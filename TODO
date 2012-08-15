@@ -1,0 +1,9 @@
+
+- Reconnect
+- SSL
+- Disconnect detection
+- Asynchronous error handling
+- Optimized Publish (coalescing)
+- Standardized Errors
+- Stats collection
+- Timeout 0 should work as no timeout
