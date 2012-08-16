@@ -92,7 +92,7 @@ func ExampleConn_Flush() {
 	for i := 0 ; i < 1000 ; i++ {
 		nc.PublishMsg(msg)
 	}
-	err := nc.flush()
+	err := nc.Flush()
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
 	}
@@ -107,7 +107,7 @@ func ExampleConn_FlushTimeout() {
 		nc.PublishMsg(msg)
 	}
 	// Only wait up to 1 second for Flush
-	err := nc.flushTimeout(1*time.Second)
+	err := nc.FlushTimeout(1*time.Second)
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
 	}
