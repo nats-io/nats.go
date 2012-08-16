@@ -38,8 +38,7 @@ func main() {
 
 	subj, i := args[0], 0
 
-	nc.Subscribe(subj, func(subj, _ string, data []byte, _ *nats.Subscription) {
-		msg := &nats.Msg{Subject:subj, Data:data}
+	nc.Subscribe(subj, func(msg *nats.Msg) {
 		i += 1
 		printMsg(msg, i)
 	})
