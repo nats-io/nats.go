@@ -21,7 +21,13 @@ _testmain.go
 
 *.exe
 
+# Emacs
 *~
 \#*\#
 .\#*
+
+# Mac
 .DS_Store
+
+# bin
+gnats-*
