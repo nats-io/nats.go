@@ -197,13 +197,12 @@ func (nc *conn) deliverMsgs() {
 	for !nc.closed {
 		m, ok := <- nc.mch
 		if !ok { break }
-		// FIXME, avoid double lookup?
-		s := nc.subs[m.sid]
-		if (s == nil || s.mcb == nil) { continue }
+		s := m.Sub
+		if (!s.IsValid() || s.mcb == nil) { continue }
 		// Fixme, race on compare
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
-			s.mcb(m.Subject, m.Reply, m.Data, s)
+			s.mcb(m)
 		}
 	}
 }
@@ -246,7 +245,7 @@ func (nc *conn) processMsg(args string) {
 	}
 	sub.msgs += 1
 
-	m := &Msg{Data:buf, Subject:subj, Reply:reply, sid:sid}
+	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
 
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
@@ -396,6 +395,12 @@ func (nc *conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
+		if s.mch != nil {
+			close(s.mch)
+			s.mch = nil
+		}
+		// Mark as invalid
+		s.conn = nil
 	}
 	nc.bwl.Lock()
 	nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
@@ -403,6 +408,12 @@ func (nc *conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 	nc.bwl.Unlock()
 
 	return nil
+}
+
+// IsValid returns a boolean indidcating whether the subscription
+// is still active.
+func (s *Subscription) IsValid() bool {
+	return s.conn != nil
 }
 
 // Unsubscribe will remove interest in a given subject.
@@ -425,7 +436,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	if s.mcb != nil {
 		return nil, errors.New("Illegal to call NextMsg on async Subscription")
 	}
-	if s.mch == nil {
+	if !s.IsValid() {
 		return nil, errors.New("Invalid Subscription")
 	}
 	if s.sc {

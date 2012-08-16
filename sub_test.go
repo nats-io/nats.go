@@ -12,7 +12,7 @@ func TestServerAutoUnsub(t *testing.T) {
 	defer nc.Close()
 	received := 0
 	max := 10
-	sub, err := nc.Subscribe("foo", func(_, _ string, _ []byte, _ *Subscription) {
+	sub, err := nc.Subscribe("foo", func(_ *Msg) {
 		received += 1
 	})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestClientASyncAutoUnsub(t *testing.T) {
 	defer nc.Close()
 	received := 0
 	max := 10
-	sub, err := nc.Subscribe("foo", func(_, _ string, _ []byte, _ *Subscription) {
+	sub, err := nc.Subscribe("foo", func(_ *Msg) {
 		received += 1
 	})
 	if err != nil {
@@ -92,6 +92,28 @@ func TestCloseSubRelease(t *testing.T) {
 	}
 }
 
+func TestIsValidSubscriber(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync("foo")
+	if !sub.IsValid() {
+		t.Fatalf("Subscription should be valid")
+	}
+	for i := 0; i < 10; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+	_, err = sub.NextMsg(100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NextMsg returned an error")
+	}
+	sub.Unsubscribe()
+	_, err = sub.NextMsg(100*time.Millisecond)
+	if err == nil {
+		t.Fatalf("NextMsg should have returned an error")
+	}
+}
+
 func TestSlowSubscriber(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
@@ -118,7 +140,7 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
 
-	nc.Subscribe("foo", func(_, _ string, _ []byte, _ *Subscription) {
+	nc.Subscribe("foo", func(_ *Msg) {
 		time.Sleep(100*time.Second)
 	})
 	for i := 0; i < (maxChanLen + 10); i++ {

@@ -111,12 +111,12 @@ func TestAsyncSubscribe(t *testing.T) {
 	defer nc.Close()
 	omsg := []byte("Hello World")
 	received := 0
-	_, err := nc.Subscribe("foo", func(subj, _ string, data []byte, sub *Subscription) {
+	_, err := nc.Subscribe("foo", func(m *Msg) {
 		received += 1
-		if !bytes.Equal(data, omsg) {
+		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
-		if (sub == nil) {
+		if (m.Sub == nil) {
 			t.Fatal("Callback does not have a valid Subsription")
 		}
 	})
@@ -165,7 +165,7 @@ func TestFlush(t *testing.T) {
 	defer nc.Close()
 	omsg := []byte("Hello World")
 	received := 0
-	nc.Subscribe("flush", func(_, _ string, _ []byte, _ *Subscription) {
+	nc.Subscribe("flush", func(_ *Msg) {
 		received += 1
 	})
 	total := 10000
@@ -183,10 +183,10 @@ func TestQueueSubscriber(t *testing.T) {
 	defer nc.Close()
 	r1 := 0
 	r2 := 0
-	nc.QueueSubscribe("foo", "bar", func(_, _ string, _ []byte, _ *Subscription) {
+	nc.QueueSubscribe("foo", "bar", func(_ *Msg) {
 		r1 += 1
 	})
-	nc.QueueSubscribe("foo", "bar", func(_, _ string, _ []byte, _ *Subscription) {
+	nc.QueueSubscribe("foo", "bar", func(_ *Msg) {
 		r2 += 1
 	})
 	omsg := []byte("Hello World")
@@ -218,11 +218,11 @@ func TestReplyArg(t *testing.T) {
 	defer nc.Close()
 	replyExpected := "bar"
 	cbReceived := false
-	nc.Subscribe("foo", func(_, reply string, data []byte, sub *Subscription) {
+	nc.Subscribe("foo", func(m *Msg) {
 		cbReceived = true
-		if (reply != replyExpected) {
+		if (m.Reply != replyExpected) {
 			t.Fatalf("Did not receive correct reply arg in callback: " +
-				     "('%s' vs '%s')", reply, replyExpected)
+				     "('%s' vs '%s')", m.Reply, replyExpected)
 		}
 	})
 	nc.PublishMsg(&Msg{Subject:"foo", Reply:replyExpected, Data:[]byte("Hello")})
@@ -254,10 +254,10 @@ func TestUnsubscribe(t *testing.T) {
 	defer nc.Close()
 	received := 0
 	max := 10
-	nc.Subscribe("foo", func(_, _ string, _ []byte, sub *Subscription) {
+	nc.Subscribe("foo", func(m *Msg) {
 		received += 1
 		if received == max {
-			err := sub.Unsubscribe()
+			err := m.Sub.Unsubscribe()
 			if err != nil {
 				t.Fatal("Unsubscribe failed with err:", err)
 			}
@@ -287,8 +287,8 @@ func TestRequest(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
 	response := []byte("I will help you")
-	nc.Subscribe("foo", func(_, reply string, _ []byte, sub *Subscription) {
-		nc.Publish(reply, response)
+	nc.Subscribe("foo", func(m *Msg) {
+		nc.Publish(m.Reply, response)
 	})
 	msg, err := nc.Request("foo", []byte("help"), 50*time.Millisecond)
 	if err != nil {
@@ -302,7 +302,7 @@ func TestRequest(t *testing.T) {
 func TestFlushInCB(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	nc.Subscribe("foo", func(_, _ string, _ []byte, _ *Subscription) {
+	nc.Subscribe("foo", func(_ *Msg) {
 		nc.Flush()
 	})
 	nc.Publish("foo", []byte("Hello"))

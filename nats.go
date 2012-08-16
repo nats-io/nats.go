@@ -36,12 +36,12 @@ type Options struct {
 	Timeout        time.Duration
 }
 
-// Msg is a structure used by synchronous Subscribers and PublishMsg().
+// Msg is a structure used by Subscribers and PublishMsg().
 type Msg struct {
-	sid     uint64
 	Subject string
 	Reply   string
 	Data    []byte
+	Sub     *Subscription
 }
 
 type Connection interface {
@@ -101,7 +101,9 @@ type ErrHandler func(Connection, error)
 
 // MsgHandler is a callback function that processes messages delivered to
 // asynchronous subscribers.
-type MsgHandler func(subj, reply string, data []byte, sub *Subscription)
+//type MsgHandler func(subj, reply string, data []byte, sub *Subscription)
+
+type MsgHandler func(msg *Msg)
 
 //type TimeoutHandler func(sub *Subscription)
 
