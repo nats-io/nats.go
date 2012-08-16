@@ -15,7 +15,7 @@ gem install nats
 
 ```go
 
-nc := nats.Connect(nats.DefaultURL)
+nc, _ := nats.Connect(nats.DefaultURL)
 
 // Simple Publisher
 nc.Publish("foo", []byte("Hello World"))
