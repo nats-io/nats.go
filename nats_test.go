@@ -97,6 +97,15 @@ func TestSimplePublish(t *testing.T) {
 	}
 }
 
+func TestSimplePublishNoData(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	err := nc.Publish("foo", nil)
+	if err != nil {
+		t.Fatal("Failed to publish empty message: ", err)
+	}
+}
+
 func TestAsyncSubscribe(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
