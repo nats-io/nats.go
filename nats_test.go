@@ -59,7 +59,7 @@ func (s *server) stopServer() {
 	}
 }
 
-func newConnection(t *testing.T) Connection {
+func newConnection(t *testing.T) *Conn {
 	nc, err := Connect(DefaultURL)
 	if err != nil {
 		t.Fatal("Failed to create default connection", err)
@@ -172,8 +172,11 @@ func TestFlush(t *testing.T) {
 	for i := 0; i < total; i++ {
 		nc.Publish("flush", omsg)
 	}
-	nc.Flush()
-	if (received != total) {
+	err := nc.Flush()
+	if err != nil {
+		t.Fatalf("Received error from flush: %s\n", err)
+	}
+	if received != total {
 		t.Fatalf("All messages not received: %d != %d\n", received, total)
 	}
 }
