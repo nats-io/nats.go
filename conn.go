@@ -108,6 +108,25 @@ func (nc *conn) connect() (err error) {
 	return nc.sendConnect()
 }
 
+// TODO(derek) Do flusher go routine to allow coalescing
+// Cant allow split writes to bw unless protected
+
+func (nc *conn) sendMsgProto(proto string, data []byte) {
+	nc.bwl.Lock()
+	defer nc.bwl.Unlock()
+	nc.bw.WriteString(proto)
+	nc.bw.Write(data)
+	nc.bw.WriteString(_CRLF_)
+	nc.bw.Flush()
+}
+
+func (nc *conn) sendProto(proto string) {
+	nc.bwl.Lock()
+	defer nc.bwl.Unlock()
+	nc.bw.WriteString(proto)
+	nc.bw.Flush()
+}
+
 func (nc *conn) sendConnect() error {
 	o := nc.opts
 
@@ -123,10 +142,7 @@ func (nc *conn) sendConnect() error {
 		return errors.New("Can't create connection message, json failed") // FIXME, standardize
 	}
 
-	nc.bwl.Lock()
-	nc.bw.WriteString(fmt.Sprintf(conProto, string(b)))
-	nc.bw.Flush()
-	nc.bwl.Unlock()
+	nc.sendProto(fmt.Sprintf(conProto, b))
 
 	err = nc.FlushTimeout(DefaultTimeout)
 	if err != nil {
@@ -263,10 +279,7 @@ func (nc *conn) processMsg(args string) {
 }
 
 func (nc *conn) processPing() {
-	nc.bwl.Lock()
-	nc.bw.WriteString(pongProto)
-	nc.bw.Flush()
-	nc.bwl.Unlock()
+	nc.sendProto(pongProto)
 }
 
 func (nc *conn) processPong() {
@@ -298,14 +311,7 @@ func (nc *conn) processErr(e string) {
 }
 
 func (nc *conn) publish(subj, reply string, data []byte) error {
-	// TODO(derek) Do flusher go routine to allow coalescing
-	// Cant allow split writes to bw unless protected
-	nc.bwl.Lock()
-	nc.bw.WriteString(fmt.Sprintf(pubProto, subj, reply, len(data)))
-	nc.bw.Write(data)
-	nc.bw.WriteString(_CRLF_)
-	nc.bw.Flush()
-	nc.bwl.Unlock()
+	nc.sendMsgProto(fmt.Sprintf(pubProto, subj, reply, len(data)), data)
 	return nil
 }
 
@@ -364,11 +370,8 @@ func (nc *conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 		sub.mch = make(chan *Msg, maxChanLen) //FIXME, is this a blocker?
 	}
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
-	nc.bwl.Lock()
-	nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
-	nc.bw.Flush()
-	nc.bwl.Unlock()
 	nc.subs[sub.sid] = sub
+	nc.sendProto(fmt.Sprintf(subProto, subj, queue, sub.sid))
 	return sub, nil
 }
 
@@ -489,11 +492,7 @@ func (nc *conn) FlushTimeout(timeout time.Duration) (err error) {
 
 	// Lock? Race?
 	nc.pongs = append(nc.pongs, ch)
-
-	nc.bwl.Lock()
-	nc.bw.WriteString(pingProto)
-	nc.bw.Flush()
-	nc.bwl.Unlock()
+	nc.sendProto(pingProto)
 
 	select {
 	case _, ok := <-ch:
