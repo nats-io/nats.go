@@ -21,13 +21,13 @@ nc := nats.Connect(nats.DefaultURL)
 nc.Publish("foo", []byte("Hello World"))
 
 // Simple Async Subscriber
-nc.Subscribe("foo", func(_, _ string, data []byte, _ *Subscription) {
-    fmt.Printf("Received a message: %v\n", data)
+nc.Subscribe("foo", func(m *Msg) {
+    fmt.Printf("Received a message: %s\n", string(m.Data))
 })
 
 // Simple Sync Subscriber
 sub, err := nc.Subscribe("foo")
-msg, err := sub.NextMsg(timeout)
+m, err := sub.NextMsg(timeout)
 
 // Unsubscribing
 sub, err := nc.Subscribe("foo", nil)
@@ -37,8 +37,8 @@ sub.Unsubscribe()
 msg, err := nc.Request("help", []byte("help me"), 10*time.Millisecond)
 
 // Replies
-nc.Subscribe("help", func(_, reply string, data []byte, sub *Subscription) {
-    nc.PublishMsg(&Msg{Subject:reply, Data:[]byte("I can help!")})
+nc.Subscribe("help", func(m *Msg) {
+    nc.Publish(m.Reply, []byte("I can help!"))
 })
 
 // Close connection
@@ -53,18 +53,18 @@ end
 ```go
 
 // "*" matches any token, at any level of the subject.
-nc.Subscribe("foo.*.baz", func(subject, _ string, data []byte, sub *Subscription) {
-    fmt.Printf("Msg received on [%s] : %v\n", subject, data);
+nc.Subscribe("foo.*.baz", func(m *Msg) {
+    fmt.Printf("Msg received on [%s] : %s\n", n.Subj, string(m.Data));
 })
 
-nc.Subscribe("foo.bar.*", func(subject, _ string, data []byte, sub *Subscription) {
-    fmt.Printf("Msg received on [%s] : %v\n", subject, data);
+nc.Subscribe("foo.bar.*", func(m *Msg) {
+    fmt.Printf("Msg received on [%s] : %s\n", m.Subject, string(m.Data));
 })
 
 // ">" matches any length of the tail of a subject, and can only be the last token
 // E.g. 'foo.>' will match 'foo.bar', 'foo.bar.baz', 'foo.foo.bar.bax.22'
-nc.Subscribe("foo.>", func(subject, _ string, data []byte, sub *Subscription) {
-    fmt.Printf("Msg received on [%s] : %v\n", subject, data);
+nc.Subscribe("foo.>", func(m *Msg) {
+    fmt.Printf("Msg received on [%s] : %s\n", m.Subject, string(m.Data));
 })
 
 // Matches all of the above
@@ -80,7 +80,7 @@ nc.Publish("foo.bar.baz", []byte("Hello World"))
 // You can have as many queue groups as you wish.
 // Normal subscribers will continue to work as expected.
 
-nc.QueueSubscribe("foo", "job_workers", func(_, _ string, _ []byte, _ *Subscription) {
+nc.QueueSubscribe("foo", "job_workers", func(_ *Msg) {
   received += 1;
 })
 
@@ -111,8 +111,8 @@ sub.AutoUnsubscribe(MAX_WANTED)
 nc1 := nats.Connect("nats://host1:4222")
 nc1 := nats.Connect("nats://host2:4222")
 
-nc1.Subscribe("foo", func(_, _ string, data []byte, _ *Subscription) {
-    fmt.Printf("Received a message: %v\n", data)
+nc1.Subscribe("foo", func(m *Msg) {
+    fmt.Printf("Received a message: %s\n", string(m.Data))
 })
 
 nc2.Publish("foo", []byte("Hello World!"));
