@@ -5,6 +5,7 @@ package nats
 import (
 	"time"
 	"net/url"
+	"errors"
 )
 
 const (
@@ -17,13 +18,18 @@ const (
 )
 
 var (
-	DefaultOptions = Options {
-		AllowReconnect : true,
-		MaxReconnect   : DefaultMaxReconnect,
-		ReconnectWait  : DefaultReconnectWait,
-		Timeout        : DefaultTimeout,
-	}
+	ErrConnectionClosed = errors.New("Connection closed")
+	ErrBadSubscription  = errors.New("Invalid Subscription")
+	ErrSlowConsumer     = errors.New("Slow consumer, messages dropped")
+	ErrTimeout          = errors.New("Timeout")
 )
+
+var DefaultOptions = Options {
+	AllowReconnect : true,
+	MaxReconnect   : DefaultMaxReconnect,
+	ReconnectWait  : DefaultReconnectWait,
+	Timeout        : DefaultTimeout,
+}
 
 // Options can be used to create a customized Connection.
 type Options struct {

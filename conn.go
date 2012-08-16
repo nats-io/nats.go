@@ -155,7 +155,7 @@ func parseControl(line string, c *control) {
 
 func (nc *conn) readOp(c *control) error {
 	if nc.closed {
-		return errors.New("Connection closed")
+		return ErrConnectionClosed
 	}
 	line, pre, err := nc.br.ReadLine()
 	if err != nil {
@@ -437,11 +437,11 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		return nil, errors.New("Illegal to call NextMsg on async Subscription")
 	}
 	if !s.IsValid() {
-		return nil, errors.New("Invalid Subscription")
+		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false
-		return nil, errors.New("Slow consumer, messages have been dropped")
+		return nil, ErrSlowConsumer
 	}
 
 	var ok bool
@@ -451,14 +451,14 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	select {
 	case msg, ok = <- s.mch:
 		if !ok {
-			return nil, errors.New("Connection closed")
+			return nil, ErrConnectionClosed
 		}
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max > 0 && s.delivered > s.max {
 			return nil, errors.New("Max messages delivered")
 		}
 	case <-t.C:
-		return nil, errors.New("Timeout")
+		return nil, ErrTimeout
 	}
 	return
 }
@@ -480,7 +480,7 @@ func (nc *conn) FlushTimeout(timeout time.Duration) (err error) {
 		return errors.New("Bad timeout value")
 	}
 	if nc.closed {
-		return errors.New("Connection closed")
+		return ErrConnectionClosed
 	}
 	t := time.NewTimer(timeout)
 	defer t.Stop()
@@ -500,13 +500,13 @@ func (nc *conn) FlushTimeout(timeout time.Duration) (err error) {
 	case _, ok := <-ch:
 		if !ok {
 			// println("FLUSH:Received error")
-			err = errors.New("Connection closed")
+			err = ErrConnectionClosed
 		}
 		if nc.sc {
-			err = errors.New("Slow consumer, messages have been dropped")
+			err = ErrSlowConsumer
 		}
 	case <-t.C:
-		err = errors.New("Timeout")
+		err = ErrTimeout
 	}
 
 	if err != nil {
