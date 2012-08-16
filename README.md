@@ -1,4 +1,4 @@
-# Node_Nats
+# Gnats
 
 A Go client for the [NATS messaging system](https://github.com/derekcollison/nats).
 
