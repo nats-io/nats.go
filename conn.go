@@ -526,6 +526,7 @@ func (nc *conn) Close() {
 		}
 	}
 	nc.subs = nil
+	nc.bw.Flush()
 	nc.conn.Close()
 }
 
