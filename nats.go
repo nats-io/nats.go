@@ -116,11 +116,6 @@ func Connect(url string) (Connection, error) {
 	return opts.Connect()
 }
 
-// DefaultConnection returns a default connection.
-func DefaultConnection() (Connection, error) {
-	return Connect(DefaultURL)
-}
-
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (Connection, error) {
 	nc := &conn{opts:o}
