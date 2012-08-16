@@ -50,6 +50,14 @@ type Msg struct {
 	Sub     *Subscription
 }
 
+// ErrHandler is a place holder for receiving asynchronous callbacks for
+// protocol errors.
+type ErrHandler func(Connection, error)
+
+// MsgHandler is a callback function that processes messages delivered to
+// asynchronous subscribers.
+type MsgHandler func(msg *Msg)
+
 type Connection interface {
 
 	// Publish publishes the data argument to the given subject.
@@ -99,17 +107,6 @@ type Connection interface {
 
 //	Subscriptions() []*Subscriptions ?
 }
-
-
-// ErrHandler is a place holder for receiving asynchronous callbacks for
-// protocol errors.
-type ErrHandler func(Connection, error)
-
-// MsgHandler is a callback function that processes messages delivered to
-// asynchronous subscribers.
-type MsgHandler func(msg *Msg)
-
-//type TimeoutHandler func(sub *Subscription)
 
 // Connect will attempt to connect to the NATS server.
 // The url can contain username/password semantics.

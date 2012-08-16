@@ -340,7 +340,6 @@ type Subscription struct {
 	max           uint64
 	conn          Connection
 	mcb           MsgHandler
-//	tcb           TimeoutCB
 	mch           chan *Msg
 	sc            bool
 }
