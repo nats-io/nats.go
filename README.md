@@ -20,10 +20,14 @@ nc := nats.Connect(nats.DefaultURL)
 // Simple Publisher
 nc.Publish("foo", []byte("Hello World"))
 
-// Simple Subscriber
+// Simple Async Subscriber
 nc.Subscribe("foo", func(_, _ string, data []byte, _ *Subscription) {
     fmt.Printf("Received a message: %v\n", data)
 })
+
+// Simple Sync Subscriber
+sub, err := nc.Subscribe("foo")
+msg, err := sub.NextMsg(timeout)
 
 // Unsubscribing
 sub, err := nc.Subscribe("foo", nil)
