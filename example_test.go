@@ -151,8 +151,6 @@ func ExampleSubscription_AutoUnsubscribe() {
 	nc.Flush()
 
 	fmt.Printf("Received = %d", received)
-	// Output:
-	// Received = 10
 }
 
 func ExampleConn_Close() {
