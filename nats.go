@@ -101,8 +101,6 @@ type ErrHandler func(Connection, error)
 
 // MsgHandler is a callback function that processes messages delivered to
 // asynchronous subscribers.
-//type MsgHandler func(subj, reply string, data []byte, sub *Subscription)
-
 type MsgHandler func(msg *Msg)
 
 //type TimeoutHandler func(sub *Subscription)
