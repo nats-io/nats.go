@@ -104,6 +104,7 @@ type Conn struct {
 	bwl     sync.Mutex
 	bw      *bufio.Writer
 	br      *bufio.Reader
+	fch     chan bool
 	info    serverInfo
 	stats   stats
 	ssid    uint64
@@ -179,8 +180,11 @@ func (nc *Conn) connect() (err error) {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 
+	nc.fch = make(chan bool, 512)
+
 	go nc.readLoop()
 	go nc.deliverMsgs()
+	go nc.flusher()
 
 	runtime.SetFinalizer(nc, fin)
 	return nc.sendConnect()
@@ -191,18 +195,18 @@ func (nc *Conn) connect() (err error) {
 
 func (nc *Conn) sendMsgProto(proto string, data []byte) {
 	nc.bwl.Lock()
-	defer nc.bwl.Unlock()
 	nc.bw.WriteString(proto)
 	nc.bw.Write(data)
 	nc.bw.WriteString(_CRLF_)
-	nc.bw.Flush()
+	nc.bwl.Unlock()
+	nc.fch <- true
 }
 
 func (nc *Conn) sendProto(proto string) {
 	nc.bwl.Lock()
-	defer nc.bwl.Unlock()
 	nc.bw.WriteString(proto)
-	nc.bw.Flush()
+	nc.bwl.Unlock()
+	nc.fch <- true
 }
 
 func (nc *Conn) sendConnect() error {
@@ -356,6 +360,22 @@ func (nc *Conn) processMsg(args string) {
 	}
 }
 
+func (nc *Conn) flusher() {
+	var b int
+	for !nc.closed {
+
+		_, ok := <- nc.fch
+		if !ok { continue }
+
+		nc.bwl.Lock()
+		b = nc.bw.Buffered()
+		if b > 0 {
+			nc.bw.Flush()
+		}
+		nc.bwl.Unlock()
+	}
+}
+
 func (nc *Conn) processPing() {
 	nc.sendProto(pongProto)
 }
@@ -499,11 +519,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 		// Mark as invalid
 		s.conn = nil
 	}
-	nc.bwl.Lock()
-	nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
-	nc.bw.Flush()
-	nc.bwl.Unlock()
-
+	nc.sendProto(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	return nil
 }
 
@@ -619,8 +635,12 @@ func (nc *Conn) Flush() error {
 func (nc *Conn) Close() {
 	if nc.closed { return }
 	nc.closed = true
+
+	// Kick the go routines
+	close(nc.fch)
 	close(nc.mch)
-	nc.mch = nil
+	defer func() { nc.fch, nc.mch = nil, nil }()
+
 	for _, ch := range nc.pongs {
 		if ch != nil {
 			ch <- true
@@ -634,8 +654,10 @@ func (nc *Conn) Close() {
 		}
 	}
 	nc.subs = nil
+	nc.bwl.Lock()
 	nc.bw.Flush()
 	nc.conn.Close()
+	nc.bwl.Unlock()
 }
 
 func fin(nc *Conn) {

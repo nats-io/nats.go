@@ -3,8 +3,8 @@
 - SSL
 - Disconnect detection
 - Asynchronous error handling
-- Optimized Publish (coalescing)
 - Stats collection
 - Timeout 0 should work as no timeout
+- [DONE] Optimized Publish (coalescing)
 - [DONE] Do Examples via Go style
 - [DONE] Standardized Errors
