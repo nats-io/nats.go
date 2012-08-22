@@ -17,9 +17,10 @@ import (
 	"time"
 	"runtime"
 	"errors"
-	"math/rand"
 	"sync"
 	"strconv"
+	"encoding/hex"
+	"crypto/rand"
 )
 
 const (
@@ -456,13 +457,9 @@ type Subscription struct {
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers.
 func NewInbox() (inbox string) {
-	inbox = fmt.Sprintf("_INBOX.%04x%04x%04x%04x%04x%06x",
-		rand.Int31n(0x0010000),
-		rand.Int31n(0x0010000),
-		rand.Int31n(0x0010000),
-		rand.Int31n(0x0010000),
-		rand.Int31n(0x0010000),
-		rand.Int31n(0x1000000))
+	u := make([]byte, 13)
+	io.ReadFull(rand.Reader, u)
+	inbox = fmt.Sprintf("_INBOX.%s", hex.EncodeToString(u))
 	return
 }
 
