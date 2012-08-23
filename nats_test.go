@@ -2,79 +2,14 @@ package nats
 
 import (
 	"testing"
-	"fmt"
-//	"os"
-	"os/exec"
-	"net"
 	"time"
 	"math"
 	"runtime"
 	"regexp"
 	"bytes"
-	"strings"
 )
 
-const natsServer = "nats-server"
-
-type server struct {
-	args []string
-	cmd  *exec.Cmd
-}
-
-var s *server
-
-func startNatsServer(t *testing.T, port uint, other string) *server {
-	var s server
-	args := fmt.Sprintf("-p %d %s", port, other)
-	s.args = strings.Split(args, " ")
-	s.cmd = exec.Command(natsServer, s.args...)
-	err := s.cmd.Start()
-	if err != nil {
-		s.cmd = nil
-		t.Errorf("Could not start %s, is NATS installed and in path?", natsServer)
-		return &s
-	}
-	// Give it time to start up
-	start := time.Now()
-	for {
-		addr := fmt.Sprintf("localhost:%d", port)
-		c, err := net.Dial("tcp", addr)
-		if err != nil {
-			time.Sleep(50 * time.Millisecond)
-			if time.Since(start) > (5 * time.Second) {
-				t.Fatalf("Timed out trying to connect to %s", natsServer)
-				return nil
-			}
-		} else {
-			c.Close()
-			break
-		}
-	}
-	return &s
-}
-
-func (s *server) stopServer() {
-	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-	}
-}
-
-func newConnection(t *testing.T) *Conn {
-	nc, err := Connect(DefaultURL)
-	if err != nil {
-		t.Fatal("Failed to create default connection", err)
-		return nil
-	}
-	return nc
-}
-
-func TestDefaultConnection(t *testing.T) {
-	s = startNatsServer(t, DefaultPort, "")
-	nc := newConnection(t)
-	nc.Close()
-}
-
-func TestClose(t *testing.T) {
+func TestCloseLeakingGoRoutines(t *testing.T) {
 	base := runtime.NumGoroutine()
 	nc := newConnection(t)
 	time.Sleep(10 * time.Millisecond)

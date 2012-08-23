@@ -6,20 +6,19 @@ import (
 
 var as *server
 
-var uri  = "nats://localhost:8222"
-var auri = "nats://derek:foo@localhost:8222"
+func TestAuthServerStart(t *testing.T) {
+	as = startServer(t, 8222, "--user derek --pass foo -l /tmp/foo.log")
+}
 
 func TestAuthConnectionFail(t *testing.T) {
-	as = startNatsServer(t, 8222, "--user derek --pass foo -l /tmp/foo.log")
-	_, err := Connect(uri)
+	_, err := Connect("nats://localhost:8222")
 	if err == nil {
 		t.Fatal("Should have gotten error trying to connect")
 	}
 }
 
 func TestAuthConnectionSuccess(t *testing.T) {
-	as = startNatsServer(t, 8222, "--user derek --pass foo -l /tmp/foo.log")
-	_, err := Connect(auri)
+	_, err := Connect("nats://derek:foo@localhost:8222")
 	if err != nil {
 		t.Fatal("Should have connected succesfully")
 	}

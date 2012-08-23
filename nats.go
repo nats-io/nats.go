@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	Version              = "0.1"
+	Version              = "0.2"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -46,6 +46,17 @@ var DefaultOptions = Options {
 	Timeout        : DefaultTimeout,
 }
 
+
+type Status int
+const (
+	DISCONNECTED Status = iota
+	CONNECTED    Status = iota
+	CLOSED       Status = iota
+	RECONNECTING Status = iota
+)
+
+type Handler func(*Conn)
+
 // Options can be used to create a customized Connection.
 type Options struct {
 	Url            string
@@ -55,6 +66,8 @@ type Options struct {
 	MaxReconnect   uint
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
+	ClosedCB       Handler
+	DisconnectedCB Handler
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -96,8 +109,7 @@ func (o Options) Connect() (*Conn, error) {
 	return nc, nil
 }
 
-
-// Internal implementation for a Connection
+// Implementation for a Connection
 type Conn struct {
 	url     *url.URL
 	opts    Options
@@ -112,9 +124,10 @@ type Conn struct {
 	subs    map[uint64]*Subscription
 	mch     chan *Msg
 	pongs   []chan bool
+	status  Status
 	sc      bool
 	err     error
-	closed bool
+	closed  bool
 }
 
 type stats struct {
@@ -166,12 +179,13 @@ const (
 const maxChanLen     = 8192
 const defaultBufSize = 32768
 
-func (nc *Conn) connect() (err error) {
+// Main connect function
+func (nc *Conn) connect() error {
 
 	// FIXME: Check for 0 Timeout
-	nc.conn, err = net.DialTimeout("tcp", nc.url.Host, nc.opts.Timeout)
-	if err != nil {
-		return
+	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.opts.Timeout)
+	if nc.err != nil {
+		return nc.err
 	}
 
 	nc.subs  = make(map[uint64]*Subscription)
@@ -212,27 +226,29 @@ func (nc *Conn) sendProto(proto string) {
 
 func (nc *Conn) sendConnect() error {
 	o := nc.opts
-
 	var user, pass string
 	u := nc.url.User
 	if u != nil {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cCmd := connectInfo{o.Verbose, o.Pedantic, user, pass, false} // FIXME ssl
-	b, err := json.Marshal(cCmd)
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, false} // FIXME ssl
+	b, err := json.Marshal(cinfo)
 	if err != nil {
-		return errors.New("Can't create connection message, json failed") // FIXME, standardize
+		nc.err = errors.New("Can't create connection message, json failed")
+		return nc.err
 	}
 
 	nc.sendProto(fmt.Sprintf(conProto, b))
 
 	err = nc.FlushTimeout(DefaultTimeout)
 	if err != nil {
+		nc.err = err
 		return err
 	} else if nc.closed {
 		return nc.err
 	}
+	nc.status = CONNECTED
 	return nil
 }
 
@@ -272,6 +288,9 @@ func (nc *Conn) readLoop() {
 	for !nc.closed {
 		err := nc.readOp(c)
 		if err != nil {
+			if err == io.EOF {
+				nc.status = DISCONNECTED
+			}
 			nc.Close()
 			break
 		}
@@ -307,12 +326,10 @@ func (nc *Conn) deliverMsgs() {
 }
 
 func (nc *Conn) processMsg(args string) {
-	var subj  string
-	var reply string
-	var sid   uint64
-	var blen  int
-	var n     int
-	var err   error
+	var subj, reply  string
+	var sid          uint64
+	var n, blen      int
+	var err          error
 
 	num := strings.Count(args, _SPC_) + 1
 
@@ -323,9 +340,11 @@ func (nc *Conn) processMsg(args string) {
 		n, err = fmt.Sscanf(args, "%s %d %s %d", &subj, &sid, &reply, &blen)
 	}
 	if err != nil {
+		// FIXME
 		println("Failed to parse control for message")
 	}
 	if (n != num) {
+		// FIXME
 		println("Failed to parse control for message, not enough elements")
 	}
 
@@ -334,6 +353,8 @@ func (nc *Conn) processMsg(args string) {
 	n, err = io.ReadFull(nc.br, buf)
 
 	// FIXME - Properly handle errors
+
+
 	if err != nil || n != blen {
 		return
 	}
@@ -396,7 +417,7 @@ func (nc *Conn) processInfo(info string) {
 	if info == _EMPTY_ { return }
 	err := json.Unmarshal([]byte(info), &nc.info)
 	if err != nil {
-		// ?
+		// FIXME HERE TOO ?
 	}
 }
 
@@ -631,12 +652,12 @@ func (nc *Conn) Flush() error {
 // Close will close the connection to the server.
 func (nc *Conn) Close() {
 	if nc.closed { return }
+	// FIXME, use status?
 	nc.closed = true
 
 	// Kick the go routines
 	close(nc.fch)
 	close(nc.mch)
-	defer func() { nc.fch, nc.mch = nil, nil }()
 
 	for _, ch := range nc.pongs {
 		if ch != nil {
@@ -651,10 +672,21 @@ func (nc *Conn) Close() {
 		}
 	}
 	nc.subs = nil
+
+	if nc.opts.DisconnectedCB != nil {
+		nc.opts.DisconnectedCB(nc)
+	}
+
 	nc.bwl.Lock()
 	nc.bw.Flush()
 	nc.conn.Close()
 	nc.bwl.Unlock()
+
+	nc.status = CLOSED
+
+	if nc.opts.ClosedCB != nil {
+		nc.opts.ClosedCB(nc)
+	}
 }
 
 func fin(nc *Conn) {

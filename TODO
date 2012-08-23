@@ -1,10 +1,11 @@
 
+- Asynchronous error handling
 - Reconnect
 - SSL
-- Disconnect detection
-- Asynchronous error handling
 - Stats collection
+- Fast Publisher?
 - Timeout 0 should work as no timeout
+- [DONE] Disconnect detection
 - [DONE] Optimized Publish (coalescing)
 - [DONE] Do Examples via Go style
 - [DONE] Standardized Errors
