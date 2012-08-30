@@ -1,8 +1,6 @@
 // Copyright 2012 Apcera Inc. All rights reserved.
 
-/*
-	A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
-*/
+// A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
 package nats
 
 import (
@@ -46,7 +44,7 @@ var DefaultOptions = Options {
 	Timeout        : DefaultTimeout,
 }
 
-
+// Do we care?
 type Status int
 const (
 	DISCONNECTED Status = iota
@@ -77,10 +75,6 @@ type Msg struct {
 	Data    []byte
 	Sub     *Subscription
 }
-
-// ErrHandler is a place holder for receiving asynchronous callbacks for
-// protocol errors.
-type ErrHandler func(*Conn, error)
 
 // MsgHandler is a callback function that processes messages delivered to
 // asynchronous subscribers.
@@ -147,8 +141,8 @@ type serverInfo struct {
 type connectInfo struct {
 	Verbose  bool   `json:"verbose"`
 	Pedantic bool   `json:"pedantic"`
-	User     string `json:"user"`
-	Pass     string `json:"pass"`
+	User     string `json:"user,omitempty"`
+	Pass     string `json:"pass,omitempty"`
 	Ssl      bool   `json:"ssl_required"`
 }
 
@@ -499,7 +493,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 // Subscribe will express interest in a given subject. The subject
 // can have wildcards (partial:*, full:>). Messages will be delivered
 // to the associated MsgHandler. If no MsgHandler is given, the
-// subscription is a synchronous subscription and get be polled via
+// subscription is a synchronous subscription and can be polled via
 // Subscription.NextMsg()
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, cb)
