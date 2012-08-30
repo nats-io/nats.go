@@ -103,12 +103,12 @@ func (o Options) Connect() (*Conn, error) {
 	return nc, nil
 }
 
-// Implementation for a Connection
+// A Conn represents a connection to a nats-server
 type Conn struct {
+	sync.Mutex
 	url     *url.URL
 	opts    Options
 	conn    net.Conn
-	bwl     sync.Mutex
 	bw      *bufio.Writer
 	br      *bufio.Reader
 	fch     chan bool
@@ -189,7 +189,7 @@ func (nc *Conn) connect() error {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 
-	nc.fch = make(chan bool, 512)
+	nc.fch = make(chan bool, 512) //FIXME, need to define
 
 	go nc.readLoop()
 	go nc.deliverMsgs()
@@ -203,18 +203,18 @@ func (nc *Conn) connect() error {
 // Cant allow split writes to bw unless protected
 
 func (nc *Conn) sendMsgProto(proto string, data []byte) {
-	nc.bwl.Lock()
+	nc.Lock()
 	nc.bw.WriteString(proto)
 	nc.bw.Write(data)
 	nc.bw.WriteString(_CRLF_)
-	nc.bwl.Unlock()
+	nc.Unlock()
 	nc.fch <- true
 }
 
 func (nc *Conn) sendProto(proto string) {
-	nc.bwl.Lock()
+	nc.Lock()
 	nc.bw.WriteString(proto)
-	nc.bwl.Unlock()
+	nc.Unlock()
 	nc.fch <- true
 }
 
@@ -232,7 +232,6 @@ func (nc *Conn) sendConnect() error {
 		nc.err = errors.New("Can't create connection message, json failed")
 		return nc.err
 	}
-
 	nc.sendProto(fmt.Sprintf(conProto, b))
 
 	err = nc.FlushTimeout(DefaultTimeout)
@@ -345,9 +344,7 @@ func (nc *Conn) processMsg(args string) {
 	// Grab payload here.
 	buf := make([]byte, blen)
 	n, err = io.ReadFull(nc.br, buf)
-
 	// FIXME - Properly handle errors
-
 
 	if err != nil || n != blen {
 		return
@@ -359,6 +356,7 @@ func (nc *Conn) processMsg(args string) {
 	}
 	sub.msgs += 1
 
+	// FIXME: We should recycle these containers
 	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
 
 	if sub.mcb != nil {
@@ -383,12 +381,12 @@ func (nc *Conn) flusher() {
 		_, ok := <- nc.fch
 		if !ok { continue }
 
-		nc.bwl.Lock()
+		nc.Lock()
 		b = nc.bw.Buffered()
 		if b > 0 {
 			nc.bw.Flush()
 		}
-		nc.bwl.Unlock()
+		nc.Unlock()
 	}
 }
 
@@ -456,6 +454,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
+	sync.Mutex
 	sid           uint64
 	Subject       string
 	Queue         string
@@ -471,11 +470,10 @@ type Subscription struct {
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers.
-func NewInbox() (inbox string) {
+func NewInbox() string {
 	u := make([]byte, 13)
 	io.ReadFull(rand.Reader, u)
-	inbox = fmt.Sprintf("_INBOX.%s", hex.EncodeToString(u))
-	return
+	return fmt.Sprintf("_INBOX.%s", hex.EncodeToString(u))
 }
 
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
@@ -524,12 +522,14 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
+		s.Lock()
 		if s.mch != nil {
 			close(s.mch)
 			s.mch = nil
 		}
 		// Mark as invalid
 		s.conn = nil
+		s.Unlock()
 	}
 	nc.sendProto(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	return nil
@@ -671,10 +671,10 @@ func (nc *Conn) Close() {
 		nc.opts.DisconnectedCB(nc)
 	}
 
-	nc.bwl.Lock()
+	nc.Lock()
 	nc.bw.Flush()
 	nc.conn.Close()
-	nc.bwl.Unlock()
+	nc.Unlock()
 
 	nc.status = CLOSED
 
