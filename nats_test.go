@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"regexp"
 	"bytes"
+	"sync"
 )
 
 func TestCloseLeakingGoRoutines(t *testing.T) {
@@ -21,6 +22,19 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	}
 	// Make sure we can call Close() multiple times
 	nc.Close()
+}
+
+func TestMultipleClose(t *testing.T) {
+	nc := newConnection(t)
+	var wg sync.WaitGroup
+	for i:=0 ; i < 10 ; i++ {
+		wg.Add(1)
+		go func() {
+			nc.Close()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestSimplePublish(t *testing.T) {
@@ -209,6 +223,23 @@ func TestUnsubscribe(t *testing.T) {
 	if received != max {
 		t.Fatalf("Received wrong # of messages after unsubscribe: %d vs %d",
 			     received, max)
+	}
+}
+
+func TestDoubleUnsubscribe(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	s, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+	err = s.Unsubscribe()
+	if err != nil {
+		t.Fatal("Unsubscribe failed with err:", err)
+	}
+	err = s.Unsubscribe()
+	if err == nil {
+		t.Fatal("Unsubscribe should have reported an error")
 	}
 }
 

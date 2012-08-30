@@ -395,8 +395,10 @@ func (nc *Conn) processPing() {
 }
 
 func (nc *Conn) processPong() {
+	nc.Lock()
 	ch := nc.pongs[0]
 	nc.pongs = nc.pongs[1:]
+	nc.Unlock()
 	if ch != nil {
 		ch <- true
 	}
@@ -543,7 +545,11 @@ func (s *Subscription) IsValid() bool {
 
 // Unsubscribe will remove interest in a given subject.
 func (s *Subscription) Unsubscribe() error {
-	return s.conn.unsubscribe(s, 0, 0)
+	conn := s.conn
+	if conn == nil {
+		return ErrBadSubscription
+	}
+	return conn.unsubscribe(s, 0, 0)
 }
 
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
@@ -551,7 +557,11 @@ func (s *Subscription) Unsubscribe() error {
 // This can be useful when sending a request to an unknown number
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
-	return s.conn.unsubscribe(s, max, 0)
+	conn := s.conn
+	if conn == nil {
+		return ErrBadSubscription
+	}
+	return conn.unsubscribe(s, max, 0)
 }
 
 // NextMsg() will return the next message available to a synchrnous subscriber,
@@ -590,6 +600,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 
 // FIXME: This is a hack
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
+	nc.Lock()
+	defer nc.Unlock()
 	if nc.pongs == nil { return false }
 	for i,c := range nc.pongs {
 		if c == ch {
@@ -605,17 +617,22 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if (timeout <= 0) {
 		return errors.New("Bad timeout value")
 	}
-	if nc.closed {
-		return ErrConnectionClosed
-	}
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 
 	ch := make(chan bool) // Inefficient?
 	defer close(ch)
 
-	// Lock? Race?
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return ErrConnectionClosed
+	}
 	nc.pongs = append(nc.pongs, ch)
+	nc.Unlock()
+
+	// Lock? Race? nc.Close() called here..
+
 	nc.sendProto(pingProto)
 
 	select {
@@ -645,9 +662,14 @@ func (nc *Conn) Flush() error {
 
 // Close will close the connection to the server.
 func (nc *Conn) Close() {
-	if nc.closed { return }
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return
+	}
 	// FIXME, use status?
 	nc.closed = true
+	nc.Unlock()
 
 	// Kick the go routines
 	close(nc.fch)
