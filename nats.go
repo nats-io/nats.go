@@ -170,10 +170,14 @@ const (
 	unsubProto = "UNSUB %d %s"  + _CRLF_
 )
 
+// The size of the buffered channel used between the socket
+// go routine and the message delivery or sync subscription.
 const maxChanLen     = 8192
+
+// The size of the bufio reader/writer on top of the socket.
 const defaultBufSize = 32768
 
-// Main connect function
+// Main connect function. Will connect to the nats-server
 func (nc *Conn) connect() error {
 
 	// FIXME: Check for 0 Timeout
@@ -199,9 +203,8 @@ func (nc *Conn) connect() error {
 	return nc.sendConnect()
 }
 
-// TODO(derek) Do flusher go routine to allow coalescing
-// Cant allow split writes to bw unless protected
-
+// Sends a protocol data message by queueing into the bufio writer
+// and kicking the flush go routine. These writes are protected.
 func (nc *Conn) sendMsgProto(proto string, data []byte) {
 	nc.Lock()
 	nc.bw.WriteString(proto)
@@ -211,6 +214,8 @@ func (nc *Conn) sendMsgProto(proto string, data []byte) {
 	nc.fch <- true
 }
 
+// Sends a protocol control message by queueing into the bufio writer
+// and kicking the flush go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.Lock()
 	nc.bw.WriteString(proto)
@@ -218,6 +223,9 @@ func (nc *Conn) sendProto(proto string) {
 	nc.fch <- true
 }
 
+// Send a connect protocol message to the server, issuing user/password if
+// applicable. Will wait for a flush to return from the server for error
+// processing.
 func (nc *Conn) sendConnect() error {
 	o := nc.opts
 	var user, pass string
@@ -245,10 +253,30 @@ func (nc *Conn) sendConnect() error {
 	return nil
 }
 
+// FIXME, pool?
+// A control protocol line.
 type control struct {
 	op, args string
 }
 
+// Read a control line and process the intended op.
+func (nc *Conn) readOp(c *control) error {
+	if nc.closed {
+		return ErrConnectionClosed
+	}
+	line, pre, err := nc.br.ReadLine()
+	if err != nil {
+		return err
+	}
+	if pre {
+		// FIXME: Be more specific here?
+		return errors.New("Line too long")
+	}
+	parseControl(string(line), c)
+	return nil
+}
+
+// Parse a control line from the server.
 func parseControl(line string, c *control) {
 	toks := strings.SplitN(string(line), _SPC_, 2)
 	if len(toks) == 1 {
@@ -261,21 +289,8 @@ func parseControl(line string, c *control) {
 	}
 }
 
-func (nc *Conn) readOp(c *control) error {
-	if nc.closed {
-		return ErrConnectionClosed
-	}
-	line, pre, err := nc.br.ReadLine()
-	if err != nil {
-		return err
-	}
-	if pre {
-		return errors.New("Line too long")
-	}
-	parseControl(string(line), c)
-	return nil
-}
-
+// readLoop() will sit on the buffered socket reading and processing the protocol
+// from the server. It will displatch appropriately based on the op type.
 func (nc *Conn) readLoop() {
 	c := &control{}
 	for !nc.closed {
@@ -304,6 +319,8 @@ func (nc *Conn) readLoop() {
 	}
 }
 
+// deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
+// It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs() {
 	for !nc.closed {
 		m, ok := <- nc.mch
@@ -318,6 +335,11 @@ func (nc *Conn) deliverMsgs() {
 	}
 }
 
+// processMsg is called by readLoop and will parse a message and place it on
+// the appropriate channel for processing. Asynchronous subscribers will all
+// share the channel that is processed by deliverMsgs. Sync subscribers have
+// their own channel. If either channel is full, the connection is considered
+// a slow subscriber.
 func (nc *Conn) processMsg(args string) {
 	var subj, reply  string
 	var sid          uint64
@@ -356,7 +378,7 @@ func (nc *Conn) processMsg(args string) {
 	}
 	sub.msgs += 1
 
-	// FIXME: We should recycle these containers
+	// FIXME: Should we recycle these containers
 	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
 
 	if sub.mcb != nil {
@@ -374,6 +396,8 @@ func (nc *Conn) processMsg(args string) {
 	}
 }
 
+// flusher is a separate go routine that will process flush requests for the write
+// bufio. This allows coaelscing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
 	for !nc.closed {
@@ -390,10 +414,14 @@ func (nc *Conn) flusher() {
 	}
 }
 
+// processPing will send an immediate pong protocol response to the
+// server. The server uses this mechanism to detect dead clients.
 func (nc *Conn) processPing() {
 	nc.sendProto(pongProto)
 }
 
+// processPong is used to process responses to the client's ping
+// messages. We use pings for the flush mechanism as well.
 func (nc *Conn) processPong() {
 	nc.Lock()
 	ch := nc.pongs[0]
@@ -404,9 +432,12 @@ func (nc *Conn) processPong() {
 	}
 }
 
+// processOK is a placeholder for processing ok messages.
 func processOK() {
 }
 
+// processInfo is used to parse the info messages sent
+// from the server.
 func (nc *Conn) processInfo(info string) {
 	if info == _EMPTY_ { return }
 	err := json.Unmarshal([]byte(info), &nc.info)
@@ -420,11 +451,14 @@ func (nc *Conn) LastError() error {
 	return nc.err
 }
 
+// processErr processes any error messages from the server and
+// sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	nc.err = errors.New(e)
 	nc.Close()
 }
 
+// publish is the internal function to publish messages to a nats-server.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.sendMsgProto(fmt.Sprintf(pubProto, subj, reply, len(data)), data)
 	return nil
@@ -441,8 +475,9 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 	return nc.publish(m.Subject, m.Reply, m.Data)
 }
 
-// Request will perform and Publish() call with an Inbox reply and return
-// the first reply received.
+// Request will perform and Publish() call with an auto generated Inbox
+// reply and return the first reply received. This is optimized for the
+// case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	inbox := NewInbox()
 	s, err := nc.SubscribeSync(inbox)
@@ -458,8 +493,16 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 type Subscription struct {
 	sync.Mutex
 	sid           uint64
+
+	// Subject that represents this subscription. This can be different
+	// then the received subject inside a Msg if this is a wildcard.
 	Subject       string
+
+	// Optional queue group name. If present, all subscriptions with the
+	// same name will form a distributed queue, and each message will
+	// only be processed by one member of the group.
 	Queue         string
+
 	msgs          uint64
 	delivered     uint64
 	bytes         uint64
@@ -471,13 +514,15 @@ type Subscription struct {
 }
 
 // NewInbox will return an inbox string which can be used for directed replies from
-// subscribers.
+// subscribers. These are guaranteed to be unique, but can be shared and subscribed
+// to by others.
 func NewInbox() string {
 	u := make([]byte, 13)
 	io.ReadFull(rand.Reader, u)
 	return fmt.Sprintf("_INBOX.%s", hex.EncodeToString(u))
 }
 
+// subscribe is the internal subscribe function that indicates interest in subjects.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
 	sub := &Subscription{Subject: subj, mcb: cb, conn:nc}
 	if cb == nil {
@@ -538,7 +583,8 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 }
 
 // IsValid returns a boolean indidcating whether the subscription
-// is still active.
+// is still active. This will return false if the subscription has
+// altready been closed.
 func (s *Subscription) IsValid() bool {
 	return s.conn != nil
 }
@@ -599,6 +645,9 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 }
 
 // FIXME: This is a hack
+// removeFlushEntry is needed when we need to discard queued up responses
+// for our pings, as part of a flush call. This happens when we have a flush
+// call oustanding and we call close.
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	nc.Lock()
 	defer nc.Unlock()
@@ -631,8 +680,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	nc.pongs = append(nc.pongs, ch)
 	nc.Unlock()
 
-	// Lock? Race? nc.Close() called here..
-
+	// FIXME: Lock? Race? nc.Close() called here..
 	nc.sendProto(pingProto)
 
 	select {
@@ -660,7 +708,8 @@ func (nc *Conn) Flush() error {
 	return nc.FlushTimeout(60*time.Second)
 }
 
-// Close will close the connection to the server.
+// Close will close the connection to the server. This call will release
+// all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	nc.Lock()
 	if nc.closed {
@@ -671,16 +720,20 @@ func (nc *Conn) Close() {
 	nc.closed = true
 	nc.Unlock()
 
-	// Kick the go routines
+	// Kick the go routines so they fall out.
 	close(nc.fch)
 	close(nc.mch)
 
+	// Clear any queued pongs, e.g. pending flush calls.
 	for _, ch := range nc.pongs {
 		if ch != nil {
 			ch <- true
 		}
 	}
 	nc.pongs = nil
+
+	// Close synch subscriber channels and release any
+	// pending NextMsg() calls.
 	for _, s := range nc.subs {
 		if s.mch != nil {
 			close(s.mch)
@@ -689,10 +742,12 @@ func (nc *Conn) Close() {
 	}
 	nc.subs = nil
 
+	// Perform appropriate callback if needed for a disconnect.
 	if nc.opts.DisconnectedCB != nil {
 		nc.opts.DisconnectedCB(nc)
 	}
 
+	// Go ahead and make sure we have flushed the outbound buffer.
 	nc.Lock()
 	nc.bw.Flush()
 	nc.conn.Close()
@@ -700,11 +755,15 @@ func (nc *Conn) Close() {
 
 	nc.status = CLOSED
 
+	// Perform appropriate callback if needed for a connection closed.
 	if nc.opts.ClosedCB != nil {
 		nc.opts.ClosedCB(nc)
 	}
 }
 
+// Used for a garbage collexction finalizer on dangling connections.
+// Should not be needed as Close() should be called, but here for
+// completeness.
 func fin(nc *Conn) {
 	nc.Close()
 }
