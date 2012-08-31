@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"encoding/hex"
 	"crypto/rand"
+	"unsafe"
 )
 
 const (
@@ -264,7 +265,7 @@ func (nc *Conn) readOp(c *control) error {
 	if nc.closed {
 		return ErrConnectionClosed
 	}
-	line, pre, err := nc.br.ReadLine()
+	b, pre, err := nc.br.ReadLine()
 	if err != nil {
 		return err
 	}
@@ -272,13 +273,15 @@ func (nc *Conn) readOp(c *control) error {
 		// FIXME: Be more specific here?
 		return errors.New("Line too long")
 	}
-	parseControl(string(line), c)
+	// Do straight move to string rep
+	line := *(*string)(unsafe.Pointer(&b))
+	parseControl(line, c)
 	return nil
 }
 
 // Parse a control line from the server.
 func parseControl(line string, c *control) {
-	toks := strings.SplitN(string(line), _SPC_, 2)
+	toks := strings.SplitN(line, _SPC_, 2)
 	if len(toks) == 1 {
 		c.op   = strings.TrimSpace(toks[0])
 		c.args = _EMPTY_
