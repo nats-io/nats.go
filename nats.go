@@ -290,7 +290,7 @@ func parseControl(line string, c *control) {
 }
 
 // readLoop() will sit on the buffered socket reading and processing the protocol
-// from the server. It will displatch appropriately based on the op type.
+// from the server. It will dispatch appropriately based on the op type.
 func (nc *Conn) readLoop() {
 	c := &control{}
 	for !nc.closed {
@@ -327,7 +327,7 @@ func (nc *Conn) deliverMsgs() {
 		if !ok { break }
 		s := m.Sub
 		if (!s.IsValid() || s.mcb == nil) { continue }
-		// Fixme, race on compare
+		// FIXME, race on compare
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
 			s.mcb(m)
@@ -397,7 +397,7 @@ func (nc *Conn) processMsg(args string) {
 }
 
 // flusher is a separate go routine that will process flush requests for the write
-// bufio. This allows coaelscing of writes to the underlying socket.
+// bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
 	for !nc.closed {
@@ -582,9 +582,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 	return nil
 }
 
-// IsValid returns a boolean indidcating whether the subscription
+// IsValid returns a boolean indicating whether the subscription
 // is still active. This will return false if the subscription has
-// altready been closed.
+// already been closed.
 func (s *Subscription) IsValid() bool {
 	return s.conn != nil
 }
@@ -610,7 +610,7 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 	return conn.unsubscribe(s, max, 0)
 }
 
-// NextMsg() will return the next message available to a synchrnous subscriber,
+// NextMsg() will return the next message available to a synchronous subscriber,
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
@@ -647,7 +647,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 // FIXME: This is a hack
 // removeFlushEntry is needed when we need to discard queued up responses
 // for our pings, as part of a flush call. This happens when we have a flush
-// call oustanding and we call close.
+// call outstanding and we call close.
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	nc.Lock()
 	defer nc.Unlock()
@@ -761,7 +761,7 @@ func (nc *Conn) Close() {
 	}
 }
 
-// Used for a garbage collexction finalizer on dangling connections.
+// Used for a garbage collection finalizer on dangling connections.
 // Should not be needed as Close() should be called, but here for
 // completeness.
 func fin(nc *Conn) {
