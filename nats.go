@@ -125,6 +125,8 @@ type Conn struct {
 	closed  bool
 }
 
+// Tracks various stats received and sent on this connection,
+// including message and bytes counts.
 type Stats struct {
 	InMsgs, OutMsgs, InBytes, OutBytes uint64
 }
