@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	Version              = "0.22"
+	Version              = "0.24"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -107,6 +107,7 @@ func (o Options) Connect() (*Conn, error) {
 // A Conn represents a connection to a nats-server
 type Conn struct {
 	sync.Mutex
+	Stats
 	url     *url.URL
 	opts    Options
 	conn    net.Conn
@@ -114,7 +115,6 @@ type Conn struct {
 	br      *bufio.Reader
 	fch     chan bool
 	info    serverInfo
-	stats   stats
 	ssid    uint64
 	subs    map[uint64]*Subscription
 	mch     chan *Msg
@@ -125,8 +125,8 @@ type Conn struct {
 	closed  bool
 }
 
-type stats struct {
-	inMsgs, outMsgs, inBytes, outBytes uint64
+type Stats struct {
+	InMsgs, OutMsgs, InBytes, OutBytes uint64
 }
 
 type serverInfo struct {
@@ -254,7 +254,6 @@ func (nc *Conn) sendConnect() error {
 	return nil
 }
 
-// FIXME, pool?
 // A control protocol line.
 type control struct {
 	op, args string
@@ -384,6 +383,10 @@ func (nc *Conn) processMsg(args string) {
 	// FIXME: Should we recycle these containers
 	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
 
+	// Stats
+	nc.InMsgs  = atomic.AddUint64(&nc.InMsgs, 1)
+	nc.InBytes = atomic.AddUint64(&nc.InBytes, uint64(blen))
+
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
 			nc.sc = true
@@ -464,6 +467,8 @@ func (nc *Conn) processErr(e string) {
 // publish is the internal function to publish messages to a nats-server.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.sendMsgProto(fmt.Sprintf(pubProto, subj, reply, len(data)), data)
+	nc.OutMsgs  = atomic.AddUint64(&nc.OutMsgs, 1)
+	nc.OutBytes = atomic.AddUint64(&nc.OutBytes, uint64(len(data)))
 	return nil
 }
 

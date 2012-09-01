@@ -293,3 +293,44 @@ func TestInbox(t *testing.T) {
 		t.Fatal("Bad INBOX format")
 	}
 }
+
+func TestStats(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	data := []byte("The quick brown fox jumped over the lazy dog")
+	iter := 10
+
+	for i:=0; i<iter ; i++ {
+		nc.Publish("foo", data)
+	}
+
+	if nc.OutMsgs != uint64(iter) {
+		t.Fatalf("Not properly tracking OutMsgs: got %d wanted %d\n", nc.OutMsgs, iter)
+	}
+	obb := uint64(iter * len(data))
+	if nc.OutBytes != obb {
+		t.Fatalf("Not properly tracking OutBytes: got %d wanted %d\n", nc.OutBytes, obb)
+	}
+
+	// Clear outbound
+	nc.OutMsgs, nc.OutBytes = 0, 0
+
+	// Test both sync and async versions of subscribe.
+	nc.Subscribe("foo", func(_ *Msg) {})
+	nc.SubscribeSync("foo")
+
+	for i:=0; i<iter ; i++ {
+		nc.Publish("foo", data)
+	}
+	nc.Flush()
+
+	if nc.InMsgs != uint64(2*iter) {
+		t.Fatalf("Not properly tracking InMsgs: got %d wanted %d\n", nc.InMsgs, 2*iter)
+	}
+
+	ibb := 2*obb
+	if nc.InBytes != ibb {
+		t.Fatalf("Not properly tracking InBytes: got %d wanted %d\n", nc.InBytes, ibb)
+	}
+}
