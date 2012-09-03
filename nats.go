@@ -653,6 +653,14 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 	return nc.subscribe(subj, queue, cb)
 }
 
+// QueueSubscribeSync creates a synchronous queue subscriber on the given
+// subject. All subscribers with the same queue name will form the queue
+// group, and only one member of the group will be selected to receive any
+// given message.
+func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
+	return nc.subscribe(subj, queue, nil)
+}
+
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) error {
