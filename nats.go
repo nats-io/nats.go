@@ -33,12 +33,12 @@ const (
 )
 
 var (
-	ErrConnectionClosed   = errors.New("Connection closed")
-	ErrSecureConnRequired = errors.New("Secure connection required")
-	ErrSecureConnWanted   = errors.New("Secure connection not available")
-	ErrBadSubscription    = errors.New("Invalid Subscription")
-	ErrSlowConsumer       = errors.New("Slow consumer, messages dropped")
-	ErrTimeout            = errors.New("Timeout")
+	ErrConnectionClosed   = errors.New("nats: Connection closed")
+	ErrSecureConnRequired = errors.New("nats: Secure connection required")
+	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
+	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
+	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
+	ErrTimeout            = errors.New("nats: Timeout")
 )
 
 var DefaultOptions = Options {
@@ -258,7 +258,7 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 	// The nats protocol should send INFO forst always.
 	if c.op != _INFO_OP_ {
-		e := errors.New("Protocol exception, INFO not received")
+		e := errors.New("nats: Protocol exception, INFO not received")
 		nc.processReadOpErr(e)
 		return e
 	}
@@ -290,7 +290,7 @@ func (nc *Conn) sendConnect() error {
 	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
-		nc.err = errors.New("Can't create connection message, json failed")
+		nc.err = errors.New("nats: Connection message, json parse failed")
 		return nc.err
 	}
 	nc.sendProto(fmt.Sprintf(conProto, b))
@@ -323,7 +323,7 @@ func (nc *Conn) readOp(c *control) error {
 	}
 	if pre {
 		// FIXME: Be more specific here?
-		return errors.New("Line too long")
+		return errors.New("nats: Line too long")
 	}
 	// Do straight move to string rep
 	line := *(*string)(unsafe.Pointer(&b))
@@ -529,7 +529,7 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
-	nc.err = errors.New(e)
+	nc.err = errors.New("nats: " + e)
 	nc.Close()
 }
 
@@ -727,7 +727,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	}
 	if s.mcb != nil {
 		s.Unlock()
-		return nil, errors.New("Illegal to call NextMsg on async Subscription")
+		return nil, errors.New("nats: Illegal call on an async Subscription")
 	}
 	if !s.IsValid() {
 		s.Unlock()
@@ -753,7 +753,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		}
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max > 0 && s.delivered > s.max {
-			return nil, errors.New("Max messages delivered")
+			return nil, errors.New("nats: Max messages delivered")
 		}
 	case <-t.C:
 		return nil, ErrTimeout
@@ -781,7 +781,7 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if (timeout <= 0) {
-		return errors.New("Bad timeout value")
+		return errors.New("nats: Bad timeout value")
 	}
 
 	nc.Lock()
