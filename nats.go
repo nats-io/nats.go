@@ -424,36 +424,38 @@ func (nc *Conn) processMsg(args string) {
 	case 4:
 		n, err = fmt.Sscanf(args, "%s %d %s %d", &subj, &sid, &reply, &blen)
 	}
-	if err != nil {
-		// FIXME
-		println("Failed to parse control for message")
-	}
-	if (n != num) {
-		// FIXME
-		println("Failed to parse control for message, not enough elements")
+	if err != nil || n != num {
+		nc.err = errors.New("nats: Parse exception processing msg")
+		nc.Close()
+		return
 	}
 
 	// Grab payload here.
 	buf := make([]byte, blen)
 	n, err = io.ReadFull(nc.br, buf)
-	// FIXME - Properly handle errors
-
 	if err != nil || n != blen {
+		nc.err = err
+		nc.Close()
 		return
 	}
 
+	// FIXME, locks?
+	nc.Lock()
+	// Stats
+	nc.InMsgs  += 1
+	nc.InBytes += uint64(blen)
 	sub := nc.subs[sid]
-	if (sub == nil || (sub.max > 0 && sub.msgs > sub.max)) {
+	defer nc.Unlock()
+
+	if sub == nil || (sub.max > 0 && sub.msgs > sub.max) {
 		return
 	}
+	sub.Lock()
+	defer sub.Unlock()
 	sub.msgs += 1
 
 	// FIXME: Should we recycle these containers
 	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
-
-	// Stats
-	nc.InMsgs  = atomic.AddUint64(&nc.InMsgs, 1)
-	nc.InBytes = atomic.AddUint64(&nc.InBytes, uint64(blen))
 
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
@@ -811,7 +813,6 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	select {
 	case _, ok := <-ch:
 		if !ok {
-			// println("FLUSH:Received error")
 			err = ErrConnectionClosed
 		}
 		if nc.sc {
