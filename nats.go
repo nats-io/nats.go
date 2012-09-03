@@ -663,7 +663,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) error {
+func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	nc.Lock()
 	if nc.closed {
 		nc.Unlock()
@@ -709,7 +709,7 @@ func (s *Subscription) Unsubscribe() error {
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, 0, 0)
+	return conn.unsubscribe(s, 0)
 }
 
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
@@ -721,7 +721,7 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, max, 0)
+	return conn.unsubscribe(s, max)
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber,
