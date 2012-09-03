@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	Version               = "0.24"
+	Version               = "0.30"
 	DefaultURL            = "nats://localhost:4222"
 	DefaultPort           = 4222
 	DefaultMaxReconnect   = 10
@@ -209,7 +209,7 @@ func (nc *Conn) connect() error {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 
-	nc.fch = make(chan bool, 512) //FIXME, need to define
+	nc.fch = make(chan bool, 1024) //FIXME, need to define
 
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
@@ -264,17 +264,6 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 	nc.processInfo(c.args)
 	return nc.checkForSecure()
-}
-
-// Sends a protocol data message by queueing into the bufio writer
-// and kicking the flush go routine. These writes are protected.
-func (nc *Conn) sendMsgProto(proto string, data []byte) {
-	nc.Lock()
-	nc.bw.WriteString(proto)
-	nc.bw.Write(data)
-	nc.bw.WriteString(_CRLF_)
-	nc.Unlock()
-	nc.fch <- true
 }
 
 // Sends a protocol control message by queueing into the bufio writer
@@ -485,10 +474,11 @@ func (nc *Conn) processMsg(args string) {
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
-	for !nc.closed {
+	var ok bool
 
-		_, ok := <- nc.fch
-		if !ok { continue }
+	for !nc.closed {
+		_, ok = <- nc.fch
+		if !ok { return }
 
 		nc.Lock()
 		b = nc.bw.Buffered()
@@ -544,10 +534,21 @@ func (nc *Conn) processErr(e string) {
 }
 
 // publish is the internal function to publish messages to a nats-server.
+// Sends a protocol data message by queueing into the bufio writer
+// and kicking the flush go routine. These writes are protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
-	nc.sendMsgProto(fmt.Sprintf(pubProto, subj, reply, len(data)), data)
-	nc.OutMsgs  = atomic.AddUint64(&nc.OutMsgs, 1)
-	nc.OutBytes = atomic.AddUint64(&nc.OutBytes, uint64(len(data)))
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return ErrConnectionClosed
+	}
+	nc.bw.WriteString(fmt.Sprintf(pubProto, subj, reply, len(data)))
+	nc.bw.Write(data)
+	nc.bw.WriteString(_CRLF_)
+	nc.OutMsgs  += 1
+	nc.OutBytes += uint64(len(data))
+	nc.Unlock()
+	nc.fch <- true
 	return nil
 }
 
@@ -611,6 +612,12 @@ func NewInbox() string {
 
 // subscribe is the internal subscribe function that indicates interest in subjects.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return nil, ErrConnectionClosed
+	}
+
 	sub := &Subscription{Subject: subj, mcb: cb, conn:nc}
 	if cb == nil {
 		// Indicates a sync subscription
@@ -618,7 +625,9 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
-	nc.sendProto(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	nc.Unlock()
+	nc.fch <- true
 	return sub, nil
 }
 
@@ -647,9 +656,17 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) error {
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return ErrConnectionClosed
+	}
 	s := nc.subs[sub.sid]
 	// Already unsubscribed
-	if s == nil { return nil }
+	if s == nil {
+		nc.Unlock()
+		return nil
+	}
 	maxStr := _EMPTY_
 	if max > 0 {
 		s.max = uint64(max)
@@ -665,7 +682,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 		s.conn = nil
 		s.Unlock()
 	}
-	nc.sendProto(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	nc.Unlock()
+	nc.fch <- true
 	return nil
 }
 
@@ -701,23 +720,34 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
+	s.Lock()
+	if s.mch == nil {
+		s.Unlock()
+		return nil, ErrConnectionClosed
+	}
 	if s.mcb != nil {
+		s.Unlock()
 		return nil, errors.New("Illegal to call NextMsg on async Subscription")
 	}
 	if !s.IsValid() {
+		s.Unlock()
 		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false
+		s.Unlock()
 		return nil, ErrSlowConsumer
 	}
+
+	mch := s.mch
+	s.Unlock()
 
 	var ok bool
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 
 	select {
-	case msg, ok = <- s.mch:
+	case msg, ok = <- mch:
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
@@ -753,22 +783,22 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if (timeout <= 0) {
 		return errors.New("Bad timeout value")
 	}
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-
-	ch := make(chan bool) // Inefficient?
-	defer close(ch)
 
 	nc.Lock()
 	if nc.closed {
 		nc.Unlock()
 		return ErrConnectionClosed
 	}
-	nc.pongs = append(nc.pongs, ch)
-	nc.Unlock()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 
-	// FIXME: Lock? Race? nc.Close() called here..
-	nc.sendProto(pingProto)
+	ch := make(chan bool) // FIXME Inefficient?
+	defer close(ch)
+
+	nc.pongs = append(nc.pongs, ch)
+	nc.bw.WriteString(pingProto)
+	nc.bw.Flush()
+	nc.Unlock()
 
 	select {
 	case _, ok := <-ch:
@@ -808,7 +838,8 @@ func (nc *Conn) Close() {
 	nc.Unlock()
 
 	// Kick the go routines so they fall out.
-	close(nc.fch)
+	// fch will be closed on finalizer
+	nc.fch <- true
 	close(nc.mch)
 
 	// Clear any queued pongs, e.g. pending flush calls.
@@ -853,4 +884,5 @@ func (nc *Conn) Close() {
 // completeness.
 func fin(nc *Conn) {
 	nc.Close()
+	close(nc.fch)
 }
