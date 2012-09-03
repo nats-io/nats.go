@@ -702,12 +702,16 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 // is still active. This will return false if the subscription has
 // already been closed.
 func (s *Subscription) IsValid() bool {
+	s.Lock()
+	defer s.Unlock()
 	return s.conn != nil
 }
 
 // Unsubscribe will remove interest in a given subject.
 func (s *Subscription) Unsubscribe() error {
+	s.Lock()
 	conn := s.conn
+	s.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
@@ -719,7 +723,9 @@ func (s *Subscription) Unsubscribe() error {
 // This can be useful when sending a request to an unknown number
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
+	s.Lock()
 	conn := s.conn
+	s.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
@@ -739,7 +745,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		s.Unlock()
 		return nil, errors.New("nats: Illegal call on an async Subscription")
 	}
-	if !s.IsValid() {
+	if s.conn == nil {
 		s.Unlock()
 		return nil, ErrBadSubscription
 	}
