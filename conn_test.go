@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 	"strings"
+	"bytes"
 	"os/exec"
 )
 
@@ -149,4 +150,44 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 
 func TestRestartServer(t *testing.T) {
 	s = startServer(t, DefaultPort, "")
+}
+
+func TestServerSecureConnections(t *testing.T) {
+	securePort := uint(2288)
+	secureServer := startServer(t, securePort, "--ssl")
+	defer secureServer.stopServer()
+	secureUrl := fmt.Sprintf("nats://localhost:%d/", securePort)
+
+	// Make sure this succeeds
+	nc, err := SecureConnect(secureUrl)
+	if err != nil {
+		t.Fatal("Failed to create secure (TLS) connection", err)
+	}
+	omsg := []byte("Hello World")
+	received := 0
+	nc.Subscribe("foo", func(m *Msg) {
+		received += 1
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+	})
+	err = nc.Publish("foo", omsg)
+	if err != nil {
+		t.Fatal("Failed to publish on secure (TLS) connection", err)
+	}
+	nc.Flush()
+	nc.Close()
+
+	// Test flag mismatch
+	// Wanted but not available..
+	nc, err = SecureConnect(DefaultURL)
+	if err == nil || nc != nil || err != ErrSecureConnWanted {
+		t.Fatalf("Should have failed to create connection: %v", err)
+	}
+
+	// Server required, but not requested.
+	nc, err = Connect(secureUrl)
+	if err == nil || nc != nil || err != ErrSecureConnRequired {
+		t.Fatal("Should have failed to create secure (TLS) connection")
+	}
 }

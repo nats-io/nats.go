@@ -19,23 +19,26 @@ import (
 	"strconv"
 	"encoding/hex"
 	"crypto/rand"
+	"crypto/tls"
 	"unsafe"
 )
 
 const (
-	Version              = "0.24"
-	DefaultURL           = "nats://localhost:4222"
-	DefaultPort          = 4222
-	DefaultMaxReconnect  = 10
-	DefaultReconnectWait = 2 * time.Second
-	DefaultTimeout       = 2 * time.Second
+	Version               = "0.24"
+	DefaultURL            = "nats://localhost:4222"
+	DefaultPort           = 4222
+	DefaultMaxReconnect   = 10
+	DefaultReconnectWait  = 2*time.Second
+	DefaultTimeout        = 2*time.Second
 )
 
 var (
-	ErrConnectionClosed = errors.New("Connection closed")
-	ErrBadSubscription  = errors.New("Invalid Subscription")
-	ErrSlowConsumer     = errors.New("Slow consumer, messages dropped")
-	ErrTimeout          = errors.New("Timeout")
+	ErrConnectionClosed   = errors.New("Connection closed")
+	ErrSecureConnRequired = errors.New("Secure connection required")
+	ErrSecureConnWanted   = errors.New("Secure connection not available")
+	ErrBadSubscription    = errors.New("Invalid Subscription")
+	ErrSlowConsumer       = errors.New("Slow consumer, messages dropped")
+	ErrTimeout            = errors.New("Timeout")
 )
 
 var DefaultOptions = Options {
@@ -61,6 +64,7 @@ type Options struct {
 	Url            string
 	Verbose        bool
 	Pedantic       bool
+	Secure         bool
 	AllowReconnect bool
 	MaxReconnect   uint
 	ReconnectWait  time.Duration
@@ -86,6 +90,15 @@ type MsgHandler func(msg *Msg)
 func Connect(url string) (*Conn, error) {
 	opts := DefaultOptions
 	opts.Url = url
+	return opts.Connect()
+}
+
+// SecureConnect will attempt to connect to the NATS server using TLS.
+// The url can contain username/password semantics.
+func SecureConnect(url string) (*Conn, error) {
+	opts := DefaultOptions
+	opts.Url = url
+	opts.Secure = true
 	return opts.Connect()
 }
 
@@ -198,12 +211,59 @@ func (nc *Conn) connect() error {
 
 	nc.fch = make(chan bool, 512) //FIXME, need to define
 
+	// Make sure to process the INFO inline here.
+	if nc.err = nc.processExpectedInfo(); nc.err != nil {
+		return nc.err
+	}
+
 	go nc.readLoop()
 	go nc.deliverMsgs()
 	go nc.flusher()
 
 	runtime.SetFinalizer(nc, fin)
 	return nc.sendConnect()
+}
+
+// This will check to see if the connection should be
+// secure. This can be dictated from either end and should
+// only be called after the INIT protocol has been received.
+func (nc *Conn) checkForSecure() error {
+	// Check to see if we need to engage TLS
+	o := nc.opts
+
+	// Check for mismatch in setups
+	if o.Secure && !nc.info.SslRequired {
+		return ErrSecureConnWanted
+	} else if nc.info.SslRequired && !o.Secure {
+		return ErrSecureConnRequired
+	}
+
+	if o.Secure {
+		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
+		nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+		nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
+	}
+	return nil
+}
+
+// processExpectedInfo will look for the expected first INFO message
+// sent when a connection is established.
+func (nc *Conn) processExpectedInfo() error {
+	nc.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond))
+	defer nc.conn.SetReadDeadline(time.Time{})
+
+	c := &control{}
+	if err := nc.readOp(c); err != nil {
+		fmt.Printf("Received an err inside first INFO: %v\n", err)
+	}
+	// The nats protocol should send INFO forst always.
+	if c.op != _INFO_OP_ {
+		e := errors.New("Protocol exception, INFO not received")
+		nc.processReadOpErr(e)
+		return e
+	}
+	nc.processInfo(c.args)
+	return nc.checkForSecure()
 }
 
 // Sends a protocol data message by queueing into the bufio writer
@@ -237,13 +297,15 @@ func (nc *Conn) sendConnect() error {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, false} // FIXME ssl
+
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		nc.err = errors.New("Can't create connection message, json failed")
 		return nc.err
 	}
 	nc.sendProto(fmt.Sprintf(conProto, b))
+
 
 	err = nc.FlushTimeout(DefaultTimeout)
 	if err != nil {
@@ -293,17 +355,32 @@ func parseControl(line string, c *control) {
 	}
 }
 
+func (nc *Conn) processDisconnect() {
+	nc.status = DISCONNECTED
+	if nc.err != nil { return }
+	if nc.info.SslRequired {
+		nc.err = ErrSecureConnRequired
+	} else {
+		nc.err = ErrConnectionClosed
+	}
+}
+
+// processReadOpErr handles errors from readOp.
+func (nc *Conn) processReadOpErr(err error) {
+	if err == io.EOF {
+		nc.processDisconnect()
+	}
+	nc.err = err
+	nc.Close()
+}
+
 // readLoop() will sit on the buffered socket reading and processing the protocol
 // from the server. It will dispatch appropriately based on the op type.
 func (nc *Conn) readLoop() {
 	c := &control{}
 	for !nc.closed {
-		err := nc.readOp(c)
-		if err != nil {
-			if err == io.EOF {
-				nc.status = DISCONNECTED
-			}
-			nc.Close()
+		if err := nc.readOp(c); err != nil {
+			nc.processReadOpErr(err)
 			break
 		}
 		switch c.op {
