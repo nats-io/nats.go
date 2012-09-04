@@ -165,6 +165,40 @@ func TestQueueSubscriber(t *testing.T) {
 	}
 }
 
+func TestQueueSyncSubscriber(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	s1, _ := nc.QueueSubscribeSync("foo", "bar")
+	s2, _ := nc.QueueSubscribeSync("foo", "bar")
+	omsg := []byte("Hello World")
+	nc.Publish("foo", omsg)
+	nc.Flush()
+	r1, r2 := len(s1.mch), len(s2.mch)
+	if (r1 + r2) != 1 {
+		t.Fatal("Received too many messages for multiple queue subscribers")
+	}
+	// Drain message
+	s1.NextMsg(0)
+	s2.NextMsg(0)
+
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", omsg)
+	}
+	nc.Flush()
+	v := uint(float32(total) * 0.15)
+	r1, r2 = len(s1.mch), len(s2.mch)
+	if r1 + r2 != total {
+		t.Fatalf("Incorrect number of messages: %d vs %d", (r1 + r2), total)
+	}
+	expected := total / 2
+	d1 := uint(math.Abs(float64(expected - r1)))
+	d2 := uint(math.Abs(float64(expected - r2)))
+	if (d1 > v || d2 > v) {
+		t.Fatalf("Too much variance in totals: %d, %d > %d", d1, d2, v)
+	}
+}
+
 func TestReplyArg(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()

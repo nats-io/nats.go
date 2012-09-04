@@ -19,23 +19,26 @@ import (
 	"strconv"
 	"encoding/hex"
 	"crypto/rand"
+	"crypto/tls"
 	"unsafe"
 )
 
 const (
-	Version              = "0.24"
-	DefaultURL           = "nats://localhost:4222"
-	DefaultPort          = 4222
-	DefaultMaxReconnect  = 10
-	DefaultReconnectWait = 2 * time.Second
-	DefaultTimeout       = 2 * time.Second
+	Version               = "0.32"
+	DefaultURL            = "nats://localhost:4222"
+	DefaultPort           = 4222
+	DefaultMaxReconnect   = 10
+	DefaultReconnectWait  = 2*time.Second
+	DefaultTimeout        = 2*time.Second
 )
 
 var (
-	ErrConnectionClosed = errors.New("Connection closed")
-	ErrBadSubscription  = errors.New("Invalid Subscription")
-	ErrSlowConsumer     = errors.New("Slow consumer, messages dropped")
-	ErrTimeout          = errors.New("Timeout")
+	ErrConnectionClosed   = errors.New("nats: Connection closed")
+	ErrSecureConnRequired = errors.New("nats: Secure connection required")
+	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
+	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
+	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
+	ErrTimeout            = errors.New("nats: Timeout")
 )
 
 var DefaultOptions = Options {
@@ -61,6 +64,7 @@ type Options struct {
 	Url            string
 	Verbose        bool
 	Pedantic       bool
+	Secure         bool
 	AllowReconnect bool
 	MaxReconnect   uint
 	ReconnectWait  time.Duration
@@ -86,6 +90,15 @@ type MsgHandler func(msg *Msg)
 func Connect(url string) (*Conn, error) {
 	opts := DefaultOptions
 	opts.Url = url
+	return opts.Connect()
+}
+
+// SecureConnect will attempt to connect to the NATS server using TLS.
+// The url can contain username/password semantics.
+func SecureConnect(url string) (*Conn, error) {
+	opts := DefaultOptions
+	opts.Url = url
+	opts.Secure = true
 	return opts.Connect()
 }
 
@@ -196,7 +209,12 @@ func (nc *Conn) connect() error {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 
-	nc.fch = make(chan bool, 512) //FIXME, need to define
+	nc.fch = make(chan bool, 1024) //FIXME, need to define
+
+	// Make sure to process the INFO inline here.
+	if nc.err = nc.processExpectedInfo(); nc.err != nil {
+		return nc.err
+	}
 
 	go nc.readLoop()
 	go nc.deliverMsgs()
@@ -206,15 +224,46 @@ func (nc *Conn) connect() error {
 	return nc.sendConnect()
 }
 
-// Sends a protocol data message by queueing into the bufio writer
-// and kicking the flush go routine. These writes are protected.
-func (nc *Conn) sendMsgProto(proto string, data []byte) {
-	nc.Lock()
-	nc.bw.WriteString(proto)
-	nc.bw.Write(data)
-	nc.bw.WriteString(_CRLF_)
-	nc.Unlock()
-	nc.fch <- true
+// This will check to see if the connection should be
+// secure. This can be dictated from either end and should
+// only be called after the INIT protocol has been received.
+func (nc *Conn) checkForSecure() error {
+	// Check to see if we need to engage TLS
+	o := nc.opts
+
+	// Check for mismatch in setups
+	if o.Secure && !nc.info.SslRequired {
+		return ErrSecureConnWanted
+	} else if nc.info.SslRequired && !o.Secure {
+		return ErrSecureConnRequired
+	}
+
+	if o.Secure {
+		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
+		nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+		nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
+	}
+	return nil
+}
+
+// processExpectedInfo will look for the expected first INFO message
+// sent when a connection is established.
+func (nc *Conn) processExpectedInfo() error {
+	nc.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond))
+	defer nc.conn.SetReadDeadline(time.Time{})
+
+	c := &control{}
+	if err := nc.readOp(c); err != nil {
+		fmt.Printf("Received an err inside first INFO: %v\n", err)
+	}
+	// The nats protocol should send INFO forst always.
+	if c.op != _INFO_OP_ {
+		e := errors.New("nats: Protocol exception, INFO not received")
+		nc.processReadOpErr(e)
+		return e
+	}
+	nc.processInfo(c.args)
+	return nc.checkForSecure()
 }
 
 // Sends a protocol control message by queueing into the bufio writer
@@ -237,13 +286,15 @@ func (nc *Conn) sendConnect() error {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, false} // FIXME ssl
+
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
-		nc.err = errors.New("Can't create connection message, json failed")
+		nc.err = errors.New("nats: Connection message, json parse failed")
 		return nc.err
 	}
 	nc.sendProto(fmt.Sprintf(conProto, b))
+
 
 	err = nc.FlushTimeout(DefaultTimeout)
 	if err != nil {
@@ -272,7 +323,7 @@ func (nc *Conn) readOp(c *control) error {
 	}
 	if pre {
 		// FIXME: Be more specific here?
-		return errors.New("Line too long")
+		return errors.New("nats: Line too long")
 	}
 	// Do straight move to string rep
 	line := *(*string)(unsafe.Pointer(&b))
@@ -293,17 +344,32 @@ func parseControl(line string, c *control) {
 	}
 }
 
+func (nc *Conn) processDisconnect() {
+	nc.status = DISCONNECTED
+	if nc.err != nil { return }
+	if nc.info.SslRequired {
+		nc.err = ErrSecureConnRequired
+	} else {
+		nc.err = ErrConnectionClosed
+	}
+}
+
+// processReadOpErr handles errors from readOp.
+func (nc *Conn) processReadOpErr(err error) {
+	if err == io.EOF {
+		nc.processDisconnect()
+	}
+	nc.err = err
+	nc.Close()
+}
+
 // readLoop() will sit on the buffered socket reading and processing the protocol
 // from the server. It will dispatch appropriately based on the op type.
 func (nc *Conn) readLoop() {
 	c := &control{}
 	for !nc.closed {
-		err := nc.readOp(c)
-		if err != nil {
-			if err == io.EOF {
-				nc.status = DISCONNECTED
-			}
-			nc.Close()
+		if err := nc.readOp(c); err != nil {
+			nc.processReadOpErr(err)
 			break
 		}
 		switch c.op {
@@ -358,36 +424,38 @@ func (nc *Conn) processMsg(args string) {
 	case 4:
 		n, err = fmt.Sscanf(args, "%s %d %s %d", &subj, &sid, &reply, &blen)
 	}
-	if err != nil {
-		// FIXME
-		println("Failed to parse control for message")
-	}
-	if (n != num) {
-		// FIXME
-		println("Failed to parse control for message, not enough elements")
+	if err != nil || n != num {
+		nc.err = errors.New("nats: Parse exception processing msg")
+		nc.Close()
+		return
 	}
 
 	// Grab payload here.
 	buf := make([]byte, blen)
 	n, err = io.ReadFull(nc.br, buf)
-	// FIXME - Properly handle errors
-
 	if err != nil || n != blen {
+		nc.err = err
+		nc.Close()
 		return
 	}
 
+	// FIXME, locks?
+	nc.Lock()
+	// Stats
+	nc.InMsgs  += 1
+	nc.InBytes += uint64(blen)
 	sub := nc.subs[sid]
-	if (sub == nil || (sub.max > 0 && sub.msgs > sub.max)) {
+	defer nc.Unlock()
+
+	if sub == nil || (sub.max > 0 && sub.msgs > sub.max) {
 		return
 	}
+	sub.Lock()
+	defer sub.Unlock()
 	sub.msgs += 1
 
 	// FIXME: Should we recycle these containers
 	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
-
-	// Stats
-	nc.InMsgs  = atomic.AddUint64(&nc.InMsgs, 1)
-	nc.InBytes = atomic.AddUint64(&nc.InBytes, uint64(blen))
 
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
@@ -408,10 +476,11 @@ func (nc *Conn) processMsg(args string) {
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
-	for !nc.closed {
+	var ok bool
 
-		_, ok := <- nc.fch
-		if !ok { continue }
+	for !nc.closed {
+		_, ok = <- nc.fch
+		if !ok { return }
 
 		nc.Lock()
 		b = nc.bw.Buffered()
@@ -462,15 +531,26 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
-	nc.err = errors.New(e)
+	nc.err = errors.New("nats: " + e)
 	nc.Close()
 }
 
 // publish is the internal function to publish messages to a nats-server.
+// Sends a protocol data message by queueing into the bufio writer
+// and kicking the flush go routine. These writes are protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
-	nc.sendMsgProto(fmt.Sprintf(pubProto, subj, reply, len(data)), data)
-	nc.OutMsgs  = atomic.AddUint64(&nc.OutMsgs, 1)
-	nc.OutBytes = atomic.AddUint64(&nc.OutBytes, uint64(len(data)))
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return ErrConnectionClosed
+	}
+	nc.bw.WriteString(fmt.Sprintf(pubProto, subj, reply, len(data)))
+	nc.bw.Write(data)
+	nc.bw.WriteString(_CRLF_)
+	nc.OutMsgs  += 1
+	nc.OutBytes += uint64(len(data))
+	nc.Unlock()
+	nc.fch <- true
 	return nil
 }
 
@@ -534,6 +614,12 @@ func NewInbox() string {
 
 // subscribe is the internal subscribe function that indicates interest in subjects.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return nil, ErrConnectionClosed
+	}
+
 	sub := &Subscription{Subject: subj, mcb: cb, conn:nc}
 	if cb == nil {
 		// Indicates a sync subscription
@@ -541,7 +627,9 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
-	nc.sendProto(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	nc.Unlock()
+	nc.fch <- true
 	return sub, nil
 }
 
@@ -567,12 +655,28 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 	return nc.subscribe(subj, queue, cb)
 }
 
+// QueueSubscribeSync creates a synchronous queue subscriber on the given
+// subject. All subscribers with the same queue name will form the queue
+// group, and only one member of the group will be selected to receive any
+// given message.
+func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
+	return nc.subscribe(subj, queue, nil)
+}
+
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) error {
+func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
+	nc.Lock()
+	if nc.closed {
+		nc.Unlock()
+		return ErrConnectionClosed
+	}
 	s := nc.subs[sub.sid]
 	// Already unsubscribed
-	if s == nil { return nil }
+	if s == nil {
+		nc.Unlock()
+		return nil
+	}
 	maxStr := _EMPTY_
 	if max > 0 {
 		s.max = uint64(max)
@@ -588,7 +692,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 		s.conn = nil
 		s.Unlock()
 	}
-	nc.sendProto(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	nc.Unlock()
+	nc.fch <- true
 	return nil
 }
 
@@ -596,16 +702,20 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, timeout time.Duration) e
 // is still active. This will return false if the subscription has
 // already been closed.
 func (s *Subscription) IsValid() bool {
+	s.Lock()
+	defer s.Unlock()
 	return s.conn != nil
 }
 
 // Unsubscribe will remove interest in a given subject.
 func (s *Subscription) Unsubscribe() error {
+	s.Lock()
 	conn := s.conn
+	s.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, 0, 0)
+	return conn.unsubscribe(s, 0)
 }
 
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
@@ -613,40 +723,53 @@ func (s *Subscription) Unsubscribe() error {
 // This can be useful when sending a request to an unknown number
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
+	s.Lock()
 	conn := s.conn
+	s.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, max, 0)
+	return conn.unsubscribe(s, max)
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber,
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
-	if s.mcb != nil {
-		return nil, errors.New("Illegal to call NextMsg on async Subscription")
+	s.Lock()
+	if s.mch == nil {
+		s.Unlock()
+		return nil, ErrConnectionClosed
 	}
-	if !s.IsValid() {
+	if s.mcb != nil {
+		s.Unlock()
+		return nil, errors.New("nats: Illegal call on an async Subscription")
+	}
+	if s.conn == nil {
+		s.Unlock()
 		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false
+		s.Unlock()
 		return nil, ErrSlowConsumer
 	}
+
+	mch := s.mch
+	s.Unlock()
 
 	var ok bool
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 
 	select {
-	case msg, ok = <- s.mch:
+	case msg, ok = <- mch:
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max > 0 && s.delivered > s.max {
-			return nil, errors.New("Max messages delivered")
+			return nil, errors.New("nats: Max messages delivered")
 		}
 	case <-t.C:
 		return nil, ErrTimeout
@@ -674,29 +797,28 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if (timeout <= 0) {
-		return errors.New("Bad timeout value")
+		return errors.New("nats: Bad timeout value")
 	}
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-
-	ch := make(chan bool) // Inefficient?
-	defer close(ch)
 
 	nc.Lock()
 	if nc.closed {
 		nc.Unlock()
 		return ErrConnectionClosed
 	}
-	nc.pongs = append(nc.pongs, ch)
-	nc.Unlock()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 
-	// FIXME: Lock? Race? nc.Close() called here..
-	nc.sendProto(pingProto)
+	ch := make(chan bool) // FIXME Inefficient?
+	defer close(ch)
+
+	nc.pongs = append(nc.pongs, ch)
+	nc.bw.WriteString(pingProto)
+	nc.bw.Flush()
+	nc.Unlock()
 
 	select {
 	case _, ok := <-ch:
 		if !ok {
-			// println("FLUSH:Received error")
 			err = ErrConnectionClosed
 		}
 		if nc.sc {
@@ -731,7 +853,8 @@ func (nc *Conn) Close() {
 	nc.Unlock()
 
 	// Kick the go routines so they fall out.
-	close(nc.fch)
+	// fch will be closed on finalizer
+	nc.fch <- true
 	close(nc.mch)
 
 	// Clear any queued pongs, e.g. pending flush calls.
@@ -776,4 +899,5 @@ func (nc *Conn) Close() {
 // completeness.
 func fin(nc *Conn) {
 	nc.Close()
+	close(nc.fch)
 }
