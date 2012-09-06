@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	Version               = "0.32"
+	Version               = "0.33"
 	DefaultURL            = "nats://localhost:4222"
 	DefaultPort           = 4222
 	DefaultMaxReconnect   = 10
@@ -603,13 +603,15 @@ type Subscription struct {
 	sc            bool
 }
 
+const InboxPrefix = "_INBOX."
+
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
 func NewInbox() string {
 	u := make([]byte, 13)
 	io.ReadFull(rand.Reader, u)
-	return fmt.Sprintf("_INBOX.%s", hex.EncodeToString(u))
+	return fmt.Sprintf("%s%s", InboxPrefix, hex.EncodeToString(u))
 }
 
 // subscribe is the internal subscribe function that indicates interest in subjects.
