@@ -584,7 +584,7 @@ type Subscription struct {
 	sid           uint64
 
 	// Subject that represents this subscription. This can be different
-	// then the received subject inside a Msg if this is a wildcard.
+	// than the received subject inside a Msg if this is a wildcard.
 	Subject       string
 
 	// Optional queue group name. If present, all subscriptions with the
