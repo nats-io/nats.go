@@ -1,4 +1,5 @@
 // Copyright 2012 Apcera Inc. All rights reserved.
+// +build ignore
 
 package main
 
@@ -9,7 +10,7 @@ import (
 )
 
 func usage() {
-    log.Fatalf("Usage: gnats-pub [-s server] [-t] <subject> <msg> \n")
+    log.Fatalf("Usage: nats-pub [-s server] [-t] <subject> <msg> \n")
 }
 
 func main() {

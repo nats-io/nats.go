@@ -1,4 +1,5 @@
 // Copyright 2012 Apcera Inc. All rights reserved.
+// +build ignore
 
 package main
 
@@ -10,7 +11,7 @@ import (
 )
 
 func usage() {
-    log.Fatalf("Usage: gnats-sub [-s server] [-t] <subject> \n")
+    log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> \n")
 }
 
 var index = 0
@@ -44,10 +45,7 @@ func main() {
 	})
 
 	log.Printf("Listening on [%s]\n", subj)
-
-	if *showTime {
-		log.SetFlags(log.LstdFlags)
-	}
+	if *showTime { log.SetFlags(log.LstdFlags) }
 
 	runtime.Goexit()
 }
