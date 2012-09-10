@@ -48,7 +48,6 @@ var DefaultOptions = Options {
 	Timeout        : DefaultTimeout,
 }
 
-// Do we care?
 type Status int
 const (
 	DISCONNECTED Status = iota
