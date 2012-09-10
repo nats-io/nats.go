@@ -1,6 +1,6 @@
-# Nats - Go Version
+# NATS - Go Client
 
-A Go client for the [NATS messaging system](https://github.com/derekcollison/nats).
+A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats).
 
 ## Installation
 
