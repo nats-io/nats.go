@@ -90,7 +90,7 @@ nc.QueueSubscribe("foo", "job_workers", func(_ *Msg) {
 
 ```go
 
-// Flush connection to server, returns  when all messages have been processed.
+// Flush connection to server, returns when all messages have been processed.
 nc.Flush()
 fmt.Println("All clear!")
 
