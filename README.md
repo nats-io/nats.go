@@ -2,6 +2,8 @@
 
 A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats).
 
+[![Build Status](https://secure.travis-ci.org/apcera/nats.png)](http://travis-ci.org/apcera/nats)
+
 ## Installation
 
 ```bash

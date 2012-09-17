@@ -1,0 +1,5 @@
+language: go
+
+before_script:
+  - sudo gem install nats --pre
+  - which nats-server
