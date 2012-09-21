@@ -438,7 +438,6 @@ func (nc *Conn) processMsg(args string) {
 		return
 	}
 
-	// FIXME, locks?
 	nc.Lock()
 	// Stats
 	nc.InMsgs  += 1
@@ -543,7 +542,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		nc.Unlock()
 		return ErrConnectionClosed
 	}
-	nc.bw.WriteString(fmt.Sprintf(pubProto, subj, reply, len(data)))
+	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
 	nc.bw.Write(data)
 	nc.bw.WriteString(_CRLF_)
 	nc.OutMsgs  += 1

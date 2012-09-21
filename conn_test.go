@@ -19,7 +19,13 @@ type server struct {
 
 var s *server
 
-func startServer(t *testing.T, port uint, other string) *server {
+// So we can pass tests and benchmarks..
+type tLogger interface {
+	Fatalf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+}
+
+func startServer(t tLogger, port uint, other string) *server {
 	var s server
 	args := fmt.Sprintf("-p %d %s", port, other)
 	s.args = strings.Split(args, " ")
