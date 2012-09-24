@@ -1,6 +1,8 @@
 # NATS - Go Client
 
-A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats).
+A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats). 
+
+[Go style Documentation](http://go.pkgdoc.org/github.com/apcera/nats)
 
 [![Build Status](https://secure.travis-ci.org/apcera/nats.png)](http://travis-ci.org/apcera/nats)
 
