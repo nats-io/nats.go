@@ -1,13 +1,13 @@
 package nats
 
 import (
+	"bytes"
+	"math"
+	"regexp"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
-	"math"
-	"runtime"
-	"regexp"
-	"bytes"
-	"sync"
 )
 
 func TestCloseLeakingGoRoutines(t *testing.T) {
@@ -65,7 +65,7 @@ func TestAsyncSubscribe(t *testing.T) {
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
-		if (m.Sub == nil) {
+		if m.Sub == nil {
 			t.Fatal("Callback does not have a valid Subsription")
 		}
 	})
@@ -102,7 +102,7 @@ func TestPubSubWithReply(t *testing.T) {
 		t.Fatal("Failed to subscribe: ", err)
 	}
 	omsg := []byte("Hello World")
-	nc.PublishMsg(&Msg{Subject:"foo", Reply:"bar", Data:omsg})
+	nc.PublishMsg(&Msg{Subject: "foo", Reply: "bar", Data: omsg})
 	msg, err := s.NextMsg(10 * time.Second)
 	if err != nil || !bytes.Equal(msg.Data, omsg) {
 		t.Fatal("Message received does not match")
@@ -188,13 +188,13 @@ func TestQueueSyncSubscriber(t *testing.T) {
 	nc.Flush()
 	v := uint(float32(total) * 0.15)
 	r1, r2 = len(s1.mch), len(s2.mch)
-	if r1 + r2 != total {
+	if r1+r2 != total {
 		t.Fatalf("Incorrect number of messages: %d vs %d", (r1 + r2), total)
 	}
 	expected := total / 2
 	d1 := uint(math.Abs(float64(expected - r1)))
 	d2 := uint(math.Abs(float64(expected - r2)))
-	if (d1 > v || d2 > v) {
+	if d1 > v || d2 > v {
 		t.Fatalf("Too much variance in totals: %d, %d > %d", d1, d2, v)
 	}
 }
@@ -223,15 +223,15 @@ func TestSyncReplyArg(t *testing.T) {
 	defer nc.Close()
 	replyExpected := "bar"
 	s, _ := nc.SubscribeSync("foo")
-	nc.PublishMsg(&Msg{Subject:"foo", Reply:replyExpected, Data:[]byte("Hello")})
+	nc.PublishMsg(&Msg{Subject: "foo", Reply: replyExpected, Data: []byte("Hello")})
 	nc.Flush()
 	msg, err := s.NextMsg(1 * time.Second)
 	if err != nil {
 		t.Fatal("Received and err on NextMsg()")
 	}
-	if (msg.Reply != replyExpected) {
-		t.Fatalf("Did not receive correct reply arg in callback: " +
-			     "('%s' vs '%s')", msg.Reply, replyExpected)
+	if msg.Reply != replyExpected {
+		t.Fatalf("Did not receive correct reply arg in callback: "+
+			"('%s' vs '%s')", msg.Reply, replyExpected)
 	}
 }
 
@@ -335,7 +335,7 @@ func TestStats(t *testing.T) {
 	data := []byte("The quick brown fox jumped over the lazy dog")
 	iter := 10
 
-	for i:=0; i<iter ; i++ {
+	for i := 0; i < iter; i++ {
 		nc.Publish("foo", data)
 	}
 
@@ -363,7 +363,7 @@ func TestStats(t *testing.T) {
 		t.Fatalf("Not properly tracking InMsgs: got %d wanted %d\n", nc.InMsgs, 2*iter)
 	}
 
-	ibb := 2*obb
+	ibb := 2 * obb
 	if nc.InBytes != ibb {
 		t.Fatalf("Not properly tracking InBytes: got %d wanted %d\n", nc.InBytes, ibb)
 	}

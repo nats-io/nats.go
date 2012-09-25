@@ -2,8 +2,8 @@ package nats_test
 
 import (
 	"fmt"
-	"time"
 	"github.com/apcera/nats"
+	"time"
 )
 
 // Show different ways to create a Conn
@@ -39,7 +39,7 @@ func ExampleConn_SubscribeSync() {
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1*time.Second)
+	m, err := sub.NextMsg(1 * time.Second)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
@@ -80,7 +80,7 @@ func ExampleConn_PublishMsg() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
-	msg := &nats.Msg{Subject:"foo", Reply:"bar", Data:[]byte("Hello World!")}
+	msg := &nats.Msg{Subject: "foo", Reply: "bar", Data: []byte("Hello World!")}
 	nc.PublishMsg(msg)
 }
 
@@ -102,12 +102,12 @@ func ExampleConn_FlushTimeout() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
-	msg := &nats.Msg{Subject:"foo", Reply:"bar", Data:[]byte("Hello World!")}
-	for i := 0 ; i < 1000 ; i++ {
+	msg := &nats.Msg{Subject: "foo", Reply: "bar", Data: []byte("Hello World!")}
+	for i := 0; i < 1000; i++ {
 		nc.PublishMsg(msg)
 	}
 	// Only wait up to 1 second for Flush
-	err := nc.FlushTimeout(1*time.Second)
+	err := nc.FlushTimeout(1 * time.Second)
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
 	}

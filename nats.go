@@ -4,32 +4,32 @@
 package nats
 
 import (
-	"fmt"
-	"net"
-	"net/url"
-	"io"
 	"bufio"
-	"strings"
-	"sync/atomic"
-	"encoding/json"
-	"time"
-	"runtime"
-	"errors"
-	"sync"
-	"strconv"
-	"encoding/hex"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
 const (
-	Version               = "0.33"
-	DefaultURL            = "nats://localhost:4222"
-	DefaultPort           = 4222
-	DefaultMaxReconnect   = 10
-	DefaultReconnectWait  = 2*time.Second
-	DefaultTimeout        = 2*time.Second
+	Version              = "0.33"
+	DefaultURL           = "nats://localhost:4222"
+	DefaultPort          = 4222
+	DefaultMaxReconnect  = 10
+	DefaultReconnectWait = 2 * time.Second
+	DefaultTimeout       = 2 * time.Second
 )
 
 var (
@@ -41,14 +41,15 @@ var (
 	ErrTimeout            = errors.New("nats: Timeout")
 )
 
-var DefaultOptions = Options {
-	AllowReconnect : true,
-	MaxReconnect   : DefaultMaxReconnect,
-	ReconnectWait  : DefaultReconnectWait,
-	Timeout        : DefaultTimeout,
+var DefaultOptions = Options{
+	AllowReconnect: true,
+	MaxReconnect:   DefaultMaxReconnect,
+	ReconnectWait:  DefaultReconnectWait,
+	Timeout:        DefaultTimeout,
 }
 
 type Status int
+
 const (
 	DISCONNECTED Status = iota
 	CONNECTED    Status = iota
@@ -103,7 +104,7 @@ func SecureConnect(url string) (*Conn, error) {
 
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
-	nc := &Conn{opts:o}
+	nc := &Conn{opts: o}
 	var err error
 	nc.url, err = url.Parse(o.Url)
 	if err != nil {
@@ -162,9 +163,9 @@ type connectInfo struct {
 }
 
 const (
-	_CRLF_    = "\r\n"
-	_EMPTY_   = ""
-	_SPC_     = " "
+	_CRLF_  = "\r\n"
+	_EMPTY_ = ""
+	_SPC_   = " "
 )
 
 const (
@@ -177,17 +178,17 @@ const (
 )
 
 const (
-	conProto   = "CONNECT %s"   + _CRLF_
-	pingProto  = "PING"         + _CRLF_
-	pongProto  = "PONG"         + _CRLF_
+	conProto   = "CONNECT %s" + _CRLF_
+	pingProto  = "PING" + _CRLF_
+	pongProto  = "PONG" + _CRLF_
 	pubProto   = "PUB %s %s %d" + _CRLF_
 	subProto   = "SUB %s %s %d" + _CRLF_
-	unsubProto = "UNSUB %d %s"  + _CRLF_
+	unsubProto = "UNSUB %d %s" + _CRLF_
 )
 
 // The size of the buffered channel used between the socket
 // go routine and the message delivery or sync subscription.
-const maxChanLen     = 8192
+const maxChanLen = 8192
 
 // The size of the bufio reader/writer on top of the socket.
 const defaultBufSize = 32768
@@ -201,9 +202,9 @@ func (nc *Conn) connect() error {
 		return nc.err
 	}
 
-	nc.subs  = make(map[uint64]*Subscription)
-	nc.mch   = make(chan *Msg, maxChanLen)
-	nc.pongs = make([] chan bool, 0, 8)
+	nc.subs = make(map[uint64]*Subscription)
+	nc.mch = make(chan *Msg, maxChanLen)
+	nc.pongs = make([]chan bool, 0, 8)
 
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
@@ -333,7 +334,7 @@ func (nc *Conn) readOp(c *control) error {
 func parseControl(line string, c *control) {
 	toks := strings.SplitN(line, _SPC_, 2)
 	if len(toks) == 1 {
-		c.op   = strings.TrimSpace(toks[0])
+		c.op = strings.TrimSpace(toks[0])
 		c.args = _EMPTY_
 	} else if len(toks) == 2 {
 		c.op, c.args = strings.TrimSpace(toks[0]), strings.TrimSpace(toks[1])
@@ -344,7 +345,9 @@ func parseControl(line string, c *control) {
 
 func (nc *Conn) processDisconnect() {
 	nc.status = DISCONNECTED
-	if nc.err != nil { return }
+	if nc.err != nil {
+		return
+	}
 	if nc.info.SslRequired {
 		nc.err = ErrSecureConnRequired
 	} else {
@@ -391,10 +394,14 @@ func (nc *Conn) readLoop() {
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs() {
 	for !nc.closed {
-		m, ok := <- nc.mch
-		if !ok { break }
+		m, ok := <-nc.mch
+		if !ok {
+			break
+		}
 		s := m.Sub
-		if (!s.IsValid() || s.mcb == nil) { continue }
+		if !s.IsValid() || s.mcb == nil {
+			continue
+		}
 		// FIXME, race on compare
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
@@ -439,7 +446,7 @@ func (nc *Conn) processMsg(args string) {
 
 	nc.Lock()
 	// Stats
-	nc.InMsgs  += 1
+	nc.InMsgs += 1
 	nc.InBytes += uint64(blen)
 	sub := nc.subs[sid]
 	defer nc.Unlock()
@@ -452,7 +459,7 @@ func (nc *Conn) processMsg(args string) {
 	sub.msgs += 1
 
 	// FIXME: Should we recycle these containers
-	m := &Msg{Data:buf, Subject:subj, Reply:reply, Sub:sub}
+	m := &Msg{Data: buf, Subject: subj, Reply: reply, Sub: sub}
 
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
@@ -476,11 +483,15 @@ func (nc *Conn) flusher() {
 	var ok bool
 
 	for !nc.closed {
-		_, ok = <- nc.fch
-		if !ok { return }
+		_, ok = <-nc.fch
+		if !ok {
+			return
+		}
 		nc.Lock()
 		b = nc.bw.Buffered()
-		if b > 0 { nc.bw.Flush() }
+		if b > 0 {
+			nc.bw.Flush()
+		}
 		nc.Unlock()
 	}
 }
@@ -508,7 +519,9 @@ func processOK() {
 // processInfo is used to parse the info messages sent
 // from the server.
 func (nc *Conn) processInfo(info string) {
-	if info == _EMPTY_ { return }
+	if info == _EMPTY_ {
+		return
+	}
 	err := json.Unmarshal([]byte(info), &nc.info)
 	if err != nil {
 		// FIXME(dlc) HERE TOO ?
@@ -542,11 +555,13 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.Lock()
 	defer nc.kickFlusher()
 	defer nc.Unlock()
-	if nc.closed { return ErrConnectionClosed }
+	if nc.closed {
+		return ErrConnectionClosed
+	}
 	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
 	nc.bw.Write(data)
 	nc.bw.WriteString(_CRLF_)
-	nc.OutMsgs  += 1
+	nc.OutMsgs += 1
 	nc.OutBytes += uint64(len(data))
 	return nil
 }
@@ -568,36 +583,40 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	inbox := NewInbox()
 	s, err := nc.SubscribeSync(inbox)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	s.AutoUnsubscribe(1)
 	defer s.Unsubscribe()
 	err = nc.publish(subj, inbox, data)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return s.NextMsg(timeout)
 }
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
 	sync.Mutex
-	sid           uint64
+	sid uint64
 
 	// Subject that represents this subscription. This can be different
 	// than the received subject inside a Msg if this is a wildcard.
-	Subject       string
+	Subject string
 
 	// Optional queue group name. If present, all subscriptions with the
 	// same name will form a distributed queue, and each message will
 	// only be processed by one member of the group.
-	Queue         string
+	Queue string
 
-	msgs          uint64
-	delivered     uint64
-	bytes         uint64
-	max           uint64
-	conn          *Conn
-	mcb           MsgHandler
-	mch           chan *Msg
-	sc            bool
+	msgs      uint64
+	delivered uint64
+	bytes     uint64
+	max       uint64
+	conn      *Conn
+	mcb       MsgHandler
+	mch       chan *Msg
+	sc        bool
 }
 
 const InboxPrefix = "_INBOX."
@@ -667,11 +686,15 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 
-	if nc.closed { return ErrConnectionClosed }
+	if nc.closed {
+		return ErrConnectionClosed
+	}
 
 	s := nc.subs[sub.sid]
 	// Already unsubscribed
-	if s == nil { return nil }
+	if s == nil {
+		return nil
+	}
 
 	maxStr := _EMPTY_
 	if max > 0 {
@@ -757,7 +780,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	defer t.Stop()
 
 	select {
-	case msg, ok = <- mch:
+	case msg, ok = <-mch:
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
@@ -778,8 +801,10 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	nc.Lock()
 	defer nc.Unlock()
-	if nc.pongs == nil { return false }
-	for i,c := range nc.pongs {
+	if nc.pongs == nil {
+		return false
+	}
+	for i, c := range nc.pongs {
 		if c == ch {
 			nc.pongs[i] = nil
 			return true
@@ -790,7 +815,7 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
-	if (timeout <= 0) {
+	if timeout <= 0 {
 		return errors.New("nats: Bad timeout value")
 	}
 
@@ -831,7 +856,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 // Flush will perform a round trip to the server and return when it
 // receives the internal reply.
 func (nc *Conn) Flush() error {
-	return nc.FlushTimeout(60*time.Second)
+	return nc.FlushTimeout(60 * time.Second)
 }
 
 // Close will close the connection to the server. This call will release

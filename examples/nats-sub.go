@@ -4,14 +4,14 @@
 package main
 
 import (
-	"log"
 	"flag"
-	"runtime"
 	"github.com/apcera/nats"
+	"log"
+	"runtime"
 )
 
 func usage() {
-    log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> \n")
+	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> \n")
 }
 
 var index = 0

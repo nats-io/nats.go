@@ -4,24 +4,26 @@
 package main
 
 import (
-	"log"
 	"flag"
 	"github.com/apcera/nats"
+	"log"
 )
 
 func usage() {
-    log.Fatalf("Usage: nats-pub [-s server] [-t] <subject> <msg> \n")
+	log.Fatalf("Usage: nats-pub [-s server] [-t] <subject> <msg> \n")
 }
 
 func main() {
-	var url  = flag.String("s", nats.DefaultURL, "The nats server URL")
+	var url = flag.String("s", nats.DefaultURL, "The nats server URL")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
-    args := flag.Args()
-    if len(args) < 1 { usage() }
+	args := flag.Args()
+	if len(args) < 1 {
+		usage()
+	}
 
 	nc, err := nats.Connect(*url)
 	if err != nil {

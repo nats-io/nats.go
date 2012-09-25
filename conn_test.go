@@ -1,13 +1,13 @@
 package nats
 
 import (
-	"testing"
+	"bytes"
 	"fmt"
 	"net"
-	"time"
-	"strings"
-	"bytes"
 	"os/exec"
+	"strings"
+	"testing"
+	"time"
 )
 
 const natsServer = "nats-server"
@@ -213,7 +213,7 @@ func TestClosedConnections(t *testing.T) {
 	if err = nc.Publish("foo", nil); err != ErrConnectionClosed {
 		t.Fatalf("Publish on closed conn did not fail properly: %v\n", err)
 	}
-	if err = nc.PublishMsg(&Msg{Subject:"foo"}); err != ErrConnectionClosed {
+	if err = nc.PublishMsg(&Msg{Subject: "foo"}); err != ErrConnectionClosed {
 		t.Fatalf("PublishMsg on closed conn did not fail properly: %v\n", err)
 	}
 	if err = nc.Flush(); err != ErrConnectionClosed {
