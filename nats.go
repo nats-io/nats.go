@@ -5,6 +5,7 @@ package nats
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.33"
+	Version              = "0.4"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -121,21 +122,21 @@ func (o Options) Connect() (*Conn, error) {
 type Conn struct {
 	sync.Mutex
 	Stats
-	url     *url.URL
-	opts    Options
-	conn    net.Conn
-	bw      *bufio.Writer
-	br      *bufio.Reader
-	fch     chan bool
-	info    serverInfo
-	ssid    uint64
-	subs    map[uint64]*Subscription
-	mch     chan *Msg
-	pongs   []chan bool
-	status  Status
-	sc      bool
-	err     error
-	closed  bool
+	url    *url.URL
+	opts   Options
+	conn   net.Conn
+	bw     *bufio.Writer
+	br     *bufio.Reader
+	fch    chan bool
+	info   serverInfo
+	ssid   uint64
+	subs   map[uint64]*Subscription
+	mch    chan *Msg
+	pongs  []chan bool
+	status Status
+	sc     bool
+	err    error
+	closed bool
 }
 
 // Tracks various stats received and sent on this connection,
@@ -416,10 +417,10 @@ func (nc *Conn) deliverMsgs() {
 // their own channel. If either channel is full, the connection is considered
 // a slow subscriber.
 func (nc *Conn) processMsg(args string) {
-	var subj, reply  string
-	var sid          uint64
-	var n, blen      int
-	var err          error
+	var subj, reply string
+	var sid uint64
+	var n, blen int
+	var err error
 
 	num := strings.Count(args, _SPC_) + 1
 
@@ -550,24 +551,60 @@ func (nc *Conn) kickFlusher() {
 
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queueing into the bufio writer
-// and kicking the flush go routine. These writes are protected.
-func (nc *Conn) publish(subj, reply string, data []byte) error {
+// and kicking the flush go routine. These writes should be protected.
+func (nc *Conn) publish(subj, reply string, data interface{}) error {
 	nc.Lock()
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 	if nc.closed {
 		return ErrConnectionClosed
 	}
-	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
-	nc.bw.Write(data)
+
+	var l int
+	switch arg := data.(type) {
+	case string:
+		l = len(arg)
+		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+		nc.bw.WriteString(arg)
+	case []byte:
+		l = len(arg)
+		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+		nc.bw.Write(arg)
+	case bool:
+		if arg {
+			l = len("true")
+			fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+			nc.bw.WriteString("true")
+		} else {
+			l = len("false")
+			fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+			nc.bw.WriteString("false")
+		}
+	case nil:
+		l = 0
+		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+		nc.bw.WriteString("")
+	default:
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "%+v", arg)
+		b := buf.Bytes()
+		l = len(b)
+		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
+		nc.bw.Write(b)
+	}
 	nc.bw.WriteString(_CRLF_)
+
 	nc.OutMsgs += 1
-	nc.OutBytes += uint64(len(data))
+	nc.OutBytes += uint64(l)
+
 	return nil
 }
 
-// Publish publishes the data argument to the given subject.
-func (nc *Conn) Publish(subj string, data []byte) error {
+// Publish publishes the data argument to the given subject. The data argument
+// will be marshalled using the defaul marshal mechanism. Strings and Bytes are
+// untouched. Bool are translated to "true" and "false". All others will be
+// turned into a string via fmt.Printf with "%+v".
+func (nc *Conn) Publish(subj string, data interface{}) error {
 	return nc.publish(subj, _EMPTY_, data)
 }
 
@@ -636,9 +673,11 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 
-	if nc.closed { return nil, ErrConnectionClosed }
+	if nc.closed {
+		return nil, ErrConnectionClosed
+	}
 
-	sub := &Subscription{Subject: subj, mcb: cb, conn:nc}
+	sub := &Subscription{Subject: subj, mcb: cb, conn: nc}
 	if cb == nil {
 		// Indicates a sync subscription
 		sub.mch = make(chan *Msg, maxChanLen)

@@ -27,7 +27,7 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 func TestMultipleClose(t *testing.T) {
 	nc := newConnection(t)
 	var wg sync.WaitGroup
-	for i:=0 ; i < 10 ; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			nc.Close()
@@ -74,7 +74,7 @@ func TestAsyncSubscribe(t *testing.T) {
 	}
 	nc.Publish("foo", omsg)
 	nc.Flush()
-	if (received != 1) {
+	if received != 1 {
 		t.Fatal("Message not received for subscription")
 	}
 }
@@ -154,13 +154,13 @@ func TestQueueSubscriber(t *testing.T) {
 	}
 	nc.Flush()
 	v := uint(float32(total) * 0.15)
-	if r1 + r2 != total {
+	if r1+r2 != total {
 		t.Fatalf("Incorrect number of messages: %d vs %d", (r1 + r2), total)
 	}
 	expected := total / 2
 	d1 := uint(math.Abs(float64(expected - r1)))
 	d2 := uint(math.Abs(float64(expected - r2)))
-	if (d1 > v || d2 > v) {
+	if d1 > v || d2 > v {
 		t.Fatalf("Too much variance in totals: %d, %d > %d", d1, d2, v)
 	}
 }
@@ -256,7 +256,7 @@ func TestUnsubscribe(t *testing.T) {
 	nc.Flush()
 	if received != max {
 		t.Fatalf("Received wrong # of messages after unsubscribe: %d vs %d",
-			     received, max)
+			received, max)
 	}
 }
 
@@ -354,7 +354,7 @@ func TestStats(t *testing.T) {
 	nc.Subscribe("foo", func(_ *Msg) {})
 	nc.SubscribeSync("foo")
 
-	for i:=0; i<iter ; i++ {
+	for i := 0; i < iter; i++ {
 		nc.Publish("foo", data)
 	}
 	nc.Flush()
@@ -366,5 +366,73 @@ func TestStats(t *testing.T) {
 	ibb := 2 * obb
 	if nc.InBytes != ibb {
 		t.Fatalf("Not properly tracking InBytes: got %d wanted %d\n", nc.InBytes, ibb)
+	}
+}
+
+func TestDefaultMarshalString(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	err := nc.Publish("foo", "Hello World")
+	if err != nil {
+		t.Fatal("Failed to publish string message with default marshaler: ", err)
+	}
+}
+
+func TestDefaultMarshalBool(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	st, _ := nc.SubscribeSync("true")
+	sf, _ := nc.SubscribeSync("false")
+
+	if err := nc.Publish("true", true); err != nil {
+		t.Fatal("Failed to publish boolean with default marshaler: ", err)
+	}
+	if err := nc.Publish("false", false); err != nil {
+		t.Fatal("Failed to publish boolean with default marshaler: ", err)
+	}
+
+	tmsg, _ := st.NextMsg(10 * time.Second)
+	fmsg, _ := sf.NextMsg(10 * time.Second)
+
+	if string(tmsg.Data) != "true" {
+		t.Fatal("Failed to get correct true boolean")
+	}
+	if string(fmsg.Data) != "false" {
+		t.Fatal("Failed to get correct false boolean")
+	}
+}
+
+func TestDefaultMarshalArray(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	s, _ := nc.SubscribeSync("array")
+	nc.Publish("array", []int{1,2,3,4,5,6,7,8,9})
+
+	msg, _ := s.NextMsg(10 * time.Second)
+	if string(msg.Data) != "[1 2 3 4 5 6 7 8 9]" {
+		t.Fatalf("Failed to get correct array string: %s", string(msg.Data))
+	}
+}
+
+type person struct {
+	Name    string
+	Address string
+	Age     int
+}
+
+func TestDefaultMarshalStruct(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	s, _ := nc.SubscribeSync("struct")
+
+	me := &person{Name:"derek", Age:22, Address: "85 Second St"}
+	nc.Publish("struct", me)
+
+	msg, _ := s.NextMsg(10 * time.Second)
+	if string(msg.Data) != "&{Name:derek Address:85 Second St Age:22}" {
+		t.Fatalf("Failed to get correct struct string: %s", string(msg.Data))
 	}
 }
