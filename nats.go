@@ -58,7 +58,7 @@ const (
 	RECONNECTING Status = iota
 )
 
-type Handler func(*Conn)
+type ConnHandler func(*Conn)
 
 // Options can be used to create a customized Connection.
 type Options struct {
@@ -70,8 +70,8 @@ type Options struct {
 	MaxReconnect   uint
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
-	ClosedCB       Handler
-	DisconnectedCB Handler
+	ClosedCB       ConnHandler
+	DisconnectedCB ConnHandler
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -614,9 +614,16 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 	return nc.publish(m.Subject, m.Reply, m.Data)
 }
 
-// Request will perform and Publish() call with an auto generated Inbox
-// reply and return the first reply received. This is optimized for the
-// case of multiple responses.
+// PublishRequest will perform a Publish() excpecting a respone on the
+// reply subject. Use Request() for automatically waiting for a response
+// inline.
+func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
+	return nc.publish(subj, reply, data)
+}
+
+// Request will create an Inbox and perform a Request() call
+// with the Inox reply and return the first reply received.
+// This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	inbox := NewInbox()
 	s, err := nc.SubscribeSync(inbox)
@@ -625,8 +632,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 	}
 	s.AutoUnsubscribe(1)
 	defer s.Unsubscribe()
-	err = nc.publish(subj, inbox, data)
-	if err != nil {
+	if err := nc.PublishRequest(subj, inbox, data); err != nil {
 		return nil, err
 	}
 	return s.NextMsg(timeout)
