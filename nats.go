@@ -5,7 +5,6 @@ package nats
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -552,50 +551,19 @@ func (nc *Conn) kickFlusher() {
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queueing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
-func (nc *Conn) publish(subj, reply string, data interface{}) error {
+func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.Lock()
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 	if nc.closed {
 		return ErrConnectionClosed
 	}
-
-	var l int
-	switch arg := data.(type) {
-	case string:
-		l = len(arg)
-		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-		nc.bw.WriteString(arg)
-	case []byte:
-		l = len(arg)
-		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-		nc.bw.Write(arg)
-	case bool:
-		if arg {
-			l = len("true")
-			fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-			nc.bw.WriteString("true")
-		} else {
-			l = len("false")
-			fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-			nc.bw.WriteString("false")
-		}
-	case nil:
-		l = 0
-		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-		nc.bw.WriteString("")
-	default:
-		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "%+v", arg)
-		b := buf.Bytes()
-		l = len(b)
-		fmt.Fprintf(nc.bw, pubProto, subj, reply, l)
-		nc.bw.Write(b)
-	}
+	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
+	nc.bw.Write(data)
 	nc.bw.WriteString(_CRLF_)
 
 	nc.OutMsgs += 1
-	nc.OutBytes += uint64(l)
+	nc.OutBytes += uint64(len(data))
 
 	return nil
 }
@@ -604,7 +572,7 @@ func (nc *Conn) publish(subj, reply string, data interface{}) error {
 // will be marshalled using the defaul marshal mechanism. Strings and Bytes are
 // untouched. Bool are translated to "true" and "false". All others will be
 // turned into a string via fmt.Printf with "%+v".
-func (nc *Conn) Publish(subj string, data interface{}) error {
+func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, data)
 }
 
