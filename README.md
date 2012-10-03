@@ -1,6 +1,6 @@
 # NATS - Go Client
 
-A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats). 
+A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats).
 
 [Go Documentation](http://go.pkgdoc.org/github.com/apcera/nats)
 
@@ -13,6 +13,56 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://github.
 go get github.com/apcera/nats
 # NATS system
 gem install nats
+```
+
+## Basic Encoded Usage
+
+```go
+
+nc, _ := nats.Connect(nats.DefaultURL)
+c, _ := nats.NewEncodedConn(nc, "json")
+defer c.Close()
+
+// Simple Publisher
+c.Publish("foo", "Hello World")
+
+type person struct {
+     Name     string
+     Address  string
+     Age      int
+}
+
+// EncodedConn can publish any raw Go type using the registered Encoder
+me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
+c.Publish("hello", me)
+
+// Simple Async Subscriber
+c.Subscribe("foo", func(s string) {
+    fmt.Printf("Received a message: %s\n", s)
+})
+
+// Go type Subscriber
+c.Subscribe("hello", func(p *person) {
+    fmt.Printf("Received a person: %+v\n", p)
+}
+
+// Unsubscribing
+sub, err := c.Subscribe("foo", nil)
+sub.Unsubscribe()
+
+// Requests
+var response string
+err := nc.Request("help", "help me", &response, 10*time.Millisecond)
+
+// Replying
+c.Subscribe("help", func(subj, reply string, msg string) {
+    c.Publish(reply, "I can help!")
+})
+
+// Close connection
+c.Close();
+
+end
 ```
 
 ## Basic Usage
