@@ -57,6 +57,8 @@ const (
 	RECONNECTING Status = iota
 )
 
+// ConnHandler's are used for asynchronous events such as
+// disconnected and closed connections.
 type ConnHandler func(*Conn)
 
 // Options can be used to create a customized Connection.
@@ -117,7 +119,8 @@ func (o Options) Connect() (*Conn, error) {
 	return nc, nil
 }
 
-// A Conn represents a connection to a nats-server
+// A Conn represents a bare connection to a nats-server. It will send and receive
+// []byte payloads.
 type Conn struct {
 	sync.Mutex
 	Stats
@@ -249,7 +252,7 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond))
+	nc.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
@@ -509,7 +512,9 @@ func (nc *Conn) processPong() {
 	ch := nc.pongs[0]
 	nc.pongs = nc.pongs[1:]
 	nc.Unlock()
-	if ch != nil { ch <- true }
+	if ch != nil {
+		ch <- true
+	}
 }
 
 // processOK is a placeholder for processing ok messages.
@@ -568,10 +573,9 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	return nil
 }
 
-// Publish publishes the data argument to the given subject. The data argument
-// will be marshalled using the defaul marshal mechanism. Strings and Bytes are
-// untouched. Bool are translated to "true" and "false". All others will be
-// turned into a string via fmt.Printf with "%+v".
+// Publish publishes the data argument to the given subject. The data
+// argument is left untouched and needs to be correctly interperted on
+// the receiver.
 func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, data)
 }
@@ -582,7 +586,7 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 	return nc.publish(m.Subject, m.Reply, m.Data)
 }
 
-// PublishRequest will perform a Publish() excpecting a respone on the
+// PublishRequest will perform a Publish() excpecting a response on the
 // reply subject. Use Request() for automatically waiting for a response
 // inline.
 func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
@@ -590,7 +594,7 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 }
 
 // Request will create an Inbox and perform a Request() call
-// with the Inox reply and return the first reply received.
+// with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	inbox := NewInbox()
