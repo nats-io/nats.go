@@ -1,10 +1,11 @@
 
-- Hide lock?
-- Easier encoder interface
-- Asynchronous error handling
 - Reconnect
+- Asynchronous error handling
+- Fast Publisher
+- Hide lock?
 - pooling for structs used? leaky bucket?
 - Timeout 0 should work as no timeout
+- [DONE] Easier encoder interface
 - [DONE] QueueSubscribeSync
 - [DONE] Make nats specific errors prefixed with 'nats:'
 - [DONE] API test for closed connection
