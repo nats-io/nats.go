@@ -26,20 +26,21 @@ defer c.Close()
 // Simple Publisher
 c.Publish("foo", "Hello World")
 
+// Simple Async Subscriber
+c.Subscribe("foo", func(s string) {
+    fmt.Printf("Received a message: %s\n", s)
+})
+
+// Go type Publisher
+// EncodedConn can Publish any raw Go type using the registered Encoder
 type person struct {
      Name     string
      Address  string
      Age      int
 }
 
-// EncodedConn can publish any raw Go type using the registered Encoder
 me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
 c.Publish("hello", me)
-
-// Simple Async Subscriber
-c.Subscribe("foo", func(s string) {
-    fmt.Printf("Received a message: %s\n", s)
-})
 
 // Go type Subscriber
 c.Subscribe("hello", func(p *person) {
