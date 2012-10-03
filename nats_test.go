@@ -2,6 +2,7 @@ package nats
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"regexp"
 	"runtime"
@@ -9,6 +10,16 @@ import (
 	"testing"
 	"time"
 )
+
+// Dumb wait program to sync on callbacks, etc.. Will timeout after 100 milliseconds
+func wait(ch chan bool) error {
+	select {
+	case <-ch:
+		return nil
+	case <-time.After(100 * time.Millisecond):
+	}
+	return errors.New("timeout")
+}
 
 func TestCloseLeakingGoRoutines(t *testing.T) {
 	base := runtime.NumGoroutine()
@@ -40,8 +51,7 @@ func TestMultipleClose(t *testing.T) {
 func TestSimplePublish(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	err := nc.Publish("foo", []byte("Hello World"))
-	if err != nil {
+	if err := nc.Publish("foo", []byte("Hello World")); err != nil {
 		t.Fatal("Failed to publish string message: ", err)
 	}
 }
@@ -49,8 +59,7 @@ func TestSimplePublish(t *testing.T) {
 func TestSimplePublishNoData(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	err := nc.Publish("foo", nil)
-	if err != nil {
+	if err := nc.Publish("foo", nil); err != nil {
 		t.Fatal("Failed to publish empty message: ", err)
 	}
 }
@@ -59,22 +68,22 @@ func TestAsyncSubscribe(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
 	omsg := []byte("Hello World")
-	received := 0
+	ch := make(chan bool)
+
 	_, err := nc.Subscribe("foo", func(m *Msg) {
-		received += 1
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
 		if m.Sub == nil {
 			t.Fatal("Callback does not have a valid Subsription")
 		}
+		ch <- true
 	})
 	if err != nil {
 		t.Fatal("Failed to subscribe: ", err)
 	}
 	nc.Publish("foo", omsg)
-	nc.Flush()
-	if received != 1 {
+	if e := wait(ch); e != nil {
 		t.Fatal("Message not received for subscription")
 	}
 }
@@ -88,7 +97,7 @@ func TestSyncSubscribe(t *testing.T) {
 	}
 	omsg := []byte("Hello World")
 	nc.Publish("foo", omsg)
-	msg, err := s.NextMsg(10 * time.Second)
+	msg, err := s.NextMsg(1 * time.Second)
 	if err != nil || !bytes.Equal(msg.Data, omsg) {
 		t.Fatal("Message received does not match")
 	}
@@ -121,8 +130,7 @@ func TestFlush(t *testing.T) {
 	for i := 0; i < total; i++ {
 		nc.Publish("flush", omsg)
 	}
-	err := nc.Flush()
-	if err != nil {
+	if err := nc.Flush(); err != nil {
 		t.Fatalf("Received error from flush: %s\n", err)
 	}
 	if received != total {
@@ -133,8 +141,7 @@ func TestFlush(t *testing.T) {
 func TestQueueSubscriber(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	r1 := 0
-	r2 := 0
+	r1, r2 := 0, 0
 	nc.QueueSubscribe("foo", "bar", func(_ *Msg) {
 		r1 += 1
 	})
@@ -202,18 +209,18 @@ func TestQueueSyncSubscriber(t *testing.T) {
 func TestReplyArg(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
+	ch := make(chan bool)
 	replyExpected := "bar"
-	cbReceived := false
+
 	nc.Subscribe("foo", func(m *Msg) {
-		cbReceived = true
-		if (m.Reply != replyExpected) {
-			t.Fatalf("Did not receive correct reply arg in callback: " +
-				     "('%s' vs '%s')", m.Reply, replyExpected)
+		if m.Reply != replyExpected {
+			t.Fatalf("Did not receive correct reply arg in callback: "+
+				"('%s' vs '%s')", m.Reply, replyExpected)
 		}
+		ch <- true
 	})
-	nc.PublishMsg(&Msg{Subject:"foo", Reply:replyExpected, Data:[]byte("Hello")})
-	nc.Flush()
-	if !cbReceived {
+	nc.PublishMsg(&Msg{Subject: "foo", Reply: replyExpected, Data: []byte("Hello")})
+	if e := wait(ch); e != nil {
 		t.Fatal("Did not receive callback")
 	}
 }
@@ -224,7 +231,6 @@ func TestSyncReplyArg(t *testing.T) {
 	replyExpected := "bar"
 	s, _ := nc.SubscribeSync("foo")
 	nc.PublishMsg(&Msg{Subject: "foo", Reply: replyExpected, Data: []byte("Hello")})
-	nc.Flush()
 	msg, err := s.NextMsg(1 * time.Second)
 	if err != nil {
 		t.Fatal("Received and err on NextMsg()")
@@ -267,12 +273,10 @@ func TestDoubleUnsubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to subscribe: ", err)
 	}
-	err = s.Unsubscribe()
-	if err != nil {
+	if err = s.Unsubscribe(); err != nil {
 		t.Fatal("Unsubscribe failed with err:", err)
 	}
-	err = s.Unsubscribe()
-	if err == nil {
+	if err = s.Unsubscribe(); err == nil {
 		t.Fatal("Unsubscribe should have reported an error")
 	}
 }
@@ -280,8 +284,7 @@ func TestDoubleUnsubscribe(t *testing.T) {
 func TestRequestTimeout(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	_, err := nc.Request("foo", []byte("help"), 10*time.Millisecond)
-	if err == nil {
+	if _, err := nc.Request("foo", []byte("help"), 10*time.Millisecond); err == nil {
 		t.Fatalf("Expected to receive a timeout error")
 	}
 }
@@ -305,10 +308,16 @@ func TestRequest(t *testing.T) {
 func TestFlushInCB(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
+	ch := make(chan bool)
+
 	nc.Subscribe("foo", func(_ *Msg) {
 		nc.Flush()
+		ch <- true
 	})
 	nc.Publish("foo", []byte("Hello"))
+	if e := wait(ch); e != nil {
+		t.Fatal("Flush did not return properly in callback")
+	}
 }
 
 func TestReleaseFlush(t *testing.T) {
@@ -322,8 +331,7 @@ func TestReleaseFlush(t *testing.T) {
 
 func TestInbox(t *testing.T) {
 	inbox := NewInbox()
-	matched, _ := regexp.Match(`_INBOX.\S`, []byte(inbox))
-	if !matched {
+	if matched, _ := regexp.Match(`_INBOX.\S`, []byte(inbox)); !matched {
 		t.Fatal("Bad INBOX format")
 	}
 }
@@ -366,73 +374,5 @@ func TestStats(t *testing.T) {
 	ibb := 2 * obb
 	if nc.InBytes != ibb {
 		t.Fatalf("Not properly tracking InBytes: got %d wanted %d\n", nc.InBytes, ibb)
-	}
-}
-
-func TestDefaultMarshalString(t *testing.T) {
-	nc := newConnection(t)
-	defer nc.Close()
-	err := nc.Publish("foo", "Hello World")
-	if err != nil {
-		t.Fatal("Failed to publish string message with default marshaler: ", err)
-	}
-}
-
-func TestDefaultMarshalBool(t *testing.T) {
-	nc := newConnection(t)
-	defer nc.Close()
-
-	st, _ := nc.SubscribeSync("true")
-	sf, _ := nc.SubscribeSync("false")
-
-	if err := nc.Publish("true", true); err != nil {
-		t.Fatal("Failed to publish boolean with default marshaler: ", err)
-	}
-	if err := nc.Publish("false", false); err != nil {
-		t.Fatal("Failed to publish boolean with default marshaler: ", err)
-	}
-
-	tmsg, _ := st.NextMsg(10 * time.Second)
-	fmsg, _ := sf.NextMsg(10 * time.Second)
-
-	if string(tmsg.Data) != "true" {
-		t.Fatal("Failed to get correct true boolean")
-	}
-	if string(fmsg.Data) != "false" {
-		t.Fatal("Failed to get correct false boolean")
-	}
-}
-
-func TestDefaultMarshalArray(t *testing.T) {
-	nc := newConnection(t)
-	defer nc.Close()
-
-	s, _ := nc.SubscribeSync("array")
-	nc.Publish("array", []int{1,2,3,4,5,6,7,8,9})
-
-	msg, _ := s.NextMsg(10 * time.Second)
-	if string(msg.Data) != "[1 2 3 4 5 6 7 8 9]" {
-		t.Fatalf("Failed to get correct array string: %s", string(msg.Data))
-	}
-}
-
-type person struct {
-	Name    string
-	Address string
-	Age     int
-}
-
-func TestDefaultMarshalStruct(t *testing.T) {
-	nc := newConnection(t)
-	defer nc.Close()
-
-	s, _ := nc.SubscribeSync("struct")
-
-	me := &person{Name:"derek", Age:22, Address: "85 Second St"}
-	nc.Publish("struct", me)
-
-	msg, _ := s.NextMsg(10 * time.Second)
-	if string(msg.Data) != "&{Name:derek Address:85 Second St Age:22}" {
-		t.Fatalf("Failed to get correct struct string: %s", string(msg.Data))
 	}
 }
