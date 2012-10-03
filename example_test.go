@@ -157,3 +157,56 @@ func ExampleConn_Close() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
 }
+
+// Show how to wrap a Conn into an EncodedConn
+func ExampleNewEncodedConn() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	c, _ := nats.NewEncodedConn(nc, "json")
+	c.Close()
+}
+
+// EncodedConn can publish virtually anything just
+// by passing it in. The encoder will be used to properly
+// encode the raw Go type
+func ExampleEncodedConn_Publish() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	c, _ := nats.NewEncodedConn(nc, "json")
+	defer c.Close()
+
+	type person struct {
+		Name     string
+		Address  string
+		Age      int
+	}
+
+	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+	c.Publish("hello", me)
+}
+
+// EncodedConn's subscribers will automatically decode the
+// wire data into the requested Go type using the Decode()
+// method of the registered Encoder. The callback signature
+// can also vary to include additional data, like subject and
+// reply subjects.
+func ExampleEncodedConn_Subscribe() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	c, _ := nats.NewEncodedConn(nc, "json")
+	defer c.Close()
+
+	type person struct {
+		Name     string
+		Address  string
+		Age      int
+	}
+
+	c.Subscribe("hello", func(p *person) {
+		fmt.Printf("Received a person! %+v\n", p)
+	})
+
+	c.Subscribe("hello", func(subj, reply string, p *person) {
+		fmt.Printf("Received a person on subject %s! %+v\n", subj, p)
+	})
+
+	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+	c.Publish("hello", me)
+}
