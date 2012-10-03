@@ -188,3 +188,61 @@ func TestMarshalBool(t *testing.T) {
 		t.Fatalf("Did not receive the message: %s", e)
 	}
 }
+
+func TestExtendedSubscribeCB(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+
+	testString := "Hello World!"
+	subject := "cb_args"
+
+	ec.Subscribe(subject, func(subj, s string) {
+		if s != testString {
+			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+		}
+		if subj != subject {
+			t.Fatalf("Got subject of '%s', wanted '%s'\n", subj, subject)
+		}
+		ch <- true
+	})
+	ec.Publish(subject, testString)
+	if e := wait(ch); e != nil {
+		if ec.LastError() != nil {
+			e = ec.LastError()
+		}
+		t.Fatalf("Did not receive the message: %s", e)
+	}
+}
+
+func TestExtendedSubscribeCB2(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+
+	testString := "Hello World!"
+	oSubj  := "cb_args"
+	oReply := "foobar"
+
+	ec.Subscribe(oSubj, func(subj, reply, s string) {
+		if s != testString {
+			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+		}
+		if subj != oSubj {
+			t.Fatalf("Got subject of '%s', wanted '%s'\n", subj, oSubj)
+		}
+		if reply != oReply {
+			t.Fatalf("Got reply of '%s', wanted '%s'\n", reply, oReply)
+		}
+		ch <- true
+	})
+	ec.PublishRequest(oSubj, oReply, testString)
+	if e := wait(ch); e != nil {
+		if ec.LastError() != nil {
+			e = ec.LastError()
+		}
+		t.Fatalf("Did not receive the message: %s", e)
+	}
+}
