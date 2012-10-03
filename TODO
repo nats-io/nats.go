@@ -1,4 +1,6 @@
 
+- Hide lock?
+- Easier encoder interface
 - Asynchronous error handling
 - Reconnect
 - pooling for structs used? leaky bucket?
