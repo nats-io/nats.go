@@ -139,7 +139,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	if err = ec.FlushTimeout(5 * time.Second); err != nil {
 		t.Fatalf("Got an error after flush: %v\n", err)
 	}
-	time.Sleep(10*time.Millisecond)
+	time.Sleep(100*time.Millisecond)
 	if received != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)
 	}
