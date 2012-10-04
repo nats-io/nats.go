@@ -6,7 +6,7 @@ import (
 )
 
 func startReconnectServer(t *testing.T) *server {
-	return startServer(t, 22222, "-DV -l /tmp/rc.log")
+	return startServer(t, 22222, "")
 }
 
 func TestReconnectDisallowedFlags(t *testing.T) {
@@ -18,15 +18,16 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 	opts.ClosedCB = func(_ *Conn) {
 		ch <- true
 	}
-	if nc, err := opts.Connect(); err != nil {
+	nc, err := opts.Connect()
+	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
-	} else {
-		defer nc.Close()
 	}
+
 	ts.stopServer()
 	if e := wait(ch); e != nil {
 		t.Fatal("Did not trigger ClosedCB correctly")
 	}
+	nc.Close()
 }
 
 func TestReconnectAllowedFlags(t *testing.T) {
@@ -64,19 +65,21 @@ var reconnectOpts =  Options{
 
 func TestBasicReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
+	ch := make(chan bool)
+
 	opts := reconnectOpts
 	nc, _ := opts.Connect()
 	ec, err := NewEncodedConn(nc, "default")
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
+
 	testString := "bar"
-	received := 0
 	ec.Subscribe("foo", func(s string) {
 		if s != testString {
 			t.Fatal("String don't match")
 		}
-		received += 1
+		ch <- true
 	})
 	ts.stopServer()
 	// server is stopped here..
@@ -85,11 +88,10 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	ts = startReconnectServer(t)
 	defer ts.stopServer()
 
-	ec.FlushTimeout(1 * time.Second)
-
-	if received != 1 {
-		t.Fatalf("Received != %d, equals %d\n", 1, received)
+	if e := wait(ch); e != nil {
+		t.Fatal("Did not receive our message")
 	}
+	nc.Close()
 }
 
 func TestExtendedReconnectFunctionality(t *testing.T) {
@@ -116,16 +118,10 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	received := 0
 
 	ec.Subscribe("foo", func(s string) {
-		if s != testString {
-			t.Fatal("String don't match")
-		}
 		received += 1
 	})
 
 	sub, _ := ec.Subscribe("foobar", func(s string) {
-		if s != testString {
-			t.Fatal("String don't match")
-		}
 		received += 1
 	})
 
@@ -137,9 +133,6 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	// Sub while disconnected
 	ec.Subscribe("bar", func(s string) {
-		if s != testString {
-			t.Fatal("String don't match")
-		}
 		received += 1
 	})
 
@@ -166,10 +159,16 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Got an error after server restarted: %v\n", err)
 	}
 
-	if err = ec.FlushTimeout(5 * time.Second); err != nil {
-		t.Fatalf("Got an error after flush: %v\n", err)
+	ch := make(chan bool)
+	ec.Subscribe("done", func(b bool) {
+		ch <- true
+	})
+	ec.Publish("done", true)
+
+	if e := wait(ch); e != nil {
+		t.Fatal("Did not receive our message")
 	}
-	time.Sleep(100*time.Millisecond)
+
 	if received != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)
 	}
