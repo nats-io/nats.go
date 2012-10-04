@@ -423,14 +423,6 @@ func (nc *Conn) processReconnect() {
 		// Create a pending buffer to underpin the bufio Writer while
 		// we are reconnecting.
 
-		if len(nc.pongs) > 0 {
-			fmt.Printf("OUTSTANDING PONGS!! %d\n", len(nc.pongs))
-		}
-
-		if nc.bw.Buffered() > 0 {
-			fmt.Printf("OUTSTANDING Buffered!! %d\n", nc.bw.Buffered())
-		}
-
 		nc.pending = &bytes.Buffer{}
 		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
 		go nc.doReconnect()
@@ -472,7 +464,8 @@ func (nc *Conn) doReconnect() {
 			continue
 		}
 
-		// We have reconnected here
+		// We are reconnected
+
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
 			// Assume the best

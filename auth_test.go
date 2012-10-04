@@ -7,7 +7,7 @@ import (
 var as *server
 
 func TestAuthServerStart(t *testing.T) {
-	as = startServer(t, 8222, "--user derek --pass foo -l /tmp/foo.log")
+	as = startServer(t, 8222, "--user derek --pass foo")
 }
 
 func TestAuthConnectionFail(t *testing.T) {

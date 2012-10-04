@@ -81,7 +81,10 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		}
 		ch <- true
 	})
+	ec.Flush()
+
 	ts.stopServer()
+
 	// server is stopped here..
 	ec.Publish("foo", testString)
 
