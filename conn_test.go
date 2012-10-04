@@ -125,33 +125,26 @@ func TestCloseDisconnectedCB(t *testing.T) {
 }
 
 func TestServerStopDisconnectedCB(t *testing.T) {
-	received := 0
+	ch := make(chan bool)
 	o := DefaultOptions
 	o.Url = DefaultURL
 	o.DisconnectedCB = func(nc *Conn) {
 		if nc.status != DISCONNECTED {
-			t.Fatal("Should have status set to DISCONNECTED")
+			t.Fatalf("Should have status set to DISCONNECTED: Was %v\n", nc.status)
 		}
-		received += 1
+		ch <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
 
 	s.stopServer()
 
-	// Wait for disconnect to be processed.
-	time.Sleep(10 * time.Millisecond)
-
-	if received == 0 {
+	if e := wait(ch); e != nil {
 		t.Fatalf("Disconnected callback not triggered\n")
 	}
-	if received > 1 {
-		t.Fatalf("Disconnected callback called too many times: %d vs 1\n", received)
-	}
-
-	nc.Close()
 }
 
 func TestRestartServer(t *testing.T) {

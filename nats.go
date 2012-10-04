@@ -252,18 +252,19 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	nc.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
 	if err := nc.readOp(c); err != nil {
-		fmt.Printf("Received an err inside first INFO: %v\n", err)
+		nc.processReadOpErr(err)
+		return err
 	}
 	// The nats protocol should send INFO forst always.
 	if c.op != _INFO_OP_ {
-		e := errors.New("nats: Protocol exception, INFO not received")
-		nc.processReadOpErr(e)
-		return e
+		err := errors.New("nats: Protocol exception, INFO not received")
+		nc.processReadOpErr(err)
+		return err
 	}
 	nc.processInfo(c.args)
 	return nc.checkForSecure()
@@ -358,13 +359,37 @@ func (nc *Conn) processDisconnect() {
 	}
 }
 
+// This will process a disconnect when reconnect is allowed
+func (nc *Conn) processReconnect() {
+	// Perform appropriate callback if needed for a disconnect.
+	if nc.opts.DisconnectedCB != nil {
+		nc.Lock()
+		nc.status = DISCONNECTED
+		nc.Unlock()
+		nc.opts.DisconnectedCB(nc)
+	}
+	nc.Lock()
+	if !nc.closed {
+		nc.status = RECONNECTING
+		nc.conn = nil
+	}
+	nc.Unlock()
+}
+
 // processReadOpErr handles errors from readOp.
 func (nc *Conn) processReadOpErr(err error) {
-	if err == io.EOF {
-		nc.processDisconnect()
+	if nc.closed {
+		return
 	}
-	nc.err = err
-	nc.Close()
+	if nc.opts.AllowReconnect {
+		nc.processReconnect()
+	} else {
+		if err == io.EOF {
+			nc.processDisconnect()
+		}
+		nc.err = err
+		nc.Close()
+	}
 }
 
 // readLoop() will sit on the buffered socket reading and processing the protocol
@@ -492,7 +517,7 @@ func (nc *Conn) flusher() {
 		}
 		nc.Lock()
 		b = nc.bw.Buffered()
-		if b > 0 {
+		if b > 0 && nc.conn != nil {
 			nc.bw.Flush()
 		}
 		nc.Unlock()
@@ -512,9 +537,7 @@ func (nc *Conn) processPong() {
 	ch := nc.pongs[0]
 	nc.pongs = nc.pongs[1:]
 	nc.Unlock()
-	if ch != nil {
-		ch <- true
-	}
+	if ch != nil { ch <- true }
 }
 
 // processOK is a placeholder for processing ok messages.
@@ -913,17 +936,18 @@ func (nc *Conn) Close() {
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.opts.DisconnectedCB != nil {
+	if nc.conn != nil && nc.opts.DisconnectedCB != nil {
 		nc.opts.DisconnectedCB(nc)
 	}
 
 	// Go ahead and make sure we have flushed the outbound buffer.
 	nc.Lock()
-	nc.bw.Flush()
-	nc.conn.Close()
-	nc.Unlock()
-
+	if nc.conn != nil {
+		nc.bw.Flush()
+		nc.conn.Close()
+	}
 	nc.status = CLOSED
+	nc.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
 	if nc.opts.ClosedCB != nil {
