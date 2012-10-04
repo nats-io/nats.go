@@ -32,7 +32,6 @@ c.Subscribe("foo", func(s string) {
     fmt.Printf("Received a message: %s\n", s)
 })
 
-// Go type Publisher
 // EncodedConn can Publish any raw Go type using the registered Encoder
 type person struct {
      Name     string
@@ -40,13 +39,15 @@ type person struct {
      Age      int
 }
 
-me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
-c.Publish("hello", me)
-
 // Go type Subscriber
 c.Subscribe("hello", func(p *person) {
     fmt.Printf("Received a person: %+v\n", p)
 }
+
+me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
+
+// Go type Publisher
+c.Publish("hello", me)
 
 // Unsubscribing
 sub, err := c.Subscribe("foo", nil)
@@ -63,8 +64,6 @@ c.Subscribe("help", func(subj, reply string, msg string) {
 
 // Close connection
 c.Close();
-
-end
 ```
 
 ## Basic Usage
@@ -100,8 +99,6 @@ nc.Subscribe("help", func(m *Msg) {
 // Close connection
 nc := nats.Connect("nats://localhost:4222")
 nc.Close();
-
-end
 ```
 
 ## Wildcard Subscriptions
