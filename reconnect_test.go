@@ -64,6 +64,36 @@ var reconnectOpts =  Options{
 
 func TestBasicReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
+	opts := reconnectOpts
+	nc, _ := opts.Connect()
+	ec, err := NewEncodedConn(nc, "default")
+	if err != nil {
+		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	}
+	testString := "bar"
+	received := 0
+	ec.Subscribe("foo", func(s string) {
+		if s != testString {
+			t.Fatal("String don't match")
+		}
+		received += 1
+	})
+	ts.stopServer()
+	// server is stopped here..
+	ec.Publish("foo", testString)
+
+	ts = startReconnectServer(t)
+	defer ts.stopServer()
+
+	ec.FlushTimeout(1 * time.Second)
+
+	if received != 1 {
+		t.Fatalf("Received != %d, equals %d\n", 1, received)
+	}
+}
+
+func TestExtendedReconnectFunctionality(t *testing.T) {
+	ts := startReconnectServer(t)
 	cbCalled := false
 	rcbCalled := false
 

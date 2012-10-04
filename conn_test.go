@@ -130,11 +130,8 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	ch := make(chan bool)
 	o := DefaultOptions
 	o.Url = DefaultURL
-	o.AllowReconnect = true
+	o.AllowReconnect = false
 	o.DisconnectedCB = func(nc *Conn) {
-		if nc.status != DISCONNECTED {
-			t.Fatalf("Should have status set to DISCONNECTED: Was %v\n", nc.status)
-		}
 		ch <- true
 	}
 	nc, err := o.Connect()
