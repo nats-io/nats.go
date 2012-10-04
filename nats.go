@@ -282,7 +282,7 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	nc.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
@@ -409,6 +409,10 @@ func (nc *Conn) processReconnect() {
 	nc.Lock()
 	if !nc.isClosed() {
 		nc.status = RECONNECTING
+		if nc.conn != nil {
+			nc.bw.Flush()
+			nc.conn.Close()
+		}
 		nc.conn = nil
 		nc.kickFlusher()
 
@@ -418,6 +422,15 @@ func (nc *Conn) processReconnect() {
 
 		// Create a pending buffer to underpin the bufio Writer while
 		// we are reconnecting.
+
+		if len(nc.pongs) > 0 {
+			fmt.Printf("OUTSTANDING PONGS!! %d\n", len(nc.pongs))
+		}
+
+		if nc.bw.Buffered() > 0 {
+			fmt.Printf("OUTSTANDING Buffered!! %d\n", nc.bw.Buffered())
+		}
+
 		nc.pending = &bytes.Buffer{}
 		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
 		go nc.doReconnect()
@@ -492,16 +505,13 @@ func (nc *Conn) processReadOpErr(err error) {
 	if nc.isClosed() || nc.isReconnecting() {
 		return
 	}
-	if err == io.EOF {
-		if nc.opts.AllowReconnect {
-			nc.processReconnect()
-			return
-		} else {
-			nc.processDisconnect()
-		}
+	if nc.opts.AllowReconnect {
+		nc.processReconnect()
+	} else {
+		nc.processDisconnect()
+		nc.err = err
+		nc.Close()
 	}
-	nc.err = err
-	nc.Close()
 }
 
 // readLoop() will sit on the buffered socket reading and processing the protocol
@@ -667,10 +677,7 @@ func (nc *Conn) processInfo(info string) {
 	if info == _EMPTY_ {
 		return
 	}
-	err := json.Unmarshal([]byte(info), &nc.info)
-	if err != nil {
-		// FIXME(dlc) HERE TOO ?
-	}
+	nc.err = json.Unmarshal([]byte(info), &nc.info)
 }
 
 // LastError reports the last error encountered via the Connection.
