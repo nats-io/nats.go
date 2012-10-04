@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// Dumb wait program to sync on callbacks, etc.. Will timeout after 100 milliseconds
+// Dumb wait program to sync on callbacks, etc.. Will timeout after 200 milliseconds
 func wait(ch chan bool) error {
 	select {
 	case <-ch:
 		return nil
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 	return errors.New("timeout")
 }
