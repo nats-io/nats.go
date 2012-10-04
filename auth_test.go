@@ -18,10 +18,11 @@ func TestAuthConnectionFail(t *testing.T) {
 }
 
 func TestAuthConnectionSuccess(t *testing.T) {
-	_, err := Connect("nats://derek:foo@localhost:8222")
+	nc, err := Connect("nats://derek:foo@localhost:8222")
 	if err != nil {
 		t.Fatal("Should have connected succesfully")
 	}
+	nc.Close()
 }
 
 func TestAuthServerStop(t *testing.T) {

@@ -5,6 +5,7 @@ package nats
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.4"
+	Version              = "0.5"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -73,6 +74,7 @@ type Options struct {
 	Timeout        time.Duration
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
+	ReconnectedCB  ConnHandler
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -124,21 +126,21 @@ func (o Options) Connect() (*Conn, error) {
 type Conn struct {
 	sync.Mutex
 	Stats
-	url    *url.URL
-	opts   Options
-	conn   net.Conn
-	bw     *bufio.Writer
-	br     *bufio.Reader
-	fch    chan bool
-	info   serverInfo
-	ssid   uint64
-	subs   map[uint64]*Subscription
-	mch    chan *Msg
-	pongs  []chan bool
-	status Status
-	sc     bool
-	err    error
-	closed bool
+	url     *url.URL
+	opts    Options
+	conn    net.Conn
+	bw      *bufio.Writer
+	br      *bufio.Reader
+	pending *bytes.Buffer
+	fch     chan bool
+	info    serverInfo
+	ssid    uint64
+	subs    map[uint64]*Subscription
+	mch     chan *Msg
+	pongs   []chan bool
+	status  Status
+	sc      bool
+	err     error
 }
 
 // Tracks various stats received and sent on this connection,
@@ -196,21 +198,51 @@ const maxChanLen = 8192
 // The size of the bufio reader/writer on top of the socket.
 const defaultBufSize = 32768
 
-// Main connect function. Will connect to the nats-server
-func (nc *Conn) connect() error {
+// The size of the bufio while we are reconnecting
+const defaultPendingSize = 1024 * 1024
 
+// createConn will connect to the server and wrap the appropriate
+// bufio structures. It will do the right thing when an existing
+// connection is in place.
+func (nc *Conn) createConn() error {
 	// FIXME: Check for 0 Timeout
 	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.opts.Timeout)
 	if nc.err != nil {
 		return nc.err
 	}
+	if nc.pending != nil && nc.bw != nil {
+		// Move to pending buffer.
+		nc.bw.Flush()
+	}
+	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
+	return nil
+}
+
+// makeSecureConn will wrap an existing Conn using TLS
+func (nc *Conn) makeTLSConn() {
+	nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
+	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
+}
+
+// spinUpSocketWatchers will launch the Go routines
+// responsible for reading and writing to the socket.
+func (nc *Conn) spinUpSocketWatchers() {
+	go nc.readLoop()
+	go nc.flusher()
+}
+
+// Main connect function. Will connect to the nats-server
+func (nc *Conn) connect() error {
+
+	if err := nc.createConn(); err != nil {
+		return err
+	}
 
 	nc.subs = make(map[uint64]*Subscription)
 	nc.mch = make(chan *Msg, maxChanLen)
 	nc.pongs = make([]chan bool, 0, 8)
-
-	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
-	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 
 	nc.fch = make(chan bool, 1024) //FIXME, need to define
 
@@ -219,9 +251,8 @@ func (nc *Conn) connect() error {
 		return nc.err
 	}
 
-	go nc.readLoop()
+	nc.spinUpSocketWatchers()
 	go nc.deliverMsgs()
-	go nc.flusher()
 
 	runtime.SetFinalizer(nc, fin)
 	return nc.sendConnect()
@@ -241,10 +272,9 @@ func (nc *Conn) checkForSecure() error {
 		return ErrSecureConnRequired
 	}
 
+	// Need to rewrap with bufio
 	if o.Secure {
-		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
-		nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
-		nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
+		nc.makeTLSConn()
 	}
 	return nil
 }
@@ -252,7 +282,7 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(100*time.Millisecond))
+	nc.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
@@ -260,7 +290,7 @@ func (nc *Conn) processExpectedInfo() error {
 		nc.processReadOpErr(err)
 		return err
 	}
-	// The nats protocol should send INFO forst always.
+	// The nats protocol should send INFO first always.
 	if c.op != _INFO_OP_ {
 		err := errors.New("nats: Protocol exception, INFO not received")
 		nc.processReadOpErr(err)
@@ -280,9 +310,8 @@ func (nc *Conn) sendProto(proto string) {
 }
 
 // Send a connect protocol message to the server, issuing user/password if
-// applicable. Will wait for a flush to return from the server for error
-// processing.
-func (nc *Conn) sendConnect() error {
+// applicable. This base version can be locked
+func (nc *Conn) connectProto() (string, error) {
 	o := nc.opts
 	var user, pass string
 	u := nc.url.User
@@ -290,20 +319,29 @@ func (nc *Conn) sendConnect() error {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-
 	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		nc.err = errors.New("nats: Connection message, json parse failed")
-		return nc.err
+		return _EMPTY_, nc.err
 	}
-	nc.sendProto(fmt.Sprintf(conProto, b))
+	return fmt.Sprintf(conProto, b), nil
+}
 
-	err = nc.FlushTimeout(DefaultTimeout)
+// Send a connect protocol message to the server, issuing user/password if
+// applicable. Will wait for a flush to return from the server for error
+// processing.
+func (nc *Conn) sendConnect() error {
+	cProto, err := nc.connectProto()
 	if err != nil {
+		return err
+	}
+	nc.sendProto(cProto)
+
+	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
 		nc.err = err
 		return err
-	} else if nc.closed {
+	} else if nc.isClosed() {
 		return nc.err
 	}
 	nc.status = CONNECTED
@@ -317,7 +355,7 @@ type control struct {
 
 // Read a control line and process the intended op.
 func (nc *Conn) readOp(c *control) error {
-	if nc.closed {
+	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
 	b, pre, err := nc.br.ReadLine()
@@ -369,34 +407,108 @@ func (nc *Conn) processReconnect() {
 		nc.opts.DisconnectedCB(nc)
 	}
 	nc.Lock()
-	if !nc.closed {
+	if !nc.isClosed() {
 		nc.status = RECONNECTING
 		nc.conn = nil
+		nc.kickFlusher()
+
+		// FIXME(dlc) - We have an issue here if we have
+		// outstanding flush points (pongs) and they were not
+		// sent out, still in the pipe
+
+		// Create a pending buffer to underpin the bufio Writer while
+		// we are reconnecting.
+		nc.pending = &bytes.Buffer{}
+		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
+		go nc.doReconnect()
 	}
 	nc.Unlock()
 }
 
-// processReadOpErr handles errors from readOp.
-func (nc *Conn) processReadOpErr(err error) {
-	if nc.closed {
+// flushReconnectPending will push the pending items that were
+// gathered while we were in a RECONNECTING state to the socket
+func (nc *Conn) flushReconnectPendingItems() {
+	if nc.pending == nil {
 		return
 	}
-	if nc.opts.AllowReconnect {
-		nc.processReconnect()
-	} else {
-		if err == io.EOF {
+	if nc.pending.Len() > 0 {
+		nc.bw.Write(nc.pending.Bytes())
+	}
+	nc.pending = nil
+}
+
+// Try to reconnect using the option parameters.
+// This function assumes we are allowed to reconnect.
+func (nc *Conn) doReconnect() {
+	// Don't jump right on
+	time.Sleep(10*time.Millisecond)
+
+	for i := 0; i < int(nc.opts.MaxReconnect); i++ {
+		if nc.isClosed() {
+			break
+		}
+		// Try to create a new connection
+		nc.Lock()
+		err := nc.createConn()
+		nc.err = nil
+
+		// Not yet..
+		if err != nil {
+			nc.Unlock()
+			time.Sleep(nc.opts.ReconnectWait)
+			continue
+		}
+
+		// We have reconnected here
+		// Process Connect logic
+		if nc.err = nc.processExpectedInfo(); nc.err == nil {
+			// Assume the best
+			nc.status = CONNECTED
+			// Spin up socket watchers again
+			nc.spinUpSocketWatchers()
+			// Send our connect info as normal
+			cProto, _ := nc.connectProto()
+			nc.bw.WriteString(cProto)
+			// Send existing subscription state
+			nc.resendSubscriptions()
+			// Now send off and clear pending buffer
+			nc.flushReconnectPendingItems()
+		}
+		nc.Unlock()
+
+		// Make sure to flush everything
+		nc.Flush()
+
+		// Call reconnectedCB if appropriate
+		if nc.opts.ReconnectedCB != nil {
+			nc.opts.ReconnectedCB(nc)
+		}
+		return
+	}
+}
+
+// processReadOpErr handles errors from readOp.
+func (nc *Conn) processReadOpErr(err error) {
+	if nc.isClosed() || nc.isReconnecting() {
+		return
+	}
+	if err == io.EOF {
+		if nc.opts.AllowReconnect {
+			nc.processReconnect()
+			return
+		} else {
 			nc.processDisconnect()
 		}
-		nc.err = err
-		nc.Close()
 	}
+	nc.err = err
+	nc.Close()
 }
 
 // readLoop() will sit on the buffered socket reading and processing the protocol
 // from the server. It will dispatch appropriately based on the op type.
 func (nc *Conn) readLoop() {
 	c := &control{}
-	for !nc.closed {
+	for !nc.isClosed() && !nc.isReconnecting() {
 		if err := nc.readOp(c); err != nil {
 			nc.processReadOpErr(err)
 			break
@@ -421,7 +533,7 @@ func (nc *Conn) readLoop() {
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs() {
-	for !nc.closed {
+	for !nc.isClosed() {
 		m, ok := <-nc.mch
 		if !ok {
 			break
@@ -430,7 +542,7 @@ func (nc *Conn) deliverMsgs() {
 		if !s.IsValid() || s.mcb == nil {
 			continue
 		}
-		// FIXME, race on compare
+		// FIXME, race on compare?
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
 			s.mcb(m)
@@ -510,15 +622,18 @@ func (nc *Conn) flusher() {
 	var b int
 	var ok bool
 
-	for !nc.closed {
+	for !nc.isClosed() && !nc.isReconnecting() {
 		_, ok = <-nc.fch
 		if !ok {
 			return
 		}
 		nc.Lock()
-		b = nc.bw.Buffered()
-		if b > 0 && nc.conn != nil {
-			nc.bw.Flush()
+		// Check for closed or reconnecting
+		if !nc.isClosed() && !nc.isReconnecting() {
+			b = nc.bw.Buffered()
+			if b > 0 && nc.conn != nil {
+				nc.err = nc.bw.Flush()
+			}
 		}
 		nc.Unlock()
 	}
@@ -537,7 +652,9 @@ func (nc *Conn) processPong() {
 	ch := nc.pongs[0]
 	nc.pongs = nc.pongs[1:]
 	nc.Unlock()
-	if ch != nil { ch <- true }
+	if ch != nil {
+		ch <- true
+	}
 }
 
 // processOK is a placeholder for processing ok messages.
@@ -571,7 +688,7 @@ func (nc *Conn) processErr(e string) {
 // kickFlusher will send a bool on a channel to kick the
 // flush go routine to flush data to the server.
 func (nc *Conn) kickFlusher() {
-	if len(nc.fch) == 0 {
+	if len(nc.fch) == 0 && nc.bw != nil {
 		nc.fch <- true
 	}
 }
@@ -583,12 +700,15 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.Lock()
 	defer nc.kickFlusher()
 	defer nc.Unlock()
-	if nc.closed {
+	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
+
 	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
 	nc.bw.Write(data)
-	nc.bw.WriteString(_CRLF_)
+	if _, nc.err = nc.bw.WriteString(_CRLF_); nc.err != nil {
+		return nc.err
+	}
 
 	nc.OutMsgs += 1
 	nc.OutBytes += uint64(len(data))
@@ -674,7 +794,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 
-	if nc.closed {
+	if nc.isClosed() {
 		return nil, ErrConnectionClosed
 	}
 
@@ -685,7 +805,11 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
-	nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	// We will send these for all subs when we reconnect, so
+	// we can suppress here.
+	if !nc.isReconnecting() {
+		nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+	}
 	return sub, nil
 }
 
@@ -726,7 +850,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	defer nc.kickFlusher()
 	defer nc.Unlock()
 
-	if nc.closed {
+	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
 
@@ -751,7 +875,11 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		s.conn = nil
 		s.Unlock()
 	}
-	nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	// We will send these for all subs when we reconnect, so
+	// we can suppress here.
+	if !nc.isReconnecting() {
+		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	}
 	return nil
 }
 
@@ -860,7 +988,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	}
 
 	nc.Lock()
-	if nc.closed {
+	if nc.isClosed() {
 		nc.Unlock()
 		return ErrConnectionClosed
 	}
@@ -899,16 +1027,44 @@ func (nc *Conn) Flush() error {
 	return nc.FlushTimeout(60 * time.Second)
 }
 
+// resendSubscriptions will send our subscription state back to the
+// server. Used in reconnects
+func (nc *Conn) resendSubscriptions() {
+	for _, s := range nc.subs {
+		nc.bw.WriteString(fmt.Sprintf(subProto, s.Subject, s.Queue, s.sid))
+		if s.max > 0 {
+			maxStr := strconv.Itoa(int(s.max))
+			nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		}
+	}
+}
+
+// Clear pending flush calls and reset
+func (nc *Conn) resetPendingFlush() {
+	nc.clearPendingFlushCalls()
+	nc.pongs = make([]chan bool, 0, 8)
+}
+
+// This will clear any pending flush calls and release pending calls.
+func (nc *Conn) clearPendingFlushCalls() {
+	// Clear any queued pongs, e.g. pending flush calls.
+	for _, ch := range nc.pongs {
+		if ch != nil {
+			ch <- true
+		}
+	}
+	nc.pongs = nil
+}
+
 // Close will close the connection to the server. This call will release
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	nc.Lock()
-	if nc.closed {
+	if nc.isClosed() {
 		nc.Unlock()
 		return
 	}
-	// FIXME, use status?
-	nc.closed = true
+	nc.status = CLOSED
 	nc.Unlock()
 
 	// Kick the go routines so they fall out.
@@ -918,12 +1074,7 @@ func (nc *Conn) Close() {
 	close(nc.mch)
 
 	// Clear any queued pongs, e.g. pending flush calls.
-	for _, ch := range nc.pongs {
-		if ch != nil {
-			ch <- true
-		}
-	}
-	nc.pongs = nil
+	nc.clearPendingFlushCalls()
 
 	// Close synch subscriber channels and release any
 	// pending NextMsg() calls.
@@ -942,17 +1093,27 @@ func (nc *Conn) Close() {
 
 	// Go ahead and make sure we have flushed the outbound buffer.
 	nc.Lock()
+	nc.status = CLOSED
 	if nc.conn != nil {
 		nc.bw.Flush()
 		nc.conn.Close()
 	}
-	nc.status = CLOSED
 	nc.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
 	if nc.opts.ClosedCB != nil {
 		nc.opts.ClosedCB(nc)
 	}
+}
+
+// Test if Conn has been closed.
+func (nc *Conn) isClosed() bool {
+	return nc.status == CLOSED
+}
+
+// Test if Conn is being reconnected.
+func (nc *Conn) isReconnecting() bool {
+	return nc.status == RECONNECTING
 }
 
 // Used for a garbage collection finalizer on dangling connections.

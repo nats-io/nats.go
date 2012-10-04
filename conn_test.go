@@ -58,6 +58,7 @@ func startServer(t tLogger, port uint, other string) *server {
 func (s *server) stopServer() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		s.cmd.Process.Kill()
+		s.cmd.Process.Wait()
 	}
 }
 
@@ -111,6 +112,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 	cbCalled := false
 	o := DefaultOptions
 	o.Url = DefaultURL
+	o.AllowReconnect = false
 	o.DisconnectedCB = func(_ *Conn) {
 		cbCalled = true
 	}
@@ -120,7 +122,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 	}
 	nc.Close()
 	if !cbCalled {
-		t.Fatalf("Disconnected callback not triggered\n")
+		t.Fatal("Disconnected callback not triggered")
 	}
 }
 
@@ -128,6 +130,7 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	ch := make(chan bool)
 	o := DefaultOptions
 	o.Url = DefaultURL
+	o.AllowReconnect = true
 	o.DisconnectedCB = func(nc *Conn) {
 		if nc.status != DISCONNECTED {
 			t.Fatalf("Should have status set to DISCONNECTED: Was %v\n", nc.status)
@@ -138,13 +141,11 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
-	defer nc.Close()
-
 	s.stopServer()
-
 	if e := wait(ch); e != nil {
 		t.Fatalf("Disconnected callback not triggered\n")
 	}
+	nc.Close()
 }
 
 func TestRestartServer(t *testing.T) {
