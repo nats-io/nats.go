@@ -1,6 +1,7 @@
 
 - Reconnect
 - Asynchronous error handling
+- SyncSubscriber and Next for EncodedConn
 - Fast Publisher
 - Hide lock?
 - pooling for structs used? leaky bucket?
