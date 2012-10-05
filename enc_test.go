@@ -263,3 +263,19 @@ func TestEncRequest(t *testing.T) {
 		t.Fatalf("Failed receiving proper response: %v\n", err)
 	}
 }
+
+func TestEncRequestReceivesMsg(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	ec.Subscribe("help", func(subj, reply, req string) {
+		ec.Publish(reply, "I can help!")
+	})
+
+	var resp Msg
+
+	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Failed receiving proper response: %v\n", err)
+	}
+}

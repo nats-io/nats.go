@@ -97,7 +97,13 @@ func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, t
 	if err != nil {
 		return err
 	}
-	return c.Enc.Decode(m.Subject, m.Data, vPtr)
+	if reflect.TypeOf(vPtr) == emptyMsgType {
+		mPtr := vPtr.(*Msg)
+		*mPtr = *m
+	} else {
+		err = c.Enc.Decode(m.Subject, m.Data, vPtr)
+	}
+	return err
 }
 
 // Handler is a specific callback used for Subscribe. It is generalized to
