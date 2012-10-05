@@ -5,6 +5,7 @@ package nats
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 func NewEConn(t *testing.T) *EncodedConn {
@@ -244,5 +245,21 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 			e = ec.LastError()
 		}
 		t.Fatalf("Did not receive the message: %s", e)
+	}
+}
+
+func TestEncRequest(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	ec.Subscribe("help", func(subj, reply, req string) {
+		ec.Publish(reply, "I can help!")
+	})
+
+	var resp string
+
+	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Failed receiving proper response: %v\n", err)
 	}
 }

@@ -88,12 +88,16 @@ func (c *EncodedConn) PublishRequest(subject, reply string, v interface{}) error
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply for the data v. A response will be
 // decoded into the vPtrResponse.
-func (c *EncodedConn) Request(subject string,
-	v interface{},
-	vPtrResponse interface{},
-	timeout time.Duration) error {
-
-	return errors.New("Not Implemented")
+func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, timeout time.Duration) error {
+	b, err := c.Enc.Encode(subject, v)
+	if err != nil {
+		return err
+	}
+	m, err := c.Conn.Request(subject, b, timeout)
+	if err != nil {
+		return err
+	}
+	return c.Enc.Decode(m.Subject, m.Data, vPtr)
 }
 
 // Handler is a specific callback used for Subscribe. It is generalized to
