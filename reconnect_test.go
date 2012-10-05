@@ -1,12 +1,17 @@
 package nats
 
 import (
+	"fmt"
+	"os"
 	"testing"
 	"time"
 )
 
+var logFile = "/tmp/reconnect_test.log"
+
 func startReconnectServer(t *testing.T) *server {
-	return startServer(t, 22222, "")
+	args := fmt.Sprintf("-DV -l %s", logFile)
+	return startServer(t, 22222, args)
 }
 
 func TestReconnectDisallowedFlags(t *testing.T) {
@@ -41,7 +46,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 		ch <- true
 		println("Exiting CB")
 	}
-	nc, err := opts.Connect();
+	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
@@ -51,12 +56,12 @@ func TestReconnectAllowedFlags(t *testing.T) {
 		t.Fatal("Triggered ClosedCB incorrectly")
 	}
 	// clear the CloseCB since ch will block
-	nc.opts.ClosedCB = nil
+	nc.Opts.ClosedCB = nil
 	nc.Close()
 }
 
-var reconnectOpts =  Options{
-	Url: "nats://localhost:22222",
+var reconnectOpts = Options{
+	Url:            "nats://localhost:22222",
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -84,12 +89,24 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	ec.Flush()
 
 	ts.stopServer()
-
 	// server is stopped here..
-	ec.Publish("foo", testString)
+
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dch <- true
+	}
+	wait(dch)
+
+	if err := ec.Publish("foo", testString); err != nil {
+		t.Fatalf("Failed to publish message: %v\n", err)
+	}
 
 	ts = startReconnectServer(t)
 	defer ts.stopServer()
+
+	if err := ec.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatal("Error on Flush: %v", err)
+	}
 
 	if e := wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
@@ -106,8 +123,10 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	opts.DisconnectedCB = func(_ *Conn) {
 		cbCalled = true
 	}
+	rch := make(chan bool)
 	opts.ReconnectedCB = func(_ *Conn) {
 		rcbCalled = true
+		rch <- true
 	}
 	nc, err := opts.Connect()
 	if err != nil {
@@ -152,7 +171,10 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	ts = startReconnectServer(t)
 	defer ts.stopServer()
+
 	// server is restarted here..
+	// wait for reconnect
+	wait(rch)
 
 	if err = ec.Publish("foobar", testString); err != nil {
 		t.Fatalf("Got an error after server restarted: %v\n", err)
@@ -180,5 +202,11 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	}
 	if !rcbCalled {
 		t.Fatal("Did not have ReconnectedCB called")
+	}
+}
+
+func TestRemoveLogFile(t *testing.T) {
+	if logFile != _EMPTY_ {
+		os.Remove(logFile)
 	}
 }
