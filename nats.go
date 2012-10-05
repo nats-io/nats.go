@@ -108,7 +108,7 @@ func SecureConnect(url string) (*Conn, error) {
 
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
-	nc := &Conn{opts: o}
+	nc := &Conn{Opts: o}
 	var err error
 	nc.url, err = url.Parse(o.Url)
 	if err != nil {
@@ -126,8 +126,8 @@ func (o Options) Connect() (*Conn, error) {
 type Conn struct {
 	sync.Mutex
 	Stats
+	Opts    Options
 	url     *url.URL
-	opts    Options
 	conn    net.Conn
 	bw      *bufio.Writer
 	br      *bufio.Reader
@@ -206,7 +206,7 @@ const defaultPendingSize = 1024 * 1024
 // connection is in place.
 func (nc *Conn) createConn() error {
 	// FIXME: Check for 0 Timeout
-	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.opts.Timeout)
+	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.Opts.Timeout)
 	if nc.err != nil {
 		return nc.err
 	}
@@ -263,7 +263,7 @@ func (nc *Conn) connect() error {
 // only be called after the INIT protocol has been received.
 func (nc *Conn) checkForSecure() error {
 	// Check to see if we need to engage TLS
-	o := nc.opts
+	o := nc.Opts
 
 	// Check for mismatch in setups
 	if o.Secure && !nc.info.SslRequired {
@@ -312,7 +312,7 @@ func (nc *Conn) sendProto(proto string) {
 // Send a connect protocol message to the server, issuing user/password if
 // applicable. This base version can be locked
 func (nc *Conn) connectProto() (string, error) {
-	o := nc.opts
+	o := nc.Opts
 	var user, pass string
 	u := nc.url.User
 	if u != nil {
@@ -400,11 +400,11 @@ func (nc *Conn) processDisconnect() {
 // This will process a disconnect when reconnect is allowed
 func (nc *Conn) processReconnect() {
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.opts.DisconnectedCB != nil {
+	if nc.Opts.DisconnectedCB != nil {
 		nc.Lock()
 		nc.status = DISCONNECTED
 		nc.Unlock()
-		nc.opts.DisconnectedCB(nc)
+		nc.Opts.DisconnectedCB(nc)
 	}
 	nc.Lock()
 	if !nc.isClosed() {
@@ -448,7 +448,7 @@ func (nc *Conn) doReconnect() {
 	// Don't jump right on
 	time.Sleep(10*time.Millisecond)
 
-	for i := 0; i < int(nc.opts.MaxReconnect); i++ {
+	for i := 0; i < int(nc.Opts.MaxReconnect); i++ {
 		if nc.isClosed() {
 			break
 		}
@@ -457,10 +457,10 @@ func (nc *Conn) doReconnect() {
 		err := nc.createConn()
 		nc.err = nil
 
-		// Not yet..
+		// Not yet connected, sleep and retry..
 		if err != nil {
 			nc.Unlock()
-			time.Sleep(nc.opts.ReconnectWait)
+			time.Sleep(nc.Opts.ReconnectWait)
 			continue
 		}
 
@@ -486,8 +486,8 @@ func (nc *Conn) doReconnect() {
 		nc.Flush()
 
 		// Call reconnectedCB if appropriate
-		if nc.opts.ReconnectedCB != nil {
-			nc.opts.ReconnectedCB(nc)
+		if nc.Opts.ReconnectedCB != nil {
+			nc.Opts.ReconnectedCB(nc)
 		}
 		return
 	}
@@ -498,7 +498,7 @@ func (nc *Conn) processReadOpErr(err error) {
 	if nc.isClosed() || nc.isReconnecting() {
 		return
 	}
-	if nc.opts.AllowReconnect {
+	if nc.Opts.AllowReconnect {
 		nc.processReconnect()
 	} else {
 		nc.processDisconnect()
@@ -1087,8 +1087,8 @@ func (nc *Conn) Close() {
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.conn != nil && nc.opts.DisconnectedCB != nil {
-		nc.opts.DisconnectedCB(nc)
+	if nc.conn != nil && nc.Opts.DisconnectedCB != nil {
+		nc.Opts.DisconnectedCB(nc)
 	}
 
 	// Go ahead and make sure we have flushed the outbound buffer.
@@ -1101,8 +1101,8 @@ func (nc *Conn) Close() {
 	nc.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
-	if nc.opts.ClosedCB != nil {
-		nc.opts.ClosedCB(nc)
+	if nc.Opts.ClosedCB != nil {
+		nc.Opts.ClosedCB(nc)
 	}
 }
 
