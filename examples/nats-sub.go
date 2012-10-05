@@ -11,7 +11,7 @@ import (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> \n")
+	log.Fatalf("Usage: nats-sub [-s server] [--ssl] [-t] <subject> \n")
 }
 
 var index = 0
@@ -22,17 +22,24 @@ func printMsg(m *nats.Msg, i int) {
 }
 
 func main() {
-	var url      = flag.String("s", nats.DefaultURL, "The nats server URL")
+	var url = flag.String("s", nats.DefaultURL, "The nats server URL")
 	var showTime = flag.Bool("t", false, "Display timestamps")
+	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
-    args := flag.Args()
-    if len(args) < 1 { usage() }
+	args := flag.Args()
+	if len(args) < 1 {
+		usage()
+	}
 
-	nc, err := nats.Connect(*url)
+	opts := nats.DefaultOptions
+	opts.Url = *url
+	opts.Secure = *ssl
+
+	nc, err := opts.Connect()
 	if err != nil {
 		log.Fatalf("Can't connect: %v\n", err)
 	}

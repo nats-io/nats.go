@@ -10,11 +10,12 @@ import (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-pub [-s server] [-t] <subject> <msg> \n")
+	log.Fatalf("Usage: nats-pub [-s server] [--ssl] [-t] <subject> <msg> \n")
 }
 
 func main() {
 	var url = flag.String("s", nats.DefaultURL, "The nats server URL")
+	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -25,7 +26,11 @@ func main() {
 		usage()
 	}
 
-	nc, err := nats.Connect(*url)
+	opts := nats.DefaultOptions
+	opts.Url = *url
+	opts.Secure = *ssl
+
+	nc, err := opts.Connect()
 	if err != nil {
 		log.Fatalf("Can't connect: %v\n", err)
 	}
