@@ -1,17 +1,11 @@
 package nats
 
 import (
-	"fmt"
-	"os"
 	"testing"
 	"time"
 )
-
-var logFile = "/tmp/reconnect_test.log"
-
 func startReconnectServer(t *testing.T) *server {
-	args := fmt.Sprintf("-DV -l %s", logFile)
-	return startServer(t, 22222, args)
+	return startServer(t, 22222, "")
 }
 
 func TestReconnectDisallowedFlags(t *testing.T) {
@@ -120,8 +114,10 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	rcbCalled := false
 
 	opts := reconnectOpts
+	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *Conn) {
 		cbCalled = true
+		dch <- true
 	}
 	rch := make(chan bool)
 	opts.ReconnectedCB = func(_ *Conn) {
@@ -152,6 +148,9 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	ts.stopServer()
 	// server is stopped here..
+
+	// wait for disconnect
+	wait(dch)
 
 	// Sub while disconnected
 	ec.Subscribe("bar", func(s string) {
@@ -202,11 +201,5 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	}
 	if !rcbCalled {
 		t.Fatal("Did not have ReconnectedCB called")
-	}
-}
-
-func TestRemoveLogFile(t *testing.T) {
-	if logFile != _EMPTY_ {
-		os.Remove(logFile)
 	}
 }
