@@ -13,10 +13,14 @@ import (
 
 // Dumb wait program to sync on callbacks, etc.. Will timeout
 func wait(ch chan bool) error {
+	return waitTime(ch, 200 * time.Millisecond)
+}
+
+func waitTime(ch chan bool, timeout time.Duration) error {
 	select {
 	case <-ch:
 		return nil
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(timeout):
 	}
 	return errors.New("timeout")
 }

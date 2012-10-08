@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.56"
+	Version              = "0.58"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -399,13 +399,6 @@ func (nc *Conn) processDisconnect() {
 
 // This will process a disconnect when reconnect is allowed
 func (nc *Conn) processReconnect() {
-	// Perform appropriate callback if needed for a disconnect.
-	if nc.Opts.DisconnectedCB != nil {
-		nc.Lock()
-		nc.status = DISCONNECTED
-		nc.Unlock()
-		nc.Opts.DisconnectedCB(nc)
-	}
 	nc.Lock()
 	if !nc.isClosed() {
 		nc.status = RECONNECTING
@@ -428,6 +421,12 @@ func (nc *Conn) processReconnect() {
 		go nc.doReconnect()
 	}
 	nc.Unlock()
+
+	// Perform appropriate callback if needed for a disconnect.
+	if nc.Opts.DisconnectedCB != nil {
+		nc.Opts.DisconnectedCB(nc)
+	}
+
 }
 
 // flushReconnectPending will push the pending items that were
@@ -446,7 +445,7 @@ func (nc *Conn) flushReconnectPendingItems() {
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
 	// Don't jump right on
-	time.Sleep(10*time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	for i := 0; i < int(nc.Opts.MaxReconnect); i++ {
 		if nc.isClosed() {

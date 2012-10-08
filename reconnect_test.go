@@ -150,7 +150,9 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	// server is stopped here..
 
 	// wait for disconnect
-	wait(dch)
+	if e := waitTime(dch, 2 * time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
 
 	// Sub while disconnected
 	ec.Subscribe("bar", func(s string) {
@@ -173,7 +175,9 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	// server is restarted here..
 	// wait for reconnect
-	wait(rch)
+	if e := waitTime(rch, 2 * time.Second); e != nil {
+		t.Fatal("Did not receive a reconnect callback message")
+	}
 
 	if err = ec.Publish("foobar", testString); err != nil {
 		t.Fatalf("Got an error after server restarted: %v\n", err)
@@ -193,11 +197,9 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatal("Did not receive our message")
 	}
 
-/*
 	if received != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)
 	}
-*/
 
 	if !cbCalled {
 		t.Fatal("Did not have DisconnectedCB called")
