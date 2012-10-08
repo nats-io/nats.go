@@ -65,7 +65,7 @@ func (s *server) stopServer() {
 func newConnection(t *testing.T) *Conn {
 	nc, err := Connect(DefaultURL)
 	if err != nil {
-		t.Fatal("Failed to create default connection", err)
+		t.Fatalf("Failed to create default connection: %v\n", err)
 		return nil
 	}
 	return nc
