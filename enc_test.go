@@ -293,7 +293,7 @@ func TestAsyncMarshalErr(t *testing.T) {
 		// This will never get called.
 	})
 
-	ec.Conn.Opts.AsynchErrorCB = func(c *Conn, s *Subscription, err error) {
+	ec.Conn.Opts.AsyncErrorCB = func(c *Conn, s *Subscription, err error) {
 		ch <- true
 	}
 

@@ -179,8 +179,8 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 			}
 			if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
 				c.Conn.err = errors.New("nats: Got an error trying to unmarshal: " + err.Error())
-				if c.Conn.Opts.AsynchErrorCB != nil {
-					go c.Conn.Opts.AsynchErrorCB(c.Conn, m.Sub, c.Conn.err)
+				if c.Conn.Opts.AsyncErrorCB != nil {
+					go c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, c.Conn.err)
 				}
 				return
 			}

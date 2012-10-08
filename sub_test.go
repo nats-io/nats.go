@@ -172,7 +172,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		t.Fatalf("Could not subscribe: %v\n", err)
 	}
 
-	nc.Opts.AsynchErrorCB = func(c *Conn, s *Subscription, e error) {
+	nc.Opts.AsyncErrorCB = func(c *Conn, s *Subscription, e error) {
 		if s != sub {
 			t.Fatal("Did not get proper subscription")
 		}

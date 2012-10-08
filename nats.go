@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.60"
+	Version              = "0.62"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -79,7 +79,7 @@ type Options struct {
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
-	AsynchErrorCB  ErrHandler
+	AsyncErrorCB   ErrHandler
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -631,8 +631,8 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 	nc.sc = true
 	s.sc = true
 	nc.err = ErrSlowConsumer
-	if nc.Opts.AsynchErrorCB != nil {
-		go nc.Opts.AsynchErrorCB(nc, s, nc.err)
+	if nc.Opts.AsyncErrorCB != nil {
+		go nc.Opts.AsyncErrorCB(nc, s, nc.err)
 	}
 }
 
