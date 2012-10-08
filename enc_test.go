@@ -4,7 +4,6 @@ package nats
 
 import (
 	"bytes"
-//	"fmt"
 	"testing"
 	"time"
 )
