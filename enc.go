@@ -69,6 +69,7 @@ func EncoderForType(encType string) Encoder {
 func (c *EncodedConn) Publish(subject string, v interface{}) error {
 	b, err := c.Enc.Encode(subject, v)
 	if err != nil {
+		c.Conn.err = err
 		return err
 	}
 	return c.Conn.publish(subject, _EMPTY_, b)
@@ -177,8 +178,10 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 				oPtr = reflect.New(argType.Elem())
 			}
 			if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
-				// FIXME(dlc) - Asynch error handling, insert here
 				c.Conn.err = errors.New("nats: Got an error trying to unmarshal: " + err.Error())
+				if c.Conn.Opts.AsynchErrorCB != nil {
+					go c.Conn.Opts.AsynchErrorCB(c.Conn, m.Sub, c.Conn.err)
+				}
 				return
 			}
 			if argType.Kind() != reflect.Ptr {

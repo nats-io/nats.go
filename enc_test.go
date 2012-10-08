@@ -4,6 +4,7 @@ package nats
 
 import (
 	"bytes"
+//	"fmt"
 	"testing"
 	"time"
 )
@@ -277,5 +278,28 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Failed receiving proper response: %v\n", err)
+	}
+}
+
+func TestAsyncMarshalErr(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+
+	testString := "Hello World!"
+	subject := "err_marshall"
+
+	ec.Subscribe(subject, func(subj, num int) {
+		// This will never get called.
+	})
+
+	ec.Conn.Opts.AsynchErrorCB = func(c *Conn, s *Subscription, err error) {
+		ch <- true
+	}
+
+	ec.Publish(subject, testString)
+	if e := wait(ch); e != nil {
+		t.Fatalf("Did not receive the message: %s", e)
 	}
 }

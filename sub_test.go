@@ -158,6 +158,42 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	}
 }
 
+func TestAsyncErrHandler(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	cbCalled := false
+	subj := "async_test"
+
+	sub, err := nc.Subscribe(subj, func(_ *Msg) {
+		time.Sleep(100 * time.Second)
+	})
+	if err != nil {
+		t.Fatalf("Could not subscribe: %v\n", err)
+	}
+
+	nc.Opts.AsynchErrorCB = func(c *Conn, s *Subscription, e error) {
+		if s != sub {
+			t.Fatal("Did not get proper subscription")
+		}
+		if e != ErrSlowConsumer {
+			t.Fatalf("Did not get proper error: %v vs %v\n", e, ErrSlowConsumer)
+		}
+		cbCalled = true
+	}
+
+
+	b := []byte("Hello World!")
+	for i := 0; i < (maxChanLen + 10); i++ {
+		nc.Publish(subj, b)
+	}
+	nc.Flush()
+
+	if !cbCalled {
+		t.Fatal("Failed to call async err handler")
+	}
+}
+
 // FIXME Hack, make this better
 func TestStopServer(t *testing.T) {
 	s.stopServer()

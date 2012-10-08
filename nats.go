@@ -58,9 +58,13 @@ const (
 	RECONNECTING Status = iota
 )
 
-// ConnHandler's are used for asynchronous events such as
+// ConnHandlers are used for asynchronous events such as
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
+
+// ErrHandlers are used to process asynchronous errors encountered
+// while processing inbound messages.
+type ErrHandler  func(*Conn, *Subscription, error)
 
 // Options can be used to create a customized Connection.
 type Options struct {
@@ -75,6 +79,7 @@ type Options struct {
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
+	AsynchErrorCB  ErrHandler
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -340,7 +345,7 @@ func (nc *Conn) sendConnect() error {
 
 	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
 		nc.err = err
-		return err
+		return nc.err
 	} else if nc.isClosed() {
 		return nc.err
 	}
@@ -605,16 +610,29 @@ func (nc *Conn) processMsg(args string) {
 
 	if sub.mcb != nil {
 		if len(nc.mch) >= maxChanLen {
-			nc.sc = true
+			nc.processSlowConsumer(sub)
 		} else {
+			sub.sc = false
 			nc.mch <- m
 		}
 	} else if sub.mch != nil {
 		if len(sub.mch) >= maxChanLen {
-			sub.sc = true
+			nc.processSlowConsumer(sub)
 		} else {
+			sub.sc = false
 			sub.mch <- m
 		}
+	}
+}
+
+// processSlowConsumer will set SlowConsumer state and fire the
+// async error handler if registered.
+func (nc *Conn) processSlowConsumer(s *Subscription) {
+	nc.sc = true
+	s.sc = true
+	nc.err = ErrSlowConsumer
+	if nc.Opts.AsynchErrorCB != nil {
+		go nc.Opts.AsynchErrorCB(nc, s, nc.err)
 	}
 }
 
