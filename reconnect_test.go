@@ -105,6 +105,13 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	if e := wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
 	}
+
+	expectedReconnectCount := uint64(1)
+	if ec.Conn.Stats.Reconnects != expectedReconnectCount {
+		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
+			ec.Conn.Stats.Reconnects, expectedReconnectCount)
+	}
+
 	nc.Close()
 }
 

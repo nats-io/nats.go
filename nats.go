@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.62"
+	Version              = "0.64"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -64,7 +64,7 @@ type ConnHandler func(*Conn)
 
 // ErrHandlers are used to process asynchronous errors encountered
 // while processing inbound messages.
-type ErrHandler  func(*Conn, *Subscription, error)
+type ErrHandler func(*Conn, *Subscription, error)
 
 // Options can be used to create a customized Connection.
 type Options struct {
@@ -151,7 +151,11 @@ type Conn struct {
 // Tracks various stats received and sent on this connection,
 // including message and bytes counts.
 type Stats struct {
-	InMsgs, OutMsgs, InBytes, OutBytes uint64
+	InMsgs     uint64
+	OutMsgs    uint64
+	InBytes    uint64
+	OutBytes   uint64
+	Reconnects uint64
 }
 
 type serverInfo struct {
@@ -469,6 +473,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
+		nc.Stats.Reconnects += 1
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
