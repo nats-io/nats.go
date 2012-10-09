@@ -129,8 +129,8 @@ func (o Options) Connect() (*Conn, error) {
 // A Conn represents a bare connection to a nats-server. It will send and receive
 // []byte payloads.
 type Conn struct {
-	sync.Mutex
 	Stats
+	lck     sync.Mutex
 	Opts    Options
 	url     *url.URL
 	conn    net.Conn
@@ -312,9 +312,9 @@ func (nc *Conn) processExpectedInfo() error {
 // Sends a protocol control message by queueing into the bufio writer
 // and kicking the flush go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
-	nc.Lock()
+	nc.lck.Lock()
 	defer nc.kickFlusher()
-	defer nc.Unlock()
+	defer nc.lck.Unlock()
 	nc.bw.WriteString(proto)
 }
 
@@ -408,7 +408,7 @@ func (nc *Conn) processDisconnect() {
 
 // This will process a disconnect when reconnect is allowed
 func (nc *Conn) processReconnect() {
-	nc.Lock()
+	nc.lck.Lock()
 	if !nc.isClosed() {
 		nc.status = RECONNECTING
 		if nc.conn != nil {
@@ -429,7 +429,7 @@ func (nc *Conn) processReconnect() {
 		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
 		go nc.doReconnect()
 	}
-	nc.Unlock()
+	nc.lck.Unlock()
 
 	// Perform appropriate callback if needed for a disconnect.
 	if nc.Opts.DisconnectedCB != nil {
@@ -461,13 +461,13 @@ func (nc *Conn) doReconnect() {
 			break
 		}
 		// Try to create a new connection
-		nc.Lock()
+		nc.lck.Lock()
 		err := nc.createConn()
 		nc.err = nil
 
 		// Not yet connected, sleep and retry..
 		if err != nil {
-			nc.Unlock()
+			nc.lck.Unlock()
 			time.Sleep(nc.Opts.ReconnectWait)
 			continue
 		}
@@ -489,7 +489,7 @@ func (nc *Conn) doReconnect() {
 			// Now send off and clear pending buffer
 			nc.flushReconnectPendingItems()
 		}
-		nc.Unlock()
+		nc.lck.Unlock()
 
 		// Make sure to flush everything
 		nc.Flush()
@@ -596,18 +596,18 @@ func (nc *Conn) processMsg(args string) {
 		return
 	}
 
-	nc.Lock()
+	nc.lck.Lock()
 	// Stats
 	nc.InMsgs += 1
 	nc.InBytes += uint64(blen)
 	sub := nc.subs[sid]
-	defer nc.Unlock()
+	defer nc.lck.Unlock()
 
 	if sub == nil || (sub.max > 0 && sub.msgs > sub.max) {
 		return
 	}
-	sub.Lock()
-	defer sub.Unlock()
+	sub.lck.Lock()
+	defer sub.lck.Unlock()
 	sub.msgs += 1
 
 	// FIXME: Should we recycle these containers
@@ -652,7 +652,7 @@ func (nc *Conn) flusher() {
 		if !ok {
 			return
 		}
-		nc.Lock()
+		nc.lck.Lock()
 		// Check for closed or reconnecting
 		if !nc.isClosed() && !nc.isReconnecting() {
 			b = nc.bw.Buffered()
@@ -660,7 +660,7 @@ func (nc *Conn) flusher() {
 				nc.err = nc.bw.Flush()
 			}
 		}
-		nc.Unlock()
+		nc.lck.Unlock()
 	}
 }
 
@@ -673,10 +673,10 @@ func (nc *Conn) processPing() {
 // processPong is used to process responses to the client's ping
 // messages. We use pings for the flush mechanism as well.
 func (nc *Conn) processPong() {
-	nc.Lock()
+	nc.lck.Lock()
 	ch := nc.pongs[0]
 	nc.pongs = nc.pongs[1:]
-	nc.Unlock()
+	nc.lck.Unlock()
 	if ch != nil {
 		ch <- true
 	}
@@ -719,9 +719,9 @@ func (nc *Conn) kickFlusher() {
 // Sends a protocol data message by queueing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
-	nc.Lock()
+	nc.lck.Lock()
 	defer nc.kickFlusher()
-	defer nc.Unlock()
+	defer nc.lck.Unlock()
 	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
@@ -777,7 +777,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
-	sync.Mutex
+	lck sync.Mutex
 	sid uint64
 
 	// Subject that represents this subscription. This can be different
@@ -812,9 +812,9 @@ func NewInbox() string {
 
 // subscribe is the internal subscribe function that indicates interest in subjects.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	nc.Lock()
+	nc.lck.Lock()
 	defer nc.kickFlusher()
-	defer nc.Unlock()
+	defer nc.lck.Unlock()
 
 	if nc.isClosed() {
 		return nil, ErrConnectionClosed
@@ -868,9 +868,9 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
-	nc.Lock()
+	nc.lck.Lock()
 	defer nc.kickFlusher()
-	defer nc.Unlock()
+	defer nc.lck.Unlock()
 
 	if nc.isClosed() {
 		return ErrConnectionClosed
@@ -888,14 +888,14 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
-		s.Lock()
+		s.lck.Lock()
 		if s.mch != nil {
 			close(s.mch)
 			s.mch = nil
 		}
 		// Mark as invalid
 		s.conn = nil
-		s.Unlock()
+		s.lck.Unlock()
 	}
 	// We will send these for all subs when we reconnect, so
 	// we can suppress here.
@@ -909,16 +909,16 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 // is still active. This will return false if the subscription has
 // already been closed.
 func (s *Subscription) IsValid() bool {
-	s.Lock()
-	defer s.Unlock()
+	s.lck.Lock()
+	defer s.lck.Unlock()
 	return s.conn != nil
 }
 
 // Unsubscribe will remove interest in a given subject.
 func (s *Subscription) Unsubscribe() error {
-	s.Lock()
+	s.lck.Lock()
 	conn := s.conn
-	s.Unlock()
+	s.lck.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
@@ -930,9 +930,9 @@ func (s *Subscription) Unsubscribe() error {
 // This can be useful when sending a request to an unknown number
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
-	s.Lock()
+	s.lck.Lock()
 	conn := s.conn
-	s.Unlock()
+	s.lck.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
 	}
@@ -943,27 +943,27 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
-	s.Lock()
+	s.lck.Lock()
 	if s.mch == nil {
-		s.Unlock()
+		s.lck.Unlock()
 		return nil, ErrConnectionClosed
 	}
 	if s.mcb != nil {
-		s.Unlock()
+		s.lck.Unlock()
 		return nil, errors.New("nats: Illegal call on an async Subscription")
 	}
 	if s.conn == nil {
-		s.Unlock()
+		s.lck.Unlock()
 		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false
-		s.Unlock()
+		s.lck.Unlock()
 		return nil, ErrSlowConsumer
 	}
 
 	mch := s.mch
-	s.Unlock()
+	s.lck.Unlock()
 
 	var ok bool
 	t := time.NewTimer(timeout)
@@ -989,8 +989,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 // for our pings, as part of a flush call. This happens when we have a flush
 // call outstanding and we call close.
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
-	nc.Lock()
-	defer nc.Unlock()
+	nc.lck.Lock()
+	defer nc.lck.Unlock()
 	if nc.pongs == nil {
 		return false
 	}
@@ -1009,9 +1009,9 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		return errors.New("nats: Bad timeout value")
 	}
 
-	nc.Lock()
+	nc.lck.Lock()
 	if nc.isClosed() {
-		nc.Unlock()
+		nc.lck.Unlock()
 		return ErrConnectionClosed
 	}
 	t := time.NewTimer(timeout)
@@ -1023,7 +1023,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	nc.pongs = append(nc.pongs, ch)
 	nc.bw.WriteString(pingProto)
 	nc.bw.Flush()
-	nc.Unlock()
+	nc.lck.Unlock()
 
 	select {
 	case _, ok := <-ch:
@@ -1081,13 +1081,13 @@ func (nc *Conn) clearPendingFlushCalls() {
 // Close will close the connection to the server. This call will release
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
-	nc.Lock()
+	nc.lck.Lock()
 	if nc.isClosed() {
-		nc.Unlock()
+		nc.lck.Unlock()
 		return
 	}
 	nc.status = CLOSED
-	nc.Unlock()
+	nc.lck.Unlock()
 
 	// Kick the go routines so they fall out.
 	// fch will be closed on finalizer
@@ -1114,13 +1114,13 @@ func (nc *Conn) Close() {
 	}
 
 	// Go ahead and make sure we have flushed the outbound buffer.
-	nc.Lock()
+	nc.lck.Lock()
 	nc.status = CLOSED
 	if nc.conn != nil {
 		nc.bw.Flush()
 		nc.conn.Close()
 	}
-	nc.Unlock()
+	nc.lck.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
 	if nc.Opts.ClosedCB != nil {
