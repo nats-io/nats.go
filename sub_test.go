@@ -194,6 +194,37 @@ func TestAsyncErrHandler(t *testing.T) {
 	}
 }
 
+// Test to make sure that we can send and async receive messages on
+// different subjects within a callback.
+func TestAsyncSubscriberStarvation(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	// Helper
+	nc.Subscribe("helper", func(m *Msg) {
+		nc.Publish(m.Reply, []byte("Hello"))
+	})
+
+	ch := make(chan bool)
+
+	// Kickoff
+	nc.Subscribe("start", func(m *Msg) {
+		// Helper Response
+		response := NewInbox()
+		nc.Subscribe(response, func(_ *Msg) {
+			ch <- true
+		})
+		nc.PublishRequest("helper", response, []byte("Help Me!"))
+	})
+
+	nc.Publish("start", []byte("Begin"))
+	nc.Flush();
+
+	if e := wait(ch); e != nil {
+		t.Fatal("Was stalled inside of callback waiting on another callback")
+	}
+}
+
 // FIXME Hack, make this better
 func TestStopServer(t *testing.T) {
 	s.stopServer()

@@ -125,58 +125,23 @@ func TestPubSubWithReply(t *testing.T) {
 func TestFlush(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
+
 	omsg := []byte("Hello World")
-	received := 0
-	nc.Subscribe("flush", func(_ *Msg) {
-		received += 1
-	})
-	total := 10000
-	for i := 0; i < total; i++ {
+	for i := 0; i < 10000; i++ {
 		nc.Publish("flush", omsg)
 	}
 	if err := nc.Flush(); err != nil {
 		t.Fatalf("Received error from flush: %s\n", err)
 	}
-	if received != total {
-		t.Fatalf("All messages not received: %d != %d\n", received, total)
+	if nb := nc.bw.Buffered(); nb > 0 {
+		t.Fatalf("Outbound buffer not empty: %d bytes\n", nb)
+	}
+	if nb := nc.br.Buffered(); nb > 0 {
+		t.Fatalf("Inbound buffer not empty: %d bytes\n", nb)
 	}
 }
 
 func TestQueueSubscriber(t *testing.T) {
-	nc := newConnection(t)
-	defer nc.Close()
-	r1, r2 := 0, 0
-	nc.QueueSubscribe("foo", "bar", func(_ *Msg) {
-		r1 += 1
-	})
-	nc.QueueSubscribe("foo", "bar", func(_ *Msg) {
-		r2 += 1
-	})
-	omsg := []byte("Hello World")
-	nc.Publish("foo", omsg)
-	nc.Flush()
-	if (r1 + r2) != 1 {
-		t.Fatal("Received too many messages for multiple queue subscribers")
-	}
-	r1, r2 = 0, 0
-	total := 100
-	for i := 0; i < total; i++ {
-		nc.Publish("foo", omsg)
-	}
-	nc.Flush()
-	v := uint(float32(total) * 0.15)
-	if r1+r2 != total {
-		t.Fatalf("Incorrect number of messages: %d vs %d", (r1 + r2), total)
-	}
-	expected := total / 2
-	d1 := uint(math.Abs(float64(expected - r1)))
-	d2 := uint(math.Abs(float64(expected - r2)))
-	if d1 > v || d2 > v {
-		t.Fatalf("Too much variance in totals: %d, %d > %d", d1, d2, v)
-	}
-}
-
-func TestQueueSyncSubscriber(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
 	s1, _ := nc.QueueSubscribeSync("foo", "bar")
@@ -188,11 +153,11 @@ func TestQueueSyncSubscriber(t *testing.T) {
 	if (r1 + r2) != 1 {
 		t.Fatal("Received too many messages for multiple queue subscribers")
 	}
-	// Drain message
+	// Drain messages
 	s1.NextMsg(0)
 	s2.NextMsg(0)
 
-	total := 100
+	total := 1000
 	for i := 0; i < total; i++ {
 		nc.Publish("foo", omsg)
 	}

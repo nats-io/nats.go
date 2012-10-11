@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.64"
+	Version              = "0.68"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -82,12 +82,85 @@ type Options struct {
 	AsyncErrorCB   ErrHandler
 }
 
+// A Conn represents a bare connection to a nats-server. It will send and receive
+// []byte payloads.
+type Conn struct {
+	Stats
+	lck     sync.Mutex
+	Opts    Options
+	url     *url.URL
+	conn    net.Conn
+	bw      *bufio.Writer
+	br      *bufio.Reader
+	pending *bytes.Buffer
+	fch     chan bool
+	info    serverInfo
+	ssid    uint64
+	subs    map[uint64]*Subscription
+	mch     chan *Msg
+	pongs   []chan bool
+	status  Status
+	err     error
+}
+
+// A Subscription represents interest in a given subject.
+type Subscription struct {
+	lck sync.Mutex
+	sid uint64
+
+	// Subject that represents this subscription. This can be different
+	// than the received subject inside a Msg if this is a wildcard.
+	Subject string
+
+	// Optional queue group name. If present, all subscriptions with the
+	// same name will form a distributed queue, and each message will
+	// only be processed by one member of the group.
+	Queue string
+
+	msgs      uint64
+	delivered uint64
+	bytes     uint64
+	max       uint64
+	conn      *Conn
+	mcb       MsgHandler
+	mch       chan *Msg
+	sc        bool
+}
+
 // Msg is a structure used by Subscribers and PublishMsg().
 type Msg struct {
 	Subject string
 	Reply   string
 	Data    []byte
 	Sub     *Subscription
+}
+
+// Tracks various stats received and sent on this connection,
+// including message and bytes counts.
+type Stats struct {
+	InMsgs     uint64
+	OutMsgs    uint64
+	InBytes    uint64
+	OutBytes   uint64
+	Reconnects uint64
+}
+
+type serverInfo struct {
+	Id           string `json:"server_id"`
+	Host         string `json:"host"`
+	Port         uint   `json:"port"`
+	Version      string `json:"version"`
+	AuthRequired bool   `json:"auth_required"`
+	SslRequired  bool   `json:"ssl_required"`
+	MaxPayload   int64  `json:"max_payload"`
+}
+
+type connectInfo struct {
+	Verbose  bool   `json:"verbose"`
+	Pedantic bool   `json:"pedantic"`
+	User     string `json:"user,omitempty"`
+	Pass     string `json:"pass,omitempty"`
+	Ssl      bool   `json:"ssl_required"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -124,56 +197,6 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 	return nc, nil
-}
-
-// A Conn represents a bare connection to a nats-server. It will send and receive
-// []byte payloads.
-type Conn struct {
-	Stats
-	lck     sync.Mutex
-	Opts    Options
-	url     *url.URL
-	conn    net.Conn
-	bw      *bufio.Writer
-	br      *bufio.Reader
-	pending *bytes.Buffer
-	fch     chan bool
-	info    serverInfo
-	ssid    uint64
-	subs    map[uint64]*Subscription
-	mch     chan *Msg
-	pongs   []chan bool
-	status  Status
-	sc      bool
-	err     error
-}
-
-// Tracks various stats received and sent on this connection,
-// including message and bytes counts.
-type Stats struct {
-	InMsgs     uint64
-	OutMsgs    uint64
-	InBytes    uint64
-	OutBytes   uint64
-	Reconnects uint64
-}
-
-type serverInfo struct {
-	Id           string `json:"server_id"`
-	Host         string `json:"host"`
-	Port         uint   `json:"port"`
-	Version      string `json:"version"`
-	AuthRequired bool   `json:"auth_required"`
-	SslRequired  bool   `json:"ssl_required"`
-	MaxPayload   int64  `json:"max_payload"`
-}
-
-type connectInfo struct {
-	Verbose  bool   `json:"verbose"`
-	Pedantic bool   `json:"pedantic"`
-	User     string `json:"user,omitempty"`
-	Pass     string `json:"pass,omitempty"`
-	Ssl      bool   `json:"ssl_required"`
 }
 
 const (
@@ -250,7 +273,6 @@ func (nc *Conn) connect() error {
 	}
 
 	nc.subs = make(map[uint64]*Subscription)
-	nc.mch = make(chan *Msg, maxChanLen)
 	nc.pongs = make([]chan bool, 0, 8)
 
 	nc.fch = make(chan bool, 1024) //FIXME, need to define
@@ -261,7 +283,6 @@ func (nc *Conn) connect() error {
 	}
 
 	nc.spinUpSocketWatchers()
-	go nc.deliverMsgs()
 
 	runtime.SetFinalizer(nc, fin)
 	return nc.sendConnect()
@@ -544,9 +565,9 @@ func (nc *Conn) readLoop() {
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
-func (nc *Conn) deliverMsgs() {
+func (nc *Conn) deliverMsgs(ch chan *Msg) {
 	for !nc.isClosed() {
-		m, ok := <-nc.mch
+		m, ok := <-ch
 		if !ok {
 			break
 		}
@@ -592,38 +613,42 @@ func (nc *Conn) processMsg(args string) {
 	n, err = io.ReadFull(nc.br, buf)
 	if err != nil || n != blen {
 		nc.err = err
-		nc.Close()
+		nc.Close() // FIXME? Should we just disconnect and let reconnect logic win?
 		return
 	}
 
+	// Lock from here out.
 	nc.lck.Lock()
+	defer nc.lck.Unlock()
+
 	// Stats
 	nc.InMsgs += 1
 	nc.InBytes += uint64(blen)
 	sub := nc.subs[sid]
-	defer nc.lck.Unlock()
 
-	if sub == nil || (sub.max > 0 && sub.msgs > sub.max) {
+	if sub == nil {
 		return
 	}
+
 	sub.lck.Lock()
 	defer sub.lck.Unlock()
-	sub.msgs += 1
 
-	// FIXME: Should we recycle these containers
+	if (sub.max > 0 && sub.msgs > sub.max) {
+		return
+	}
+
+	// Sub internal stats
+	sub.msgs += 1
+	sub.bytes += uint64(blen)
+
+	// FIXME(dlc): Should we recycle these containers?
 	m := &Msg{Data: buf, Subject: subj, Reply: reply, Sub: sub}
 
-	if sub.mcb != nil {
-		if len(nc.mch) >= maxChanLen {
-			nc.processSlowConsumer(sub)
-		} else {
-			sub.sc = false
-			nc.mch <- m
-		}
-	} else if sub.mch != nil {
+	if sub.mch != nil {
 		if len(sub.mch) >= maxChanLen {
 			nc.processSlowConsumer(sub)
 		} else {
+			// Clear always
 			sub.sc = false
 			sub.mch <- m
 		}
@@ -633,7 +658,6 @@ func (nc *Conn) processMsg(args string) {
 // processSlowConsumer will set SlowConsumer state and fire the
 // async error handler if registered.
 func (nc *Conn) processSlowConsumer(s *Subscription) {
-	nc.sc = true
 	s.sc = true
 	nc.err = ErrSlowConsumer
 	if nc.Opts.AsyncErrorCB != nil {
@@ -775,30 +799,6 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 	return s.NextMsg(timeout)
 }
 
-// A Subscription represents interest in a given subject.
-type Subscription struct {
-	lck sync.Mutex
-	sid uint64
-
-	// Subject that represents this subscription. This can be different
-	// than the received subject inside a Msg if this is a wildcard.
-	Subject string
-
-	// Optional queue group name. If present, all subscriptions with the
-	// same name will form a distributed queue, and each message will
-	// only be processed by one member of the group.
-	Queue string
-
-	msgs      uint64
-	delivered uint64
-	bytes     uint64
-	max       uint64
-	conn      *Conn
-	mcb       MsgHandler
-	mch       chan *Msg
-	sc        bool
-}
-
 const InboxPrefix = "_INBOX."
 
 // NewInbox will return an inbox string which can be used for directed replies from
@@ -821,12 +821,24 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 
 	sub := &Subscription{Subject: subj, mcb: cb, conn: nc}
+	sub.mch = make(chan *Msg, maxChanLen)
+
+	// If we have an async callback, start up a sub specific
+	// go routine to deliver the messages.
+	if cb != nil {
+		go nc.deliverMsgs(sub.mch)
+	}
+
+/*
 	if cb == nil {
 		// Indicates a sync subscription
 		sub.mch = make(chan *Msg, maxChanLen)
 	}
+*/
+
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
+
 	// We will send these for all subs when we reconnect, so
 	// we can suppress here.
 	if !nc.isReconnecting() {
@@ -1029,9 +1041,8 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	case _, ok := <-ch:
 		if !ok {
 			err = ErrConnectionClosed
-		}
-		if nc.sc {
-			err = ErrSlowConsumer
+		} else {
+			err = nc.err
 		}
 	case <-t.C:
 		err = ErrTimeout
@@ -1092,8 +1103,6 @@ func (nc *Conn) Close() {
 	// Kick the go routines so they fall out.
 	// fch will be closed on finalizer
 	nc.kickFlusher()
-
-	close(nc.mch)
 
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
