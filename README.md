@@ -42,7 +42,7 @@ type person struct {
 // Go type Subscriber
 c.Subscribe("hello", func(p *person) {
     fmt.Printf("Received a person: %+v\n", p)
-}
+})
 
 me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
 
