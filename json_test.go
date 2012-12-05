@@ -24,7 +24,7 @@ func TestJsonMarshalString(t *testing.T) {
 
 	ec.Subscribe("json_string", func(s string) {
 		if s != testString {
-			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+			t.Fatalf("Received test string of '%s', wanted '%s'\n", s, testString)
 		}
 		ch <- true
 	})
@@ -43,7 +43,7 @@ func TestJsonMarshalInt(t *testing.T) {
 
 	ec.Subscribe("json_int", func(n int) {
 		if n != testN {
-			t.Fatalf("Got test int of '%d', wanted '%d'\n", n, testN)
+			t.Fatalf("Received test int of '%d', wanted '%d'\n", n, testN)
 		}
 		ch <- true
 	})

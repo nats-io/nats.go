@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Show different ways to create a Conn
+// Shows different ways to create a Conn
 func ExampleConnect() {
 
 	nats.Connect(nats.DefaultURL)
@@ -106,7 +106,7 @@ func ExampleConn_FlushTimeout() {
 	for i := 0; i < 1000; i++ {
 		nc.PublishMsg(msg)
 	}
-	// Only wait up to 1 second for Flush
+	// Only wait for up to 1 second for Flush
 	err := nc.FlushTimeout(1 * time.Second)
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
@@ -158,7 +158,7 @@ func ExampleConn_Close() {
 	nc.Close()
 }
 
-// Show how to wrap a Conn into an EncodedConn
+// Shows how to wrap a Conn into an EncodedConn
 func ExampleNewEncodedConn() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
@@ -186,8 +186,8 @@ func ExampleEncodedConn_Publish() {
 // EncodedConn's subscribers will automatically decode the
 // wire data into the requested Go type using the Decode()
 // method of the registered Encoder. The callback signature
-// can also vary to include additional data, like subject and
-// reply subjects.
+// can also vary to include additional data, such as subject
+// and reply subjects.
 func ExampleEncodedConn_Subscribe() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
