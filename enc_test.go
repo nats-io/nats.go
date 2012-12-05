@@ -25,7 +25,7 @@ func TestMarshalString(t *testing.T) {
 
 	ec.Subscribe("enc_string", func(s string) {
 		if s != testString {
-			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+			t.Fatalf("Received test string of '%s', wanted '%s'\n", s, testString)
 		}
 		ch <- true
 	})
@@ -47,7 +47,7 @@ func TestMarshalBytes(t *testing.T) {
 
 	ec.Subscribe("enc_bytes", func(b []byte) {
 		if !bytes.Equal(b, testBytes) {
-			t.Fatalf("Got test bytes of '%s', wanted '%s'\n", b, testBytes)
+			t.Fatalf("Received test bytes of '%s', wanted '%s'\n", b, testBytes)
 		}
 		ch <- true
 	})
@@ -69,7 +69,7 @@ func TestMarshalInt(t *testing.T) {
 
 	ec.Subscribe("enc_int", func(n int) {
 		if n != testN {
-			t.Fatalf("Got test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
 		}
 		ch <- true
 	})
@@ -91,7 +91,7 @@ func TestMarshalInt32(t *testing.T) {
 
 	ec.Subscribe("enc_int", func(n int32) {
 		if n != int32(testN) {
-			t.Fatalf("Got test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
 		}
 		ch <- true
 	})
@@ -113,7 +113,7 @@ func TestMarshalInt64(t *testing.T) {
 
 	ec.Subscribe("enc_int", func(n int64) {
 		if n != int64(testN) {
-			t.Fatalf("Got test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
 		}
 		ch <- true
 	})
@@ -135,7 +135,7 @@ func TestMarshalFloat32(t *testing.T) {
 
 	ec.Subscribe("enc_float", func(n float32) {
 		if n != testN {
-			t.Fatalf("Got test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
 		}
 		ch <- true
 	})
@@ -157,7 +157,7 @@ func TestMarshalFloat64(t *testing.T) {
 
 	ec.Subscribe("enc_float", func(n float64) {
 		if n != testN {
-			t.Fatalf("Got test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
 		}
 		ch <- true
 	})
@@ -201,10 +201,10 @@ func TestExtendedSubscribeCB(t *testing.T) {
 
 	ec.Subscribe(subject, func(subj, s string) {
 		if s != testString {
-			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+			t.Fatalf("Received test string of '%s', wanted '%s'\n", s, testString)
 		}
 		if subj != subject {
-			t.Fatalf("Got subject of '%s', wanted '%s'\n", subj, subject)
+			t.Fatalf("Received subject of '%s', wanted '%s'\n", subj, subject)
 		}
 		ch <- true
 	})
@@ -229,13 +229,13 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 
 	ec.Subscribe(oSubj, func(subj, reply, s string) {
 		if s != testString {
-			t.Fatalf("Got test string of '%s', wanted '%s'\n", s, testString)
+			t.Fatalf("Received test string of '%s', wanted '%s'\n", s, testString)
 		}
 		if subj != oSubj {
-			t.Fatalf("Got subject of '%s', wanted '%s'\n", subj, oSubj)
+			t.Fatalf("Received subject of '%s', wanted '%s'\n", subj, oSubj)
 		}
 		if reply != oReply {
-			t.Fatalf("Got reply of '%s', wanted '%s'\n", reply, oReply)
+			t.Fatalf("Received reply of '%s', wanted '%s'\n", reply, oReply)
 		}
 		ch <- true
 	})
@@ -260,7 +260,7 @@ func TestEncRequest(t *testing.T) {
 
 	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
 	if err != nil {
-		t.Fatalf("Failed receiving proper response: %v\n", err)
+		t.Fatalf("Failed at receiving proper response: %v\n", err)
 	}
 }
 
@@ -276,7 +276,7 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 
 	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
 	if err != nil {
-		t.Fatalf("Failed receiving proper response: %v\n", err)
+		t.Fatalf("Failed at receiving proper response: %v\n", err)
 	}
 }
 

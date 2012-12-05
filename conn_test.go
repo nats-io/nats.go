@@ -19,7 +19,7 @@ type server struct {
 
 var s *server
 
-// So we can pass tests and benchmarks..
+// So that we can pass tests and benchmarks...
 type tLogger interface {
 	Fatalf(format string, args ...interface{})
 	Errorf(format string, args ...interface{})
