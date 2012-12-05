@@ -48,7 +48,7 @@ func (je *DefaultEncoder) Encode(subject string, v interface{}) ([]byte, error) 
 }
 
 func (je *DefaultEncoder) Decode(subject string, data []byte, vPtr interface{}) error {
-	// Figure out what its pointing to..
+	// Figure out what it's pointing to...
 	sData := *(*string)(unsafe.Pointer(&data))
 	switch arg := vPtr.(type) {
 	case *string:

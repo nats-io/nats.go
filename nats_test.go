@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Dumb wait program to sync on callbacks, etc.. Will timeout
+// Dumb wait program to sync on callbacks, etc... Will timeout
 func wait(ch chan bool) error {
 	return waitTime(ch, 200 * time.Millisecond)
 }
@@ -33,7 +33,7 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	delta := (runtime.NumGoroutine() - base)
 	if delta > 0 {
-		t.Fatalf("%d Go routines still exists post Close()", delta)
+		t.Fatalf("%d Go routines still exist post Close()", delta)
 	}
 	// Make sure we can call Close() multiple times
 	nc.Close()
@@ -79,7 +79,7 @@ func TestAsyncSubscribe(t *testing.T) {
 			t.Fatal("Message received does not match")
 		}
 		if m.Sub == nil {
-			t.Fatal("Callback does not have a valid Subsription")
+			t.Fatal("Callback does not have a valid Subscription")
 		}
 		ch <- true
 	})
@@ -202,7 +202,7 @@ func TestSyncReplyArg(t *testing.T) {
 	nc.PublishMsg(&Msg{Subject: "foo", Reply: replyExpected, Data: []byte("Hello")})
 	msg, err := s.NextMsg(1 * time.Second)
 	if err != nil {
-		t.Fatal("Received and err on NextMsg()")
+		t.Fatal("Received an err on NextMsg()")
 	}
 	if msg.Reply != replyExpected {
 		t.Fatalf("Did not receive correct reply arg in callback: "+
@@ -317,11 +317,11 @@ func TestStats(t *testing.T) {
 	}
 
 	if nc.OutMsgs != uint64(iter) {
-		t.Fatalf("Not properly tracking OutMsgs: got %d wanted %d\n", nc.OutMsgs, iter)
+		t.Fatalf("Not properly tracking OutMsgs: received %d, wanted %d\n", nc.OutMsgs, iter)
 	}
 	obb := uint64(iter * len(data))
 	if nc.OutBytes != obb {
-		t.Fatalf("Not properly tracking OutBytes: got %d wanted %d\n", nc.OutBytes, obb)
+		t.Fatalf("Not properly tracking OutBytes: received %d, wanted %d\n", nc.OutBytes, obb)
 	}
 
 	// Clear outbound
@@ -337,11 +337,11 @@ func TestStats(t *testing.T) {
 	nc.Flush()
 
 	if nc.InMsgs != uint64(2*iter) {
-		t.Fatalf("Not properly tracking InMsgs: got %d wanted %d\n", nc.InMsgs, 2*iter)
+		t.Fatalf("Not properly tracking InMsgs: received %d, wanted %d\n", nc.InMsgs, 2*iter)
 	}
 
 	ibb := 2 * obb
 	if nc.InBytes != ibb {
-		t.Fatalf("Not properly tracking InBytes: got %d wanted %d\n", nc.InBytes, ibb)
+		t.Fatalf("Not properly tracking InBytes: received %d, wanted %d\n", nc.InBytes, ibb)
 	}
 }

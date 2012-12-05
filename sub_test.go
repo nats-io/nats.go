@@ -87,7 +87,7 @@ func TestCloseSubRelease(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 	if elapsed > 10*time.Millisecond {
-		t.Fatalf("Too much time elapsed to release NextMsg: %dms",
+		t.Fatalf("Too much time has elapsed to release NextMsg: %dms",
 			(elapsed/time.Millisecond))
 	}
 }
@@ -174,10 +174,10 @@ func TestAsyncErrHandler(t *testing.T) {
 
 	nc.Opts.AsyncErrorCB = func(c *Conn, s *Subscription, e error) {
 		if s != sub {
-			t.Fatal("Did not get proper subscription")
+			t.Fatal("Did not receive proper subscription")
 		}
 		if e != ErrSlowConsumer {
-			t.Fatalf("Did not get proper error: %v vs %v\n", e, ErrSlowConsumer)
+			t.Fatalf("Did not receive proper error: %v vs %v\n", e, ErrSlowConsumer)
 		}
 		cbCalled = true
 	}
@@ -225,7 +225,7 @@ func TestAsyncSubscriberStarvation(t *testing.T) {
 	}
 }
 
-// FIXME Hack, make this better
+// FIXME: Hack, make this better
 func TestStopServer(t *testing.T) {
 	s.stopServer()
 }

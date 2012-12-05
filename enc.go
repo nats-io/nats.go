@@ -34,7 +34,7 @@ type EncodedConn struct {
 	Enc  Encoder
 }
 
-// NewEncodedConn will wrap an existing Connection and utilize the appropriate registrered
+// NewEncodedConn will wrap an existing Connection and utilize the appropriate registered
 // encoder.
 func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 	if c == nil {
@@ -75,7 +75,7 @@ func (c *EncodedConn) Publish(subject string, v interface{}) error {
 	return c.Conn.publish(subject, _EMPTY_, b)
 }
 
-// PublishRequest will perform a Publish() excpecting a response on the
+// PublishRequest will perform a Publish() expecting a response on the
 // reply subject. Use Request() for automatically waiting for a response
 // inline.
 func (c *EncodedConn) PublishRequest(subject, reply string, v interface{}) error {

@@ -76,14 +76,14 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	testString := "bar"
 	ec.Subscribe("foo", func(s string) {
 		if s != testString {
-			t.Fatal("String don't match")
+			t.Fatal("String doesn't match")
 		}
 		ch <- true
 	})
 	ec.Flush()
 
 	ts.stopServer()
-	// server is stopped here..
+	// server is stopped here...
 
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *Conn) {
@@ -170,11 +170,11 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	sub.Unsubscribe()
 
 	if err = ec.Publish("foo", testString); err != nil {
-		t.Fatalf("Got an error after disconnect: %v\n", err)
+		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
 	if err = ec.Publish("bar", testString); err != nil {
-		t.Fatalf("Got an error after disconnect: %v\n", err)
+		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
 	ts = startReconnectServer(t)
@@ -187,11 +187,11 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	}
 
 	if err = ec.Publish("foobar", testString); err != nil {
-		t.Fatalf("Got an error after server restarted: %v\n", err)
+		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
 	if err = ec.Publish("foo", testString); err != nil {
-		t.Fatalf("Got an error after server restarted: %v\n", err)
+		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
 	ch := make(chan bool)

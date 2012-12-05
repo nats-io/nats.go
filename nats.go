@@ -136,7 +136,7 @@ type Msg struct {
 }
 
 // Tracks various stats received and sent on this connection,
-// including message and bytes counts.
+// including counts for messages and bytes.
 type Stats struct {
 	InMsgs     uint64
 	OutMsgs    uint64
@@ -224,7 +224,7 @@ const (
 )
 
 // The size of the buffered channel used between the socket
-// go routine and the message delivery or sync subscription.
+// Go routine and the message delivery or sync subscription.
 const maxChanLen = 8192
 
 // The size of the bufio reader/writer on top of the socket.
@@ -275,7 +275,7 @@ func (nc *Conn) connect() error {
 	nc.subs = make(map[uint64]*Subscription)
 	nc.pongs = make([]chan bool, 0, 8)
 
-	nc.fch = make(chan bool, 1024) //FIXME, need to define
+	nc.fch = make(chan bool, 1024) //FIXME: need to define
 
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
@@ -331,7 +331,7 @@ func (nc *Conn) processExpectedInfo() error {
 }
 
 // Sends a protocol control message by queueing into the bufio writer
-// and kicking the flush go routine.  These writes are protected.
+// and kicking the flush Go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.lck.Lock()
 	defer nc.kickFlusher()
@@ -396,7 +396,7 @@ func (nc *Conn) readOp(c *control) error {
 		// FIXME: Be more specific here?
 		return errors.New("nats: Line too long")
 	}
-	// Do straight move to string rep
+	// Do straight move to string rep.
 	line := *(*string)(unsafe.Pointer(&b))
 	parseControl(line, c)
 	return nil
@@ -427,7 +427,7 @@ func (nc *Conn) processDisconnect() {
 	}
 }
 
-// This will process a disconnect when reconnect is allowed
+// This will process a disconnect when reconnect is allowed.
 func (nc *Conn) processReconnect() {
 	nc.lck.Lock()
 	if !nc.isClosed() {
@@ -441,7 +441,7 @@ func (nc *Conn) processReconnect() {
 
 		// FIXME(dlc) - We have an issue here if we have
 		// outstanding flush points (pongs) and they were not
-		// sent out, still in the pipe
+		// sent out, but are still in the pipe.
 
 		// Create a pending buffer to underpin the bufio Writer while
 		// we are reconnecting.
@@ -460,7 +460,7 @@ func (nc *Conn) processReconnect() {
 }
 
 // flushReconnectPending will push the pending items that were
-// gathered while we were in a RECONNECTING state to the socket
+// gathered while we were in a RECONNECTING state to the socket.
 func (nc *Conn) flushReconnectPendingItems() {
 	if nc.pending == nil {
 		return
@@ -486,7 +486,7 @@ func (nc *Conn) doReconnect() {
 		err := nc.createConn()
 		nc.err = nil
 
-		// Not yet connected, sleep and retry..
+		// Not yet connected, sleep and retry...
 		if err != nil {
 			nc.lck.Unlock()
 			time.Sleep(nc.Opts.ReconnectWait)
@@ -575,7 +575,7 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 		if !s.IsValid() || s.mcb == nil {
 			continue
 		}
-		// FIXME, race on compare?
+		// FIXME: race on compare?
 		s.delivered = atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
 			s.mcb(m)
@@ -617,7 +617,7 @@ func (nc *Conn) processMsg(args string) {
 		return
 	}
 
-	// Lock from here out.
+	// Lock from here on out.
 	nc.lck.Lock()
 	defer nc.lck.Unlock()
 
@@ -665,7 +665,7 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 	}
 }
 
-// flusher is a separate go routine that will process flush requests for the write
+// flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
@@ -706,8 +706,9 @@ func (nc *Conn) processPong() {
 	}
 }
 
-// processOK is a placeholder for processing ok messages.
+// processOK is a placeholder for processing OK messages.
 func processOK() {
+	// do nothing
 }
 
 // processInfo is used to parse the info messages sent
@@ -732,7 +733,7 @@ func (nc *Conn) processErr(e string) {
 }
 
 // kickFlusher will send a bool on a channel to kick the
-// flush go routine to flush data to the server.
+// flush Go routine to flush data to the server.
 func (nc *Conn) kickFlusher() {
 	if len(nc.fch) == 0 && nc.bw != nil {
 		nc.fch <- true
@@ -763,14 +764,14 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 }
 
 // Publish publishes the data argument to the given subject. The data
-// argument is left untouched and needs to be correctly interperted on
+// argument is left untouched and needs to be correctly interpreted on
 // the receiver.
 func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, data)
 }
 
 // PublishMsg publishes the Msg structure, which includes the
-// Subject, and optional Reply, and Optional Data fields.
+// Subject, an optional Reply and an optional Data field.
 func (nc *Conn) PublishMsg(m *Msg) error {
 	return nc.publish(m.Subject, m.Reply, m.Data)
 }
@@ -810,7 +811,7 @@ func NewInbox() string {
 	return fmt.Sprintf("%s%s", InboxPrefix, hex.EncodeToString(u))
 }
 
-// subscribe is the internal subscribe function that indicates interest in subjects.
+// subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
 	nc.lck.Lock()
 	defer nc.kickFlusher()
@@ -824,7 +825,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	sub.mch = make(chan *Msg, maxChanLen)
 
 	// If we have an async callback, start up a sub specific
-	// go routine to deliver the messages.
+	// Go routine to deliver the messages.
 	if cb != nil {
 		go nc.deliverMsgs(sub.mch)
 	}
@@ -839,40 +840,40 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
 
-	// We will send these for all subs when we reconnect, so
-	// we can suppress here.
+	// We will send these for all subs when we reconnect
+	// so that we can suppress here.
 	if !nc.isReconnecting() {
 		nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
 	}
 	return sub, nil
 }
 
-// Subscribe will express interest in a given subject. The subject
+// Subscribe will express interest in the given subject. The subject
 // can have wildcards (partial:*, full:>). Messages will be delivered
 // to the associated MsgHandler. If no MsgHandler is given, the
 // subscription is a synchronous subscription and can be polled via
-// Subscription.NextMsg()
+// Subscription.NextMsg().
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, cb)
 }
 
-// SubscribeSync is syntactic sugar for Subscribe(subject, nil)
+// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
 func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, nil)
 }
 
-// QueueSubscribe creates a queue subscriber on the given subject. All
-// subscribers with the same queue name will form the queue group, and
+// QueueSubscribe creates an asynchronous queue subscriber on the given subject. 
+// All subscribers with the same queue name will form the queue group and
 // only one member of the group will be selected to receive any given
-// message.
+// message asynchronously.
 func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, queue, cb)
 }
 
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
 // subject. All subscribers with the same queue name will form the queue
-// group, and only one member of the group will be selected to receive any
-// given message.
+// group and only one member of the group will be selected to receive any
+// given message synchronously.
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	return nc.subscribe(subj, queue, nil)
 }
@@ -909,8 +910,8 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		s.conn = nil
 		s.lck.Unlock()
 	}
-	// We will send these for all subs when we reconnect, so
-	// we can suppress here.
+	// We will send these for all subs when we reconnect
+	// so that we can suppress here.
 	if !nc.isReconnecting() {
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	}
@@ -926,7 +927,7 @@ func (s *Subscription) IsValid() bool {
 	return s.conn != nil
 }
 
-// Unsubscribe will remove interest in a given subject.
+// Unsubscribe will remove interest in the given subject.
 func (s *Subscription) Unsubscribe() error {
 	s.lck.Lock()
 	conn := s.conn
@@ -951,7 +952,7 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 	return conn.unsubscribe(s, max)
 }
 
-// NextMsg() will return the next message available to a synchronous subscriber,
+// NextMsg() will return the next message available to a synchronous subscriber
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
@@ -998,7 +999,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 
 // FIXME: This is a hack
 // removeFlushEntry is needed when we need to discard queued up responses
-// for our pings, as part of a flush call. This happens when we have a flush
+// for our pings as part of a flush call. This happens when we have a flush
 // call outstanding and we call close.
 func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	nc.lck.Lock()
@@ -1029,7 +1030,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 
-	ch := make(chan bool) // FIXME Inefficient?
+	ch := make(chan bool) // FIXME: Inefficient?
 	defer close(ch)
 
 	nc.pongs = append(nc.pongs, ch)
@@ -1100,14 +1101,14 @@ func (nc *Conn) Close() {
 	nc.status = CLOSED
 	nc.lck.Unlock()
 
-	// Kick the go routines so they fall out.
+	// Kick the Go routines so they fall out.
 	// fch will be closed on finalizer
 	nc.kickFlusher()
 
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
 
-	// Close synch subscriber channels and release any
+	// Close sync subscriber channels and release any
 	// pending NextMsg() calls.
 	for _, s := range nc.subs {
 		if s.mch != nil {

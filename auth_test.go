@@ -13,14 +13,14 @@ func TestAuthServerStart(t *testing.T) {
 func TestAuthConnectionFail(t *testing.T) {
 	_, err := Connect("nats://localhost:8222")
 	if err == nil {
-		t.Fatal("Should have gotten error trying to connect")
+		t.Fatal("Should have received an error while trying to connect")
 	}
 }
 
 func TestAuthConnectionSuccess(t *testing.T) {
 	nc, err := Connect("nats://derek:foo@localhost:8222")
 	if err != nil {
-		t.Fatal("Should have connected succesfully")
+		t.Fatal("Should have connected successfully")
 	}
 	nc.Close()
 }
