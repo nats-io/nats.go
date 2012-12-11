@@ -1,11 +1,13 @@
-
+- Name in Connect for gnatsd
+- Parser rewrite
 - Reconnect
 - Asynchronous error handling
 - SyncSubscriber and Next for EncodedConn
-- Fast Publisher
+- Fast Publisher?
 - Hide lock?
 - pooling for structs used? leaky bucket?
 - Timeout 0 should work as no timeout
+
 - [DONE] Easier encoder interface
 - [DONE] QueueSubscribeSync
 - [DONE] Make nats specific errors prefixed with 'nats:'
