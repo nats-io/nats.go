@@ -52,10 +52,10 @@ var DefaultOptions = Options{
 type Status int
 
 const (
-	DISCONNECTED Status = iota
-	CONNECTED    Status = iota
-	CLOSED       Status = iota
-	RECONNECTING Status = iota
+	DISCONNECTED = Status(iota)
+	CONNECTED
+	CLOSED
+	RECONNECTING
 )
 
 // ConnHandlers are used for asynchronous events such as
@@ -228,6 +228,7 @@ const (
 const maxChanLen = 8192
 
 // The size of the bufio reader/writer on top of the socket.
+//const defaultBufSize = 32768
 const defaultBufSize = 32768
 
 // The size of the bufio while we are reconnecting
@@ -862,7 +863,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, nil)
 }
 
-// QueueSubscribe creates an asynchronous queue subscriber on the given subject. 
+// QueueSubscribe creates an asynchronous queue subscriber on the given subject.
 // All subscribers with the same queue name will form the queue group and
 // only one member of the group will be selected to receive any given
 // message asynchronously.
