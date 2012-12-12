@@ -99,6 +99,7 @@ type Conn struct {
 	subs    map[uint64]*Subscription
 	mch     chan *Msg
 	pongs   []chan bool
+	scratch [512]byte
 	status  Status
 	err     error
 }
@@ -203,6 +204,7 @@ const (
 	_CRLF_  = "\r\n"
 	_EMPTY_ = ""
 	_SPC_   = " "
+	_PUB_P_ = "PUB "
 )
 
 const (
@@ -277,6 +279,10 @@ func (nc *Conn) connect() error {
 	nc.pongs = make([]chan bool, 0, 8)
 
 	nc.fch = make(chan bool, 1024) //FIXME: need to define
+
+	// Setup scratch outbound buffer for PUB
+	pub := nc.scratch[:len(_PUB_P_)]
+	copy(pub, _PUB_P_)
 
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
@@ -634,7 +640,7 @@ func (nc *Conn) processMsg(args string) {
 	sub.lck.Lock()
 	defer sub.lck.Unlock()
 
-	if (sub.max > 0 && sub.msgs > sub.max) {
+	if sub.max > 0 && sub.msgs > sub.max {
 		return
 	}
 
@@ -741,19 +747,41 @@ func (nc *Conn) kickFlusher() {
 	}
 }
 
+// Used for handrolled itoa
+const digits = "0123456789"
+
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queueing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.lck.Lock()
-	defer nc.kickFlusher()
-	defer nc.lck.Unlock()
-	if nc.isClosed() {
+	if nc.status == CLOSED {
+		nc.lck.Unlock()
 		return ErrConnectionClosed
 	}
 
-	fmt.Fprintf(nc.bw, pubProto, subj, reply, len(data))
+	msgh := nc.scratch[:len(_PUB_P_)]
+	msgh = append(msgh, subj...)
+	msgh = append(msgh, ' ')
+	if reply != "" {
+		msgh = append(msgh, reply...)
+		msgh = append(msgh, ' ')
+	}
+
+	// We could be smarter here, but simple loop is ok,
+	// just avoid strconv in fast path
+	var b [12]byte
+	var i = len(b)
+	for l := len(data); l > 0; l /= 10 {
+		i -= 1
+		b[i] = digits[l%10]
+	}
+	msgh = append(msgh, b[i:]...)
+	msgh = append(msgh, _CRLF_...)
+
+	nc.bw.Write(msgh)
 	nc.bw.Write(data)
+
 	if _, nc.err = nc.bw.WriteString(_CRLF_); nc.err != nil {
 		return nc.err
 	}
@@ -761,6 +789,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.OutMsgs += 1
 	nc.OutBytes += uint64(len(data))
 
+	nc.kickFlusher()
+	nc.lck.Unlock()
 	return nil
 }
 
@@ -830,13 +860,6 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	if cb != nil {
 		go nc.deliverMsgs(sub.mch)
 	}
-
-/*
-	if cb == nil {
-		// Indicates a sync subscription
-		sub.mch = make(chan *Msg, maxChanLen)
-	}
-*/
 
 	sub.sid = atomic.AddUint64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
