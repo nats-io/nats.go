@@ -341,9 +341,9 @@ func (nc *Conn) processExpectedInfo() error {
 // and kicking the flush Go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.lck.Lock()
-	defer nc.kickFlusher()
-	defer nc.lck.Unlock()
 	nc.bw.WriteString(proto)
+	nc.kickFlusher()
+	nc.lck.Unlock()
 }
 
 // Send a connect protocol message to the server, issuing user/password if
@@ -579,7 +579,8 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 			break
 		}
 		s := m.Sub
-		if !s.IsValid() || s.mcb == nil {
+		// FIXME, lock?
+		if s.conn == nil || s.mcb == nil {
 			continue
 		}
 		// FIXME: race on compare?
@@ -626,7 +627,6 @@ func (nc *Conn) processMsg(args string) {
 
 	// Lock from here on out.
 	nc.lck.Lock()
-	defer nc.lck.Unlock()
 
 	// Stats
 	nc.InMsgs += 1
@@ -634,13 +634,15 @@ func (nc *Conn) processMsg(args string) {
 	sub := nc.subs[sid]
 
 	if sub == nil {
+		nc.lck.Unlock()
 		return
 	}
 
 	sub.lck.Lock()
-	defer sub.lck.Unlock()
 
 	if sub.max > 0 && sub.msgs > sub.max {
+		sub.lck.Unlock()
+		nc.lck.Unlock()
 		return
 	}
 
@@ -660,6 +662,8 @@ func (nc *Conn) processMsg(args string) {
 			sub.mch <- m
 		}
 	}
+	sub.lck.Unlock()
+	nc.lck.Unlock()
 }
 
 // processSlowConsumer will set SlowConsumer state and fire the
@@ -760,6 +764,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return ErrConnectionClosed
 	}
 
+	if nc.err != nil {
+		nc.lck.Unlock()
+		return nc.err
+	}
+
 	msgh := nc.scratch[:len(_PUB_P_)]
 	msgh = append(msgh, subj...)
 	msgh = append(msgh, ' ')
@@ -779,10 +788,18 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	msgh = append(msgh, b[i:]...)
 	msgh = append(msgh, _CRLF_...)
 
-	nc.bw.Write(msgh)
-	nc.bw.Write(data)
+	// FIXME, do deadlines here
+	if _, nc.err = nc.bw.Write(msgh); nc.err != nil {
+		nc.lck.Unlock()
+		return nc.err
+	}
+	if _, nc.err = nc.bw.Write(data); nc.err != nil {
+		nc.lck.Unlock()
+		return nc.err
+	}
 
 	if _, nc.err = nc.bw.WriteString(_CRLF_); nc.err != nil {
+		nc.lck.Unlock()
 		return nc.err
 	}
 
@@ -817,18 +834,19 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
-func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
+func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
 	s, err := nc.SubscribeSync(inbox)
 	if err != nil {
 		return nil, err
 	}
 	s.AutoUnsubscribe(1)
-	defer s.Unsubscribe()
-	if err := nc.PublishRequest(subj, inbox, data); err != nil {
-		return nil, err
+	err = nc.PublishRequest(subj, inbox, data)
+	if err == nil {
+		m, err = s.NextMsg(timeout)
 	}
-	return s.NextMsg(timeout)
+	s.Unsubscribe()
+	return
 }
 
 const InboxPrefix = "_INBOX."
@@ -845,6 +863,7 @@ func NewInbox() string {
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
 	nc.lck.Lock()
+	// ok here, but defer is expensive
 	defer nc.kickFlusher()
 	defer nc.lck.Unlock()
 
@@ -906,6 +925,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	nc.lck.Lock()
+	// ok here, but defer is expensive
 	defer nc.kickFlusher()
 	defer nc.lck.Unlock()
 
