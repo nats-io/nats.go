@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.68"
+	Version              = "0.72"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -82,6 +82,24 @@ type Options struct {
 	AsyncErrorCB   ErrHandler
 }
 
+const (
+	// The size of the buffered channel used between the socket
+	// Go routine and the message delivery or sync subscription.
+	maxChanLen = 8192
+
+	// Scratch storage for assembling protocol headers
+	scratchSize = 512
+
+	// The size of the bufio reader/writer on top of the socket.
+	defaultBufSize = 32768
+
+	// The size of the bufio while we are reconnecting
+	defaultPendingSize = 1024 * 1024
+
+	// The buffered size of the flush "kick" channel
+	flushChanSize = 1024
+)
+
 // A Conn represents a bare connection to a nats-server. It will send and receive
 // []byte payloads.
 type Conn struct {
@@ -91,23 +109,24 @@ type Conn struct {
 	url     *url.URL
 	conn    net.Conn
 	bw      *bufio.Writer
-	br      *bufio.Reader
+//	br      *bufio.Reader
 	pending *bytes.Buffer
 	fch     chan bool
 	info    serverInfo
-	ssid    uint64
-	subs    map[uint64]*Subscription
+	ssid    int64
+	subs    map[int64]*Subscription
 	mch     chan *Msg
 	pongs   []chan bool
-	scratch [512]byte
+	scratch [scratchSize]byte
 	status  Status
 	err     error
+	ps      parseState
 }
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
 	mu  sync.Mutex
-	sid uint64
+	sid int64
 
 	// Subject that represents this subscription. This can be different
 	// than the received subject inside a Msg if this is a wildcard.
@@ -225,17 +244,6 @@ const (
 	unsubProto = "UNSUB %d %s" + _CRLF_
 )
 
-// The size of the buffered channel used between the socket
-// Go routine and the message delivery or sync subscription.
-const maxChanLen = 8192
-
-// The size of the bufio reader/writer on top of the socket.
-//const defaultBufSize = 32768
-const defaultBufSize = 32768
-
-// The size of the bufio while we are reconnecting
-const defaultPendingSize = 1024 * 1024
-
 // createConn will connect to the server and wrap the appropriate
 // bufio structures. It will do the right thing when an existing
 // connection is in place.
@@ -245,12 +253,15 @@ func (nc *Conn) createConn() error {
 	if nc.err != nil {
 		return nc.err
 	}
+	if ip, ok := nc.conn.(*net.TCPConn); ok {
+		ip.SetReadBuffer(defaultBufSize)
+	}
+
 	if nc.pending != nil && nc.bw != nil {
 		// Move to pending buffer.
 		nc.bw.Flush()
 	}
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
-	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 	return nil
 }
 
@@ -258,7 +269,6 @@ func (nc *Conn) createConn() error {
 func (nc *Conn) makeTLSConn() {
 	nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
-	nc.br = bufio.NewReaderSize(nc.conn, defaultBufSize)
 }
 
 // spinUpSocketWatchers will launch the Go routines
@@ -270,15 +280,15 @@ func (nc *Conn) spinUpSocketWatchers() {
 
 // Main connect function. Will connect to the nats-server
 func (nc *Conn) connect() error {
-
+	// Create actual socket connection
 	if err := nc.createConn(); err != nil {
 		return err
 	}
 
-	nc.subs = make(map[uint64]*Subscription)
+	nc.subs = make(map[int64]*Subscription)
 	nc.pongs = make([]chan bool, 0, 8)
 
-	nc.fch = make(chan bool, 1024) //FIXME: need to define
+	nc.fch = make(chan bool, flushChanSize)
 
 	// Setup scratch outbound buffer for PUB
 	pub := nc.scratch[:len(_PUB_P_)]
@@ -324,13 +334,13 @@ func (nc *Conn) processExpectedInfo() error {
 
 	c := &control{}
 	if err := nc.readOp(c); err != nil {
-		nc.processReadOpErr(err)
+		nc.processOpErr(err)
 		return err
 	}
 	// The nats protocol should send INFO first always.
 	if c.op != _INFO_OP_ {
 		err := errors.New("nats: Protocol exception, INFO not received")
-		nc.processReadOpErr(err)
+		nc.processOpErr(err)
 		return err
 	}
 	nc.processInfo(c.args)
@@ -395,7 +405,8 @@ func (nc *Conn) readOp(c *control) error {
 	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
-	b, pre, err := nc.br.ReadLine()
+	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
+	b, pre, err := br.ReadLine()
 	if err != nil {
 		return err
 	}
@@ -530,8 +541,8 @@ func (nc *Conn) doReconnect() {
 	}
 }
 
-// processReadOpErr handles errors from readOp.
-func (nc *Conn) processReadOpErr(err error) {
+// processOpErr handles errors from reading or parsing the protocol.
+func (nc *Conn) processOpErr(err error) {
 	if nc.isClosed() || nc.isReconnecting() {
 		return
 	}
@@ -544,28 +555,22 @@ func (nc *Conn) processReadOpErr(err error) {
 	}
 }
 
-// readLoop() will sit on the buffered socket reading and processing the protocol
-// from the server. It will dispatch appropriately based on the op type.
+
+// readLoop() will sit on the socket reading and processing the
+// protocol from the server. It will dispatch appropriately based
+// on the op type.
 func (nc *Conn) readLoop() {
-	c := &control{}
+	b := make([]byte, defaultBufSize)
+
 	for !nc.isClosed() && !nc.isReconnecting() {
-		if err := nc.readOp(c); err != nil {
-			nc.processReadOpErr(err)
+		n, err := nc.conn.Read(b)
+		if err != nil {
+			nc.processOpErr(err) // FIXME.
 			break
 		}
-		switch c.op {
-		case _MSG_OP_:
-			nc.processMsg(c.args)
-		case _OK_OP_:
-			processOK()
-		case _PING_OP_:
-			nc.processPing()
-		case _PONG_OP_:
-			nc.processPong()
-		case _INFO_OP_:
-			nc.processInfo(c.args)
-		case _ERR_OP_:
-			nc.processErr(c.args)
+		if err := nc.parse(b[:n]); err != nil {
+			nc.processOpErr(err)
+			break
 		}
 	}
 }
@@ -591,48 +596,19 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 	}
 }
 
-// processMsg is called by readLoop and will parse a message and place it on
-// the appropriate channel for processing. Asynchronous subscribers will all
-// share the channel that is processed by deliverMsgs. Sync subscribers have
-// their own channel. If either channel is full, the connection is considered
-// a slow subscriber.
-func (nc *Conn) processMsg(args string) {
-	var subj, reply string
-	var sid uint64
-	var n, blen int
-	var err error
-
-	num := strings.Count(args, _SPC_) + 1
-
-	switch num {
-	case 3:
-		n, err = fmt.Sscanf(args, "%s %d %d", &subj, &sid, &blen)
-	case 4:
-		n, err = fmt.Sscanf(args, "%s %d %s %d", &subj, &sid, &reply, &blen)
-	}
-	if err != nil || n != num {
-		nc.err = errors.New("nats: Parse exception processing msg")
-		nc.Close()
-		return
-	}
-
-	// Grab payload here.
-	buf := make([]byte, blen)
-	n, err = io.ReadFull(nc.br, buf)
-	if err != nil || n != blen {
-		nc.err = err
-		nc.Close() // FIXME? Should we just disconnect and let reconnect logic win?
-		return
-	}
-
+// processMsg is called by parse and will place the msg on the
+// appropriate channel for processing. All subscribers have their
+// their own channel. If the channel is full, the connection is
+// considered a slow subscriber.
+func (nc *Conn) processMsg(msg []byte) {
 	// Lock from here on out.
 	nc.mu.Lock()
 
 	// Stats
 	nc.InMsgs += 1
-	nc.InBytes += uint64(blen)
-	sub := nc.subs[sid]
+	nc.InBytes += uint64(len(msg))
 
+	sub := nc.subs[nc.ps.ma.sid]
 	if sub == nil {
 		nc.mu.Unlock()
 		return
@@ -648,10 +624,12 @@ func (nc *Conn) processMsg(args string) {
 
 	// Sub internal stats
 	sub.msgs += 1
-	sub.bytes += uint64(blen)
+	sub.bytes += uint64(len(msg))
 
 	// FIXME(dlc): Should we recycle these containers?
-	m := &Msg{Data: buf, Subject: subj, Reply: reply, Sub: sub}
+	subj := *(*string)(unsafe.Pointer(&nc.ps.ma.subject))
+	reply := *(*string)(unsafe.Pointer(&nc.ps.ma.reply))
+	m := &Msg{Data: msg, Subject: subj, Reply: reply, Sub: sub}
 
 	if sub.mch != nil {
 		if len(sub.mch) >= maxChanLen {
@@ -708,9 +686,13 @@ func (nc *Conn) processPing() {
 // processPong is used to process responses to the client's ping
 // messages. We use pings for the flush mechanism as well.
 func (nc *Conn) processPong() {
+	var ch chan bool
+
 	nc.mu.Lock()
-	ch := nc.pongs[0]
-	nc.pongs = nc.pongs[1:]
+	if len(nc.pongs) > 0 {
+		ch = nc.pongs[0]
+		nc.pongs = nc.pongs[1:]
+	}
 	nc.mu.Unlock()
 	if ch != nil {
 		ch <- true
@@ -718,7 +700,7 @@ func (nc *Conn) processPong() {
 }
 
 // processOK is a placeholder for processing OK messages.
-func processOK() {
+func (nc *Conn) processOK() {
 	// do nothing
 }
 
@@ -880,7 +862,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 		go nc.deliverMsgs(sub.mch)
 	}
 
-	sub.sid = atomic.AddUint64(&nc.ssid, 1)
+	sub.sid = atomic.AddInt64(&nc.ssid, 1)
 	nc.subs[sub.sid] = sub
 
 	// We will send these for all subs when we reconnect
