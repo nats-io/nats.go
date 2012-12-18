@@ -626,10 +626,16 @@ func (nc *Conn) processMsg(msg []byte) {
 	sub.msgs += 1
 	sub.bytes += uint64(len(msg))
 
-	// FIXME(dlc): Should we recycle these containers?
+	// FIXME(dlc), if the callback holds onto these could be not good.
 	subj := *(*string)(unsafe.Pointer(&nc.ps.ma.subject))
 	reply := *(*string)(unsafe.Pointer(&nc.ps.ma.reply))
-	m := &Msg{Data: msg, Subject: subj, Reply: reply, Sub: sub}
+
+	// FIXME(dlc): Need to copy, should/can do COW?
+	newMsg := make([]byte, len(msg))
+	copy(newMsg, msg)
+
+	// FIXME(dlc): Should we recycle these containers?
+	m := &Msg{Data: newMsg, Subject: subj, Reply: reply, Sub: sub}
 
 	if sub.mch != nil {
 		if len(sub.mch) >= maxChanLen {
