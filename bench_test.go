@@ -15,7 +15,6 @@ func BenchmarkPublishSpeed(b *testing.B) {
 	}
 	defer nc.Close()
 	b.StartTimer()
-	b.SetBytes(1)
 
 	msg := []byte("Hello World")
 
@@ -42,7 +41,6 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 
 	ch := make(chan bool)
 	b.StartTimer()
-	b.SetBytes(2)
 
 	nc.Opts.AsyncErrorCB = func(nc *Conn, s *Subscription, err error) {
 		b.Fatalf("Error : %v\n", err)
