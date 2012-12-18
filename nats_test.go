@@ -136,9 +136,6 @@ func TestFlush(t *testing.T) {
 	if nb := nc.bw.Buffered(); nb > 0 {
 		t.Fatalf("Outbound buffer not empty: %d bytes\n", nb)
 	}
-	if nb := nc.br.Buffered(); nb > 0 {
-		t.Fatalf("Inbound buffer not empty: %d bytes\n", nb)
-	}
 }
 
 func TestQueueSubscriber(t *testing.T) {
