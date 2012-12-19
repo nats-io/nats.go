@@ -627,7 +627,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	sub.msgs += 1
 	sub.bytes += uint64(len(msg))
 
-	// FIXME(dlc), put these in with msg?
+	// Copy them into string
 	subj := string(nc.ps.ma.subject)
 	reply := string(nc.ps.ma.reply)
 
