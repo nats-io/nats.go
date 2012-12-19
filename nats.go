@@ -456,9 +456,6 @@ func (nc *Conn) processReconnect() {
 		nc.conn = nil
 		nc.kickFlusher()
 
-		// Dump old parseState
-		nc.ps = parseState{}
-
 		// FIXME(dlc) - We have an issue here if we have
 		// outstanding flush points (pongs) and they were not
 		// sent out, but are still in the pipe.
@@ -574,6 +571,8 @@ func (nc *Conn) readLoop() {
 			break
 		}
 	}
+	// Clear the parseState here..
+	nc.ps = parseState{}
 }
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
