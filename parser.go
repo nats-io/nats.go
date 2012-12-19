@@ -52,6 +52,8 @@ const (
 	OP_MSG
 	OP_MSG_SPC
 	MSG_ARG
+	MSG_PAYLOAD
+	MSG_END
 	OP_P
 	OP_PI
 	OP_PIN
@@ -59,8 +61,6 @@ const (
 	OP_PO
 	OP_PON
 	OP_PONG
-	MSG_PAYLOAD
-	MSG_END
 )
 
 // parse is the fast protocol parser engine.
@@ -261,7 +261,7 @@ func (nc *Conn) parse(buf []byte) error {
 			goto parseErr
 		}
 	}
-	// Check for split buffer scenarios for SUB and UNSUB and PUB
+	// Check for split buffer scenarios
 	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG) && nc.ps.argBuf == nil {
 		nc.ps.argBuf = nc.ps.scratch[:0]
 		nc.ps.argBuf = append(nc.ps.argBuf, buf[nc.ps.as:(i+1)-nc.ps.drop]...)
