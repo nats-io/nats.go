@@ -109,7 +109,6 @@ type Conn struct {
 	url     *url.URL
 	conn    net.Conn
 	bw      *bufio.Writer
-//	br      *bufio.Reader
 	pending *bytes.Buffer
 	fch     chan bool
 	info    serverInfo
@@ -626,9 +625,9 @@ func (nc *Conn) processMsg(msg []byte) {
 	sub.msgs += 1
 	sub.bytes += uint64(len(msg))
 
-	// FIXME(dlc), if the callback holds onto these could be not good.
-	subj := *(*string)(unsafe.Pointer(&nc.ps.ma.subject))
-	reply := *(*string)(unsafe.Pointer(&nc.ps.ma.reply))
+	// FIXME(dlc), put these in with msg?
+	subj := string(nc.ps.ma.subject)
+	reply := string(nc.ps.ma.reply)
 
 	// FIXME(dlc): Need to copy, should/can do COW?
 	newMsg := make([]byte, len(msg))
