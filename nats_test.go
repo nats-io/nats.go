@@ -271,6 +271,22 @@ func TestRequest(t *testing.T) {
 	}
 }
 
+func TestRequestNoBody(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *Msg) {
+		nc.Publish(m.Reply, response)
+	})
+	msg, err := nc.Request("foo", nil, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Received an error on Request test: %s", err)
+	}
+	if !bytes.Equal(msg.Data, response) {
+		t.Fatalf("Received invalid response")
+	}
+}
+
 func TestFlushInCB(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()

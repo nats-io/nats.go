@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version              = "0.72"
+	Version              = "0.74"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -767,12 +767,19 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// We could be smarter here, but simple loop is ok,
 	// just avoid strconv in fast path
+	// FIXME(dlc) - Find a better way here.
 	var b [12]byte
 	var i = len(b)
-	for l := len(data); l > 0; l /= 10 {
+	if len(data) > 0 {
+		for l := len(data); l > 0; l /= 10 {
+			i -= 1
+			b[i] = digits[l%10]
+		}
+	} else {
 		i -= 1
-		b[i] = digits[l%10]
+		b[i] = digits[0]
 	}
+
 	msgh = append(msgh, b[i:]...)
 	msgh = append(msgh, _CRLF_...)
 
