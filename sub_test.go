@@ -127,7 +127,7 @@ func TestSlowSubscriber(t *testing.T) {
 	nc.FlushTimeout(timeout)
 	elapsed := time.Since(start)
 	if elapsed >= timeout {
-		t.Fatalf("Flush did not return before timeout")
+		t.Fatalf("Flush did not return before timeout: %d > %d", elapsed, timeout)
 	}
 	// Make sure NextMsg returns an error to indicate slow consumer
 	_, err := sub.NextMsg(100 * time.Millisecond)
