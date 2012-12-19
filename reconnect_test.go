@@ -37,9 +37,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.ClosedCB = func(_ *Conn) {
-		println("INSIDE CLOSED CB in TEST")
 		ch <- true
-		println("Exiting CB")
 	}
 	nc, err := opts.Connect()
 	if err != nil {
