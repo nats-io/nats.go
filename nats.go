@@ -40,6 +40,7 @@ var (
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
 	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
+	ErrAuthorization      = errors.New("nats: Authorization Error")
 )
 
 var DefaultOptions = Options{
@@ -456,6 +457,8 @@ func (nc *Conn) processReconnect() {
 		nc.conn = nil
 		nc.kickFlusher()
 
+		// FIXME(dlc) - Make sure to fix the parseState
+
 		// FIXME(dlc) - We have an issue here if we have
 		// outstanding flush points (pongs) and they were not
 		// sent out, but are still in the pipe.
@@ -767,6 +770,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	// We could be smarter here, but simple loop is ok,
 	// just avoid strconv in fast path
 	// FIXME(dlc) - Find a better way here.
+	// msgh = strconv.AppendInt(msgh, int64(len(data)), 10)
+
 	var b [12]byte
 	var i = len(b)
 	if len(data) > 0 {
