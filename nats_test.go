@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"math"
+	"net"
 	"regexp"
 	"runtime"
 	"sync"
@@ -13,7 +14,7 @@ import (
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func wait(ch chan bool) error {
-	return waitTime(ch, 200 * time.Millisecond)
+	return waitTime(ch, 200*time.Millisecond)
 }
 
 func waitTime(ch chan bool, timeout time.Duration) error {
@@ -50,6 +51,20 @@ func TestMultipleClose(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestBadOptionTimeoutConnect(t *testing.T) {
+	opts := DefaultOptions
+	opts.Timeout = -1
+	opts.Url = "nats://localhost:4222"
+
+	_, err := opts.Connect()
+	if err == nil {
+		t.Fatal("Expected an error")
+	}
+	if ne, ok := err.(net.Error); !ok || (ok && !ne.Timeout()) {
+		t.Fatal("Expected a net.Timeout error")
+	}
 }
 
 func TestSimplePublish(t *testing.T) {

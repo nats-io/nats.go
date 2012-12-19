@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 )
+
 func startReconnectServer(t *testing.T) *server {
 	return startServer(t, 22222, "")
 }
@@ -99,7 +100,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	defer ts.stopServer()
 
 	if err := ec.FlushTimeout(5 * time.Second); err != nil {
-		t.Fatal("Error on Flush: %v", err)
+		t.Fatalf("Error on Flush: %v", err)
 	}
 
 	if e := wait(ch); e != nil {
@@ -182,7 +183,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	// server is restarted here..
 	// wait for reconnect
-	if e := waitTime(rch, 2 * time.Second); e != nil {
+	if e := waitTime(rch, 2*time.Second); e != nil {
 		t.Fatal("Did not receive a reconnect callback message")
 	}
 
@@ -214,4 +215,60 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	if !rcbCalled {
 		t.Fatal("Did not have ReconnectedCB called")
 	}
+}
+
+func TestParseStateReconnectFunctionality(t *testing.T) {
+	ts := startReconnectServer(t)
+	ch := make(chan bool)
+
+	opts := reconnectOpts
+	nc, _ := opts.Connect()
+	ec, err := NewEncodedConn(nc, "default")
+	if err != nil {
+		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	}
+
+	testString := "bar"
+	ec.Subscribe("foo", func(s string) {
+		if s != testString {
+			t.Fatal("String doesn't match")
+		}
+		ch <- true
+	})
+	ec.Flush()
+
+	// Simulate partialState, this needs to be cleared
+	nc.ps.state = OP_PON
+
+	ts.stopServer()
+	// server is stopped here...
+
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dch <- true
+	}
+	wait(dch)
+
+	if err := ec.Publish("foo", testString); err != nil {
+		t.Fatalf("Failed to publish message: %v\n", err)
+	}
+
+	ts = startReconnectServer(t)
+	defer ts.stopServer()
+
+	if err := ec.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("Error on Flush: %v", err)
+	}
+
+	if e := wait(ch); e != nil {
+		t.Fatal("Did not receive our message")
+	}
+
+	expectedReconnectCount := uint64(1)
+	if ec.Conn.Stats.Reconnects != expectedReconnectCount {
+		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
+			ec.Conn.Stats.Reconnects, expectedReconnectCount)
+	}
+
+	nc.Close()
 }

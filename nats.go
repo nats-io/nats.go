@@ -248,7 +248,6 @@ const (
 // bufio structures. It will do the right thing when an existing
 // connection is in place.
 func (nc *Conn) createConn() error {
-	// FIXME: Check for 0 Timeout
 	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.Opts.Timeout)
 	if nc.err != nil {
 		return nc.err
@@ -457,7 +456,8 @@ func (nc *Conn) processReconnect() {
 		nc.conn = nil
 		nc.kickFlusher()
 
-		// FIXME(dlc) - Make sure to fix the parseState
+		// Dump old parseState
+		nc.ps = parseState{}
 
 		// FIXME(dlc) - We have an issue here if we have
 		// outstanding flush points (pongs) and they were not
@@ -465,7 +465,6 @@ func (nc *Conn) processReconnect() {
 
 		// Create a pending buffer to underpin the bufio Writer while
 		// we are reconnecting.
-
 		nc.pending = &bytes.Buffer{}
 		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
 		go nc.doReconnect()
