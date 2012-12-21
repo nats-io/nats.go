@@ -3,7 +3,7 @@ language: go
 before_script:
   - gem -v
   - ruby -v
-  - gem install nats
+  - gem install nats --pre
   - which nats-server
   - nats-server -v
   - go version
