@@ -464,6 +464,7 @@ func (nc *Conn) processReconnect() {
 		// we are reconnecting.
 		nc.pending = &bytes.Buffer{}
 		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
+		nc.err = nil
 		go nc.doReconnect()
 	}
 	nc.mu.Unlock()
@@ -490,22 +491,27 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
-	// Don't jump right on
-	time.Sleep(10 * time.Millisecond)
 
 	for i := 0; i < int(nc.Opts.MaxReconnect); i++ {
+		// Sleep appropriate amount of time before the
+		// connection attempt
+		time.Sleep(nc.Opts.ReconnectWait)
+
+		nc.mu.Lock()
+
+		// Check if we have been closed first.
 		if nc.isClosed() {
+			nc.mu.Unlock()
 			break
 		}
-		// Try to create a new connection
-		nc.mu.Lock()
-		err := nc.createConn()
-		nc.err = nil
 
-		// Not yet connected, sleep and retry...
+		// Try to create a new connection
+		err := nc.createConn()
+
+		// Not yet connected, retry...
 		if err != nil {
+			nc.err = nil
 			nc.mu.Unlock()
-			time.Sleep(nc.Opts.ReconnectWait)
 			continue
 		}
 
@@ -531,7 +537,8 @@ func (nc *Conn) doReconnect() {
 		// Make sure to flush everything
 		nc.Flush()
 
-		// Call reconnectedCB if appropriate
+		// Call reconnectedCB if appropriate. We are already in a
+		// separate Go routine here, so ok to call direct.
 		if nc.Opts.ReconnectedCB != nil {
 			nc.Opts.ReconnectedCB(nc)
 		}

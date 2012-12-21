@@ -36,6 +36,9 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	opts := DefaultOptions
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
+	opts.MaxReconnect = 2
+	opts.ReconnectWait = 1 * time.Second
+
 	opts.ClosedCB = func(_ *Conn) {
 		ch <- true
 	}
@@ -43,14 +46,21 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
-
 	ts.stopServer()
+
+	// We want wait to timeout here, and the connection
+	// should not trigger the Close CB.
 	if e := wait(ch); e == nil {
 		t.Fatal("Triggered ClosedCB incorrectly")
 	}
+	if !nc.isReconnecting() {
+		t.Fatal("Expected to be in a reconnecting state")
+	}
+
 	// clear the CloseCB since ch will block
 	nc.Opts.ClosedCB = nil
 	nc.Close()
+
 }
 
 var reconnectOpts = Options{
