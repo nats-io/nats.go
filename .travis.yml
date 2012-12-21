@@ -1,6 +1,8 @@
 language: go
 
 before_script:
+  - gem -v
+  - ruby -v
   - sudo gem install nats
   - which nats-server
   - nats-server -v
