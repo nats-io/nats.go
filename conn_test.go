@@ -43,7 +43,7 @@ func startServer(t tLogger, port uint, other string) *server {
 		c, err := net.Dial("tcp", addr)
 		if err != nil {
 			time.Sleep(50 * time.Millisecond)
-			if time.Since(start) > (5 * time.Second) {
+			if time.Since(start) > (10 * time.Second) {
 				t.Fatalf("Timed out trying to connect to %s", natsServer)
 				return nil
 			}
