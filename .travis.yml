@@ -1,7 +1,7 @@
 language: go
 
 before_script:
-  - sudo gem install nats --pre
+  - sudo gem install nats
   - which nats-server
   - nats-server -v
   - go version
