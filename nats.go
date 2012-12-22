@@ -70,6 +70,7 @@ type ErrHandler func(*Conn, *Subscription, error)
 // Options can be used to create a customized Connection.
 type Options struct {
 	Url            string
+	Name           string
 	Verbose        bool
 	Pedantic       bool
 	Secure         bool
@@ -181,6 +182,7 @@ type connectInfo struct {
 	User     string `json:"user,omitempty"`
 	Pass     string `json:"pass,omitempty"`
 	Ssl      bool   `json:"ssl_required"`
+	Name     string `json:"name"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -365,7 +367,7 @@ func (nc *Conn) connectProto() (string, error) {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure}
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure, o.Name}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		nc.err = errors.New("nats: Connection message, json parse failed")
@@ -559,7 +561,6 @@ func (nc *Conn) processOpErr(err error) {
 		nc.Close()
 	}
 }
-
 
 // readLoop() will sit on the socket reading and processing the
 // protocol from the server. It will dispatch appropriately based
