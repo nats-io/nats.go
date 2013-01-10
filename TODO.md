@@ -1,0 +1,20 @@
+
+- [] SyncSubscriber and Next for EncodedConn
+- [] Fast Publisher?
+- [] pooling for structs used? leaky bucket?
+- [] Timeout 0 should work as no timeout
+- [X] Name in Connect for gnatsd
+- [X] Asynchronous error handling
+- [X] Parser rewrite
+- [X] Reconnect
+- [X] Hide Lock
+- [X] Easier encoder interface
+- [X] QueueSubscribeSync
+- [X] Make nats specific errors prefixed with 'nats:'
+- [X] API test for closed connection
+- [X] TLS/SSL
+- [X] Stats collection
+- [X] Disconnect detection
+- [X] Optimized Publish (coalescing)
+- [X] Do Examples via Go style
+- [X] Standardized Errors
