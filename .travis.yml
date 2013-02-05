@@ -7,3 +7,5 @@ before_script:
   - which nats-server
   - nats-server -v
   - go version
+  - mkdir -p $GOPATH/src/github.com/apcera
+  - ln -s /home/travis/build/apcera/nats nats
