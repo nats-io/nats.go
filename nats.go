@@ -389,7 +389,7 @@ func (nc *Conn) sendConnect() error {
 	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
 		nc.err = err
 		return nc.err
-	} else if nc.isClosed() {
+	} else if nc.IsClosed() {
 		return nc.err
 	}
 	nc.status = CONNECTED
@@ -403,7 +403,7 @@ type control struct {
 
 // Read a control line and process the intended op.
 func (nc *Conn) readOp(c *control) error {
-	if nc.isClosed() {
+	if nc.IsClosed() {
 		return ErrConnectionClosed
 	}
 	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
@@ -449,7 +449,7 @@ func (nc *Conn) processDisconnect() {
 // This will process a disconnect when reconnect is allowed.
 func (nc *Conn) processReconnect() {
 	nc.mu.Lock()
-	if !nc.isClosed() {
+	if !nc.IsClosed() {
 		nc.status = RECONNECTING
 		if nc.conn != nil {
 			nc.bw.Flush()
@@ -502,7 +502,7 @@ func (nc *Conn) doReconnect() {
 		nc.mu.Lock()
 
 		// Check if we have been closed first.
-		if nc.isClosed() {
+		if nc.IsClosed() {
 			nc.mu.Unlock()
 			break
 		}
@@ -550,7 +550,7 @@ func (nc *Conn) doReconnect() {
 
 // processOpErr handles errors from reading or parsing the protocol.
 func (nc *Conn) processOpErr(err error) {
-	if nc.isClosed() || nc.isReconnecting() {
+	if nc.IsClosed() || nc.isReconnecting() {
 		return
 	}
 	if nc.Opts.AllowReconnect {
@@ -568,7 +568,7 @@ func (nc *Conn) processOpErr(err error) {
 func (nc *Conn) readLoop() {
 	b := make([]byte, defaultBufSize)
 
-	for !nc.isClosed() && !nc.isReconnecting() {
+	for !nc.IsClosed() && !nc.isReconnecting() {
 		n, err := nc.conn.Read(b)
 		if err != nil {
 			nc.processOpErr(err) // FIXME.
@@ -586,7 +586,7 @@ func (nc *Conn) readLoop() {
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
-	for !nc.isClosed() {
+	for !nc.IsClosed() {
 		m, ok := <-ch
 		if !ok {
 			break
@@ -674,14 +674,14 @@ func (nc *Conn) flusher() {
 	var b int
 	var ok bool
 
-	for !nc.isClosed() && !nc.isReconnecting() {
+	for !nc.IsClosed() && !nc.isReconnecting() {
 		_, ok = <-nc.fch
 		if !ok {
 			return
 		}
 		nc.mu.Lock()
 		// Check for closed or reconnecting
-		if !nc.isClosed() && !nc.isReconnecting() {
+		if !nc.IsClosed() && !nc.isReconnecting() {
 			b = nc.bw.Buffered()
 			if b > 0 && nc.conn != nil {
 				nc.err = nc.bw.Flush()
@@ -872,7 +872,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
-	if nc.isClosed() {
+	if nc.IsClosed() {
 		return nil, ErrConnectionClosed
 	}
 
@@ -934,7 +934,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
-	if nc.isClosed() {
+	if nc.IsClosed() {
 		return ErrConnectionClosed
 	}
 
@@ -1072,7 +1072,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	}
 
 	nc.mu.Lock()
-	if nc.isClosed() {
+	if nc.IsClosed() {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
@@ -1143,7 +1143,7 @@ func (nc *Conn) clearPendingFlushCalls() {
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	nc.mu.Lock()
-	if nc.isClosed() {
+	if nc.IsClosed() {
 		nc.mu.Unlock()
 		return
 	}
@@ -1188,7 +1188,7 @@ func (nc *Conn) Close() {
 }
 
 // Test if Conn has been closed.
-func (nc *Conn) isClosed() bool {
+func (nc *Conn) IsClosed() bool {
 	return nc.status == CLOSED
 }
 

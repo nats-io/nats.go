@@ -40,7 +40,7 @@ func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 	if c == nil {
 		return nil, errors.New("nats: Nil Connection")
 	}
-	if c.isClosed() {
+	if c.IsClosed() {
 		return nil, ErrConnectionClosed
 	}
 	ec := &EncodedConn{Conn: c, Enc: EncoderForType(encType)}
