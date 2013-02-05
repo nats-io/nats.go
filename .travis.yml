@@ -8,4 +8,4 @@ before_script:
   - nats-server -v
   - go version
   - mkdir -p $GOPATH/src/github.com/apcera
-  - ln -s /home/travis/build/apcera/nats nats
+  - ln -s /home/travis/build/apcera/nats $GOPATH/src/github.com/apcera/nats
