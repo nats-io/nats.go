@@ -166,7 +166,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	// server is stopped here..
 
 	// wait for disconnect
-	if e := waitTime(dch, 2 * time.Second); e != nil {
+	if e := waitTime(dch, 2*time.Second); e != nil {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
@@ -279,4 +279,25 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	}
 
 	nc.Close()
+}
+
+func TestIsClosed(t *testing.T) {
+	ts := startReconnectServer(t)
+	nc := newConnection(t)
+	if nc.IsClosed() == true {
+		t.Fatalf("IsClosed returned true when the connection is still open.")
+	}
+	ts.stopServer()
+	if nc.IsClosed() == true {
+		t.Fatalf("IsClosed returned true when the connection is still open.")
+	}
+	ts = startReconnectServer(t)
+	if nc.IsClosed() == true {
+		t.Fatalf("IsClosed returned true when the connection is still open.")
+	}
+	nc.Close()
+	if nc.IsClosed() == false {
+		t.Fatalf("IsClosed returned false after Close() was called.")
+	}
+	ts.stopServer()
 }
