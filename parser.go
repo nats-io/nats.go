@@ -257,6 +257,26 @@ func (nc *Conn) parse(buf []byte) error {
 				nc.processPong()
 				nc.ps.drop, nc.ps.state = 0, OP_START
 			}
+		case OP_PI:
+			switch b {
+			case 'N', 'n':
+				nc.ps.state = OP_PIN
+			default:
+				goto parseErr
+			}
+		case OP_PIN:
+			switch b {
+			case 'G', 'g':
+				nc.ps.state = OP_PING
+			default:
+				goto parseErr
+			}
+		case OP_PING:
+			switch b {
+			case '\n':
+				nc.processPing()
+				nc.ps.drop, nc.ps.state = 0, OP_START
+			}
 		default:
 			goto parseErr
 		}
