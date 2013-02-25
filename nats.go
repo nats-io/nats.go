@@ -1,4 +1,4 @@
-// Copyright 2012 Apcera Inc. All rights reserved.
+// Copyright 2012-2013 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
 package nats
@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	mrand "math/rand"
 )
 
 const (
@@ -41,6 +43,8 @@ var (
 	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
 	ErrAuthorization      = errors.New("nats: Authorization Error")
+	ErrNoServers          = errors.New("nats: No servers available for connection")
+	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 )
 
 var DefaultOptions = Options{
@@ -70,6 +74,8 @@ type ErrHandler func(*Conn, *Subscription, error)
 // Options can be used to create a customized Connection.
 type Options struct {
 	Url            string
+	Servers        []string
+	NoRandomize    bool
 	Name           string
 	Verbose        bool
 	Pedantic       bool
@@ -100,6 +106,9 @@ const (
 
 	// The buffered size of the flush "kick" channel
 	flushChanSize = 1024
+
+	// Default server pool size
+	srvPoolSize = 4
 )
 
 // A Conn represents a bare connection to a nats-server. It will send and receive
@@ -110,6 +119,7 @@ type Conn struct {
 	Opts    Options
 	url     *url.URL
 	conn    net.Conn
+	srvPool []*srv
 	bw      *bufio.Writer
 	pending *bytes.Buffer
 	fch     chan bool
@@ -166,6 +176,13 @@ type Stats struct {
 	Reconnects uint64
 }
 
+// Tracks individual backend servers.
+type srv struct {
+	url        *url.URL
+	didConnect bool
+	connects   int
+}
+
 type serverInfo struct {
 	Id           string `json:"server_id"`
 	Host         string `json:"host"`
@@ -209,13 +226,10 @@ func SecureConnect(url string) (*Conn, error) {
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
-	var err error
-	nc.url, err = url.Parse(o.Url)
-	if err != nil {
+	if err := nc.setupServerPool(); err != nil {
 		return nil, err
 	}
-	err = nc.connect()
-	if err != nil {
+	if err := nc.connect(); err != nil {
 		return nil, err
 	}
 	return nc, nil
@@ -245,6 +259,58 @@ const (
 	subProto   = "SUB %s %s %d" + _CRLF_
 	unsubProto = "UNSUB %d %s" + _CRLF_
 )
+
+// Will assign the correct server to the nc.Url
+func (nc *Conn) pickServer() error {
+	nc.url = nil
+	if len(nc.srvPool) <= 0 {
+		return ErrNoServers
+	}
+	for _, s := range nc.srvPool {
+		if s != nil {
+			nc.url = s.url
+			return nil
+		}
+	}
+	return ErrNoServers
+}
+
+// Create the server pool using the options given.
+// We will place a Url option first, followed by any
+// Server Options. We will randomize the server pool unlesss
+// the NoRandomize flag is set.
+func (nc *Conn) setupServerPool() error {
+	nc.srvPool = make([]*srv, 0, srvPoolSize)
+	if nc.Opts.Url != _EMPTY_ {
+		u, err := url.Parse(nc.Opts.Url)
+		if err != nil {
+			return err
+		}
+		s := &srv{url: u}
+		nc.srvPool = append(nc.srvPool, s)
+	}
+
+	var srvrs []string
+
+	if nc.Opts.NoRandomize {
+		srvrs = nc.Opts.Servers
+	} else {
+		in := mrand.Perm(len(nc.Opts.Servers))
+		for _, i := range in {
+			srvrs = append(srvrs, nc.Opts.Servers[i])
+		}
+	}
+
+	for _, urlString := range srvrs {
+		u, err := url.Parse(urlString)
+		if err != nil {
+			return err
+		}
+		s := &srv{url: u}
+		nc.srvPool = append(nc.srvPool, s)
+	}
+	return nc.pickServer()
+}
 
 // createConn will connect to the server and wrap the appropriate
 // bufio structures. It will do the right thing when an existing
@@ -279,11 +345,27 @@ func (nc *Conn) spinUpSocketWatchers() {
 	go nc.flusher()
 }
 
+// Report the connected server's Url
+func (nc *Conn) ConnectedUrl() string {
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.url.String()
+}
+
 // Main connect function. Will connect to the nats-server
 func (nc *Conn) connect() error {
 	// Create actual socket connection
-	if err := nc.createConn(); err != nil {
-		return err
+	// For first connect we walk all servers in the pool and try
+	// to connect immediately.
+	for i, _ := range nc.srvPool {
+		if err := nc.createConn(); err == nil {
+			break
+		}
+		nc.srvPool[i] = nil
+		if err := nc.pickServer(); err != nil {
+			return err
+		}
 	}
 
 	nc.subs = make(map[int64]*Subscription)
@@ -370,7 +452,7 @@ func (nc *Conn) connectProto() (string, error) {
 	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure, o.Name}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
-		nc.err = errors.New("nats: Connection message, json parse failed")
+		nc.err = ErrJsonParse
 		return _EMPTY_, nc.err
 	}
 	return fmt.Sprintf(conProto, b), nil

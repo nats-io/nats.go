@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"math"
-	"net"
 	"regexp"
 	"runtime"
 	"sync"
@@ -62,8 +61,8 @@ func TestBadOptionTimeoutConnect(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error")
 	}
-	if ne, ok := err.(net.Error); !ok || (ok && !ne.Timeout()) {
-		t.Fatal("Expected a net.Timeout error")
+	if err != ErrNoServers {
+		t.Fatalf("Expected a ErrNoServers error: Got %v\n", err)
 	}
 }
 
