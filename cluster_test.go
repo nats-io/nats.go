@@ -213,6 +213,8 @@ func TestBasicClusterReconnect(t *testing.T) {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
+	reconnectTimeStart := time.Now()
+
 	// wait for reconnect
 	if e := waitTime(rch, 2*time.Second); e != nil {
 		t.Fatal("Did not receive a reconnect callback message")
