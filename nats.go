@@ -445,24 +445,15 @@ func (nc *Conn) connect() error {
 				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
+				nc.url = nc.srvPool[i].url
 				break
 			} else {
 				nc.srvPool[i].reconnects += 1
 				nc.close(DISCONNECTED, false)
 			}
 		}
-		if s, err := nc.selectNextServer(); err != nil {
-			// If we encountered an error, such as Authorization Failed, let's
-			// report that up versus vanilla no servers found.
-			if nc.err != nil {
-				err = nc.err
-			}
-			return err
-		} else {
-			nc.url = s.url
-		}
 	}
-	return nil
+	return nc.err
 }
 
 // This will check to see if the connection should be
