@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ var (
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
 	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
+	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
 	ErrAuthorization      = errors.New("nats: Authorization failed")
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
@@ -373,6 +375,9 @@ func (nc *Conn) setupServerPool() error {
 // bufio structures. It will do the right thing when an existing
 // connection is in place.
 func (nc *Conn) createConn() error {
+	if nc.Opts.Timeout < 0 {
+		return ErrBadTimeout
+	}
 	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.Opts.Timeout)
 	if nc.err != nil {
 		return nc.err
@@ -440,18 +445,29 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	for i, _ := range nc.srvPool {
+		nc.url = nc.srvPool[i].url
 		if err := nc.createConn(); err == nil {
 			if nc.err = nc.processConnectInit(); nc.err == nil {
 				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
-				nc.url = nc.srvPool[i].url
+
 				break
 			} else {
 				nc.srvPool[i].reconnects += 1
 				nc.close(DISCONNECTED, false)
+				nc.url = nil
+			}
+		} else {
+			// Cancel out default connection refused, will trigger the
+			// No servers error conditional
+			if matched, _ := regexp.Match(`connection refused`, []byte(err.Error())); matched {
+				nc.err = nil
 			}
 		}
+	}
+	if nc.err == nil && nc.status != CONNECTED {
+		nc.err = ErrNoServers
 	}
 	return nc.err
 }

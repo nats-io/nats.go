@@ -65,7 +65,7 @@ func TestServersOption(t *testing.T) {
 	opts.Servers = testServers
 	_, err = opts.Connect()
 	if err == nil || err != ErrNoServers {
-		t.Fatal("Did not receive proper error: %v", err)
+		t.Fatalf("Did not receive proper error: %v\n", err)
 	}
 
 	// Make sure we can connect to first server if running
@@ -275,6 +275,7 @@ func TestHotSpotReconnect(t *testing.T) {
 	cs := make(map[string]int)
 	for _, nc := range clients {
 		cs[nc.ConnectedUrl()] += 1
+		nc.Close()
 	}
 	if len(cs) != numServers {
 		t.Fatalf("Wrong number or reported servers: %d vs %d\n", len(cs), numServers)
