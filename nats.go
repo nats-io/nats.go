@@ -42,7 +42,7 @@ var (
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
 	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
-	ErrAuthorization      = errors.New("nats: Authorization Error")
+	ErrAuthorization      = errors.New("nats: Authorization failed")
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 )
@@ -180,7 +180,7 @@ type Stats struct {
 type srv struct {
 	url        *url.URL
 	didConnect bool
-	connects   int
+	reconnects int
 }
 
 type serverInfo struct {
@@ -260,6 +260,51 @@ const (
 	unsubProto = "UNSUB %d %s" + _CRLF_
 )
 
+// Return bool indicating if we have more servers to try to establish a connection.
+func (nc *Conn) serversAvailable() bool {
+	for _, s := range nc.srvPool {
+		if s != nil {
+			return true
+		}
+	}
+	return false;
+}
+
+func (nc *Conn) debugPool(str string) {
+	fmt.Printf("%s\n", str)
+	for i, s := range nc.srvPool {
+		fmt.Printf("\t%d: %v\n", i+1, s.url)
+	}
+}
+
+// Pop the current server and put onto the end of the list. Select head of list as long
+// as number of reconnect attempts under MaxReconnect.
+func (nc *Conn) selectNextServer() error {
+	// Don't assume its first one.
+	for i, s := range nc.srvPool {
+		if s == nil {
+			continue
+		}
+		if s.url == nc.url {
+			sp := nc.srvPool
+			num := len(sp)
+			copy(sp[i:num-1], sp[i+1:num])
+			if s.reconnects < int(nc.Opts.MaxReconnect) {
+				nc.srvPool[num-1] = s
+			} else {
+				nc.srvPool = sp[0:num-1]
+			}
+			break
+		}
+	}
+	if len(nc.srvPool) <= 0 {
+		nc.url = nil
+		return ErrNoServers
+	}
+	nc.url = nc.srvPool[0].url
+	return nil
+}
+
 // Will assign the correct server to the nc.Url
 func (nc *Conn) pickServer() error {
 	nc.url = nil
@@ -300,7 +345,6 @@ func (nc *Conn) setupServerPool() error {
 			srvrs = append(srvrs, nc.Opts.Servers[i])
 		}
 	}
-
 	for _, urlString := range srvrs {
 		u, err := url.Parse(urlString)
 		if err != nil {
@@ -353,21 +397,8 @@ func (nc *Conn) ConnectedUrl() string {
 	return nc.url.String()
 }
 
-// Main connect function. Will connect to the nats-server
-func (nc *Conn) connect() error {
-	// Create actual socket connection
-	// For first connect we walk all servers in the pool and try
-	// to connect immediately.
-	for i, _ := range nc.srvPool {
-		if err := nc.createConn(); err == nil {
-			break
-		}
-		nc.srvPool[i] = nil
-		if err := nc.pickServer(); err != nil {
-			return err
-		}
-	}
-
+// Low level setup for structs, etc
+func (nc *Conn) setup() {
 	nc.subs = make(map[int64]*Subscription)
 	nc.pongs = make([]chan bool, 0, 8)
 
@@ -376,16 +407,53 @@ func (nc *Conn) connect() error {
 	// Setup scratch outbound buffer for PUB
 	pub := nc.scratch[:len(_PUB_P_)]
 	copy(pub, _PUB_P_)
+}
+
+// Process a connected connection and initialize properly.
+func (nc *Conn) processConnectInit() error {
+	nc.setup()
 
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
 		return nc.err
 	}
-
 	nc.spinUpSocketWatchers()
-
-	runtime.SetFinalizer(nc, fin)
 	return nc.sendConnect()
+}
+
+// Main connect function. Will connect to the nats-server
+func (nc *Conn) connect() error {
+	// Create actual socket connection
+	// For first connect we walk all servers in the pool and try
+	// to connect immediately.
+	for i, _ := range nc.srvPool {
+
+		fmt.Printf("Trying to connect to: %v\n", nc.srvPool[i].url)
+
+		if err := nc.createConn(); err == nil {
+			if nc.err = nc.processConnectInit(); nc.err == nil {
+				runtime.SetFinalizer(nc, fin)
+				nc.srvPool[i].didConnect = true
+				nc.srvPool[i].reconnects = 0
+				break
+			} else {
+				fmt.Printf("Calling close: %v\n", nc.err)
+				nc.close(DISCONNECTED, false)
+				fmt.Printf("DONE Calling close: %v\n", nc.err)
+			}
+		}
+		// FIXME(dlc): Should we nil out??
+		nc.srvPool[i] = nil
+		if err := nc.pickServer(); err != nil {
+			// If we encountered an error, such as Authorization Failed, let's
+			// report that up versus vanilla no servers found.
+			if nc.err != nil {
+				err = nc.err
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // This will check to see if the connection should be
@@ -557,7 +625,6 @@ func (nc *Conn) processReconnect() {
 	if nc.Opts.DisconnectedCB != nil {
 		nc.Opts.DisconnectedCB(nc)
 	}
-
 }
 
 // flushReconnectPending will push the pending items that were
@@ -575,6 +642,8 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
+
+	fmt.Printf("doReconnect Called!!\n")
 
 	for i := 0; i < int(nc.Opts.MaxReconnect); i++ {
 		// Sleep appropriate amount of time before the
@@ -1221,11 +1290,13 @@ func (nc *Conn) clearPendingFlushCalls() {
 	nc.pongs = nil
 }
 
-// Close will close the connection to the server. This call will release
-// all blocking calls, such as Flush() and NextMsg()
-func (nc *Conn) Close() {
+// Low level close call that will do correct cleanup and set
+// desired status. Also controls whether user defined callbacks
+// will be triggered.
+func (nc *Conn) close(status Status, doCBs bool) {
 	nc.mu.Lock()
 	if nc.IsClosed() {
+		nc.status = status
 		nc.mu.Unlock()
 		return
 	}
@@ -1250,7 +1321,7 @@ func (nc *Conn) Close() {
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.conn != nil && nc.Opts.DisconnectedCB != nil {
+	if doCBs && nc.conn != nil && nc.Opts.DisconnectedCB != nil {
 		nc.Opts.DisconnectedCB(nc)
 	}
 
@@ -1264,9 +1335,18 @@ func (nc *Conn) Close() {
 	nc.mu.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
-	if nc.Opts.ClosedCB != nil {
+	if doCBs && nc.Opts.ClosedCB != nil {
 		nc.Opts.ClosedCB(nc)
 	}
+	nc.mu.Lock()
+	nc.status = status
+	nc.mu.Unlock()
+}
+
+// Close will close the connection to the server. This call will release
+// all blocking calls, such as Flush() and NextMsg()
+func (nc *Conn) Close() {
+	nc.close(CLOSED, true)
 }
 
 // Test if Conn has been closed.
