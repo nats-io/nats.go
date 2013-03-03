@@ -447,18 +447,19 @@ func (nc *Conn) connect() error {
 				nc.srvPool[i].reconnects = 0
 				break
 			} else {
+				nc.srvPool[i].reconnects += 1
 				nc.close(DISCONNECTED, false)
 			}
 		}
-		// FIXME(dlc): Should we nil out??
-		nc.srvPool[i] = nil
-		if err := nc.pickServer(); err != nil {
+		if s, err := nc.selectNextServer(); err != nil {
 			// If we encountered an error, such as Authorization Failed, let's
 			// report that up versus vanilla no servers found.
 			if nc.err != nil {
 				err = nc.err
 			}
 			return err
+		} else {
+			nc.url = s.url
 		}
 	}
 	return nil
@@ -606,6 +607,7 @@ func (nc *Conn) processDisconnect() {
 
 // This will process a disconnect when reconnect is allowed.
 func (nc *Conn) processReconnect() {
+
 	nc.mu.Lock()
 	if !nc.IsClosed() {
 		nc.status = RECONNECTING

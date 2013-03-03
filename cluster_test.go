@@ -1,8 +1,10 @@
 package nats
 
 import (
-	"regexp"
+	"math"
 	"reflect"
+	"regexp"
+	"sync"
 	"testing"
 	"time"
 )
@@ -223,5 +225,68 @@ func TestBasicClusterReconnect(t *testing.T) {
 	if nc.ConnectedUrl() != testServers[2] {
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
+	}
+
+	// Make sure we did not wait on reconnect for default time.
+	reconnectTime := time.Since(reconnectTimeStart)
+	if reconnectTime > (100 * time.Millisecond) {
+		t.Fatalf("Took longer than expected to reconnect: %v\n", reconnectTime)
+	}
+}
+
+func TestHotSpotReconnect(t *testing.T) {
+	s1 := startServer(t, 1222, "")
+
+	numClients := 100
+	clients := []*Conn{}
+
+	wg := &sync.WaitGroup{}
+	wg.Add(numClients)
+
+	for i := 0; i < numClients; i++ {
+		opts := DefaultOptions
+		opts.Servers = testServers
+		opts.ReconnectedCB = func(_ *Conn) {
+			wg.Done()
+		}
+		nc, err := opts.Connect()
+		if err != nil {
+			t.Fatalf("Expected to connect, got err: %v\n", err)
+		}
+		if nc.ConnectedUrl() != testServers[0] {
+			t.Fatalf("Connected to incorrect server: %v\n", nc.ConnectedUrl())
+		}
+		clients = append(clients, nc)
+	}
+
+	s2 := startServer(t, 1224, "")
+	defer s2.stopServer()
+	s3 := startServer(t, 1226, "")
+	defer s3.stopServer()
+
+	s1.stopServer()
+
+	numServers := 2
+
+	// Wait on all reconnects
+	wg.Wait()
+
+	// Walk the clients and calculate how many of each..
+	cs := make(map[string]int)
+	for _, nc := range clients {
+		cs[nc.ConnectedUrl()] += 1
+	}
+	if len(cs) != numServers {
+		t.Fatalf("Wrong number or reported servers: %d vs %d\n", len(cs), numServers)
+	}
+	expected := numClients / numServers
+	v := uint(float32(expected) * 0.30)
+
+	// Check that each item is within acceptable range
+	for s, total := range cs {
+		delta := uint(math.Abs(float64(expected - total)))
+		if delta > v {
+			t.Fatalf("Connected clients to server: %s out of range: %d\n", s, total)
+		}
 	}
 }
