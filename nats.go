@@ -271,38 +271,51 @@ func (nc *Conn) serversAvailable() bool {
 }
 
 func (nc *Conn) debugPool(str string) {
+	_, cur := nc.currentServer()
 	fmt.Printf("%s\n", str)
 	for i, s := range nc.srvPool {
-		fmt.Printf("\t%d: %v\n", i+1, s.url)
+		if s == cur {
+			fmt.Printf("\t*%d: %v\n", i+1, s.url)
+		} else {
+			fmt.Printf("\t%d: %v\n", i+1, s.url)
+		}
 	}
 }
 
-// Pop the current server and put onto the end of the list. Select head of list as long
-// as number of reconnect attempts under MaxReconnect.
-func (nc *Conn) selectNextServer() error {
-	// Don't assume its first one.
+// Return the currently selected server
+func (nc *Conn) currentServer() (int, *srv) {
 	for i, s := range nc.srvPool {
 		if s == nil {
 			continue
 		}
 		if s.url == nc.url {
-			sp := nc.srvPool
-			num := len(sp)
-			copy(sp[i:num-1], sp[i+1:num])
-			if s.reconnects < int(nc.Opts.MaxReconnect) {
-				nc.srvPool[num-1] = s
-			} else {
-				nc.srvPool = sp[0:num-1]
-			}
-			break
+			return i, s
 		}
+	}
+	return -1, nil
+}
+
+// Pop the current server and put onto the end of the list. Select head of list as long
+// as number of reconnect attempts under MaxReconnect.
+func (nc *Conn) selectNextServer() (*srv, error) {
+	i, s := nc.currentServer()
+	if i < 0 {
+		return nil, ErrNoServers
+	}
+	sp := nc.srvPool
+	num := len(sp)
+	copy(sp[i:num-1], sp[i+1:num])
+	if s.reconnects < int(nc.Opts.MaxReconnect) {
+		nc.srvPool[num-1] = s
+	} else {
+		nc.srvPool = sp[0:num-1]
 	}
 	if len(nc.srvPool) <= 0 {
 		nc.url = nil
-		return ErrNoServers
+		return nil, ErrNoServers
 	}
 	nc.url = nc.srvPool[0].url
-	return nil
+	return nc.srvPool[0], nil
 }
 
 // Will assign the correct server to the nc.Url
@@ -427,9 +440,6 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	for i, _ := range nc.srvPool {
-
-		fmt.Printf("Trying to connect to: %v\n", nc.srvPool[i].url)
-
 		if err := nc.createConn(); err == nil {
 			if nc.err = nc.processConnectInit(); nc.err == nil {
 				runtime.SetFinalizer(nc, fin)
@@ -437,9 +447,7 @@ func (nc *Conn) connect() error {
 				nc.srvPool[i].reconnects = 0
 				break
 			} else {
-				fmt.Printf("Calling close: %v\n", nc.err)
 				nc.close(DISCONNECTED, false)
-				fmt.Printf("DONE Calling close: %v\n", nc.err)
 			}
 		}
 		// FIXME(dlc): Should we nil out??
@@ -643,12 +651,20 @@ func (nc *Conn) flushReconnectPendingItems() {
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
 
-	fmt.Printf("doReconnect Called!!\n")
+	for ; len(nc.srvPool) > 0 ; {
 
-	for i := 0; i < int(nc.Opts.MaxReconnect); i++ {
+		_, last := nc.currentServer()
+		cur, err := nc.selectNextServer()
+		if err != nil {
+			break
+		}
+
 		// Sleep appropriate amount of time before the
-		// connection attempt
-		time.Sleep(nc.Opts.ReconnectWait)
+		// connection attempt if connecting to same server
+		// we just got disconnected from..
+		if cur == last {
+			time.Sleep(nc.Opts.ReconnectWait)
+		}
 
 		nc.mu.Lock()
 
@@ -658,8 +674,11 @@ func (nc *Conn) doReconnect() {
 			break
 		}
 
+		// Mark that we tried a reconnect
+		cur.reconnects += 1
+
 		// Try to create a new connection
-		err := nc.createConn()
+		err = nc.createConn()
 
 		// Not yet connected, retry...
 		if err != nil {

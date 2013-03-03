@@ -143,7 +143,8 @@ func TestSelectNextServer(t *testing.T) {
 		t.Fatalf("Wrong default selection: %v\n", nc.url)
 	}
 
-	if err := nc.selectNextServer(); err != nil {
+	sel, err := nc.selectNextServer()
+	if err != nil {
 		t.Fatalf("Got an err: %v\n", err)
 	}
 	// Check that we are now looking at #2, and current is now last.
@@ -156,10 +157,13 @@ func TestSelectNextServer(t *testing.T) {
 	if nc.srvPool[len(nc.srvPool)-1].url.String() != testServers[0] {
 		t.Fatalf("Did not push old to last position\n")
 	}
+	if sel != nc.srvPool[0] {
+		t.Fatalf("Did not return correct server: %v vs %v\n", sel.url, nc.srvPool[0].url)
+	}
 
 	// Test that we do not keep servers where we have tried to reconnect past our limit.
 	nc.srvPool[0].reconnects = int(opts.MaxReconnect)
-	if err := nc.selectNextServer(); err != nil {
+	if _, err := nc.selectNextServer(); err != nil {
 		t.Fatalf("Got an err: %v\n", err)
 	}
 	// Check that we are now looking at #3, and current is not in the list.
@@ -174,7 +178,7 @@ func TestSelectNextServer(t *testing.T) {
 	}
 }
 
-func TestClusterReconnect(t *testing.T) {
+func TestBasicClusterReconnect(t *testing.T) {
 	s1 := startServer(t, 1222, "")
 	s2 := startServer(t, 1224, "")
 	defer s2.stopServer()
