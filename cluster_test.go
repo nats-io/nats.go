@@ -291,3 +291,98 @@ func TestHotSpotReconnect(t *testing.T) {
 		}
 	}
 }
+
+func TestProperReconnectDelay(t *testing.T) {
+	s1 := startServer(t, 1222, "")
+
+	opts := DefaultOptions
+	opts.Servers = testServers
+	opts.NoRandomize = true
+
+	dcbCalled := false
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dcbCalled = true
+		dch <- true
+	}
+
+	closedCbCalled := false
+	opts.ClosedCB = func(_ *Conn) {
+		closedCbCalled = true
+	}
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+
+	s1.stopServer()
+
+	// wait for disconnect
+	if e := waitTime(dch, 2*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	// Wait, want to make sure we don't spin on reconnect to non-existant servers.
+	time.Sleep(1 * time.Second)
+
+	// Make sure we are still reconnecting..
+	if closedCbCalled {
+		t.Fatal("Closed CB was triggered, should not have been.")
+	}
+	if nc.status != RECONNECTING {
+		t.Fatalf("Wrong status: %d\n", nc.status)
+	}
+}
+
+func TestProperFalloutAfterMaxAttempts(t *testing.T) {
+	s1 := startServer(t, 1222, "")
+
+	opts := DefaultOptions
+	opts.Servers = testServers
+	opts.NoRandomize = true
+	opts.MaxReconnect = 5
+	opts.ReconnectWait = (10 * time.Millisecond)
+
+	dcbCalled := false
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dcbCalled = true
+		dch <- true
+	}
+
+	closedCbCalled := false
+	cch := make(chan bool)
+
+	opts.ClosedCB = func(_ *Conn) {
+		closedCbCalled = true
+		cch <- true
+	}
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+
+	s1.stopServer()
+
+	// wait for disconnect
+	if e := waitTime(dch, 2*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	// Wait for ClosedCB
+	if e := waitTime(cch, 1*time.Second); e != nil {
+		t.Fatal("Did not receive a closed callback message")
+	}
+
+	// Make sure we are still reconnecting..
+	if !closedCbCalled {
+		t.Logf("%+v\n", nc)
+		t.Fatal("Closed CB was not triggered, should have been.")
+	}
+
+	if nc.status != CLOSED {
+		t.Fatalf("Wrong status: %d\n", nc.status)
+	}
+}

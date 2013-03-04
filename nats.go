@@ -180,9 +180,10 @@ type Stats struct {
 
 // Tracks individual backend servers.
 type srv struct {
-	url        *url.URL
-	didConnect bool
-	reconnects int
+	url         *url.URL
+	didConnect  bool
+	reconnects  int
+	lastAttempt time.Time
 }
 
 type serverInfo struct {
@@ -310,7 +311,7 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	if s.reconnects < int(nc.Opts.MaxReconnect) {
 		nc.srvPool[num-1] = s
 	} else {
-		nc.srvPool = sp[0:num-1]
+		nc.srvPool = sp[0 : num-1]
 	}
 	if len(nc.srvPool) <= 0 {
 		nc.url = nil
@@ -377,6 +378,11 @@ func (nc *Conn) setupServerPool() error {
 func (nc *Conn) createConn() error {
 	if nc.Opts.Timeout < 0 {
 		return ErrBadTimeout
+	}
+	if _, cur := nc.currentServer(); cur == nil {
+		return ErrNoServers
+	} else {
+		cur.lastAttempt = time.Now()
 	}
 	nc.conn, nc.err = net.DialTimeout("tcp", nc.url.Host, nc.Opts.Timeout)
 	if nc.err != nil {
@@ -451,10 +457,8 @@ func (nc *Conn) connect() error {
 				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
-
 				break
 			} else {
-				nc.srvPool[i].reconnects += 1
 				nc.close(DISCONNECTED, false)
 				nc.url = nil
 			}
@@ -660,19 +664,19 @@ func (nc *Conn) flushReconnectPendingItems() {
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
 
-	for ; len(nc.srvPool) > 0 ; {
+	for len(nc.srvPool) > 0 {
 
-		_, last := nc.currentServer()
 		cur, err := nc.selectNextServer()
 		if err != nil {
+			nc.err = err
 			break
 		}
 
 		// Sleep appropriate amount of time before the
 		// connection attempt if connecting to same server
 		// we just got disconnected from..
-		if cur == last {
-			time.Sleep(nc.Opts.ReconnectWait)
+		if time.Since(cur.lastAttempt) < nc.Opts.ReconnectWait {
+			time.Sleep(nc.Opts.ReconnectWait - time.Since(cur.lastAttempt))
 		}
 
 		nc.mu.Lock()
@@ -725,6 +729,12 @@ func (nc *Conn) doReconnect() {
 		}
 		return
 	}
+
+	// Call into close.. No servers left..
+	if nc.err == nil {
+		nc.err = ErrNoServers
+	}
+	nc.Close()
 }
 
 // processOpErr handles errors from reading or parsing the protocol.
