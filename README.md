@@ -186,7 +186,7 @@ var servers = []string{
 opts := nats.DefaultOptions
 opts.Servers = servers
 
-// Optionally set Wait and MaxAttempts.
+// Optionally set ReconnectWait and MaxReconnect attempts.
 // This example means 10 seconds total per backend.
 opts.MaxReconnect = 5
 opts.ReconnectWait = (2 * time.Second)
