@@ -172,11 +172,45 @@ nc2.Publish("foo", []byte("Hello World!"));
 
 ```
 
+## Clustered Usage
+
+```go
+
+var servers = []string{
+	"nats://localhost:1222",
+	"nats://localhost:1223",
+	"nats://localhost:1224",
+}
+
+// Setup options to include all servers in the cluster
+opts := nats.DefaultOptions
+opts.Servers = servers
+
+// Optionally set Wait and MaxAttempts.
+// This example means 10 seconds total per backend.
+opts.MaxReconnect = 5
+opts.ReconnectWait = (2 * time.Second)
+
+nc, err := opts.Connect()
+
+// Setup callbacks to be notified on disconnects and reconnects
+nc.Opts.DisconnectedCB = func(_ *Conn) {
+    fmt.Printf("Got disconnected!\n")
+}
+
+// See who we are connected to on reconnect.
+nc.Opts.ReconnectedCB = func(nc *Conn) {
+    fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())
+}
+
+```
+
+
 ## License
 
 (The MIT License)
 
-Copyright (c) 2012 Apcera Inc.
+Copyright (c) 2012-2013 Apcera Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
