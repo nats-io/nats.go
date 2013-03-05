@@ -191,6 +191,9 @@ opts.Servers = servers
 opts.MaxReconnect = 5
 opts.ReconnectWait = (2 * time.Second)
 
+// Optionally disable randomization of the server pool
+opts.NoRandomize = true
+
 nc, err := opts.Connect()
 
 // Setup callbacks to be notified on disconnects and reconnects
