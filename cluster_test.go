@@ -386,3 +386,55 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 		t.Fatalf("Wrong status: %d\n", nc.status)
 	}
 }
+
+func TestTimeoutOnNoServers(t *testing.T) {
+	s1 := startServer(t, 1222, "")
+
+	opts := DefaultOptions
+	opts.Servers = testServers
+	opts.NoRandomize = true
+
+	// 100 milliseconds total time wait
+	opts.MaxReconnect = 10
+	opts.ReconnectWait = (10 * time.Millisecond)
+
+	dcbCalled := false
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dcbCalled = true
+		dch <- true
+	}
+
+	cch := make(chan bool)
+	opts.ClosedCB = func(_ *Conn) {
+		cch <- true
+	}
+
+	if _, err := opts.Connect(); err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+
+	s1.stopServer()
+
+	// wait for disconnect
+	if e := waitTime(dch, 2*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	startWait := time.Now()
+
+	// Wait for ClosedCB
+	if e := waitTime(cch, 1*time.Second); e != nil {
+		t.Fatal("Did not receive a closed callback message")
+	}
+
+	timeWait := time.Since(startWait)
+
+	// Use 50ms as variable time delta
+	variable := (50 * time.Millisecond)
+	expected := (time.Duration(opts.MaxReconnect) * opts.ReconnectWait)
+
+	if timeWait > (expected + variable) {
+		t.Fatalf("Waited too long for Closed state: %d\n", timeWait / time.Millisecond)
+	}
+}
