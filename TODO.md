@@ -1,4 +1,5 @@
 
+- [ ] Ping timer
 - [ ] SyncSubscriber and Next for EncodedConn
 - [ ] Fast Publisher?
 - [ ] pooling for structs used? leaky bucket?
