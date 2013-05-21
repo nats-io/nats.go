@@ -83,7 +83,7 @@ type Options struct {
 	Pedantic       bool
 	Secure         bool
 	AllowReconnect bool
-	MaxReconnect   uint
+	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
 	ClosedCB       ConnHandler
@@ -308,7 +308,8 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	sp := nc.srvPool
 	num := len(sp)
 	copy(sp[i:num-1], sp[i+1:num])
-	if s.reconnects < int(nc.Opts.MaxReconnect) {
+	max_reconnect := nc.Opts.MaxReconnect
+	if max_reconnect < 0 || s.reconnects < max_reconnect {
 		nc.srvPool[num-1] = s
 	} else {
 		nc.srvPool = sp[0 : num-1]
