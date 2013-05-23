@@ -3,11 +3,9 @@
 // A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
 package nats
 
-
 import (
 	"fmt"
 )
-
 
 type msgArg struct {
 	subject []byte

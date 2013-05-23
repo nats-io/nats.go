@@ -224,7 +224,7 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 	ch := make(chan bool)
 
 	testString := "Hello World!"
-	oSubj  := "cb_args"
+	oSubj := "cb_args"
 	oReply := "foobar"
 
 	ec.Subscribe(oSubj, func(subj, reply, s string) {

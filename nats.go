@@ -270,7 +270,7 @@ func (nc *Conn) serversAvailable() bool {
 			return true
 		}
 	}
-	return false;
+	return false
 }
 
 func (nc *Conn) debugPool(str string) {
@@ -619,7 +619,6 @@ func (nc *Conn) processDisconnect() {
 
 // This will process a disconnect when reconnect is allowed.
 func (nc *Conn) processReconnect() {
-
 	nc.mu.Lock()
 	if !nc.IsClosed() {
 		nc.status = RECONNECTING
@@ -664,9 +663,7 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
-
 	for len(nc.srvPool) > 0 {
-
 		cur, err := nc.selectNextServer()
 		if err != nil {
 			nc.err = err
