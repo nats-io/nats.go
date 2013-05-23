@@ -78,7 +78,7 @@ func TestJsonMarshalStruct(t *testing.T) {
 
 	ec.Subscribe("json_struct", func(p *person) {
 		ch <- true
-		if !reflect.DeepEqual(p,me) {
+		if !reflect.DeepEqual(p, me) {
 			t.Fatalf("Did not receive the correct struct response")
 		}
 		ch <- true
