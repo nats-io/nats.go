@@ -42,11 +42,13 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	sub.AutoUnsubscribe(max)
 	nc.Flush()
 	for {
-		_, err := sub.NextMsg(1*time.Millisecond)
-		if err != nil { break }
+		_, err := sub.NextMsg(1 * time.Millisecond)
+		if err != nil {
+			break
+		}
 		received += 1
 	}
-	if (received != max) {
+	if received != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
 	}
 }
@@ -78,17 +80,17 @@ func TestCloseSubRelease(t *testing.T) {
 	sub, _ := nc.SubscribeSync("foo")
 	start := time.Now()
 	go func() {
-		time.Sleep(5*time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 		nc.Close()
 	}()
-	_, err := sub.NextMsg(50*time.Millisecond)
+	_, err := sub.NextMsg(50 * time.Millisecond)
 	if err == nil {
 		t.Fatalf("Expected an error from NextMsg")
 	}
 	elapsed := time.Since(start)
 	if elapsed > 10*time.Millisecond {
 		t.Fatalf("Too much time has elapsed to release NextMsg: %dms",
-			(elapsed/time.Millisecond))
+			(elapsed / time.Millisecond))
 	}
 }
 
@@ -122,7 +124,7 @@ func TestSlowSubscriber(t *testing.T) {
 	for i := 0; i < (maxChanLen + 10); i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
-	timeout := 500*time.Millisecond
+	timeout := 500 * time.Millisecond
 	start := time.Now()
 	nc.FlushTimeout(timeout)
 	elapsed := time.Since(start)
@@ -182,7 +184,6 @@ func TestAsyncErrHandler(t *testing.T) {
 		cbCalled = true
 	}
 
-
 	b := []byte("Hello World!")
 	for i := 0; i < (maxChanLen + 10); i++ {
 		nc.Publish(subj, b)
@@ -218,7 +219,7 @@ func TestAsyncSubscriberStarvation(t *testing.T) {
 	})
 
 	nc.Publish("start", []byte("Begin"))
-	nc.Flush();
+	nc.Flush()
 
 	if e := wait(ch); e != nil {
 		t.Fatal("Was stalled inside of callback waiting on another callback")

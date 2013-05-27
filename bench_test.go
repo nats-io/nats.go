@@ -63,7 +63,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 			b.Fatalf("Error in benchmark during Publish: %v\n", err)
 		}
 		// Don't overrun ourselves and be a slow consumer
-		if i % 1000 == 0 {
+		if i%1000 == 0 {
 			time.Sleep(10)
 		}
 	}
