@@ -861,20 +861,20 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
 	var b int
-	var ok bool
 
-	for !nc.IsClosed() && !nc.isReconnecting() {
-		_, ok = <-nc.fch
-		if !ok {
+	for {
+		if _, ok := <-nc.fch; !ok {
 			return
 		}
 		nc.mu.Lock()
 		// Check for closed or reconnecting
-		if !nc.IsClosed() && !nc.isReconnecting() {
-			b = nc.bw.Buffered()
-			if b > 0 && nc.conn != nil {
-				nc.err = nc.bw.Flush()
-			}
+		if nc.IsClosed() || nc.isReconnecting() {
+			nc.mu.Unlock()
+			return
+		}
+		b = nc.bw.Buffered()
+		if b > 0 && nc.conn != nil {
+			nc.err = nc.bw.Flush()
 		}
 		nc.mu.Unlock()
 	}
