@@ -133,7 +133,7 @@ type Conn struct {
 	scratch [scratchSize]byte
 	status  Status
 	err     error
-	ps      parseState
+	ps      *parseState
 }
 
 // A Subscription represents interest in a given subject.
@@ -558,8 +558,13 @@ func (nc *Conn) sendConnect() error {
 
 	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
 		nc.err = err
-		return nc.err
-	} else if nc.IsClosed() {
+		return err
+	}
+
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if nc.IsClosed() {
 		return nc.err
 	}
 	nc.status = CONNECTED
@@ -640,11 +645,12 @@ func (nc *Conn) processReconnect() {
 		nc.err = nil
 		go nc.doReconnect()
 	}
+	dcb := nc.Opts.DisconnectedCB
 	nc.mu.Unlock()
 
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.Opts.DisconnectedCB != nil {
-		nc.Opts.DisconnectedCB(nc)
+	if dcb != nil {
+		dcb(nc)
 	}
 }
 
@@ -739,14 +745,21 @@ func (nc *Conn) doReconnect() {
 
 // processOpErr handles errors from reading or parsing the protocol.
 func (nc *Conn) processOpErr(err error) {
+	nc.mu.Lock()
 	if nc.IsClosed() || nc.isReconnecting() {
+		nc.mu.Unlock()
 		return
 	}
-	if nc.Opts.AllowReconnect {
+	allowReconnect := nc.Opts.AllowReconnect
+	nc.mu.Unlock()
+
+	if allowReconnect {
 		nc.processReconnect()
 	} else {
+		nc.mu.Lock()
 		nc.processDisconnect()
 		nc.err = err
+		nc.mu.Unlock()
 		nc.Close()
 	}
 }
@@ -757,7 +770,18 @@ func (nc *Conn) processOpErr(err error) {
 func (nc *Conn) readLoop() {
 	b := make([]byte, defaultBufSize)
 
-	for !nc.IsClosed() && !nc.isReconnecting() {
+	// Create a parseState if needed.
+	if nc.ps == nil {
+		nc.ps = &parseState{}
+	}
+
+	for {
+		nc.mu.Lock()
+		sb := nc.IsClosed() || nc.isReconnecting()
+		nc.mu.Unlock()
+		if sb {
+			break
+		}
 		n, err := nc.conn.Read(b)
 		if err != nil {
 			nc.processOpErr(err) // FIXME.
@@ -769,7 +793,7 @@ func (nc *Conn) readLoop() {
 		}
 	}
 	// Clear the parseState here..
-	nc.ps = parseState{}
+	nc.ps = nil
 }
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
@@ -1282,7 +1306,9 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		if !ok {
 			err = ErrConnectionClosed
 		} else {
+			nc.mu.Lock()
 			err = nc.err
+			nc.mu.Unlock()
 		}
 	case <-t.C:
 		err = ErrTimeout
