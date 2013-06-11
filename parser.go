@@ -305,7 +305,7 @@ parseErr:
 	return fmt.Errorf("nats: Parse Error [%d]: '%s'", nc.ps.state, buf[i:])
 }
 
-// clonePubArg is used when the split buffer scenario has the pubArg in the existing read buffer, but
+// cloneMsgArg is used when the split buffer scenario has the pubArg in the existing read buffer, but
 // we need to hold onto it into the next read.
 func (nc *Conn) cloneMsgArg() {
 	nc.ps.argBuf = nc.ps.scratch[:0]
