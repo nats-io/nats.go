@@ -83,7 +83,7 @@ type Options struct {
 	Pedantic       bool
 	Secure         bool
 	AllowReconnect bool
-	MaxReconnect   uint
+	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
 	ClosedCB       ConnHandler
@@ -270,7 +270,7 @@ func (nc *Conn) serversAvailable() bool {
 			return true
 		}
 	}
-	return false;
+	return false
 }
 
 func (nc *Conn) debugPool(str string) {
@@ -308,7 +308,8 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	sp := nc.srvPool
 	num := len(sp)
 	copy(sp[i:num-1], sp[i+1:num])
-	if s.reconnects < int(nc.Opts.MaxReconnect) {
+	max_reconnect := nc.Opts.MaxReconnect
+	if max_reconnect < 0 || s.reconnects < max_reconnect {
 		nc.srvPool[num-1] = s
 	} else {
 		nc.srvPool = sp[0 : num-1]
@@ -623,7 +624,6 @@ func (nc *Conn) processDisconnect() {
 
 // This will process a disconnect when reconnect is allowed.
 func (nc *Conn) processReconnect() {
-
 	nc.mu.Lock()
 	if !nc.IsClosed() {
 		nc.status = RECONNECTING
@@ -669,9 +669,7 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
-
 	for len(nc.srvPool) > 0 {
-
 		cur, err := nc.selectNextServer()
 		if err != nil {
 			nc.err = err

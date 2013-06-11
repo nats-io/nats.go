@@ -435,6 +435,6 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	expected := (time.Duration(opts.MaxReconnect) * opts.ReconnectWait)
 
 	if timeWait > (expected + variable) {
-		t.Fatalf("Waited too long for Closed state: %d\n", timeWait / time.Millisecond)
+		t.Fatalf("Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
 	}
 }

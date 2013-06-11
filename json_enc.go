@@ -31,7 +31,7 @@ func (je *JsonEncoder) Decode(subject string, data []byte, vPtr interface{}) (er
 		// need be..
 		str := *(*string)(unsafe.Pointer(&data))
 		if strings.HasPrefix(str, `"`) && strings.HasSuffix(str, `"`) {
-			*arg = str[1:len(str)-1]
+			*arg = str[1 : len(str)-1]
 		} else {
 			*arg = str
 		}

@@ -13,10 +13,10 @@ func ExampleConnect() {
 	nats.Connect("nats://derek:secretpassword@nats.apcera.com:421")
 
 	opts := nats.Options{
-		AllowReconnect : true,
-		MaxReconnect   : 10,
-		ReconnectWait  : 5 * time.Second,
-		Timeout        : 1 * time.Second,
+		AllowReconnect: true,
+		MaxReconnect:   10,
+		ReconnectWait:  5 * time.Second,
+		Timeout:        1 * time.Second,
 	}
 
 	nc, _ := opts.Connect()
@@ -52,7 +52,7 @@ func ExampleSubscription_NextMsg() {
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1*time.Second)
+	m, err := sub.NextMsg(1 * time.Second)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
@@ -88,8 +88,8 @@ func ExampleConn_Flush() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
-	msg := &nats.Msg{Subject:"foo", Reply:"bar", Data:[]byte("Hello World!")}
-	for i := 0 ; i < 1000 ; i++ {
+	msg := &nats.Msg{Subject: "foo", Reply: "bar", Data: []byte("Hello World!")}
+	for i := 0; i < 1000; i++ {
 		nc.PublishMsg(msg)
 	}
 	err := nc.Flush()
@@ -140,7 +140,7 @@ func ExampleSubscription_AutoUnsubscribe() {
 
 	received, wanted, total := 0, 10, 100
 
-	sub, _ := nc.Subscribe("foo",  func(_ *nats.Msg) {
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
 		received += 1
 	})
 	sub.AutoUnsubscribe(wanted)
@@ -174,9 +174,9 @@ func ExampleEncodedConn_Publish() {
 	defer c.Close()
 
 	type person struct {
-		Name     string
-		Address  string
-		Age      int
+		Name    string
+		Address string
+		Age     int
 	}
 
 	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
@@ -194,9 +194,9 @@ func ExampleEncodedConn_Subscribe() {
 	defer c.Close()
 
 	type person struct {
-		Name     string
-		Address  string
-		Age      int
+		Name    string
+		Address string
+		Age     int
 	}
 
 	c.Subscribe("hello", func(p *person) {
