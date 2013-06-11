@@ -944,6 +944,7 @@ const digits = "0123456789"
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
+
 	if nc.status == CLOSED {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
