@@ -876,7 +876,7 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 			continue
 		}
 		// FIXME: race on compare?
-		s.delivered = atomic.AddUint64(&s.delivered, 1)
+		atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
 			s.mcb(m)
 		}
@@ -1318,7 +1318,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		s.delivered = atomic.AddUint64(&s.delivered, 1)
+		atomic.AddUint64(&s.delivered, 1)
 		if s.max > 0 && s.delivered > s.max {
 			return nil, errors.New("nats: Max messages delivered")
 		}

@@ -210,7 +210,6 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 	} else {
 		return c.Conn.Subscribe(subject, natsCB)
 	}
-	panic("nats: Should not reach here")
 }
 
 // FlushTimeout allows a Flush operation to have an associated timeout.

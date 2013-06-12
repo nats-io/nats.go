@@ -44,7 +44,6 @@ func (je *DefaultEncoder) Encode(subject string, v interface{}) ([]byte, error) 
 		fmt.Fprintf(&buf, "%+v", arg)
 		return buf.Bytes(), nil
 	}
-	panic("Should not reach here")
 }
 
 func (je *DefaultEncoder) Decode(subject string, data []byte, vPtr interface{}) error {
@@ -103,5 +102,4 @@ func (je *DefaultEncoder) Decode(subject string, data []byte, vPtr interface{}) 
 		vt := reflect.TypeOf(arg).Elem()
 		return errors.New(fmt.Sprintf("nats: Default Encoder can't decode to type %s", vt))
 	}
-	panic("Should not reach here")
 }
