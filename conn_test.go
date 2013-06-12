@@ -109,19 +109,19 @@ func TestConnClosedCB(t *testing.T) {
 }
 
 func TestCloseDisconnectedCB(t *testing.T) {
-	cbCalled := false
+	ch := make(chan bool)
 	o := DefaultOptions
 	o.Url = DefaultURL
 	o.AllowReconnect = false
 	o.DisconnectedCB = func(_ *Conn) {
-		cbCalled = true
+		ch <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if !cbCalled {
+	if e := wait(ch); e != nil {
 		t.Fatal("Disconnected callback not triggered")
 	}
 }
