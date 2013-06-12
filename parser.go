@@ -1,4 +1,4 @@
-// Copyright 2012 Apcera Inc. All rights reserved.
+// Copyright 2012-2013 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
 package nats
