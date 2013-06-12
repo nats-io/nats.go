@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -126,18 +127,14 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 
 func TestExtendedReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
-	cbCalled := false
-	rcbCalled := false
 
 	opts := reconnectOpts
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *Conn) {
-		cbCalled = true
 		dch <- true
 	}
 	rch := make(chan bool)
 	opts.ReconnectedCB = func(_ *Conn) {
-		rcbCalled = true
 		rch <- true
 	}
 	nc, err := opts.Connect()
@@ -149,14 +146,14 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	testString := "bar"
-	received := 0
+	received := int32(0)
 
 	ec.Subscribe("foo", func(s string) {
-		received += 1
+		atomic.AddInt32(&received, 1)
 	})
 
 	sub, _ := ec.Subscribe("foobar", func(s string) {
-		received += 1
+		atomic.AddInt32(&received, 1)
 	})
 
 	ec.Publish("foo", testString)
@@ -172,7 +169,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	// Sub while disconnected
 	ec.Subscribe("bar", func(s string) {
-		received += 1
+		atomic.AddInt32(&received, 1)
 	})
 
 	// Unsub while disconnected
@@ -216,13 +213,6 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	if received != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)
 	}
-
-	if !cbCalled {
-		t.Fatal("Did not have DisconnectedCB called")
-	}
-	if !rcbCalled {
-		t.Fatal("Did not have ReconnectedCB called")
-	}
 }
 
 func TestParseStateReconnectFunctionality(t *testing.T) {
@@ -246,7 +236,9 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	ec.Flush()
 
 	// Simulate partialState, this needs to be cleared
+	nc.mu.Lock()
 	nc.ps.state = OP_PON
+	nc.mu.Unlock()
 
 	ts.stopServer()
 	// server is stopped here...
