@@ -164,7 +164,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
 
-	cbCalled := false
+	ch := make(chan bool)
 	subj := "async_test"
 
 	sub, err := nc.Subscribe(subj, func(_ *Msg) {
@@ -181,7 +181,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		if e != ErrSlowConsumer {
 			t.Fatalf("Did not receive proper error: %v vs %v\n", e, ErrSlowConsumer)
 		}
-		cbCalled = true
+		ch <- true
 	}
 
 	b := []byte("Hello World!")
@@ -190,7 +190,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	}
 	nc.Flush()
 
-	if !cbCalled {
+	if e := wait(ch); e != nil {
 		t.Fatal("Failed to call async err handler")
 	}
 }
