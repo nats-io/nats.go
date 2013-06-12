@@ -1,4 +1,5 @@
 language: go
+go: 1.1
 
 before_script:
   - gem -v
@@ -7,5 +8,8 @@ before_script:
   - which nats-server
   - nats-server -v
   - go version
-  - mkdir -p $GOPATH/src/github.com/apcera
-  - ln -s /home/travis/build/apcera/nats $GOPATH/src/github.com/apcera/nats
+#  - mkdir -p $GOPATH/src/github.com/apcera
+#  - ln -s /home/travis/build/apcera/nats $GOPATH/src/github.com/apcera/nats
+
+script:
+  - go test -race ./... -v
