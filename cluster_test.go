@@ -112,6 +112,10 @@ func TestAuthServers(t *testing.T) {
 	opts.Servers = plainServers
 	_, err := opts.Connect()
 
+	if err == nil {
+		t.Fatalf("Expect Auth failure, got no error\n")
+	}
+
 	if matched, _ := regexp.Match(`Authorization failed`, []byte(err.Error())); !matched {
 		t.Fatalf("Wrong error, wanted Auth failure, got '%s'\n", err)
 	}
@@ -189,17 +193,13 @@ func TestBasicClusterReconnect(t *testing.T) {
 	opts.Servers = testServers
 	opts.NoRandomize = true
 
-	dcbCalled := false
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *Conn) {
-		dcbCalled = true
 		dch <- true
 	}
 
-	rcbCalled := false
 	rch := make(chan bool)
 	opts.ReconnectedCB = func(_ *Conn) {
-		rcbCalled = true
 		rch <- true
 	}
 
