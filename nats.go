@@ -119,6 +119,7 @@ type Conn struct {
 	Stats
 	mu      sync.Mutex
 	Opts    Options
+	wg      sync.WaitGroup
 	url     *url.URL
 	conn    net.Conn
 	srvPool []*srv
@@ -407,15 +408,25 @@ func (nc *Conn) makeTLSConn() {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 }
 
-// spinUpSocketWatchers will launch the Go routines
-// responsible for reading and writing to the socket.
+// spinUpSocketWatchers will launch the Go routines responsible for
+// reading and writing to the socket. This will be launched via a
+// go routine itself to release any locks that may be held.
+// We also use a WaitGroup to make sure we only start them on a
+// reconnect when the precious ones have exited.
 func (nc *Conn) spinUpSocketWatchers() {
+	// Wait for any previous ones.
+	nc.wg.Wait()
+	// We will wait on both.
+	nc.wg.Add(2)
+
 	go nc.readLoop()
 	go nc.flusher()
 }
 
 // Report the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
@@ -435,14 +446,20 @@ func (nc *Conn) setup() {
 }
 
 // Process a connected connection and initialize properly.
+// The lock should not be held entering this function.
 func (nc *Conn) processConnectInit() error {
+	nc.mu.Lock()
 	nc.setup()
 
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
+		nc.mu.Unlock()
 		return nc.err
 	}
-	nc.spinUpSocketWatchers()
+	nc.mu.Unlock()
+
+	go nc.spinUpSocketWatchers()
+
 	return nc.sendConnect()
 }
 
@@ -451,16 +468,25 @@ func (nc *Conn) connect() error {
 	// Create actual socket connection
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
+	nc.mu.Lock()
 	for i, _ := range nc.srvPool {
 		nc.url = nc.srvPool[i].url
 		if err := nc.createConn(); err == nil {
-			if nc.err = nc.processConnectInit(); nc.err == nil {
+			// Release the lock, processConnectInit has to do its own locking.
+			nc.mu.Unlock()
+			err = nc.processConnectInit()
+			nc.mu.Lock()
+
+			if err == nil {
 				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
 				break
 			} else {
+				nc.err = err
+				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false)
+				nc.mu.Lock()
 				nc.url = nil
 			}
 		} else {
@@ -471,6 +497,8 @@ func (nc *Conn) connect() error {
 			}
 		}
 	}
+	defer nc.mu.Unlock()
+
 	if nc.err == nil && nc.status != CONNECTED {
 		nc.err = ErrNoServers
 	}
@@ -528,8 +556,8 @@ func (nc *Conn) sendProto(proto string) {
 	nc.mu.Unlock()
 }
 
-// Send a connect protocol message to the server, issuing user/password if
-// applicable. This base version can be locked
+// Generate a connect protocol message, issuing user/password if
+// applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
 	var user, pass string
@@ -549,12 +577,17 @@ func (nc *Conn) connectProto() (string, error) {
 
 // Send a connect protocol message to the server, issuing user/password if
 // applicable. Will wait for a flush to return from the server for error
-// processing.
+// processing. The lock should not be held entering this function.
 func (nc *Conn) sendConnect() error {
+
+	nc.mu.Lock()
 	cProto, err := nc.connectProto()
 	if err != nil {
+		nc.mu.Unlock()
 		return err
 	}
+	nc.mu.Unlock()
+
 	nc.sendProto(cProto)
 
 	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
@@ -623,8 +656,12 @@ func (nc *Conn) processDisconnect() {
 }
 
 // This will process a disconnect when reconnect is allowed.
+// The lock should not be held on entering this function.
 func (nc *Conn) processReconnect() {
+
 	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
 	if !nc.IsClosed() {
 		nc.status = RECONNECTING
 		if nc.conn != nil {
@@ -645,12 +682,10 @@ func (nc *Conn) processReconnect() {
 		nc.err = nil
 		go nc.doReconnect()
 	}
-	dcb := nc.Opts.DisconnectedCB
-	nc.mu.Unlock()
-
 	// Perform appropriate callback if needed for a disconnect.
+	dcb := nc.Opts.DisconnectedCB
 	if dcb != nil {
-		dcb(nc)
+		go dcb(nc)
 	}
 }
 
@@ -669,6 +704,11 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
+
+	// Hold the lock manually and release where needed below,
+	// can't do defer here.
+	nc.mu.Lock()
+
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
 		if err != nil {
@@ -680,14 +720,14 @@ func (nc *Conn) doReconnect() {
 		// connection attempt if connecting to same server
 		// we just got disconnected from..
 		if time.Since(cur.lastAttempt) < nc.Opts.ReconnectWait {
-			time.Sleep(nc.Opts.ReconnectWait - time.Since(cur.lastAttempt))
+			sleepTime := nc.Opts.ReconnectWait - time.Since(cur.lastAttempt)
+			nc.mu.Unlock()
+			time.Sleep(sleepTime)
+			nc.mu.Lock()
 		}
-
-		nc.mu.Lock()
 
 		// Check if we have been closed first.
 		if nc.IsClosed() {
-			nc.mu.Unlock()
 			break
 		}
 
@@ -698,9 +738,9 @@ func (nc *Conn) doReconnect() {
 		err = nc.createConn()
 
 		// Not yet connected, retry...
+		// Continue to hold the lock
 		if err != nil {
 			nc.err = nil
-			nc.mu.Unlock()
 			continue
 		}
 
@@ -712,7 +752,7 @@ func (nc *Conn) doReconnect() {
 			// Assume the best
 			nc.status = CONNECTED
 			// Spin up socket watchers again
-			nc.spinUpSocketWatchers()
+			go nc.spinUpSocketWatchers()
 			// Send our connect info as normal
 			cProto, _ := nc.connectProto()
 			nc.bw.WriteString(cProto)
@@ -721,6 +761,11 @@ func (nc *Conn) doReconnect() {
 			// Now send off and clear pending buffer
 			nc.flushReconnectPendingItems()
 		}
+
+		// snapshot the reconnect callback while lock is held.
+		rcb := nc.Opts.ReconnectedCB
+
+		// Release lock here, we will return below.
 		nc.mu.Unlock()
 
 		// Make sure to flush everything
@@ -728,20 +773,22 @@ func (nc *Conn) doReconnect() {
 
 		// Call reconnectedCB if appropriate. We are already in a
 		// separate Go routine here, so ok to call direct.
-		if nc.Opts.ReconnectedCB != nil {
-			nc.Opts.ReconnectedCB(nc)
+		if rcb != nil {
+			rcb(nc)
 		}
 		return
 	}
 
-	// Call into close.. No servers left..
+	// Call into close.. W have no servers left..
 	if nc.err == nil {
 		nc.err = ErrNoServers
 	}
+	nc.mu.Unlock()
 	nc.Close()
 }
 
 // processOpErr handles errors from reading or parsing the protocol.
+// The lock should not be held entering this function.
 func (nc *Conn) processOpErr(err error) {
 	nc.mu.Lock()
 	if nc.IsClosed() || nc.isReconnecting() {
@@ -768,19 +815,30 @@ func (nc *Conn) processOpErr(err error) {
 func (nc *Conn) readLoop() {
 	b := make([]byte, defaultBufSize)
 
+	// Release the wait group
+	defer nc.wg.Done()
+
 	// Create a parseState if needed.
+	nc.mu.Lock()
 	if nc.ps == nil {
 		nc.ps = &parseState{}
 	}
+	nc.mu.Unlock()
 
 	for {
+		// FIXME(dlc): RWLock here?
 		nc.mu.Lock()
 		sb := nc.IsClosed() || nc.isReconnecting()
-		nc.mu.Unlock()
 		if sb {
+			nc.ps = &parseState{}
+		}
+		conn := nc.conn
+		nc.mu.Unlock()
+
+		if sb || conn == nil {
 			break
 		}
-		n, err := nc.conn.Read(b)
+		n, err := conn.Read(b)
 		if err != nil {
 			nc.processOpErr(err) // FIXME.
 			break
@@ -791,13 +849,23 @@ func (nc *Conn) readLoop() {
 		}
 	}
 	// Clear the parseState here..
+	nc.mu.Lock()
 	nc.ps = nil
+	nc.mu.Unlock()
 }
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
-	for !nc.IsClosed() {
+
+	for {
+		nc.mu.Lock()
+		closed := nc.IsClosed()
+		nc.mu.Unlock()
+		if closed {
+			break
+		}
+
 		m, ok := <-ch
 		if !ok {
 			break
@@ -882,7 +950,9 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
-	var b int
+
+	// Release the wait group
+	defer nc.wg.Done()
 
 	for {
 		if _, ok := <-nc.fch; !ok {
@@ -894,7 +964,7 @@ func (nc *Conn) flusher() {
 			nc.mu.Unlock()
 			return
 		}
-		b = nc.bw.Buffered()
+		b := nc.bw.Buffered()
 		if b > 0 && nc.conn != nil {
 			nc.err = nc.bw.Flush()
 		}
@@ -1355,7 +1425,8 @@ func (nc *Conn) clearPendingFlushCalls() {
 
 // Low level close call that will do correct cleanup and set
 // desired status. Also controls whether user defined callbacks
-// will be triggered.
+// will be triggered. The lock should not be held entering this
+// function. This function will handle the locking manually.
 func (nc *Conn) close(status Status, doCBs bool) {
 	nc.mu.Lock()
 	if nc.IsClosed() {
@@ -1373,33 +1444,38 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
 
+	nc.mu.Lock()
+
 	// Close sync subscriber channels and release any
 	// pending NextMsg() calls.
 	for _, s := range nc.subs {
+		s.mu.Lock()
 		if s.mch != nil {
 			close(s.mch)
 			s.mch = nil
 		}
+		s.mu.Unlock()
 	}
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	if doCBs && nc.conn != nil && nc.Opts.DisconnectedCB != nil {
-		nc.Opts.DisconnectedCB(nc)
+	dcb := nc.Opts.DisconnectedCB
+	if doCBs && nc.conn != nil && dcb != nil {
+		go dcb(nc)
 	}
 
 	// Go ahead and make sure we have flushed the outbound buffer.
-	nc.mu.Lock()
 	nc.status = CLOSED
 	if nc.conn != nil {
 		nc.bw.Flush()
 		nc.conn.Close()
 	}
+	ccb := nc.Opts.ClosedCB
 	nc.mu.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
-	if doCBs && nc.Opts.ClosedCB != nil {
-		nc.Opts.ClosedCB(nc)
+	if doCBs && ccb != nil {
+		ccb(nc)
 	}
 	nc.mu.Lock()
 	nc.status = status
