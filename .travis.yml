@@ -7,9 +7,7 @@ before_script:
   - gem install nats --pre
   - which nats-server
   - nats-server -v
-  - go version
-#  - mkdir -p $GOPATH/src/github.com/apcera
-#  - ln -s /home/travis/build/apcera/nats $GOPATH/src/github.com/apcera/nats
 
 script:
+  - go test -i ./...
   - go test -race ./... -v
