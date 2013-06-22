@@ -73,6 +73,12 @@ nc, _ := nats.Connect(nats.DefaultURL)
 c, _ := nats.NewEncodedConn(nc, "json")
 defer c.Close()
 
+type person struct {
+     Name     string
+     Address  string
+     Age      int
+}
+
 recvCh := make(chan *person)
 c.BindRecvChan("hello", recvCh)
 
