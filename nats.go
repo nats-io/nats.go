@@ -47,6 +47,7 @@ var (
 	ErrAuthorization      = errors.New("nats: Authorization failed")
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
+	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
 )
 
 var DefaultOptions = Options{
