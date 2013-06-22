@@ -66,6 +66,28 @@ c.Subscribe("help", func(subj, reply string, msg string) {
 c.Close();
 ```
 
+## Using Go Channels (netchan)
+
+```go
+nc, _ := nats.Connect(nats.DefaultURL)
+c, _ := nats.NewEncodedConn(nc, "json")
+defer c.Close()
+
+recvCh := make(chan *person)
+c.BindRecvChan("hello", recvCh)
+
+sendCh := make(chan *person)
+c.BindSendChan("hello", sendCh)
+
+me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+
+// Send via Go channels
+sendCh <- me
+
+// Receive via Go channels
+who := <- recvCh
+```
+
 ## Basic Usage
 
 ```go
