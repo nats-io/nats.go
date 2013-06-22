@@ -21,8 +21,9 @@ var encLock sync.Mutex
 
 func init() {
 	encMap = make(map[string]Encoder)
-	// Register json and default encoder
+	// Register json, gob and default encoder
 	RegisterEncoder("json", &JsonEncoder{})
+	RegisterEncoder("gob", &GobEncoder{})
 	RegisterEncoder("default", &DefaultEncoder{})
 }
 
@@ -205,11 +206,7 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 		cbValue.Call(oV)
 	}
 
-	if queue != _EMPTY_ {
-		return c.Conn.QueueSubscribe(subject, queue, natsCB)
-	} else {
-		return c.Conn.Subscribe(subject, natsCB)
-	}
+	return c.Conn.subscribe(subject, queue, natsCB)
 }
 
 // FlushTimeout allows a Flush operation to have an associated timeout.
