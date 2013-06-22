@@ -210,3 +210,50 @@ func ExampleEncodedConn_Subscribe() {
 	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
 	c.Publish("hello", me)
 }
+
+// BindSendChan() allows binding of a Go channel to a nats
+// subject for publish operations. The Encoder attached to the
+// EncodedConn will be used for marshalling.
+func ExampleEncodedConn_BindSendChan() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	c, _ := nats.NewEncodedConn(nc, "json")
+	defer c.Close()
+
+	type person struct {
+		Name    string
+		Address string
+		Age     int
+	}
+
+	ch := make(chan *person)
+	c.BindSendChan("hello", ch)
+
+	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+	ch <- me
+}
+
+// BindRecvChan() allows binding of a Go channel to a nats
+// subject for subscribe operations. The Encoder attached to the
+// EncodedConn will be used for un-marshalling.
+func ExampleEncodedConn_BindRecvChan() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	c, _ := nats.NewEncodedConn(nc, "json")
+	defer c.Close()
+
+	type person struct {
+		Name    string
+		Address string
+		Age     int
+	}
+
+	ch := make(chan *person)
+	c.BindRecvChan("hello", ch)
+
+	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+	c.Publish("hello", me)
+
+	// Receive the publish directly on a channel
+	who := <- ch
+
+	fmt.Printf("%v says hello!\n", who)
+}
