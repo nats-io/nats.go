@@ -5,9 +5,10 @@ package main
 
 import (
 	"flag"
-	"github.com/apcera/nats"
 	"log"
 	"runtime"
+
+	"github.com/apcera/nats"
 )
 
 func usage() {
@@ -52,7 +53,9 @@ func main() {
 	})
 
 	log.Printf("Listening on [%s]\n", subj)
-	if *showTime { log.SetFlags(log.LstdFlags) }
+	if *showTime {
+		log.SetFlags(log.LstdFlags)
+	}
 
 	runtime.Goexit()
 }

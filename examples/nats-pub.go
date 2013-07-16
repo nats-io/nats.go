@@ -5,8 +5,9 @@ package main
 
 import (
 	"flag"
-	"github.com/apcera/nats"
 	"log"
+
+	"github.com/apcera/nats"
 )
 
 func usage() {
