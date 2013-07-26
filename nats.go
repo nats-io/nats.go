@@ -872,14 +872,20 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 			break
 		}
 		s := m.Sub
-		// FIXME, lock?
-		if s.conn == nil || s.mcb == nil {
+
+		// Capture under locks
+		s.mu.Lock()
+		conn := s.conn
+		mcb := s.mcb
+		s.mu.Unlock()
+
+		if conn == nil || mcb == nil {
 			continue
 		}
 		// FIXME: race on compare?
 		atomic.AddUint64(&s.delivered, 1)
 		if s.max <= 0 || s.delivered <= s.max {
-			s.mcb(m)
+			mcb(m)
 		}
 	}
 }
