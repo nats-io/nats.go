@@ -81,4 +81,3 @@ func TestGobMarshalStruct(t *testing.T) {
 		t.Fatal("Did not receive the message")
 	}
 }
-

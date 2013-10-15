@@ -61,7 +61,6 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	// clear the CloseCB since ch will block
 	nc.Opts.ClosedCB = nil
 	nc.Close()
-
 }
 
 var reconnectOpts = Options{

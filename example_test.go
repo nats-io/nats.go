@@ -253,7 +253,7 @@ func ExampleEncodedConn_BindRecvChan() {
 	c.Publish("hello", me)
 
 	// Receive the publish directly on a channel
-	who := <- ch
+	who := <-ch
 
 	fmt.Printf("%v says hello!\n", who)
 }

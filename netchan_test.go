@@ -54,11 +54,11 @@ func TestSimpleRecvChan(t *testing.T) {
 
 	// Receive from 'foo'
 	select {
-	case num := <- ch:
+	case num := <-ch:
 		if num != numSent {
 			t.Fatalf("Failed to receive correct value: %d vs %d\n", num, numSent)
 		}
-	case <-time.After(1*time.Second):
+	case <-time.After(1 * time.Second):
 		t.Fatalf("Failed to receive a value, timed-out\n")
 	}
 	close(ch)

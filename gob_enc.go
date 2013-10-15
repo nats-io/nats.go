@@ -16,7 +16,6 @@ type GobEncoder struct {
 
 // FIXME(dlc) - This could probably be more efficient.
 
-
 func (ge *GobEncoder) Encode(subject string, v interface{}) ([]byte, error) {
 	b := new(bytes.Buffer)
 	enc := gob.NewEncoder(b)

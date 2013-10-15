@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.86"
+	Version              = "0.88"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -415,6 +415,8 @@ func (nc *Conn) makeTLSConn() {
 // We also use a WaitGroup to make sure we only start them on a
 // reconnect when the precious ones have exited.
 func (nc *Conn) spinUpSocketWatchers() {
+	// Kick old flusher forcefully.
+	nc.fch <- true
 	// Wait for any previous ones.
 	nc.wg.Wait()
 	// We will wait on both.
@@ -422,6 +424,17 @@ func (nc *Conn) spinUpSocketWatchers() {
 
 	go nc.readLoop()
 	go nc.flusher()
+}
+
+// reSpinUpSocketWatchers will handle respinning up the socket watchers
+// on a reconnect. This is called from doReconnect and is in its own Go
+// routine.
+func (nc *Conn) reSpinUpSocketWatchers() {
+	nc.spinUpSocketWatchers()
+	nc.mu.Lock()
+	// Assume the best for status.
+	nc.status = CONNECTED
+	nc.mu.Unlock()
 }
 
 // Report the connected server's Url
@@ -705,7 +718,6 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
-
 	// Hold the lock manually and release where needed below,
 	// can't do defer here.
 	nc.mu.Lock()
@@ -750,10 +762,9 @@ func (nc *Conn) doReconnect() {
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
-			// Assume the best
-			nc.status = CONNECTED
 			// Spin up socket watchers again
-			go nc.spinUpSocketWatchers()
+			go nc.reSpinUpSocketWatchers()
+
 			// Send our connect info as normal
 			cProto, _ := nc.connectProto()
 			nc.bw.WriteString(cProto)
@@ -839,6 +850,7 @@ func (nc *Conn) readLoop() {
 		if sb || conn == nil {
 			break
 		}
+
 		n, err := conn.Read(b)
 		if err != nil {
 			nc.processOpErr(err) // FIXME.
@@ -957,7 +969,6 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
-
 	// Release the wait group
 	defer nc.wg.Done()
 
@@ -966,6 +977,7 @@ func (nc *Conn) flusher() {
 			return
 		}
 		nc.mu.Lock()
+
 		// Check for closed or reconnecting
 		if nc.IsClosed() || nc.isReconnecting() {
 			nc.mu.Unlock()
