@@ -135,7 +135,7 @@ func TestMarshalFloat32(t *testing.T) {
 
 	ec.Subscribe("enc_float", func(n float32) {
 		if n != testN {
-			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %f, wanted %f\n", n, testN)
 		}
 		ch <- true
 	})
@@ -157,7 +157,7 @@ func TestMarshalFloat64(t *testing.T) {
 
 	ec.Subscribe("enc_float", func(n float64) {
 		if n != testN {
-			t.Fatalf("Received test number of %d, wanted %d\n", n, testN)
+			t.Fatalf("Received test number of %f, wanted %f\n", n, testN)
 		}
 		ch <- true
 	})
