@@ -483,7 +483,7 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	nc.mu.Lock()
-	for i, _ := range nc.srvPool {
+	for i := range nc.srvPool {
 		nc.url = nc.srvPool[i].url
 		if err := nc.createConn(); err == nil {
 			// Release the lock, processConnectInit has to do its own locking.
