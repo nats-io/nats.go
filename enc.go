@@ -46,7 +46,7 @@ func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 	}
 	ec := &EncodedConn{Conn: c, Enc: EncoderForType(encType)}
 	if ec.Enc == nil {
-		return nil, errors.New(fmt.Sprintf("No encoder registered for '%s'", encType))
+		return nil, fmt.Errorf("No encoder registered for '%s'", encType)
 	}
 	return ec, nil
 }

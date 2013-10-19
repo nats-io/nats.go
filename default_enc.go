@@ -4,7 +4,6 @@ package nats
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -100,6 +99,6 @@ func (je *DefaultEncoder) Decode(subject string, data []byte, vPtr interface{}) 
 		return nil
 	default:
 		vt := reflect.TypeOf(arg).Elem()
-		return errors.New(fmt.Sprintf("nats: Default Encoder can't decode to type %s", vt))
+		return fmt.Errorf("nats: Default Encoder can't decode to type %s", vt)
 	}
 }
