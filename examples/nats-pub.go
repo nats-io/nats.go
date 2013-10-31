@@ -6,7 +6,7 @@ package main
 import (
 	"flag"
 	"log"
-
+	"strings"
 	"github.com/apcera/nats"
 )
 
@@ -15,7 +15,7 @@ func usage() {
 }
 
 func main() {
-	var url = flag.String("s", nats.DefaultURL, "The nats server URL")
+	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
 
 	log.SetFlags(0)
@@ -28,7 +28,11 @@ func main() {
 	}
 
 	opts := nats.DefaultOptions
-	opts.Url = *url
+	opts.Servers = strings.Split(*urls, ",")
+	for i, s := range opts.Servers {
+    		opts.Servers[i] = strings.Trim(s, " ")
+	}
+
 	opts.Secure = *ssl
 
 	nc, err := opts.Connect()
