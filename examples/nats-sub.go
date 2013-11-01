@@ -7,7 +7,7 @@ import (
 	"flag"
 	"log"
 	"runtime"
-
+	"strings"
 	"github.com/apcera/nats"
 )
 
@@ -23,7 +23,7 @@ func printMsg(m *nats.Msg, i int) {
 }
 
 func main() {
-	var url = flag.String("s", nats.DefaultURL, "The nats server URL")
+	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var showTime = flag.Bool("t", false, "Display timestamps")
 	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
 
@@ -37,7 +37,10 @@ func main() {
 	}
 
 	opts := nats.DefaultOptions
-	opts.Url = *url
+	opts.Servers = strings.Split(*urls, ",")
+	for i, s := range opts.Servers {
+    		opts.Servers[i] = strings.Trim(s, " ")
+	}
 	opts.Secure = *ssl
 
 	nc, err := opts.Connect()
