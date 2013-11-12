@@ -1473,7 +1473,7 @@ func (nc *Conn) close(status Status, doCBs bool) {
 			s.mch = nil
 		}
 		// Mark as invalid, for signalling to deliverMsgs
-		s.conn = nil
+		s.mcb = nil
 		s.mu.Unlock()
 	}
 	nc.subs = nil
