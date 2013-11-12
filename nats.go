@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.88"
+	Version              = "0.89"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -870,7 +870,6 @@ func (nc *Conn) readLoop() {
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
-
 	for {
 		nc.mu.Lock()
 		closed := nc.IsClosed()
@@ -1473,6 +1472,8 @@ func (nc *Conn) close(status Status, doCBs bool) {
 			close(s.mch)
 			s.mch = nil
 		}
+		// Mark as invalid, for signalling to deliverMsgs
+		s.conn = nil
 		s.mu.Unlock()
 	}
 	nc.subs = nil

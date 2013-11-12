@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -223,6 +224,37 @@ func TestAsyncSubscriberStarvation(t *testing.T) {
 
 	if e := wait(ch); e != nil {
 		t.Fatal("Was stalled inside of callback waiting on another callback")
+	}
+}
+
+func TestAsyncSubscribersOnClose(t *testing.T) {
+	nc := newConnection(t)
+
+	toSend := 10
+	callbacks := int64(0)
+	ch := make(chan bool, toSend)
+
+	nc.Subscribe("foo", func(_ *Msg) {
+		atomic.AddInt64(&callbacks, 1)
+		<- ch
+	})
+
+	for i := 0; i < toSend; i++ {
+		nc.Publish("foo", []byte("Hello World!"))
+	}
+	nc.Flush()
+	nc.Close()
+
+	// Release callbacks
+	for i := 1; i < toSend; i++ {
+		ch <- true
+	}
+
+	// Wait for some time.
+	time.Sleep(10*time.Millisecond)
+	seen := atomic.LoadInt64(&callbacks)
+	if seen != 1 {
+		t.Fatalf("Expected only one callback, received %d callbacks\n", seen)
 	}
 }
 
