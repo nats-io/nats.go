@@ -236,7 +236,7 @@ func TestAsyncSubscribersOnClose(t *testing.T) {
 
 	nc.Subscribe("foo", func(_ *Msg) {
 		atomic.AddInt64(&callbacks, 1)
-		<- ch
+		<-ch
 	})
 
 	for i := 0; i < toSend; i++ {
@@ -251,7 +251,7 @@ func TestAsyncSubscribersOnClose(t *testing.T) {
 	}
 
 	// Wait for some time.
-	time.Sleep(10*time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	seen := atomic.LoadInt64(&callbacks)
 	if seen != 1 {
 		t.Fatalf("Expected only one callback, received %d callbacks\n", seen)
