@@ -681,6 +681,10 @@ func (nc *Conn) processReconnect() {
 	defer nc.mu.Unlock()
 
 	if !nc.IsClosed() {
+		// If we are already in the proper state, just return.
+		if nc.status == RECONNECTING {
+			return
+		}
 		nc.status = RECONNECTING
 		if nc.conn != nil {
 			nc.bw.Flush()
