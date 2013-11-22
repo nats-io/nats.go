@@ -233,3 +233,45 @@ func TestClosedConnections(t *testing.T) {
 		t.Fatalf("Unsubscribe on closed conn did not fail properly: %v\n", err)
 	}
 }
+
+func TestErrOnConnectAndDeadlock(t *testing.T) {
+	// We will hand run a fake server that will timeout and not return a proper
+	// INFO proto. This is to test that we do not deadlock. Issue #18
+
+	l, e := net.Listen("tcp", ":0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	addr := tl.Addr().(*net.TCPAddr)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		// Send back a mal-formed INFO.
+		conn.Write([]byte("INFOZ \r\n"))
+	}()
+
+	// Used to synchronize
+	ch := make(chan bool)
+
+	go func() {
+		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
+		_, err := Connect(natsUrl)
+		if err == nil {
+			t.Fatal("Expected bad INFO err, got none")
+		}
+		ch <- true
+	}()
+
+	// Setup a timer to watch for deadlock
+	select {
+	case <-ch:
+		break
+	case <-time.After(time.Second):
+		t.Fatalf("Connect took too long, deadlock?")
+	}
+}

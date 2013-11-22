@@ -541,20 +541,24 @@ func (nc *Conn) checkForSecure() error {
 }
 
 // processExpectedInfo will look for the expected first INFO message
-// sent when a connection is established.
+// sent when a connection is established. The lock should be held entering.
 func (nc *Conn) processExpectedInfo() error {
 	nc.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
 	if err := nc.readOp(c); err != nil {
+		nc.mu.Unlock()
 		nc.processOpErr(err)
+		nc.mu.Lock()
 		return err
 	}
 	// The nats protocol should send INFO first always.
 	if c.op != _INFO_OP_ {
+		nc.mu.Unlock()
 		err := errors.New("nats: Protocol exception, INFO not received")
 		nc.processOpErr(err)
+		nc.mu.Lock()
 		return err
 	}
 	nc.processInfo(c.args)
@@ -853,7 +857,7 @@ func (nc *Conn) readLoop() {
 
 		n, err := conn.Read(b)
 		if err != nil {
-			nc.processOpErr(err) // FIXME.
+			nc.processOpErr(err)
 			break
 		}
 		if err := nc.parse(b[:n]); err != nil {
