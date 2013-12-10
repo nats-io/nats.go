@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.90"
+	Version              = "0.91"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -391,9 +391,12 @@ func (nc *Conn) createConn() error {
 	if nc.err != nil {
 		return nc.err
 	}
-	if ip, ok := nc.conn.(*net.TCPConn); ok {
-		ip.SetReadBuffer(defaultBufSize)
-	}
+
+	// No clue why, but this stalls and kills performance on Mac (Mavericks).
+	// https://code.google.com/p/go/issues/detail?id=6930
+	//if ip, ok := nc.conn.(*net.TCPConn); ok {
+	//	ip.SetReadBuffer(defaultBufSize)
+	//}
 
 	if nc.pending != nil && nc.bw != nil {
 		// Move to pending buffer.
