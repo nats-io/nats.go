@@ -546,7 +546,7 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established. The lock should be held entering.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	nc.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
