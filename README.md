@@ -44,13 +44,14 @@ c.Subscribe("hello", func(p *person) {
     fmt.Printf("Received a person: %+v\n", p)
 })
 
-me := &person{Name: "derek", Age: 22, Address: "85 Second St, San Francisco, CA"}
+me := &person{Name: "derek", Age: 22, Address: "585 Howard Street, San Francisco, CA"}
 
 // Go type Publisher
 c.Publish("hello", me)
 
 // Unsubscribing
 sub, err := c.Subscribe("foo", nil)
+...
 sub.Unsubscribe()
 
 // Requests
@@ -85,7 +86,7 @@ c.BindRecvChan("hello", recvCh)
 sendCh := make(chan *person)
 c.BindSendChan("hello", sendCh)
 
-me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+me := &person{Name: "derek", Age: 22, Address: "585 Howard Street"}
 
 // Send via Go channels
 sendCh <- me
@@ -153,12 +154,12 @@ nc.Publish("foo.bar.baz", []byte("Hello World"))
 
 ```
 
-## Queues Groups
+## Queue Groups
 
 ```go
 // All subscriptions with the same queue name will form a queue group.
-// Each message will be delivered to only one subscriber per queue group, queuing semantics.
-// You can have as many queue groups as you wish.
+// Each message will be delivered to only one subscriber per queue group,
+// using queuing semantics. You can have as many queue groups as you wish.
 // Normal subscribers will continue to work as expected.
 
 nc.QueueSubscribe("foo", "job_workers", func(_ *Msg) {
@@ -241,7 +242,7 @@ nc.Opts.ReconnectedCB = func(nc *Conn) {
 
 (The MIT License)
 
-Copyright (c) 2012-2013 Apcera Inc.
+Copyright (c) 2012-2014 Apcera Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
