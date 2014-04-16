@@ -802,7 +802,7 @@ func (nc *Conn) doReconnect() {
 		return
 	}
 
-	// Call into close.. W have no servers left..
+	// Call into close.. We have no servers left..
 	if nc.err == nil {
 		nc.err = ErrNoServers
 	}
