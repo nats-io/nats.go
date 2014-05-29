@@ -1,4 +1,4 @@
-// Copyright 2012-2013 Apcera Inc. All rights reserved.
+// Copyright 2012-2014 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
 package nats
@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.91"
+	Version              = "0.92"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -1187,7 +1187,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 		return nil, ErrConnectionClosed
 	}
 
-	sub := &Subscription{Subject: subj, mcb: cb, conn: nc}
+	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
 	sub.mch = make(chan *Msg, maxChanLen)
 
 	// If we have an async callback, start up a sub specific

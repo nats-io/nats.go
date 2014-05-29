@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -270,6 +271,95 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	}
 
 	nc.Close()
+}
+
+func TestQueueSubsOnReconnect(t *testing.T) {
+	ts := startReconnectServer(t)
+
+	opts := reconnectOpts
+
+	// Allow us to block on receonnect complete.
+	reconnectsDone := make(chan bool)
+	opts.ReconnectedCB = func(nc *Conn) {
+		reconnectsDone <- true
+	}
+
+	// Helper to wait on a reconnect.
+	waitOnReconnect := func() {
+		select {
+		case <-reconnectsDone:
+			break
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Expected a reconnect, timedout!\n")
+		}
+	}
+
+	// Create connection
+	nc, _ := opts.Connect()
+	ec, err := NewEncodedConn(nc, "json")
+	if err != nil {
+		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	}
+
+	// To hold results.
+	results := make(map[int]int)
+	var mu sync.Mutex
+
+	// Make sure we got what we needed, 1 msg only and all seqnos accounted for..
+	checkResults := func(numSent int) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		for i := 0; i < numSent; i++ {
+			if results[i] != 1 {
+				t.Fatalf("Received incorrect number of messages, [%d] for seq: %d\n", results[i], i)
+			}
+		}
+
+		// Auto reset results map
+		results = make(map[int]int)
+	}
+
+	subj := "foo.bar"
+	qgroup := "workers"
+
+	cb := func(seqno int) {
+		mu.Lock()
+		defer mu.Unlock()
+		results[seqno] = results[seqno] + 1
+	}
+
+	// Create Queue Subscribers
+	ec.QueueSubscribe(subj, qgroup, cb)
+	ec.QueueSubscribe(subj, qgroup, cb)
+
+	ec.Flush()
+
+	// Helper function to send messages and check results.
+	sendAndCheckMsgs := func(numToSend int) {
+		for i := 0; i < numToSend; i++ {
+			ec.Publish(subj, i)
+		}
+		// Wait for processing.
+		ec.Flush()
+		time.Sleep(50 * time.Millisecond)
+
+		// Check Results
+		checkResults(numToSend)
+	}
+
+	// Base Test
+	sendAndCheckMsgs(10)
+
+	// Stop and restart server
+	ts.stopServer()
+	ts = startReconnectServer(t)
+	defer ts.stopServer()
+
+	waitOnReconnect()
+
+	// Reconnect Base Test
+	sendAndCheckMsgs(10)
 }
 
 func TestIsClosed(t *testing.T) {
