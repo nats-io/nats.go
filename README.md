@@ -1,20 +1,22 @@
-# NATS - Go Client
+# NATS - Go Client [![Build Status](https://secure.travis-ci.org/apcera/nats.svg?branch=master)](http://travis-ci.org/apcera/nats) [![GoDoc](http://godoc.org/github.com/apcera/nats?status.png)](http://godoc.org/github.com/apcera/nats)
 
 A [Go](http://golang.org) client for the [NATS messaging system](https://github.com/derekcollison/nats).
 
-[![Build Status](https://secure.travis-ci.org/apcera/nats.png)](http://travis-ci.org/apcera/nats)
 
 ## Installation
 
 ```bash
 # Go client
 go get github.com/apcera/nats
-# NATS system
+
+# Servers
+
+# gnatsd
+go get github.com/apcera/gnatsd
+
+# nats-server (Ruby)
 gem install nats
 ```
-
-## Go Style Documentation
-[http://go.pkgdoc.org/github.com/apcera/nats](http://go.pkgdoc.org/github.com/apcera/nats)
 
 ## Basic Encoded Usage
 
