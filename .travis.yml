@@ -9,6 +9,9 @@ before_script:
   - which nats-server
   - nats-server -v
 
+install:
+  - go get code.google.com/p/go.tools/cmd/vet
+
 script:
   - go vet ./...
   - go test -i -race ./...
