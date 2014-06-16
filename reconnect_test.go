@@ -278,7 +278,7 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 
 	opts := reconnectOpts
 
-	// Allow us to block on receonnect complete.
+	// Allow us to block on reconnect complete.
 	reconnectsDone := make(chan bool)
 	opts.ReconnectedCB = func(nc *Conn) {
 		reconnectsDone <- true
