@@ -382,7 +382,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 		t.Fatal("Closed CB was not triggered, should have been.")
 	}
 
-	if nc.status != CLOSED {
+	if nc.IsClosed() != true {
 		t.Fatalf("Wrong status: %d\n", nc.status)
 	}
 }

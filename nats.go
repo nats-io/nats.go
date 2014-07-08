@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.92"
+	Version              = "0.94"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -37,14 +37,14 @@ const (
 )
 
 var (
-	ErrConnectionClosed   = errors.New("nats: Connection closed")
+	ErrConnectionClosed   = errors.New("nats: Connection Closed")
 	ErrSecureConnRequired = errors.New("nats: Secure connection required")
 	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
-	ErrSlowConsumer       = errors.New("nats: Slow consumer, messages dropped")
+	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
 	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
-	ErrAuthorization      = errors.New("nats: Authorization failed")
+	ErrAuthorization      = errors.New("nats: Authorization Failed")
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
@@ -96,7 +96,7 @@ type Options struct {
 const (
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery or sync subscription.
-	maxChanLen = 8192
+	maxChanLen = 65536
 
 	// Scratch storage for assembling protocol headers
 	scratchSize = 512
@@ -619,7 +619,7 @@ func (nc *Conn) sendConnect() error {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		return nc.err
 	}
 	nc.status = CONNECTED
@@ -633,7 +633,7 @@ type control struct {
 
 // Read a control line and process the intended op.
 func (nc *Conn) readOp(c *control) error {
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
 	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
@@ -683,7 +683,7 @@ func (nc *Conn) processReconnect() {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
-	if !nc.IsClosed() {
+	if !nc.isClosed() {
 		// If we are already in the proper state, just return.
 		if nc.status == RECONNECTING {
 			return
@@ -751,7 +751,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// Check if we have been closed first.
-		if nc.IsClosed() {
+		if nc.isClosed() {
 			break
 		}
 
@@ -814,7 +814,7 @@ func (nc *Conn) doReconnect() {
 // The lock should not be held entering this function.
 func (nc *Conn) processOpErr(err error) {
 	nc.mu.Lock()
-	if nc.IsClosed() || nc.isReconnecting() {
+	if nc.isClosed() || nc.isReconnecting() {
 		nc.mu.Unlock()
 		return
 	}
@@ -851,7 +851,7 @@ func (nc *Conn) readLoop() {
 	for {
 		// FIXME(dlc): RWLock here?
 		nc.mu.Lock()
-		sb := nc.IsClosed() || nc.isReconnecting()
+		sb := nc.isClosed() || nc.isReconnecting()
 		if sb {
 			nc.ps = &parseState{}
 		}
@@ -883,7 +883,7 @@ func (nc *Conn) readLoop() {
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
 	for {
 		nc.mu.Lock()
-		closed := nc.IsClosed()
+		closed := nc.isClosed()
 		nc.mu.Unlock()
 		if closed {
 			break
@@ -962,6 +962,7 @@ func (nc *Conn) processMsg(msg []byte) {
 			sub.mch <- m
 		}
 	}
+
 	sub.mu.Unlock()
 	nc.mu.Unlock()
 }
@@ -969,11 +970,11 @@ func (nc *Conn) processMsg(msg []byte) {
 // processSlowConsumer will set SlowConsumer state and fire the
 // async error handler if registered.
 func (nc *Conn) processSlowConsumer(s *Subscription) {
-	s.sc = true
 	nc.err = ErrSlowConsumer
-	if nc.Opts.AsyncErrorCB != nil {
+	if nc.Opts.AsyncErrorCB != nil && !s.sc {
 		go nc.Opts.AsyncErrorCB(nc, s, nc.err)
 	}
+	s.sc = true
 }
 
 // flusher is a separate Go routine that will process flush requests for the write
@@ -989,7 +990,7 @@ func (nc *Conn) flusher() {
 		nc.mu.Lock()
 
 		// Check for closed or reconnecting
-		if nc.IsClosed() || nc.isReconnecting() {
+		if nc.isClosed() || nc.isReconnecting() {
 			nc.mu.Unlock()
 			return
 		}
@@ -1045,6 +1046,7 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
+	// FIXME(dlc) - process Slow Consumer signals special.
 	nc.err = errors.New("nats: " + e)
 	nc.Close()
 }
@@ -1066,7 +1068,7 @@ const digits = "0123456789"
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
 
-	if nc.status == CLOSED {
+	if nc.isClosed() {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
@@ -1183,7 +1185,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		return nil, ErrConnectionClosed
 	}
 
@@ -1245,7 +1247,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		return ErrConnectionClosed
 	}
 
@@ -1383,7 +1385,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	}
 
 	nc.mu.Lock()
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
@@ -1391,7 +1393,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	defer t.Stop()
 
 	ch := make(chan bool) // FIXME: Inefficient?
-	defer close(ch)
+	//	defer close(ch)
 
 	nc.pongs = append(nc.pongs, ch)
 	nc.bw.WriteString(pingProto)
@@ -1406,6 +1408,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 			nc.mu.Lock()
 			err = nc.err
 			nc.mu.Unlock()
+			close(ch)
 		}
 	case <-t.C:
 		err = ErrTimeout
@@ -1458,7 +1461,7 @@ func (nc *Conn) clearPendingFlushCalls() {
 // function. This function will handle the locking manually.
 func (nc *Conn) close(status Status, doCBs bool) {
 	nc.mu.Lock()
-	if nc.IsClosed() {
+	if nc.isClosed() {
 		nc.status = status
 		nc.mu.Unlock()
 		return
@@ -1521,6 +1524,13 @@ func (nc *Conn) Close() {
 
 // Test if Conn has been closed.
 func (nc *Conn) IsClosed() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.isClosed()
+}
+
+// Test if Conn has been closed Lock is assumed held.
+func (nc *Conn) isClosed() bool {
 	return nc.status == CLOSED
 }
 
