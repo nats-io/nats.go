@@ -193,7 +193,7 @@ sub.AutoUnsubscribe(MAX_WANTED)
 
 // Multiple connections
 nc1 := nats.Connect("nats://host1:4222")
-nc1 := nats.Connect("nats://host2:4222")
+nc2 := nats.Connect("nats://host2:4222")
 
 nc1.Subscribe("foo", func(m *Msg) {
     fmt.Printf("Received a message: %s\n", string(m.Data))
