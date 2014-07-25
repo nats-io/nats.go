@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.94"
+	Version              = "0.96"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -1263,6 +1263,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
+		var wg *sync.WaitGroup
 		s.mu.Lock()
 		if s.mch != nil {
 			close(s.mch)
@@ -1271,6 +1272,12 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		// Mark as invalid
 		s.conn = nil
 		s.mu.Unlock()
+		if wg != nil {
+			// Need to unlock nc here to avoid a potential deadlock.
+			nc.mu.Unlock()
+			wg.Wait()
+			nc.mu.Lock()
+		}
 	}
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.

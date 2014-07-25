@@ -190,13 +190,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		nc.Publish(subj, b)
 	}
 
-	timeout := 5 * time.Second
-	start := time.Now()
-	err = nc.FlushTimeout(timeout)
-	elapsed := time.Since(start)
-	if elapsed >= timeout {
-		t.Fatalf("Flush did not return before timeout")
-	}
+	nc.Flush()
 
 	if e := wait(ch); e != nil {
 		t.Fatal("Failed to call async err handler")

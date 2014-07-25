@@ -73,8 +73,8 @@ c.Close();
 
 ```go
 nc, _ := nats.Connect(nats.DefaultURL)
-c, _ := nats.NewEncodedConn(nc, "json")
-defer c.Close()
+ec, _ := nats.NewEncodedConn(nc, "json")
+defer ec.Close()
 
 type person struct {
      Name     string
@@ -83,10 +83,10 @@ type person struct {
 }
 
 recvCh := make(chan *person)
-c.BindRecvChan("hello", recvCh)
+ec.BindRecvChan("hello", recvCh)
 
 sendCh := make(chan *person)
-c.BindSendChan("hello", sendCh)
+ec.BindSendChan("hello", sendCh)
 
 me := &person{Name: "derek", Age: 22, Address: "585 Howard Street"}
 

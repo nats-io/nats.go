@@ -1,4 +1,4 @@
-// Copyright 2013 Apcera Inc. All rights reserved.
+// Copyright 2013-2014 Apcera Inc. All rights reserved.
 
 package nats
 
@@ -7,7 +7,7 @@ import (
 	"reflect"
 )
 
-// This allows the functionality fo network channels by binding send and receive Go chans
+// This allows the functionality for network channels by binding send and receive Go chans
 // to subjects and optionally queue groups.
 // Data will be encoded and decoded via the EncodedConn and its associated encoders.
 
@@ -41,20 +41,20 @@ func chPublish(c *EncodedConn, chVal reflect.Value, subject string) {
 }
 
 // Bind a channel for receive operations from nats.
-func (c *EncodedConn) BindRecvChan(subject string, channel interface{}) error {
+func (c *EncodedConn) BindRecvChan(subject string, channel interface{}) (*Subscription, error) {
 	return c.bindRecvChan(subject, _EMPTY_, channel)
 }
 
 // Bind a channel for queue-based receive operations from nats.
-func (c *EncodedConn) BindRecvQueueChan(subject, queue string, channel interface{}) error {
+func (c *EncodedConn) BindRecvQueueChan(subject, queue string, channel interface{}) (*Subscription, error) {
 	return c.bindRecvChan(subject, queue, channel)
 }
 
 // Internal function to bind receive operations for a channel.
-func (c *EncodedConn) bindRecvChan(subject, queue string, channel interface{}) error {
+func (c *EncodedConn) bindRecvChan(subject, queue string, channel interface{}) (*Subscription, error) {
 	chVal := reflect.ValueOf(channel)
 	if chVal.Kind() != reflect.Chan {
-		return ErrChanArg
+		return nil, ErrChanArg
 	}
 	argType := chVal.Type().Elem()
 
@@ -75,10 +75,15 @@ func (c *EncodedConn) bindRecvChan(subject, queue string, channel interface{}) e
 		if argType.Kind() != reflect.Ptr {
 			oPtr = reflect.Indirect(oPtr)
 		}
+		// This is a bit hacky, but in this instance we may be trying to send to a closed channel.
+		// and the user does not know when it is safe to close the Channel
+		defer func() {
+			m.Sub.Unsubscribe()
+			recover()
+		}()
+		// Actually do the send to the channel.
 		chVal.Send(oPtr)
 	}
 
-	_, err := c.Conn.subscribe(subject, queue, cb)
-
-	return err
+	return c.Conn.subscribe(subject, queue, cb)
 }
