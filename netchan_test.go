@@ -129,6 +129,32 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	}
 }
 
+func TestRecvChanMultipleMessages(t *testing.T) {
+	// Make sure we can receive more than one message.
+	// In response to #25, which is a bug from fixing #22.
+
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	// Num to send, should == len of messages queued.
+	size := 10
+
+	ch := make(chan int, size)
+
+	if _, err := ec.BindRecvChan("foo", ch); err != nil {
+		t.Fatalf("Failed to bind to a send channel: %v\n", err)
+	}
+
+	for i := 0; i < size; i++ {
+		ec.Publish("foo", 22)
+	}
+	ec.Flush()
+
+	if lch := len(ch); lch != size {
+		t.Fatalf("Expected %d messages queued, got %d.", size, lch)
+	}
+}
+
 func BenchmarkPublishSpeedViaChan(b *testing.B) {
 	b.StopTimer()
 	server := startServer(b, DefaultPort, "")

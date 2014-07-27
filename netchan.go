@@ -76,10 +76,12 @@ func (c *EncodedConn) bindRecvChan(subject, queue string, channel interface{}) (
 			oPtr = reflect.Indirect(oPtr)
 		}
 		// This is a bit hacky, but in this instance we may be trying to send to a closed channel.
-		// and the user does not know when it is safe to close the Channel
+		// and the user does not know when it is safe to close the channel.
 		defer func() {
-			m.Sub.Unsubscribe()
-			recover()
+			// If we have panicked, recover and close the subscription.
+			if r := recover(); r != nil {
+				m.Sub.Unsubscribe()
+			}
 		}()
 		// Actually do the send to the channel.
 		chVal.Send(oPtr)
