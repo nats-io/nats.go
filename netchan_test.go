@@ -99,6 +99,8 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	ec.Publish("foo", 22)
 	ec.Flush()
 
+	time.Sleep(50 * time.Millisecond)
+
 	after := runtime.NumGoroutine()
 
 	if before != after {
