@@ -137,7 +137,7 @@ nc.Close();
 
 // "*" matches any token, at any level of the subject.
 nc.Subscribe("foo.*.baz", func(m *Msg) {
-    fmt.Printf("Msg received on [%s] : %s\n", n.Subj, string(m.Data));
+    fmt.Printf("Msg received on [%s] : %s\n", m.Subject, string(m.Data));
 })
 
 nc.Subscribe("foo.bar.*", func(m *Msg) {
