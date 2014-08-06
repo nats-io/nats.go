@@ -372,3 +372,17 @@ func TestStats(t *testing.T) {
 		t.Fatalf("Not properly tracking InBytes: received %d, wanted %d\n", nc.InBytes, ibb)
 	}
 }
+
+func TestRaceSafeStats(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+
+	go nc.Publish("foo", []byte("Hello World"))
+	time.Sleep(200 * time.Millisecond)
+
+	stats := nc.Stats()
+
+	if stats.OutMsgs != uint64(1) {
+		t.Fatalf("Not properly tracking OutMsgs: received %d, wanted %d\n", nc.OutMsgs, 1)
+	}
+}

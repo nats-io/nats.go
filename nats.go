@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	Version              = "0.97"
+	Version              = "0.98"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -117,7 +117,7 @@ const (
 // A Conn represents a bare connection to a nats-server. It will send and receive
 // []byte payloads.
 type Conn struct {
-	Stats
+	Statistics
 	mu      sync.Mutex
 	Opts    Options
 	wg      sync.WaitGroup
@@ -172,7 +172,7 @@ type Msg struct {
 
 // Tracks various stats received and sent on this connection,
 // including counts for messages and bytes.
-type Stats struct {
+type Statistics struct {
 	InMsgs     uint64
 	OutMsgs    uint64
 	InBytes    uint64
@@ -769,7 +769,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		nc.Stats.Reconnects += 1
+		nc.Reconnects += 1
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
@@ -1544,6 +1544,14 @@ func (nc *Conn) isClosed() bool {
 // Test if Conn is being reconnected.
 func (nc *Conn) isReconnecting() bool {
 	return nc.status == RECONNECTING
+}
+
+// Stats will return a race safe copy of the Statistics section for the connection.
+func (nc *Conn) Stats() Statistics {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	stats := nc.Statistics
+	return stats
 }
 
 // Used for a garbage collection finalizer on dangling connections.
