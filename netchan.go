@@ -22,7 +22,7 @@ func (c *EncodedConn) BindSendChan(subject string, channel interface{}) error {
 }
 
 // Publish all values that arrive on the channel until it is closed or we
-// ecounter an error.
+// encounter an error.
 func chPublish(c *EncodedConn, chVal reflect.Value, subject string) {
 	for {
 		val, ok := chVal.Recv()

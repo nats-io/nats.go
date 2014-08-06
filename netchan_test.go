@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+func TestBadChan(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	if err := ec.BindSendChan("foo", "not a chan"); err == nil {
+		t.Fatalf("Expected an Error when sending a non-channel\n")
+	}
+
+	if _, err := ec.BindRecvChan("foo", "not a chan"); err == nil {
+		t.Fatalf("Expected an Error when sending a non-channel\n")
+	}
+
+	if err := ec.BindSendChan("foo", "not a chan"); err != ErrChanArg {
+		t.Fatalf("Expected an ErrChanArg when sending a non-channel\n")
+	}
+
+	if _, err := ec.BindRecvChan("foo", "not a chan"); err != ErrChanArg {
+		t.Fatalf("Expected an ErrChanArg when sending a non-channel\n")
+	}
+}
+
 func TestSimpleSendChan(t *testing.T) {
 	ec := NewEConn(t)
 	defer ec.Close()
