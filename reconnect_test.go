@@ -117,9 +117,9 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	if ec.Conn.Stats.Reconnects != expectedReconnectCount {
+	if ec.Conn.Reconnects != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
-			ec.Conn.Stats.Reconnects, expectedReconnectCount)
+			ec.Conn.Reconnects, expectedReconnectCount)
 	}
 
 	nc.Close()
@@ -265,9 +265,9 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	if ec.Conn.Stats.Reconnects != expectedReconnectCount {
+	if ec.Conn.Reconnects != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
-			ec.Conn.Stats.Reconnects, expectedReconnectCount)
+			ec.Conn.Reconnects, expectedReconnectCount)
 	}
 
 	nc.Close()
