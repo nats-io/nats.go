@@ -382,3 +382,69 @@ func TestIsClosed(t *testing.T) {
 	}
 	ts.stopServer()
 }
+
+func TestIsReconnectingAndStatus(t *testing.T) {
+	ts := startReconnectServer(t)
+	// This will kill the last 'ts' server that is created
+	defer func() { ts.stopServer() }()
+	disconnectedch := make(chan bool)
+	reconnectch := make(chan bool)
+	opts := DefaultOptions
+	opts.Url = "nats://localhost:22222"
+	opts.AllowReconnect = true
+	opts.MaxReconnect = 10000
+	opts.ReconnectWait = 100 * time.Millisecond
+
+	opts.DisconnectedCB = func(_ *Conn) {
+		disconnectedch <- true
+	}
+	opts.ReconnectedCB = func(_ *Conn) {
+		reconnectch <- true
+	}
+
+	// Connect, verify initial reconnecting state check, then stop the server
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	if nc.IsReconnecting() == true {
+		t.Fatalf("IsReconnecting returned true when the connection is still open.")
+	}
+	if status := nc.Status(); status != CONNECTED {
+		t.Fatalf("Status returned %d when connected instead of CONNECTED", status)
+	}
+	ts.stopServer()
+
+	// Wait until we get the disconnected callback
+	if e := wait(disconnectedch); e != nil {
+		t.Fatalf("Disconnect callback wasn't triggered: %v", e)
+	}
+	if nc.IsReconnecting() == false {
+		t.Fatalf("IsReconnecting returned false when the client is reconnecting.")
+	}
+	if status := nc.Status(); status != RECONNECTING {
+		t.Fatalf("Status returned %d when reconnecting instead of CONNECTED", status)
+	}
+
+	ts = startReconnectServer(t)
+
+	// Wait until we get the reconnect callback
+	if e := wait(reconnectch); e != nil {
+		t.Fatalf("Reconnect callback wasn't triggered: %v", e)
+	}
+	if nc.IsReconnecting() == true {
+		t.Fatalf("IsReconnecting returned true after the connection was reconnected.")
+	}
+	if status := nc.Status(); status != CONNECTED {
+		t.Fatalf("Status returned %d when reconnected instead of CONNECTED", status)
+	}
+
+	// Close the connection, reconnecting should still be false
+	nc.Close()
+	if nc.IsReconnecting() == true {
+		t.Fatalf("IsReconnecting returned true after Close() was called.")
+	}
+	if status := nc.Status(); status != CLOSED {
+		t.Fatalf("Status returned %d after Close() was called instead of CLOSED", status)
+	}
+}
