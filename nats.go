@@ -1536,6 +1536,20 @@ func (nc *Conn) IsClosed() bool {
 	return nc.isClosed()
 }
 
+// Test if Conn is reconnecting.
+func (nc *Conn) IsReconnecting() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.isReconnecting()
+}
+
+// Status returns the current state of the connection.
+func (nc *Conn) Status() Status {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.status
+}
+
 // Test if Conn has been closed Lock is assumed held.
 func (nc *Conn) isClosed() bool {
 	return nc.status == CLOSED
