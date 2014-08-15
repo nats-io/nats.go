@@ -111,7 +111,7 @@ nc.Subscribe("foo", func(m *Msg) {
 })
 
 // Simple Sync Subscriber
-sub, err := nc.Subscribe("foo")
+sub, err := nc.SubscribeSync("foo")
 m, err := sub.NextMsg(timeout)
 
 // Unsubscribing
