@@ -13,7 +13,7 @@ import (
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func wait(ch chan bool) error {
-	return waitTime(ch, 200*time.Millisecond)
+	return waitTime(ch, 500*time.Millisecond)
 }
 
 func waitTime(ch chan bool, timeout time.Duration) error {
