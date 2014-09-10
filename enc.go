@@ -179,10 +179,13 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 				oPtr = reflect.New(argType.Elem())
 			}
 			if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
-				c.Conn.err = errors.New("nats: Got an error trying to unmarshal: " + err.Error())
-				if c.Conn.Opts.AsyncErrorCB != nil {
+				nc := c.Conn
+				nc.mu.Lock()
+				nc.err = errors.New("nats: Got an error trying to unmarshal: " + err.Error())
+				if nc.Opts.AsyncErrorCB != nil {
 					go c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, c.Conn.err)
 				}
+				nc.mu.Unlock()
 				return
 			}
 			if argType.Kind() != reflect.Ptr {
