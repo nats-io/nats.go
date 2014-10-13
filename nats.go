@@ -1047,8 +1047,13 @@ func (nc *Conn) LastError() error {
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
-	nc.err = errors.New("nats: " + e)
-	nc.Close()
+	err := errors.New("nats: " + e)
+	if e == "Stale Connection" {
+		nc.processOpErr(err)
+	} else {
+		nc.err = err
+		nc.Close()
+	}
 }
 
 // kickFlusher will send a bool on a channel to kick the
