@@ -1,6 +1,6 @@
 // Copyright 2012-2014 Apcera Inc. All rights reserved.
 
-// A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
+// A Go client for the NATS messaging system (https://nats.io).
 package nats
 
 import (
@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/url"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -468,6 +467,9 @@ func (nc *Conn) processConnectInit() error {
 	nc.mu.Lock()
 	nc.setup()
 
+	// Set our status to connected.
+	nc.status = CONNECTED
+
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
 		nc.mu.Unlock()
@@ -475,6 +477,7 @@ func (nc *Conn) processConnectInit() error {
 	}
 	nc.mu.Unlock()
 
+	// We need these to process the sendConnect.
 	go nc.spinUpSocketWatchers()
 
 	return nc.sendConnect()
@@ -495,7 +498,6 @@ func (nc *Conn) connect() error {
 			nc.mu.Lock()
 
 			if err == nil {
-				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
 				break
@@ -685,7 +687,7 @@ func (nc *Conn) processReconnect() {
 
 	if !nc.isClosed() {
 		// If we are already in the proper state, just return.
-		if nc.status == RECONNECTING {
+		if nc.isReconnecting() {
 			return
 		}
 		nc.status = RECONNECTING
@@ -770,6 +772,9 @@ func (nc *Conn) doReconnect() {
 
 		// We are reconnected
 		nc.Reconnects += 1
+
+		// Set our status to connected.
+		nc.status = CONNECTED
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
@@ -1074,8 +1079,9 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	}
 
 	if nc.err != nil {
+		err := nc.err
 		nc.mu.Unlock()
-		return nc.err
+		return err
 	}
 
 	msgh := nc.scratch[:len(_PUB_P_)]
@@ -1566,12 +1572,4 @@ func (nc *Conn) Stats() Statistics {
 	defer nc.mu.Unlock()
 	stats := nc.Statistics
 	return stats
-}
-
-// Used for a garbage collection finalizer on dangling connections.
-// Should not be needed as Close() should be called, but here for
-// completeness.
-func fin(nc *Conn) {
-	nc.Close()
-	close(nc.fch)
 }
