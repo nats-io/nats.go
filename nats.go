@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "1.0"
+	Version              = "1.0.1"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -428,17 +428,6 @@ func (nc *Conn) spinUpSocketWatchers() {
 	go nc.flusher()
 }
 
-// reSpinUpSocketWatchers will handle respinning up the socket watchers
-// on a reconnect. This is called from doReconnect and is in its own Go
-// routine.
-func (nc *Conn) reSpinUpSocketWatchers() {
-	nc.spinUpSocketWatchers()
-	nc.mu.Lock()
-	// Assume the best for status.
-	nc.status = CONNECTED
-	nc.mu.Unlock()
-}
-
 // Report the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
 	nc.mu.Lock()
@@ -773,21 +762,28 @@ func (nc *Conn) doReconnect() {
 		// We are reconnected
 		nc.Reconnects += 1
 
-		// Set our status to connected.
-		nc.status = CONNECTED
-
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
-			// Spin up socket watchers again
-			go nc.reSpinUpSocketWatchers()
-
 			// Send our connect info as normal
-			cProto, _ := nc.connectProto()
+			cProto, err := nc.connectProto()
+			if err != nil {
+				continue
+			}
+
+			// Set our status to connected.
+			nc.status = CONNECTED
+
 			nc.bw.WriteString(cProto)
 			// Send existing subscription state
 			nc.resendSubscriptions()
 			// Now send off and clear pending buffer
 			nc.flushReconnectPendingItems()
+
+			// Spin up socket watchers again
+			go nc.spinUpSocketWatchers()
+		} else {
+			nc.status = RECONNECTING
+			continue
 		}
 
 		// snapshot the reconnect callback while lock is held.
@@ -1269,7 +1265,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
-		var wg *sync.WaitGroup
 		s.mu.Lock()
 		if s.mch != nil {
 			close(s.mch)
@@ -1278,12 +1273,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		// Mark as invalid
 		s.conn = nil
 		s.mu.Unlock()
-		if wg != nil {
-			// Need to unlock nc here to avoid a potential deadlock.
-			nc.mu.Unlock()
-			wg.Wait()
-			nc.mu.Lock()
-		}
 	}
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.

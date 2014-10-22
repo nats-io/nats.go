@@ -106,12 +106,13 @@ func TestIsValidSubscriber(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
-	_, err = sub.NextMsg(100 * time.Millisecond)
+	nc.Flush()
+	_, err = sub.NextMsg(200 * time.Millisecond)
 	if err != nil {
 		t.Fatalf("NextMsg returned an error")
 	}
 	sub.Unsubscribe()
-	_, err = sub.NextMsg(100 * time.Millisecond)
+	_, err = sub.NextMsg(200 * time.Millisecond)
 	if err == nil {
 		t.Fatalf("NextMsg should have returned an error")
 	}
@@ -133,7 +134,7 @@ func TestSlowSubscriber(t *testing.T) {
 		t.Fatalf("Flush did not return before timeout: %d > %d", elapsed, timeout)
 	}
 	// Make sure NextMsg returns an error to indicate slow consumer
-	_, err := sub.NextMsg(100 * time.Millisecond)
+	_, err := sub.NextMsg(200 * time.Millisecond)
 	if err == nil {
 		t.Fatalf("NextMsg did not return an error")
 	}
@@ -144,7 +145,7 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	defer nc.Close()
 
 	nc.Subscribe("foo", func(_ *Msg) {
-		time.Sleep(100 * time.Second)
+		time.Sleep(200 * time.Second)
 	})
 	for i := 0; i < (maxChanLen + 100); i++ {
 		nc.Publish("foo", []byte("Hello"))
@@ -169,7 +170,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	subj := "async_test"
 
 	sub, err := nc.Subscribe(subj, func(_ *Msg) {
-		time.Sleep(100 * time.Second)
+		time.Sleep(200 * time.Second)
 	})
 	if err != nil {
 		t.Fatalf("Could not subscribe: %v\n", err)
