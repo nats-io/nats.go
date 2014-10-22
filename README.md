@@ -1,4 +1,4 @@
-# NATS - Go Client [![Build Status](https://secure.travis-ci.org/apcera/nats.svg?branch=master)](http://travis-ci.org/apcera/nats) [![GoDoc](http://godoc.org/github.com/apcera/nats?status.png)](http://godoc.org/github.com/apcera/nats) [![Coverage Status](https://img.shields.io/coveralls/apcera/nats.svg)](https://coveralls.io/r/apcera/nats)
+# NATS - Go Client [![Build Status](https://travis-ci.org/apcera/nats.svg?branch=master)](http://travis-ci.org/apcera/nats) [![GoDoc](http://godoc.org/github.com/apcera/nats?status.png)](http://godoc.org/github.com/apcera/nats) [![Coverage Status](https://img.shields.io/coveralls/apcera/nats.svg)](https://coveralls.io/r/apcera/nats)
 A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io).
 
 
