@@ -106,6 +106,7 @@ func TestIsValidSubscriber(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
+	nc.Flush()
 	_, err = sub.NextMsg(200 * time.Millisecond)
 	if err != nil {
 		t.Fatalf("NextMsg returned an error")
