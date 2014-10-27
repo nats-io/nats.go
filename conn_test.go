@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"net"
@@ -274,4 +275,67 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatalf("Connect took too long, deadlock?")
 	}
+}
+
+func TestReadTimeout(t *testing.T) {
+	// start a fake server that we can hang
+	l, e := net.Listen("tcp", ":0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	// Used to synchronize
+	ch := make(chan bool)
+	var conn net.Conn
+
+	go func() {
+		var err error
+		conn, err = l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+
+		// Send INFO message
+		info := fmt.Sprintf(`INFO {"server_id":"id","version":"1.2.3.4","host":"127.0.0.1":"port":%d,auth_required":false}`, addr.Port)
+		conn.Write([]byte(info))
+		conn.Write([]byte("\r\n"))
+
+		// Read to ensure that we're receiving a CONNECT message, for sanity/clarity
+		br := bufio.NewReaderSize(conn, 1024*1024)
+		if s, _ := br.ReadString(byte('\n')); !strings.HasPrefix(s, "CONNECT") {
+			t.Fatalf("Expected first message from client to start with CONNECT, got '%s'\n", s)
+		}
+
+		conn.Write([]byte("PONG\r\n"))
+
+		ch <- true
+	}()
+
+	opts := DefaultOptions
+	opts.ReadTimeout = 100 * time.Millisecond
+	opts.Url = fmt.Sprintf("nats://localhost:%d/", addr.Port)
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Connect failed: %s", err.Error())
+	}
+
+	// Setup a timer to watch for deadlock
+	select {
+	case <-ch:
+		defer conn.Close()
+		break
+	case <-time.After(time.Second):
+		t.Fatalf("Connect took too long, deadlock?")
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if !nc.IsClosed() && !nc.isReconnecting() {
+		t.Fatal("Connection was not terminated", nc.IsClosed(), nc.isReconnecting())
+	}
+	nc.Close()
 }

@@ -34,6 +34,7 @@ const (
 	DefaultMaxReconnect  = 10
 	DefaultReconnectWait = 2 * time.Second
 	DefaultTimeout       = 2 * time.Second
+	DefaultReadTimeout   = 3 * time.Minute
 )
 
 var (
@@ -55,6 +56,7 @@ var DefaultOptions = Options{
 	MaxReconnect:   DefaultMaxReconnect,
 	ReconnectWait:  DefaultReconnectWait,
 	Timeout:        DefaultTimeout,
+	ReadTimeout:    DefaultReadTimeout,
 }
 
 type Status int
@@ -87,6 +89,7 @@ type Options struct {
 	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
+	ReadTimeout    time.Duration
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
@@ -859,6 +862,11 @@ func (nc *Conn) readLoop() {
 		nc.mu.Unlock()
 
 		if sb || conn == nil {
+			break
+		}
+
+		err := conn.SetReadDeadline(time.Now().Add(nc.Opts.ReadTimeout))
+		if err != nil {
 			break
 		}
 
