@@ -1,6 +1,6 @@
 // Copyright 2012-2014 Apcera Inc. All rights reserved.
 
-// A Go client for the NATS messaging system (https://github.com/derekcollison/nats).
+// A Go client for the NATS messaging system (https://nats.io).
 package nats
 
 import (
@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/url"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "0.99"
+	Version              = "1.0.1"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -432,17 +431,6 @@ func (nc *Conn) spinUpSocketWatchers() {
 	go nc.flusher()
 }
 
-// reSpinUpSocketWatchers will handle respinning up the socket watchers
-// on a reconnect. This is called from doReconnect and is in its own Go
-// routine.
-func (nc *Conn) reSpinUpSocketWatchers() {
-	nc.spinUpSocketWatchers()
-	nc.mu.Lock()
-	// Assume the best for status.
-	nc.status = CONNECTED
-	nc.mu.Unlock()
-}
-
 // Report the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
 	nc.mu.Lock()
@@ -471,6 +459,9 @@ func (nc *Conn) processConnectInit() error {
 	nc.mu.Lock()
 	nc.setup()
 
+	// Set our status to connected.
+	nc.status = CONNECTED
+
 	// Make sure to process the INFO inline here.
 	if nc.err = nc.processExpectedInfo(); nc.err != nil {
 		nc.mu.Unlock()
@@ -478,6 +469,7 @@ func (nc *Conn) processConnectInit() error {
 	}
 	nc.mu.Unlock()
 
+	// We need these to process the sendConnect.
 	go nc.spinUpSocketWatchers()
 
 	return nc.sendConnect()
@@ -498,7 +490,6 @@ func (nc *Conn) connect() error {
 			nc.mu.Lock()
 
 			if err == nil {
-				runtime.SetFinalizer(nc, fin)
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
 				break
@@ -688,7 +679,7 @@ func (nc *Conn) processReconnect() {
 
 	if !nc.isClosed() {
 		// If we are already in the proper state, just return.
-		if nc.status == RECONNECTING {
+		if nc.isReconnecting() {
 			return
 		}
 		nc.status = RECONNECTING
@@ -776,16 +767,26 @@ func (nc *Conn) doReconnect() {
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {
-			// Spin up socket watchers again
-			go nc.reSpinUpSocketWatchers()
-
 			// Send our connect info as normal
-			cProto, _ := nc.connectProto()
+			cProto, err := nc.connectProto()
+			if err != nil {
+				continue
+			}
+
+			// Set our status to connected.
+			nc.status = CONNECTED
+
 			nc.bw.WriteString(cProto)
 			// Send existing subscription state
 			nc.resendSubscriptions()
 			// Now send off and clear pending buffer
 			nc.flushReconnectPendingItems()
+
+			// Spin up socket watchers again
+			go nc.spinUpSocketWatchers()
+		} else {
+			nc.status = RECONNECTING
+			continue
 		}
 
 		// snapshot the reconnect callback while lock is held.
@@ -1087,8 +1088,9 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	}
 
 	if nc.err != nil {
+		err := nc.err
 		nc.mu.Unlock()
-		return nc.err
+		return err
 	}
 
 	msgh := nc.scratch[:len(_PUB_P_)]
@@ -1276,7 +1278,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		maxStr = strconv.Itoa(max)
 	} else {
 		delete(nc.subs, s.sid)
-		var wg *sync.WaitGroup
 		s.mu.Lock()
 		if s.mch != nil {
 			close(s.mch)
@@ -1285,12 +1286,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		// Mark as invalid
 		s.conn = nil
 		s.mu.Unlock()
-		if wg != nil {
-			// Need to unlock nc here to avoid a potential deadlock.
-			nc.mu.Unlock()
-			wg.Wait()
-			nc.mu.Lock()
-		}
 	}
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
@@ -1579,12 +1574,4 @@ func (nc *Conn) Stats() Statistics {
 	defer nc.mu.Unlock()
 	stats := nc.Statistics
 	return stats
-}
-
-// Used for a garbage collection finalizer on dangling connections.
-// Should not be needed as Close() should be called, but here for
-// completeness.
-func fin(nc *Conn) {
-	nc.Close()
-	close(nc.fch)
 }
