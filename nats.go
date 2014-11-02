@@ -33,6 +33,8 @@ const (
 	DefaultMaxReconnect  = 10
 	DefaultReconnectWait = 2 * time.Second
 	DefaultTimeout       = 2 * time.Second
+
+	STALE_CONNECTION = "Stale Connection"
 )
 
 var (
@@ -1048,8 +1050,13 @@ func (nc *Conn) LastError() error {
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
-	nc.err = errors.New("nats: " + e)
-	nc.Close()
+	err := errors.New("nats: " + e)
+	if e == STALE_CONNECTION {
+		nc.processOpErr(err)
+	} else {
+		nc.err = err
+		nc.Close()
+	}
 }
 
 // kickFlusher will send a bool on a channel to kick the
