@@ -17,8 +17,7 @@ script:
 - go test -i -race ./...
 - go test -v -race ./...
 - go test -v -covermode=count -coverprofile=coverage.out
-- $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=travis-ci -repotoken
-  $COVERALLS_TOKEN
+- $HOME/gopath/bin/goveralls -coverprofile coverage.out -service travis-ci -repotoken $COVERALLS_TOKEN
 env:
   global:
     secure: UxWSqs4k2Sa2AqA16rbRYxkqw9eF82yjl737CCCf2ce6nQTihZ2zNOPDXMfE/JeKv6spwErzX3I2JyrSQJ9BdHTwnYHOdvajNFqoUDtM/vp89OcOBrUNNST0wlmVp8mkMSUecpBAJCaCpc8PTbkca2p7VkHv8dohdSnpxugPZX0=
