@@ -27,14 +27,12 @@ import (
 )
 
 const (
-	Version              = "1.0.1"
+	Version              = "1.0.2"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
 	DefaultReconnectWait = 2 * time.Second
 	DefaultTimeout       = 2 * time.Second
-
-	STALE_CONNECTION = "Stale Connection"
 )
 
 var (
@@ -66,6 +64,9 @@ const (
 	CLOSED
 	RECONNECTING
 )
+
+// For detection and proper handling of a Stale Connection
+const STALE_CONNECTION = "Stale Connection"
 
 // ConnHandlers are used for asynchronous events such as
 // disconnected and closed connections.
