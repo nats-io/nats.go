@@ -101,7 +101,7 @@ type Options struct {
 	ReconnectedCB  ConnHandler
 	AsyncErrorCB   ErrHandler
 
-	PingInterval time.Duration
+	PingInterval time.Duration // disabled if 0 or negative
 	MaxPingsOut  int
 }
 
@@ -248,9 +248,6 @@ func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
 	if nc.Opts.MaxPingsOut == 0 {
 		nc.Opts.MaxPingsOut = DefaultMaxPingOut
-	}
-	if nc.Opts.PingInterval == 0 {
-		nc.Opts.PingInterval = DefaultPingInterval
 	}
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
@@ -457,7 +454,14 @@ func (nc *Conn) spinUpSocketWatchers() {
 
 	nc.mu.Lock()
 	nc.pout = 0
-	nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
+
+	if nc.Opts.PingInterval > 0 {
+		if nc.ptmr == nil {
+			nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
+		} else {
+			nc.ptmr.Reset(nc.Opts.PingInterval)
+		}
+	}
 	nc.mu.Unlock()
 }
 
@@ -1418,19 +1422,23 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	return false
 }
 
+// The lock must be held entering this function.
 func (nc *Conn) sendPing(ch chan bool) {
 	nc.pongs = append(nc.pongs, ch)
 	nc.bw.WriteString(pingProto)
-	nc.bw.Flush()
+	nc.kickFlusher()
 }
 
 func (nc *Conn) processPingTimer() {
 	nc.mu.Lock()
 
+	if nc.isClosed() {
+		return
+	}
+
 	// Check for violation
 	nc.pout += 1
 	if nc.pout > nc.Opts.MaxPingsOut {
-		nc.ptmr = nil
 		nc.mu.Unlock()
 		nc.processOpErr(ErrStaleConnection)
 		return
@@ -1539,7 +1547,6 @@ func (nc *Conn) close(status Status, doCBs bool) {
 
 	if nc.ptmr != nil {
 		nc.ptmr.Stop()
-		nc.ptmr = nil
 	}
 
 	// Close sync subscriber channels and release any
