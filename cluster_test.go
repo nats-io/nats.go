@@ -438,3 +438,59 @@ func TestTimeoutOnNoServers(t *testing.T) {
 		t.Fatalf("Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
 	}
 }
+
+func TestPingReconnect(t *testing.T) {
+	RECONNECTS := 4
+	s1 := startServer(t, 1222, "")
+	defer s1.stopServer()
+
+	opts := DefaultOptions
+	opts.Servers = testServers
+	opts.NoRandomize = true
+	opts.ReconnectWait = 200 * time.Millisecond
+	opts.PingInterval = 50 * time.Millisecond
+	opts.MaxPingsOut = -1
+
+	barrier := make(chan struct{})
+	rch := make(chan time.Time, RECONNECTS)
+	dch := make(chan time.Time, RECONNECTS)
+
+	opts.DisconnectedCB = func(_ *Conn) {
+		d := dch
+		select {
+		case d <- time.Now():
+		default:
+			d = nil
+		}
+
+	}
+
+	opts.ReconnectedCB = func(c *Conn) {
+		r := rch
+		select {
+		case r <- time.Now():
+		default:
+			r = nil
+			c.Opts.MaxPingsOut = 500
+			close(barrier)
+		}
+	}
+
+	_, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+
+	<-barrier
+	s1.stopServer()
+
+	<-dch
+	for i := 0; i < RECONNECTS-1; i++ {
+		disconnectedAt := <-dch
+		reconnectAt := <-rch
+		pingCycle := disconnectedAt.Sub(reconnectAt)
+		if pingCycle > 2*opts.PingInterval {
+			t.Fatalf("Reconnect due to ping took %s", pingCycle.String())
+		}
+	}
+}

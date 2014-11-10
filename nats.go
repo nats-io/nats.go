@@ -33,6 +33,8 @@ const (
 	DefaultMaxReconnect  = 10
 	DefaultReconnectWait = 2 * time.Second
 	DefaultTimeout       = 2 * time.Second
+	DefaultPingInterval  = 2 * time.Minute
+	DefaultMaxPingOut    = 2
 )
 
 var (
@@ -54,6 +56,9 @@ var DefaultOptions = Options{
 	MaxReconnect:   DefaultMaxReconnect,
 	ReconnectWait:  DefaultReconnectWait,
 	Timeout:        DefaultTimeout,
+
+	PingInterval: DefaultPingInterval,
+	MaxPingsOut:  DefaultMaxPingOut,
 }
 
 type Status int
@@ -67,6 +72,8 @@ const (
 
 // For detection and proper handling of a Stale Connection
 const STALE_CONNECTION = "Stale Connection"
+
+var ErrStaleConnection = errors.New("nats: " + STALE_CONNECTION)
 
 // ConnHandlers are used for asynchronous events such as
 // disconnected and closed connections.
@@ -93,6 +100,9 @@ type Options struct {
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
 	AsyncErrorCB   ErrHandler
+
+	PingInterval time.Duration
+	MaxPingsOut  int
 }
 
 const (
@@ -138,6 +148,9 @@ type Conn struct {
 	status  Status
 	err     error
 	ps      *parseState
+
+	ptmr *time.Timer
+	pout int
 }
 
 // A Subscription represents interest in a given subject.
@@ -233,6 +246,12 @@ func SecureConnect(url string) (*Conn, error) {
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
+	if nc.Opts.MaxPingsOut == 0 {
+		nc.Opts.MaxPingsOut = DefaultMaxPingOut
+	}
+	if nc.Opts.PingInterval == 0 {
+		nc.Opts.PingInterval = DefaultPingInterval
+	}
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
 	}
@@ -423,12 +442,23 @@ func (nc *Conn) spinUpSocketWatchers() {
 	// Kick old flusher forcefully.
 	nc.fch <- true
 	// Wait for any previous ones.
+	nc.mu.Lock()
+	if nc.ptmr != nil {
+		nc.ptmr.Stop()
+	}
+	nc.mu.Unlock()
+
 	nc.wg.Wait()
 	// We will wait on both.
 	nc.wg.Add(2)
 
 	go nc.readLoop()
 	go nc.flusher()
+
+	nc.mu.Lock()
+	nc.pout = 0
+	nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
+	nc.mu.Unlock()
 }
 
 // Report the connected server's Url
@@ -1022,6 +1052,7 @@ func (nc *Conn) processPong() {
 		ch = nc.pongs[0]
 		nc.pongs = nc.pongs[1:]
 	}
+	nc.pout = 0
 	nc.mu.Unlock()
 	if ch != nil {
 		ch <- true
@@ -1051,11 +1082,10 @@ func (nc *Conn) LastError() error {
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
-	err := errors.New("nats: " + e)
 	if e == STALE_CONNECTION {
-		nc.processOpErr(err)
+		nc.processOpErr(ErrStaleConnection)
 	} else {
-		nc.err = err
+		nc.err = errors.New("nats: " + e)
 		nc.Close()
 	}
 }
@@ -1388,6 +1418,29 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 	return false
 }
 
+func (nc *Conn) sendPing(ch chan bool) {
+	nc.pongs = append(nc.pongs, ch)
+	nc.bw.WriteString(pingProto)
+	nc.bw.Flush()
+}
+
+func (nc *Conn) processPingTimer() {
+	nc.mu.Lock()
+
+	// Check for violation
+	nc.pout += 1
+	if nc.pout > nc.Opts.MaxPingsOut {
+		nc.ptmr = nil
+		nc.mu.Unlock()
+		nc.processOpErr(ErrStaleConnection)
+		return
+	}
+
+	nc.sendPing(nil)
+	nc.ptmr.Reset(nc.Opts.PingInterval)
+	nc.mu.Unlock()
+}
+
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if timeout <= 0 {
@@ -1403,11 +1456,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	defer t.Stop()
 
 	ch := make(chan bool) // FIXME: Inefficient?
-	//	defer close(ch)
-
-	nc.pongs = append(nc.pongs, ch)
-	nc.bw.WriteString(pingProto)
-	nc.bw.Flush()
+	nc.sendPing(ch)
 	nc.mu.Unlock()
 
 	select {
@@ -1487,6 +1536,11 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.clearPendingFlushCalls()
 
 	nc.mu.Lock()
+
+	if nc.ptmr != nil {
+		nc.ptmr.Stop()
+		nc.ptmr = nil
+	}
 
 	// Close sync subscriber channels and release any
 	// pending NextMsg() calls.
