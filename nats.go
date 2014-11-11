@@ -1089,7 +1089,9 @@ func (nc *Conn) processErr(e string) {
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
+		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
+		nc.mu.Unlock()
 		nc.Close()
 	}
 }
@@ -1432,7 +1434,7 @@ func (nc *Conn) sendPing(ch chan bool) {
 func (nc *Conn) processPingTimer() {
 	nc.mu.Lock()
 
-	if nc.isClosed() {
+	if nc.status != CONNECTED {
 		return
 	}
 
