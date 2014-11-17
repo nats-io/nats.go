@@ -37,6 +37,9 @@ const (
 	DefaultMaxPingOut    = 2
 )
 
+// For detection and proper handling of a Stale Connection
+const STALE_CONNECTION = "Stale Connection"
+
 var (
 	ErrConnectionClosed   = errors.New("nats: Connection Closed")
 	ErrSecureConnRequired = errors.New("nats: Secure connection required")
@@ -49,6 +52,7 @@ var (
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
+	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 )
 
 var DefaultOptions = Options{
@@ -69,11 +73,6 @@ const (
 	CLOSED
 	RECONNECTING
 )
-
-// For detection and proper handling of a Stale Connection
-const STALE_CONNECTION = "Stale Connection"
-
-var ErrStaleConnection = errors.New("nats: " + STALE_CONNECTION)
 
 // ConnHandlers are used for asynchronous events such as
 // disconnected and closed connections.
@@ -430,25 +429,28 @@ func (nc *Conn) makeTLSConn() {
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 }
 
+// waitForExits will wait for all socket watcher Go routines to
+// be shutdown before proceeding.
+func (nc *Conn) waitForExits() {
+	// Kick old flusher forcefully.
+	nc.fch <- true
+	// Wait for any previous go routines.
+	nc.wg.Wait()
+}
+
 // spinUpSocketWatchers will launch the Go routines responsible for
 // reading and writing to the socket. This will be launched via a
 // go routine itself to release any locks that may be held.
 // We also use a WaitGroup to make sure we only start them on a
-// reconnect when the precious ones have exited.
+// reconnect when the previous ones have exited.
 func (nc *Conn) spinUpSocketWatchers() {
-	// Kick old flusher forcefully.
-	nc.fch <- true
-	// Wait for any previous ones.
-	nc.mu.Lock()
-	if nc.ptmr != nil {
-		nc.ptmr.Stop()
-	}
-	nc.mu.Unlock()
+	// Make sure everything has exited.
+	nc.waitForExits()
 
-	nc.wg.Wait()
-	// We will wait on both.
+	// We will wait on both going forward.
 	nc.wg.Add(2)
 
+	// Spin up the readLoop and the socket flusher.
 	go nc.readLoop()
 	go nc.flusher()
 
@@ -720,25 +722,9 @@ func (nc *Conn) processReconnect() {
 		if nc.conn != nil {
 			nc.bw.Flush()
 			nc.conn.Close()
+			nc.conn = nil
 		}
-		nc.conn = nil
-		nc.kickFlusher()
-
-		// FIXME(dlc) - We have an issue here if we have
-		// outstanding flush points (pongs) and they were not
-		// sent out, but are still in the pipe.
-
-		// Create a pending buffer to underpin the bufio Writer while
-		// we are reconnecting.
-		nc.pending = &bytes.Buffer{}
-		nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
-		nc.err = nil
 		go nc.doReconnect()
-	}
-	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if dcb != nil {
-		go dcb(nc)
 	}
 }
 
@@ -757,9 +743,33 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
+	// We want to make sure we have the other watchers shutdown properly
+	// here before we proceed past this point.
+	nc.waitForExits()
+
+	// FIXME(dlc) - We have an issue here if we have
+	// outstanding flush points (pongs) and they were not
+	// sent out, but are still in the pipe.
+
 	// Hold the lock manually and release where needed below,
 	// can't do defer here.
 	nc.mu.Lock()
+
+	// Create a new pending buffer to underpin the bufio Writer while
+	// we are reconnecting.
+	nc.pending = &bytes.Buffer{}
+	nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
+
+	// Clear any errors.
+	nc.err = nil
+
+	// Perform appropriate callback if needed for a disconnect.
+	dcb := nc.Opts.DisconnectedCB
+	if dcb != nil {
+		nc.mu.Unlock()
+		dcb(nc)
+		nc.mu.Lock()
+	}
 
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
@@ -874,9 +884,7 @@ func (nc *Conn) processOpErr(err error) {
 // protocol from the server. It will dispatch appropriately based
 // on the op type.
 func (nc *Conn) readLoop() {
-	b := make([]byte, defaultBufSize)
-
-	// Release the wait group
+	// Release the wait group on exit
 	defer nc.wg.Done()
 
 	// Create a parseState if needed.
@@ -885,6 +893,9 @@ func (nc *Conn) readLoop() {
 		nc.ps = &parseState{}
 	}
 	nc.mu.Unlock()
+
+	// Stack based buffer.
+	b := make([]byte, defaultBufSize)
 
 	for {
 		// FIXME(dlc): RWLock here?
@@ -1435,6 +1446,7 @@ func (nc *Conn) processPingTimer() {
 	nc.mu.Lock()
 
 	if nc.status != CONNECTED {
+		nc.mu.Unlock()
 		return
 	}
 
