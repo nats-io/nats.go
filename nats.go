@@ -147,9 +147,8 @@ type Conn struct {
 	status  Status
 	err     error
 	ps      *parseState
-
-	ptmr *time.Timer
-	pout int
+	ptmr    *time.Timer
+	pout    int
 }
 
 // A Subscription represents interest in a given subject.
@@ -709,7 +708,6 @@ func (nc *Conn) processDisconnect() {
 // This will process a disconnect when reconnect is allowed.
 // The lock should not be held on entering this function.
 func (nc *Conn) processReconnect() {
-
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
@@ -719,6 +717,9 @@ func (nc *Conn) processReconnect() {
 			return
 		}
 		nc.status = RECONNECTING
+		if nc.ptmr != nil {
+			nc.ptmr.Stop()
+		}
 		if nc.conn != nil {
 			nc.bw.Flush()
 			nc.conn.Close()
