@@ -726,11 +726,6 @@ func (nc *Conn) processReconnect() {
 		}
 		go nc.doReconnect()
 	}
-	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if dcb != nil {
-		go dcb(nc)
-	}
 }
 
 // flushReconnectPending will push the pending items that were
@@ -767,6 +762,14 @@ func (nc *Conn) doReconnect() {
 
 	// Clear any errors.
 	nc.err = nil
+
+	// Perform appropriate callback if needed for a disconnect.
+	dcb := nc.Opts.DisconnectedCB
+	if dcb != nil {
+		nc.mu.Unlock()
+		dcb(nc)
+		nc.mu.Lock()
+	}
 
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
