@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "1.0.4"
+	Version              = "1.0.5"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 10
@@ -474,6 +474,16 @@ func (nc *Conn) ConnectedUrl() string {
 		return _EMPTY_
 	}
 	return nc.url.String()
+}
+
+// Report the connected server's Id
+func (nc *Conn) ConnectedServerId() string {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.Id
 }
 
 // Low level setup for structs, etc

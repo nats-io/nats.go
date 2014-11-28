@@ -1,4 +1,4 @@
-// Copyright 2012-2013 Apcera Inc. All rights reserved.
+// Copyright 2012-2014 Apcera Inc. All rights reserved.
 
 package nats
 
@@ -18,6 +18,12 @@ type Encoder interface {
 
 var encMap map[string]Encoder
 var encLock sync.Mutex
+
+const (
+	JSON_ENCODER    = "json"
+	GOB_ENCODER     = "gob"
+	DEFAULT_ENCODER = "default"
+)
 
 func init() {
 	encMap = make(map[string]Encoder)
