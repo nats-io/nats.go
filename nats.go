@@ -30,7 +30,7 @@ const (
 	Version              = "1.0.5"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
-	DefaultMaxReconnect  = 10
+	DefaultMaxReconnect  = 60
 	DefaultReconnectWait = 2 * time.Second
 	DefaultTimeout       = 2 * time.Second
 	DefaultPingInterval  = 2 * time.Minute
@@ -819,6 +819,10 @@ func (nc *Conn) doReconnect() {
 
 		// We are reconnected
 		nc.Reconnects += 1
+
+		// Clear out server stats for the server we connected to..
+		cur.didConnect = true
+		cur.reconnects = 0
 
 		// Process Connect logic
 		if nc.err = nc.processExpectedInfo(); nc.err == nil {

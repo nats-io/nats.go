@@ -11,6 +11,15 @@ func startReconnectServer(t *testing.T) *server {
 	return startServer(t, 22222, "")
 }
 
+func TestReconnectTotalTime(t *testing.T) {
+	opts := DefaultOptions
+	totalReconnectTime := time.Duration(opts.MaxReconnect) * opts.ReconnectWait
+	if totalReconnectTime < (2 * time.Minute) {
+		t.Fatalf("Total reconnect time should be at least 2 mins: Currently %v\n",
+			totalReconnectTime)
+	}
+}
+
 func TestReconnectDisallowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
 	ch := make(chan bool)
@@ -120,6 +129,12 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	if ec.Conn.Reconnects != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
 			ec.Conn.Reconnects, expectedReconnectCount)
+	}
+
+	// Make sure the server who is reconnected has the reconnects stats reset.
+	_, cur := nc.currentServer()
+	if cur.reconnects != 0 {
+		t.Fatalf("Current Server's reconnects should be 0 vs %d\n", cur.reconnects)
 	}
 
 	nc.Close()
