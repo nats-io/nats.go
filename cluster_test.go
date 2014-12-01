@@ -228,6 +228,8 @@ func TestBasicClusterReconnect(t *testing.T) {
 	}
 
 	// Make sure we did not wait on reconnect for default time.
+	// Reconnect should be fast since it will be a switch to the
+	// second server and not be dependent on server restart time.
 	reconnectTime := time.Since(reconnectTimeStart)
 	if reconnectTime > (100 * time.Millisecond) {
 		t.Fatalf("Took longer than expected to reconnect: %v\n", reconnectTime)

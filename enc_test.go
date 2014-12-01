@@ -258,7 +258,7 @@ func TestEncRequest(t *testing.T) {
 
 	var resp string
 
-	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
+	err := ec.Request("help", "help me", &resp, 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Failed at receiving proper response: %v\n", err)
 	}
@@ -274,7 +274,7 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 
 	var resp Msg
 
-	err := ec.Request("help", "help me", &resp, 100*time.Millisecond)
+	err := ec.Request("help", "help me", &resp, 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Failed at receiving proper response: %v\n", err)
 	}
