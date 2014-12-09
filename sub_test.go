@@ -123,7 +123,7 @@ func TestSlowSubscriber(t *testing.T) {
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
-	for i := 0; i < (maxChanLen + 100); i++ {
+	for i := 0; i < (DefaultMaxChanLen + 100); i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
 	timeout := 5 * time.Second
@@ -147,7 +147,7 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	nc.Subscribe("foo", func(_ *Msg) {
 		time.Sleep(200 * time.Second)
 	})
-	for i := 0; i < (maxChanLen + 100); i++ {
+	for i := 0; i < (DefaultMaxChanLen + 100); i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
 	timeout := 5 * time.Second
@@ -187,7 +187,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	}
 
 	b := []byte("Hello World!")
-	for i := 0; i < (maxChanLen + 100); i++ {
+	for i := 0; i < (DefaultMaxChanLen + 100); i++ {
 		nc.Publish(subj, b)
 	}
 
