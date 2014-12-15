@@ -302,3 +302,24 @@ func TestAsyncMarshalErr(t *testing.T) {
 		t.Fatalf("Did not receive the message: %s", e)
 	}
 }
+
+func TestEncodeNil(t *testing.T) {
+	de := &DefaultEncoder{}
+	_, err := de.Encode("foo", nil)
+	if err != nil {
+		t.Fatalf("Expected no error encoding nil", err)
+	}
+}
+
+func TestDecodeDefault(t *testing.T) {
+	de := &DefaultEncoder{}
+	b, err := de.Encode("foo", 22)
+	if err != nil {
+		t.Fatalf("Expected no error encoding number", err)
+	}
+	var c chan bool
+	err = de.Decode("foo", b, &c)
+	if err == nil {
+		t.Fatalf("Expected an error decoding")
+	}
+}
