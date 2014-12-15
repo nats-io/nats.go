@@ -1,4 +1,4 @@
-// Copyright 2012 Apcera Inc. All rights reserved.
+// Copyright 2012-2014 Apcera Inc. All rights reserved.
 
 package nats
 
@@ -87,5 +87,33 @@ func TestJsonMarshalStruct(t *testing.T) {
 	ec.Publish("json_struct", me)
 	if e := wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestNotMarshableToJson(t *testing.T) {
+	je := &JsonEncoder{}
+	ch := make(chan bool)
+	_, err := je.Encode("foo", ch)
+	if err == nil {
+		t.Fatal("Expected an error when failing encoding")
+	}
+}
+
+func TestDecodeConditionals(t *testing.T) {
+	je := &JsonEncoder{}
+
+	b, err := je.Encode("foo", 22)
+	if err != nil {
+		t.Fatalf("Expected no error when encoding, got %v\n", err)
+	}
+	var foo string
+	var bar []byte
+	err = je.Decode("foo", b, &foo)
+	if err != nil {
+		t.Fatalf("Expected no error when decoding, got %v\n", err)
+	}
+	err = je.Decode("foo", b, &bar)
+	if err != nil {
+		t.Fatalf("Expected no error when decoding, got %v\n", err)
 	}
 }
