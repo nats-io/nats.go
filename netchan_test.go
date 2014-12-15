@@ -61,6 +61,33 @@ func TestSimpleSendChan(t *testing.T) {
 	close(ch)
 }
 
+func TestFailedChannelSend(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	nc := ec.Conn
+	ch := make(chan bool)
+	wch := make(chan bool)
+
+	nc.Opts.AsyncErrorCB = func(c *Conn, s *Subscription, e error) {
+		wch <- true
+	}
+
+	if err := ec.BindSendChan("foo", ch); err != nil {
+		t.Fatalf("Failed to bind to a receive channel: %v\n", err)
+	}
+
+	nc.Flush()
+	nc.Close()
+
+	// This should trigger an async error.
+	ch <- true
+
+	if e := wait(wch); e != nil {
+		t.Fatal("Failed to call async err handler")
+	}
+}
+
 func TestSimpleRecvChan(t *testing.T) {
 	ec := NewEConn(t)
 	defer ec.Close()
@@ -69,7 +96,7 @@ func TestSimpleRecvChan(t *testing.T) {
 	ch := make(chan int32)
 
 	if _, err := ec.BindRecvChan("foo", ch); err != nil {
-		t.Fatalf("Failed to bind to a send channel: %v\n", err)
+		t.Fatalf("Failed to bind to a receive channel: %v\n", err)
 	}
 
 	ec.Publish("foo", numSent)
@@ -84,6 +111,54 @@ func TestSimpleRecvChan(t *testing.T) {
 		t.Fatalf("Failed to receive a value, timed-out\n")
 	}
 	close(ch)
+}
+
+func TestQueueRecvChan(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+
+	numSent := int32(22)
+	ch := make(chan int32)
+
+	if _, err := ec.BindRecvQueueChan("foo", "bar", ch); err != nil {
+		t.Fatalf("Failed to bind to a queue receive channel: %v\n", err)
+	}
+
+	ec.Publish("foo", numSent)
+
+	// Receive from 'foo'
+	select {
+	case num := <-ch:
+		if num != numSent {
+			t.Fatalf("Failed to receive correct value: %d vs %d\n", num, numSent)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Failed to receive a value, timed-out\n")
+	}
+	close(ch)
+}
+
+func TestDecoderErrRecvChan(t *testing.T) {
+	ec := NewEConn(t)
+	defer ec.Close()
+	nc := ec.Conn
+	wch := make(chan bool)
+
+	nc.Opts.AsyncErrorCB = func(c *Conn, s *Subscription, e error) {
+		wch <- true
+	}
+
+	ch := make(chan *int32)
+
+	if _, err := ec.BindRecvChan("foo", ch); err != nil {
+		t.Fatalf("Failed to bind to a send channel: %v\n", err)
+	}
+
+	ec.Publish("foo", "Hello World")
+
+	if e := wait(wch); e != nil {
+		t.Fatal("Failed to call async err handler")
+	}
 }
 
 func TestRecvChanPanicOnClosedChan(t *testing.T) {

@@ -260,6 +260,20 @@ func TestAsyncSubscribersOnClose(t *testing.T) {
 	}
 }
 
+func TestNextMsgCallOnAsyncSub(t *testing.T) {
+	nc := newConnection(t)
+	defer nc.Close()
+	sub, err := nc.Subscribe("foo", func(_ *Msg) {
+	})
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err == nil {
+		t.Fatal("Expected an error call NextMsg() on AsyncSubscriber")
+	}
+}
+
 // FIXME: Hack, make this better
 func TestStopServer(t *testing.T) {
 	s.stopServer()

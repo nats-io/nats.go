@@ -39,6 +39,27 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	nc.Close()
 }
 
+func TestConnectedServer(t *testing.T) {
+	nc := newConnection(t)
+	u := nc.ConnectedUrl()
+	s := nc.ConnectedServerId()
+	if u == "" || u != DefaultURL {
+		t.Fatalf("Unexpected connected URL of %s\n", u)
+	}
+	if s == "" {
+		t.Fatal("Expeced a connected server id")
+	}
+	nc.Close()
+	u = nc.ConnectedUrl()
+	s = nc.ConnectedServerId()
+	if u != "" {
+		t.Fatalf("Expected a nil connected URL, got %s\n", u)
+	}
+	if s != "" {
+		t.Fatalf("Expected a nil connect server, got %s\n", s)
+	}
+}
+
 func TestMultipleClose(t *testing.T) {
 	nc := newConnection(t)
 	var wg sync.WaitGroup
