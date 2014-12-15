@@ -5,6 +5,7 @@ package nats
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func NewJsonEncodedConn(t *testing.T) *EncodedConn {
@@ -96,6 +97,30 @@ func TestNotMarshableToJson(t *testing.T) {
 	_, err := je.Encode("foo", ch)
 	if err == nil {
 		t.Fatal("Expected an error when failing encoding")
+	}
+}
+
+func TestFailedEncodedPublish(t *testing.T) {
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+	err := ec.Publish("foo", ch)
+	if err == nil {
+		t.Fatal("Expected an error trying to publish a channel")
+	}
+	err = ec.PublishRequest("foo", "bar", ch)
+	if err == nil {
+		t.Fatal("Expected an error trying to publish a channel")
+	}
+	var cr chan bool
+	err = ec.Request("foo", ch, &cr, time.Second)
+	if err == nil {
+		t.Fatal("Expected an error trying to publish a channel")
+	}
+	derr := ec.LastError()
+	if derr.Error() != err.Error() {
+		t.Fatalf("Expected LastError to be same: %q vs %q\n", err, derr)
 	}
 }
 
