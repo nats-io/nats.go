@@ -357,7 +357,7 @@ func TestEncodeNil(t *testing.T) {
 	de := &DefaultEncoder{}
 	_, err := de.Encode("foo", nil)
 	if err != nil {
-		t.Fatalf("Expected no error encoding nil", err)
+		t.Fatalf("Expected no error encoding nil: %v", err)
 	}
 }
 
@@ -365,7 +365,7 @@ func TestDecodeDefault(t *testing.T) {
 	de := &DefaultEncoder{}
 	b, err := de.Encode("foo", 22)
 	if err != nil {
-		t.Fatalf("Expected no error encoding number", err)
+		t.Fatalf("Expected no error encoding number: %v", err)
 	}
 	var c chan bool
 	err = de.Decode("foo", b, &c)
