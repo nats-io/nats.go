@@ -1226,7 +1226,7 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
-	s, err := nc.SubscribeSync(inbox)
+	s, err := nc.subscribeWithChanLen(inbox, _EMPTY_, nil, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1252,6 +1252,10 @@ func NewInbox() string {
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribeWithChanLen(subj, queue, cb, maxChanLen)
+}
+
+func (nc *Conn) subscribeWithChanLen(subj, queue string, cb MsgHandler, chLen int) (*Subscription, error) {
 	nc.mu.Lock()
 	// ok here, but defer is expensive
 	defer nc.kickFlusher()
@@ -1262,7 +1266,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 
 	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
-	sub.mch = make(chan *Msg, maxChanLen)
+	sub.mch = make(chan *Msg, chLen)
 
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
