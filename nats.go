@@ -371,11 +371,13 @@ func (nc *Conn) setupServerPool() error {
 	}
 
 	var srvrs []string
+	source := mrand.NewSource(time.Now().UnixNano())
+	r := mrand.New(source)
 
 	if nc.Opts.NoRandomize {
 		srvrs = nc.Opts.Servers
 	} else {
-		in := mrand.Perm(len(nc.Opts.Servers))
+		in := r.Perm(len(nc.Opts.Servers))
 		for _, i := range in {
 			srvrs = append(srvrs, nc.Opts.Servers[i])
 		}
