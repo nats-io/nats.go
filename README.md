@@ -16,6 +16,11 @@ go get github.com/apcera/gnatsd
 
 # nats-server (Ruby)
 gem install nats
+
+# Install nats CLI
+# set GOBIN if not set
+go install $GOPATH/src/github.com/apcera/nats/examples/nats-pub.go
+go install $GOPATH/src/github.com/apcera/nats/examples/nats-sub.go
 ```
 
 ## Basic Encoded Usage
