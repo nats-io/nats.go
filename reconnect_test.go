@@ -225,7 +225,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatal("Did not receive our message")
 	}
 
-	if received != 4 {
+	if atomic.LoadInt32(&received) != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)
 	}
 }
