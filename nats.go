@@ -1234,8 +1234,7 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
-	s, err := nc.subscribe(subj, _EMPTY_, nil, RequestChanLen)
-	//	s, err := nc.SubscribeSync(inbox)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, RequestChanLen)
 	if err != nil {
 		return nil, err
 	}
