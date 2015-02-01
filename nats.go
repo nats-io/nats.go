@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://nats.io).
 package nats
@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "1.0.6"
+	Version              = "1.0.8"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 60
@@ -35,6 +35,8 @@ const (
 	DefaultTimeout       = 2 * time.Second
 	DefaultPingInterval  = 2 * time.Minute
 	DefaultMaxPingOut    = 2
+	DefaultMaxChanLen    = 65536
+	RequestChanLen       = 4
 )
 
 // For detection and proper handling of a Stale Connection
@@ -60,9 +62,9 @@ var DefaultOptions = Options{
 	MaxReconnect:   DefaultMaxReconnect,
 	ReconnectWait:  DefaultReconnectWait,
 	Timeout:        DefaultTimeout,
-
-	PingInterval: DefaultPingInterval,
-	MaxPingsOut:  DefaultMaxPingOut,
+	PingInterval:   DefaultPingInterval,
+	MaxPingsOut:    DefaultMaxPingOut,
+	SubChanLen:     DefaultMaxChanLen,
 }
 
 type Status int
@@ -102,13 +104,13 @@ type Options struct {
 
 	PingInterval time.Duration // disabled if 0 or negative
 	MaxPingsOut  int
+
+	// The size of the buffered channel used between the socket
+	// Go routine and the message delivery or sync subscription.
+	SubChanLen int
 }
 
 const (
-	// The size of the buffered channel used between the socket
-	// Go routine and the message delivery or sync subscription.
-	maxChanLen = 65536
-
 	// Scratch storage for assembling protocol headers
 	scratchSize = 512
 
@@ -246,6 +248,10 @@ func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
 	if nc.Opts.MaxPingsOut == 0 {
 		nc.Opts.MaxPingsOut = DefaultMaxPingOut
+	}
+	// Allow old default for channel length to work correctly.
+	if nc.Opts.SubChanLen == 0 {
+		nc.Opts.SubChanLen = DefaultMaxChanLen
 	}
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
@@ -1020,7 +1026,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	m := &Msg{Data: newMsg, Subject: subj, Reply: reply, Sub: sub}
 
 	if sub.mch != nil {
-		if len(sub.mch) >= maxChanLen {
+		if len(sub.mch) >= nc.Opts.SubChanLen {
 			nc.processSlowConsumer(sub)
 		} else {
 			// Clear always
@@ -1228,7 +1234,8 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
-	s, err := nc.SubscribeSync(inbox)
+	s, err := nc.subscribe(subj, _EMPTY_, nil, RequestChanLen)
+	//	s, err := nc.SubscribeSync(inbox)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,7 +1260,7 @@ func NewInbox() string {
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subscription, error) {
 	nc.mu.Lock()
 	// ok here, but defer is expensive
 	defer nc.kickFlusher()
@@ -1264,7 +1271,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 	}
 
 	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
-	sub.mch = make(chan *Msg, maxChanLen)
+	sub.mch = make(chan *Msg, chanlen)
 
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
@@ -1289,12 +1296,12 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler) (*Subscription, err
 // subscription is a synchronous subscription and can be polled via
 // Subscription.NextMsg().
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb)
+	return nc.subscribe(subj, _EMPTY_, cb, nc.Opts.SubChanLen)
 }
 
 // SubscribeSync is syntactic sugar for Subscribe(subject, nil).
 func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil)
+	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen)
 }
 
 // QueueSubscribe creates an asynchronous queue subscriber on the given subject.
@@ -1302,7 +1309,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 // only one member of the group will be selected to receive any given
 // message asynchronously.
 func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb)
+	return nc.subscribe(subj, queue, cb, nc.Opts.SubChanLen)
 }
 
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
@@ -1310,7 +1317,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // group and only one member of the group will be selected to receive any
 // given message synchronously.
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil)
+	return nc.subscribe(subj, queue, nil, nc.Opts.SubChanLen)
 }
 
 // unsubscribe performs the low level unsubscribe to the server.
