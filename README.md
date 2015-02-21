@@ -240,6 +240,16 @@ nc.Opts.ReconnectedCB = func(nc *Conn) {
 ```
 
 
+## Testing
+
+Based on the .travis.yml file, to duplicate the official testing
+environment locally:
+- Ubuntu 14.04.2 LTS
+- apt-get install build-essential libssl-dev git mercurial ruby ruby-dev
+- Build from source go version go1.3.3 linux/amd64
+- Tested verses ruby nats-server version 0.5.0.beta.16, ie gem install nats --pre
+
+
 ## License
 
 (The MIT License)
