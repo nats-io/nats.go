@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func NewJsonEncodedConn(t *testing.T) *EncodedConn {
+func NewJSONEncodedConn(t *testing.T) *EncodedConn {
 	ec, err := NewEncodedConn(newConnection(t), "json")
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
@@ -16,8 +16,8 @@ func NewJsonEncodedConn(t *testing.T) *EncodedConn {
 	return ec
 }
 
-func TestJsonMarshalString(t *testing.T) {
-	ec := NewJsonEncodedConn(t)
+func TestJSONMarshalString(t *testing.T) {
+	ec := NewJSONEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -35,8 +35,8 @@ func TestJsonMarshalString(t *testing.T) {
 	}
 }
 
-func TestJsonMarshalInt(t *testing.T) {
-	ec := NewJsonEncodedConn(t)
+func TestJSONMarshalInt(t *testing.T) {
+	ec := NewJSONEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -62,8 +62,8 @@ type person struct {
 	Assets   map[string]uint
 }
 
-func TestJsonMarshalStruct(t *testing.T) {
-	ec := NewJsonEncodedConn(t)
+func TestJSONMarshalStruct(t *testing.T) {
+	ec := NewJSONEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -91,8 +91,8 @@ func TestJsonMarshalStruct(t *testing.T) {
 	}
 }
 
-func TestNotMarshableToJson(t *testing.T) {
-	je := &JsonEncoder{}
+func TestNotMarshableToJSON(t *testing.T) {
+	je := &JSONEncoder{}
 	ch := make(chan bool)
 	_, err := je.Encode("foo", ch)
 	if err == nil {
@@ -101,7 +101,7 @@ func TestNotMarshableToJson(t *testing.T) {
 }
 
 func TestFailedEncodedPublish(t *testing.T) {
-	ec := NewJsonEncodedConn(t)
+	ec := NewJSONEncodedConn(t)
 	defer ec.Close()
 
 	ch := make(chan bool)
@@ -125,7 +125,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 }
 
 func TestDecodeConditionals(t *testing.T) {
-	je := &JsonEncoder{}
+	je := &JSONEncoder{}
 
 	b, err := je.Encode("foo", 22)
 	if err != nil {

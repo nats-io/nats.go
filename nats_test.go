@@ -41,8 +41,8 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 
 func TestConnectedServer(t *testing.T) {
 	nc := newConnection(t)
-	u := nc.ConnectedUrl()
-	s := nc.ConnectedServerId()
+	u := nc.ConnectedURL()
+	s := nc.ConnectedServerID()
 	if u == "" || u != DefaultURL {
 		t.Fatalf("Unexpected connected URL of %s\n", u)
 	}
@@ -50,8 +50,8 @@ func TestConnectedServer(t *testing.T) {
 		t.Fatal("Expeced a connected server id")
 	}
 	nc.Close()
-	u = nc.ConnectedUrl()
-	s = nc.ConnectedServerId()
+	u = nc.ConnectedURL()
+	s = nc.ConnectedServerID()
 	if u != "" {
 		t.Fatalf("Expected a nil connected URL, got %s\n", u)
 	}
@@ -76,7 +76,7 @@ func TestMultipleClose(t *testing.T) {
 func TestBadOptionTimeoutConnect(t *testing.T) {
 	opts := DefaultOptions
 	opts.Timeout = -1
-	opts.Url = "nats://localhost:4222"
+	opts.URL = "nats://localhost:4222"
 
 	_, err := opts.Connect()
 	if err == nil {

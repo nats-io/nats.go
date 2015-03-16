@@ -74,9 +74,9 @@ func TestServersOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
-	if nc.ConnectedUrl() != "nats://localhost:1222" {
+	if nc.ConnectedURL() != "nats://localhost:1222" {
 		t.Fatalf("Does not report correct connection: %s\n",
-			nc.ConnectedUrl())
+			nc.ConnectedURL())
 	}
 	nc.Close()
 	s1.stopServer()
@@ -87,9 +87,9 @@ func TestServersOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
-	if nc.ConnectedUrl() != "nats://localhost:1223" {
+	if nc.ConnectedURL() != "nats://localhost:1223" {
 		t.Fatalf("Does not report correct connection: %s\n",
-			nc.ConnectedUrl())
+			nc.ConnectedURL())
 	}
 	nc.Close()
 	s2.stopServer()
@@ -131,9 +131,9 @@ func TestAuthServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to connect properly: %v\n", err)
 	}
-	if nc.ConnectedUrl() != authServers[1] {
+	if nc.ConnectedURL() != authServers[1] {
 		t.Fatalf("Does not report correct connection: %s\n",
-			nc.ConnectedUrl())
+			nc.ConnectedURL())
 	}
 }
 
@@ -222,9 +222,9 @@ func TestBasicClusterReconnect(t *testing.T) {
 		t.Fatal("Did not receive a reconnect callback message")
 	}
 
-	if nc.ConnectedUrl() != testServers[2] {
+	if nc.ConnectedURL() != testServers[2] {
 		t.Fatalf("Does not report correct connection: %s\n",
-			nc.ConnectedUrl())
+			nc.ConnectedURL())
 	}
 
 	// Make sure we did not wait on reconnect for default time.
@@ -255,8 +255,8 @@ func TestHotSpotReconnect(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected to connect, got err: %v\n", err)
 		}
-		if nc.ConnectedUrl() != testServers[0] {
-			t.Fatalf("Connected to incorrect server: %v\n", nc.ConnectedUrl())
+		if nc.ConnectedURL() != testServers[0] {
+			t.Fatalf("Connected to incorrect server: %v\n", nc.ConnectedURL())
 		}
 		clients = append(clients, nc)
 	}
@@ -276,7 +276,7 @@ func TestHotSpotReconnect(t *testing.T) {
 	// Walk the clients and calculate how many of each..
 	cs := make(map[string]int)
 	for _, nc := range clients {
-		cs[nc.ConnectedUrl()] += 1
+		cs[nc.ConnectedURL()] += 1
 		nc.Close()
 	}
 	if len(cs) != numServers {
