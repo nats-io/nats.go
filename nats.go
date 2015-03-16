@@ -813,7 +813,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// Mark that we tried a reconnect
-		cur.reconnects += 1
+		cur.reconnects++
 
 		// Try to create a new connection
 		err = nc.createConn()
@@ -826,7 +826,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		nc.Reconnects += 1
+		nc.Reconnects++
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
@@ -993,7 +993,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	nc.mu.Lock()
 
 	// Stats
-	nc.InMsgs += 1
+	nc.InMsgs++
 	nc.InBytes += uint64(len(msg))
 
 	sub := nc.subs[nc.ps.ma.sid]
@@ -1011,7 +1011,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs += 1
+	sub.msgs++
 	sub.bytes += uint64(len(msg))
 
 	// Copy them into string
@@ -1175,11 +1175,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	var i = len(b)
 	if len(data) > 0 {
 		for l := len(data); l > 0; l /= 10 {
-			i -= 1
+			i--
 			b[i] = digits[l%10]
 		}
 	} else {
-		i -= 1
+		i--
 		b[i] = digits[0]
 	}
 
@@ -1201,7 +1201,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return nc.err
 	}
 
-	nc.OutMsgs += 1
+	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
 	nc.kickFlusher()
@@ -1474,7 +1474,7 @@ func (nc *Conn) processPingTimer() {
 	}
 
 	// Check for violation
-	nc.pout += 1
+	nc.pout++
 	if nc.pout > nc.Opts.MaxPingsOut {
 		nc.mu.Unlock()
 		nc.processOpErr(ErrStaleConnection)

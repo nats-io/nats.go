@@ -49,7 +49,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 	received := 0
 
 	nc.Subscribe("foo", func(m *Msg) {
-		received += 1
+		received++
 		if received >= b.N {
 			ch <- true
 		}

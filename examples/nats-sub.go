@@ -19,7 +19,7 @@ func usage() {
 var index = 0
 
 func printMsg(m *nats.Msg, i int) {
-	index += 1
+	index++
 	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
 }
 
@@ -52,7 +52,7 @@ func main() {
 	subj, i := args[0], 0
 
 	nc.Subscribe(subj, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
 	})
 

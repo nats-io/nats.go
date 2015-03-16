@@ -163,7 +163,7 @@ func TestServerSecureConnections(t *testing.T) {
 	omsg := []byte("Hello World")
 	received := 0
 	nc.Subscribe("foo", func(m *Msg) {
-		received += 1
+		received++
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}

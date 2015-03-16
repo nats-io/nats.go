@@ -248,7 +248,7 @@ func TestUnsubscribe(t *testing.T) {
 	received := 0
 	max := 10
 	nc.Subscribe("foo", func(m *Msg) {
-		received += 1
+		received++
 		if received == max {
 			err := m.Sub.Unsubscribe()
 			if err != nil {
