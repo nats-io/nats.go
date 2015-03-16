@@ -52,7 +52,7 @@ var (
 	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
 	ErrAuthorization      = errors.New("nats: Authorization Failed")
 	ErrNoServers          = errors.New("nats: No servers available for connection")
-	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
+	ErrJSONParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 )
@@ -86,7 +86,7 @@ type ErrHandler func(*Conn, *Subscription, error)
 
 // Options can be used to create a customized Connection.
 type Options struct {
-	Url            string
+	URL            string
 	Servers        []string
 	NoRandomize    bool
 	Name           string
@@ -204,7 +204,7 @@ type srv struct {
 }
 
 type serverInfo struct {
-	Id           string `json:"server_id"`
+	ID           string `json:"server_id"`
 	Host         string `json:"host"`
 	Port         uint   `json:"port"`
 	Version      string `json:"version"`
@@ -230,7 +230,7 @@ type MsgHandler func(msg *Msg)
 // The url can contain username/password semantics.
 func Connect(url string) (*Conn, error) {
 	opts := DefaultOptions
-	opts.Url = url
+	opts.URL = url
 	return opts.Connect()
 }
 
@@ -238,7 +238,7 @@ func Connect(url string) (*Conn, error) {
 // The url can contain username/password semantics.
 func SecureConnect(url string) (*Conn, error) {
 	opts := DefaultOptions
-	opts.Url = url
+	opts.URL = url
 	opts.Secure = true
 	return opts.Connect()
 }
@@ -346,7 +346,7 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	return nc.srvPool[0], nil
 }
 
-// Will assign the correct server to the nc.Url
+// Will assign the correct server to the nc.URL
 func (nc *Conn) pickServer() error {
 	nc.url = nil
 	if len(nc.srvPool) <= 0 {
@@ -362,13 +362,13 @@ func (nc *Conn) pickServer() error {
 }
 
 // Create the server pool using the options given.
-// We will place a Url option first, followed by any
+// We will place a URL option first, followed by any
 // Server Options. We will randomize the server pool unlesss
 // the NoRandomize flag is set.
 func (nc *Conn) setupServerPool() error {
 	nc.srvPool = make([]*srv, 0, srvPoolSize)
-	if nc.Opts.Url != _EMPTY_ {
-		u, err := url.Parse(nc.Opts.Url)
+	if nc.Opts.URL != _EMPTY_ {
+		u, err := url.Parse(nc.Opts.URL)
 		if err != nil {
 			return err
 		}
@@ -474,8 +474,8 @@ func (nc *Conn) spinUpSocketWatchers() {
 	nc.mu.Unlock()
 }
 
-// Report the connected server's Url
-func (nc *Conn) ConnectedUrl() string {
+// Report the connected server's URL
+func (nc *Conn) ConnectedURL() string {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
@@ -484,14 +484,14 @@ func (nc *Conn) ConnectedUrl() string {
 	return nc.url.String()
 }
 
-// Report the connected server's Id
-func (nc *Conn) ConnectedServerId() string {
+// Report the connected server's ID
+func (nc *Conn) ConnectedServerID() string {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.info.Id
+	return nc.info.ID
 }
 
 // Low level setup for structs, etc
@@ -637,7 +637,7 @@ func (nc *Conn) connectProto() (string, error) {
 	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure, o.Name}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
-		nc.err = ErrJsonParse
+		nc.err = ErrJSONParse
 		return _EMPTY_, nc.err
 	}
 	return fmt.Sprintf(conProto, b), nil
@@ -813,7 +813,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// Mark that we tried a reconnect
-		cur.reconnects += 1
+		cur.reconnects++
 
 		// Try to create a new connection
 		err = nc.createConn()
@@ -826,7 +826,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		nc.Reconnects += 1
+		nc.Reconnects++
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
@@ -993,7 +993,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	nc.mu.Lock()
 
 	// Stats
-	nc.InMsgs += 1
+	nc.InMsgs++
 	nc.InBytes += uint64(len(msg))
 
 	sub := nc.subs[nc.ps.ma.sid]
@@ -1011,7 +1011,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs += 1
+	sub.msgs++
 	sub.bytes += uint64(len(msg))
 
 	// Copy them into string
@@ -1175,11 +1175,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	var i = len(b)
 	if len(data) > 0 {
 		for l := len(data); l > 0; l /= 10 {
-			i -= 1
+			i--
 			b[i] = digits[l%10]
 		}
 	} else {
-		i -= 1
+		i--
 		b[i] = digits[0]
 	}
 
@@ -1201,7 +1201,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return nc.err
 	}
 
-	nc.OutMsgs += 1
+	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
 	nc.kickFlusher()
@@ -1474,7 +1474,7 @@ func (nc *Conn) processPingTimer() {
 	}
 
 	// Check for violation
-	nc.pout += 1
+	nc.pout++
 	if nc.pout > nc.Opts.MaxPingsOut {
 		nc.mu.Unlock()
 		nc.processOpErr(ErrStaleConnection)

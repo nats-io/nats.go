@@ -24,7 +24,7 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
 	ch := make(chan bool)
 	opts := DefaultOptions
-	opts.Url = "nats://localhost:22222"
+	opts.URL = "nats://localhost:22222"
 	opts.AllowReconnect = false
 	opts.ClosedCB = func(_ *Conn) {
 		ch <- true
@@ -45,7 +45,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
 	ch := make(chan bool)
 	opts := DefaultOptions
-	opts.Url = "nats://localhost:22222"
+	opts.URL = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 2
 	opts.ReconnectWait = 1 * time.Second
@@ -74,7 +74,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 }
 
 var reconnectOpts = Options{
-	Url:            "nats://localhost:22222",
+	URL:            "nats://localhost:22222",
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -405,7 +405,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	disconnectedch := make(chan bool)
 	reconnectch := make(chan bool)
 	opts := DefaultOptions
-	opts.Url = "nats://localhost:22222"
+	opts.URL = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond

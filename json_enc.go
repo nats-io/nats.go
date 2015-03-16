@@ -10,11 +10,11 @@ import (
 // A JSON Encoder implementation for EncodedConn
 // This encoder will use the builtin encoding/json to Marshal
 // and Unmarshal most types, including structs.
-type JsonEncoder struct {
+type JSONEncoder struct {
 	// Empty
 }
 
-func (je *JsonEncoder) Encode(subject string, v interface{}) ([]byte, error) {
+func (je *JSONEncoder) Encode(subject string, v interface{}) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -22,7 +22,7 @@ func (je *JsonEncoder) Encode(subject string, v interface{}) ([]byte, error) {
 	return b, nil
 }
 
-func (je *JsonEncoder) Decode(subject string, data []byte, vPtr interface{}) (err error) {
+func (je *JSONEncoder) Decode(subject string, data []byte, vPtr interface{}) (err error) {
 	switch arg := vPtr.(type) {
 	case *string:
 		// If they want a string and it is a JSON string, strip quotes

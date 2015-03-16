@@ -14,7 +14,7 @@ func TestServerAutoUnsub(t *testing.T) {
 	received := 0
 	max := 10
 	sub, err := nc.Subscribe("foo", func(_ *Msg) {
-		received += 1
+		received++
 	})
 	if err != nil {
 		t.Fatal("Failed to subscribe: ", err)
@@ -47,7 +47,7 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 		if err != nil {
 			break
 		}
-		received += 1
+		received++
 	}
 	if received != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
@@ -60,7 +60,7 @@ func TestClientASyncAutoUnsub(t *testing.T) {
 	received := 0
 	max := 10
 	sub, err := nc.Subscribe("foo", func(_ *Msg) {
-		received += 1
+		received++
 	})
 	if err != nil {
 		t.Fatal("Failed to subscribe: ", err)

@@ -94,7 +94,7 @@ func TestConnectionStatus(t *testing.T) {
 func TestConnClosedCB(t *testing.T) {
 	cbCalled := false
 	o := DefaultOptions
-	o.Url = DefaultURL
+	o.URL = DefaultURL
 	o.ClosedCB = func(_ *Conn) {
 		cbCalled = true
 	}
@@ -111,7 +111,7 @@ func TestConnClosedCB(t *testing.T) {
 func TestCloseDisconnectedCB(t *testing.T) {
 	ch := make(chan bool)
 	o := DefaultOptions
-	o.Url = DefaultURL
+	o.URL = DefaultURL
 	o.AllowReconnect = false
 	o.DisconnectedCB = func(_ *Conn) {
 		ch <- true
@@ -129,7 +129,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 func TestServerStopDisconnectedCB(t *testing.T) {
 	ch := make(chan bool)
 	o := DefaultOptions
-	o.Url = DefaultURL
+	o.URL = DefaultURL
 	o.AllowReconnect = false
 	o.DisconnectedCB = func(nc *Conn) {
 		ch <- true
@@ -153,17 +153,17 @@ func TestServerSecureConnections(t *testing.T) {
 	securePort := uint(2288)
 	secureServer := startServer(t, securePort, "--ssl")
 	defer secureServer.stopServer()
-	secureUrl := fmt.Sprintf("nats://localhost:%d/", securePort)
+	secureURL := fmt.Sprintf("nats://localhost:%d/", securePort)
 
 	// Make sure this succeeds
-	nc, err := SecureConnect(secureUrl)
+	nc, err := SecureConnect(secureURL)
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
 	omsg := []byte("Hello World")
 	received := 0
 	nc.Subscribe("foo", func(m *Msg) {
-		received += 1
+		received++
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
@@ -183,7 +183,7 @@ func TestServerSecureConnections(t *testing.T) {
 	}
 
 	// Server required, but not requested.
-	nc, err = Connect(secureUrl)
+	nc, err = Connect(secureURL)
 	if err == nil || nc != nil || err != ErrSecureConnRequired {
 		t.Fatal("Should have failed to create secure (TLS) connection")
 	}
@@ -259,8 +259,8 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	ch := make(chan bool)
 
 	go func() {
-		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
-		_, err := Connect(natsUrl)
+		natsURL := fmt.Sprintf("nats://localhost:%d/", addr.Port)
+		_, err := Connect(natsURL)
 		if err == nil {
 			t.Fatal("Expected bad INFO err, got none")
 		}
