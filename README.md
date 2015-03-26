@@ -1,6 +1,7 @@
 # NATS - Go Client
 A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io).
 
+[![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
 [![Build Status](https://travis-ci.org/apcera/nats.svg?branch=master)](http://travis-ci.org/apcera/nats) [![GoDoc](http://godoc.org/github.com/apcera/nats?status.png)](http://godoc.org/github.com/apcera/nats) [![Coverage Status](https://img.shields.io/coveralls/apcera/nats.svg)](https://coveralls.io/r/apcera/nats)
 
 ## Installation
