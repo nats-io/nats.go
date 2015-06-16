@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "1.0.8"
+	Version              = "1.0.9"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 60
@@ -37,6 +37,7 @@ const (
 	DefaultMaxPingOut    = 2
 	DefaultMaxChanLen    = 65536
 	RequestChanLen       = 4
+	LangString           = "go"
 )
 
 // For detection and proper handling of a Stale Connection
@@ -220,6 +221,8 @@ type connectInfo struct {
 	Pass     string `json:"pass,omitempty"`
 	Ssl      bool   `json:"ssl_required"`
 	Name     string `json:"name"`
+	Lang     string `json:"lang"`
+	Version  string `json:"version"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -634,7 +637,8 @@ func (nc *Conn) connectProto() (string, error) {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Secure, o.Name}
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass,
+		o.Secure, o.Name, LangString, Version}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		nc.err = ErrJsonParse
