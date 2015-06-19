@@ -2,18 +2,18 @@
 A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io).
 
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
-[![Build Status](https://travis-ci.org/apcera/nats.svg?branch=master)](http://travis-ci.org/apcera/nats) [![GoDoc](http://godoc.org/github.com/apcera/nats?status.png)](http://godoc.org/github.com/apcera/nats) [![Coverage Status](https://img.shields.io/coveralls/apcera/nats.svg)](https://coveralls.io/r/apcera/nats)
+[![Build Status](https://travis-ci.org/nats-io/nats.svg?branch=master)](http://travis-ci.org/nats-io/nats) [![GoDoc](http://godoc.org/github.com/nats-io/nats?status.png)](http://godoc.org/github.com/nats-io/nats) [![Coverage Status](https://img.shields.io/coveralls/nats-io/nats.svg)](https://coveralls.io/r/nats-io/nats)
 
 ## Installation
 
 ```bash
 # Go client
-go get github.com/apcera/nats
+go get github.com/nats-io/nats
 
 # Servers
 
 # gnatsd
-go get github.com/apcera/gnatsd
+go get github.com/nats-io/gnatsd
 
 # nats-server (Ruby)
 gem install nats
