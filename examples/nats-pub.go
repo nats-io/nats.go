@@ -1,4 +1,4 @@
-// Copyright 2012 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 // +build ignore
 
 package main
@@ -8,7 +8,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/apcera/nats"
+	"github.com/nats-io/nats"
 )
 
 func usage() {
