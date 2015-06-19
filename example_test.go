@@ -2,7 +2,7 @@ package nats_test
 
 import (
 	"fmt"
-	"github.com/apcera/nats"
+	"github.com/nats-io/nats"
 	"time"
 )
 
