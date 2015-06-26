@@ -24,7 +24,7 @@ gem install nats
 ```go
 
 nc, _ := nats.Connect(nats.DefaultURL)
-c, _ := nats.NewEncodedConn(nc, "json")
+c, _ := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
 defer c.Close()
 
 // Simple Publisher
@@ -74,7 +74,7 @@ c.Close();
 
 ```go
 nc, _ := nats.Connect(nats.DefaultURL)
-ec, _ := nats.NewEncodedConn(nc, "json")
+ec, _ := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
 defer ec.Close()
 
 type person struct {
