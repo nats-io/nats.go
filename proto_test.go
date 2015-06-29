@@ -3,9 +3,9 @@
 package nats
 
 import (
-	"testing"
 	"reflect"
-	
+	"testing"
+
 	pb "github.com/nats-io/nats/testdata"
 )
 
@@ -41,4 +41,3 @@ func TestProtoMarshalStruct(t *testing.T) {
 		t.Fatal("Did not receive the message")
 	}
 }
-

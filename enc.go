@@ -31,7 +31,7 @@ func init() {
 	// Register json, gob and default encoder
 	RegisterEncoder("json", &JsonEncoder{})
 	RegisterEncoder("gob", &GobEncoder{})
-	RegisterEncoder("proto", &ProtoEncoder{})	
+	RegisterEncoder("proto", &ProtoEncoder{})
 	RegisterEncoder("default", &DefaultEncoder{})
 }
 
