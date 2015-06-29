@@ -11,6 +11,7 @@ install:
 - go get golang.org/x/tools/cmd/vet
 - go get golang.org/x/tools/cmd/cover
 - go get github.com/mattn/goveralls
+- go get github.com/golang/protobuf/proto
 script:
 - go fmt ./...
 - go vet ./...
