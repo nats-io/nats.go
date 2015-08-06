@@ -1,6 +1,5 @@
 // Copyright 2012-2014 Apcera Inc. All rights reserved.
 
-// A Go client for the NATS messaging system (https://nats.io).
 package nats
 
 import (
