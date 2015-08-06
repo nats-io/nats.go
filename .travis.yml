@@ -4,7 +4,7 @@ go:
 before_script:
 - gem -v
 - ruby -v
-- gem install nats --pre
+- gem install nats
 - which nats-server
 - nats-server -v
 install:
