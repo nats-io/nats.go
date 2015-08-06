@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	Version              = "1.0.9"
+	Version              = "1.1.0"
 	DefaultURL           = "nats://localhost:4222"
 	DefaultPort          = 4222
 	DefaultMaxReconnect  = 60
@@ -1192,16 +1192,16 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// FIXME, do deadlines here
 	if _, nc.err = nc.bw.Write(msgh); nc.err != nil {
-		nc.mu.Unlock()
+		defer nc.mu.Unlock()
 		return nc.err
 	}
 	if _, nc.err = nc.bw.Write(data); nc.err != nil {
-		nc.mu.Unlock()
+		defer nc.mu.Unlock()
 		return nc.err
 	}
 
 	if _, nc.err = nc.bw.WriteString(_CRLF_); nc.err != nil {
-		nc.mu.Unlock()
+		defer nc.mu.Unlock()
 		return nc.err
 	}
 
