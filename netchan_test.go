@@ -247,6 +247,7 @@ func TestRecvChanMultipleMessages(t *testing.T) {
 		ec.Publish("foo", 22)
 	}
 	ec.Flush()
+	time.Sleep(10 * time.Millisecond)
 
 	if lch := len(ch); lch != size {
 		t.Fatalf("Expected %d messages queued, got %d.", size, lch)

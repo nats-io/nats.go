@@ -975,6 +975,7 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 		s.mu.Lock()
 		conn := s.conn
 		mcb := s.mcb
+		max := s.max
 		s.mu.Unlock()
 
 		if conn == nil || mcb == nil {
@@ -982,7 +983,7 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 		}
 		// FIXME: race on compare?
 		atomic.AddUint64(&s.delivered, 1)
-		if s.max <= 0 || s.delivered <= s.max {
+		if max <= 0 || s.delivered <= max {
 			mcb(m)
 		}
 	}

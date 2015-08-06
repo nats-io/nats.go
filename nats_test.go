@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -245,15 +246,17 @@ func TestSyncReplyArg(t *testing.T) {
 func TestUnsubscribe(t *testing.T) {
 	nc := newConnection(t)
 	defer nc.Close()
-	received := 0
-	max := 10
+	received := int32(0)
+	max := int32(10)
+	ch := make(chan bool)
 	nc.Subscribe("foo", func(m *Msg) {
-		received += 1
+		atomic.AddInt32(&received, 1)
 		if received == max {
 			err := m.Sub.Unsubscribe()
 			if err != nil {
 				t.Fatal("Unsubscribe failed with err:", err)
 			}
+			ch <- true
 		}
 	})
 	send := 20
@@ -261,9 +264,12 @@ func TestUnsubscribe(t *testing.T) {
 		nc.Publish("foo", []byte("hello"))
 	}
 	nc.Flush()
-	if received != max {
+	<-ch
+
+	r := atomic.LoadInt32(&received)
+	if r != max {
 		t.Fatalf("Received wrong # of messages after unsubscribe: %d vs %d",
-			received, max)
+			r, max)
 	}
 }
 
