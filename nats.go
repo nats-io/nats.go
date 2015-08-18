@@ -209,6 +209,7 @@ type serverInfo struct {
 	Host         string `json:"host"`
 	Port         uint   `json:"port"`
 	Version      string `json:"version"`
+	GoVersion    string `json:"go"`
 	AuthRequired bool   `json:"auth_required"`
 	SslRequired  bool   `json:"ssl_required"`
 	MaxPayload   int64  `json:"max_payload"`
