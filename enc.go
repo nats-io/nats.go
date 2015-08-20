@@ -20,10 +20,10 @@ var encMap map[string]Encoder
 var encLock sync.Mutex
 
 const (
-	JSON_ENCODER    = "json"
-	GOB_ENCODER     = "gob"
-	PROTO_ENCODER   = "proto"
-	DEFAULT_ENCODER = "default"
+	JSON_ENCODER     = "json"
+	GOB_ENCODER      = "gob"
+	PROTOBUF_ENCODER = "protobuf"
+	DEFAULT_ENCODER  = "default"
 )
 
 func init() {
@@ -31,7 +31,7 @@ func init() {
 	// Register json, gob and default encoder
 	RegisterEncoder("json", &JsonEncoder{})
 	RegisterEncoder("gob", &GobEncoder{})
-	RegisterEncoder("proto", &ProtoEncoder{})
+	RegisterEncoder("protobuf", &ProtoEncoder{})
 	RegisterEncoder("default", &DefaultEncoder{})
 }
 

@@ -1,5 +1,3 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
-
 package nats
 
 import (
@@ -10,7 +8,7 @@ import (
 )
 
 func NewProtoEncodedConn(t *testing.T) *EncodedConn {
-	ec, err := NewEncodedConn(newConnection(t), "proto")
+	ec, err := NewEncodedConn(newConnection(t), PROTOBUF_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}

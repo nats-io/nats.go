@@ -1,10 +1,10 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
+// Copyright 2014 Antonio Antelo Vazquez All rights reserved.
 
 package nats
 
 import (
 	"errors"
-	
+
 	"github.com/golang/protobuf/proto"
 )
 
