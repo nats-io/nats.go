@@ -1,4 +1,5 @@
 
+- [ ] Test for valid subjects on publish and subscribe?
 - [ ] SyncSubscriber and Next for EncodedConn
 - [ ] Fast Publisher?
 - [ ] pooling for structs used? leaky bucket?
