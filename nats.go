@@ -56,6 +56,7 @@ var (
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
+	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
 )
 
 var DefaultOptions = Options{
@@ -109,6 +110,10 @@ type Options struct {
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery or sync subscription.
 	SubChanLen int
+
+	// Avoid publishing message if size above this threshold
+	MaxPayload        int
+	EnforceMaxPayload bool
 }
 
 const (
@@ -1114,6 +1119,7 @@ func (nc *Conn) processInfo(info string) {
 		return
 	}
 	nc.err = json.Unmarshal([]byte(info), &nc.info)
+	nc.Opts.MaxPayload = int(nc.info.MaxPayload)
 }
 
 // LastError reports the last error encountered via the Connection.
@@ -1151,6 +1157,15 @@ const digits = "0123456789"
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
+
+	// Proactively reject payloads over the threshold set by server,
+	// only if explicitly enabled when customizing the connection.
+	if nc.Opts.EnforceMaxPayload && len(data) > nc.Opts.MaxPayload {
+		nc.err = ErrMaxPayload
+		err := nc.err
+		nc.mu.Unlock()
+		return err
+	}
 
 	if nc.isClosed() {
 		nc.mu.Unlock()
