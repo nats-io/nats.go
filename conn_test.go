@@ -279,7 +279,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 func TestErrOnMaxPayloadLimit(t *testing.T) {
 	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.4.2\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":10}\r\n"
 
-	l, e := net.Listen("tcp", "127.0.0.1:4222")
+	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal("Could not listen on an ephemeral port")
 	}
