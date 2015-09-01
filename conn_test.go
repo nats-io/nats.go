@@ -286,59 +286,43 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	tl := l.(*net.TCPListener)
 	addr := tl.Addr().(*net.TCPAddr)
 
-	// Used to synchronize
-	ch := make(chan struct{})
-
-	// Simple server which send back an INFO message
-	// with custom max payload size.
+	// Send back an INFO message with custom max payload size on connect.
+	var conn net.Conn
+	var err error
 	go func() {
-		for {
-			select {
-			case <-time.After(5 * time.Second):
-				break
-			default:
-				conn, err := l.Accept()
-				if err != nil {
-					t.Fatalf("Error accepting client connection: %v\n", err)
-				}
-				info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
-				conn.Write([]byte(info))
-				conn.Write([]byte("PONG\r\n"))
-				time.Sleep(500 * time.Millisecond)
-				conn.Close()
-			}
+		conn, err = l.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting client connection: %v\n", err)
 		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+		// Wait a bit for client to connect and make a ping
+		time.Sleep(100 * time.Millisecond)
+		conn.Write([]byte("PONG\r\n"))
 	}()
 
-	var nc *Conn
-	var err error
+	doneCh := make(chan struct{})
 	go func() {
 		natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
 		opts := DefaultOptions
 		opts.Servers = []string{natsUrl}
-		opts.EnforceMaxPayload = true
-
-		for i := 0; i < 10; i++ {
-			nc, err = opts.Connect()
-			if err == nil {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
+		nc, err := opts.Connect()
 		if err != nil {
 			t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
 		}
-		ch <- struct{}{}
-	}()
 
-	// Setup a timer to watch for deadlock
-	select {
-	case <-ch:
-		err := nc.Publish("hello", []byte("hello world"))
+		err = nc.Publish("hello", []byte("hello world"))
 		if err != ErrMaxPayload {
 			t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("Connect took too long")
+		doneCh <- struct{}{}
+	}()
+
+	select {
+	case <-doneCh:
+		break
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Timeout.")
 	}
 }

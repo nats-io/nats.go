@@ -112,8 +112,7 @@ type Options struct {
 	SubChanLen int
 
 	// Avoid publishing message if size above this threshold
-	MaxPayload        int
-	EnforceMaxPayload bool
+	MaxPayload int
 }
 
 const (
@@ -1160,7 +1159,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Proactively reject payloads over the threshold set by server,
 	// only if explicitly enabled when customizing the connection.
-	if nc.Opts.EnforceMaxPayload && len(data) > nc.Opts.MaxPayload {
+	if len(data) > nc.Opts.MaxPayload {
 		nc.err = ErrMaxPayload
 		err := nc.err
 		nc.mu.Unlock()
