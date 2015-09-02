@@ -277,7 +277,8 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 }
 
 func TestErrOnMaxPayloadLimit(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.4.2\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":10}\r\n"
+	expectedMaxPayload := int64(10)
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.4.2\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":%d}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -295,7 +296,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 			fmt.Printf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
-		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, expectedMaxPayload)
 		conn.Write([]byte(info))
 
 		// Read connect and ping commands sent from the client
@@ -315,6 +316,11 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		nc, err := opts.Connect()
 		if err != nil {
 			t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+		}
+
+		got := nc.MaxPayload()
+		if got != expectedMaxPayload {
+			t.Fatal("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
 		}
 
 		err = nc.Publish("hello", []byte("hello world"))
