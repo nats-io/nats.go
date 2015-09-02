@@ -1118,7 +1118,6 @@ func (nc *Conn) processInfo(info string) {
 		return
 	}
 	nc.err = json.Unmarshal([]byte(info), &nc.info)
-	nc.Opts.MaxPayload = int(nc.info.MaxPayload)
 }
 
 // LastError reports the last error encountered via the Connection.
@@ -1159,7 +1158,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Proactively reject payloads over the threshold set by server,
 	// only if explicitly enabled when customizing the connection.
-	if len(data) > nc.Opts.MaxPayload {
+	if len(data) > nc.MaxPayload() {
 		nc.err = ErrMaxPayload
 		err := nc.err
 		nc.mu.Unlock()
@@ -1686,4 +1685,9 @@ func (nc *Conn) Stats() Statistics {
 	defer nc.mu.Unlock()
 	stats := nc.Statistics
 	return stats
+}
+
+// MaxPayload returns the size limit that a message payload can have.
+func (nc *Conn) MaxPayload() int {
+	return int(nc.info.MaxPayload)
 }
