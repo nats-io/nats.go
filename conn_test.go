@@ -297,8 +297,13 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
 		conn.Write([]byte(info))
-		// Wait a bit for client to connect and make a ping
-		time.Sleep(100 * time.Millisecond)
+
+		// Read connect and ping commands sent from the client
+		line := make([]byte, 111)
+		_, err := conn.Read(line)
+		if err != nil {
+			t.Fatal("Expected CONNECT and PING from client, got: %s", err)
+		}
 		conn.Write([]byte("PONG\r\n"))
 	}()
 
