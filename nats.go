@@ -1153,8 +1153,7 @@ const digits = "0123456789"
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
 
-	// Proactively reject payloads over the threshold set by server,
-	// only if explicitly enabled when customizing the connection.
+	// Proactively reject payloads over the threshold set by server.
 	if len(data) > nc.MaxPayload() {
 		nc.err = ErrMaxPayload
 		err := nc.err
