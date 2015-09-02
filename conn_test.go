@@ -303,7 +303,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		line := make([]byte, 111)
 		_, err := conn.Read(line)
 		if err != nil {
-			t.Fatal("Expected CONNECT and PING from client, got: %s", err)
+			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 	}()
