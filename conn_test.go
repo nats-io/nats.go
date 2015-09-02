@@ -320,7 +320,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 
 		got := nc.MaxPayload()
 		if got != expectedMaxPayload {
-			t.Fatal("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
+			t.Fatalf("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
 		}
 
 		err = nc.Publish("hello", []byte("hello world"))
