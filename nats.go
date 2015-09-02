@@ -110,9 +110,6 @@ type Options struct {
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery or sync subscription.
 	SubChanLen int
-
-	// Avoid publishing message if size above this threshold
-	MaxPayload int
 }
 
 const (
