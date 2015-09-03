@@ -1689,6 +1689,5 @@ func (nc *Conn) Stats() Statistics {
 func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
-	max := nc.info.MaxPayload
-	return max
+	return nc.info.MaxPayload
 }
