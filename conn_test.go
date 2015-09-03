@@ -275,3 +275,65 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 		t.Fatalf("Connect took too long, deadlock?")
 	}
 }
+
+func TestErrOnMaxPayloadLimit(t *testing.T) {
+	expectedMaxPayload := int64(10)
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.4.2\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":%d}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	addr := tl.Addr().(*net.TCPAddr)
+
+	// Send back an INFO message with custom max payload size on connect.
+	var conn net.Conn
+	var err error
+	go func() {
+		conn, err = l.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, expectedMaxPayload)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		line := make([]byte, 111)
+		_, err := conn.Read(line)
+		if err != nil {
+			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+	}()
+
+	doneCh := make(chan struct{})
+	go func() {
+		natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+		opts := DefaultOptions
+		opts.Servers = []string{natsUrl}
+		nc, err := opts.Connect()
+		if err != nil {
+			t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+		}
+
+		got := nc.MaxPayload()
+		if got != expectedMaxPayload {
+			t.Fatalf("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
+		}
+
+		err = nc.Publish("hello", []byte("hello world"))
+		if err != ErrMaxPayload {
+			t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
+		}
+		doneCh <- struct{}{}
+	}()
+
+	select {
+	case <-doneCh:
+		break
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Timeout.")
+	}
+}

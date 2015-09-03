@@ -56,6 +56,7 @@ var (
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
+	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
 )
 
 var DefaultOptions = Options{
@@ -1152,6 +1153,16 @@ const digits = "0123456789"
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
 
+	// Proactively reject payloads over the threshold set by server.
+	var msgSize int64
+	msgSize = int64(len(data))
+	if msgSize > nc.info.MaxPayload {
+		nc.err = ErrMaxPayload
+		err := nc.err
+		nc.mu.Unlock()
+		return err
+	}
+
 	if nc.isClosed() {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
@@ -1672,4 +1683,11 @@ func (nc *Conn) Stats() Statistics {
 	defer nc.mu.Unlock()
 	stats := nc.Statistics
 	return stats
+}
+
+// MaxPayload returns the size limit that a message payload can have.
+func (nc *Conn) MaxPayload() int64 {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.info.MaxPayload
 }
