@@ -982,9 +982,10 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 		if conn == nil || mcb == nil {
 			continue
 		}
-		// FIXME: race on compare?
+
 		atomic.AddUint64(&s.delivered, 1)
-		if max <= 0 || s.delivered <= max {
+		delivered := atomic.LoadUint64(&s.delivered)
+		if max <= 0 || delivered <= max {
 			mcb(m)
 		}
 	}
