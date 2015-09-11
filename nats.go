@@ -1140,8 +1140,11 @@ func (nc *Conn) processErr(e string) {
 // kickFlusher will send a bool on a channel to kick the
 // flush Go routine to flush data to the server.
 func (nc *Conn) kickFlusher() {
-	if len(nc.fch) == 0 && nc.bw != nil {
-		nc.fch <- true
+	if nc.bw != nil {
+		select {
+		case nc.fch <- true:
+		default:
+		}
 	}
 }
 
