@@ -9,7 +9,7 @@ import (
 )
 
 func NewEConn(t *testing.T) *EncodedConn {
-	ec, err := NewEncodedConn(newConnection(t), "default")
+	ec, err := NewEncodedConn(newConnection(t), DEFAULT)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
