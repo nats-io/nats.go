@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 
 package nats
 
@@ -8,6 +8,9 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	// Default Encoders
+	. "github.com/nats-io/nats/encoders/builtin"
 )
 
 // Encoder interface is for all register encoders

@@ -1,14 +1,17 @@
-// Copyright 2012 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 
-package nats
+package builtin_test
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/nats-io/nats"
+	"github.com/nats-io/nats/test"
 )
 
-func NewGobEncodedConn(t *testing.T) *EncodedConn {
-	ec, err := NewEncodedConn(newConnection(t), "gob")
+func NewGobEncodedConn(t *testing.T) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), nats.GOB_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -16,6 +19,9 @@ func NewGobEncodedConn(t *testing.T) *EncodedConn {
 }
 
 func TestGobMarshalString(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewGobEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -29,12 +35,15 @@ func TestGobMarshalString(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("gob_string", testString)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestGobMarshalInt(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewGobEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -48,12 +57,15 @@ func TestGobMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("gob_int", testN)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestGobMarshalStruct(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewGobEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -77,7 +89,7 @@ func TestGobMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("gob_struct", me)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }

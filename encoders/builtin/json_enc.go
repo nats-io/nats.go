@@ -1,6 +1,6 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 
-package nats
+package builtin
 
 import (
 	"encoding/json"

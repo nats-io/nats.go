@@ -1,15 +1,19 @@
 // Copyright 2012-2015 Apcera Inc. All rights reserved.
 
-package nats
+package builtin_test
 
 import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats"
+	"github.com/nats-io/nats/encoders/builtin"
+	"github.com/nats-io/nats/test"
 )
 
-func NewJsonEncodedConn(t *testing.T) *EncodedConn {
-	ec, err := NewEncodedConn(newConnection(t), "json")
+func NewJsonEncodedConn(t *testing.T) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), nats.JSON_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -17,6 +21,9 @@ func NewJsonEncodedConn(t *testing.T) *EncodedConn {
 }
 
 func TestJsonMarshalString(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewJsonEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -30,12 +37,15 @@ func TestJsonMarshalString(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("json_string", testString)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestJsonMarshalInt(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewJsonEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -49,7 +59,7 @@ func TestJsonMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("json_int", testN)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
@@ -63,6 +73,9 @@ type person struct {
 }
 
 func TestJsonMarshalStruct(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewJsonEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -86,13 +99,13 @@ func TestJsonMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("json_struct", me)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestNotMarshableToJson(t *testing.T) {
-	je := &JsonEncoder{}
+	je := &builtin.JsonEncoder{}
 	ch := make(chan bool)
 	_, err := je.Encode("foo", ch)
 	if err == nil {
@@ -101,6 +114,9 @@ func TestNotMarshableToJson(t *testing.T) {
 }
 
 func TestFailedEncodedPublish(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewJsonEncodedConn(t)
 	defer ec.Close()
 
@@ -125,7 +141,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 }
 
 func TestDecodeConditionals(t *testing.T) {
-	je := &JsonEncoder{}
+	je := &builtin.JsonEncoder{}
 
 	b, err := je.Encode("foo", 22)
 	if err != nil {
