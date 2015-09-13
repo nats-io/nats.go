@@ -1,40 +1,17 @@
 package protobuf
 
 import (
-	"errors"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/nats-io/nats"
+	"github.com/nats-io/nats/test"
+
 	pb "github.com/nats-io/nats/encoders/protobuf/testdata"
 )
 
-// Dumb wait program to sync on callbacks, etc... Will timeout
-func wait(ch chan bool) error {
-	return waitTime(ch, 500*time.Millisecond)
-}
-
-func waitTime(ch chan bool, timeout time.Duration) error {
-	select {
-	case <-ch:
-		return nil
-	case <-time.After(timeout):
-	}
-	return errors.New("timeout")
-}
-
-func newConnection(t *testing.T) *nats.Conn {
-	nc, err := nats.Connect(nats.DefaultURL)
-	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
-		return nil
-	}
-	return nc
-}
-
 func NewProtoEncodedConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(newConnection(t), PROTOBUF_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), PROTOBUF_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -42,6 +19,9 @@ func NewProtoEncodedConn(t *testing.T) *nats.EncodedConn {
 }
 
 func TestProtoMarshalStruct(t *testing.T) {
+	s := test.RunDefaultServer()
+	defer s.Shutdown()
+
 	ec := NewProtoEncodedConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
@@ -61,7 +41,7 @@ func TestProtoMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("protobuf_test", me)
-	if e := wait(ch); e != nil {
+	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }

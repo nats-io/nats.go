@@ -27,7 +27,7 @@ type ProtobufEncoder struct {
 
 var (
 	ErrInvalidProtoMsgEncode = errors.New("nats: Invalid protobuf proto.Message object passed to encode")
-	ErrInvalidProtoMsgDecode = errors.New("nats: Invalid protobuf proto.Message object passed to encode")
+	ErrInvalidProtoMsgDecode = errors.New("nats: Invalid protobuf proto.Message object passed to decode")
 )
 
 func (pb *ProtobufEncoder) Encode(subject string, v interface{}) ([]byte, error) {

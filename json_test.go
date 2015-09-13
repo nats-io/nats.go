@@ -1,4 +1,4 @@
-// Copyright 2012-2014 Apcera Inc. All rights reserved.
+// Copyright 2012-2015 Apcera Inc. All rights reserved.
 
 package nats
 
@@ -67,11 +67,11 @@ func TestJsonMarshalStruct(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
+	me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
 	me.Children = make(map[string]*person)
 
-	me.Children["sam"] = &person{Name: "sam", Age: 16, Address: "85 Second St"}
-	me.Children["meg"] = &person{Name: "meg", Age: 14, Address: "85 Second St"}
+	me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+	me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
 	me.Assets = make(map[string]uint)
 	me.Assets["house"] = 1000
