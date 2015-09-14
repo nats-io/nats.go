@@ -143,6 +143,7 @@ type Conn struct {
 	pending *bytes.Buffer
 	fch     chan bool
 	info    serverInfo
+	_       uint32 // needed to correctly align the following ssid field on i386 systems
 	ssid    int64
 	subs    map[int64]*Subscription
 	mch     chan *Msg
