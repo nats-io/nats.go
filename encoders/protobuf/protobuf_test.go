@@ -7,11 +7,12 @@ import (
 	"github.com/nats-io/nats"
 	"github.com/nats-io/nats/test"
 
+	"github.com/nats-io/nats/encoders/protobuf"
 	pb "github.com/nats-io/nats/encoders/protobuf/testdata"
 )
 
 func NewProtoEncodedConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), PROTOBUF_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), protobuf.PROTOBUF_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
