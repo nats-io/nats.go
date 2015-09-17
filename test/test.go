@@ -5,7 +5,6 @@ package test
 import (
 	"errors"
 	"fmt"
-	"testing"
 	"time"
 
 	"github.com/nats-io/gnatsd/server"
@@ -13,6 +12,12 @@ import (
 
 	gnatsd "github.com/nats-io/gnatsd/test"
 )
+
+// So that we can pass tests and benchmarks...
+type tLogger interface {
+	Fatalf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+}
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
@@ -28,11 +33,15 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	return errors.New("timeout")
 }
 
-func NewDefaultConnection(t *testing.T) *nats.Conn {
+////////////////////////////////////////////////////////////////////////////////
+// Creating client connections
+////////////////////////////////////////////////////////////////////////////////
+
+func NewDefaultConnection(t tLogger) *nats.Conn {
 	return NewConnection(t, nats.DefaultPort)
 }
 
-func NewConnection(t *testing.T, port int) *nats.Conn {
+func NewConnection(t tLogger, port int) *nats.Conn {
 	url := fmt.Sprintf("nats://localhost:%d", port)
 	nc, err := nats.Connect(url)
 	if err != nil {
@@ -42,6 +51,18 @@ func NewConnection(t *testing.T, port int) *nats.Conn {
 	return nc
 }
 
+func NewEConn(t tLogger) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewDefaultConnection(t), nats.DEFAULT_ENCODER)
+	if err != nil {
+		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	}
+	return ec
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Running gnatsd server in separate Go routines
+////////////////////////////////////////////////////////////////////////////////
+
 func RunDefaultServer() *server.Server {
 	return RunServerOnPort(nats.DefaultPort)
 }
@@ -49,5 +70,9 @@ func RunDefaultServer() *server.Server {
 func RunServerOnPort(port int) *server.Server {
 	opts := gnatsd.DefaultTestOptions
 	opts.Port = port
+	return RunServerWithOptions(opts)
+}
+
+func RunServerWithOptions(opts server.Options) *server.Server {
 	return gnatsd.RunServer(&opts)
 }

@@ -1,16 +1,20 @@
-package nats_test
+package test
 
 import (
 	"fmt"
-	"github.com/nats-io/nats"
 	"time"
+
+	"github.com/nats-io/nats"
 )
 
 // Shows different ways to create a Conn
 func ExampleConnect() {
 
-	nats.Connect(nats.DefaultURL)
-	nats.Connect("nats://derek:secretpassword@nats.apcera.com:421")
+	nc, _ := nats.Connect(nats.DefaultURL)
+	nc.Close()
+
+	nc, _ = nats.Connect("nats://derek:secretpassword@nats.apcera.com:4222")
+	nc.Close()
 
 	opts := nats.Options{
 		AllowReconnect: true,
@@ -19,7 +23,7 @@ func ExampleConnect() {
 		Timeout:        1 * time.Second,
 	}
 
-	nc, _ := opts.Connect()
+	nc, _ = opts.Connect()
 	nc.Close()
 }
 
