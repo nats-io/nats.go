@@ -21,43 +21,6 @@ var testServers = []string{
 	"nats://localhost:1228",
 }
 
-/*
-func TestServersRandomize(t *testing.T) {
-	opts := DefaultOptions
-	opts.Servers = testServers
-	nc := &Conn{Opts: opts}
-	if err := nc.setupServerPool(); err != nil {
-		t.Fatalf("Problem setting up Server Pool: %v\n", err)
-	}
-	// Build []string from srvPool
-	clientServers := []string{}
-	for _, s := range nc.srvPool {
-		clientServers = append(clientServers, s.url.String())
-	}
-	// In theory this could happen..
-	if reflect.DeepEqual(testServers, clientServers) {
-		t.Fatalf("ServerPool list not randomized\n")
-	}
-
-	// Now test that we do not randomize if proper flag is set.
-	opts = DefaultOptions
-	opts.Servers = testServers
-	opts.NoRandomize = true
-	nc = &Conn{Opts: opts}
-	if err := nc.setupServerPool(); err != nil {
-		t.Fatalf("Problem setting up Server Pool: %v\n", err)
-	}
-	// Build []string from srvPool
-	clientServers = []string{}
-	for _, s := range nc.srvPool {
-		clientServers = append(clientServers, s.url.String())
-	}
-	if !reflect.DeepEqual(testServers, clientServers) {
-		t.Fatalf("ServerPool list should not be randomized\n")
-	}
-}
-*/
-
 func TestServersOption(t *testing.T) {
 	opts := nats.DefaultOptions
 	opts.NoRandomize = true
@@ -101,7 +64,6 @@ func TestServersOption(t *testing.T) {
 }
 
 func TestAuthServers(t *testing.T) {
-
 	var plainServers = []string{
 		"nats://localhost:1222",
 		"nats://localhost:1224",
@@ -148,55 +110,6 @@ func TestAuthServers(t *testing.T) {
 			nc.ConnectedUrl())
 	}
 }
-
-/*
-func TestSelectNextServer(t *testing.T) {
-	opts := DefaultOptions
-	opts.Servers = testServers
-	opts.NoRandomize = true
-	nc := &Conn{Opts: opts}
-	if err := nc.setupServerPool(); err != nil {
-		t.Fatalf("Problem setting up Server Pool: %v\n", err)
-	}
-	if nc.url != nc.srvPool[0].url {
-		t.Fatalf("Wrong default selection: %v\n", nc.url)
-	}
-
-	sel, err := nc.selectNextServer()
-	if err != nil {
-		t.Fatalf("Got an err: %v\n", err)
-	}
-	// Check that we are now looking at #2, and current is now last.
-	if len(nc.srvPool) != len(testServers) {
-		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers))
-	}
-	if nc.url.String() != testServers[1] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.url, testServers[1])
-	}
-	if nc.srvPool[len(nc.srvPool)-1].url.String() != testServers[0] {
-		t.Fatalf("Did not push old to last position\n")
-	}
-	if sel != nc.srvPool[0] {
-		t.Fatalf("Did not return correct server: %v vs %v\n", sel.url, nc.srvPool[0].url)
-	}
-
-	// Test that we do not keep servers where we have tried to reconnect past our limit.
-	nc.srvPool[0].reconnects = int(opts.MaxReconnect)
-	if _, err := nc.selectNextServer(); err != nil {
-		t.Fatalf("Got an err: %v\n", err)
-	}
-	// Check that we are now looking at #3, and current is not in the list.
-	if len(nc.srvPool) != len(testServers)-1 {
-		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers)-1)
-	}
-	if nc.url.String() != testServers[2] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.url, testServers[2])
-	}
-	if nc.srvPool[len(nc.srvPool)-1].url.String() == testServers[1] {
-		t.Fatalf("Did not throw away the last server correctly\n")
-	}
-}
-*/
 
 func TestBasicClusterReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)

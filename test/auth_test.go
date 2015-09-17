@@ -33,3 +33,28 @@ func TestAuth(t *testing.T) {
 	}
 	nc.Close()
 }
+
+func TestAuthFailNoDisconnectCB(t *testing.T) {
+	opts := gnatsd.DefaultTestOptions
+	opts.Port = 8232
+	s := RunServerWithOptions(opts)
+
+	// Auth is pluggable, so need to set here..
+	auth := &auth.Plain{
+		Username: "derek",
+		Password: "foo",
+	}
+	s.SetAuthMethod(auth)
+
+	defer s.Shutdown()
+
+	copts := nats.DefaultOptions
+	copts.DisconnectedCB = func(nc *nats.Conn) {
+		t.Fatal("Should not have received a disconnect callback on auth failure")
+	}
+
+	_, err := copts.Connect()
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+}
