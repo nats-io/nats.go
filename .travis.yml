@@ -1,13 +1,12 @@
 language: go
 go:
 - 1.4
-before_script:
-- gem -v
-- ruby -v
-- gem install nats
-- which nats-server
-- nats-server -v
+- 1.5
 install:
+- DST=~/gopath/src/github.com/nats-io
+- mkdir -p "$DST"
+- git clone --depth=1 --quiet https://github.com/nats-io/gnatsd.git "$DST"/gnatsd
+- go get -t ./...
 - go get golang.org/x/tools/cmd/vet
 - go get golang.org/x/tools/cmd/cover
 - go get github.com/mattn/goveralls
