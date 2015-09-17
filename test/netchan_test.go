@@ -215,11 +215,11 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	// Close the receive Channel
 	close(ch)
 
-	// The publish will trugger the close and shutdown of the Go routines
+	// The publish will trigger the close and shutdown of the Go routines
 	ec.Publish("foo", 22)
 	ec.Flush()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	after := runtime.NumGoroutine()
 
