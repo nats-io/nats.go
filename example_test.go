@@ -1,4 +1,4 @@
-package test
+package nats_test
 
 import (
 	"fmt"

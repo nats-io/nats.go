@@ -52,7 +52,7 @@ func TestConnectedServer(t *testing.T) {
 	}
 	srv = nc.ConnectedServerId()
 	if srv != "" {
-		t.Fatalf("Expected a nil connect server, got %s\n", s)
+		t.Fatalf("Expected a nil connect server, got %s\n", srv)
 	}
 }
 
