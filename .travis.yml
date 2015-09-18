@@ -1,6 +1,5 @@
 language: go
 sudo: false
-
 go:
 - 1.4
 - 1.5
@@ -16,8 +15,8 @@ script:
 - go fmt ./...
 - go vet ./...
 - go test -i -race ./...
-- GOMAXPROCS=1 go test -v -race ./...
-- GOMAXPROCS=1 go test -v -covermode=count -coverprofile=coverage.out
+- go test -v -race ./...
+- go test -v -covermode=count -coverprofile=coverage.out
 - $HOME/gopath/bin/goveralls -coverprofile coverage.out -service travis-ci
 env:
   global:

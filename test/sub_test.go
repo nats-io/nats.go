@@ -221,9 +221,14 @@ func TestAsyncErrHandler(t *testing.T) {
 
 	ch := make(chan bool)
 
+	aeCalled := false
+
 	nc.Opts.AsyncErrorCB = func(c *nats.Conn, s *nats.Subscription, e error) {
 		// Suppress additional calls
-		nc.Opts.AsyncErrorCB = nil
+		if aeCalled {
+			return
+		}
+		aeCalled = true
 
 		if s != sub {
 			t.Fatal("Did not receive proper subscription")

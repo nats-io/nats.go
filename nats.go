@@ -1081,15 +1081,18 @@ func (nc *Conn) flusher() {
 	defer nc.wg.Done()
 
 	// snapshot the bw and conn since they can change from underneath of us.
+	nc.mu.Lock()
 	bw := nc.bw
 	conn := nc.conn
+	fch := nc.fch
+	nc.mu.Unlock()
 
 	if conn == nil || bw == nil {
 		return
 	}
 
 	for {
-		if _, ok := <-nc.fch; !ok {
+		if _, ok := <-fch; !ok {
 			return
 		}
 		nc.mu.Lock()
@@ -1619,6 +1622,9 @@ func (nc *Conn) resetPendingFlush() {
 
 // This will clear any pending flush calls and release pending calls.
 func (nc *Conn) clearPendingFlushCalls() {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
 	// Clear any queued pongs, e.g. pending flush calls.
 	for _, ch := range nc.pongs {
 		if ch != nil {
