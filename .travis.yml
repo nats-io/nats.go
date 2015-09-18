@@ -16,7 +16,5 @@ script:
 - go vet ./...
 - go test -i -race ./...
 - go test -v -race ./...
-- ./travis/coveralls-script.sh
-env:
-  global:
-    secure: UxWSqs4k2Sa2AqA16rbRYxkqw9eF82yjl737CCCf2ce6nQTihZ2zNOPDXMfE/JeKv6spwErzX3I2JyrSQJ9BdHTwnYHOdvajNFqoUDtM/vp89OcOBrUNNST0wlmVp8mkMSUecpBAJCaCpc8PTbkca2p7VkHv8dohdSnpxugPZX0=
+- GOMAXPROCS=1 go test -v -covermode=count -coverprofile=coverage.out ./test
+- $HOME/gopath/bin/goveralls -coverprofile coverage.out -service travis-ci
