@@ -1,101 +1,46 @@
-package nats
+package test
 
 import (
 	"bytes"
 	"fmt"
 	"net"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats"
 )
 
-const natsServer = "nats-server"
-
-type server struct {
-	args []string
-	cmd  *exec.Cmd
-}
-
-var s *server
-
-// So that we can pass tests and benchmarks...
-type tLogger interface {
-	Fatalf(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
-}
-
-func startServer(t tLogger, port uint, other string) *server {
-	var s server
-	args := fmt.Sprintf("-p %d %s", port, other)
-	s.args = strings.Split(args, " ")
-	s.cmd = exec.Command(natsServer, s.args...)
-	err := s.cmd.Start()
-	if err != nil {
-		s.cmd = nil
-		t.Errorf("Could not start %s, is NATS installed and in path?", natsServer)
-		return &s
-	}
-	// Give it time to start up
-	start := time.Now()
-	for {
-		addr := fmt.Sprintf("localhost:%d", port)
-		c, err := net.Dial("tcp", addr)
-		if err != nil {
-			time.Sleep(50 * time.Millisecond)
-			if time.Since(start) > (10 * time.Second) {
-				t.Fatalf("Timed out trying to connect to %s", natsServer)
-				return nil
-			}
-		} else {
-			c.Close()
-			break
-		}
-	}
-	return &s
-}
-
-func (s *server) stopServer() {
-	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-		s.cmd.Process.Wait()
-	}
-}
-
-func newConnection(t *testing.T) *Conn {
-	nc, err := Connect(DefaultURL)
-	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
-		return nil
-	}
-	return nc
-}
-
 func TestDefaultConnection(t *testing.T) {
-	s = startServer(t, DefaultPort, "")
-	nc := newConnection(t)
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
 	nc.Close()
 }
 
 func TestConnectionStatus(t *testing.T) {
-	nc, err := Connect(DefaultURL)
-	if err != nil {
-		t.Fatalf("Should have connected ok: %v", err)
-	}
-	if nc.status != CONNECTED {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+
+	if nc.Status() != nats.CONNECTED {
 		t.Fatal("Should have status set to CONNECTED")
 	}
 	nc.Close()
-	if nc.status != CLOSED {
+	if nc.Status() != nats.CLOSED {
 		t.Fatal("Should have status set to CLOSED")
 	}
 }
 
 func TestConnClosedCB(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	cbCalled := false
-	o := DefaultOptions
-	o.Url = DefaultURL
-	o.ClosedCB = func(_ *Conn) {
+	o := nats.DefaultOptions
+	o.Url = nats.DefaultURL
+	o.ClosedCB = func(_ *nats.Conn) {
 		cbCalled = true
 	}
 	nc, err := o.Connect()
@@ -109,11 +54,14 @@ func TestConnClosedCB(t *testing.T) {
 }
 
 func TestCloseDisconnectedCB(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	ch := make(chan bool)
-	o := DefaultOptions
-	o.Url = DefaultURL
+	o := nats.DefaultOptions
+	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
-	o.DisconnectedCB = func(_ *Conn) {
+	o.DisconnectedCB = func(_ *nats.Conn) {
 		ch <- true
 	}
 	nc, err := o.Connect()
@@ -121,48 +69,47 @@ func TestCloseDisconnectedCB(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if e := wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Disconnected callback not triggered")
 	}
 }
 
 func TestServerStopDisconnectedCB(t *testing.T) {
+	s := RunDefaultServer()
 	ch := make(chan bool)
-	o := DefaultOptions
-	o.Url = DefaultURL
+	o := nats.DefaultOptions
+	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
-	o.DisconnectedCB = func(nc *Conn) {
+	o.DisconnectedCB = func(nc *nats.Conn) {
 		ch <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
-	s.stopServer()
-	if e := wait(ch); e != nil {
+	s.Shutdown()
+	if e := Wait(ch); e != nil {
 		t.Fatalf("Disconnected callback not triggered\n")
 	}
 	nc.Close()
 }
 
-func TestRestartServer(t *testing.T) {
-	s = startServer(t, DefaultPort, "")
-}
-
 func TestServerSecureConnections(t *testing.T) {
+	t.Skip("Moved to gnatsd, waiting on TLS support")
+
 	securePort := uint(2288)
-	secureServer := startServer(t, securePort, "--ssl")
-	defer secureServer.stopServer()
+	//	secureServer := startServer(t, securePort, "--ssl")
+	//	defer secureServer.stopServer()
 	secureUrl := fmt.Sprintf("nats://localhost:%d/", securePort)
 
 	// Make sure this succeeds
-	nc, err := SecureConnect(secureUrl)
+	nc, err := nats.SecureConnect(secureUrl)
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
 	omsg := []byte("Hello World")
 	received := 0
-	nc.Subscribe("foo", func(m *Msg) {
+	nc.Subscribe("foo", func(m *nats.Msg) {
 		received += 1
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
@@ -177,23 +124,24 @@ func TestServerSecureConnections(t *testing.T) {
 
 	// Test flag mismatch
 	// Wanted but not available..
-	nc, err = SecureConnect(DefaultURL)
-	if err == nil || nc != nil || err != ErrSecureConnWanted {
+	nc, err = nats.SecureConnect(nats.DefaultURL)
+	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
 		t.Fatalf("Should have failed to create connection: %v", err)
 	}
 
 	// Server required, but not requested.
-	nc, err = Connect(secureUrl)
-	if err == nil || nc != nil || err != ErrSecureConnRequired {
+	nc, err = nats.Connect(secureUrl)
+	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
 		t.Fatal("Should have failed to create secure (TLS) connection")
 	}
 }
 
 func TestClosedConnections(t *testing.T) {
-	nc, err := Connect(DefaultURL)
-	if err != nil {
-		t.Fatal("Failed to create default connection", err)
-	}
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+
 	sub, _ := nc.SubscribeSync("foo")
 	if sub == nil {
 		t.Fatal("Failed to create valid subscription")
@@ -201,35 +149,35 @@ func TestClosedConnections(t *testing.T) {
 
 	// Test all API endpoints do the right thing with a closed connection.
 	nc.Close()
-	if err = nc.Publish("foo", nil); err != ErrConnectionClosed {
+	if err := nc.Publish("foo", nil); err != nats.ErrConnectionClosed {
 		t.Fatalf("Publish on closed conn did not fail properly: %v\n", err)
 	}
-	if err = nc.PublishMsg(&Msg{Subject: "foo"}); err != ErrConnectionClosed {
+	if err := nc.PublishMsg(&nats.Msg{Subject: "foo"}); err != nats.ErrConnectionClosed {
 		t.Fatalf("PublishMsg on closed conn did not fail properly: %v\n", err)
 	}
-	if err = nc.Flush(); err != ErrConnectionClosed {
+	if err := nc.Flush(); err != nats.ErrConnectionClosed {
 		t.Fatalf("Flush on closed conn did not fail properly: %v\n", err)
 	}
-	_, err = nc.Subscribe("foo", nil)
-	if err != ErrConnectionClosed {
+	_, err := nc.Subscribe("foo", nil)
+	if err != nats.ErrConnectionClosed {
 		t.Fatalf("Subscribe on closed conn did not fail properly: %v\n", err)
 	}
 	_, err = nc.SubscribeSync("foo")
-	if err != ErrConnectionClosed {
+	if err != nats.ErrConnectionClosed {
 		t.Fatalf("SubscribeSync on closed conn did not fail properly: %v\n", err)
 	}
 	_, err = nc.QueueSubscribe("foo", "bar", nil)
-	if err != ErrConnectionClosed {
+	if err != nats.ErrConnectionClosed {
 		t.Fatalf("QueueSubscribe on closed conn did not fail properly: %v\n", err)
 	}
 	_, err = nc.Request("foo", []byte("help"), 10*time.Millisecond)
-	if err != ErrConnectionClosed {
+	if err != nats.ErrConnectionClosed {
 		t.Fatalf("Request on closed conn did not fail properly: %v\n", err)
 	}
-	if _, err = sub.NextMsg(10); err != ErrConnectionClosed {
+	if _, err = sub.NextMsg(10); err != nats.ErrConnectionClosed {
 		t.Fatalf("NextMessage on closed conn did not fail properly: %v\n", err)
 	}
-	if err = sub.Unsubscribe(); err != ErrConnectionClosed {
+	if err = sub.Unsubscribe(); err != nats.ErrConnectionClosed {
 		t.Fatalf("Unsubscribe on closed conn did not fail properly: %v\n", err)
 	}
 }
@@ -260,7 +208,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 
 	go func() {
 		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
-		_, err := Connect(natsUrl)
+		_, err := nats.Connect(natsUrl)
 		if err == nil {
 			t.Fatal("Expected bad INFO err, got none")
 		}
@@ -278,7 +226,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 
 func TestErrOnMaxPayloadLimit(t *testing.T) {
 	expectedMaxPayload := int64(10)
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.4.2\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":%d}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":%d}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -311,7 +259,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	doneCh := make(chan struct{})
 	go func() {
 		natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-		opts := DefaultOptions
+		opts := nats.DefaultOptions
 		opts.Servers = []string{natsUrl}
 		nc, err := opts.Connect()
 		if err != nil {
@@ -324,7 +272,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		}
 
 		err = nc.Publish("hello", []byte("hello world"))
-		if err != ErrMaxPayload {
+		if err != nats.ErrMaxPayload {
 			t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
 		}
 		doneCh <- struct{}{}
