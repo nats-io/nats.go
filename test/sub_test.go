@@ -78,11 +78,11 @@ func TestClientASyncAutoUnsub(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to subscribe: ", err)
 	}
+	sub.AutoUnsubscribe(int(max))
 	total := 100
 	for i := 0; i < total; i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
-	sub.AutoUnsubscribe(int(max))
 	nc.Flush()
 	time.Sleep(10 * time.Millisecond)
 
@@ -221,14 +221,14 @@ func TestAsyncErrHandler(t *testing.T) {
 
 	ch := make(chan bool)
 
-	aeCalled := false
+	aeCalled := int64(0)
 
 	nc.Opts.AsyncErrorCB = func(c *nats.Conn, s *nats.Subscription, e error) {
 		// Suppress additional calls
-		if aeCalled {
+		if atomic.LoadInt64(&aeCalled) == 1 {
 			return
 		}
-		aeCalled = true
+		atomic.AddInt64(&aeCalled, 1)
 
 		if s != sub {
 			t.Fatal("Did not receive proper subscription")
