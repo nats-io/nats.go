@@ -1,6 +1,7 @@
 package test
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/nats-io/gnatsd/auth"
@@ -49,12 +50,17 @@ func TestAuthFailNoDisconnectCB(t *testing.T) {
 	defer s.Shutdown()
 
 	copts := nats.DefaultOptions
+	copts.Url = "nats://localhost:8232"
+	receivedDisconnectCB := int32(0)
 	copts.DisconnectedCB = func(nc *nats.Conn) {
-		t.Fatal("Should not have received a disconnect callback on auth failure")
+		atomic.AddInt32(&receivedDisconnectCB, 1)
 	}
 
 	_, err := copts.Connect()
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
+	}
+	if atomic.LoadInt32(&receivedDisconnectCB) > 0 {
+		t.Fatal("Should not have received a disconnect callback on auth failure")
 	}
 }
