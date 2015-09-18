@@ -12,10 +12,10 @@ import (
 	"github.com/nats-io/nats/test"
 )
 
-func NewJsonEncodedConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), nats.JSON_ENCODER)
+func NewJsonEncodedConn(tl test.TestLogger) *nats.EncodedConn {
+        ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), nats.JSON_ENCODER)
 	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+                tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	return ec
 }
@@ -102,6 +102,37 @@ func TestJsonMarshalStruct(t *testing.T) {
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
+}
+
+func BenchmarkJsonMarshalStruct(b *testing.B) {
+        s := test.RunDefaultServer()
+        defer s.Shutdown()
+
+        ec := NewJsonEncodedConn(b)
+        defer ec.Close()
+        ch := make(chan bool)
+
+        me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+        me.Children = make(map[string]*person)
+
+        me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+        me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+        ec.Subscribe("json_struct", func(p *person) {
+                ch <- true
+                if !reflect.DeepEqual(p, me) {
+                        b.Fatalf("Did not receive the correct struct response")
+                }
+                ch <- true
+        })
+
+        for n := 0; n < b.N; n++ {
+                ec.Publish("json_struct", me)
+                if e := test.Wait(ch); e != nil {
+                        b.Fatal("Did not receive the message")
+                }
+        }
+
 }
 
 func TestNotMarshableToJson(t *testing.T) {
