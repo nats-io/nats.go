@@ -186,7 +186,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		atomic.AddInt32(&received, 1)
 	})
 
-	// Unsub while disconnected
+	// Unsub foobar while disconnected
 	sub.Unsubscribe()
 
 	if err = ec.Publish("foo", testString); err != nil {
@@ -223,6 +223,9 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
 	}
+
+	// Sleep a bit to guarantee scheduler runs and process all subs.
+	time.Sleep(50 * time.Millisecond)
 
 	if atomic.LoadInt32(&received) != 4 {
 		t.Fatalf("Received != %d, equals %d\n", 4, received)

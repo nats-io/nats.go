@@ -238,10 +238,11 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	// Send back an INFO message with custom max payload size on connect.
 	var conn net.Conn
 	var err error
+
 	go func() {
 		conn, err = l.Accept()
 		if err != nil {
-			fmt.Printf("Error accepting client connection: %v\n", err)
+			t.Fatalf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, expectedMaxPayload)
@@ -254,34 +255,28 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
+		// Hang around a bit to not err on EOF in client.
+		time.Sleep(250 * time.Millisecond)
 	}()
 
-	doneCh := make(chan struct{})
-	go func() {
-		natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-		opts := nats.DefaultOptions
-		opts.Servers = []string{natsUrl}
-		nc, err := opts.Connect()
-		if err != nil {
-			t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
-		}
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
 
-		got := nc.MaxPayload()
-		if got != expectedMaxPayload {
-			t.Fatalf("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
-		}
+	natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.Servers = []string{natsUrl}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
 
-		err = nc.Publish("hello", []byte("hello world"))
-		if err != nats.ErrMaxPayload {
-			t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
-		}
-		doneCh <- struct{}{}
-	}()
-
-	select {
-	case <-doneCh:
-		break
-	case <-time.After(5 * time.Second):
-		t.Fatalf("Timeout.")
+	got := nc.MaxPayload()
+	if got != expectedMaxPayload {
+		t.Fatalf("Expected MaxPayload to be %d, got: %d", expectedMaxPayload, got)
+	}
+	err = nc.Publish("hello", []byte("hello world"))
+	if err != nats.ErrMaxPayload {
+		t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
 	}
 }

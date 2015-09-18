@@ -913,7 +913,7 @@ func (nc *Conn) processOpErr(err error) {
 		nc.mu.Unlock()
 		return
 	}
-	allowReconnect := nc.Opts.AllowReconnect
+	allowReconnect := nc.Opts.AllowReconnect && nc.status == CONNECTED
 	nc.mu.Unlock()
 
 	if allowReconnect {
