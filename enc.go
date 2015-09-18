@@ -172,6 +172,9 @@ func (c *EncodedConn) QueueSubscribe(subject, queue string, cb Handler) (*Subscr
 
 // Internal implementation that all public functions will use.
 func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscription, error) {
+	if cb == nil {
+		return nil, errors.New("nats: Handler required for EncodedConn Subscription")
+	}
 	argType, numArgs := argInfo(cb)
 	cbValue := reflect.ValueOf(cb)
 	wantsRaw := (argType == emptyMsgType)
@@ -233,7 +236,7 @@ func (c *EncodedConn) Flush() error {
 }
 
 // Close will close the connection to the server. This call will release
-// all blocking calls, such as Flush() and NextMsg()
+// all blocking calls, such as Flush(), etc.
 func (c *EncodedConn) Close() {
 	c.Conn.Close()
 }
