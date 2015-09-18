@@ -48,6 +48,7 @@ var (
 	ErrSecureConnRequired = errors.New("nats: Secure connection required")
 	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
+	ErrBadSubject         = errors.New("nats: Invalid Subject")
 	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
 	ErrTimeout            = errors.New("nats: Timeout")
 	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
@@ -1184,6 +1185,9 @@ const digits = "0123456789"
 // Sends a protocol data message by queueing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
+	if subj == "" {
+		return ErrBadSubject
+	}
 	nc.mu.Lock()
 
 	// Proactively reject payloads over the threshold set by server.

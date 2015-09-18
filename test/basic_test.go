@@ -467,3 +467,18 @@ func TestRaceSafeStats(t *testing.T) {
 		t.Fatalf("Not properly tracking OutMsgs: received %d, wanted %d\n", nc.OutMsgs, 1)
 	}
 }
+
+func TestBadSubject(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	err := nc.Publish("", []byte("Hello World"))
+	if err == nil {
+		t.Fatalf("Expected an error on bad subject to publish")
+	}
+	if err != nats.ErrBadSubject {
+		t.Fatalf("Expected a ErrBadSubject error: Got %v\n", err)
+	}
+}
