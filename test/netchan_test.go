@@ -221,10 +221,10 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	after := runtime.NumGoroutine()
+	delta := (runtime.NumGoroutine() - before)
 
-	if before != after {
-		t.Fatalf("Leaked Go routine(s) : %d, closing channel should have closed them\n", after-before)
+	if delta > 0 {
+		t.Fatalf("Leaked Go routine(s) : %d, closing channel should have closed them\n", delta)
 	}
 }
 
