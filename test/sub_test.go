@@ -1,6 +1,7 @@
 package test
 
 import (
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,9 @@ func TestServerAutoUnsub(t *testing.T) {
 	defer nc.Close()
 	received := int32(0)
 	max := int32(10)
+
+	base := runtime.NumGoroutine()
+
 	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
@@ -35,6 +39,13 @@ func TestServerAutoUnsub(t *testing.T) {
 	if atomic.LoadInt32(&received) != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
 	}
+	if sub.IsValid() {
+		t.Fatal("Expected subscription to be invalid after hitting max")
+	}
+	delta := (runtime.NumGoroutine() - base)
+	if delta > 0 {
+		t.Fatalf("%d Go routines still exist post max subscriptions hit", delta)
+	}
 }
 
 func TestClientSyncAutoUnsub(t *testing.T) {
@@ -46,11 +57,11 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	received := 0
 	max := 10
 	sub, _ := nc.SubscribeSync("foo")
+	sub.AutoUnsubscribe(max)
 	total := 100
 	for i := 0; i < total; i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
-	sub.AutoUnsubscribe(max)
 	nc.Flush()
 	for {
 		_, err := sub.NextMsg(1 * time.Millisecond)
@@ -61,6 +72,9 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	}
 	if received != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
+	}
+	if sub.IsValid() {
+		t.Fatal("Expected subscription to be invalid after hitting max")
 	}
 }
 

@@ -1003,10 +1003,16 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 			continue
 		}
 
-		atomic.AddUint64(&s.delivered, 1)
-		delivered := atomic.LoadUint64(&s.delivered)
+		delivered := atomic.AddUint64(&s.delivered, 1)
 		if max <= 0 || delivered <= max {
 			mcb(m)
+		}
+		// If we have hit the max for delivered msgs, remove sub.
+		if max > 0 && delivered >= max {
+			nc.mu.Lock()
+			nc.removeSub(s)
+			nc.mu.Unlock()
+			break
 		}
 	}
 }
@@ -1031,8 +1037,10 @@ func (nc *Conn) processMsg(msg []byte) {
 
 	sub.mu.Lock()
 
+	// This is a catch all for more than max messages delivered.
 	if sub.max > 0 && sub.msgs > sub.max {
 		sub.mu.Unlock()
+		nc.removeSub(sub)
 		nc.mu.Unlock()
 		return
 	}
@@ -1398,15 +1406,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		s.max = uint64(max)
 		maxStr = strconv.Itoa(max)
 	} else {
-		delete(nc.subs, s.sid)
-		s.mu.Lock()
-		if s.mch != nil {
-			close(s.mch)
-			s.mch = nil
-		}
-		// Mark as invalid
-		s.conn = nil
-		s.mu.Unlock()
+		nc.removeSub(s)
 	}
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
@@ -1414,6 +1414,20 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	}
 	return nil
+}
+
+// Lock for nc should be held here upon entry
+func (nc *Conn) removeSub(s *Subscription) {
+	delete(nc.subs, s.sid)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mch != nil {
+		// Kick out deliverMsgs Goroutine
+		close(s.mch)
+		s.mch = nil
+	}
+	// Mark as invalid
+	s.conn = nil
 }
 
 // IsValid returns a boolean indicating whether the subscription
@@ -1473,7 +1487,10 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		return nil, ErrSlowConsumer
 	}
 
+	// snapshot
+	nc := s.conn
 	mch := s.mch
+	max := s.max
 	s.mu.Unlock()
 
 	var ok bool
@@ -1485,13 +1502,23 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		atomic.AddUint64(&s.delivered, 1)
-		if s.max > 0 && s.delivered > s.max {
-			return nil, errors.New("nats: Max messages delivered")
+		delivered := atomic.AddUint64(&s.delivered, 1)
+		if max > 0 {
+			if delivered > max {
+				return nil, errors.New("nats: Max messages delivered")
+			}
+			// Remove subscription if we have reached max.
+			if delivered == max {
+				nc.mu.Lock()
+				nc.removeSub(s)
+				nc.mu.Unlock()
+			}
 		}
+
 	case <-t.C:
 		return nil, ErrTimeout
 	}
+
 	return
 }
 
