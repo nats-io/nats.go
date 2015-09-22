@@ -90,10 +90,13 @@ func TestGobMarshalStruct(t *testing.T) {
 	ec.Publish("gob_struct", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
-	}
+        }
 }
 
-func BenchmarkGobMarshalStruct(b *testing.B) {
+func BenchmarkPublishGobStruct(b *testing.B) {
+        // stop benchmark for set-up
+        b.StopTimer()
+
         s := test.RunDefaultServer()
         defer s.Shutdown()
 
@@ -113,6 +116,9 @@ func BenchmarkGobMarshalStruct(b *testing.B) {
                 }
                 ch <- true
         })
+
+        // resume benchmark
+        b.StartTimer()
 
         for n := 0; n < b.N; n++ {
                 ec.Publish("gob_struct", me)

@@ -100,10 +100,13 @@ func TestJsonMarshalStruct(t *testing.T) {
 	ec.Publish("json_struct", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
-	}
+        }
 }
 
-func BenchmarkJsonMarshalStruct(b *testing.B) {
+func BenchmarkPublishJsonStruct(b *testing.B) {
+        // stop benchmark for set-up
+        b.StopTimer()
+
         s := test.RunDefaultServer()
         defer s.Shutdown()
 
@@ -123,6 +126,9 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
                 }
                 ch <- true
         })
+
+        // resume benchmark
+        b.StartTimer()
 
         for n := 0; n < b.N; n++ {
                 ec.Publish("json_struct", me)

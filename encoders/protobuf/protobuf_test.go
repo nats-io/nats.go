@@ -44,10 +44,13 @@ func TestProtoMarshalStruct(t *testing.T) {
 	ec.Publish("protobuf_test", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
-	}
+        }
 }
 
-func BenchmarkProtobuf(b *testing.B) {
+func BenchmarkPublishProtobufStruct(b *testing.B) {
+        // stop benchmark for set-up
+        b.StopTimer()
+
         s := test.RunDefaultServer()
         defer s.Shutdown()
 
@@ -67,6 +70,9 @@ func BenchmarkProtobuf(b *testing.B) {
                 }
                 ch <- true
         })
+
+        // resume benchmark
+        b.StartTimer()
 
         for n := 0; n < b.N; n++ {
                 ec.Publish("protobuf_test", me)
