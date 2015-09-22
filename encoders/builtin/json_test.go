@@ -91,7 +91,6 @@ func TestJsonMarshalStruct(t *testing.T) {
 	me.Assets["car"] = 100
 
 	ec.Subscribe("json_struct", func(p *person) {
-		ch <- true
 		if !reflect.DeepEqual(p, me) {
 			t.Fatalf("Did not receive the correct struct response")
 		}
@@ -119,7 +118,6 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
         me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
         ec.Subscribe("json_struct", func(p *person) {
-                ch <- true
                 if !reflect.DeepEqual(p, me) {
                         b.Fatalf("Did not receive the correct struct response")
                 }
