@@ -103,6 +103,19 @@ func TestJsonMarshalStruct(t *testing.T) {
         }
 }
 
+func BenchmarkJsonMarshalStruct(b *testing.B) {
+        me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+        me.Children = make(map[string]*person)
+
+        me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+        me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+        encoder := &builtin.JsonEncoder{}
+        if _, err := encoder.Encode("protobuf_test", me); err != nil {
+                b.Fatalf("Couldn't serialize object", err)
+        }
+}
+
 func BenchmarkPublishJsonStruct(b *testing.B) {
         // stop benchmark for set-up
         b.StopTimer()
