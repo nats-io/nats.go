@@ -111,8 +111,10 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
         me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
         encoder := &builtin.JsonEncoder{}
-        if _, err := encoder.Encode("protobuf_test", me); err != nil {
-                b.Fatalf("Couldn't serialize object", err)
+        for n := 0; n < b.N; n++ {
+                if _, err := encoder.Encode("protobuf_test", me); err != nil {
+                        b.Fatalf("Couldn't serialize object", err)
+                }
         }
 }
 

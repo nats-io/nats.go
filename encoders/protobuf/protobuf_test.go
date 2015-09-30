@@ -11,19 +11,6 @@ import (
         pb "github.com/nats-io/nats/encoders/protobuf/testdata"
 )
 
-func BenchmarkProtobufMarshalStruct(b *testing.B) {
-        me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
-        me.Children = make(map[string]*pb.Person)
-
-        me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
-        me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
-
-        encoder := &protobuf.ProtobufEncoder{}
-        if _, err := encoder.Encode("protobuf_test", me); err != nil {
-                b.Fatalf("Couldn't serialize object", err)
-        }
-}
-
 func NewProtoEncodedConn(tl test.TestLogger) *nats.EncodedConn {
         ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), protobuf.PROTOBUF_ENCODER)
         if err != nil {
@@ -57,6 +44,21 @@ func TestProtoMarshalStruct(t *testing.T) {
 	ec.Publish("protobuf_test", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
+        }
+}
+
+func BenchmarkProtobufMarshalStruct(b *testing.B) {
+        me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+        me.Children = make(map[string]*pb.Person)
+
+        me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+        me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+        encoder := &protobuf.ProtobufEncoder{}
+        for n := 0; n < b.N; n++ {
+                if _, err := encoder.Encode("protobuf_test", me); err != nil {
+                        b.Fatalf("Couldn't serialize object", err)
+                }
         }
 }
 
