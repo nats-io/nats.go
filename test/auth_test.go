@@ -35,6 +35,35 @@ func TestAuth(t *testing.T) {
 	nc.Close()
 }
 
+func TestTokenAuth(t *testing.T) {
+	opts := gnatsd.DefaultTestOptions
+	opts.Port = 8232
+	s := RunServerWithOptions(opts)
+
+	// Auth is pluggable, so need to set here..
+	auth := &auth.Token{
+		Token: "token1",
+	}
+	s.SetAuthMethod(auth)
+
+	defer s.Shutdown()
+
+	copts := nats.DefaultOptions
+	copts.Url = "nats://localhost:8232"
+	_, err := copts.Connect()
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+
+	copts.Token = "token1"
+
+	nc, err := copts.Connect()
+	if err != nil {
+		t.Fatal("Should have connected successfully")
+	}
+	nc.Close()
+}
+
 func TestAuthFailNoDisconnectCB(t *testing.T) {
 	opts := gnatsd.DefaultTestOptions
 	opts.Port = 8232
