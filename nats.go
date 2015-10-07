@@ -1202,10 +1202,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	var msgSize int64
 	msgSize = int64(len(data))
 	if msgSize > nc.info.MaxPayload {
-		nc.err = ErrMaxPayload
-		err := nc.err
 		nc.mu.Unlock()
-		return err
+		return ErrMaxPayload
 	}
 
 	if nc.isClosed() {
