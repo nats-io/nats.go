@@ -175,11 +175,11 @@ nc.QueueSubscribe("foo", "job_workers", func(_ *Msg) {
 
 ```go
 
-// Flush connection to server, returns when all messages have been processed.
+// Flush connection to server, returns when all messages have been processed
 nc.Flush()
 fmt.Println("All clear!")
 
-// FlushTimeout specifies a timeout value as well.
+// FlushTimeout specifies a timeout value as well
 err := nc.FlushTimeout(1*time.Second)
 if err != nil {
     fmt.Println("All clear!")
