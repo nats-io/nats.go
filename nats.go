@@ -1168,10 +1168,13 @@ func (nc *Conn) processErr(e string) {
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
+		var doCbs = true
+
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
+		doCbs = (nc.status != CONNECTING)
 		nc.mu.Unlock()
-		nc.Close()
+		nc.close(CLOSED, doCbs)
 	}
 }
 
