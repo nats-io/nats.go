@@ -459,7 +459,10 @@ func (nc *Conn) makeTLSConn() {
 // be shutdown before proceeding.
 func (nc *Conn) waitForExits() {
 	// Kick old flusher forcefully.
-	nc.fch <- true
+	select {
+	case nc.fch <- true:
+	default:
+	}
 
 	//	nc.fch <- true
 	// Wait for any previous go routines.
