@@ -462,6 +462,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 
 	// Restart the server
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 
 	// Wait for the reconnect CB to be invoked (but not for too long)
 	if e := WaitTime(reconnectch, 5*time.Second); e != nil {
