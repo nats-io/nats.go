@@ -131,10 +131,18 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatal("Did not receive our message")
 	}
 
+	// This test fails sometimes on Travis with '0 vs 1', which is weird.
+	// If we are here, that means that the message published while we
+	// were disconnected has been properly flushed and we have receive that
+	// message. Conn.Reconnects is updated *before* the content of the
+	// pending buffer is flushed, so it cannot be 0 at this point...
+
 	expectedReconnectCount := uint64(1)
-	if ec.Conn.Reconnects != expectedReconnectCount {
+	reconnectCount := ec.Conn.Stats().Reconnects
+
+	if reconnectCount != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
-			ec.Conn.Reconnects, expectedReconnectCount)
+			reconnectCount, expectedReconnectCount)
 	}
 	nc.Close()
 }
