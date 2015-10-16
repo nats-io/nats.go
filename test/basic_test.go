@@ -209,8 +209,8 @@ func TestQueueSubscriber(t *testing.T) {
 		t.Fatal("Received too many messages for multiple queue subscribers")
 	}
 	// Drain messages
-	s1.NextMsg(0)
-	s2.NextMsg(0)
+	s1.NextMsg(1000)
+	s2.NextMsg(1000)
 
 	total := 1000
 	for i := 0; i < total; i++ {
