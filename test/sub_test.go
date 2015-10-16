@@ -160,7 +160,12 @@ func TestSlowSubscriber(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	// Make the sub channel length small so that it reduces the risk of failure
+	// when running with GOMAXPROCS=1
+	nc.Opts.SubChanLen = 100
+
 	sub, _ := nc.SubscribeSync("foo")
+
 	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {
 		nc.Publish("foo", []byte("Hello"))
 	}
@@ -186,6 +191,10 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	defer nc.Close()
 
 	bch := make(chan bool)
+
+	// Make the sub channel length small so that it reduces the risk of failure
+	// when running with GOMAXPROCS=1
+	nc.Opts.SubChanLen = 100
 
 	nc.Subscribe("foo", func(_ *nats.Msg) {
 		// block to back us up..

@@ -95,6 +95,13 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	})
 	ec.Flush()
 
+	// Got a RACE condition with Travis build. The locking below does not
+	// really help because the parser running in the readLoop accesses
+	// nc.ps without the connection lock. Sleeping may help better since
+	// it would make the memory write in parse.go (when processing the
+	// pong) further away from the modification below.
+	time.Sleep(time.Second)
+
 	// Simulate partialState, this needs to be cleared
 	nc.mu.Lock()
 	nc.ps.state = OP_PON
@@ -125,9 +132,11 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	if ec.Conn.Reconnects != expectedReconnectCount {
+	reconnectedCount := ec.Conn.Stats().Reconnects
+
+	if reconnectedCount != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
-			ec.Conn.Reconnects, expectedReconnectCount)
+			reconnectedCount, expectedReconnectCount)
 	}
 
 	nc.Close()
