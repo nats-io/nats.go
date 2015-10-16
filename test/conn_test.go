@@ -279,4 +279,8 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	if err != nats.ErrMaxPayload {
 		t.Fatalf("Expected to fail trying to send more than max payload, got: %s", err)
 	}
+	err = nc.Publish("hello", []byte("a"))
+	if err != nil {
+		t.Fatalf("Expected to succeed trying to send less than max payload, got: %s", err)
+	}
 }
