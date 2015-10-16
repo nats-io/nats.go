@@ -132,7 +132,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	if ec.Conn.Reconnects != expectedReconnectCount {
+	if ec.Conn.Stats().Reconnects != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
 			ec.Conn.Reconnects, expectedReconnectCount)
 	}
