@@ -84,6 +84,7 @@ func TestAuthServers(t *testing.T) {
 	opts := nats.DefaultOptions
 	opts.NoRandomize = true
 	opts.Servers = plainServers
+	opts.Timeout = 5 * time.Second
 	_, err := opts.Connect()
 
 	if err == nil {
