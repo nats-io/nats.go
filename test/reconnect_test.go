@@ -66,7 +66,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 
 	// We want wait to timeout here, and the connection
 	// should not trigger the Close CB.
-	if e := Wait(ch); e == nil {
+	if e := WaitTime(ch, 500*time.Millisecond); e == nil {
 		t.Fatal("Triggered ClosedCB incorrectly")
 	}
 	if !nc.IsReconnecting() {
@@ -114,7 +114,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	opts.DisconnectedCB = func(_ *nats.Conn) {
 		dch <- true
 	}
-	Wait(dch)
+	WaitTime(dch, 500*time.Millisecond)
 
 	if err := ec.Publish("foo", testString); err != nil {
 		t.Fatalf("Failed to publish message: %v\n", err)
