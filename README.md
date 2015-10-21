@@ -59,7 +59,10 @@ sub.Unsubscribe()
 
 // Requests
 var response string
-err := nc.Request("help", "help me", &response, 10*time.Millisecond)
+err := c.Request("help", "help me", &response, 10*time.Millisecond)
+if err != nil {
+    fmt.Printf("Request failed: %v\n", err)
+}
 
 // Replying
 c.Subscribe("help", func(subj, reply string, msg string) {
