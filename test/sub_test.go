@@ -20,6 +20,9 @@ func TestServerAutoUnsub(t *testing.T) {
 	received := int32(0)
 	max := int32(10)
 
+	// Call this to make sure that we have everything setup connection wise
+	nc.Flush()
+
 	base := runtime.NumGoroutine()
 
 	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
