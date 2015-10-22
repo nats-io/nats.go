@@ -21,7 +21,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	mrand "math/rand"
 )
@@ -473,7 +472,6 @@ func (nc *Conn) waitForExits() {
 	default:
 	}
 
-	//	nc.fch <- true
 	// Wait for any previous go routines.
 	nc.wg.Wait()
 }
@@ -495,8 +493,6 @@ func (nc *Conn) spinUpSocketWatchers() {
 	go nc.flusher()
 
 	nc.mu.Lock()
-	nc.pout = 0
-
 	if nc.Opts.PingInterval > 0 {
 		if nc.ptmr == nil {
 			nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
@@ -540,25 +536,34 @@ func (nc *Conn) setup() {
 }
 
 // Process a connected connection and initialize properly.
-// The lock should not be held entering this function.
 func (nc *Conn) processConnectInit() error {
-	nc.mu.Lock()
-	nc.setup()
+
+	// Set out deadline for the whole connect process
+	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
+	defer nc.conn.SetDeadline(time.Time{})
 
 	// Set our status to connecting.
 	nc.status = CONNECTING
 
-	// Make sure to process the INFO inline here.
-	if nc.err = nc.processExpectedInfo(); nc.err != nil {
-		nc.mu.Unlock()
-		return nc.err
+	// Process the INFO protocol received from the server
+	err := nc.processExpectedInfo()
+	if err != nil {
+		return err
 	}
-	nc.mu.Unlock()
 
-	// We need these to process the sendConnect response.
+	// Send the CONNECT protocol along with the initial PING protocol.
+	// Wait for the PONG response (or any error that we get from the server).
+	err = nc.sendConnect()
+	if err != nil {
+		return err
+	}
+
+	// Reset the number of PING sent out
+	nc.pout = 0
+
 	go nc.spinUpSocketWatchers()
 
-	return nc.sendConnect()
+	return nil
 }
 
 // Main connect function. Will connect to the nats-server
@@ -569,11 +574,13 @@ func (nc *Conn) connect() error {
 	nc.mu.Lock()
 	for i := range nc.srvPool {
 		nc.url = nc.srvPool[i].url
+
 		if err := nc.createConn(); err == nil {
-			// Release the lock, processConnectInit has to do its own locking.
-			nc.mu.Unlock()
+			// This was moved out of processConnectInit() because
+			// that function is now invoked from doReconnect() too.
+			nc.setup()
+
 			err = nc.processConnectInit()
-			nc.mu.Lock()
 
 			if err == nil {
 				nc.srvPool[i].didConnect = true
@@ -626,26 +633,29 @@ func (nc *Conn) checkForSecure() error {
 // processExpectedInfo will look for the expected first INFO message
 // sent when a connection is established. The lock should be held entering.
 func (nc *Conn) processExpectedInfo() error {
-	nc.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	defer nc.conn.SetReadDeadline(time.Time{})
 
 	c := &control{}
-	if err := nc.readOp(c); err != nil {
-		nc.mu.Unlock()
-		nc.processOpErr(err)
-		nc.mu.Lock()
+
+	// Read the protocol
+	err := nc.readOp(c)
+	if err != nil {
 		return err
 	}
+
 	// The nats protocol should send INFO first always.
 	if c.op != _INFO_OP_ {
-		nc.mu.Unlock()
-		err := errors.New("nats: Protocol exception, INFO not received")
-		nc.processOpErr(err)
-		nc.mu.Lock()
+		return errors.New("nats: Protocol exception, INFO not received")
+	}
+
+	// Parse the protocol
+	nc.processInfo(c.args)
+
+	err = nc.checkForSecure()
+	if err != nil {
 		return err
 	}
-	nc.processInfo(c.args)
-	return nc.checkForSecure()
+
+	return nil
 }
 
 // Sends a protocol control message by queueing into the bufio writer
@@ -679,33 +689,53 @@ func (nc *Conn) connectProto() (string, error) {
 
 // Send a connect protocol message to the server, issue user/password if
 // applicable. Will wait for a flush to return from the server for error
-// processing. The lock should not be held entering this function.
+// processing.
 func (nc *Conn) sendConnect() error {
-	nc.mu.Lock()
+
+	// Construct the CONNECT protocol string
 	cProto, err := nc.connectProto()
 	if err != nil {
-		nc.mu.Unlock()
 		return err
 	}
 
-	timeout := nc.Opts.Timeout
-	nc.mu.Unlock()
+	// Write the protocol into the buffer
+	_, err = nc.bw.WriteString(cProto)
+	if err != nil {
+		return err
+	}
 
-	nc.sendProto(cProto)
+	// Add to the buffer the PING protocol
+	_, err = nc.bw.WriteString(pingProto)
+	if err != nil {
+		return err
+	}
 
-	if err := nc.FlushTimeout(timeout); err != nil {
-		if strings.HasPrefix(err.Error(), "tls: ") {
+	// Flush the buffer
+	err = nc.bw.Flush()
+	if err != nil {
+		return err
+	}
+
+	// Now read the response from the server.
+	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		return err
+	}
+
+	// We expect a PONG
+	if line != pongProto {
+		// But it could be something else, like -ERR
+		if strings.HasPrefix(line, _ERR_OP_) {
+			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
+		} else if strings.HasPrefix(err.Error(), "tls: ") {
+			// Or a TLS error:
 			return ErrSecureConnFailed
 		}
-		return err
+
+		return errors.New("nats: " + line)
 	}
 
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-
-	if nc.isClosed() {
-		return nc.err
-	}
 	// This is where we are truly connected.
 	nc.status = CONNECTED
 
@@ -719,20 +749,11 @@ type control struct {
 
 // Read a control line and process the intended op.
 func (nc *Conn) readOp(c *control) error {
-	if nc.isClosed() {
-		return ErrConnectionClosed
-	}
 	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
-	b, pre, err := br.ReadLine()
+	line, err := br.ReadString('\n')
 	if err != nil {
 		return err
 	}
-	if pre {
-		// FIXME: Be more specific here?
-		return errors.New("nats: Line too long")
-	}
-	// Do straight move to string rep.
-	line := *(*string)(unsafe.Pointer(&b))
 	parseControl(line, c)
 	return nil
 }
@@ -762,30 +783,6 @@ func (nc *Conn) processDisconnect() {
 	}
 }
 
-// This will process a disconnect when reconnect is allowed.
-// The lock should not be held on entering this function.
-func (nc *Conn) processReconnect() {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-
-	if !nc.isClosed() {
-		// If we are already in the proper state, just return.
-		if nc.isReconnecting() {
-			return
-		}
-		nc.status = RECONNECTING
-		if nc.ptmr != nil {
-			nc.ptmr.Stop()
-		}
-		if nc.conn != nil {
-			nc.bw.Flush()
-			nc.conn.Close()
-			nc.conn = nil
-		}
-		go nc.doReconnect()
-	}
-}
-
 // flushReconnectPending will push the pending items that were
 // gathered while we were in a RECONNECTING state to the socket.
 func (nc *Conn) flushReconnectPendingItems() {
@@ -795,7 +792,6 @@ func (nc *Conn) flushReconnectPendingItems() {
 	if nc.pending.Len() > 0 {
 		nc.bw.Write(nc.pending.Bytes())
 	}
-	nc.pending = nil
 }
 
 // Try to reconnect using the option parameters.
@@ -871,31 +867,30 @@ func (nc *Conn) doReconnect() {
 		cur.didConnect = true
 		cur.reconnects = 0
 
-		// Set our status to connecting.
-		nc.status = CONNECTING
-
-		// Process Connect logic
-		if nc.err = nc.processExpectedInfo(); nc.err == nil {
-			// Send our connect info as normal
-			cProto, err := nc.connectProto()
-			if err != nil {
-				continue
-			}
-
-			nc.bw.WriteString(cProto)
-			// Send existing subscription state
-			nc.resendSubscriptions()
-			// Now send off and clear pending buffer
-			nc.flushReconnectPendingItems()
-			// This is where we are truly connected.
-			nc.status = CONNECTED
-
-			// Spin up socket watchers again
-			go nc.spinUpSocketWatchers()
-		} else {
+		// Process connect logic
+		if nc.err = nc.processConnectInit(); nc.err != nil {
 			nc.status = RECONNECTING
 			continue
 		}
+
+		// Send existing subscription state
+		nc.resendSubscriptions()
+
+		// Now send off and clear pending buffer
+		nc.flushReconnectPendingItems()
+
+		// Flush the buffer
+		nc.err = nc.bw.Flush()
+		if nc.err != nil {
+			nc.status = RECONNECTING
+			continue
+		}
+
+		// Done with the pending buffer
+		nc.pending = nil
+
+		// This is where we are truly connected.
+		nc.status = CONNECTED
 
 		// snapshot the reconnect callback while lock is held.
 		rcb := nc.Opts.ReconnectedCB
@@ -926,17 +921,28 @@ func (nc *Conn) doReconnect() {
 // The lock should not be held entering this function.
 func (nc *Conn) processOpErr(err error) {
 	nc.mu.Lock()
-	if nc.isClosed() || nc.isReconnecting() {
+	if nc.isConnecting() || nc.isClosed() || nc.isReconnecting() {
 		nc.mu.Unlock()
 		return
 	}
-	allowReconnect := nc.Opts.AllowReconnect && nc.status == CONNECTED
-	nc.mu.Unlock()
 
-	if allowReconnect {
-		nc.processReconnect()
+	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
+		// Set our new status
+		nc.status = RECONNECTING
+
+		if nc.ptmr != nil {
+			nc.ptmr.Stop()
+		}
+		if nc.conn != nil {
+			nc.bw.Flush()
+			nc.conn.Close()
+			nc.conn = nil
+		}
+		go nc.doReconnect()
+
+		nc.mu.Unlock()
+		return
 	} else {
-		nc.mu.Lock()
 		nc.processDisconnect()
 		nc.err = err
 		nc.mu.Unlock()
@@ -1125,7 +1131,7 @@ func (nc *Conn) flusher() {
 		nc.mu.Lock()
 
 		// Check to see if we should bail out.
-		if !nc.isConnected() || bw != nc.bw || conn != nc.conn {
+		if !nc.isConnected() || nc.isConnecting() || bw != nc.bw || conn != nc.conn {
 			nc.mu.Unlock()
 			return
 		}
@@ -1781,6 +1787,11 @@ func (nc *Conn) isClosed() bool {
 	return nc.status == CLOSED
 }
 
+// Test if Conn is in the process of connecting
+func (nc *Conn) isConnecting() bool {
+	return nc.status == CONNECTING
+}
+
 // Test if Conn is being reconnected.
 func (nc *Conn) isReconnecting() bool {
 	return nc.status == RECONNECTING
@@ -1788,7 +1799,7 @@ func (nc *Conn) isReconnecting() bool {
 
 // Test if Conn is connected or connecting.
 func (nc *Conn) isConnected() bool {
-	return nc.status == CONNECTING || nc.status == CONNECTED
+	return nc.status == CONNECTED
 }
 
 // Stats will return a race safe copy of the Statistics section for the connection.

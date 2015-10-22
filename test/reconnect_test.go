@@ -90,8 +90,14 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
 
 	ch := make(chan bool)
+	dch := make(chan bool)
 
 	opts := reconnectOpts
+
+	opts.DisconnectedCB = func(_ *nats.Conn) {
+		dch <- true
+	}
+
 	nc, _ := opts.Connect()
 	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
 	if err != nil {
@@ -110,11 +116,9 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	ts.Shutdown()
 	// server is stopped here...
 
-	dch := make(chan bool)
-	opts.DisconnectedCB = func(_ *nats.Conn) {
-		dch <- true
+	if err := Wait(dch); err != nil {
+		t.Fatalf("Did not get the disconnected callback on time\n")
 	}
-	WaitTime(dch, 500*time.Millisecond)
 
 	if err := ec.Publish("foo", testString); err != nil {
 		t.Fatalf("Failed to publish message: %v\n", err)
@@ -130,12 +134,6 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
 	}
-
-	// This test fails sometimes on Travis with '0 vs 1', which is weird.
-	// If we are here, that means that the message published while we
-	// were disconnected has been properly flushed and we have receive that
-	// message. Conn.Reconnects is updated *before* the content of the
-	// pending buffer is flushed, so it cannot be 0 at this point...
 
 	expectedReconnectCount := uint64(1)
 	reconnectCount := ec.Conn.Stats().Reconnects
