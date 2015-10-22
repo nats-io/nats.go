@@ -45,8 +45,9 @@ const STALE_CONNECTION = "Stale Connection"
 
 var (
 	ErrConnectionClosed   = errors.New("nats: Connection Closed")
-	ErrSecureConnRequired = errors.New("nats: Secure connection required")
-	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
+	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
+	ErrSecureConnWanted   = errors.New("nats: Secure Connection not available")
+	ErrSecureConnFailed   = errors.New("nats: Secure Connection failed")
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
 	ErrBadSubject         = errors.New("nats: Invalid Subject")
 	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
@@ -97,6 +98,7 @@ type Options struct {
 	Verbose        bool
 	Pedantic       bool
 	Secure         bool
+	TLSConfig      *tls.Config
 	AllowReconnect bool
 	MaxReconnect   int
 	ReconnectWait  time.Duration
@@ -214,7 +216,7 @@ type serverInfo struct {
 	Port         uint   `json:"port"`
 	Version      string `json:"version"`
 	AuthRequired bool   `json:"auth_required"`
-	SslRequired  bool   `json:"ssl_required"`
+	TLSRequired  bool   `json:"ssl_required"`
 	MaxPayload   int64  `json:"max_payload"`
 }
 
@@ -449,9 +451,16 @@ func (nc *Conn) createConn() (err error) {
 	return nil
 }
 
-// makeSecureConn will wrap an existing Conn using TLS
+// makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() {
-	nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
+	// Allow the user to configure their own tls.Config structure, otherwise
+	// default to InsecureSkipVerify.
+	// TODO(dlc) - We should make the more secure version the default.
+	if nc.Opts.TLSConfig != nil {
+		nc.conn = tls.Client(nc.conn, nc.Opts.TLSConfig)
+	} else {
+		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
+	}
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 }
 
@@ -601,9 +610,9 @@ func (nc *Conn) checkForSecure() error {
 	o := nc.Opts
 
 	// Check for mismatch in setups
-	if o.Secure && !nc.info.SslRequired {
+	if o.Secure && !nc.info.TLSRequired {
 		return ErrSecureConnWanted
-	} else if nc.info.SslRequired && !o.Secure {
+	} else if nc.info.TLSRequired && !o.Secure {
 		return ErrSecureConnRequired
 	}
 
@@ -668,7 +677,7 @@ func (nc *Conn) connectProto() (string, error) {
 	return fmt.Sprintf(conProto, b), nil
 }
 
-// Send a connect protocol message to the server, issuing user/password if
+// Send a connect protocol message to the server, issue user/password if
 // applicable. Will wait for a flush to return from the server for error
 // processing. The lock should not be held entering this function.
 func (nc *Conn) sendConnect() error {
@@ -683,6 +692,9 @@ func (nc *Conn) sendConnect() error {
 	nc.sendProto(cProto)
 
 	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
+		if strings.HasPrefix(err.Error(), "tls: ") {
+			return ErrSecureConnFailed
+		}
 		return err
 	}
 
@@ -741,7 +753,7 @@ func (nc *Conn) processDisconnect() {
 	if nc.err != nil {
 		return
 	}
-	if nc.info.SslRequired {
+	if nc.info.TLSRequired {
 		nc.err = ErrSecureConnRequired
 	} else {
 		nc.err = ErrConnectionClosed
