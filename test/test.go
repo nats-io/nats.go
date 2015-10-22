@@ -21,7 +21,7 @@ type tLogger interface {
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
-	return WaitTime(ch, 500*time.Millisecond)
+	return WaitTime(ch, 5*time.Second)
 }
 
 func WaitTime(ch chan bool, timeout time.Duration) error {

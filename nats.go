@@ -687,11 +687,13 @@ func (nc *Conn) sendConnect() error {
 		nc.mu.Unlock()
 		return err
 	}
+
+	timeout := nc.Opts.Timeout
 	nc.mu.Unlock()
 
 	nc.sendProto(cProto)
 
-	if err := nc.FlushTimeout(DefaultTimeout); err != nil {
+	if err := nc.FlushTimeout(timeout); err != nil {
 		if strings.HasPrefix(err.Error(), "tls: ") {
 			return ErrSecureConnFailed
 		}
