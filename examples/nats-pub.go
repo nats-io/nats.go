@@ -12,7 +12,7 @@ import (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-pub [-s server] [--ssl] [-t] <subject> <msg> \n")
+  log.Fatalf("Usage: nats-pub [-s server (%s)] [--ssl] <subject> <msg> \n", nats.DefaultURL)
 }
 
 func main() {
