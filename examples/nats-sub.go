@@ -16,10 +16,7 @@ func usage() {
 	log.Fatalf("Usage: nats-sub [-s server] [--ssl] [-t] <subject> \n")
 }
 
-var index = 0
-
 func printMsg(m *nats.Msg, i int) {
-	index += 1
 	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
 }
 
