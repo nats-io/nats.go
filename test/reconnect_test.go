@@ -49,6 +49,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
 	ch := make(chan bool)
+	dch := make(chan bool)
 	opts := nats.DefaultOptions
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
@@ -57,6 +58,9 @@ func TestReconnectAllowedFlags(t *testing.T) {
 
 	opts.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
+	}
+	opts.DisconnectedCB = func(_ *nats.Conn) {
+		dch <- true
 	}
 	nc, err := opts.Connect()
 	if err != nil {
@@ -69,6 +73,13 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	if e := WaitTime(ch, 500*time.Millisecond); e == nil {
 		t.Fatal("Triggered ClosedCB incorrectly")
 	}
+
+	// We should wait to get the disconnected callback to ensure
+	// that we are in the process of reconnecting.
+	if e := Wait(dch); e != nil {
+		t.Fatal("DisconnectedCB should have been triggered")
+	}
+
 	if !nc.IsReconnecting() {
 		t.Fatal("Expected to be in a reconnecting state")
 	}
