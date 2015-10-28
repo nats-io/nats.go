@@ -119,7 +119,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 
 	// Wait for the reconnect CB.
 	if e := WaitTime(reconnectch, 5*time.Second); e != nil {
-		t.Fatal("Reconnect callback should not have been triggered")
+		t.Fatal("Reconnect callback should have been triggered")
 	}
 
 	if nc.IsClosed() {
