@@ -296,16 +296,6 @@ const (
 	unsubProto = "UNSUB %d %s" + _CRLF_
 )
 
-// Return bool indicating if we have more servers to try to establish a connection.
-func (nc *Conn) serversAvailable() bool {
-	for _, s := range nc.srvPool {
-		if s != nil {
-			return true
-		}
-	}
-	return false
-}
-
 func (nc *Conn) debugPool(str string) {
 	_, cur := nc.currentServer()
 	fmt.Printf("%s\n", str)
