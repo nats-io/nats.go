@@ -1274,7 +1274,6 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	}
 
 	if _, err := nc.bw.WriteString(_CRLF_); err != nil {
-		nc.mu.Unlock()
 		nc.err = err
 		nc.mu.Unlock()
 		return err
