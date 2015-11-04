@@ -1263,19 +1263,20 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// FIXME, do deadlines here
 	if _, err := nc.bw.Write(msgh); err != nil {
-		defer nc.mu.Unlock()
 		nc.err = err
+		nc.mu.Unlock()
 		return err
 	}
 	if _, err := nc.bw.Write(data); err != nil {
-		defer nc.mu.Unlock()
 		nc.err = err
+		nc.mu.Unlock()
 		return err
 	}
 
 	if _, err := nc.bw.WriteString(_CRLF_); err != nil {
-		defer nc.mu.Unlock()
+		nc.mu.Unlock()
 		nc.err = err
+		nc.mu.Unlock()
 		return err
 	}
 
