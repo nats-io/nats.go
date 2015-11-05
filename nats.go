@@ -496,21 +496,25 @@ func (nc *Conn) spinUpSocketWatchers() {
 // Report the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
+		nc.mu.Unlock()
 		return _EMPTY_
 	}
-	return nc.url.String()
+	url := nc.url.String()
+	nc.mu.Unlock()
+	return url
 }
 
 // Report the connected server's Id
 func (nc *Conn) ConnectedServerId() string {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
+		nc.mu.Unlock()
 		return _EMPTY_
 	}
-	return nc.info.Id
+	id := nc.info.Id
+	nc.mu.Unlock()
+	return id
 }
 
 // Low level setup for structs, etc
@@ -1641,11 +1645,13 @@ func (nc *Conn) Flush() error {
 // Buffered will return the number of bytes buffered to be sent to the server.
 func (nc *Conn) Buffered() (int, error) {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.isClosed() || nc.bw == nil {
+		nc.mu.Unlock()
 		return -1, ErrConnectionClosed
 	}
-	return nc.bw.Buffered(), nil
+	buffered := nc.bw.Buffered()
+	nc.mu.Unlock()
+	return buffered, nil
 }
 
 // resendSubscriptions will send our subscription state back to the
@@ -1754,22 +1760,25 @@ func (nc *Conn) Close() {
 // Test if Conn has been closed.
 func (nc *Conn) IsClosed() bool {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isClosed()
+	closed := nc.isClosed()
+	nc.mu.Unlock()
+	return closed
 }
 
 // Test if Conn is reconnecting.
 func (nc *Conn) IsReconnecting() bool {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isReconnecting()
+	reconnecting := nc.isReconnecting()
+	nc.mu.Unlock()
+	return reconnecting
 }
 
 // Status returns the current state of the connection.
 func (nc *Conn) Status() Status {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.status
+	status := nc.status
+	nc.mu.Unlock()
+	return status
 }
 
 // Test if Conn has been closed Lock is assumed held.
@@ -1795,14 +1804,15 @@ func (nc *Conn) isConnected() bool {
 // Stats will return a race safe copy of the Statistics section for the connection.
 func (nc *Conn) Stats() Statistics {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	stats := nc.Statistics
+	nc.mu.Unlock()
 	return stats
 }
 
 // MaxPayload returns the size limit that a message payload can have.
 func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.info.MaxPayload
+	maxPayload := nc.info.MaxPayload
+	nc.mu.Unlock()
+	return maxPayload
 }
