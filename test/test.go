@@ -19,6 +19,8 @@ type tLogger interface {
 	Errorf(format string, args ...interface{})
 }
 
+type TestLogger tLogger
+
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
 	return WaitTime(ch, 5*time.Second)

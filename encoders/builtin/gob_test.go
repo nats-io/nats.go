@@ -10,10 +10,10 @@ import (
 	"github.com/nats-io/nats/test"
 )
 
-func NewGobEncodedConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), nats.GOB_ENCODER)
+func NewGobEncodedConn(tl test.TestLogger) *nats.EncodedConn {
+        ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), nats.GOB_ENCODER)
 	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+                tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	return ec
 }
@@ -81,7 +81,6 @@ func TestGobMarshalStruct(t *testing.T) {
 	me.Assets["car"] = 100
 
 	ec.Subscribe("gob_struct", func(p *person) {
-		ch <- true
 		if !reflect.DeepEqual(p, me) {
 			t.Fatalf("Did not receive the correct struct response")
 		}
@@ -91,5 +90,40 @@ func TestGobMarshalStruct(t *testing.T) {
 	ec.Publish("gob_struct", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
-	}
+        }
+}
+
+func BenchmarkPublishGobStruct(b *testing.B) {
+        // stop benchmark for set-up
+        b.StopTimer()
+
+        s := test.RunDefaultServer()
+        defer s.Shutdown()
+
+        ec := NewGobEncodedConn(b)
+        defer ec.Close()
+        ch := make(chan bool)
+
+        me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+        me.Children = make(map[string]*person)
+
+        me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+        me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+        ec.Subscribe("gob_struct", func(p *person) {
+                if !reflect.DeepEqual(p, me) {
+                        b.Fatalf("Did not receive the correct struct response")
+                }
+                ch <- true
+        })
+
+        // resume benchmark
+        b.StartTimer()
+
+        for n := 0; n < b.N; n++ {
+                ec.Publish("gob_struct", me)
+                if e := test.Wait(ch); e != nil {
+                        b.Fatal("Did not receive the message")
+                }
+        }
 }
