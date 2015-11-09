@@ -1458,7 +1458,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 func (s *Subscription) IsValid() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return !s.closed
+	return s.conn != nil
 }
 
 // Unsubscribe will remove interest in the given subject.
@@ -1495,7 +1495,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		s.mu.Unlock()
 		return nil, ErrConnectionClosed
 	}
-	if s.closed {
+	if s.conn == nil {
 		s.mu.Unlock()
 		return nil, ErrBadSubscription
 	}
@@ -1548,7 +1548,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 func (s *Subscription) QueuedMsgs() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.conn == nil {
 		return -1, ErrBadSubscription
 	}
 	return len(s.mch), nil
