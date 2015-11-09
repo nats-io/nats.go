@@ -1282,7 +1282,9 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.OutMsgs += 1
 	nc.OutBytes += uint64(len(data))
 
-	nc.kickFlusher()
+	if len(nc.fch) == 0 {
+		nc.kickFlusher()
+	}
 	nc.mu.Unlock()
 	return nil
 }
