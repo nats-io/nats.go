@@ -178,6 +178,7 @@ type Subscription struct {
 	bytes     uint64
 	max       uint64
 	conn      *Conn
+	closed    bool
 	mcb       MsgHandler
 	mch       chan *Msg
 	sc        bool
@@ -990,33 +991,34 @@ func (nc *Conn) readLoop() {
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
-func (nc *Conn) deliverMsgs(ch chan *Msg) {
+func (nc *Conn) deliverMsgs(s *Subscription, ch chan *Msg) {
+	closed := false
+	delivered := uint64(0)
+	max := uint64(0)
+
+	s.mu.Lock()
+	mcb := s.mcb
+	s.mu.Unlock()
+
 	for {
-		nc.mu.Lock()
-		closed := nc.isClosed()
-		nc.mu.Unlock()
-		if closed {
-			break
-		}
 
 		m, ok := <-ch
 		if !ok {
 			break
 		}
-		s := m.Sub
 
-		// Capture under locks
+		// Capture under lock
 		s.mu.Lock()
-		conn := s.conn
-		mcb := s.mcb
-		max := s.max
+		max = s.max
+		closed = s.closed
+		s.delivered++
+		delivered = s.delivered
 		s.mu.Unlock()
 
-		if conn == nil || mcb == nil {
-			continue
+		if closed {
+			break
 		}
 
-		delivered := atomic.AddUint64(&s.delivered, 1)
 		if max <= 0 || delivered <= max {
 			mcb(m)
 		}
@@ -1034,19 +1036,33 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 // appropriate channel for processing. All subscribers have their
 // their own channel. If the channel is full, the connection is
 // considered a slow subscriber.
-func (nc *Conn) processMsg(msg []byte) {
+func (nc *Conn) processMsg(data []byte) {
 	// Lock from here on out.
 	nc.mu.Lock()
 
 	// Stats
 	nc.InMsgs += 1
-	nc.InBytes += uint64(len(msg))
+	nc.InBytes += uint64(len(data))
 
 	sub := nc.subs[nc.ps.ma.sid]
 	if sub == nil {
 		nc.mu.Unlock()
 		return
 	}
+
+	// Copy them into string
+	subj := string(nc.ps.ma.subject)
+	reply := string(nc.ps.ma.reply)
+
+	// Doing message create outside of the sub's lock to reduce contention.
+	// It's possible that we end-up not using the message, but that's ok.
+
+	// FIXME(dlc): Need to copy, should/can do COW?
+	msgPayload := make([]byte, len(data))
+	copy(msgPayload, data)
+
+	// FIXME(dlc): Should we recycle these containers?
+	m := &Msg{Data: msgPayload, Subject: subj, Reply: reply, Sub: sub}
 
 	sub.mu.Lock()
 
@@ -1060,18 +1076,7 @@ func (nc *Conn) processMsg(msg []byte) {
 
 	// Sub internal stats
 	sub.msgs += 1
-	sub.bytes += uint64(len(msg))
-
-	// Copy them into string
-	subj := string(nc.ps.ma.subject)
-	reply := string(nc.ps.ma.reply)
-
-	// FIXME(dlc): Need to copy, should/can do COW?
-	newMsg := make([]byte, len(msg))
-	copy(newMsg, msg)
-
-	// FIXME(dlc): Should we recycle these containers?
-	m := &Msg{Data: newMsg, Subject: subj, Reply: reply, Sub: sub}
+	sub.bytes += uint64(len(data))
 
 	if sub.mch != nil {
 		if len(sub.mch) >= nc.Opts.SubChanLen {
@@ -1282,9 +1287,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.OutMsgs += 1
 	nc.OutBytes += uint64(len(data))
 
-	if len(nc.fch) == 0 {
-		nc.kickFlusher()
-	}
+	nc.kickFlusher()
 	nc.mu.Unlock()
 	return nil
 }
@@ -1355,7 +1358,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
 	if cb != nil {
-		go nc.deliverMsgs(sub.mch)
+		go nc.deliverMsgs(sub, sub.mch)
 	}
 
 	sub.sid = atomic.AddInt64(&nc.ssid, 1)
@@ -1444,6 +1447,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 	}
 	// Mark as invalid
 	s.conn = nil
+	s.closed = true
 }
 
 // IsValid returns a boolean indicating whether the subscription
@@ -1452,7 +1456,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 func (s *Subscription) IsValid() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.conn != nil
+	return !s.closed
 }
 
 // Unsubscribe will remove interest in the given subject.
@@ -1489,13 +1493,13 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		s.mu.Unlock()
 		return nil, ErrConnectionClosed
 	}
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrBadSubscription
+	}
 	if s.mcb != nil {
 		s.mu.Unlock()
 		return nil, errors.New("nats: Illegal call on an async Subscription")
-	}
-	if s.conn == nil {
-		s.mu.Unlock()
-		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false
@@ -1542,7 +1546,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 func (s *Subscription) QueuedMsgs() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.closed {
 		return -1, ErrBadSubscription
 	}
 	return len(s.mch), nil
@@ -1713,12 +1717,14 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	// pending NextMsg() calls.
 	for _, s := range nc.subs {
 		s.mu.Lock()
+
 		if s.mch != nil {
 			close(s.mch)
 			s.mch = nil
 		}
 		// Mark as invalid, for signalling to deliverMsgs
-		s.mcb = nil
+		s.closed = true
+
 		s.mu.Unlock()
 	}
 	nc.subs = nil
