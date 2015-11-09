@@ -992,9 +992,9 @@ func (nc *Conn) readLoop() {
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
 func (nc *Conn) deliverMsgs(s *Subscription, ch chan *Msg) {
-	closed := false
-	delivered := uint64(0)
-	max := uint64(0)
+	var closed bool
+	var delivered uint64
+	var max uint64
 
 	s.mu.Lock()
 	mcb := s.mcb
