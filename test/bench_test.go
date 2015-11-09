@@ -32,11 +32,16 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 	b.StopTimer()
 	s := RunDefaultServer()
 	defer s.Shutdown()
+
+	ncp := NewDefaultConnection(b)
+	defer ncp.Close()
+
 	nc := NewDefaultConnection(b)
 	defer nc.Close()
 
+	nc.Opts.SubChanLen = b.N
+
 	ch := make(chan bool)
-	b.StartTimer()
 
 	nc.Opts.AsyncErrorCB = func(nc *nats.Conn, s *nats.Subscription, err error) {
 		b.Fatalf("Error : %v\n", err)
@@ -51,16 +56,20 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 		}
 	})
 
+	nc.Flush()
+
 	msg := []byte("Hello World")
 
+	b.StartTimer()
+
 	for i := 0; i < b.N; i++ {
-		if err := nc.Publish("foo", msg); err != nil {
+		if err := ncp.Publish("foo", msg); err != nil {
 			b.Fatalf("Error in benchmark during Publish: %v\n", err)
 		}
 		// Don't overrun ourselves and be a slow consumer, server will cut us off
-		if int32(i)-atomic.LoadInt32(&received) > 8192 {
-			time.Sleep(100)
-		}
+		//		if int32(i)-atomic.LoadInt32(&received) > 8192 {
+		//			time.Sleep(100)
+		//		}
 	}
 
 	// Make sure they are all processed.
