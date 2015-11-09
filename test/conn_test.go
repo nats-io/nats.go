@@ -89,7 +89,12 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	}
 	s.Shutdown()
 	if e := Wait(ch); e != nil {
-		t.Fatalf("Disconnected callback not triggered\n")
+		endpoint := fmt.Sprintf("localhost:%d", nats.DefaultPort)
+		if testConn, err := net.DialTimeout("tcp", endpoint, o.Timeout); err == nil {
+			testConn.Close()
+			t.Fatal("The server is still running, that's why we get a failure here!")
+		}
+		t.Fatal("Disconnected callback not triggered\n")
 	}
 	nc.Close()
 }
