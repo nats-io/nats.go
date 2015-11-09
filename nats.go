@@ -1662,12 +1662,6 @@ func (nc *Conn) resendSubscriptions() {
 	}
 }
 
-// Clear pending flush calls and reset
-func (nc *Conn) resetPendingFlush() {
-	nc.clearPendingFlushCalls()
-	nc.pongs = make([]chan bool, 0, 8)
-}
-
 // This will clear any pending flush calls and release pending calls.
 func (nc *Conn) clearPendingFlushCalls() {
 	nc.mu.Lock()
