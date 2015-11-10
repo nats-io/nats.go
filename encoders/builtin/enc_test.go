@@ -99,7 +99,7 @@ func TestMarshalInt(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	testN := int(22)
+	testN := 22
 
 	ec.Subscribe("enc_int", func(n int) {
 		if n != testN {
@@ -124,7 +124,7 @@ func TestMarshalInt32(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	testN := int32(22)
+	testN := 22
 
 	ec.Subscribe("enc_int", func(n int32) {
 		if n != int32(testN) {
@@ -149,7 +149,7 @@ func TestMarshalInt64(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	testN := int64(22)
+	testN := 22
 
 	ec.Subscribe("enc_int", func(n int64) {
 		if n != int64(testN) {

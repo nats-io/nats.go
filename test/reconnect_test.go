@@ -347,8 +347,7 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 
 func TestIsClosed(t *testing.T) {
 	ts := startReconnectServer(t)
-	// This will kill the last 'ts' server that is created
-	defer func() { ts.Shutdown() }()
+	defer ts.Shutdown()
 
 	nc := NewConnection(t, 22222)
 	defer nc.Close()
@@ -361,6 +360,7 @@ func TestIsClosed(t *testing.T) {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 	if nc.IsClosed() == true {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
@@ -372,8 +372,8 @@ func TestIsClosed(t *testing.T) {
 
 func TestIsReconnectingAndStatus(t *testing.T) {
 	ts := startReconnectServer(t)
-	// This will kill the last 'ts' server that is created
-	defer func() { ts.Shutdown() }()
+	defer ts.Shutdown()
+
 	disconnectedch := make(chan bool)
 	reconnectch := make(chan bool)
 	opts := nats.DefaultOptions
@@ -416,6 +416,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	}
 
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 
 	// Wait until we get the reconnect callback
 	if e := Wait(reconnectch); e != nil {
@@ -440,8 +441,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 
 func TestFullFlushChanDuringReconnect(t *testing.T) {
 	ts := startReconnectServer(t)
-	// This will kill the last 'ts' server that is created
-	defer func() { ts.Shutdown() }()
+	defer ts.Shutdown()
 
 	reconnectch := make(chan bool)
 
@@ -494,6 +494,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 
 	// Restart the server
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 
 	// Wait for the reconnect CB to be invoked (but not for too long)
 	if e := WaitTime(reconnectch, 5*time.Second); e != nil {

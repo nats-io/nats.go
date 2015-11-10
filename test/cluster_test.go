@@ -390,7 +390,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	expected := (time.Duration(opts.MaxReconnect) * opts.ReconnectWait)
 
 	if timeWait > (expected + variable) {
-		t.Logf("WARNING: Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
+		t.Fatalf("Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
 	}
 }
 
@@ -406,8 +406,8 @@ func TestPingReconnect(t *testing.T) {
 	opts.PingInterval = 50 * time.Millisecond
 	opts.MaxPingsOut = -1
 
-	closeBarrier := true
-	barrier := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	rch := make(chan time.Time, RECONNECTS)
 	dch := make(chan time.Time, RECONNECTS)
 
@@ -426,11 +426,7 @@ func TestPingReconnect(t *testing.T) {
 		case r <- time.Now():
 		default:
 			r = nil
-			// Prevent panic of close on closed channel
-			if closeBarrier {
-				closeBarrier = false
-				close(barrier)
-			}
+			wg.Done()
 		}
 	}
 
@@ -440,7 +436,7 @@ func TestPingReconnect(t *testing.T) {
 	}
 	defer nc.Close()
 
-	<-barrier
+	wg.Wait()
 	s1.Shutdown()
 
 	<-dch
