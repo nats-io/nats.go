@@ -16,7 +16,7 @@ import (
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
-	return WaitTime(ch, 500*time.Millisecond)
+	return WaitTime(ch, 5*time.Second)
 }
 
 func WaitTime(ch chan bool, timeout time.Duration) error {
@@ -55,6 +55,7 @@ func TestReconnectServerStats(t *testing.T) {
 
 	opts := reconnectOpts
 	nc, _ := opts.Connect()
+	defer nc.Close()
 	nc.Flush()
 
 	ts.Shutdown()
@@ -72,7 +73,6 @@ func TestReconnectServerStats(t *testing.T) {
 	if cur.reconnects != 0 {
 		t.Fatalf("Current Server's reconnects should be 0 vs %d\n", cur.reconnects)
 	}
-	nc.Close()
 }
 
 func TestParseStateReconnectFunctionality(t *testing.T) {
@@ -80,11 +80,21 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	ch := make(chan bool)
 
 	opts := reconnectOpts
-	nc, _ := opts.Connect()
-	ec, err := NewEncodedConn(nc, DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *Conn) {
+		dch <- true
 	}
+
+	nc, errc := opts.Connect()
+	if errc != nil {
+		t.Fatalf("Failed to create a connection: %v\n", errc)
+	}
+	ec, errec := NewEncodedConn(nc, DEFAULT_ENCODER)
+	if errec != nil {
+		nc.Close()
+		t.Fatalf("Failed to create an encoded connection: %v\n", errec)
+	}
+	defer ec.Close()
 
 	testString := "bar"
 	ec.Subscribe("foo", func(s string) {
@@ -100,7 +110,7 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	// nc.ps without the connection lock. Sleeping may help better since
 	// it would make the memory write in parse.go (when processing the
 	// pong) further away from the modification below.
-	time.Sleep(time.Second)
+	time.Sleep(1 * time.Second)
 
 	// Simulate partialState, this needs to be cleared
 	nc.mu.Lock()
@@ -110,11 +120,9 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	ts.Shutdown()
 	// server is stopped here...
 
-	dch := make(chan bool)
-	opts.DisconnectedCB = func(_ *Conn) {
-		dch <- true
+	if err := Wait(dch); err != nil {
+		t.Fatal("Did not get the DisconnectedCB")
 	}
-	Wait(dch)
 
 	if err := ec.Publish("foo", testString); err != nil {
 		t.Fatalf("Failed to publish message: %v\n", err)
@@ -127,7 +135,7 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Error on Flush: %v", err)
 	}
 
-	if e := Wait(ch); e != nil {
+	if err := Wait(ch); err != nil {
 		t.Fatal("Did not receive our message")
 	}
 
@@ -138,8 +146,6 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
 			reconnectedCount, expectedReconnectCount)
 	}
-
-	nc.Close()
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -48,7 +48,7 @@ func TestGobMarshalInt(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	testN := 22
+	testN := int(22)
 
 	ec.Subscribe("gob_int", func(n int) {
 		if n != testN {

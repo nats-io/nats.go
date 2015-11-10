@@ -50,7 +50,7 @@ func TestJsonMarshalInt(t *testing.T) {
 	defer ec.Close()
 	ch := make(chan bool)
 
-	testN := 22
+	testN := int(22)
 
 	ec.Subscribe("json_int", func(n int) {
 		if n != testN {
@@ -180,7 +180,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 		t.Fatal("Expected an error trying to publish a channel")
 	}
 	var cr chan bool
-	err = ec.Request("foo", ch, &cr, time.Second)
+	err = ec.Request("foo", ch, &cr, 1*time.Second)
 	if err == nil {
 		t.Fatal("Expected an error trying to publish a channel")
 	}

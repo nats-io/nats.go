@@ -34,7 +34,6 @@ func TestProtoMarshalStruct(t *testing.T) {
 	me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
 	ec.Subscribe("protobuf_test", func(p *pb.Person) {
-		ch <- true
 		if !reflect.DeepEqual(p, me) {
 			t.Fatal("Did not receive the correct protobuf response")
 		}
