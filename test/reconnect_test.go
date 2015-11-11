@@ -25,6 +25,8 @@ func TestReconnectTotalTime(t *testing.T) {
 
 func TestReconnectDisallowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
+	defer ts.Shutdown()
+
 	ch := make(chan bool)
 	opts := nats.DefaultOptions
 	opts.Url = "nats://localhost:22222"
@@ -36,13 +38,13 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
 
 	ts.Shutdown()
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not trigger ClosedCB correctly")
 	}
-	nc.Close()
 }
 
 func TestReconnectAllowedFlags(t *testing.T) {
@@ -66,6 +68,8 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
+
 	ts.Shutdown()
 
 	// We want wait to timeout here, and the connection
@@ -86,7 +90,6 @@ func TestReconnectAllowedFlags(t *testing.T) {
 
 	// clear the CloseCB since ch will block
 	nc.Opts.ClosedCB = nil
-	nc.Close()
 }
 
 var reconnectOpts = nats.Options{
@@ -99,6 +102,7 @@ var reconnectOpts = nats.Options{
 
 func TestBasicReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
+	defer ts.Shutdown()
 
 	ch := make(chan bool)
 	dch := make(chan bool)
@@ -109,7 +113,11 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		dch <- true
 	}
 
-	nc, _ := opts.Connect()
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v\n", err)
+	}
+	defer nc.Close()
 	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
@@ -153,11 +161,11 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
 			reconnectCount, expectedReconnectCount)
 	}
-	nc.Close()
 }
 
 func TestExtendedReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
+	defer ts.Shutdown()
 
 	opts := reconnectOpts
 	dch := make(chan bool)
@@ -172,6 +180,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
 	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
@@ -251,6 +260,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 func TestQueueSubsOnReconnect(t *testing.T) {
 	ts := startReconnectServer(t)
+	defer ts.Shutdown()
 
 	opts := reconnectOpts
 
@@ -260,18 +270,13 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 		reconnectsDone <- true
 	}
 
-	// Helper to wait on a reconnect.
-	waitOnReconnect := func() {
-		select {
-		case <-reconnectsDone:
-			break
-		case <-time.After(2 * time.Second):
-			t.Fatalf("Expected a reconnect, timedout!\n")
-		}
-	}
-
 	// Create connection
-	nc, _ := opts.Connect()
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v\n", err)
+	}
+	defer nc.Close()
+
 	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
@@ -332,7 +337,9 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 	ts = startReconnectServer(t)
 	defer ts.Shutdown()
 
-	waitOnReconnect()
+	if err := Wait(reconnectsDone); err != nil {
+		t.Fatal("Did not get the ReconnectedCB!")
+	}
 
 	// Reconnect Base Test
 	sendAndCheckMsgs(10)
@@ -340,7 +347,11 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 
 func TestIsClosed(t *testing.T) {
 	ts := startReconnectServer(t)
+	defer ts.Shutdown()
+
 	nc := NewConnection(t, 22222)
+	defer nc.Close()
+
 	if nc.IsClosed() == true {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
@@ -349,6 +360,7 @@ func TestIsClosed(t *testing.T) {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 	if nc.IsClosed() == true {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
@@ -356,13 +368,12 @@ func TestIsClosed(t *testing.T) {
 	if nc.IsClosed() == false {
 		t.Fatalf("IsClosed returned false after Close() was called.")
 	}
-	ts.Shutdown()
 }
 
 func TestIsReconnectingAndStatus(t *testing.T) {
 	ts := startReconnectServer(t)
-	// This will kill the last 'ts' server that is created
-	defer func() { ts.Shutdown() }()
+	defer ts.Shutdown()
+
 	disconnectedch := make(chan bool)
 	reconnectch := make(chan bool)
 	opts := nats.DefaultOptions
@@ -383,6 +394,8 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
+
 	if nc.IsReconnecting() == true {
 		t.Fatalf("IsReconnecting returned true when the connection is still open.")
 	}
@@ -403,6 +416,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	}
 
 	ts = startReconnectServer(t)
+	defer ts.Shutdown()
 
 	// Wait until we get the reconnect callback
 	if e := Wait(reconnectch); e != nil {
@@ -446,6 +460,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
 
 	// Channel used to make the go routine sending messages to stop.
 	stop := make(chan bool)
@@ -485,7 +500,4 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	if e := WaitTime(reconnectch, 5*time.Second); e != nil {
 		t.Fatalf("Reconnect callback wasn't triggered: %v", e)
 	}
-
-	// Close the connection
-	nc.Close()
 }

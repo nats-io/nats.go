@@ -23,6 +23,7 @@ func TestConnectionStatus(t *testing.T) {
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
+	defer nc.Close()
 
 	if nc.Status() != nats.CONNECTED {
 		t.Fatal("Should have status set to CONNECTED")
@@ -76,6 +77,8 @@ func TestCloseDisconnectedCB(t *testing.T) {
 
 func TestServerStopDisconnectedCB(t *testing.T) {
 	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	ch := make(chan bool)
 	o := nats.DefaultOptions
 	o.Url = nats.DefaultURL
@@ -87,11 +90,12 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
+
 	s.Shutdown()
 	if e := Wait(ch); e != nil {
 		t.Fatalf("Disconnected callback not triggered\n")
 	}
-	nc.Close()
 }
 
 func TestServerSecureConnections(t *testing.T) {
@@ -107,6 +111,8 @@ func TestServerSecureConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
+	defer nc.Close()
+
 	omsg := []byte("Hello World")
 	received := 0
 	nc.Subscribe("foo", func(m *nats.Msg) {
@@ -141,6 +147,7 @@ func TestClosedConnections(t *testing.T) {
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
+	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
 	if sub == nil {
@@ -191,6 +198,8 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 		t.Fatal("Could not listen on an ephemeral port")
 	}
 	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
 	addr := tl.Addr().(*net.TCPAddr)
 
 	go func() {
@@ -208,8 +217,9 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 
 	go func() {
 		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
-		_, err := nats.Connect(natsUrl)
+		nc, err := nats.Connect(natsUrl)
 		if err == nil {
+			nc.Close()
 			t.Fatal("Expected bad INFO err, got none")
 		}
 		ch <- true
@@ -233,6 +243,8 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		t.Fatal("Could not listen on an ephemeral port")
 	}
 	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
 	addr := tl.Addr().(*net.TCPAddr)
 
 	// Send back an INFO message with custom max payload size on connect.

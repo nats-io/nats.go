@@ -345,15 +345,20 @@ func TestEncRequest(t *testing.T) {
 	ec := NewEConn(t)
 	defer ec.Close()
 
+	expectedResp := "I can help!"
+
 	ec.Subscribe("help", func(subj, reply, req string) {
-		ec.Publish(reply, "I can help!")
+		ec.Publish(reply, expectedResp)
 	})
 
 	var resp string
 
-	err := ec.Request("help", "help me", &resp, 500*time.Millisecond)
+	err := ec.Request("help", "help me", &resp, 1*time.Second)
 	if err != nil {
 		t.Fatalf("Failed at receiving proper response: %v\n", err)
+	}
+	if resp != expectedResp {
+		t.Fatalf("Received reply '%s', wanted '%s'\n", resp, expectedResp)
 	}
 }
 
@@ -364,15 +369,20 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 	ec := NewEConn(t)
 	defer ec.Close()
 
+	expectedResp := "I can help!"
+
 	ec.Subscribe("help", func(subj, reply, req string) {
-		ec.Publish(reply, "I can help!")
+		ec.Publish(reply, expectedResp)
 	})
 
 	var resp nats.Msg
 
-	err := ec.Request("help", "help me", &resp, 500*time.Millisecond)
+	err := ec.Request("help", "help me", &resp, 1*time.Second)
 	if err != nil {
 		t.Fatalf("Failed at receiving proper response: %v\n", err)
+	}
+	if string(resp.Data) != expectedResp {
+		t.Fatalf("Received reply '%s', wanted '%s'\n", string(resp.Data), expectedResp)
 	}
 }
 

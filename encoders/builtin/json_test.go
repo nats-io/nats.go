@@ -180,7 +180,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 		t.Fatal("Expected an error trying to publish a channel")
 	}
 	var cr chan bool
-	err = ec.Request("foo", ch, &cr, time.Second)
+	err = ec.Request("foo", ch, &cr, 1*time.Second)
 	if err == nil {
 		t.Fatal("Expected an error trying to publish a channel")
 	}

@@ -252,7 +252,7 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	sub.Unsubscribe()
 
 	// Sleep a bit to wait for the Go routine to exit.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	delta := (runtime.NumGoroutine() - before)
 

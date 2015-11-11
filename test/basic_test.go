@@ -17,12 +17,21 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
 	base := runtime.NumGoroutine()
 
 	nc := NewDefaultConnection(t)
-	time.Sleep(10 * time.Millisecond)
+
+	nc.Flush()
 	nc.Close()
-	time.Sleep(10 * time.Millisecond)
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
 	delta := (runtime.NumGoroutine() - base)
 	if delta > 0 {
 		t.Fatalf("%d Go routines still exist post Close()", delta)
@@ -36,6 +45,7 @@ func TestConnectedServer(t *testing.T) {
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
+	defer nc.Close()
 
 	u := nc.ConnectedUrl()
 	if u == "" || u != nats.DefaultURL {
@@ -344,7 +354,7 @@ func TestRequest(t *testing.T) {
 	nc.Subscribe("foo", func(m *nats.Msg) {
 		nc.Publish(m.Reply, response)
 	})
-	msg, err := nc.Request("foo", []byte("help"), 50*time.Millisecond)
+	msg, err := nc.Request("foo", []byte("help"), 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Received an error on Request test: %s", err)
 	}
@@ -363,7 +373,7 @@ func TestRequestNoBody(t *testing.T) {
 	nc.Subscribe("foo", func(m *nats.Msg) {
 		nc.Publish(m.Reply, response)
 	})
-	msg, err := nc.Request("foo", nil, 50*time.Millisecond)
+	msg, err := nc.Request("foo", nil, 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Received an error on Request test: %s", err)
 	}

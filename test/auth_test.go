@@ -110,6 +110,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
+	defer nc.Close()
 
 	// Stop the server
 	ts.Shutdown()
@@ -118,7 +119,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	// should fail. It should then try to connect to the third and succeed.
 
 	// Wait for the reconnect CB.
-	if e := WaitTime(reconnectch, 5*time.Second); e != nil {
+	if e := Wait(reconnectch); e != nil {
 		t.Fatal("Reconnect callback should have been triggered")
 	}
 
@@ -129,7 +130,4 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	if nc.ConnectedUrl() != servers[2] {
 		t.Fatalf("Should have reconnected to %s, reconnected to %s instead", servers[2], nc.ConnectedUrl())
 	}
-
-	// Close the connection
-	nc.Close()
 }

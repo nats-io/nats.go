@@ -37,7 +37,7 @@ func TestServerAutoUnsub(t *testing.T) {
 		nc.Publish("foo", []byte("Hello"))
 	}
 	nc.Flush()
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	if atomic.LoadInt32(&received) != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
@@ -67,7 +67,7 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	}
 	nc.Flush()
 	for {
-		_, err := sub.NextMsg(1 * time.Millisecond)
+		_, err := sub.NextMsg(10 * time.Millisecond)
 		if err != nil {
 			break
 		}
@@ -113,6 +113,8 @@ func TestCloseSubRelease(t *testing.T) {
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
 	sub, _ := nc.SubscribeSync("foo")
 	start := time.Now()
 	go func() {
@@ -325,6 +327,7 @@ func TestAsyncSubscribersOnClose(t *testing.T) {
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
+	defer nc.Close()
 
 	toSend := 10
 	callbacks := int32(0)
