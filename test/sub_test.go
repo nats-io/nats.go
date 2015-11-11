@@ -37,7 +37,7 @@ func TestServerAutoUnsub(t *testing.T) {
 		nc.Publish("foo", []byte("Hello"))
 	}
 	nc.Flush()
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	if atomic.LoadInt32(&received) != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
