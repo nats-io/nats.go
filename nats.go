@@ -991,13 +991,19 @@ func (nc *Conn) readLoop() {
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
-func (nc *Conn) deliverMsgs(s *Subscription, ch chan *Msg) {
+func (nc *Conn) deliverMsgs(s *Subscription) {
 	var closed bool
 	var delivered uint64
 	var max uint64
 
 	s.mu.Lock()
 	mcb := s.mcb
+	ch := s.mch
+	if ch == nil {
+		// We were unsubscribed before we had a chance to start. We are done!
+		s.mu.Unlock()
+		return
+	}
 	s.mu.Unlock()
 
 	for {
@@ -1360,7 +1366,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
 	if cb != nil {
-		go nc.deliverMsgs(sub, sub.mch)
+		go nc.deliverMsgs(sub)
 	}
 
 	sub.sid = atomic.AddInt64(&nc.ssid, 1)
