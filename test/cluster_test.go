@@ -37,12 +37,15 @@ func TestServersOption(t *testing.T) {
 
 	// Make sure we can connect to first server if running
 	s1 := RunServerOnPort(1222)
+	// Do this in case some failure occurs before explicit shutdown
+	defer s1.Shutdown()
 
 	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
 	if nc.ConnectedUrl() != "nats://localhost:1222" {
+		nc.Close()
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
 	}
@@ -51,16 +54,18 @@ func TestServersOption(t *testing.T) {
 
 	// Make sure we can connect to a non first server if running
 	s2 := RunServerOnPort(1223)
+	// Do this in case some failure occurs before explicit shutdown
+	defer s2.Shutdown()
+
 	nc, err = opts.Connect()
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
+	defer nc.Close()
 	if nc.ConnectedUrl() != "nats://localhost:1223" {
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
 	}
-	nc.Close()
-	s2.Shutdown()
 }
 
 func TestAuthServers(t *testing.T) {
@@ -85,9 +90,10 @@ func TestAuthServers(t *testing.T) {
 	opts.NoRandomize = true
 	opts.Servers = plainServers
 	opts.Timeout = 5 * time.Second
-	_, err := opts.Connect()
+	nc, err := opts.Connect()
 
 	if err == nil {
+		nc.Close()
 		t.Fatalf("Expect Auth failure, got no error\n")
 	}
 
@@ -102,10 +108,11 @@ func TestAuthServers(t *testing.T) {
 	}
 
 	opts.Servers = authServers
-	nc, err := opts.Connect()
+	nc, err = opts.Connect()
 	if err != nil {
 		t.Fatalf("Expected to connect properly: %v\n", err)
 	}
+	defer nc.Close()
 	if nc.ConnectedUrl() != authServers[1] {
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
@@ -114,6 +121,7 @@ func TestAuthServers(t *testing.T) {
 
 func TestBasicClusterReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
 	s2 := RunServerOnPort(1224)
 	defer s2.Shutdown()
 
@@ -169,6 +177,7 @@ func TestBasicClusterReconnect(t *testing.T) {
 
 func TestHotSpotReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
 
 	numClients := 100
 	clients := []*nats.Conn{}
@@ -186,6 +195,7 @@ func TestHotSpotReconnect(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected to connect, got err: %v\n", err)
 		}
+		defer nc.Close()
 		if nc.ConnectedUrl() != testServers[0] {
 			t.Fatalf("Connected to incorrect server: %v\n", nc.ConnectedUrl())
 		}
@@ -227,6 +237,7 @@ func TestHotSpotReconnect(t *testing.T) {
 
 func TestProperReconnectDelay(t *testing.T) {
 	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
 	opts.Servers = testServers
@@ -250,6 +261,7 @@ func TestProperReconnectDelay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
+	defer nc.Close()
 
 	s1.Shutdown()
 
@@ -272,6 +284,7 @@ func TestProperReconnectDelay(t *testing.T) {
 
 func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
 	opts.Servers = testServers
@@ -298,6 +311,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
+	defer nc.Close()
 
 	s1.Shutdown()
 
@@ -311,12 +325,13 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 		t.Fatal("Did not receive a closed callback message")
 	}
 
-	// Make sure we are still reconnecting..
+	// Make sure we are not still reconnecting..
 	if !closedCbCalled {
 		t.Logf("%+v\n", nc)
 		t.Fatal("Closed CB was not triggered, should have been.")
 	}
 
+	// Expect connection to be closed...
 	if nc.IsClosed() != true {
 		t.Fatalf("Wrong status: %d\n", nc.Status())
 	}
@@ -324,12 +339,13 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 
 func TestTimeoutOnNoServers(t *testing.T) {
 	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
 	opts.Servers = testServers
 	opts.NoRandomize = true
 
-	// 100 milliseconds total time wait
+	// 1 second total time wait
 	opts.MaxReconnect = 10
 	opts.ReconnectWait = (100 * time.Millisecond)
 
@@ -347,9 +363,11 @@ func TestTimeoutOnNoServers(t *testing.T) {
 		cch <- true
 	}
 
-	if _, err := opts.Connect(); err != nil {
+	nc, err := opts.Connect()
+	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
+	defer nc.Close()
 
 	s1.Shutdown()
 
@@ -388,7 +406,8 @@ func TestPingReconnect(t *testing.T) {
 	opts.PingInterval = 50 * time.Millisecond
 	opts.MaxPingsOut = -1
 
-	barrier := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	rch := make(chan time.Time, RECONNECTS)
 	dch := make(chan time.Time, RECONNECTS)
 
@@ -407,17 +426,17 @@ func TestPingReconnect(t *testing.T) {
 		case r <- time.Now():
 		default:
 			r = nil
-			c.Opts.MaxPingsOut = 500
-			close(barrier)
+			wg.Done()
 		}
 	}
 
-	_, err := opts.Connect()
+	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
+	defer nc.Close()
 
-	<-barrier
+	wg.Wait()
 	s1.Shutdown()
 
 	<-dch

@@ -1688,11 +1688,10 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		return
 	}
 	nc.status = CLOSED
-	nc.mu.Unlock()
 
 	// Kick the Go routines so they fall out.
-	// fch will be closed on finalizer
 	nc.kickFlusher()
+	nc.mu.Unlock()
 
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
