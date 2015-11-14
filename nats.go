@@ -94,6 +94,7 @@ type Options struct {
 	Servers        []string
 	NoRandomize    bool
 	Name           string
+	Token          string
 	Verbose        bool
 	Pedantic       bool
 	Secure         bool
@@ -225,6 +226,7 @@ type connectInfo struct {
 	Pedantic bool   `json:"pedantic"`
 	User     string `json:"user,omitempty"`
 	Pass     string `json:"pass,omitempty"`
+	Token    string `json:"auth_token,omitempty"`
 	Ssl      bool   `json:"ssl_required"`
 	Name     string `json:"name"`
 	Lang     string `json:"lang"`
@@ -668,7 +670,7 @@ func (nc *Conn) connectProto() (string, error) {
 		user = u.Username()
 		pass, _ = u.Password()
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass,
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, o.Token,
 		o.Secure, o.Name, LangString, Version}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
