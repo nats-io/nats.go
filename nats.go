@@ -136,6 +136,12 @@ const (
 // []byte payloads.
 type Conn struct {
 	Statistics
+
+	// Keep ssid as first element of the struct to guarantee
+	// 64bit alignment. atomic.* functions crash on 32bit machines if operand is not
+	// aligned at 64bit. See https://github.com/golang/go/issues/599
+	ssid    int64
+
 	mu      sync.Mutex
 	Opts    Options
 	wg      sync.WaitGroup
@@ -146,8 +152,6 @@ type Conn struct {
 	pending *bytes.Buffer
 	fch     chan bool
 	info    serverInfo
-	_       uint32 // needed to correctly align the following ssid field on i386 systems
-	ssid    int64
 	subs    map[int64]*Subscription
 	mch     chan *Msg
 	pongs   []chan bool
