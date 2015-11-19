@@ -135,13 +135,13 @@ const (
 // A Conn represents a bare connection to a nats-server. It will send and receive
 // []byte payloads.
 type Conn struct {
+	// Keep all members for which we use atomic at the beginning of the
+	// struct and make sure they are all 64bits (or use padding if necessary).
+	// atomic.* functions crash on 32bit machines if operand is not aligned
+	// at 64bit. See https://github.com/golang/go/issues/599
+	ssid int64
+
 	Statistics
-
-	// Keep ssid as first element of the struct to guarantee
-	// 64bit alignment. atomic.* functions crash on 32bit machines if operand is not
-	// aligned at 64bit. See https://github.com/golang/go/issues/599
-	ssid    int64
-
 	mu      sync.Mutex
 	Opts    Options
 	wg      sync.WaitGroup
@@ -165,6 +165,12 @@ type Conn struct {
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
+	// Keep all members for which we use atomic at the beginning of the
+	// struct and make sure they are all 64bits (or use padding if necessary).
+	// atomic.* functions crash on 32bit machines if operand is not aligned
+	// at 64bit. See https://github.com/golang/go/issues/599
+	delivered uint64
+
 	mu  sync.Mutex
 	sid int64
 
@@ -177,15 +183,14 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	msgs      uint64
-	delivered uint64
-	bytes     uint64
-	max       uint64
-	conn      *Conn
-	closed    bool
-	mcb       MsgHandler
-	mch       chan *Msg
-	sc        bool
+	msgs   uint64
+	bytes  uint64
+	max    uint64
+	conn   *Conn
+	closed bool
+	mcb    MsgHandler
+	mch    chan *Msg
+	sc     bool
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
