@@ -460,6 +460,8 @@ func (nc *Conn) makeTLSConn() {
 	} else {
 		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	}
+	conn := nc.conn.(*tls.Conn)
+	conn.Handshake()
 	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
 }
 
