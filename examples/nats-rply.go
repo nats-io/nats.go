@@ -13,7 +13,7 @@ import (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-rply [-s server] [--ssl] [-t] <subject> <reponse>\n")
+	log.Fatalf("Usage: nats-rply [-s server] [--tls] [-t] <subject> <reponse>\n")
 }
 
 func printMsg(m *nats.Msg, i int) {
@@ -23,7 +23,7 @@ func printMsg(m *nats.Msg, i int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var showTime = flag.Bool("t", false, "Display timestamps")
-	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
+	var tls = flag.Bool("tls", false, "Use Secure Connection")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -39,7 +39,7 @@ func main() {
 	for i, s := range opts.Servers {
 		opts.Servers[i] = strings.Trim(s, " ")
 	}
-	opts.Secure = *ssl
+	opts.Secure = *tls
 
 	nc, err := opts.Connect()
 	if err != nil {

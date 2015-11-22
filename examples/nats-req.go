@@ -13,12 +13,12 @@ import (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-req [-s server (%s)] [--ssl] <subject> <msg> \n", nats.DefaultURL)
+	log.Fatalf("Usage: nats-req [-s server (%s)] [--tls] <subject> <msg> \n", nats.DefaultURL)
 }
 
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
-	var ssl = flag.Bool("ssl", false, "Use Secure Connection")
+	var tls = flag.Bool("tls", false, "Use Secure Connection")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -35,7 +35,7 @@ func main() {
 		opts.Servers[i] = strings.Trim(s, " ")
 	}
 
-	opts.Secure = *ssl
+	opts.Secure = *tls
 
 	nc, err := opts.Connect()
 	if err != nil {
