@@ -225,7 +225,7 @@ type serverInfo struct {
 	Port         uint   `json:"port"`
 	Version      string `json:"version"`
 	AuthRequired bool   `json:"auth_required"`
-	TLSRequired  bool   `json:"ssl_required"`
+	TLSRequired  bool   `json:"tls_required"`
 	MaxPayload   int64  `json:"max_payload"`
 }
 
@@ -234,7 +234,7 @@ type connectInfo struct {
 	Pedantic bool   `json:"pedantic"`
 	User     string `json:"user,omitempty"`
 	Pass     string `json:"pass,omitempty"`
-	Ssl      bool   `json:"ssl_required"`
+	TLS      bool   `json:"tls_required"`
 	Name     string `json:"name"`
 	Lang     string `json:"lang"`
 	Version  string `json:"version"`
@@ -1725,6 +1725,12 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		nc.ptmr.Stop()
 	}
 
+	// Go ahead and make sure we have flushed the outbound
+	if nc.conn != nil {
+		nc.bw.Flush()
+		defer nc.conn.Close()
+	}
+
 	// Close sync subscriber channels and release any
 	// pending NextMsg() calls.
 	for _, s := range nc.subs {
@@ -1747,12 +1753,6 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		go dcb(nc)
 	}
 
-	// Go ahead and make sure we have flushed the outbound buffer.
-	nc.status = CLOSED
-	if nc.conn != nil {
-		nc.bw.Flush()
-		nc.conn.Close()
-	}
 	ccb := nc.Opts.ClosedCB
 	nc.mu.Unlock()
 
