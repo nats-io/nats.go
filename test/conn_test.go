@@ -99,12 +99,11 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 }
 
 func TestServerSecureConnections(t *testing.T) {
-	t.Skip("Moved to gnatsd, waiting on TLS support")
+	s, opts := RunServerWithConfig("./configs/tls.conf")
+	defer s.Shutdown()
 
-	securePort := uint(2288)
-	//	secureServer := startServer(t, securePort, "--ssl")
-	//	defer secureServer.stopServer()
-	secureUrl := fmt.Sprintf("nats://localhost:%d/", securePort)
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureUrl := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
 
 	// Make sure this succeeds
 	nc, err := nats.SecureConnect(secureUrl)
@@ -128,17 +127,20 @@ func TestServerSecureConnections(t *testing.T) {
 	nc.Flush()
 	nc.Close()
 
-	// Test flag mismatch
-	// Wanted but not available..
-	nc, err = nats.SecureConnect(nats.DefaultURL)
-	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
-		t.Fatalf("Should have failed to create connection: %v", err)
-	}
-
 	// Server required, but not requested.
 	nc, err = nats.Connect(secureUrl)
 	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
 		t.Fatal("Should have failed to create secure (TLS) connection")
+	}
+
+	// Test flag mismatch
+	// Wanted but not available..
+	ds := RunDefaultServer()
+	defer ds.Shutdown()
+
+	nc, err = nats.SecureConnect(nats.DefaultURL)
+	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
+		t.Fatalf("Should have failed to create connection: %v", err)
 	}
 }
 

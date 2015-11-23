@@ -78,3 +78,7 @@ func RunServerOnPort(port int) *server.Server {
 func RunServerWithOptions(opts server.Options) *server.Server {
 	return gnatsd.RunServer(&opts)
 }
+
+func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
+	return gnatsd.RunServerWithConfig(configFile)
+}
