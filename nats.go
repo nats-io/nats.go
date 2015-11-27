@@ -1028,10 +1028,12 @@ func (nc *Conn) deliverMsgs(s *Subscription) {
 		s.mu.Lock()
 		max = s.max
 		closed = s.closed
+		s.mu.Unlock()
+
 		// Use the same semantics everywhere for delivered
 		// Increments... I know this is in a lock vs. elsewhere
+		// Is this less racing???
 		delivered = atomic.AddUint64(&s.delivered, 1)
-		s.mu.Unlock()
 
 		if closed {
 			break
