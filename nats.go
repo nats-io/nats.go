@@ -1028,8 +1028,9 @@ func (nc *Conn) deliverMsgs(s *Subscription) {
 		s.mu.Lock()
 		max = s.max
 		closed = s.closed
-		s.delivered++
-		delivered = s.delivered
+		// Use the same semantics everywhere for delivered
+		// Increments... I know this is in a lock vs. elsewhere
+		delivered = atomic.AddUint64(&s.delivered, 1)
 		s.mu.Unlock()
 
 		if closed {
@@ -1083,14 +1084,11 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
-	// This is a catch all for more than max messages delivered.
-	if sub.max > 0 && sub.msgs > sub.max {
-		sub.mu.Unlock()
-		nc.removeSub(sub)
-		nc.mu.Unlock()
-		return
-	}
-
+	// Let the deliver loop and logic handle unsubscribing
+	// when we deliver / dequeue messages vs. producing them 
+	// to the consumer. Open new issue here around max handling semantics 
+	// overall?
+	
 	// Sub internal stats
 	sub.msgs += 1
 	sub.bytes += uint64(len(data))
@@ -1542,6 +1540,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 			return nil, ErrConnectionClosed
 		}
 		delivered := atomic.AddUint64(&s.delivered, 1)
+		// FIXME: jam: off to the races on max vs. delivered
+		// FIXME: jam: cached above but possibly updated...
 		if max > 0 {
 			if delivered > max {
 				return nil, errors.New("nats: Max messages delivered")
