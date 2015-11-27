@@ -1031,8 +1031,8 @@ func (nc *Conn) deliverMsgs(s *Subscription) {
 		s.mu.Unlock()
 
 		// Use the same semantics everywhere for delivered
-		// Increments... I know this is in a lock vs. elsewhere
-		// Is this less racing???
+		// Increments... This was in the lock above but race
+		// checks were failing.
 		delivered = atomic.AddUint64(&s.delivered, 1)
 
 		if closed {
