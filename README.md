@@ -73,6 +73,65 @@ c.Subscribe("help", func(subj, reply string, msg string) {
 c.Close();
 ```
 
+## TLS
+
+```go
+// There is a SecureConnect() for NATS, but this by default does NOT verify the server identity, use with caution and only for testing!
+nc, err := nats.SecureConnect(secureUrl)
+
+// The better way is to setup the tls.Config as needed and pass via the options.
+// To start, set secure boolean on NATS options.
+opts := nats.DefaultOptions
+opts.Url = url
+opts.Secure = true
+
+// For a server with a trusted chain built into the client host, simply designate the server name that is expected.
+config := &tls.Config{
+    ServerName: opts.Host,
+    MinVersion: tls.VersionTLS12,
+}
+
+// If you are using a self-signed cert and need to load in the CA.
+rootPEM, err := ioutil.ReadFile("./configs/certs/ca.pem")
+if err != nil || rootPEM == nil {
+    t.Fatalf("failed to read root certificate")
+}
+pool := x509.NewCertPool()
+ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+if !ok {
+    t.Fatalf("failed to parse root certificate")
+}
+
+config := &tls.Config{
+    ServerName: opts.Host,
+    RootCAs:    pool,
+    MinVersion: tls.VersionTLS12,
+}
+
+// If the server requires client certificates..
+certFile := "./configs/certs/client-cert.pem"
+keyFile := "./configs/certs/client-key.pem"
+cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+if err != nil {
+    t.Fatalf("error parsing X509 certificate/key pair: %v", err)
+}
+
+config := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    ServerName:   opts.Host,
+    MinVersion:   tls.VersionTLS12,
+}
+
+// Now add to the options and connect.
+opts.TLSConfig = config
+
+nc, err := opts.Connect()
+if err != nil {
+	t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
+}
+
+```
+
 ## Using Go Channels (netchan)
 
 ```go
