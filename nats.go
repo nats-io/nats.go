@@ -778,11 +778,6 @@ func (nc *Conn) processDisconnect() {
 	if nc.err != nil {
 		return
 	}
-	if nc.info.TLSRequired {
-		nc.err = ErrSecureConnRequired
-	} else {
-		nc.err = ErrConnectionClosed
-	}
 }
 
 // flushReconnectPending will push the pending items that were
