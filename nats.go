@@ -304,6 +304,7 @@ const (
 	pubProto   = "PUB %s %s %d" + _CRLF_
 	subProto   = "SUB %s %s %d" + _CRLF_
 	unsubProto = "UNSUB %d %s" + _CRLF_
+	okProto    = _OK_OP_ + _CRLF_
 )
 
 func (nc *Conn) debugPool(str string) {
@@ -726,7 +727,7 @@ func (nc *Conn) sendConnect() error {
 	}
 
 	// If opts.Verbose is set, handle +OK
-	if nc.Opts.Verbose && strings.HasPrefix(line, _OK_OP_) {
+	if nc.Opts.Verbose && line == okProto {
 		// Read the rest now...
 		line, err = br.ReadString('\n')
 		if err != nil {
