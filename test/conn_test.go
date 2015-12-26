@@ -298,3 +298,17 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		t.Fatalf("Expected to succeed trying to send less than max payload, got: %s", err)
 	}
 }
+
+func TestConnectVerbose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	o := nats.DefaultOptions
+	o.Verbose = true
+
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	nc.Close()
+}
