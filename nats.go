@@ -725,6 +725,15 @@ func (nc *Conn) sendConnect() error {
 		return err
 	}
 
+	// If opts.Verbose is set, handle +OK
+	if nc.Opts.Verbose && strings.HasPrefix(line, _OK_OP_) {
+		// Read the rest now...
+		line, err = br.ReadString('\n')
+		if err != nil {
+			return err
+		}
+	}
+
 	// We expect a PONG
 	if line != pongProto {
 		// But it could be something else, like -ERR

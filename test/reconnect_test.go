@@ -501,3 +501,39 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 		t.Fatalf("Reconnect callback wasn't triggered: %v", e)
 	}
 }
+
+func TestReconnectVerbose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	o := nats.DefaultOptions
+	o.Verbose = true
+	rch := make(chan bool)
+	o.ReconnectedCB = func(_ *nats.Conn) {
+		rch <- true
+	}
+
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	err = nc.Flush()
+	if err != nil {
+		t.Fatalf("Error during flush: %v", err)
+	}
+
+	s.Shutdown()
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	if e := Wait(rch); e != nil {
+		t.Fatal("Should have reconnected ok")
+	}
+
+	err = nc.Flush()
+	if err != nil {
+		t.Fatalf("Error during flush: %v", err)
+	}
+}
