@@ -46,7 +46,6 @@ var (
 	ErrConnectionClosed   = errors.New("nats: Connection Closed")
 	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
 	ErrSecureConnWanted   = errors.New("nats: Secure Connection not available")
-	ErrSecureConnFailed   = errors.New("nats: Secure Connection failed")
 	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
 	ErrBadSubject         = errors.New("nats: Invalid Subject")
 	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
@@ -740,9 +739,6 @@ func (nc *Conn) sendConnect() error {
 		// But it could be something else, like -ERR
 		if strings.HasPrefix(line, _ERR_OP_) {
 			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
-		} else if strings.HasPrefix(err.Error(), "tls: ") {
-			// Or a TLS error:
-			return ErrSecureConnFailed
 		}
 
 		return errors.New("nats: " + line)
