@@ -1509,17 +1509,13 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	s.mu.Lock()
-	if s.mch == nil {
+	if s.closed {
 		s.mu.Unlock()
-		return nil, ErrConnectionClosed
+		return nil, ErrBadSubscription
 	}
 	if s.mcb != nil {
 		s.mu.Unlock()
 		return nil, errors.New("nats: Illegal call on an async Subscription")
-	}
-	if s.conn == nil {
-		s.mu.Unlock()
-		return nil, ErrBadSubscription
 	}
 	if s.sc {
 		s.sc = false

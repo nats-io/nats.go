@@ -69,6 +69,9 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	for {
 		_, err := sub.NextMsg(10 * time.Millisecond)
 		if err != nil {
+			if err != nats.ErrBadSubscription {
+				t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())				
+			}
 			break
 		}
 		received += 1
