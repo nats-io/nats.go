@@ -183,7 +183,7 @@ func TestClosedConnections(t *testing.T) {
 	if err != nats.ErrConnectionClosed {
 		t.Fatalf("Request on closed conn did not fail properly: %v\n", err)
 	}
-	if _, err = sub.NextMsg(10); err != nats.ErrBadSubscription {
+	if _, err = sub.NextMsg(10); err != nats.ErrConnectionClosed {
 		t.Fatalf("NextMessage on closed conn did not fail properly: %v\n", err)
 	}
 	if err = sub.Unsubscribe(); err != nats.ErrConnectionClosed {
