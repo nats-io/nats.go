@@ -57,6 +57,8 @@ var (
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
+	ErrMaxMessages        = errors.New("nats: Maximum messages delivered")
+	ErrSyncSubRequired    = errors.New("nats: Illegal call on an async Subscription")
 )
 
 var DefaultOptions = Options{
@@ -182,14 +184,15 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	msgs   uint64
-	bytes  uint64
-	max    uint64
-	conn   *Conn
-	closed bool
-	mcb    MsgHandler
-	mch    chan *Msg
-	sc     bool
+	msgs       uint64
+	bytes      uint64
+	max        uint64
+	conn       *Conn
+	closed     bool
+	mcb        MsgHandler
+	mch        chan *Msg
+	sc         bool
+	connClosed bool
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -1509,17 +1512,22 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	s.mu.Lock()
-	if s.mch == nil {
+	if s.connClosed {
 		s.mu.Unlock()
 		return nil, ErrConnectionClosed
 	}
+	if s.mch == nil {
+		if s.max > 0 && s.delivered >= s.max {
+			s.mu.Unlock()
+			return nil, ErrMaxMessages
+		} else if s.closed {
+			s.mu.Unlock()
+			return nil, ErrBadSubscription
+		}
+	}
 	if s.mcb != nil {
 		s.mu.Unlock()
-		return nil, errors.New("nats: Illegal call on an async Subscription")
-	}
-	if s.conn == nil {
-		s.mu.Unlock()
-		return nil, ErrBadSubscription
+		return nil, ErrSyncSubRequired
 	}
 	if s.sc {
 		s.sc = false
@@ -1743,6 +1751,8 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		}
 		// Mark as invalid, for signalling to deliverMsgs
 		s.closed = true
+		// Mark connection closed in subscription
+		s.connClosed = true
 
 		s.mu.Unlock()
 	}
