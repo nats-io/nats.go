@@ -70,7 +70,7 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 		_, err := sub.NextMsg(10 * time.Millisecond)
 		if err != nil {
 			if err != nats.ErrMaxMessages {
-				t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())				
+				t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())
 			}
 			break
 		}
@@ -386,18 +386,18 @@ func TestNextMsgCallOnClosedSub(t *testing.T) {
 	defer nc.Close()
 	sub, err := nc.SubscribeSync("foo")
 	if err != nil {
-		
+
 		t.Fatal("Failed to subscribe: ", err)
 	}
-	
+
 	if err = sub.Unsubscribe(); err != nil {
 		t.Fatal("Unsubscribe failed with err:", err)
 	}
-	
+
 	_, err = sub.NextMsg(time.Second)
 	if err == nil {
 		t.Fatal("Expected an error calling NextMsg() on closed subscription")
 	} else if err != nats.ErrBadSubscription {
-		t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())				
+		t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())
 	}
 }

@@ -43,22 +43,22 @@ const (
 const STALE_CONNECTION = "Stale Connection"
 
 var (
-	ErrConnectionClosed     = errors.New("nats: Connection Closed")
-	ErrSecureConnRequired   = errors.New("nats: Secure Connection required")
-	ErrSecureConnWanted     = errors.New("nats: Secure Connection not available")
-	ErrBadSubscription    	= errors.New("nats: Invalid Subscription")
-	ErrBadSubject           = errors.New("nats: Invalid Subject")
-	ErrSlowConsumer         = errors.New("nats: Slow Consumer, messages dropped")
-	ErrTimeout              = errors.New("nats: Timeout")
-	ErrBadTimeout           = errors.New("nats: Timeout Invalid")
-	ErrAuthorization        = errors.New("nats: Authorization Failed")
-	ErrNoServers            = errors.New("nats: No servers available for connection")
-	ErrJsonParse            = errors.New("nats: Connect message, json parse err")
-	ErrChanArg              = errors.New("nats: Argument needs to be a channel type")
-	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
-	ErrMaxPayload           = errors.New("nats: Maximum Payload Exceeded")
-	ErrMaxMessages         	= errors.New("nats: Maximum messages delivered")
-	ErrSyncSubRequired      = errors.New("nats: Illegal call on an async Subscription")
+	ErrConnectionClosed   = errors.New("nats: Connection Closed")
+	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
+	ErrSecureConnWanted   = errors.New("nats: Secure Connection not available")
+	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
+	ErrBadSubject         = errors.New("nats: Invalid Subject")
+	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
+	ErrTimeout            = errors.New("nats: Timeout")
+	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
+	ErrAuthorization      = errors.New("nats: Authorization Failed")
+	ErrNoServers          = errors.New("nats: No servers available for connection")
+	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
+	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
+	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
+	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
+	ErrMaxMessages        = errors.New("nats: Maximum messages delivered")
+	ErrSyncSubRequired    = errors.New("nats: Illegal call on an async Subscription")
 )
 
 var DefaultOptions = Options{
@@ -1512,28 +1512,28 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	s.mu.Lock()
-	if s.connClosed { 
+	if s.connClosed {
 		s.mu.Unlock()
-        return nil, ErrConnectionClosed
+		return nil, ErrConnectionClosed
 	}
 	if s.mch == nil {
 		if s.max > 0 && s.delivered >= s.max {
 			s.mu.Unlock()
 			return nil, ErrMaxMessages
- 		} else if s.closed {
+		} else if s.closed {
 			s.mu.Unlock()
 			return nil, ErrBadSubscription
 		}
-    }
-    if s.mcb != nil {
-        s.mu.Unlock()
-        return nil, ErrSyncSubRequired
-    }
-    if s.sc {
-        s.sc = false
-        s.mu.Unlock()
-        return nil, ErrSlowConsumer
-    }
+	}
+	if s.mcb != nil {
+		s.mu.Unlock()
+		return nil, ErrSyncSubRequired
+	}
+	if s.sc {
+		s.sc = false
+		s.mu.Unlock()
+		return nil, ErrSlowConsumer
+	}
 
 	// snapshot
 	nc := s.conn
@@ -1751,7 +1751,7 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		}
 		// Mark as invalid, for signalling to deliverMsgs
 		s.closed = true
-		// Mark connection closed in subscription 
+		// Mark connection closed in subscription
 		s.connClosed = true
 
 		s.mu.Unlock()
