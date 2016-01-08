@@ -737,13 +737,13 @@ func (nc *Conn) sendConnect() error {
 		}
 	}
 
-	// We expect a PONG
-	if line != pongProto {
-		// But it could be something else, like -ERR
-		if strings.HasPrefix(line, _ERR_OP_) {
-			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
-		}
-
+	// We expect a PONG, the +OK line is also fine
+	switch {
+	case line == pongProto, strings.HasPrefix(line, _OK_OP_):
+		break
+	case strings.HasPrefix(line, _ERR_OP_):
+		return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
+	default:
 		return errors.New("nats: " + line)
 	}
 
