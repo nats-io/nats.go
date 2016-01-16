@@ -238,7 +238,7 @@ func TestHotSpotReconnect(t *testing.T) {
 		t.Fatalf("Wrong number of reported servers: %d vs %d\n", len(cs), numServers)
 	}
 	expected := numClients / numServers
-	v := uint(float32(expected) * 0.30)
+	v := uint(float32(expected) * 0.40)
 
 	// Check that each item is within acceptable range
 	for s, total := range cs {
