@@ -25,7 +25,7 @@ import (
 	mrand "math/rand"
 )
 
-// Defaults
+// Default Constants
 const (
 	Version              = "1.1.6"
 	DefaultURL           = "nats://localhost:4222"
@@ -91,6 +91,9 @@ type ConnHandler func(*Conn)
 // ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
+
+// Option is a function on the options for a connection.
+type Option func(*Options)
 
 // Options can be used to create a customized connection.
 type Options struct {
@@ -249,13 +252,132 @@ type connectInfo struct {
 // asynchronous subscribers.
 type MsgHandler func(msg *Msg)
 
-// Connect will attempt to connect to the NATS server.
-// The url can contain username/password semantics.
+// Connect will attempt to connect to the NATS system.
+// The url can contain username/password semantics. e.g. nats://derek:pass@localhost:4222
 // Comma separated arrays are also supported, e.g. urlA, urlB.
-func Connect(url string) (*Conn, error) {
+// Options start with the defaults but can be overridden.
+func Connect(url string, options ...Option) (*Conn, error) {
 	opts := DefaultOptions
 	opts.Servers = processUrlString(url)
+	for _, opt := range options {
+		opt(&opts)
+	}
 	return opts.Connect()
+}
+
+// Options that can be passed to Connect.
+
+// Name is an Option to set the client name.
+func Name(name string) Option {
+	return func(o *Options) {
+		o.Name = name
+	}
+}
+
+// Secure is an Option to enable TLS secure connections that skip server verification by default.
+// Pass a TLS Configuration for proper TLS.
+func Secure(tls ...*tls.Config) Option {
+	return func(o *Options) {
+		o.Secure = true
+		// Use of variadic just simplifies testing scenarios. We only take the first one.
+		// fixme(DLC) - Could panic if more than one. Could also do TLS option.
+		if len(tls) > 0 {
+			o.TLSConfig = tls[0]
+		}
+	}
+}
+
+// NoReconnect is an Option to turn off reconnect behavior.
+func NoReconnect() Option {
+	return func(o *Options) {
+		o.AllowReconnect = false
+	}
+}
+
+// DontRandomize is an Option to turn off randomizing the server pool.
+func DontRandomize() Option {
+	return func(o *Options) {
+		o.NoRandomize = true
+	}
+}
+
+// ReconnectWait is an Option to set the wait time between reconnect attempts.
+func ReconnectWait(t time.Duration) Option {
+	return func(o *Options) {
+		o.ReconnectWait = t
+	}
+}
+
+// MaxReconnects is an Option to set the maximum number of reconnect attempts.
+func MaxReconnects(max int) Option {
+	return func(o *Options) {
+		o.MaxReconnect = max
+	}
+}
+
+// Timeout is an Option to set the timeout for Dial on a connection.
+func Timeout(t time.Duration) Option {
+	return func(o *Options) {
+		o.Timeout = t
+	}
+}
+
+// DisconnectHandler is an Option to set the disconnected handler.
+func DisconnectHandler(cb ConnHandler) Option {
+	return func(o *Options) {
+		o.DisconnectedCB = cb
+	}
+}
+
+// ReconnectHandler is an Option to set the reconnected handler.
+func ReconnectHandler(cb ConnHandler) Option {
+	return func(o *Options) {
+		o.ReconnectedCB = cb
+	}
+}
+
+// ClosedHandler is an Option to set the closed handler.
+func ClosedHandler(cb ConnHandler) Option {
+	return func(o *Options) {
+		o.ClosedCB = cb
+	}
+}
+
+// ErrHandler is an Option to set the async error  handler.
+func ErrorHandler(cb ErrHandler) Option {
+	return func(o *Options) {
+		o.AsyncErrorCB = cb
+	}
+}
+
+// Handler processing
+
+// SetDisconnectHandler will set the disconnect event handler.
+func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.DisconnectedCB = dcb
+}
+
+// SetReconnectHandler will set the reconnect event handler.
+func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.ReconnectedCB = rcb
+}
+
+// SetClosedHandler will set the reconnect event handler.
+func (nc *Conn) SetClosedHandler(cb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.ClosedCB = cb
+}
+
+// SetErrHandler will set the async error handler.
+func (nc *Conn) SetErrorHandler(cb ErrHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.AsyncErrorCB = cb
 }
 
 // Process the url string argument to Connect. Return an array of
@@ -266,16 +388,6 @@ func processUrlString(url string) []string {
 		urls[i] = strings.TrimSpace(s)
 	}
 	return urls
-}
-
-// SecureConnect will attempt to connect to the NATS server using TLS.
-// The url can contain username/password semantics.
-// DEPRECATED - This should not be used.
-func SecureConnect(url string) (*Conn, error) {
-	opts := DefaultOptions
-	opts.Url = url
-	opts.Secure = true
-	return opts.Connect()
 }
 
 // Connect will attempt to connect to a NATS server with multiple options.

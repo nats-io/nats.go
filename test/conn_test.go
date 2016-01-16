@@ -2,7 +2,10 @@ package test
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"testing"
 	"time"
@@ -106,7 +109,7 @@ func TestServerSecureConnections(t *testing.T) {
 	secureURL := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
 
 	// Make sure this succeeds
-	nc, err := nats.SecureConnect(secureURL)
+	nc, err := nats.Connect(secureURL, nats.Secure())
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
@@ -138,10 +141,35 @@ func TestServerSecureConnections(t *testing.T) {
 	ds := RunDefaultServer()
 	defer ds.Shutdown()
 
-	nc, err = nats.SecureConnect(nats.DefaultURL)
+	nc, err = nats.Connect(nats.DefaultURL, nats.Secure())
 	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
 		t.Fatalf("Should have failed to create connection: %v", err)
 	}
+
+	// Let's be more TLS correct and verify servername, endpoint etc.
+	// Now do more advanced checking, verifying servername and using rootCA.
+	// Setup our own TLSConfig using RootCA from our self signed cert.
+	rootPEM, err := ioutil.ReadFile("./configs/certs/ca.pem")
+	if err != nil || rootPEM == nil {
+		t.Fatalf("failed to read root certificate")
+	}
+	pool := x509.NewCertPool()
+	ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+	if !ok {
+		t.Fatalf("failed to parse root certificate")
+	}
+
+	tls := &tls.Config{
+		ServerName: opts.Host,
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	nc, err = nats.Connect(secureURL, nats.Secure(tls))
+	if err != nil {
+		t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
+	}
+	defer nc.Close()
 }
 
 func TestClosedConnections(t *testing.T) {
