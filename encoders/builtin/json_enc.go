@@ -7,13 +7,14 @@ import (
 	"strings"
 )
 
-// A JSON Encoder implementation for EncodedConn
+// JsonEncoder is a JSON Encoder implementation for EncodedConn.
 // This encoder will use the builtin encoding/json to Marshal
 // and Unmarshal most types, including structs.
 type JsonEncoder struct {
 	// Empty
 }
 
+// Encode
 func (je *JsonEncoder) Encode(subject string, v interface{}) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -22,6 +23,7 @@ func (je *JsonEncoder) Encode(subject string, v interface{}) ([]byte, error) {
 	return b, nil
 }
 
+// Decode
 func (je *JsonEncoder) Decode(subject string, data []byte, vPtr interface{}) (err error) {
 	switch arg := vPtr.(type) {
 	case *string:

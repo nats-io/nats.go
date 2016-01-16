@@ -50,7 +50,7 @@ func main() {
 	subj, queue, i := args[0], args[1], 0
 
 	nc.QueueSubscribe(subj, queue, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
 	})
 

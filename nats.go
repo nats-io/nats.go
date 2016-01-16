@@ -25,6 +25,7 @@ import (
 	mrand "math/rand"
 )
 
+// Defaults
 const (
 	Version              = "1.1.6"
 	DefaultURL           = "nats://localhost:4222"
@@ -39,9 +40,10 @@ const (
 	LangString           = "go"
 )
 
-// For detection and proper handling of a Stale Connection
+// STALE_CONNECTION is for detection and proper handling of stale connections.
 const STALE_CONNECTION = "Stale Connection"
 
+// Errors
 var (
 	ErrConnectionClosed   = errors.New("nats: Connection Closed")
 	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
@@ -71,6 +73,7 @@ var DefaultOptions = Options{
 	SubChanLen:     DefaultMaxChanLen,
 }
 
+// Status represents the state of the connection.
 type Status int
 
 const (
@@ -81,15 +84,15 @@ const (
 	CONNECTING
 )
 
-// ConnHandlers are used for asynchronous events such as
+// ConnHandler is used for asynchronous events such as
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
 
-// ErrHandlers are used to process asynchronous errors encountered
+// ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
 
-// Options can be used to create a customized Connection.
+// Options can be used to create a customized connection.
 type Options struct {
 	Url            string
 	Servers        []string
@@ -356,8 +359,8 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	sp := nc.srvPool
 	num := len(sp)
 	copy(sp[i:num-1], sp[i+1:num])
-	max_reconnect := nc.Opts.MaxReconnect
-	if max_reconnect < 0 || s.reconnects < max_reconnect {
+	maxReconnect := nc.Opts.MaxReconnect
+	if maxReconnect < 0 || s.reconnects < maxReconnect {
 		nc.srvPool[num-1] = s
 	} else {
 		nc.srvPool = sp[0 : num-1]
@@ -866,7 +869,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// Mark that we tried a reconnect
-		cur.reconnects += 1
+		cur.reconnects++
 
 		// Try to create a new connection
 		err = nc.createConn()
@@ -879,7 +882,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		nc.Reconnects += 1
+		nc.Reconnects++
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
@@ -947,7 +950,6 @@ func (nc *Conn) processOpErr(err error) {
 	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
 		// Set our new status
 		nc.status = RECONNECTING
-
 		if nc.ptmr != nil {
 			nc.ptmr.Stop()
 		}
@@ -957,15 +959,14 @@ func (nc *Conn) processOpErr(err error) {
 			nc.conn = nil
 		}
 		go nc.doReconnect()
-
 		nc.mu.Unlock()
 		return
-	} else {
-		nc.processDisconnect()
-		nc.err = err
-		nc.mu.Unlock()
-		nc.Close()
 	}
+
+	nc.processDisconnect()
+	nc.err = err
+	nc.mu.Unlock()
+	nc.Close()
 }
 
 // readLoop() will sit on the socket reading and processing the
@@ -1074,7 +1075,7 @@ func (nc *Conn) processMsg(data []byte) {
 	nc.mu.Lock()
 
 	// Stats
-	nc.InMsgs += 1
+	nc.InMsgs++
 	nc.InBytes += uint64(len(data))
 
 	sub := nc.subs[nc.ps.ma.sid]
@@ -1108,7 +1109,7 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs += 1
+	sub.msgs++
 	sub.bytes += uint64(len(data))
 
 	if sub.mch != nil {
@@ -1317,7 +1318,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return err
 	}
 
-	nc.OutMsgs += 1
+	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
 	if len(nc.fch) == 0 {
@@ -1365,6 +1366,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg
 	return
 }
 
+// InboxPrefix is the prefix for all inbox subjects.
 const InboxPrefix = "_INBOX."
 
 // NewInbox will return an inbox string which can be used for directed replies from
@@ -1631,7 +1633,7 @@ func (nc *Conn) processPingTimer() {
 	}
 
 	// Check for violation
-	nc.pout += 1
+	nc.pout++
 	if nc.pout > nc.Opts.MaxPingsOut {
 		nc.mu.Unlock()
 		nc.processOpErr(ErrStaleConnection)

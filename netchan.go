@@ -11,7 +11,7 @@ import (
 // to subjects and optionally queue groups.
 // Data will be encoded and decoded via the EncodedConn and its associated encoders.
 
-// Bind a channel for send operations to nats.
+// BindSendChan binds a channel for send operations to NATS.
 func (c *EncodedConn) BindSendChan(subject string, channel interface{}) error {
 	chVal := reflect.ValueOf(channel)
 	if chVal.Kind() != reflect.Chan {
@@ -40,12 +40,12 @@ func chPublish(c *EncodedConn, chVal reflect.Value, subject string) {
 	}
 }
 
-// Bind a channel for receive operations from nats.
+// BindRecvChan binds a channel for receive operations from NATS.
 func (c *EncodedConn) BindRecvChan(subject string, channel interface{}) (*Subscription, error) {
 	return c.bindRecvChan(subject, _EMPTY_, channel)
 }
 
-// Bind a channel for queue-based receive operations from nats.
+// BindRecvQueueChan binds a channel for queue-based receive operations from NATS.
 func (c *EncodedConn) BindRecvQueueChan(subject, queue string, channel interface{}) (*Subscription, error) {
 	return c.bindRecvChan(subject, queue, channel)
 }

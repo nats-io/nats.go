@@ -74,7 +74,7 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 			}
 			break
 		}
-		received += 1
+		received++
 	}
 	if received != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)

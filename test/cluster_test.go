@@ -231,7 +231,7 @@ func TestHotSpotReconnect(t *testing.T) {
 	// Walk the clients and calculate how many of each..
 	cs := make(map[string]int)
 	for _, nc := range clients {
-		cs[nc.ConnectedUrl()] += 1
+		cs[nc.ConnectedUrl()]++
 		nc.Close()
 	}
 	if len(cs) != numServers {

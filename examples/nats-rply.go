@@ -49,7 +49,7 @@ func main() {
 	subj, reply, i := args[0], args[1], 0
 
 	nc.Subscribe(subj, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
 		nc.Publish(msg.Reply, []byte(reply))
 	})

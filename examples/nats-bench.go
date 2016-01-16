@@ -15,6 +15,7 @@ import (
 	"github.com/nats-io/nats"
 )
 
+// Some sane defaults
 const (
 	DefaultNumMsgs = 100000
 	DefaultNumPubs = 1
@@ -115,7 +116,7 @@ func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs i
 
 	received := 0
 	nc.Subscribe(subj, func(msg *nats.Msg) {
-		received += 1
+		received++
 		if received%HashModulo == 0 {
 			fmt.Fprintf(os.Stderr, "*")
 		}

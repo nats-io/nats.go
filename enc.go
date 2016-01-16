@@ -22,6 +22,7 @@ type Encoder interface {
 var encMap map[string]Encoder
 var encLock sync.Mutex
 
+// Indexe names into the Registered Encoders.
 const (
 	JSON_ENCODER    = "json"
 	GOB_ENCODER     = "gob"
@@ -31,9 +32,9 @@ const (
 func init() {
 	encMap = make(map[string]Encoder)
 	// Register json, gob and default encoder
-	RegisterEncoder("json", &JsonEncoder{})
-	RegisterEncoder("gob", &GobEncoder{})
-	RegisterEncoder("default", &DefaultEncoder{})
+	RegisterEncoder(JSON_ENCODER, &JsonEncoder{})
+	RegisterEncoder(GOB_ENCODER, &GobEncoder{})
+	RegisterEncoder(DEFAULT_ENCODER, &DefaultEncoder{})
 }
 
 // EncodedConn are the preferred way to interface with NATS. They wrap a bare connection to

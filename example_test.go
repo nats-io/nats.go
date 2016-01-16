@@ -134,7 +134,7 @@ func ExampleConn_QueueSubscribe() {
 	received := 0
 
 	nc.QueueSubscribe("foo", "worker_group", func(_ *nats.Msg) {
-		received += 1
+		received++
 	})
 }
 
@@ -145,7 +145,7 @@ func ExampleSubscription_AutoUnsubscribe() {
 	received, wanted, total := 0, 10, 100
 
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
-		received += 1
+		received++
 	})
 	sub.AutoUnsubscribe(wanted)
 

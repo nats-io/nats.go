@@ -19,6 +19,7 @@ type tLogger interface {
 	Errorf(format string, args ...interface{})
 }
 
+// TestLogger
 type TestLogger tLogger
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
@@ -26,6 +27,7 @@ func Wait(ch chan bool) error {
 	return WaitTime(ch, 5*time.Second)
 }
 
+// Wait for a chan with a timeout.
 func WaitTime(ch chan bool, timeout time.Duration) error {
 	select {
 	case <-ch:
@@ -39,10 +41,12 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 // Creating client connections
 ////////////////////////////////////////////////////////////////////////////////
 
+// NewDefaultConnection
 func NewDefaultConnection(t tLogger) *nats.Conn {
 	return NewConnection(t, nats.DefaultPort)
 }
 
+// NewConnection forms connection on a given port.
 func NewConnection(t tLogger, port int) *nats.Conn {
 	url := fmt.Sprintf("nats://localhost:%d", port)
 	nc, err := nats.Connect(url)
@@ -53,6 +57,7 @@ func NewConnection(t tLogger, port int) *nats.Conn {
 	return nc
 }
 
+// NewEConn
 func NewEConn(t tLogger) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(NewDefaultConnection(t), nats.DEFAULT_ENCODER)
 	if err != nil {
@@ -65,20 +70,24 @@ func NewEConn(t tLogger) *nats.EncodedConn {
 // Running gnatsd server in separate Go routines
 ////////////////////////////////////////////////////////////////////////////////
 
+// RunDefaultServer will run a server on the default port.
 func RunDefaultServer() *server.Server {
 	return RunServerOnPort(nats.DefaultPort)
 }
 
+// RunServerOnPort will run a server on the given port.
 func RunServerOnPort(port int) *server.Server {
 	opts := gnatsd.DefaultTestOptions
 	opts.Port = port
 	return RunServerWithOptions(opts)
 }
 
+// RunServerWithOptions will run a server with the given options.
 func RunServerWithOptions(opts server.Options) *server.Server {
 	return gnatsd.RunServer(&opts)
 }
 
+// RunServerWithConfig will run a server with the given configuration file.
 func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
 	return gnatsd.RunServerWithConfig(configFile)
 }

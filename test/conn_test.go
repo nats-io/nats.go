@@ -103,10 +103,10 @@ func TestServerSecureConnections(t *testing.T) {
 	defer s.Shutdown()
 
 	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
-	secureUrl := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
+	secureURL := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
 
 	// Make sure this succeeds
-	nc, err := nats.SecureConnect(secureUrl)
+	nc, err := nats.SecureConnect(secureURL)
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
@@ -128,7 +128,7 @@ func TestServerSecureConnections(t *testing.T) {
 	nc.Close()
 
 	// Server required, but not requested.
-	nc, err = nats.Connect(secureUrl)
+	nc, err = nats.Connect(secureURL)
 	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
 		t.Fatal("Should have failed to create secure (TLS) connection")
 	}
@@ -218,8 +218,8 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	ch := make(chan bool)
 
 	go func() {
-		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
-		nc, err := nats.Connect(natsUrl)
+		natsURL := fmt.Sprintf("nats://localhost:%d/", addr.Port)
+		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
 			t.Fatal("Expected bad INFO err, got none")
@@ -276,9 +276,9 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	// Wait for server mock to start
 	time.Sleep(100 * time.Millisecond)
 
-	natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
 	opts := nats.DefaultOptions
-	opts.Servers = []string{natsUrl}
+	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
