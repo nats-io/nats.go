@@ -40,7 +40,19 @@ func TestServersOption(t *testing.T) {
 	// Do this in case some failure occurs before explicit shutdown
 	defer s1.Shutdown()
 
-	nc, err := opts.Connect()
+	// Test url string array version
+	nc, err := nats.Connect("nats://localhost:1224, nats://localhost:1222")
+	if err != nil {
+		t.Fatalf("Could not connect: %v\n", err)
+	}
+	if nc.ConnectedUrl() != "nats://localhost:1222" {
+		nc.Close()
+		t.Fatalf("Does not report correct connection: %s\n",
+			nc.ConnectedUrl())
+	}
+	nc.Close()
+
+	nc, err = opts.Connect()
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
@@ -179,18 +191,20 @@ func TestHotSpotReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	numClients := 100
+	numClients := 32
 	clients := []*nats.Conn{}
 
 	wg := &sync.WaitGroup{}
 	wg.Add(numClients)
 
+	opts := nats.DefaultOptions
+	opts.ReconnectWait = 50 * time.Millisecond
+	opts.Servers = testServers
+	opts.ReconnectedCB = func(_ *nats.Conn) {
+		wg.Done()
+	}
+
 	for i := 0; i < numClients; i++ {
-		opts := nats.DefaultOptions
-		opts.Servers = testServers
-		opts.ReconnectedCB = func(_ *nats.Conn) {
-			wg.Done()
-		}
 		nc, err := opts.Connect()
 		if err != nil {
 			t.Fatalf("Expected to connect, got err: %v\n", err)
@@ -221,7 +235,7 @@ func TestHotSpotReconnect(t *testing.T) {
 		nc.Close()
 	}
 	if len(cs) != numServers {
-		t.Fatalf("Wrong number or reported servers: %d vs %d\n", len(cs), numServers)
+		t.Fatalf("Wrong number of reported servers: %d vs %d\n", len(cs), numServers)
 	}
 	expected := numClients / numServers
 	v := uint(float32(expected) * 0.30)

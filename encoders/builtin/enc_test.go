@@ -12,8 +12,10 @@ import (
 	"github.com/nats-io/nats/test"
 )
 
+const TEST_PORT = 8168
+
 func NewEConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(t), nats.DEFAULT_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewConnection(t, TEST_PORT), nats.DEFAULT_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -21,10 +23,10 @@ func NewEConn(t *testing.T) *nats.EncodedConn {
 }
 
 func TestConstructorErrs(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	c := test.NewDefaultConnection(t)
+	c := test.NewConnection(t, TEST_PORT)
 	_, err := nats.NewEncodedConn(nil, "default")
 	if err == nil {
 		t.Fatal("Expected err for nil connection")
@@ -42,7 +44,7 @@ func TestConstructorErrs(t *testing.T) {
 }
 
 func TestMarshalString(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -67,7 +69,7 @@ func TestMarshalString(t *testing.T) {
 }
 
 func TestMarshalBytes(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -92,7 +94,7 @@ func TestMarshalBytes(t *testing.T) {
 }
 
 func TestMarshalInt(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -117,7 +119,7 @@ func TestMarshalInt(t *testing.T) {
 }
 
 func TestMarshalInt32(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -142,7 +144,7 @@ func TestMarshalInt32(t *testing.T) {
 }
 
 func TestMarshalInt64(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -167,7 +169,7 @@ func TestMarshalInt64(t *testing.T) {
 }
 
 func TestMarshalFloat32(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -192,7 +194,7 @@ func TestMarshalFloat32(t *testing.T) {
 }
 
 func TestMarshalFloat64(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -217,7 +219,7 @@ func TestMarshalFloat64(t *testing.T) {
 }
 
 func TestMarshalBool(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -240,7 +242,7 @@ func TestMarshalBool(t *testing.T) {
 }
 
 func TestExtendedSubscribeCB(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -270,7 +272,7 @@ func TestExtendedSubscribeCB(t *testing.T) {
 }
 
 func TestExtendedSubscribeCB2(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -304,7 +306,7 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 }
 
 func TestRawMsgSubscribeCB(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -339,7 +341,7 @@ func TestRawMsgSubscribeCB(t *testing.T) {
 }
 
 func TestEncRequest(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -363,7 +365,7 @@ func TestEncRequest(t *testing.T) {
 }
 
 func TestEncRequestReceivesMsg(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)
@@ -387,7 +389,7 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 }
 
 func TestAsyncMarshalErr(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewEConn(t)

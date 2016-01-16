@@ -13,7 +13,7 @@ import (
 )
 
 func NewJsonEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), nats.JSON_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), nats.JSON_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -21,7 +21,7 @@ func NewJsonEncodedConn(tl test.TestLogger) *nats.EncodedConn {
 }
 
 func TestJsonMarshalString(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -43,7 +43,7 @@ func TestJsonMarshalString(t *testing.T) {
 }
 
 func TestJsonMarshalInt(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -73,7 +73,7 @@ type person struct {
 }
 
 func TestJsonMarshalStruct(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -122,7 +122,7 @@ func BenchmarkPublishJsonStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(b)
@@ -164,7 +164,7 @@ func TestNotMarshableToJson(t *testing.T) {
 }
 
 func TestFailedEncodedPublish(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)

@@ -6,14 +6,11 @@ import (
 	"time"
 
 	"github.com/nats-io/gnatsd/auth"
-	gnatsd "github.com/nats-io/gnatsd/test"
 	"github.com/nats-io/nats"
 )
 
 func TestAuth(t *testing.T) {
-	opts := gnatsd.DefaultTestOptions
-	opts.Port = 8232
-	s := RunServerWithOptions(opts)
+	s := RunServerOnPort(8232)
 
 	// Auth is pluggable, so need to set here..
 	auth := &auth.Plain{
@@ -37,9 +34,7 @@ func TestAuth(t *testing.T) {
 }
 
 func TestAuthFailNoDisconnectCB(t *testing.T) {
-	opts := gnatsd.DefaultTestOptions
-	opts.Port = 8232
-	s := RunServerWithOptions(opts)
+	s := RunServerOnPort(8232)
 
 	// Auth is pluggable, so need to set here..
 	auth := &auth.Plain{
@@ -67,20 +62,16 @@ func TestAuthFailNoDisconnectCB(t *testing.T) {
 }
 
 func TestAuthFailAllowReconnect(t *testing.T) {
-
-	ts := startReconnectServer(t)
+	ts := RunServerOnPort(23232)
 	defer ts.Shutdown()
 
 	var servers = []string{
-		"nats://localhost:22222",
-		"nats://localhost:22223",
-		"nats://localhost:22224",
+		"nats://localhost:23232",
+		"nats://localhost:23233",
+		"nats://localhost:23234",
 	}
 
-	srvOpts := gnatsd.DefaultTestOptions
-	srvOpts.Port = 22223
-	ts2 := RunServerWithOptions(srvOpts)
-
+	ts2 := RunServerOnPort(23233)
 	// Auth is pluggable, so need to set here..
 	auth := &auth.Plain{
 		Username: "ivan",
@@ -89,7 +80,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	ts2.SetAuthMethod(auth)
 	defer ts2.Shutdown()
 
-	ts3 := RunServerOnPort(22224)
+	ts3 := RunServerOnPort(23234)
 	defer ts3.Shutdown()
 
 	reconnectch := make(chan bool)
