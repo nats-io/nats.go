@@ -55,10 +55,10 @@ var (
 	ErrNoServers          = errors.New("nats: No servers available for connection")
 	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
 	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
-	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
 	ErrMaxMessages        = errors.New("nats: Maximum messages delivered")
 	ErrSyncSubRequired    = errors.New("nats: Illegal call on an async Subscription")
+	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 )
 
 var DefaultOptions = Options{
@@ -103,16 +103,16 @@ type Options struct {
 	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
+	PingInterval   time.Duration // disabled if 0 or negative
+	MaxPingsOut    int
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
 	AsyncErrorCB   ErrHandler
 
-	PingInterval time.Duration // disabled if 0 or negative
-	MaxPingsOut  int
-
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery or sync subscription.
+	// NOTE: This is temporary as we will move to a better solution.
 	SubChanLen int
 }
 
@@ -133,8 +133,8 @@ const (
 	srvPoolSize = 4
 )
 
-// A Conn represents a bare connection to a nats-server. It will send and receive
-// []byte payloads.
+// A Conn represents a bare connection to a nats-server.
+// It can send and receive []byte payloads.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
 	// struct and make sure they are all 64bits (or use padding if necessary).
@@ -248,14 +248,26 @@ type MsgHandler func(msg *Msg)
 
 // Connect will attempt to connect to the NATS server.
 // The url can contain username/password semantics.
+// Comma separated arrays are also supported, e.g. urlA, urlB.
 func Connect(url string) (*Conn, error) {
 	opts := DefaultOptions
-	opts.Url = url
+	opts.Servers = processUrlString(url)
 	return opts.Connect()
+}
+
+// Process the url string argument to Connect. Return an array of
+// urls, even if only one.
+func processUrlString(url string) []string {
+	urls := strings.Split(url, ",")
+	for i, s := range urls {
+		urls[i] = strings.TrimSpace(s)
+	}
+	return urls
 }
 
 // SecureConnect will attempt to connect to the NATS server using TLS.
 // The url can contain username/password semantics.
+// DEPRECATED - This should not be used.
 func SecureConnect(url string) (*Conn, error) {
 	opts := DefaultOptions
 	opts.Url = url
@@ -1607,6 +1619,9 @@ func (nc *Conn) sendPing(ch chan bool) {
 	nc.bw.Flush()
 }
 
+// This will fire periodically and send a client origin
+// ping to the server. Will also check that we have received
+// responses from the server.
 func (nc *Conn) processPingTimer() {
 	nc.mu.Lock()
 
@@ -1782,14 +1797,14 @@ func (nc *Conn) Close() {
 	nc.close(CLOSED, true)
 }
 
-// Test if Conn has been closed.
+// IsClosed tests if a Conn has been closed.
 func (nc *Conn) IsClosed() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.isClosed()
 }
 
-// Test if Conn is reconnecting.
+// IsReconnecting tests if a Conn is reconnecting.
 func (nc *Conn) IsReconnecting() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
@@ -1832,6 +1847,8 @@ func (nc *Conn) Stats() Statistics {
 }
 
 // MaxPayload returns the size limit that a message payload can have.
+// This is set by the server configuration and delivered to the client
+// upon connect.
 func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
