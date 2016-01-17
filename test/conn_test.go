@@ -2,7 +2,10 @@ package test
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"testing"
 	"time"
@@ -103,10 +106,10 @@ func TestServerSecureConnections(t *testing.T) {
 	defer s.Shutdown()
 
 	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
-	secureUrl := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
+	secureURL := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
 
 	// Make sure this succeeds
-	nc, err := nats.SecureConnect(secureUrl)
+	nc, err := nats.Connect(secureURL, nats.Secure())
 	if err != nil {
 		t.Fatal("Failed to create secure (TLS) connection", err)
 	}
@@ -128,7 +131,7 @@ func TestServerSecureConnections(t *testing.T) {
 	nc.Close()
 
 	// Server required, but not requested.
-	nc, err = nats.Connect(secureUrl)
+	nc, err = nats.Connect(secureURL)
 	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
 		t.Fatal("Should have failed to create secure (TLS) connection")
 	}
@@ -138,10 +141,54 @@ func TestServerSecureConnections(t *testing.T) {
 	ds := RunDefaultServer()
 	defer ds.Shutdown()
 
-	nc, err = nats.SecureConnect(nats.DefaultURL)
+	nc, err = nats.Connect(nats.DefaultURL, nats.Secure())
 	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
 		t.Fatalf("Should have failed to create connection: %v", err)
 	}
+
+	// Let's be more TLS correct and verify servername, endpoint etc.
+	// Now do more advanced checking, verifying servername and using rootCA.
+	// Setup our own TLSConfig using RootCA from our self signed cert.
+	rootPEM, err := ioutil.ReadFile("./configs/certs/ca.pem")
+	if err != nil || rootPEM == nil {
+		t.Fatalf("failed to read root certificate")
+	}
+	pool := x509.NewCertPool()
+	ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+	if !ok {
+		t.Fatalf("failed to parse root certificate")
+	}
+
+	tls := &tls.Config{
+		ServerName: opts.Host,
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	nc, err = nats.Connect(secureURL, nats.Secure(tls))
+	if err != nil {
+		t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
+	}
+	defer nc.Close()
+}
+
+func TestServerTLSHintConnections(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tls.conf")
+	defer s.Shutdown()
+
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureURL := fmt.Sprintf("tls://%s:%s@%s/", opts.Username, opts.Password, endpoint)
+
+	nc, err := nats.Connect(secureURL, nats.RootCAs("./configs/certs/badca.pem"))
+	if err == nil {
+		t.Fatal("Expected an error from bad RootCA file")
+	}
+
+	nc, err = nats.Connect(secureURL, nats.RootCAs("./configs/certs/ca.pem"))
+	if err != nil {
+		t.Fatal("Failed to create secure (TLS) connection", err)
+	}
+	defer nc.Close()
 }
 
 func TestClosedConnections(t *testing.T) {
@@ -218,8 +265,8 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	ch := make(chan bool)
 
 	go func() {
-		natsUrl := fmt.Sprintf("nats://localhost:%d/", addr.Port)
-		nc, err := nats.Connect(natsUrl)
+		natsURL := fmt.Sprintf("nats://localhost:%d/", addr.Port)
+		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
 			t.Fatal("Expected bad INFO err, got none")
@@ -276,9 +323,9 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	// Wait for server mock to start
 	time.Sleep(100 * time.Millisecond)
 
-	natsUrl := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
 	opts := nats.DefaultOptions
-	opts.Servers = []string{natsUrl}
+	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)

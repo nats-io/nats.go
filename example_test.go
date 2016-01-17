@@ -13,7 +13,10 @@ func ExampleConnect() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
 
-	nc, _ = nats.Connect("nats://derek:secretpassword@nats.apcera.com:4222")
+	nc, _ = nats.Connect("nats://derek:secretpassword@demo.nats.io:4222")
+	nc.Close()
+
+	nc, _ = nats.Connect("tls://derek:secretpassword@demo.nats.io:4443")
 	nc.Close()
 
 	opts := nats.Options{
@@ -134,7 +137,7 @@ func ExampleConn_QueueSubscribe() {
 	received := 0
 
 	nc.QueueSubscribe("foo", "worker_group", func(_ *nats.Msg) {
-		received += 1
+		received++
 	})
 }
 
@@ -145,7 +148,7 @@ func ExampleSubscription_AutoUnsubscribe() {
 	received, wanted, total := 0, 10, 100
 
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
-		received += 1
+		received++
 	})
 	sub.AutoUnsubscribe(wanted)
 

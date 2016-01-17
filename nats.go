@@ -1,4 +1,4 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2016 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://nats.io).
 package nats
@@ -8,11 +8,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/url"
 	"regexp"
@@ -25,6 +27,7 @@ import (
 	mrand "math/rand"
 )
 
+// Default Constants
 const (
 	Version              = "1.1.6"
 	DefaultURL           = "nats://localhost:4222"
@@ -39,26 +42,28 @@ const (
 	LangString           = "go"
 )
 
-// For detection and proper handling of a Stale Connection
-const STALE_CONNECTION = "Stale Connection"
+// STALE_CONNECTION is for detection and proper handling of stale connections.
+const STALE_CONNECTION = "stale connection"
 
+// Errors
 var (
-	ErrConnectionClosed   = errors.New("nats: Connection Closed")
-	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
-	ErrSecureConnWanted   = errors.New("nats: Secure Connection not available")
-	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
-	ErrBadSubject         = errors.New("nats: Invalid Subject")
-	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
-	ErrTimeout            = errors.New("nats: Timeout")
-	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
-	ErrAuthorization      = errors.New("nats: Authorization Failed")
-	ErrNoServers          = errors.New("nats: No servers available for connection")
-	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
-	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
+	ErrConnectionClosed   = errors.New("nats: connection closed")
+	ErrSecureConnRequired = errors.New("nats: secure connection required")
+	ErrSecureConnWanted   = errors.New("nats: secure connection not available")
+	ErrBadSubscription    = errors.New("nats: invalid subscription")
+	ErrBadSubject         = errors.New("nats: invalid subject")
+	ErrSlowConsumer       = errors.New("nats: slow consumer, messages dropped")
+	ErrTimeout            = errors.New("nats: timeout")
+	ErrBadTimeout         = errors.New("nats: timeout invalid")
+	ErrAuthorization      = errors.New("nats: authorization failed")
+	ErrNoServers          = errors.New("nats: no servers available for connection")
+	ErrJsonParse          = errors.New("nats: connect message, json parse err")
+	ErrChanArg            = errors.New("nats: argument needs to be a channel type")
+	ErrMaxPayload         = errors.New("nats: maximum payload exceeded")
+	ErrMaxMessages        = errors.New("nats: maximum messages delivered")
+	ErrSyncSubRequired    = errors.New("nats: illegal call on an async subscription")
+	ErrMultipleTLSConfigs = errors.New("nats: multiple tls.Configs not allowed")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
-	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
-	ErrMaxMessages        = errors.New("nats: Maximum messages delivered")
-	ErrSyncSubRequired    = errors.New("nats: Illegal call on an async Subscription")
 )
 
 var DefaultOptions = Options{
@@ -71,6 +76,7 @@ var DefaultOptions = Options{
 	SubChanLen:     DefaultMaxChanLen,
 }
 
+// Status represents the state of the connection.
 type Status int
 
 const (
@@ -81,15 +87,18 @@ const (
 	CONNECTING
 )
 
-// ConnHandlers are used for asynchronous events such as
+// ConnHandler is used for asynchronous events such as
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
 
-// ErrHandlers are used to process asynchronous errors encountered
+// ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
 
-// Options can be used to create a customized Connection.
+// Option is a function on the options for a connection.
+type Option func(*Options) error
+
+// Options can be used to create a customized connection.
 type Options struct {
 	Url            string
 	Servers        []string
@@ -103,16 +112,16 @@ type Options struct {
 	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
+	PingInterval   time.Duration // disabled if 0 or negative
+	MaxPingsOut    int
 	ClosedCB       ConnHandler
 	DisconnectedCB ConnHandler
 	ReconnectedCB  ConnHandler
 	AsyncErrorCB   ErrHandler
 
-	PingInterval time.Duration // disabled if 0 or negative
-	MaxPingsOut  int
-
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery or sync subscription.
+	// NOTE: This is temporary as we will move to a better solution.
 	SubChanLen int
 }
 
@@ -133,8 +142,8 @@ const (
 	srvPoolSize = 4
 )
 
-// A Conn represents a bare connection to a nats-server. It will send and receive
-// []byte payloads.
+// A Conn represents a bare connection to a nats-server.
+// It can send and receive []byte payloads.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
 	// struct and make sure they are all 64bits (or use padding if necessary).
@@ -246,21 +255,182 @@ type connectInfo struct {
 // asynchronous subscribers.
 type MsgHandler func(msg *Msg)
 
-// Connect will attempt to connect to the NATS server.
-// The url can contain username/password semantics.
-func Connect(url string) (*Conn, error) {
+// Connect will attempt to connect to the NATS system.
+// The url can contain username/password semantics. e.g. nats://derek:pass@localhost:4222
+// Comma separated arrays are also supported, e.g. urlA, urlB.
+// Options start with the defaults but can be overridden.
+func Connect(url string, options ...Option) (*Conn, error) {
 	opts := DefaultOptions
-	opts.Url = url
+	opts.Servers = processUrlString(url)
+	for _, opt := range options {
+		if err := opt(&opts); err != nil {
+			return nil, err
+		}
+	}
 	return opts.Connect()
 }
 
-// SecureConnect will attempt to connect to the NATS server using TLS.
-// The url can contain username/password semantics.
-func SecureConnect(url string) (*Conn, error) {
-	opts := DefaultOptions
-	opts.Url = url
-	opts.Secure = true
-	return opts.Connect()
+// Options that can be passed to Connect.
+
+// Name is an Option to set the client name.
+func Name(name string) Option {
+	return func(o *Options) error {
+		o.Name = name
+		return nil
+	}
+}
+
+// Secure is an Option to enable TLS secure connections that skip server verification by default.
+// Pass a TLS Configuration for proper TLS.
+func Secure(tls ...*tls.Config) Option {
+	return func(o *Options) error {
+		o.Secure = true
+		// Use of variadic just simplifies testing scenarios. We only take the first one.
+		// fixme(DLC) - Could panic if more than one. Could also do TLS option.
+		if len(tls) > 1 {
+			return ErrMultipleTLSConfigs
+		}
+		if len(tls) == 1 {
+			o.TLSConfig = tls[0]
+		}
+		return nil
+	}
+}
+
+// RootCAs is a helper option to provide the RootCAs pool from a list of fileNames. If Secure is
+// not already set this will set it as well.
+func RootCAs(file ...string) Option {
+	return func(o *Options) error {
+		pool := x509.NewCertPool()
+		for _, f := range file {
+			rootPEM, err := ioutil.ReadFile(f)
+			if err != nil || rootPEM == nil {
+				return fmt.Errorf("nats: error loading or parsing rootCA file: %v", err)
+			}
+			ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+			if !ok {
+				return fmt.Errorf("nats: failed to parse root certificate from %q", f)
+			}
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSConfig.RootCAs = pool
+		o.Secure = true
+		return nil
+	}
+}
+
+// NoReconnect is an Option to turn off reconnect behavior.
+func NoReconnect() Option {
+	return func(o *Options) error {
+		o.AllowReconnect = false
+		return nil
+	}
+}
+
+// DontRandomize is an Option to turn off randomizing the server pool.
+func DontRandomize() Option {
+	return func(o *Options) error {
+		o.NoRandomize = true
+		return nil
+	}
+}
+
+// ReconnectWait is an Option to set the wait time between reconnect attempts.
+func ReconnectWait(t time.Duration) Option {
+	return func(o *Options) error {
+		o.ReconnectWait = t
+		return nil
+	}
+}
+
+// MaxReconnects is an Option to set the maximum number of reconnect attempts.
+func MaxReconnects(max int) Option {
+	return func(o *Options) error {
+		o.MaxReconnect = max
+		return nil
+	}
+}
+
+// Timeout is an Option to set the timeout for Dial on a connection.
+func Timeout(t time.Duration) Option {
+	return func(o *Options) error {
+		o.Timeout = t
+		return nil
+	}
+}
+
+// DisconnectHandler is an Option to set the disconnected handler.
+func DisconnectHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.DisconnectedCB = cb
+		return nil
+	}
+}
+
+// ReconnectHandler is an Option to set the reconnected handler.
+func ReconnectHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.ReconnectedCB = cb
+		return nil
+	}
+}
+
+// ClosedHandler is an Option to set the closed handler.
+func ClosedHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.ClosedCB = cb
+		return nil
+	}
+}
+
+// ErrHandler is an Option to set the async error  handler.
+func ErrorHandler(cb ErrHandler) Option {
+	return func(o *Options) error {
+		o.AsyncErrorCB = cb
+		return nil
+	}
+}
+
+// Handler processing
+
+// SetDisconnectHandler will set the disconnect event handler.
+func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.DisconnectedCB = dcb
+}
+
+// SetReconnectHandler will set the reconnect event handler.
+func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.ReconnectedCB = rcb
+}
+
+// SetClosedHandler will set the reconnect event handler.
+func (nc *Conn) SetClosedHandler(cb ConnHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.ClosedCB = cb
+}
+
+// SetErrHandler will set the async error handler.
+func (nc *Conn) SetErrorHandler(cb ErrHandler) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.AsyncErrorCB = cb
+}
+
+// Process the url string argument to Connect. Return an array of
+// urls, even if only one.
+func processUrlString(url string) []string {
+	urls := strings.Split(url, ",")
+	for i, s := range urls {
+		urls[i] = strings.TrimSpace(s)
+	}
+	return urls
 }
 
 // Connect will attempt to connect to a NATS server with multiple options.
@@ -344,8 +514,8 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	sp := nc.srvPool
 	num := len(sp)
 	copy(sp[i:num-1], sp[i+1:num])
-	max_reconnect := nc.Opts.MaxReconnect
-	if max_reconnect < 0 || s.reconnects < max_reconnect {
+	maxReconnect := nc.Opts.MaxReconnect
+	if maxReconnect < 0 || s.reconnects < maxReconnect {
 		nc.srvPool[num-1] = s
 	} else {
 		nc.srvPool = sp[0 : num-1]
@@ -372,6 +542,8 @@ func (nc *Conn) pickServer() error {
 	}
 	return ErrNoServers
 }
+
+const tlsScheme = "tls"
 
 // Create the server pool using the options given.
 // We will place a Url option first, followed by any
@@ -419,6 +591,17 @@ func (nc *Conn) setupServerPool() error {
 		nc.srvPool = append(nc.srvPool, s)
 	}
 
+	// Check for Scheme hint to move to TLS mode.
+	for _, srv := range nc.srvPool {
+		if srv.url.Scheme == tlsScheme {
+			// FIXME(dlc), this is for all in the pool, should be case by case.
+			nc.Opts.Secure = true
+			if nc.Opts.TLSConfig == nil {
+				nc.Opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			}
+		}
+	}
+
 	return nc.pickServer()
 }
 
@@ -459,7 +642,13 @@ func (nc *Conn) makeTLSConn() {
 	// default to InsecureSkipVerify.
 	// TODO(dlc) - We should make the more secure version the default.
 	if nc.Opts.TLSConfig != nil {
-		nc.conn = tls.Client(nc.conn, nc.Opts.TLSConfig)
+		tlsCopy := *nc.Opts.TLSConfig
+		// If its blank we will override it with the current host
+		if tlsCopy.ServerName == _EMPTY_ {
+			h, _, _ := net.SplitHostPort(nc.url.Host)
+			tlsCopy.ServerName = h
+		}
+		nc.conn = tls.Client(nc.conn, &tlsCopy)
 	} else {
 		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	}
@@ -854,7 +1043,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// Mark that we tried a reconnect
-		cur.reconnects += 1
+		cur.reconnects++
 
 		// Try to create a new connection
 		err = nc.createConn()
@@ -867,7 +1056,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		nc.Reconnects += 1
+		nc.Reconnects++
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
@@ -935,7 +1124,6 @@ func (nc *Conn) processOpErr(err error) {
 	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
 		// Set our new status
 		nc.status = RECONNECTING
-
 		if nc.ptmr != nil {
 			nc.ptmr.Stop()
 		}
@@ -945,15 +1133,14 @@ func (nc *Conn) processOpErr(err error) {
 			nc.conn = nil
 		}
 		go nc.doReconnect()
-
 		nc.mu.Unlock()
 		return
-	} else {
-		nc.processDisconnect()
-		nc.err = err
-		nc.mu.Unlock()
-		nc.Close()
 	}
+
+	nc.processDisconnect()
+	nc.err = err
+	nc.mu.Unlock()
+	nc.Close()
 }
 
 // readLoop() will sit on the socket reading and processing the
@@ -1062,7 +1249,7 @@ func (nc *Conn) processMsg(data []byte) {
 	nc.mu.Lock()
 
 	// Stats
-	nc.InMsgs += 1
+	nc.InMsgs++
 	nc.InBytes += uint64(len(data))
 
 	sub := nc.subs[nc.ps.ma.sid]
@@ -1096,7 +1283,7 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs += 1
+	sub.msgs++
 	sub.bytes += uint64(len(data))
 
 	if sub.mch != nil {
@@ -1305,7 +1492,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return err
 	}
 
-	nc.OutMsgs += 1
+	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
 	if len(nc.fch) == 0 {
@@ -1353,6 +1540,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg
 	return
 }
 
+// InboxPrefix is the prefix for all inbox subjects.
 const InboxPrefix = "_INBOX."
 
 // NewInbox will return an inbox string which can be used for directed replies from
@@ -1607,6 +1795,9 @@ func (nc *Conn) sendPing(ch chan bool) {
 	nc.bw.Flush()
 }
 
+// This will fire periodically and send a client origin
+// ping to the server. Will also check that we have received
+// responses from the server.
 func (nc *Conn) processPingTimer() {
 	nc.mu.Lock()
 
@@ -1616,7 +1807,7 @@ func (nc *Conn) processPingTimer() {
 	}
 
 	// Check for violation
-	nc.pout += 1
+	nc.pout++
 	if nc.pout > nc.Opts.MaxPingsOut {
 		nc.mu.Unlock()
 		nc.processOpErr(ErrStaleConnection)
@@ -1782,14 +1973,14 @@ func (nc *Conn) Close() {
 	nc.close(CLOSED, true)
 }
 
-// Test if Conn has been closed.
+// IsClosed tests if a Conn has been closed.
 func (nc *Conn) IsClosed() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.isClosed()
 }
 
-// Test if Conn is reconnecting.
+// IsReconnecting tests if a Conn is reconnecting.
 func (nc *Conn) IsReconnecting() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
@@ -1832,6 +2023,8 @@ func (nc *Conn) Stats() Statistics {
 }
 
 // MaxPayload returns the size limit that a message payload can have.
+// This is set by the server configuration and delivered to the client
+// upon connect.
 func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()

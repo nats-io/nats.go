@@ -243,3 +243,31 @@ func TestSelectNextServer(t *testing.T) {
 		t.Fatalf("Did not throw away the last server correctly\n")
 	}
 }
+
+// This will test that comma separated url strings work properly for
+// the Connect() command.
+func TestUrlArgument(t *testing.T) {
+	check := func(url string, expected []string) {
+		if !reflect.DeepEqual(processUrlString(url), expected) {
+			t.Fatalf("Got wrong response processing URL: %q, RES: %#v\n", url, processUrlString(url))
+		}
+	}
+	// This is normal case
+	oneExpected := []string{"nats://localhost:1222"}
+
+	check("nats://localhost:1222", oneExpected)
+	check("nats://localhost:1222 ", oneExpected)
+	check(" nats://localhost:1222", oneExpected)
+	check(" nats://localhost:1222 ", oneExpected)
+
+	var multiExpected = []string{
+		"nats://localhost:1222",
+		"nats://localhost:1223",
+		"nats://localhost:1224",
+	}
+
+	check("nats://localhost:1222,nats://localhost:1223,nats://localhost:1224", multiExpected)
+	check("nats://localhost:1222, nats://localhost:1223, nats://localhost:1224", multiExpected)
+	check(" nats://localhost:1222, nats://localhost:1223, nats://localhost:1224 ", multiExpected)
+	check("nats://localhost:1222,   nats://localhost:1223  ,nats://localhost:1224", multiExpected)
+}

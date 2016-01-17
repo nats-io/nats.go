@@ -11,7 +11,7 @@ import (
 )
 
 func NewGobEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), nats.GOB_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), nats.GOB_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -19,7 +19,7 @@ func NewGobEncodedConn(tl test.TestLogger) *nats.EncodedConn {
 }
 
 func TestGobMarshalString(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -41,7 +41,7 @@ func TestGobMarshalString(t *testing.T) {
 }
 
 func TestGobMarshalInt(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -63,7 +63,7 @@ func TestGobMarshalInt(t *testing.T) {
 }
 
 func TestGobMarshalStruct(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -97,7 +97,7 @@ func BenchmarkPublishGobStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(b)

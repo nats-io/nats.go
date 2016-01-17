@@ -74,7 +74,7 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 			}
 			break
 		}
-		received += 1
+		received++
 	}
 	if received != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
@@ -260,7 +260,7 @@ func TestAsyncErrHandler(t *testing.T) {
 
 	aeCalled := int64(0)
 
-	nc.Opts.AsyncErrorCB = func(c *nats.Conn, s *nats.Subscription, e error) {
+	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
 		// Suppress additional calls
 		if atomic.LoadInt64(&aeCalled) == 1 {
 			return
@@ -278,7 +278,7 @@ func TestAsyncErrHandler(t *testing.T) {
 
 		// release the test
 		ch <- true
-	}
+	})
 
 	b := []byte("Hello World!")
 	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {

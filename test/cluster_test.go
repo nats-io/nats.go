@@ -3,6 +3,7 @@ package test
 import (
 	"math"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ var testServers = []string{
 	"nats://localhost:1227",
 	"nats://localhost:1228",
 }
+
+var servers = strings.Join(testServers, ",")
 
 func TestServersOption(t *testing.T) {
 	opts := nats.DefaultOptions
@@ -68,6 +71,51 @@ func TestServersOption(t *testing.T) {
 	}
 }
 
+func TestNewStyleServersOption(t *testing.T) {
+	_, err := nats.Connect(nats.DefaultURL, nats.DontRandomize())
+	if err != nats.ErrNoServers {
+		t.Fatalf("Wrong error: '%s'\n", err)
+	}
+	servers := strings.Join(testServers, ",")
+
+	_, err = nats.Connect(servers, nats.DontRandomize())
+	if err == nil || err != nats.ErrNoServers {
+		t.Fatalf("Did not receive proper error: %v\n", err)
+	}
+
+	// Make sure we can connect to first server if running
+	s1 := RunServerOnPort(1222)
+	// Do this in case some failure occurs before explicit shutdown
+	defer s1.Shutdown()
+
+	nc, err := nats.Connect(servers, nats.DontRandomize())
+	if err != nil {
+		t.Fatalf("Could not connect: %v\n", err)
+	}
+	if nc.ConnectedUrl() != "nats://localhost:1222" {
+		nc.Close()
+		t.Fatalf("Does not report correct connection: %s\n",
+			nc.ConnectedUrl())
+	}
+	nc.Close()
+	s1.Shutdown()
+
+	// Make sure we can connect to a non-first server if running
+	s2 := RunServerOnPort(1223)
+	// Do this in case some failure occurs before explicit shutdown
+	defer s2.Shutdown()
+
+	nc, err = nats.Connect(servers, nats.DontRandomize())
+	if err != nil {
+		t.Fatalf("Could not connect: %v\n", err)
+	}
+	defer nc.Close()
+	if nc.ConnectedUrl() != "nats://localhost:1223" {
+		t.Fatalf("Does not report correct connection: %s\n",
+			nc.ConnectedUrl())
+	}
+}
+
 func TestAuthServers(t *testing.T) {
 	var plainServers = []string{
 		"nats://localhost:1222",
@@ -86,11 +134,8 @@ func TestAuthServers(t *testing.T) {
 	as2.SetAuthMethod(auth)
 	defer as2.Shutdown()
 
-	opts := nats.DefaultOptions
-	opts.NoRandomize = true
-	opts.Servers = plainServers
-	opts.Timeout = 5 * time.Second
-	nc, err := opts.Connect()
+	pservers := strings.Join(plainServers, ",")
+	nc, err := nats.Connect(pservers, nats.DontRandomize(), nats.Timeout(5*time.Second))
 
 	if err == nil {
 		nc.Close()
@@ -106,9 +151,8 @@ func TestAuthServers(t *testing.T) {
 		"nats://localhost:1222",
 		"nats://derek:foo@localhost:1224",
 	}
-
-	opts.Servers = authServers
-	nc, err = opts.Connect()
+	aservers := strings.Join(authServers, ",")
+	nc, err = nats.Connect(aservers, nats.DontRandomize(), nats.Timeout(5*time.Second))
 	if err != nil {
 		t.Fatalf("Expected to connect properly: %v\n", err)
 	}
@@ -125,23 +169,19 @@ func TestBasicClusterReconnect(t *testing.T) {
 	s2 := RunServerOnPort(1224)
 	defer s2.Shutdown()
 
-	opts := nats.DefaultOptions
-	opts.Servers = testServers
-	opts.NoRandomize = true
-
 	dch := make(chan bool)
-	opts.DisconnectedCB = func(nc *nats.Conn) {
-		// Suppress any additional calls
-		nc.Opts.DisconnectedCB = nil
-		dch <- true
-	}
-
 	rch := make(chan bool)
-	opts.ReconnectedCB = func(_ *nats.Conn) {
-		rch <- true
+
+	opts := []nats.Option{nats.DontRandomize(),
+		nats.DisconnectHandler(func(nc *nats.Conn) {
+			// Suppress any additional callbacks
+			nc.SetDisconnectHandler(nil)
+			dch <- true
+		}),
+		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
 	}
 
-	nc, err := opts.Connect()
+	nc, err := nats.Connect(servers, opts...)
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
@@ -179,19 +219,20 @@ func TestHotSpotReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	numClients := 100
+	numClients := 32
 	clients := []*nats.Conn{}
 
 	wg := &sync.WaitGroup{}
 	wg.Add(numClients)
 
+	opts := []nats.Option{
+		nats.ReconnectWait(50 * time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) { wg.Done() }),
+	}
+
 	for i := 0; i < numClients; i++ {
-		opts := nats.DefaultOptions
-		opts.Servers = testServers
-		opts.ReconnectedCB = func(_ *nats.Conn) {
-			wg.Done()
-		}
-		nc, err := opts.Connect()
+		//		nc, err := opts.Connect()
+		nc, err := nats.Connect(servers, opts...)
 		if err != nil {
 			t.Fatalf("Expected to connect, got err: %v\n", err)
 		}
@@ -217,14 +258,14 @@ func TestHotSpotReconnect(t *testing.T) {
 	// Walk the clients and calculate how many of each..
 	cs := make(map[string]int)
 	for _, nc := range clients {
-		cs[nc.ConnectedUrl()] += 1
+		cs[nc.ConnectedUrl()]++
 		nc.Close()
 	}
 	if len(cs) != numServers {
-		t.Fatalf("Wrong number or reported servers: %d vs %d\n", len(cs), numServers)
+		t.Fatalf("Wrong number of reported servers: %d vs %d\n", len(cs), numServers)
 	}
 	expected := numClients / numServers
-	v := uint(float32(expected) * 0.30)
+	v := uint(float32(expected) * 0.40)
 
 	// Check that each item is within acceptable range
 	for s, total := range cs {
@@ -244,20 +285,21 @@ func TestProperReconnectDelay(t *testing.T) {
 	opts.NoRandomize = true
 
 	dcbCalled := false
+	closedCbCalled := false
 	dch := make(chan bool)
-	opts.DisconnectedCB = func(nc *nats.Conn) {
+
+	dcb := func(nc *nats.Conn) {
 		// Suppress any additional calls
-		nc.Opts.DisconnectedCB = nil
+		nc.SetDisconnectHandler(nil)
 		dcbCalled = true
 		dch <- true
 	}
 
-	closedCbCalled := false
-	opts.ClosedCB = func(_ *nats.Conn) {
+	ccb := func(_ *nats.Conn) {
 		closedCbCalled = true
 	}
 
-	nc, err := opts.Connect()
+	nc, err := nats.Connect(servers, nats.DontRandomize(), nats.DisconnectHandler(dcb), nats.ClosedHandler(ccb))
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}

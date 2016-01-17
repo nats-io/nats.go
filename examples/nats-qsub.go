@@ -1,4 +1,4 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2016 Apcera Inc. All rights reserved.
 // +build ignore
 
 package main
@@ -8,13 +8,13 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/nats-io/nats"
 )
 
+// NOTE: Use tls scheme for TLS, e.g. nats-qsub -s tls://demo.nats.io:4443 foo
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [--tls] [-t] <subject> <queue-group>\n")
+	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> <queue-group>\n")
 }
 
 func printMsg(m *nats.Msg, i int) {
@@ -24,7 +24,6 @@ func printMsg(m *nats.Msg, i int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var showTime = flag.Bool("t", false, "Display timestamps")
-	var tls = flag.Bool("tls", false, "Use Secure Connection")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -35,14 +34,7 @@ func main() {
 		usage()
 	}
 
-	opts := nats.DefaultOptions
-	opts.Servers = strings.Split(*urls, ",")
-	for i, s := range opts.Servers {
-		opts.Servers[i] = strings.Trim(s, " ")
-	}
-	opts.Secure = *tls
-
-	nc, err := opts.Connect()
+	nc, err := nats.Connect(*urls)
 	if err != nil {
 		log.Fatalf("Can't connect: %v\n", err)
 	}
@@ -50,7 +42,7 @@ func main() {
 	subj, queue, i := args[0], args[1], 0
 
 	nc.QueueSubscribe(subj, queue, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
 	})
 

@@ -11,8 +11,10 @@ import (
 	pb "github.com/nats-io/nats/encoders/protobuf/testdata"
 )
 
+const TEST_PORT = 8068
+
 func NewProtoEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewDefaultConnection(tl), protobuf.PROTOBUF_ENCODER)
+	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), protobuf.PROTOBUF_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -20,7 +22,7 @@ func NewProtoEncodedConn(tl test.TestLogger) *nats.EncodedConn {
 }
 
 func TestProtoMarshalStruct(t *testing.T) {
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewProtoEncodedConn(t)
@@ -65,7 +67,7 @@ func BenchmarkPublishProtobufStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunDefaultServer()
+	s := test.RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewProtoEncodedConn(b)
