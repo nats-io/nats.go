@@ -1,7 +1,6 @@
 language: go
 sudo: false
 go:
-- 1.4
 - 1.5
 install:
 - DST=~/gopath/src/github.com/nats-io
@@ -11,10 +10,10 @@ install:
 - go get golang.org/x/tools/cmd/vet
 - go get golang.org/x/tools/cmd/cover
 - go get github.com/mattn/goveralls
+- go get github.com/wadey/gocovmerge
 script:
 - go fmt ./...
 - go vet ./...
 - go test -i -race ./...
 - go test -v -race ./...
-- GOMAXPROCS=1 go test -v -p=1 -covermode=count -coverprofile=coverage.out ./test
-- $HOME/gopath/bin/goveralls -coverprofile coverage.out -service travis-ci
+- ./scripts/cov.sh TRAVIS
