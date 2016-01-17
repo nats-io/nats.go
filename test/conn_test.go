@@ -172,6 +172,25 @@ func TestServerSecureConnections(t *testing.T) {
 	defer nc.Close()
 }
 
+func TestServerTLSHintConnections(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tls.conf")
+	defer s.Shutdown()
+
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureURL := fmt.Sprintf("tls://%s:%s@%s/", opts.Username, opts.Password, endpoint)
+
+	nc, err := nats.Connect(secureURL, nats.RootCAs("./configs/certs/badca.pem"))
+	if err == nil {
+		t.Fatal("Expected an error from bad RootCA file")
+	}
+
+	nc, err = nats.Connect(secureURL, nats.RootCAs("./configs/certs/ca.pem"))
+	if err != nil {
+		t.Fatal("Failed to create secure (TLS) connection", err)
+	}
+	defer nc.Close()
+}
+
 func TestClosedConnections(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

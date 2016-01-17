@@ -13,7 +13,10 @@ func ExampleConnect() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
 
-	nc, _ = nats.Connect("nats://derek:secretpassword@nats.apcera.com:4222")
+	nc, _ = nats.Connect("nats://derek:secretpassword@demo.nats.io:4222")
+	nc.Close()
+
+	nc, _ = nats.Connect("tls://derek:secretpassword@demo.nats.io:4443")
 	nc.Close()
 
 	opts := nats.Options{

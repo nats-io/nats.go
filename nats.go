@@ -1,4 +1,4 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2016 Apcera Inc. All rights reserved.
 
 // A Go client for the NATS messaging system (https://nats.io).
 package nats
@@ -8,11 +8,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/url"
 	"regexp"
@@ -41,25 +43,26 @@ const (
 )
 
 // STALE_CONNECTION is for detection and proper handling of stale connections.
-const STALE_CONNECTION = "Stale Connection"
+const STALE_CONNECTION = "stale connection"
 
 // Errors
 var (
-	ErrConnectionClosed   = errors.New("nats: Connection Closed")
-	ErrSecureConnRequired = errors.New("nats: Secure Connection required")
-	ErrSecureConnWanted   = errors.New("nats: Secure Connection not available")
-	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
-	ErrBadSubject         = errors.New("nats: Invalid Subject")
-	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
-	ErrTimeout            = errors.New("nats: Timeout")
-	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
-	ErrAuthorization      = errors.New("nats: Authorization Failed")
-	ErrNoServers          = errors.New("nats: No servers available for connection")
-	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
-	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
-	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
-	ErrMaxMessages        = errors.New("nats: Maximum messages delivered")
-	ErrSyncSubRequired    = errors.New("nats: Illegal call on an async Subscription")
+	ErrConnectionClosed   = errors.New("nats: connection closed")
+	ErrSecureConnRequired = errors.New("nats: secure connection required")
+	ErrSecureConnWanted   = errors.New("nats: secure connection not available")
+	ErrBadSubscription    = errors.New("nats: invalid subscription")
+	ErrBadSubject         = errors.New("nats: invalid subject")
+	ErrSlowConsumer       = errors.New("nats: slow consumer, messages dropped")
+	ErrTimeout            = errors.New("nats: timeout")
+	ErrBadTimeout         = errors.New("nats: timeout invalid")
+	ErrAuthorization      = errors.New("nats: authorization failed")
+	ErrNoServers          = errors.New("nats: no servers available for connection")
+	ErrJsonParse          = errors.New("nats: connect message, json parse err")
+	ErrChanArg            = errors.New("nats: argument needs to be a channel type")
+	ErrMaxPayload         = errors.New("nats: maximum payload exceeded")
+	ErrMaxMessages        = errors.New("nats: maximum messages delivered")
+	ErrSyncSubRequired    = errors.New("nats: illegal call on an async subscription")
+	ErrMultipleTLSConfigs = errors.New("nats: multiple tls.Configs not allowed")
 	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -93,7 +96,7 @@ type ConnHandler func(*Conn)
 type ErrHandler func(*Conn, *Subscription, error)
 
 // Option is a function on the options for a connection.
-type Option func(*Options)
+type Option func(*Options) error
 
 // Options can be used to create a customized connection.
 type Options struct {
@@ -260,7 +263,9 @@ func Connect(url string, options ...Option) (*Conn, error) {
 	opts := DefaultOptions
 	opts.Servers = processUrlString(url)
 	for _, opt := range options {
-		opt(&opts)
+		if err := opt(&opts); err != nil {
+			return nil, err
+		}
 	}
 	return opts.Connect()
 }
@@ -269,84 +274,122 @@ func Connect(url string, options ...Option) (*Conn, error) {
 
 // Name is an Option to set the client name.
 func Name(name string) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.Name = name
+		return nil
 	}
 }
 
 // Secure is an Option to enable TLS secure connections that skip server verification by default.
 // Pass a TLS Configuration for proper TLS.
 func Secure(tls ...*tls.Config) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.Secure = true
 		// Use of variadic just simplifies testing scenarios. We only take the first one.
 		// fixme(DLC) - Could panic if more than one. Could also do TLS option.
-		if len(tls) > 0 {
+		if len(tls) > 1 {
+			return ErrMultipleTLSConfigs
+		}
+		if len(tls) == 1 {
 			o.TLSConfig = tls[0]
 		}
+		return nil
+	}
+}
+
+// RootCAs is a helper option to provide the RootCAs pool from a list of fileNames. If Secure is
+// not already set this will set it as well.
+func RootCAs(file ...string) Option {
+	return func(o *Options) error {
+		pool := x509.NewCertPool()
+		for _, f := range file {
+			rootPEM, err := ioutil.ReadFile(f)
+			if err != nil || rootPEM == nil {
+				return fmt.Errorf("nats: error loading or parsing rootCA file: %v", err)
+			}
+			ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+			if !ok {
+				return fmt.Errorf("nats: failed to parse root certificate from %q", f)
+			}
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSConfig.RootCAs = pool
+		o.Secure = true
+		return nil
 	}
 }
 
 // NoReconnect is an Option to turn off reconnect behavior.
 func NoReconnect() Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.AllowReconnect = false
+		return nil
 	}
 }
 
 // DontRandomize is an Option to turn off randomizing the server pool.
 func DontRandomize() Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.NoRandomize = true
+		return nil
 	}
 }
 
 // ReconnectWait is an Option to set the wait time between reconnect attempts.
 func ReconnectWait(t time.Duration) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.ReconnectWait = t
+		return nil
 	}
 }
 
 // MaxReconnects is an Option to set the maximum number of reconnect attempts.
 func MaxReconnects(max int) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.MaxReconnect = max
+		return nil
 	}
 }
 
 // Timeout is an Option to set the timeout for Dial on a connection.
 func Timeout(t time.Duration) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.Timeout = t
+		return nil
 	}
 }
 
 // DisconnectHandler is an Option to set the disconnected handler.
 func DisconnectHandler(cb ConnHandler) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.DisconnectedCB = cb
+		return nil
 	}
 }
 
 // ReconnectHandler is an Option to set the reconnected handler.
 func ReconnectHandler(cb ConnHandler) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.ReconnectedCB = cb
+		return nil
 	}
 }
 
 // ClosedHandler is an Option to set the closed handler.
 func ClosedHandler(cb ConnHandler) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.ClosedCB = cb
+		return nil
 	}
 }
 
 // ErrHandler is an Option to set the async error  handler.
 func ErrorHandler(cb ErrHandler) Option {
-	return func(o *Options) {
+	return func(o *Options) error {
 		o.AsyncErrorCB = cb
+		return nil
 	}
 }
 
@@ -500,6 +543,8 @@ func (nc *Conn) pickServer() error {
 	return ErrNoServers
 }
 
+const tlsScheme = "tls"
+
 // Create the server pool using the options given.
 // We will place a Url option first, followed by any
 // Server Options. We will randomize the server pool unlesss
@@ -546,6 +591,17 @@ func (nc *Conn) setupServerPool() error {
 		nc.srvPool = append(nc.srvPool, s)
 	}
 
+	// Check for Scheme hint to move to TLS mode.
+	for _, srv := range nc.srvPool {
+		if srv.url.Scheme == tlsScheme {
+			// FIXME(dlc), this is for all in the pool, should be case by case.
+			nc.Opts.Secure = true
+			if nc.Opts.TLSConfig == nil {
+				nc.Opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			}
+		}
+	}
+
 	return nc.pickServer()
 }
 
@@ -586,7 +642,13 @@ func (nc *Conn) makeTLSConn() {
 	// default to InsecureSkipVerify.
 	// TODO(dlc) - We should make the more secure version the default.
 	if nc.Opts.TLSConfig != nil {
-		nc.conn = tls.Client(nc.conn, nc.Opts.TLSConfig)
+		tlsCopy := *nc.Opts.TLSConfig
+		// If its blank we will override it with the current host
+		if tlsCopy.ServerName == _EMPTY_ {
+			h, _, _ := net.SplitHostPort(nc.url.Host)
+			tlsCopy.ServerName = h
+		}
+		nc.conn = tls.Client(nc.conn, &tlsCopy)
 	} else {
 		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	}
