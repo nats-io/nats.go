@@ -19,7 +19,42 @@ go get github.com/nats-io/gnatsd
 gem install nats
 ```
 
-## Basic Encoded Usage
+## Basic Usage
+
+```go
+
+nc, _ := nats.Connect(nats.DefaultURL)
+
+// Simple Publisher
+nc.Publish("foo", []byte("Hello World"))
+
+// Simple Async Subscriber
+nc.Subscribe("foo", func(m *Msg) {
+    fmt.Printf("Received a message: %s\n", string(m.Data))
+})
+
+// Simple Sync Subscriber
+sub, err := nc.SubscribeSync("foo")
+m, err := sub.NextMsg(timeout)
+
+// Unsubscribing
+sub, err := nc.Subscribe("foo", nil)
+sub.Unsubscribe()
+
+// Requests
+msg, err := nc.Request("help", []byte("help me"), 10*time.Millisecond)
+
+// Replies
+nc.Subscribe("help", func(m *Msg) {
+    nc.Publish(m.Reply, []byte("I can help!"))
+})
+
+// Close connection
+nc := nats.Connect("nats://localhost:4222")
+nc.Close();
+```
+
+## Encoded Connections
 
 ```go
 
@@ -76,37 +111,21 @@ c.Close();
 ## TLS
 
 ```go
-// There is a SecureConnect() for NATS, but this by default does NOT verify the server identity, use with caution and only for testing!
-nc, err := nats.SecureConnect(secureUrl)
+// tls as a scheme will enable secure connections by default. This will also verify the server name.
+nc, err := nats.Connect("tls://nats.demo.io:4443")
 
-// The better way is to setup the tls.Config as needed and pass via the options.
-// To start, set secure boolean on NATS options.
-opts := nats.DefaultOptions
-opts.Url = url
-opts.Secure = true
+// If you are using a self-signed certificate, you need to have a tls.Config with RootCAs setup.
+// We provide a helper method to make this case easier.
+nc, err = nats.Connect("tls://localhost:4443", nats.RootCAs("./configs/certs/ca.pem"))
 
-// For a server with a trusted chain built into the client host, simply designate the server name that is expected.
-config := &tls.Config{
-    ServerName: opts.Host,
-    MinVersion: tls.VersionTLS12,
-}
-
-// If you are using a self-signed cert and need to load in the CA.
-rootPEM, err := ioutil.ReadFile("./configs/certs/ca.pem")
-if err != nil || rootPEM == nil {
-    t.Fatalf("failed to read root certificate")
-}
-pool := x509.NewCertPool()
-ok := pool.AppendCertsFromPEM([]byte(rootPEM))
-if !ok {
-    t.Fatalf("failed to parse root certificate")
-}
-
+// You can also supply a complete tls.Config
 config := &tls.Config{
     ServerName: opts.Host,
     RootCAs:    pool,
     MinVersion: tls.VersionTLS12,
 }
+
+nc, err = nats.Connect("nats://localhost:4443", nats.Secure(config))
 
 // If the server requires client certificates..
 certFile := "./configs/certs/client-cert.pem"
@@ -122,10 +141,7 @@ config := &tls.Config{
     MinVersion:   tls.VersionTLS12,
 }
 
-// Now add to the options and connect.
-opts.TLSConfig = config
-
-nc, err := opts.Connect()
+nc, err = nats.Connect("nats://localhost:4443", nats.Secure(config))
 if err != nil {
 	t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
 }
@@ -158,41 +174,6 @@ sendCh <- me
 
 // Receive via Go channels
 who := <- recvCh
-```
-
-## Basic Usage
-
-```go
-
-nc, _ := nats.Connect(nats.DefaultURL)
-
-// Simple Publisher
-nc.Publish("foo", []byte("Hello World"))
-
-// Simple Async Subscriber
-nc.Subscribe("foo", func(m *Msg) {
-    fmt.Printf("Received a message: %s\n", string(m.Data))
-})
-
-// Simple Sync Subscriber
-sub, err := nc.SubscribeSync("foo")
-m, err := sub.NextMsg(timeout)
-
-// Unsubscribing
-sub, err := nc.Subscribe("foo", nil)
-sub.Unsubscribe()
-
-// Requests
-msg, err := nc.Request("help", []byte("help me"), 10*time.Millisecond)
-
-// Replies
-nc.Subscribe("help", func(m *Msg) {
-    nc.Publish(m.Reply, []byte("I can help!"))
-})
-
-// Close connection
-nc := nats.Connect("nats://localhost:4222")
-nc.Close();
 ```
 
 ## Wildcard Subscriptions
@@ -270,44 +251,34 @@ nc2.Publish("foo", []byte("Hello World!"));
 
 ```go
 
-var servers = []string{
-	"nats://localhost:1222",
-	"nats://localhost:1223",
-	"nats://localhost:1224",
-}
+var servers = "nats://localhost:1222, nats://localhost:1223, nats://localhost:1224"
 
-// Setup options to include all servers in the cluster
-opts := nats.DefaultOptions
-opts.Servers = servers
+nc, err := nats.Connect(servers)
 
 // Optionally set ReconnectWait and MaxReconnect attempts.
 // This example means 10 seconds total per backend.
-opts.MaxReconnect = 5
-opts.ReconnectWait = (2 * time.Second)
+nc, err = nats.Connect(servers, nats.MaxReconnects(5), nats.ReconnectWait(2 * time.Second))
 
 // Optionally disable randomization of the server pool
-opts.NoRandomize = true
-
-nc, err := opts.Connect()
+nc, err = nats.Connect(servers, nats.DontRandomize())
 
 // Setup callbacks to be notified on disconnects and reconnects
-nc.Opts.DisconnectedCB = func(_ *Conn) {
-    fmt.Printf("Got disconnected!\n")
-}
-
-// See who we are connected to on reconnect.
-nc.Opts.ReconnectedCB = func(nc *Conn) {
-    fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())
-}
+nc, err = nats.Connect(servers,
+	nats.DisconnectHandler(func(nc *nats.Conn) {
+		fmt.Printf("Got disconnected!\n")
+	}),
+	nats.ReconnectHandler(func(_ *nats.Conn) {
+		fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())
+	})
+)
 
 ```
-
 
 ## License
 
 (The MIT License)
 
-Copyright (c) 2012-2015 Apcera Inc.
+Copyright (c) 2012-2016 Apcera Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
