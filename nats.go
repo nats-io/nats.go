@@ -1741,7 +1741,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		delivered := atomic.AddUint64(&s.delivered, 1)
 		if max > 0 {
 			if delivered > max {
-				return nil, errors.New("nats: Max messages delivered")
+				return nil, ErrMaxMessages
 			}
 			// Remove subscription if we have reached max.
 			if delivered == max {
