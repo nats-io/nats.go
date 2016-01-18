@@ -10,13 +10,9 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 # Go client
 go get github.com/nats-io/nats
 
-# Servers
+# Server
 
-# gnatsd
 go get github.com/nats-io/gnatsd
-
-# nats-server (Ruby)
-gem install nats
 ```
 
 ## Basic Usage
@@ -37,8 +33,12 @@ nc.Subscribe("foo", func(m *Msg) {
 sub, err := nc.SubscribeSync("foo")
 m, err := sub.NextMsg(timeout)
 
-// Unsubscribing
-sub, err := nc.Subscribe("foo", nil)
+// Channel Subscriber
+ch := make(chan *nats.Msg, 64)
+sub, err := nc.ChanSubscribe("foo", ch)
+msg <- ch
+
+// Unsubscribe
 sub.Unsubscribe()
 
 // Requests
@@ -82,12 +82,12 @@ c.Subscribe("hello", func(p *person) {
     fmt.Printf("Received a person: %+v\n", p)
 })
 
-me := &person{Name: "derek", Age: 22, Address: "585 Howard Street, San Francisco, CA"}
+me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery Street, San Francisco, CA"}
 
 // Go type Publisher
 c.Publish("hello", me)
 
-// Unsubscribing
+// Unsubscribe
 sub, err := c.Subscribe("foo", nil)
 ...
 sub.Unsubscribe()
@@ -167,7 +167,7 @@ ec.BindRecvChan("hello", recvCh)
 sendCh := make(chan *person)
 ec.BindSendChan("hello", sendCh)
 
-me := &person{Name: "derek", Age: 22, Address: "585 Howard Street"}
+me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery Street"}
 
 // Send via Go channels
 sendCh <- me

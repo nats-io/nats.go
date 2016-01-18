@@ -9,6 +9,7 @@ go test -v -covermode=atomic -coverprofile=./cov/protobuf.out ./encoders/protobu
 go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/nats ./test
 gocovmerge ./cov/*.out > acc.out
 rm -rf ./cov
+
 # If we have an arg, assume travis run and push to coveralls. Otherwise launch browser results
 if [[ -n $1 ]]; then
     $HOME/gopath/bin/goveralls -coverprofile=acc.out -service travis-ci

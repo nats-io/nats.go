@@ -37,8 +37,8 @@ const (
 	DefaultTimeout       = 2 * time.Second
 	DefaultPingInterval  = 2 * time.Minute
 	DefaultMaxPingOut    = 2
-	DefaultMaxChanLen    = 65536
-	RequestChanLen       = 4
+	DefaultMaxChanLen    = 1024
+	RequestChanLen       = 8
 	LangString           = "go"
 )
 
@@ -194,14 +194,26 @@ type Subscription struct {
 	Queue string
 
 	msgs       uint64
+	dropped    uint64
 	bytes      uint64
 	max        uint64
 	conn       *Conn
-	closed     bool
 	mcb        MsgHandler
 	mch        chan *Msg
+	closed     bool
 	sc         bool
 	connClosed bool
+
+	// Async linked list
+	pHead *Msg
+	pTail *Msg
+	pCond *sync.Cond
+
+	// Pending stats
+	pMsgs       int64
+	pBytes      int64
+	pMsgsLimit  int64
+	pBytesLimit int64
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -210,6 +222,7 @@ type Msg struct {
 	Reply   string
 	Data    []byte
 	Sub     *Subscription
+	next    *Msg
 }
 
 // Tracks various stats received and sent on this connection,
@@ -1191,42 +1204,41 @@ func (nc *Conn) readLoop() {
 	nc.mu.Unlock()
 }
 
-// deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
+// waitForMsgs waits on the conditional shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
-func (nc *Conn) deliverMsgs(s *Subscription) {
+func (nc *Conn) waitForMsgs(s *Subscription) {
 	var closed bool
-	var delivered uint64
-	var max uint64
-
-	s.mu.Lock()
-	mcb := s.mcb
-	ch := s.mch
-	if ch == nil {
-		// We were unsubscribed before we had a chance to start. We are done!
-		s.mu.Unlock()
-		return
-	}
-	s.mu.Unlock()
+	var delivered, max uint64
 
 	for {
-
-		m, ok := <-ch
-		if !ok {
-			break
-		}
-
-		// Capture under lock
 		s.mu.Lock()
+		if s.pHead == nil && !s.closed {
+			s.pCond.Wait()
+		}
+		// Pop the msg off the list
+		m := s.pHead
+		if m != nil {
+			s.pHead = m.next
+			if s.pHead == nil {
+				s.pTail = nil
+			}
+			s.pMsgs--
+			s.pBytes -= int64(len(m.Data))
+		}
+		mcb := s.mcb
 		max = s.max
 		closed = s.closed
-		s.delivered++
-		delivered = s.delivered
+		if !s.closed {
+			s.delivered++
+			delivered = s.delivered
+		}
 		s.mu.Unlock()
 
 		if closed {
 			break
 		}
 
+		// Deliver the message.
 		if max <= 0 || delivered <= max {
 			mcb(m)
 		}
@@ -1286,14 +1298,46 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.msgs++
 	sub.bytes += uint64(len(data))
 
+	sub.pMsgs++
+	sub.pBytes += int64(len(m.Data))
+
+	// Check for a Slow Consumer
+	if sub.pMsgs > sub.pMsgsLimit || sub.pBytes > sub.pBytesLimit {
+		sub.dropped++
+		nc.processSlowConsumer(sub)
+		// Undo stats from above
+		sub.pMsgs--
+		sub.pBytes -= int64(len(m.Data))
+		sub.mu.Unlock()
+		nc.mu.Unlock()
+		return
+	}
+
+	// Clear Slow Consumer status.
+	sub.sc = false
+
+	// We have two modes of delivery. One is the channel, used by channel
+	// subscribers and syncSubscribers, the other is a linked list for async.
 	if sub.mch != nil {
-		if len(sub.mch) >= nc.Opts.SubChanLen {
+		select {
+		case sub.mch <- m:
+		default:
+			sub.dropped++
 			nc.processSlowConsumer(sub)
-		} else {
-			// Clear always
-			sub.sc = false
-			sub.mch <- m
+			// Undo stats from above
+			sub.pMsgs--
+			sub.pBytes -= int64(len(m.Data))
 		}
+	} else {
+		// Push onto the async pList
+		if sub.pHead == nil {
+			sub.pHead = m
+			sub.pTail = m
+		} else {
+			sub.pTail.next = m
+			sub.pTail = m
+		}
+		sub.pCond.Signal()
 	}
 
 	sub.mu.Unlock()
@@ -1527,7 +1571,8 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, RequestChanLen)
+	ch := make(chan *Msg, RequestChanLen)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, RequestChanLen, ch)
 	if err != nil {
 		return nil, err
 	}
@@ -1552,10 +1597,61 @@ func NewInbox() string {
 	return fmt.Sprintf("%s%s", InboxPrefix, hex.EncodeToString(u))
 }
 
+// Subscribe will express interest in the given subject. The subject
+// can have wildcards (partial:*, full:>). Messages will be delivered// to the associated MsgHandler. If no MsgHandler is given, the
+// subscription is a synchronous subscription and can be polled via
+// Subscription.NextMsg().
+func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, cb, nc.Opts.SubChanLen, nil)
+}
+
+// ChanSubscribe will place all messages received on the channel.
+// You should not close the channel until sub.Unsubscribe() has been called.
+func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen, ch)
+}
+
+// ChanQueueSubscribe will place all messages received on the channel.
+// You should not close the channel until sub.Unsubscribe() has been called.
+func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, group, nil, nc.Opts.SubChanLen, ch)
+}
+
+// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
+func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen, nil)
+}
+
+// SubscribeSyncWithChan is syntactic sugar for ChanSubscribe(subject, ch).
+func (nc *Conn) SubscribeSyncWithChan(subj string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen, ch)
+}
+
+// QueueSubscribe creates an asynchronous queue subscriber on the given subject.
+// All subscribers with the same queue name will form the queue group and
+// only one member of the group will be selected to receive any given
+// message asynchronously.
+func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, queue, cb, nc.Opts.SubChanLen, nil)
+}
+
+// QueueSubscribeSync creates a synchronous queue subscriber on the given
+// subject. All subscribers with the same queue name will form the queue
+// group and only one member of the group will be selected to receive any
+// given message synchronously.
+func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
+	return nc.subscribe(subj, queue, nil, nc.Opts.SubChanLen, nil)
+}
+
+// QueueSubscribeSyncWithChan is syntactic sugar for ChanQueueSubscribe(subject, ch).
+func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen, ch)
+}
+
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int, ch chan *Msg) (*Subscription, error) {
 	nc.mu.Lock()
-	// ok here, but defer is expensive
+	// ok here, but defer is generally expensive
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
@@ -1564,12 +1660,21 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 	}
 
 	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
-	sub.mch = make(chan *Msg, chanlen)
+	// Set pending limits.
+	sub.pMsgsLimit = DefaultSubPendingMsgsLimit
+	sub.pBytesLimit = DefaultSubPendingBytesLimit
 
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
 	if cb != nil {
-		go nc.deliverMsgs(sub)
+		sub.pCond = sync.NewCond(&sub.mu)
+		go nc.waitForMsgs(sub)
+	} else {
+		if ch != nil {
+			sub.mch = ch
+		} else {
+			sub.mch = make(chan *Msg, chanlen)
+		}
 	}
 
 	sub.sid = atomic.AddInt64(&nc.ssid, 1)
@@ -1583,69 +1688,6 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 	return sub, nil
 }
 
-// Subscribe will express interest in the given subject. The subject
-// can have wildcards (partial:*, full:>). Messages will be delivered
-// to the associated MsgHandler. If no MsgHandler is given, the
-// subscription is a synchronous subscription and can be polled via
-// Subscription.NextMsg().
-func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb, nc.Opts.SubChanLen)
-}
-
-// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
-func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen)
-}
-
-// QueueSubscribe creates an asynchronous queue subscriber on the given subject.
-// All subscribers with the same queue name will form the queue group and
-// only one member of the group will be selected to receive any given
-// message asynchronously.
-func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb, nc.Opts.SubChanLen)
-}
-
-// QueueSubscribeSync creates a synchronous queue subscriber on the given
-// subject. All subscribers with the same queue name will form the queue
-// group and only one member of the group will be selected to receive any
-// given message synchronously.
-func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil, nc.Opts.SubChanLen)
-}
-
-// unsubscribe performs the low level unsubscribe to the server.
-// Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
-	nc.mu.Lock()
-	// ok here, but defer is expensive
-	defer nc.kickFlusher()
-	defer nc.mu.Unlock()
-
-	if nc.isClosed() {
-		return ErrConnectionClosed
-	}
-
-	s := nc.subs[sub.sid]
-	// Already unsubscribed
-	if s == nil {
-		return nil
-	}
-
-	maxStr := _EMPTY_
-	if max > 0 {
-		s.max = uint64(max)
-		maxStr = strconv.Itoa(max)
-	} else {
-		nc.removeSub(s)
-	}
-	// We will send these for all subs when we reconnect
-	// so that we can suppress here.
-	if !nc.isReconnecting() {
-		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
-	}
-	return nil
-}
-
 // Lock for nc should be held here upon entry
 func (nc *Conn) removeSub(s *Subscription) {
 	delete(nc.subs, s.sid)
@@ -1653,12 +1695,15 @@ func (nc *Conn) removeSub(s *Subscription) {
 	defer s.mu.Unlock()
 	if s.mch != nil {
 		// Kick out deliverMsgs Goroutine
-		close(s.mch)
+		// close(s.mch)
 		s.mch = nil
 	}
 	// Mark as invalid
 	s.conn = nil
 	s.closed = true
+	if s.pCond != nil {
+		s.pCond.Broadcast()
+	}
 }
 
 // IsValid returns a boolean indicating whether the subscription
@@ -1693,6 +1738,39 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 		return ErrBadSubscription
 	}
 	return conn.unsubscribe(s, max)
+}
+
+// unsubscribe performs the low level unsubscribe to the server.
+// Use Subscription.Unsubscribe()
+func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
+	nc.mu.Lock()
+	// ok here, but defer is expensive
+	defer nc.kickFlusher()
+	defer nc.mu.Unlock()
+
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+
+	s := nc.subs[sub.sid]
+	// Already unsubscribed
+	if s == nil {
+		return nil
+	}
+
+	maxStr := _EMPTY_
+	if max > 0 {
+		s.max = uint64(max)
+		maxStr = strconv.Itoa(max)
+	} else {
+		nc.removeSub(s)
+	}
+	// We will send these for all subs when we reconnect
+	// so that we can suppress here.
+	if !nc.isReconnecting() {
+		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	}
+	return nil
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber
@@ -1738,7 +1816,14 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		delivered := atomic.AddUint64(&s.delivered, 1)
+		// Update some stats.
+		s.mu.Lock()
+		s.delivered++
+		s.pMsgs--
+		s.pBytes -= int64(len(msg.Data))
+		delivered := s.delivered
+		s.mu.Unlock()
+
 		if max > 0 {
 			if delivered > max {
 				return nil, errors.New("nats: Max messages delivered")
@@ -1759,13 +1844,57 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 }
 
 // Queued returns the number of queued messages in the client for this subscription.
+// DEPRECATED: Use Pending()
 func (s *Subscription) QueuedMsgs() (int, error) {
+	m, _, err := s.Pending()
+	return int(m), err
+}
+
+// Pending returns the number of queued messages and queued bytes in the client for this subscription.
+func (s *Subscription) Pending() (int64, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, -1, ErrBadSubscription
+	}
+	return s.pMsgs, s.pBytes, nil
+}
+
+// Pending Limits
+const (
+	DefaultSubPendingMsgsLimit  = 65536
+	DefaultSubPendingBytesLimit = 65536 * 1024
+)
+
+// PendingLimits returns the current limits for this subscription.
+func (s *Subscription) PendingLimits() (int64, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, -1, ErrBadSubscription
+	}
+	return s.pMsgsLimit, s.pBytesLimit, nil
+}
+
+// SetPendingLimits sets the limits for pending msgs and bytes for this subscription.
+func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return ErrBadSubscription
+	}
+	s.pMsgsLimit, s.pBytesLimit = msgLimit, bytesLimit
+	return nil
+}
+
+// Delivered returns the number of delivered messages for this subscription.
+func (s *Subscription) Delivered() (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
 		return -1, ErrBadSubscription
 	}
-	return len(s.mch), nil
+	return int64(s.delivered), nil
 }
 
 // FIXME: This is a hack
@@ -1864,6 +1993,7 @@ func (nc *Conn) Flush() error {
 }
 
 // Buffered will return the number of bytes buffered to be sent to the server.
+// FIXME(dlc) take into account disconnected state.
 func (nc *Conn) Buffered() (int, error) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()

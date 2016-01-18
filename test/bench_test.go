@@ -37,9 +37,9 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 
 	ch := make(chan bool)
 
-	nc.Opts.AsyncErrorCB = func(nc *nats.Conn, s *nats.Subscription, err error) {
+	nc.SetErrorHandler(func(nc *nats.Conn, s *nats.Subscription, err error) {
 		b.Fatalf("Error : %v\n", err)
-	}
+	})
 
 	received := int32(0)
 
@@ -72,4 +72,32 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 		b.Fatal(nc.LastError())
 	}
 	b.StopTimer()
+}
+
+func BenchmarkAsyncSubscriptionCreationSpeed(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	b.StartTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		nc.Subscribe("foo", func(m *nats.Msg) {})
+	}
+}
+
+func BenchmarkSyncSubscriptionCreationSpeed(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	b.StartTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		nc.SubscribeSync("foo")
+	}
 }
