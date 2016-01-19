@@ -56,11 +56,11 @@ func TestPublishErrorAfterInvalidPublishMessage(t *testing.T) {
 
 	const testSubj = "test"
 
-	c.Publish(testSubj, testdata.Person{Name: "Anatolii"})
+	c.Publish(testSubj, &testdata.Person{Name: "Anatolii"})
 
 	//Sending invalid protobuf message
 	c.Publish(testSubj, "foo")
-	if err := c.Publish(testSubj, testdata.Person{Name: "Anatolii"}); err != nil {
-		t.Error("Fail to send correct json message after invalid message publishing")
+	if err := c.Publish(testSubj, &testdata.Person{Name: "Anatolii"}); err != nil {
+		t.Error("Fail to send correct json message after invalid message publishing", err)
 	}
 }
