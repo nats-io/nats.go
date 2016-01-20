@@ -200,7 +200,6 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	dropped    uint64
 	max        uint64
 	conn       *Conn
 	mcb        MsgHandler
@@ -218,10 +217,11 @@ type Subscription struct {
 	pCond *sync.Cond
 
 	// Pending stats
-	pMsgs       int64
-	pBytes      int64
-	pMsgsLimit  int64
-	pBytesLimit int64
+	pMsgs       int
+	pBytes      int
+	pMsgsLimit  int
+	pBytesLimit int
+	dropped     int
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -1234,7 +1234,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 				s.pTail = nil
 			}
 			s.pMsgs--
-			s.pBytes -= int64(len(m.Data))
+			s.pBytes -= len(m.Data)
 		}
 		mcb := s.mcb
 		max = s.max
@@ -1307,7 +1307,7 @@ func (nc *Conn) processMsg(data []byte) {
 
 	// Sub internal stats
 	sub.pMsgs++
-	sub.pBytes += int64(len(m.Data))
+	sub.pBytes += len(m.Data)
 
 	// Check for a Slow Consumer
 	if sub.pMsgs > sub.pMsgsLimit || sub.pBytes > sub.pBytesLimit {
@@ -1346,7 +1346,7 @@ slowConsumer:
 	nc.processSlowConsumer(sub)
 	// Undo stats from above
 	sub.pMsgs--
-	sub.pBytes -= int64(len(m.Data))
+	sub.pBytes -= len(m.Data)
 	sub.mu.Unlock()
 	nc.mu.Unlock()
 	return
@@ -1863,7 +1863,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		delivered := s.delivered
 		if s.typ == SyncSubscription {
 			s.pMsgs--
-			s.pBytes -= int64(len(msg.Data))
+			s.pBytes -= len(msg.Data)
 		}
 		s.mu.Unlock()
 
@@ -1894,7 +1894,7 @@ func (s *Subscription) QueuedMsgs() (int, error) {
 }
 
 // Pending returns the number of queued messages and queued bytes in the client for this subscription.
-func (s *Subscription) Pending() (int64, int64, error) {
+func (s *Subscription) Pending() (int, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1913,7 +1913,7 @@ const (
 )
 
 // PendingLimits returns the current limits for this subscription.
-func (s *Subscription) PendingLimits() (int64, int64, error) {
+func (s *Subscription) PendingLimits() (int, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1926,7 +1926,7 @@ func (s *Subscription) PendingLimits() (int64, int64, error) {
 }
 
 // SetPendingLimits sets the limits for pending msgs and bytes for this subscription.
-func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int64) error {
+func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1953,13 +1953,13 @@ func (s *Subscription) Delivered() (int64, error) {
 // This will correspond to messages dropped by violations of PendingLimits. If
 // the server declares the connection a SlowConsumer, this number may not be
 // valid.
-func (s *Subscription) Dropped() (int64, error) {
+func (s *Subscription) Dropped() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
 		return -1, ErrBadSubscription
 	}
-	return int64(s.dropped), nil
+	return s.dropped, nil
 }
 
 // FIXME: This is a hack

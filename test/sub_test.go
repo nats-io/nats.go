@@ -234,8 +234,8 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	}
 
 	// Set new limits
-	pml := int64(100)
-	pbl := int64(1024 * 1024)
+	pml := 100
+	pbl := 1024 * 1024
 
 	sub.SetPendingLimits(pml, pbl)
 
@@ -297,7 +297,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	toSend := 100
 
 	// Limit internal subchan length to trip condition easier.
-	sub.SetPendingLimits(int64(limit), 1024)
+	sub.SetPendingLimits(limit, 1024)
 
 	ch := make(chan bool)
 
@@ -336,7 +336,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		t.Fatal("Failed to call async err handler")
 	}
 	// Make sure dropped stats is correct.
-	if d, _ := sub.Dropped(); d != int64(toSend-limit) {
+	if d, _ := sub.Dropped(); d != toSend-limit {
 		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
@@ -393,7 +393,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 		t.Fatal("Failed to call async err handler")
 	}
 	// Make sure dropped stats is correct.
-	if d, _ := sub.Dropped(); d != int64(toSend-limit) {
+	if d, _ := sub.Dropped(); d != toSend-limit {
 		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
@@ -656,15 +656,14 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 
 	// New way, make sure the same and check bytes.
 	m, b, _ := sub.Pending()
-	total64 := int64(total)
-	mlen := int64(len(msg))
+	mlen := len(msg)
 
-	if m != total64 && m != total64-1 {
-		t.Fatalf("Expected msgs of %d or %d, got %d\n", total64, total64-1, m)
+	if m != total && m != total-1 {
+		t.Fatalf("Expected msgs of %d or %d, got %d\n", total, total-1, m)
 	}
-	if b != total64*mlen && b != (total64-1)*mlen {
+	if b != total*mlen && b != (total-1)*mlen {
 		t.Fatalf("Expected bytes of %d or %d, got %d\n",
-			total64*mlen, (total64-1)*mlen, b)
+			total*mlen, (total-1)*mlen, b)
 	}
 }
 
@@ -760,14 +759,13 @@ func TestSyncSubscriptionPending(t *testing.T) {
 
 	// New way, make sure the same and check bytes.
 	m, b, _ := sub.Pending()
-	total64 := int64(total)
-	mlen := int64(len(msg))
+	mlen := len(msg)
 
-	if m != total64 {
-		t.Fatalf("Expected msgs of %d, got %d\n", total64, m)
+	if m != total {
+		t.Fatalf("Expected msgs of %d, got %d\n", total, m)
 	}
-	if b != total64*mlen {
-		t.Fatalf("Expected bytes of %d, got %d\n", total64*mlen, b)
+	if b != total*mlen {
+		t.Fatalf("Expected bytes of %d, got %d\n", total*mlen, b)
 	}
 
 	// Now drain some down and make sure pending is correct
