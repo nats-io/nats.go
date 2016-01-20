@@ -168,17 +168,11 @@ func TestSlowSubscriber(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
-	// Make the sub channel length small so that it reduces the risk of failure
-	// when running with GOMAXPROCS=1 (the server would disconnect the client as
-	// a slow consumer). Alternatively, leave SubChanLen alone, but uncomment the
-	// line in the publish loop).
-	nc.Opts.SubChanLen = 100
-
 	sub, _ := nc.SubscribeSync("foo")
+	sub.SetPendingLimits(100, 1024)
 
-	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {
+	for i := 0; i < 200; i++ {
 		nc.Publish("foo", []byte("Hello"))
-		//		runtime.Gosched()
 	}
 	timeout := 5 * time.Second
 	start := time.Now()
@@ -194,6 +188,29 @@ func TestSlowSubscriber(t *testing.T) {
 	}
 }
 
+func TestSlowChanSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	ch := make(chan *nats.Msg, 64)
+	sub, _ := nc.ChanSubscribe("foo", ch)
+	sub.SetPendingLimits(100, 1024)
+
+	for i := 0; i < 200; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+	timeout := 5 * time.Second
+	start := time.Now()
+	nc.FlushTimeout(timeout)
+	elapsed := time.Since(start)
+	if elapsed >= timeout {
+		t.Fatalf("Flush did not return before timeout: %d > %d", elapsed, timeout)
+	}
+}
+
 func TestSlowAsyncSubscriber(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -203,20 +220,38 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 
 	bch := make(chan bool)
 
-	// Make the sub channel length small so that it reduces the risk of failure
-	// when running with GOMAXPROCS=1 (the server would disconnect the client as
-	// a slow consumer). Alternatively, leave SubChanLen alone, but uncomment the
-	// line in the publish loop).
-	nc.Opts.SubChanLen = 100
-
-	nc.Subscribe("foo", func(_ *nats.Msg) {
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
 		// block to back us up..
 		<-bch
 	})
-	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {
-		nc.Publish("foo", []byte("Hello"))
-		//		runtime.Gosched()
+	// Make sure these are the defaults
+	pm, pb, _ := sub.PendingLimits()
+	if pm != nats.DefaultSubPendingMsgsLimit {
+		t.Fatalf("Pending limit for number of msgs incorrect, expected %d, got %d\n", nats.DefaultSubPendingMsgsLimit, pm)
 	}
+	if pb != nats.DefaultSubPendingBytesLimit {
+		t.Fatalf("Pending limit for number of bytes incorrect, expected %d, got %d\n", nats.DefaultSubPendingBytesLimit, pb)
+	}
+
+	// Set new limits
+	pml := 100
+	pbl := 1024 * 1024
+
+	sub.SetPendingLimits(pml, pbl)
+
+	// Make sure the set is correct
+	pm, pb, _ = sub.PendingLimits()
+	if pm != pml {
+		t.Fatalf("Pending limit for number of msgs incorrect, expected %d, got %d\n", pml, pm)
+	}
+	if pb != pbl {
+		t.Fatalf("Pending limit for number of bytes incorrect, expected %d, got %d\n", pbl, pb)
+	}
+
+	for i := 0; i < (int(pml) + 100); i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
 	timeout := 5 * time.Second
 	start := time.Now()
 	err := nc.FlushTimeout(timeout)
@@ -224,8 +259,12 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	if elapsed >= timeout {
 		t.Fatalf("Flush did not return before timeout")
 	}
-	if err == nil {
-		t.Fatal("Expected an error indicating slow consumer")
+	// We want flush to work, so expect no error for it.
+	if err != nil {
+		t.Fatalf("Expected no error from Flush()\n")
+	}
+	if nc.LastError() != nats.ErrSlowConsumer {
+		t.Fatal("Expected LastError to indicate slow consumer")
 	}
 	// release the sub
 	bch <- true
@@ -235,9 +274,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	// Limit internal subchan length to trip condition easier.
 	opts := nats.DefaultOptions
-	opts.SubChanLen = 10
 
 	nc, err := opts.Connect()
 	if err != nil {
@@ -256,15 +293,17 @@ func TestAsyncErrHandler(t *testing.T) {
 		t.Fatalf("Could not subscribe: %v\n", err)
 	}
 
+	limit := 10
+	toSend := 100
+
+	// Limit internal subchan length to trip condition easier.
+	sub.SetPendingLimits(limit, 1024)
+
 	ch := make(chan bool)
 
 	aeCalled := int64(0)
 
 	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
-		// Suppress additional calls
-		if atomic.LoadInt64(&aeCalled) == 1 {
-			return
-		}
 		atomic.AddInt64(&aeCalled, 1)
 
 		if s != sub {
@@ -273,21 +312,92 @@ func TestAsyncErrHandler(t *testing.T) {
 		if e != nats.ErrSlowConsumer {
 			t.Fatalf("Did not receive proper error: %v vs %v\n", e, nats.ErrSlowConsumer)
 		}
-		// release the sub
-		bch <- true
-
-		// release the test
-		ch <- true
+		// Suppress additional calls
+		if atomic.LoadInt64(&aeCalled) == 1 {
+			// release the sub
+			defer close(bch)
+			// release the test
+			ch <- true
+		}
 	})
 
 	b := []byte("Hello World!")
-	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {
+	// First one trips the ch wait in subscription callback.
+	nc.Publish(subj, b)
+	nc.Flush()
+	for i := 0; i < toSend; i++ {
+		nc.Publish(subj, b)
+	}
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Got an error on Flush:%v\n", err)
+	}
+
+	if e := Wait(ch); e != nil {
+		t.Fatal("Failed to call async err handler")
+	}
+	// Make sure dropped stats is correct.
+	if d, _ := sub.Dropped(); d != toSend-limit {
+		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit, d)
+	}
+	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
+		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
+	}
+}
+
+func TestAsyncErrHandlerChanSubscription(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	opts := nats.DefaultOptions
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Could not connect to server: %v\n", err)
+	}
+	defer nc.Close()
+
+	subj := "chan_test"
+
+	limit := 10
+	toSend := 100
+
+	// Create our own channel.
+	mch := make(chan *nats.Msg, limit)
+	sub, err := nc.ChanSubscribe(subj, mch)
+	if err != nil {
+		t.Fatalf("Could not subscribe: %v\n", err)
+	}
+	ch := make(chan bool)
+	aeCalled := int64(0)
+
+	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
+		atomic.AddInt64(&aeCalled, 1)
+		if e != nats.ErrSlowConsumer {
+			t.Fatalf("Did not receive proper error: %v vs %v\n",
+				e, nats.ErrSlowConsumer)
+		}
+		// Suppress additional calls
+		if atomic.LoadInt64(&aeCalled) == 1 {
+			// release the test
+			ch <- true
+		}
+	})
+
+	b := []byte("Hello World!")
+	for i := 0; i < toSend; i++ {
 		nc.Publish(subj, b)
 	}
 	nc.Flush()
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Failed to call async err handler")
+	}
+	// Make sure dropped stats is correct.
+	if d, _ := sub.Dropped(); d != toSend-limit {
+		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
+	}
+	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
+		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
 	}
 }
 
@@ -386,7 +496,6 @@ func TestNextMsgCallOnClosedSub(t *testing.T) {
 	defer nc.Close()
 	sub, err := nc.SubscribeSync("foo")
 	if err != nil {
-
 		t.Fatal("Failed to subscribe: ", err)
 	}
 
@@ -399,5 +508,322 @@ func TestNextMsgCallOnClosedSub(t *testing.T) {
 		t.Fatal("Expected an error calling NextMsg() on closed subscription")
 	} else if err != nats.ErrBadSubscription {
 		t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())
+	}
+}
+
+func TestChanSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Create our own channel.
+	ch := make(chan *nats.Msg, 128)
+
+	_, err := nc.ChanSubscribe("foo", ch)
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+
+	// Send some messages to ourselves.
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	received := 0
+	tm := time.NewTimer(5 * time.Second)
+	defer tm.Stop()
+
+	// Go ahead and receive
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				t.Fatalf("Got an error reading from channel")
+			}
+		case <-tm.C:
+			t.Fatalf("Timed out waiting on messages")
+		}
+		received++
+		if received >= total {
+			return
+		}
+	}
+}
+
+func TestChanQueueSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Create our own channel.
+	ch1 := make(chan *nats.Msg, 64)
+	ch2 := make(chan *nats.Msg, 64)
+
+	nc.ChanQueueSubscribe("foo", "bar", ch1)
+	nc.ChanQueueSubscribe("foo", "bar", ch2)
+
+	// Send some messages to ourselves.
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	received := 0
+	tm := time.NewTimer(5 * time.Second)
+	defer tm.Stop()
+
+	chk := func(ok bool) {
+		if !ok {
+			t.Fatalf("Got an error reading from channel")
+		} else {
+			received++
+		}
+	}
+
+	// Go ahead and receive
+	for {
+		select {
+		case _, ok := <-ch1:
+			chk(ok)
+		case _, ok := <-ch2:
+			chk(ok)
+		case <-tm.C:
+			t.Fatalf("Timed out waiting on messages")
+		}
+		if received >= total {
+			return
+		}
+	}
+}
+
+func TestCloseChanOnSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Create our own channel.
+	ch := make(chan *nats.Msg, 8)
+	sub, _ := nc.ChanSubscribe("foo", ch)
+
+	// Send some messages to ourselves.
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	sub.Unsubscribe()
+	for len(ch) > 0 {
+		<-ch
+	}
+	// Make sure we can send to the channel still.
+	// Test that we do not close it.
+	ch <- &nats.Msg{}
+}
+
+func TestAsyncSubscriptionPending(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Send some messages to ourselves.
+	total := 100
+	msg := []byte("0123456789")
+
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
+		time.Sleep(1 * time.Second)
+	})
+	defer sub.Unsubscribe()
+
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	// Test old way
+	q, _ := sub.QueuedMsgs()
+	if q != total && q != total-1 {
+		t.Fatalf("Expected %d or %d, got %d\n", total, total-1, q)
+	}
+
+	// New way, make sure the same and check bytes.
+	m, b, _ := sub.Pending()
+	mlen := len(msg)
+
+	if m != total && m != total-1 {
+		t.Fatalf("Expected msgs of %d or %d, got %d\n", total, total-1, m)
+	}
+	if b != total*mlen && b != (total-1)*mlen {
+		t.Fatalf("Expected bytes of %d or %d, got %d\n",
+			total*mlen, (total-1)*mlen, b)
+	}
+}
+
+func TestAsyncSubscriptionPendingDrain(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Send some messages to ourselves.
+	total := 100
+	msg := []byte("0123456789")
+
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	defer sub.Unsubscribe()
+
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	// Wait for all delivered.
+	for d, _ := sub.Delivered(); d != int64(total); d, _ = sub.Delivered() {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	m, b, _ := sub.Pending()
+	if m != 0 {
+		t.Fatalf("Expected msgs of 0, got %d\n", m)
+	}
+	if b != 0 {
+		t.Fatalf("Expected bytes of 0, got %d\n", b)
+	}
+}
+
+func TestSyncSubscriptionPendingDrain(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Send some messages to ourselves.
+	total := 100
+	msg := []byte("0123456789")
+
+	sub, _ := nc.SubscribeSync("foo")
+	defer sub.Unsubscribe()
+
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	// Wait for all delivered.
+	for d, _ := sub.Delivered(); d != int64(total); d, _ = sub.Delivered() {
+		sub.NextMsg(10 * time.Millisecond)
+	}
+
+	m, b, _ := sub.Pending()
+	if m != 0 {
+		t.Fatalf("Expected msgs of 0, got %d\n", m)
+	}
+	if b != 0 {
+		t.Fatalf("Expected bytes of 0, got %d\n", b)
+	}
+}
+
+func TestSyncSubscriptionPending(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	sub, _ := nc.SubscribeSync("foo")
+	defer sub.Unsubscribe()
+
+	// Send some messages to ourselves.
+	total := 100
+	msg := []byte("0123456789")
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	// Test old way
+	q, _ := sub.QueuedMsgs()
+	if q != total && q != total-1 {
+		t.Fatalf("Expected %d or %d, got %d\n", total, total-1, q)
+	}
+
+	// New way, make sure the same and check bytes.
+	m, b, _ := sub.Pending()
+	mlen := len(msg)
+
+	if m != total {
+		t.Fatalf("Expected msgs of %d, got %d\n", total, m)
+	}
+	if b != total*mlen {
+		t.Fatalf("Expected bytes of %d, got %d\n", total*mlen, b)
+	}
+
+	// Now drain some down and make sure pending is correct
+	for i := 0; i < total-1; i++ {
+		sub.NextMsg(10 * time.Millisecond)
+	}
+	m, b, _ = sub.Pending()
+	if m != 1 {
+		t.Fatalf("Expected msgs of 1, got %d\n", m)
+	}
+	if b != mlen {
+		t.Fatalf("Expected bytes of %d, got %d\n", mlen, b)
+	}
+}
+
+func TestSubscriptionTypes(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.AsyncSubscription {
+		t.Fatalf("Expected AsyncSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err != nil {
+		t.Fatalf("We should be able to SetPendingLimits()")
+	}
+	if _, _, err := sub.Pending(); err != nil {
+		t.Fatalf("We should be able to call Pending()")
+	}
+
+	sub, _ = nc.SubscribeSync("foo")
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.SyncSubscription {
+		t.Fatalf("Expected SyncSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err != nil {
+		t.Fatalf("We should be able to SetPendingLimits()")
+	}
+	if _, _, err := sub.Pending(); err != nil {
+		t.Fatalf("We should be able to call Pending()")
+	}
+
+	sub, _ = nc.ChanSubscribe("foo", make(chan *nats.Msg))
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.ChanSubscription {
+		t.Fatalf("Expected ChanSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err == nil {
+		t.Fatalf("We should NOT be able to SetPendingLimits() on ChanSubscriber")
+	}
+	if _, _, err := sub.Pending(); err == nil {
+		t.Fatalf("We should NOT be able to call Pending() on ChanSubscriber")
 	}
 }

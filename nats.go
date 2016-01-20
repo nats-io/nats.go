@@ -29,17 +29,18 @@ import (
 
 // Default Constants
 const (
-	Version              = "1.1.7"
-	DefaultURL           = "nats://localhost:4222"
-	DefaultPort          = 4222
-	DefaultMaxReconnect  = 60
-	DefaultReconnectWait = 2 * time.Second
-	DefaultTimeout       = 2 * time.Second
-	DefaultPingInterval  = 2 * time.Minute
-	DefaultMaxPingOut    = 2
-	DefaultMaxChanLen    = 65536
-	RequestChanLen       = 4
-	LangString           = "go"
+	Version                 = "1.1.7"
+	DefaultURL              = "nats://localhost:4222"
+	DefaultPort             = 4222
+	DefaultMaxReconnect     = 60
+	DefaultReconnectWait    = 2 * time.Second
+	DefaultTimeout          = 2 * time.Second
+	DefaultPingInterval     = 2 * time.Minute
+	DefaultMaxPingOut       = 2
+	DefaultMaxChanLen       = 8192            //8k
+	DefaultReconnectBufSize = 8 * 1024 * 1024 // 8MB
+	RequestChanLen          = 8
+	LangString              = "go"
 )
 
 // STALE_CONNECTION is for detection and proper handling of stale connections.
@@ -47,33 +48,37 @@ const STALE_CONNECTION = "stale connection"
 
 // Errors
 var (
-	ErrConnectionClosed   = errors.New("nats: connection closed")
-	ErrSecureConnRequired = errors.New("nats: secure connection required")
-	ErrSecureConnWanted   = errors.New("nats: secure connection not available")
-	ErrBadSubscription    = errors.New("nats: invalid subscription")
-	ErrBadSubject         = errors.New("nats: invalid subject")
-	ErrSlowConsumer       = errors.New("nats: slow consumer, messages dropped")
-	ErrTimeout            = errors.New("nats: timeout")
-	ErrBadTimeout         = errors.New("nats: timeout invalid")
-	ErrAuthorization      = errors.New("nats: authorization failed")
-	ErrNoServers          = errors.New("nats: no servers available for connection")
-	ErrJsonParse          = errors.New("nats: connect message, json parse err")
-	ErrChanArg            = errors.New("nats: argument needs to be a channel type")
-	ErrMaxPayload         = errors.New("nats: maximum payload exceeded")
-	ErrMaxMessages        = errors.New("nats: maximum messages delivered")
-	ErrSyncSubRequired    = errors.New("nats: illegal call on an async subscription")
-	ErrMultipleTLSConfigs = errors.New("nats: multiple tls.Configs not allowed")
-	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
+	ErrConnectionClosed     = errors.New("nats: connection closed")
+	ErrSecureConnRequired   = errors.New("nats: secure connection required")
+	ErrSecureConnWanted     = errors.New("nats: secure connection not available")
+	ErrBadSubscription      = errors.New("nats: invalid subscription")
+	ErrTypeSubscription     = errors.New("nats: invalid subscription type")
+	ErrBadSubject           = errors.New("nats: invalid subject")
+	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
+	ErrTimeout              = errors.New("nats: timeout")
+	ErrBadTimeout           = errors.New("nats: timeout invalid")
+	ErrAuthorization        = errors.New("nats: authorization failed")
+	ErrNoServers            = errors.New("nats: no servers available for connection")
+	ErrJsonParse            = errors.New("nats: connect message, json parse err")
+	ErrChanArg              = errors.New("nats: argument needs to be a channel type")
+	ErrMaxPayload           = errors.New("nats: maximum payload exceeded")
+	ErrMaxMessages          = errors.New("nats: maximum messages delivered")
+	ErrSyncSubRequired      = errors.New("nats: illegal call on an async subscription")
+	ErrMultipleTLSConfigs   = errors.New("nats: multiple tls.Configs not allowed")
+	ErrNoInfoReceived       = errors.New("nats: protocol exception, INFO not received")
+	ErrReconnectBufExceeded = errors.New("nats: outbound buffer limit exceeded")
+	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 
 var DefaultOptions = Options{
-	AllowReconnect: true,
-	MaxReconnect:   DefaultMaxReconnect,
-	ReconnectWait:  DefaultReconnectWait,
-	Timeout:        DefaultTimeout,
-	PingInterval:   DefaultPingInterval,
-	MaxPingsOut:    DefaultMaxPingOut,
-	SubChanLen:     DefaultMaxChanLen,
+	AllowReconnect:   true,
+	MaxReconnect:     DefaultMaxReconnect,
+	ReconnectWait:    DefaultReconnectWait,
+	Timeout:          DefaultTimeout,
+	PingInterval:     DefaultPingInterval,
+	MaxPingsOut:      DefaultMaxPingOut,
+	SubChanLen:       DefaultMaxChanLen,
+	ReconnectBufSize: DefaultReconnectBufSize,
 }
 
 // Status represents the state of the connection.
@@ -119,9 +124,14 @@ type Options struct {
 	ReconnectedCB  ConnHandler
 	AsyncErrorCB   ErrHandler
 
+	// Size of the backing bufio buffer during reconnect. Once this
+	// has been exhausted publish operations will error.
+	ReconnectBufSize int
+
 	// The size of the buffered channel used between the socket
-	// Go routine and the message delivery or sync subscription.
-	// NOTE: This is temporary as we will move to a better solution.
+	// Go routine and the message delivery or SyncSubscriptions.
+	// NOTE: This does not afffect AsyncSubscriptions which are
+	// dictated by PendingLimits()
 	SubChanLen int
 }
 
@@ -131,9 +141,6 @@ const (
 
 	// The size of the bufio reader/writer on top of the socket.
 	defaultBufSize = 32768
-
-	// The size of the bufio while we are reconnecting
-	defaultPendingSize = 1024 * 1024
 
 	// The buffered size of the flush "kick" channel
 	flushChanSize = 1024
@@ -193,15 +200,28 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	msgs       uint64
-	bytes      uint64
 	max        uint64
 	conn       *Conn
-	closed     bool
 	mcb        MsgHandler
 	mch        chan *Msg
+	closed     bool
 	sc         bool
 	connClosed bool
+
+	// Type of Subscription
+	typ SubscriptionType
+
+	// Async linked list
+	pHead *Msg
+	pTail *Msg
+	pCond *sync.Cond
+
+	// Pending stats
+	pMsgs       int
+	pBytes      int
+	pMsgsLimit  int
+	pBytesLimit int
+	dropped     int
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -210,6 +230,7 @@ type Msg struct {
 	Reply   string
 	Data    []byte
 	Sub     *Subscription
+	next    *Msg
 }
 
 // Tracks various stats received and sent on this connection,
@@ -442,6 +463,10 @@ func (o Options) Connect() (*Conn, error) {
 	// Allow old default for channel length to work correctly.
 	if nc.Opts.SubChanLen == 0 {
 		nc.Opts.SubChanLen = DefaultMaxChanLen
+	}
+	// Default ReconnectBufSize
+	if nc.Opts.ReconnectBufSize == 0 {
+		nc.Opts.ReconnectBufSize = DefaultReconnectBufSize
 	}
 
 	if err := nc.setupServerPool(); err != nil {
@@ -838,7 +863,7 @@ func (nc *Conn) processExpectedInfo() error {
 
 	// The nats protocol should send INFO first always.
 	if c.op != _INFO_OP_ {
-		return errors.New("nats: Protocol exception, INFO not received")
+		return ErrNoInfoReceived
 	}
 
 	// Parse the protocol
@@ -932,7 +957,6 @@ func (nc *Conn) sendConnect() error {
 		if strings.HasPrefix(line, _ERR_OP_) {
 			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
 		}
-
 		return errors.New("nats: " + line)
 	}
 
@@ -1007,7 +1031,7 @@ func (nc *Conn) doReconnect() {
 	// Create a new pending buffer to underpin the bufio Writer while
 	// we are reconnecting.
 	nc.pending = &bytes.Buffer{}
-	nc.bw = bufio.NewWriterSize(nc.pending, defaultPendingSize)
+	nc.bw = bufio.NewWriterSize(nc.pending, nc.Opts.ReconnectBufSize)
 
 	// Clear any errors.
 	nc.err = nil
@@ -1191,43 +1215,42 @@ func (nc *Conn) readLoop() {
 	nc.mu.Unlock()
 }
 
-// deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
+// waitForMsgs waits on the conditional shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
-func (nc *Conn) deliverMsgs(s *Subscription) {
+func (nc *Conn) waitForMsgs(s *Subscription) {
 	var closed bool
-	var delivered uint64
-	var max uint64
-
-	s.mu.Lock()
-	mcb := s.mcb
-	ch := s.mch
-	if ch == nil {
-		// We were unsubscribed before we had a chance to start. We are done!
-		s.mu.Unlock()
-		return
-	}
-	s.mu.Unlock()
+	var delivered, max uint64
 
 	for {
-
-		m, ok := <-ch
-		if !ok {
-			break
-		}
-
-		// Capture under lock
 		s.mu.Lock()
+		if s.pHead == nil && !s.closed {
+			s.pCond.Wait()
+		}
+		// Pop the msg off the list
+		m := s.pHead
+		if m != nil {
+			s.pHead = m.next
+			if s.pHead == nil {
+				s.pTail = nil
+			}
+			s.pMsgs--
+			s.pBytes -= len(m.Data)
+		}
+		mcb := s.mcb
 		max = s.max
 		closed = s.closed
-		s.delivered++
-		delivered = s.delivered
+		if !s.closed {
+			s.delivered++
+			delivered = s.delivered
+		}
 		s.mu.Unlock()
 
 		if closed {
 			break
 		}
 
-		if max <= 0 || delivered <= max {
+		// Deliver the message.
+		if m != nil && (max <= 0 || delivered <= max) {
 			mcb(m)
 		}
 		// If we have hit the max for delivered msgs, remove sub.
@@ -1241,9 +1264,9 @@ func (nc *Conn) deliverMsgs(s *Subscription) {
 }
 
 // processMsg is called by parse and will place the msg on the
-// appropriate channel for processing. All subscribers have their
-// their own channel. If the channel is full, the connection is
-// considered a slow subscriber.
+// appropriate channel/pending queue for processing. If the channel is full,
+// or the pending queue is over the pending limits, the connection is
+// considered a slow consumer.
 func (nc *Conn) processMsg(data []byte) {
 	// Lock from here on out.
 	nc.mu.Lock()
@@ -1275,7 +1298,7 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.mu.Lock()
 
 	// This is a catch all for more than max messages delivered.
-	if sub.max > 0 && sub.msgs > sub.max {
+	if sub.max > 0 && sub.delivered > sub.max {
 		sub.mu.Unlock()
 		nc.removeSub(sub)
 		nc.mu.Unlock()
@@ -1283,21 +1306,50 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs++
-	sub.bytes += uint64(len(data))
+	sub.pMsgs++
+	sub.pBytes += len(m.Data)
 
+	// Check for a Slow Consumer
+	if sub.pMsgs > sub.pMsgsLimit || sub.pBytes > sub.pBytesLimit {
+		goto slowConsumer
+	}
+
+	// We have two modes of delivery. One is the channel, used by channel
+	// subscribers and syncSubscribers, the other is a linked list for async.
 	if sub.mch != nil {
-		if len(sub.mch) >= nc.Opts.SubChanLen {
-			nc.processSlowConsumer(sub)
+		select {
+		case sub.mch <- m:
+		default:
+			goto slowConsumer
+		}
+	} else {
+		// Push onto the async pList
+		if sub.pHead == nil {
+			sub.pHead = m
+			sub.pTail = m
+			sub.pCond.Signal()
 		} else {
-			// Clear always
-			sub.sc = false
-			sub.mch <- m
+			sub.pTail.next = m
+			sub.pTail = m
 		}
 	}
 
+	// Clear SlowConsumer status.
+	sub.sc = false
+
 	sub.mu.Unlock()
 	nc.mu.Unlock()
+	return
+
+slowConsumer:
+	sub.dropped++
+	nc.processSlowConsumer(sub)
+	// Undo stats from above
+	sub.pMsgs--
+	sub.pBytes -= len(m.Data)
+	sub.mu.Unlock()
+	nc.mu.Unlock()
+	return
 }
 
 // processSlowConsumer will set SlowConsumer state and fire the
@@ -1394,11 +1446,9 @@ func (nc *Conn) processErr(e string) {
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
-		var doCbs = true
-
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
-		doCbs = (nc.status != CONNECTING)
+		doCbs := (nc.status != CONNECTING)
 		nc.mu.Unlock()
 		nc.close(CLOSED, doCbs)
 	}
@@ -1413,6 +1463,26 @@ func (nc *Conn) kickFlusher() {
 		default:
 		}
 	}
+}
+
+// Publish publishes the data argument to the given subject. The data
+// argument is left untouched and needs to be correctly interpreted on
+// the receiver.
+func (nc *Conn) Publish(subj string, data []byte) error {
+	return nc.publish(subj, _EMPTY_, data)
+}
+
+// PublishMsg publishes the Msg structure, which includes the
+// Subject, an optional Reply and an optional Data field.
+func (nc *Conn) PublishMsg(m *Msg) error {
+	return nc.publish(m.Subject, m.Reply, m.Data)
+}
+
+// PublishRequest will perform a Publish() excpecting a response on the
+// reply subject. Use Request() for automatically waiting for a response
+// inline.
+func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
+	return nc.publish(subj, reply, data)
 }
 
 // Used for handrolled itoa
@@ -1444,6 +1514,18 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		err := nc.err
 		nc.mu.Unlock()
 		return err
+	}
+
+	// Check if we are reconnecting, and if so check if
+	// we have exceeded our reconnect outbound buffer limits.
+	if nc.isReconnecting() {
+		// Flush to underlying buffer.
+		nc.bw.Flush()
+		// Check if we are over
+		if nc.pending.Len() >= nc.Opts.ReconnectBufSize {
+			nc.mu.Unlock()
+			return ErrReconnectBufExceeded
+		}
 	}
 
 	msgh := nc.scratch[:len(_PUB_P_)]
@@ -1502,32 +1584,13 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	return nil
 }
 
-// Publish publishes the data argument to the given subject. The data
-// argument is left untouched and needs to be correctly interpreted on
-// the receiver.
-func (nc *Conn) Publish(subj string, data []byte) error {
-	return nc.publish(subj, _EMPTY_, data)
-}
-
-// PublishMsg publishes the Msg structure, which includes the
-// Subject, an optional Reply and an optional Data field.
-func (nc *Conn) PublishMsg(m *Msg) error {
-	return nc.publish(m.Subject, m.Reply, m.Data)
-}
-
-// PublishRequest will perform a Publish() excpecting a response on the
-// reply subject. Use Request() for automatically waiting for a response
-// inline.
-func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
-	return nc.publish(subj, reply, data)
-}
-
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
 	inbox := NewInbox()
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, RequestChanLen)
+	ch := make(chan *Msg, RequestChanLen)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch)
 	if err != nil {
 		return nil, err
 	}
@@ -1552,24 +1615,92 @@ func NewInbox() string {
 	return fmt.Sprintf("%s%s", InboxPrefix, hex.EncodeToString(u))
 }
 
+// Subscribe will express interest in the given subject. The subject
+// can have wildcards (partial:*, full:>). Messages will be delivered// to the associated MsgHandler. If no MsgHandler is given, the
+// subscription is a synchronous subscription and can be polled via
+// Subscription.NextMsg().
+func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, cb, nil)
+}
+
+// ChanSubscribe will place all messages received on the channel.
+// You should not close the channel until sub.Unsubscribe() has been called.
+func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, ch)
+}
+
+// ChanQueueSubscribe will place all messages received on the channel.
+// You should not close the channel until sub.Unsubscribe() has been called.
+func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, group, nil, ch)
+}
+
+// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
+func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
+	mch := make(chan *Msg, nc.Opts.SubChanLen)
+	s, e := nc.subscribe(subj, _EMPTY_, nil, mch)
+	if s != nil {
+		s.typ = SyncSubscription
+	}
+	return s, e
+}
+
+// QueueSubscribe creates an asynchronous queue subscriber on the given subject.
+// All subscribers with the same queue name will form the queue group and
+// only one member of the group will be selected to receive any given
+// message asynchronously.
+func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, queue, cb, nil)
+}
+
+// QueueSubscribeSync creates a synchronous queue subscriber on the given
+// subject. All subscribers with the same queue name will form the queue
+// group and only one member of the group will be selected to receive any
+// given message synchronously.
+func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
+	mch := make(chan *Msg, nc.Opts.SubChanLen)
+	s, e := nc.subscribe(subj, queue, nil, mch)
+	if s != nil {
+		s.typ = SyncSubscription
+	}
+	return s, e
+}
+
+// QueueSubscribeSyncWithChan is syntactic sugar for ChanQueueSubscribe(subject, ch).
+func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, ch)
+}
+
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Subscription, error) {
 	nc.mu.Lock()
-	// ok here, but defer is expensive
+	// ok here, but defer is generally expensive
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
+	// Check for some error conditions.
 	if nc.isClosed() {
 		return nil, ErrConnectionClosed
 	}
 
+	if cb == nil && ch == nil {
+		return nil, ErrBadSubscription
+	}
+
 	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
-	sub.mch = make(chan *Msg, chanlen)
+	// Set pending limits.
+	sub.pMsgsLimit = DefaultSubPendingMsgsLimit
+	sub.pBytesLimit = DefaultSubPendingBytesLimit
 
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
 	if cb != nil {
-		go nc.deliverMsgs(sub)
+		sub.typ = AsyncSubscription
+		sub.pCond = sync.NewCond(&sub.mu)
+		go nc.waitForMsgs(sub)
+	} else {
+		sub.typ = ChanSubscription
+		sub.mch = ch
 	}
 
 	sub.sid = atomic.AddInt64(&nc.ssid, 1)
@@ -1583,82 +1714,37 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 	return sub, nil
 }
 
-// Subscribe will express interest in the given subject. The subject
-// can have wildcards (partial:*, full:>). Messages will be delivered
-// to the associated MsgHandler. If no MsgHandler is given, the
-// subscription is a synchronous subscription and can be polled via
-// Subscription.NextMsg().
-func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb, nc.Opts.SubChanLen)
-}
-
-// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
-func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, nc.Opts.SubChanLen)
-}
-
-// QueueSubscribe creates an asynchronous queue subscriber on the given subject.
-// All subscribers with the same queue name will form the queue group and
-// only one member of the group will be selected to receive any given
-// message asynchronously.
-func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb, nc.Opts.SubChanLen)
-}
-
-// QueueSubscribeSync creates a synchronous queue subscriber on the given
-// subject. All subscribers with the same queue name will form the queue
-// group and only one member of the group will be selected to receive any
-// given message synchronously.
-func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil, nc.Opts.SubChanLen)
-}
-
-// unsubscribe performs the low level unsubscribe to the server.
-// Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
-	nc.mu.Lock()
-	// ok here, but defer is expensive
-	defer nc.kickFlusher()
-	defer nc.mu.Unlock()
-
-	if nc.isClosed() {
-		return ErrConnectionClosed
-	}
-
-	s := nc.subs[sub.sid]
-	// Already unsubscribed
-	if s == nil {
-		return nil
-	}
-
-	maxStr := _EMPTY_
-	if max > 0 {
-		s.max = uint64(max)
-		maxStr = strconv.Itoa(max)
-	} else {
-		nc.removeSub(s)
-	}
-	// We will send these for all subs when we reconnect
-	// so that we can suppress here.
-	if !nc.isReconnecting() {
-		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
-	}
-	return nil
-}
-
 // Lock for nc should be held here upon entry
 func (nc *Conn) removeSub(s *Subscription) {
 	delete(nc.subs, s.sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mch != nil {
-		// Kick out deliverMsgs Goroutine
-		close(s.mch)
 		s.mch = nil
 	}
 	// Mark as invalid
 	s.conn = nil
 	s.closed = true
+	if s.pCond != nil {
+		s.pCond.Broadcast()
+	}
+}
+
+// SubscriptionType is the type of the Subscription.
+type SubscriptionType int
+
+// The different types of subscription types.
+const (
+	AsyncSubscription = SubscriptionType(iota)
+	SyncSubscription
+	ChanSubscription
+)
+
+// Type returns the type of Subscription.
+func (s *Subscription) Type() SubscriptionType {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.typ
 }
 
 // IsValid returns a boolean indicating whether the subscription
@@ -1693,6 +1779,39 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 		return ErrBadSubscription
 	}
 	return conn.unsubscribe(s, max)
+}
+
+// unsubscribe performs the low level unsubscribe to the server.
+// Use Subscription.Unsubscribe()
+func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
+	nc.mu.Lock()
+	// ok here, but defer is expensive
+	defer nc.kickFlusher()
+	defer nc.mu.Unlock()
+
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+
+	s := nc.subs[sub.sid]
+	// Already unsubscribed
+	if s == nil {
+		return nil
+	}
+
+	maxStr := _EMPTY_
+	if max > 0 {
+		s.max = uint64(max)
+		maxStr = strconv.Itoa(max)
+	} else {
+		nc.removeSub(s)
+	}
+	// We will send these for all subs when we reconnect
+	// so that we can suppress here.
+	if !nc.isReconnecting() {
+		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+	}
+	return nil
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber
@@ -1738,10 +1857,19 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		delivered := atomic.AddUint64(&s.delivered, 1)
+		// Update some stats.
+		s.mu.Lock()
+		s.delivered++
+		delivered := s.delivered
+		if s.typ == SyncSubscription {
+			s.pMsgs--
+			s.pBytes -= len(msg.Data)
+		}
+		s.mu.Unlock()
+
 		if max > 0 {
 			if delivered > max {
-				return nil, errors.New("nats: Max messages delivered")
+				return nil, ErrMaxMessages
 			}
 			// Remove subscription if we have reached max.
 			if delivered == max {
@@ -1759,13 +1887,79 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 }
 
 // Queued returns the number of queued messages in the client for this subscription.
+// DEPRECATED: Use Pending()
 func (s *Subscription) QueuedMsgs() (int, error) {
+	m, _, err := s.Pending()
+	return int(m), err
+}
+
+// Pending returns the number of queued messages and queued bytes in the client for this subscription.
+func (s *Subscription) Pending() (int, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, -1, ErrBadSubscription
+	}
+	if s.typ == ChanSubscription {
+		return -1, -1, ErrTypeSubscription
+	}
+	return s.pMsgs, s.pBytes, nil
+}
+
+// Pending Limits
+const (
+	DefaultSubPendingMsgsLimit  = 65536
+	DefaultSubPendingBytesLimit = 65536 * 1024
+)
+
+// PendingLimits returns the current limits for this subscription.
+func (s *Subscription) PendingLimits() (int, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, -1, ErrBadSubscription
+	}
+	if s.typ == ChanSubscription {
+		return -1, -1, ErrTypeSubscription
+	}
+	return s.pMsgsLimit, s.pBytesLimit, nil
+}
+
+// SetPendingLimits sets the limits for pending msgs and bytes for this subscription.
+func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return ErrBadSubscription
+	}
+	if s.typ == ChanSubscription {
+		return ErrTypeSubscription
+	}
+	s.pMsgsLimit, s.pBytesLimit = msgLimit, bytesLimit
+	return nil
+}
+
+// Delivered returns the number of delivered messages for this subscription.
+func (s *Subscription) Delivered() (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
 		return -1, ErrBadSubscription
 	}
-	return len(s.mch), nil
+	return int64(s.delivered), nil
+}
+
+// Dropped returns the number of known dropped messages for this subscription.
+// This will correspond to messages dropped by violations of PendingLimits. If
+// the server declares the connection a SlowConsumer, this number may not be
+// valid.
+func (s *Subscription) Dropped() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, ErrBadSubscription
+	}
+	return s.dropped, nil
 }
 
 // FIXME: This is a hack
@@ -1822,7 +2016,7 @@ func (nc *Conn) processPingTimer() {
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	if timeout <= 0 {
-		return errors.New("nats: Bad timeout value")
+		return ErrBadTimeout
 	}
 
 	nc.mu.Lock()
@@ -1843,7 +2037,9 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 			err = ErrConnectionClosed
 		} else {
 			nc.mu.Lock()
-			err = nc.err
+			if nc.err != nil && nc.err != ErrSlowConsumer {
+				err = nc.err
+			}
 			nc.mu.Unlock()
 			close(ch)
 		}
@@ -1864,6 +2060,7 @@ func (nc *Conn) Flush() error {
 }
 
 // Buffered will return the number of bytes buffered to be sent to the server.
+// FIXME(dlc) take into account disconnected state.
 func (nc *Conn) Buffered() (int, error) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()

@@ -69,7 +69,10 @@ func TestReconnectServerStats(t *testing.T) {
 	}
 
 	// Make sure the server who is reconnected has the reconnects stats reset.
+	nc.mu.Lock()
 	_, cur := nc.currentServer()
+	nc.mu.Unlock()
+
 	if cur.reconnects != 0 {
 		t.Fatalf("Current Server's reconnects should be 0 vs %d\n", cur.reconnects)
 	}

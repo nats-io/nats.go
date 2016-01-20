@@ -37,15 +37,14 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 
 	ch := make(chan bool)
 
-	nc.Opts.AsyncErrorCB = func(nc *nats.Conn, s *nats.Subscription, err error) {
+	nc.SetErrorHandler(func(nc *nats.Conn, s *nats.Subscription, err error) {
 		b.Fatalf("Error : %v\n", err)
-	}
+	})
 
 	received := int32(0)
 
 	nc.Subscribe("foo", func(m *nats.Msg) {
-		atomic.AddInt32(&received, 1)
-		if atomic.LoadInt32(&received) >= int32(b.N) {
+		if nr := atomic.AddInt32(&received, 1); nr >= int32(b.N) {
 			ch <- true
 		}
 	})
@@ -59,7 +58,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 			b.Fatalf("Error in benchmark during Publish: %v\n", err)
 		}
 		// Don't overrun ourselves and be a slow consumer, server will cut us off
-		if int32(i)-atomic.LoadInt32(&received) > 8192 {
+		if int32(i)-atomic.LoadInt32(&received) > 32768 {
 			time.Sleep(100)
 		}
 	}
@@ -69,7 +68,35 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 	if err != nil {
 		b.Fatal("Timed out waiting for messages")
 	} else if atomic.LoadInt32(&received) != int32(b.N) {
-		b.Fatal(nc.LastError())
+		b.Fatalf("Received: %d, err:%v", received, nc.LastError())
 	}
 	b.StopTimer()
+}
+
+func BenchmarkAsyncSubscriptionCreationSpeed(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	b.StartTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		nc.Subscribe("foo", func(m *nats.Msg) {})
+	}
+}
+
+func BenchmarkSyncSubscriptionCreationSpeed(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	b.StartTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		nc.SubscribeSync("foo")
+	}
 }

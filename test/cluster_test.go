@@ -30,7 +30,7 @@ func TestServersOption(t *testing.T) {
 
 	_, err := opts.Connect()
 	if err != nats.ErrNoServers {
-		t.Fatalf("Wrong error: '%s'\n", err)
+		t.Fatalf("Wrong error: '%v'\n", err)
 	}
 	opts.Servers = testServers
 	_, err = opts.Connect()
@@ -74,7 +74,7 @@ func TestServersOption(t *testing.T) {
 func TestNewStyleServersOption(t *testing.T) {
 	_, err := nats.Connect(nats.DefaultURL, nats.DontRandomize())
 	if err != nats.ErrNoServers {
-		t.Fatalf("Wrong error: '%s'\n", err)
+		t.Fatalf("Wrong error: '%v'\n", err)
 	}
 	servers := strings.Join(testServers, ",")
 
