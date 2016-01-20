@@ -36,14 +36,6 @@ const (
 	OP_MINUS_ERR
 	OP_MINUS_ERR_SPC
 	MINUS_ERR_ARG
-	OP_C
-	OP_CO
-	OP_CON
-	OP_CONN
-	OP_CONNE
-	OP_CONNEC
-	OP_CONNECT
-	CONNECT_ARG
 	OP_M
 	OP_MS
 	OP_MSG
@@ -71,8 +63,6 @@ func (nc *Conn) parse(buf []byte) error {
 			switch b {
 			case 'M', 'm':
 				nc.ps.state = OP_M
-			case 'C', 'c':
-				nc.ps.state = OP_C
 			case 'P', 'p':
 				nc.ps.state = OP_P
 			case '+':
