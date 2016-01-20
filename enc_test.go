@@ -37,7 +37,7 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 
 	c.Subscribe(testSubj, func(msg *Message) {})
 
-	//Publishing invalid json to catch decode error in subscription callback
+	//Publish invalid json to catch decode error in subscription callback
 	c.Publish(testSubj, `foo`)
 	c.Flush()
 
