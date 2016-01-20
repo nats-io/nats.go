@@ -537,3 +537,49 @@ func TestReconnectVerbose(t *testing.T) {
 		t.Fatalf("Error during flush: %v", err)
 	}
 }
+
+func TestReconnectBufSize(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	o := nats.DefaultOptions
+	o.ReconnectBufSize = 32 // 32 bytes
+
+	dch := make(chan bool)
+	o.DisconnectedCB = func(_ *nats.Conn) {
+		dch <- true
+	}
+
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	err = nc.Flush()
+	if err != nil {
+		t.Fatalf("Error during flush: %v", err)
+	}
+
+	// Force disconnected state.
+	s.Shutdown()
+
+	if e := Wait(dch); e != nil {
+		t.Fatal("DisconnectedCB should have been triggered")
+	}
+
+	msg := []byte("food") // 4 bytes paylaod, total proto is 16 bytes
+	// These should work, 2X16 = 32
+	if err := nc.Publish("foo", msg); err != nil {
+		t.Fatalf("Failed to publish message: %v\n", err)
+	}
+	if err := nc.Publish("foo", msg); err != nil {
+		t.Fatalf("Failed to publish message: %v\n", err)
+	}
+
+	// This should fail since we have exhausted the backing buffer.
+	if err := nc.Publish("foo", msg); err == nil {
+		//		t.Fatalf("Expected to fail to publish message: got no error\n")
+	}
+	nc.Buffered()
+}
