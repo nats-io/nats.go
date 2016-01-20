@@ -28,14 +28,20 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 	nc, _ := opts.Connect()
 	defer nc.Close()
 	c, _ := NewEncodedConn(nc, JSON_ENCODER)
+
+	//Test message type
 	type Message struct {
 		Message string
 	}
 	const testSubj = "test"
 
 	c.Subscribe(testSubj, func(msg *Message) {})
+
+	//Publishing invalid json to catch decode error in subscription callback
 	c.Publish(testSubj, `foo`)
 	c.Flush()
+
+	//Next publish should be successful
 	if err := c.Publish(testSubj, Message{"2"}); err != nil {
 		t.Error("Fail to send correct json message after decode error in subscription")
 	}
@@ -51,7 +57,11 @@ func TestPublishErrorAfterInvalidPublishMessage(t *testing.T) {
 	const testSubj = "test"
 
 	c.Publish(testSubj, &testdata.Person{Name: "Anatolii"})
+
+	//Publish invalid protobuff message to catch decode error
 	c.Publish(testSubj, "foo")
+
+	//Next publish with valid protobuf message should be successful
 	if err := c.Publish(testSubj, &testdata.Person{Name: "Anatolii"}); err != nil {
 		t.Error("Fail to send correct json message after invalid message publishing", err)
 	}
