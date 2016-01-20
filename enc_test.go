@@ -39,10 +39,9 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 	//Sending invalid json message
 	c.Publish(testSubj, `foo`)
 
-	time.Sleep(100 * time.Millisecond)
-
+	c.Flush()
 	if err := c.Publish(testSubj, Message{"2"}); err != nil {
-		t.Error("Fail to send correct json message after decede error in subscription")
+		t.Error("Fail to send correct json message after decode error in subscription")
 	}
 }
 
