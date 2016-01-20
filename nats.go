@@ -195,9 +195,7 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	msgs       uint64
 	dropped    uint64
-	bytes      uint64
 	max        uint64
 	conn       *Conn
 	mcb        MsgHandler
@@ -1291,7 +1289,7 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.mu.Lock()
 
 	// This is a catch all for more than max messages delivered.
-	if sub.max > 0 && sub.msgs > sub.max {
+	if sub.max > 0 && sub.delivered > sub.max {
 		sub.mu.Unlock()
 		nc.removeSub(sub)
 		nc.mu.Unlock()
@@ -1299,9 +1297,6 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Sub internal stats
-	sub.msgs++
-	sub.bytes += uint64(len(data))
-
 	sub.pMsgs++
 	sub.pBytes += int64(len(m.Data))
 
