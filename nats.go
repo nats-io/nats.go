@@ -1446,11 +1446,9 @@ func (nc *Conn) processErr(e string) {
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
-		var doCbs = true
-
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
-		doCbs = (nc.status != CONNECTING)
+		doCbs := (nc.status != CONNECTING)
 		nc.mu.Unlock()
 		nc.close(CLOSED, doCbs)
 	}
@@ -2039,7 +2037,9 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 			err = ErrConnectionClosed
 		} else {
 			nc.mu.Lock()
-			err = nc.err
+			if nc.err != nil && nc.err != ErrSlowConsumer {
+				err = nc.err
+			}
 			nc.mu.Unlock()
 			close(ch)
 		}

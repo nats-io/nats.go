@@ -259,8 +259,12 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	if elapsed >= timeout {
 		t.Fatalf("Flush did not return before timeout")
 	}
-	if err == nil {
-		t.Fatal("Expected an error indicating slow consumer")
+	// We want flush to work, so expect no error for it.
+	if err != nil {
+		t.Fatalf("Expected no error from Flush()\n")
+	}
+	if nc.LastError() != nats.ErrSlowConsumer {
+		t.Fatal("Expected LastError to indicate slow consumer")
 	}
 	// release the sub
 	bch <- true
@@ -321,7 +325,9 @@ func TestAsyncErrHandler(t *testing.T) {
 	for i := 0; i < toSend; i++ {
 		nc.Publish(subj, b)
 	}
-	nc.Flush()
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Got an error on Flush:%v\n", err)
+	}
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Failed to call async err handler")
