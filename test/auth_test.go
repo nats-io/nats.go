@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestAuth(t *testing.T) {
 
 	nc, err := nats.Connect("nats://derek:foo@localhost:8232")
 	if err != nil {
-		t.Fatal("Should have connected successfully")
+		t.Fatal("Should have connected successfully with a token")
 	}
 	nc.Close()
 }
@@ -121,4 +122,27 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	if nc.ConnectedUrl() != servers[2] {
 		t.Fatalf("Should have reconnected to %s, reconnected to %s instead", servers[2], nc.ConnectedUrl())
 	}
+}
+
+func TestTokenAuth(t *testing.T) {
+	s := RunServerOnPort(8232)
+
+	secret := "S3Cr3T0k3n!"
+	// Auth is pluggable, so need to set here..
+	auth := &auth.Token{Token: secret}
+	s.SetAuthMethod(auth)
+
+	defer s.Shutdown()
+
+	_, err := nats.Connect("nats://localhost:8232")
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+
+	tokenUrl := fmt.Sprintf("nats://%s@localhost:8232", secret)
+	nc, err := nats.Connect(tokenUrl)
+	if err != nil {
+		t.Fatal("Should have connected successfully")
+	}
+	nc.Close()
 }

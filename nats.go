@@ -266,6 +266,7 @@ type connectInfo struct {
 	Pedantic bool   `json:"pedantic"`
 	User     string `json:"user,omitempty"`
 	Pass     string `json:"pass,omitempty"`
+	Token    string `json:"auth_token,omitempty"`
 	TLS      bool   `json:"tls_required"`
 	Name     string `json:"name"`
 	Lang     string `json:"lang"`
@@ -890,13 +891,19 @@ func (nc *Conn) sendProto(proto string) {
 // applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
-	var user, pass string
+	var user, pass, token string
 	u := nc.url.User
 	if u != nil {
-		user = u.Username()
-		pass, _ = u.Password()
+		// if no password, assume username is authToken
+		if _, ok := u.Password(); !ok {
+			token = u.Username()
+		} else {
+			user = u.Username()
+			pass, _ = u.Password()
+		}
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass,
+	cinfo := connectInfo{o.Verbose, o.Pedantic,
+		user, pass, token,
 		o.Secure, o.Name, LangString, Version}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
