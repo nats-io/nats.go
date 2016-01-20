@@ -44,8 +44,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 	received := int32(0)
 
 	nc.Subscribe("foo", func(m *nats.Msg) {
-		atomic.AddInt32(&received, 1)
-		if atomic.LoadInt32(&received) >= int32(b.N) {
+		if nr := atomic.AddInt32(&received, 1); nr >= int32(b.N) {
 			ch <- true
 		}
 	})
@@ -59,7 +58,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 			b.Fatalf("Error in benchmark during Publish: %v\n", err)
 		}
 		// Don't overrun ourselves and be a slow consumer, server will cut us off
-		if int32(i)-atomic.LoadInt32(&received) > 8192 {
+		if int32(i)-atomic.LoadInt32(&received) > 32768 {
 			time.Sleep(100)
 		}
 	}
@@ -69,7 +68,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 	if err != nil {
 		b.Fatal("Timed out waiting for messages")
 	} else if atomic.LoadInt32(&received) != int32(b.N) {
-		b.Fatal(nc.LastError())
+		b.Fatalf("Received: %d, err:%v", received, nc.LastError())
 	}
 	b.StopTimer()
 }

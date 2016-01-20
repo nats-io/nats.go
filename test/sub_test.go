@@ -663,36 +663,6 @@ func TestSyncSubscriptionPendingDrain(t *testing.T) {
 	}
 }
 
-func TestChanSubscriptionPendingDrain(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	// Send some messages to ourselves.
-	total := 100
-	msg := []byte("0123456789")
-
-	chLen := 64
-	ch := make(chan *nats.Msg, chLen)
-	sub, _ := nc.ChanSubscribe("foo", ch)
-	defer sub.Unsubscribe()
-
-	for i := 0; i < total; i++ {
-		nc.Publish("foo", msg)
-	}
-	nc.Flush()
-
-	m, b, _ := sub.Pending()
-	if m != 0 {
-		t.Fatalf("Expected msgs of 0, got %d\n", m)
-	}
-	if b != 0 {
-		t.Fatalf("Expected bytes of 0, got %d\n", b)
-	}
-}
-
 func TestSyncSubscriptionPending(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -739,5 +709,52 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	}
 	if b != mlen {
 		t.Fatalf("Expected bytes of %d, got %d\n", mlen, b)
+	}
+}
+
+func TestSubscriptionTypes(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.AsyncSubscription {
+		t.Fatalf("Expected AsyncSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err != nil {
+		t.Fatalf("We should be able to SetPendingLimits()")
+	}
+	if _, _, err := sub.Pending(); err != nil {
+		t.Fatalf("We should be able to call Pending()")
+	}
+
+	sub, _ = nc.SubscribeSync("foo")
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.SyncSubscription {
+		t.Fatalf("Expected SyncSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err != nil {
+		t.Fatalf("We should be able to SetPendingLimits()")
+	}
+	if _, _, err := sub.Pending(); err != nil {
+		t.Fatalf("We should be able to call Pending()")
+	}
+
+	sub, _ = nc.ChanSubscribe("foo", make(chan *nats.Msg))
+	defer sub.Unsubscribe()
+	if st := sub.Type(); st != nats.ChanSubscription {
+		t.Fatalf("Expected ChanSubscription, got %v\n", st)
+	}
+	// Check Pending
+	if err := sub.SetPendingLimits(1, 100); err == nil {
+		t.Fatalf("We should NOT be able to SetPendingLimits() on ChanSubscriber")
+	}
+	if _, _, err := sub.Pending(); err == nil {
+		t.Fatalf("We should NOT be able to call Pending() on ChanSubscriber")
 	}
 }
