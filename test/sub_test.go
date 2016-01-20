@@ -315,13 +315,16 @@ func TestAsyncErrHandler(t *testing.T) {
 		// Suppress additional calls
 		if atomic.LoadInt64(&aeCalled) == 1 {
 			// release the sub
-			bch <- true
+			defer close(bch)
 			// release the test
 			ch <- true
 		}
 	})
 
 	b := []byte("Hello World!")
+	// First one trips the ch wait in subscription callback.
+	nc.Publish(subj, b)
+	nc.Flush()
 	for i := 0; i < toSend; i++ {
 		nc.Publish(subj, b)
 	}
@@ -334,7 +337,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	}
 	// Make sure dropped stats is correct.
 	if d, _ := sub.Dropped(); d != int64(toSend-limit) {
-		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
+		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
 		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
