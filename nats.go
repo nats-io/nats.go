@@ -1302,18 +1302,8 @@ func (nc *Conn) processMsg(data []byte) {
 
 	// Check for a Slow Consumer
 	if sub.pMsgs > sub.pMsgsLimit || sub.pBytes > sub.pBytesLimit {
-		sub.dropped++
-		nc.processSlowConsumer(sub)
-		// Undo stats from above
-		sub.pMsgs--
-		sub.pBytes -= int64(len(m.Data))
-		sub.mu.Unlock()
-		nc.mu.Unlock()
-		return
+		goto slowConsumer
 	}
-
-	// Clear Slow Consumer status.
-	sub.sc = false
 
 	// We have two modes of delivery. One is the channel, used by channel
 	// subscribers and syncSubscribers, the other is a linked list for async.
@@ -1321,11 +1311,7 @@ func (nc *Conn) processMsg(data []byte) {
 		select {
 		case sub.mch <- m:
 		default:
-			sub.dropped++
-			nc.processSlowConsumer(sub)
-			// Undo stats from above
-			sub.pMsgs--
-			sub.pBytes -= int64(len(m.Data))
+			goto slowConsumer
 		}
 	} else {
 		// Push onto the async pList
@@ -1339,8 +1325,22 @@ func (nc *Conn) processMsg(data []byte) {
 		}
 	}
 
+	// Clear SlowConsumer status.
+	sub.sc = false
+
 	sub.mu.Unlock()
 	nc.mu.Unlock()
+	return
+
+slowConsumer:
+	sub.dropped++
+	nc.processSlowConsumer(sub)
+	// Undo stats from above
+	sub.pMsgs--
+	sub.pBytes -= int64(len(m.Data))
+	sub.mu.Unlock()
+	nc.mu.Unlock()
+	return
 }
 
 // processSlowConsumer will set SlowConsumer state and fire the
@@ -1926,6 +1926,19 @@ func (s *Subscription) Delivered() (int64, error) {
 		return -1, ErrBadSubscription
 	}
 	return int64(s.delivered), nil
+}
+
+// Dropped returns the number of known dropped messages for this subscription.
+// This will correspond to messages dropped by violations of PendingLimits. If
+// the server declares the connection a SlowConsumer, this number may not be
+// valid.
+func (s *Subscription) Dropped() (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, ErrBadSubscription
+	}
+	return int64(s.dropped), nil
 }
 
 // FIXME: This is a hack

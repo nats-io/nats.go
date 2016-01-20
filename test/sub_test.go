@@ -289,18 +289,17 @@ func TestAsyncErrHandler(t *testing.T) {
 		t.Fatalf("Could not subscribe: %v\n", err)
 	}
 
+	limit := 10
+	toSend := 100
+
 	// Limit internal subchan length to trip condition easier.
-	sub.SetPendingLimits(10, 1024)
+	sub.SetPendingLimits(int64(limit), 1024)
 
 	ch := make(chan bool)
 
 	aeCalled := int64(0)
 
 	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
-		// Suppress additional calls
-		if atomic.LoadInt64(&aeCalled) == 1 {
-			return
-		}
 		atomic.AddInt64(&aeCalled, 1)
 
 		if s != sub {
@@ -309,21 +308,87 @@ func TestAsyncErrHandler(t *testing.T) {
 		if e != nats.ErrSlowConsumer {
 			t.Fatalf("Did not receive proper error: %v vs %v\n", e, nats.ErrSlowConsumer)
 		}
-		// release the sub
-		bch <- true
-
-		// release the test
-		ch <- true
+		// Suppress additional calls
+		if atomic.LoadInt64(&aeCalled) == 1 {
+			// release the sub
+			bch <- true
+			// release the test
+			ch <- true
+		}
 	})
 
 	b := []byte("Hello World!")
-	for i := 0; i < (nc.Opts.SubChanLen + 100); i++ {
+	for i := 0; i < toSend; i++ {
 		nc.Publish(subj, b)
 	}
 	nc.Flush()
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Failed to call async err handler")
+	}
+	// Make sure dropped stats is correct.
+	if d, _ := sub.Dropped(); d != int64(toSend-limit) {
+		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
+	}
+	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
+		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
+	}
+}
+
+func TestAsyncErrHandlerChanSubscription(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	opts := nats.DefaultOptions
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Could not connect to server: %v\n", err)
+	}
+	defer nc.Close()
+
+	subj := "chan_test"
+
+	limit := 10
+	toSend := 100
+
+	// Create our own channel.
+	mch := make(chan *nats.Msg, limit)
+	sub, err := nc.ChanSubscribe(subj, mch)
+	if err != nil {
+		t.Fatalf("Could not subscribe: %v\n", err)
+	}
+	ch := make(chan bool)
+	aeCalled := int64(0)
+
+	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
+		atomic.AddInt64(&aeCalled, 1)
+		if e != nats.ErrSlowConsumer {
+			t.Fatalf("Did not receive proper error: %v vs %v\n",
+				e, nats.ErrSlowConsumer)
+		}
+		// Suppress additional calls
+		if atomic.LoadInt64(&aeCalled) == 1 {
+			// release the test
+			ch <- true
+		}
+	})
+
+	b := []byte("Hello World!")
+	for i := 0; i < toSend; i++ {
+		nc.Publish(subj, b)
+	}
+	nc.Flush()
+
+	if e := Wait(ch); e != nil {
+		t.Fatal("Failed to call async err handler")
+	}
+	// Make sure dropped stats is correct.
+	if d, _ := sub.Dropped(); d != int64(toSend-limit) {
+		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
+	}
+	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
+		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
 	}
 }
 
@@ -564,12 +629,8 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	total := 100
 	msg := []byte("0123456789")
 
-	//	wch := make(chan bool)
-	//	defer func() { wch <- true }()
-
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
 		time.Sleep(1 * time.Second)
-		//<-wch
 	})
 	defer sub.Unsubscribe()
 
@@ -593,7 +654,8 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 		t.Fatalf("Expected msgs of %d or %d, got %d\n", total64, total64-1, m)
 	}
 	if b != total64*mlen && b != (total64-1)*mlen {
-		t.Fatalf("Expected bytes of %d or %d, got %d\n", total64*mlen, (total64-1)*mlen, b)
+		t.Fatalf("Expected bytes of %d or %d, got %d\n",
+			total64*mlen, (total64-1)*mlen, b)
 	}
 }
 
