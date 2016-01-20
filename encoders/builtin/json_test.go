@@ -184,9 +184,9 @@ func TestFailedEncodedPublish(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error trying to publish a channel")
 	}
-	derr := ec.LastError()
-	if derr.Error() != err.Error() {
-		t.Fatalf("Expected LastError to be same: %q vs %q\n", err, derr)
+	err = ec.LastError()
+	if err != nil {
+		t.Fatalf("Expected LastError to be nil: %q ", err)
 	}
 }
 
