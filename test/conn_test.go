@@ -41,18 +41,18 @@ func TestConnClosedCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	cbCalled := false
+	cbCalled := make(chan bool)
 	o := nats.DefaultOptions
 	o.Url = nats.DefaultURL
 	o.ClosedCB = func(_ *nats.Conn) {
-		cbCalled = true
+		cbCalled <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if !cbCalled {
+	if err := Wait(cbCalled); err != nil {
 		t.Fatalf("Closed callback not triggered\n")
 	}
 }
@@ -358,4 +358,76 @@ func TestConnectVerbose(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
+}
+
+func TestCallbacksOrder(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	firstDisconnect := true
+	dtime1 := time.Time{}
+	dtime2 := time.Time{}
+	rtime := time.Time{}
+	ctime := time.Time{}
+
+	disconnected := make(chan bool)
+	reconnected := make(chan bool)
+	closed := make(chan bool)
+
+	dch := func(nc *nats.Conn) {
+		time.Sleep(500 * time.Millisecond)
+		if firstDisconnect {
+			firstDisconnect = false
+			dtime1 = time.Now()
+		} else {
+			dtime2 = time.Now()
+		}
+		disconnected <- true
+	}
+
+	rch := func(nc *nats.Conn) {
+		time.Sleep(200 * time.Millisecond)
+		rtime = time.Now()
+		reconnected <- true
+	}
+
+	cch := func(nc *nats.Conn) {
+		ctime = time.Now()
+		closed <- true
+	}
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.DisconnectHandler(dch),
+		nats.ReconnectHandler(rch),
+		nats.ClosedHandler(cch))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v\n", err)
+	}
+
+	s.Shutdown()
+
+	if err := Wait(disconnected); err != nil {
+		t.Fatalf("Did not get the disconnected callback")
+	}
+
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	if err := Wait(reconnected); err != nil {
+		t.Fatalf("Did not get the reconnected callback")
+	}
+
+	nc.Close()
+
+	if err := Wait(disconnected); err != nil {
+		t.Fatalf("Did not get the disconnected callback")
+	}
+
+	if err := Wait(closed); err != nil {
+		t.Fatalf("Did not get the close callback")
+	}
+
+	if rtime.Before(dtime1) || dtime2.Before(rtime) || ctime.Before(rtime) {
+		t.Fatalf("Wrong callback order")
+	}
 }

@@ -135,6 +135,25 @@ type Options struct {
 	SubChanLen int
 }
 
+type asyncCBType int
+
+const (
+	CONN_CB = asyncCBType(iota)
+	ERR_CB
+)
+
+type asyncCB struct {
+	cbType asyncCBType
+
+	connCb ConnHandler
+
+	errCb ErrHandler
+	sub   *Subscription
+	err   error
+
+	next *asyncCB
+}
+
 const (
 	// Scratch storage for assembling protocol headers
 	scratchSize = 512
@@ -178,6 +197,10 @@ type Conn struct {
 	ps      *parseState
 	ptmr    *time.Timer
 	pout    int
+
+	asyncCbsCh   chan bool
+	asyncCbsHead *asyncCB
+	asyncCbsTail *asyncCB
 }
 
 // A Subscription represents interest in a given subject.
@@ -458,6 +481,12 @@ func processUrlString(url string) []string {
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
+
+	// Start the async callbacks dispatcher. Pass the channel, so that if the
+	// connection is created/closed quickly, we can still process the list.
+	nc.asyncCbsCh = make(chan bool)
+	go nc.asyncCBDispatcher(nc.asyncCbsCh)
+
 	if nc.Opts.MaxPingsOut == 0 {
 		nc.Opts.MaxPingsOut = DefaultMaxPingOut
 	}
@@ -1044,11 +1073,8 @@ func (nc *Conn) doReconnect() {
 	nc.err = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if dcb != nil {
-		nc.mu.Unlock()
-		dcb(nc)
-		nc.mu.Lock()
+	if nc.Opts.DisconnectedCB != nil {
+		nc.postConnCB(nc.Opts.DisconnectedCB)
 	}
 
 	for len(nc.srvPool) > 0 {
@@ -1118,8 +1144,10 @@ func (nc *Conn) doReconnect() {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
-		// snapshot the reconnect callback while lock is held.
-		rcb := nc.Opts.ReconnectedCB
+		// Call reconnectedCB if appropriate.
+		if nc.Opts.ReconnectedCB != nil {
+			nc.postConnCB(nc.Opts.ReconnectedCB)
+		}
 
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
@@ -1127,11 +1155,6 @@ func (nc *Conn) doReconnect() {
 		// Make sure to flush everything
 		nc.Flush()
 
-		// Call reconnectedCB if appropriate. We are already in a
-		// separate Go routine here, so ok to call direct.
-		if rcb != nil {
-			rcb(nc)
-		}
 		return
 	}
 
@@ -1364,7 +1387,7 @@ slowConsumer:
 func (nc *Conn) processSlowConsumer(s *Subscription) {
 	nc.err = ErrSlowConsumer
 	if nc.Opts.AsyncErrorCB != nil && !s.sc {
-		go nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer)
+		nc.postErrCB(nc.Opts.AsyncErrorCB, s, ErrSlowConsumer)
 	}
 	s.sc = true
 }
@@ -2154,19 +2177,22 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if doCBs && nc.conn != nil && dcb != nil {
-		go dcb(nc)
+	if doCBs && nc.conn != nil && nc.Opts.DisconnectedCB != nil {
+		nc.postConnCB(nc.Opts.DisconnectedCB)
 	}
-
-	ccb := nc.Opts.ClosedCB
-	nc.mu.Unlock()
 
 	// Perform appropriate callback if needed for a connection closed.
-	if doCBs && ccb != nil {
-		ccb(nc)
+	if doCBs && nc.Opts.ClosedCB != nil {
+		nc.postConnCB(nc.Opts.ClosedCB)
 	}
-	nc.mu.Lock()
+
+	// Close the async cb dispatcher. The dispatcher will still process the
+	// remaining callbacks in the list.
+	if nc.asyncCbsCh != nil {
+		close(nc.asyncCbsCh)
+		nc.asyncCbsCh = nil
+	}
+
 	nc.status = status
 	nc.mu.Unlock()
 }
@@ -2233,4 +2259,69 @@ func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.info.MaxPayload
+}
+
+// The lock is assumed to be held upon entering.
+func (nc *Conn) addToCBList(cb *asyncCB) {
+	if nc.asyncCbsTail != nil {
+		nc.asyncCbsTail.next = cb
+	}
+	nc.asyncCbsTail = cb
+	if nc.asyncCbsHead == nil {
+		nc.asyncCbsHead = cb
+	}
+
+	select {
+	case nc.asyncCbsCh <- true:
+	default:
+	}
+}
+
+// The lock is assumed to be held upon entering.
+func (nc *Conn) postConnCB(connCb ConnHandler) {
+	cb := &asyncCB{cbType: CONN_CB, connCb: connCb}
+	nc.addToCBList(cb)
+}
+
+// The lock is assumed to be held upon entering.
+func (nc *Conn) postErrCB(errCb ErrHandler, sub *Subscription, err error) {
+	cb := &asyncCB{cbType: ERR_CB, errCb: errCb, sub: sub, err: err}
+	nc.addToCBList(cb)
+}
+
+func (nc *Conn) asyncCBDispatcher(ch chan bool) {
+
+	for {
+		_, ok := <-ch
+
+		// We will check the list and make sure we process all pending
+		// callbacks.
+
+		for {
+			nc.mu.Lock()
+
+			cb := nc.asyncCbsHead
+			if cb == nil {
+				nc.mu.Unlock()
+				break
+			}
+
+			nc.asyncCbsHead = cb.next
+			if nc.asyncCbsHead == nil {
+				nc.asyncCbsTail = nil
+			}
+
+			nc.mu.Unlock()
+
+			if cb.cbType == ERR_CB {
+				cb.errCb(nc, cb.sub, cb.err)
+			} else {
+				cb.connCb(nc)
+			}
+		}
+
+		if !ok {
+			break
+		}
+	}
 }
