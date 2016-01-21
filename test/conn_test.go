@@ -375,7 +375,7 @@ func TestCallbacksOrder(t *testing.T) {
 	closed := make(chan bool)
 
 	dch := func(nc *nats.Conn) {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		if firstDisconnect {
 			firstDisconnect = false
 			dtime1 = time.Now()
@@ -386,7 +386,7 @@ func TestCallbacksOrder(t *testing.T) {
 	}
 
 	rch := func(nc *nats.Conn) {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		rtime = time.Now()
 		reconnected <- true
 	}
@@ -399,7 +399,8 @@ func TestCallbacksOrder(t *testing.T) {
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.DisconnectHandler(dch),
 		nats.ReconnectHandler(rch),
-		nats.ClosedHandler(cch))
+		nats.ClosedHandler(cch),
+		nats.ReconnectWait(50*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
