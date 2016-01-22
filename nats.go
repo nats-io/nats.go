@@ -135,12 +135,6 @@ type Options struct {
 	SubChanLen int
 }
 
-type errHandlerInfo struct {
-	cb  ErrHandler
-	sub *Subscription
-	err error
-}
-
 const (
 	// Scratch storage for assembling protocol headers
 	scratchSize = 512
@@ -153,6 +147,9 @@ const (
 
 	// Default server pool size
 	srvPoolSize = 4
+
+	// The size of the callback channels
+	cbChanSize = 8
 )
 
 // A Conn represents a bare connection to a nats-server.
@@ -185,9 +182,8 @@ type Conn struct {
 	ptmr    *time.Timer
 	pout    int
 
-	connCbs chan ConnHandler
-	errCbs  chan errHandlerInfo
-	cbDone  chan struct{}
+	cbsChan chan func()
+	cbsDone chan struct{}
 }
 
 // A Subscription represents interest in a given subject.
@@ -470,9 +466,8 @@ func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
 
 	// Start the connection and error handlers "dispatching" routine.
-	nc.connCbs = make(chan ConnHandler, 8)
-	nc.errCbs = make(chan errHandlerInfo, 8)
-	nc.cbDone = make(chan struct{})
+	nc.cbsChan = make(chan func(), cbChanSize)
+	nc.cbsDone = make(chan struct{})
 	go nc.asyncCBDispatcher()
 
 	if nc.Opts.MaxPingsOut == 0 {
@@ -1064,7 +1059,9 @@ func (nc *Conn) doReconnect() {
 	dcb := nc.Opts.DisconnectedCB
 	if dcb != nil {
 		nc.mu.Unlock()
-		nc.connCbs <- dcb
+		nc.cbsChan <- func() {
+			dcb(nc)
+		}
 		nc.mu.Lock()
 	}
 
@@ -1146,7 +1143,9 @@ func (nc *Conn) doReconnect() {
 
 		// Call reconnectedCB if appropriate.
 		if rcb != nil {
-			nc.connCbs <- rcb
+			nc.cbsChan <- func() {
+				rcb(nc)
+			}
 		}
 
 		return
@@ -1381,7 +1380,9 @@ slowConsumer:
 func (nc *Conn) processSlowConsumer(s *Subscription) {
 	nc.err = ErrSlowConsumer
 	if nc.Opts.AsyncErrorCB != nil && !s.sc {
-		nc.errCbs <- errHandlerInfo{cb: nc.Opts.AsyncErrorCB, sub: s, err: ErrSlowConsumer}
+		nc.cbsChan <- func() {
+			nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer)
+		}
 	}
 	s.sc = true
 }
@@ -2185,19 +2186,23 @@ func (nc *Conn) close(status Status, doCBs bool) {
 
 	// Perform appropriate callback if needed
 	if dcb != nil {
-		nc.connCbs <- dcb
+		nc.cbsChan <- func() {
+			dcb(nc)
+		}
 	}
 	if ccb != nil {
-		nc.connCbs <- ccb
+		nc.cbsChan <- func() {
+			ccb(nc)
+		}
 	}
 
 	nc.mu.Lock()
 
-	if nc.cbDone != nil {
+	if nc.cbsDone != nil {
 		// Close this channel to notify that we are done. The go routine will
-		// drain all remaining callbacks from their respective channels.
-		close(nc.cbDone)
-		nc.cbDone = nil
+		// drain all remaining callbacks from cbsChan.
+		close(nc.cbsDone)
+		nc.cbsDone = nil
 	}
 
 	nc.status = status
@@ -2272,28 +2277,18 @@ func (nc *Conn) asyncCBDispatcher() {
 
 	// Capture things under lock
 	nc.mu.Lock()
-	ch := nc.connCbs
-	eh := nc.errCbs
-	done := nc.cbDone
+	ch := nc.cbsChan
+	done := nc.cbsDone
 	nc.mu.Unlock()
 
 	for {
 		select {
-		case ecb := <-eh:
-			ecb.cb(nc, ecb.sub, ecb.err)
-			break
-		case c := <-ch:
-			c(nc)
-			break
+		case cb := <-ch:
+			cb()
 		case <-done:
-			if len(eh) > 0 {
-				for ecb := range eh {
-					ecb.cb(nc, ecb.sub, ecb.err)
-				}
-			}
 			if len(ch) > 0 {
-				for c := range ch {
-					c(nc)
+				for cb := range ch {
+					cb()
 				}
 			}
 			return

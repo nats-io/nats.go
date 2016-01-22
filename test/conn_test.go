@@ -368,9 +368,10 @@ func TestCallbacksOrder(t *testing.T) {
 	dtime1 := time.Time{}
 	dtime2 := time.Time{}
 	rtime := time.Time{}
+	atime1 := time.Time{}
+	atime2 := time.Time{}
 	ctime := time.Time{}
 
-	disconnected := make(chan bool)
 	reconnected := make(chan bool)
 	closed := make(chan bool)
 
@@ -382,13 +383,21 @@ func TestCallbacksOrder(t *testing.T) {
 		} else {
 			dtime2 = time.Now()
 		}
-		disconnected <- true
 	}
 
 	rch := func(nc *nats.Conn) {
 		time.Sleep(50 * time.Millisecond)
 		rtime = time.Now()
 		reconnected <- true
+	}
+
+	ech := func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		time.Sleep(20 * time.Millisecond)
+		if sub.Subject == "foo" {
+			atime1 = time.Now()
+		} else {
+			atime2 = time.Now()
+		}
 	}
 
 	cch := func(nc *nats.Conn) {
@@ -400,6 +409,7 @@ func TestCallbacksOrder(t *testing.T) {
 		nats.DisconnectHandler(dch),
 		nats.ReconnectHandler(rch),
 		nats.ClosedHandler(cch),
+		nats.ErrorHandler(ech),
 		nats.ReconnectWait(50*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
@@ -407,28 +417,47 @@ func TestCallbacksOrder(t *testing.T) {
 
 	s.Shutdown()
 
-	if err := Wait(disconnected); err != nil {
-		t.Fatalf("Did not get the disconnected callback")
-	}
-
 	s = RunDefaultServer()
 	defer s.Shutdown()
 
+	var sub1 *nats.Subscription
+
+	recv := func(m *nats.Msg) {
+		time.Sleep(time.Second)
+		m.Sub.Unsubscribe()
+	}
+
+	sub1, err = nc.Subscribe("foo", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub1.SetPendingLimits(1, 100000)
+	for i := 0; i < 2; i++ {
+		nc.Publish("foo", []byte("test"))
+	}
+
+	var sub2 *nats.Subscription
+
+	sub2, err = nc.Subscribe("bar", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub2.SetPendingLimits(1, 100000)
+	for i := 0; i < 2; i++ {
+		nc.Publish("bar", []byte("test"))
+	}
+
 	if err := Wait(reconnected); err != nil {
-		t.Fatalf("Did not get the reconnected callback")
+		t.Fatal("Did not get the reconnected callback")
 	}
 
 	nc.Close()
 
-	if err := Wait(disconnected); err != nil {
-		t.Fatalf("Did not get the disconnected callback")
-	}
-
 	if err := Wait(closed); err != nil {
-		t.Fatalf("Did not get the close callback")
+		t.Fatal("Did not get the close callback")
 	}
 
-	if rtime.Before(dtime1) || dtime2.Before(rtime) || ctime.Before(rtime) {
-		t.Fatalf("Wrong callback order")
+	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
+		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
 	}
 }
