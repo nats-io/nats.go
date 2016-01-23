@@ -2199,8 +2199,8 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		if nc.Opts.ClosedCB != nil {
 			nc.ach <- func() { nc.Opts.ClosedCB(nc) }
 		}
+		nc.ach <- nc.closeAsyncFunc()
 	}
-	nc.ach <- nc.closeAsyncFunc()
 	nc.status = status
 	nc.mu.Unlock()
 }

@@ -136,7 +136,6 @@ func TestAuthServers(t *testing.T) {
 
 	pservers := strings.Join(plainServers, ",")
 	nc, err := nats.Connect(pservers, nats.DontRandomize(), nats.Timeout(5*time.Second))
-
 	if err == nil {
 		nc.Close()
 		t.Fatalf("Expect Auth failure, got no error\n")
