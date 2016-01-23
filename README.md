@@ -25,7 +25,7 @@ nc, _ := nats.Connect(nats.DefaultURL)
 nc.Publish("foo", []byte("Hello World"))
 
 // Simple Async Subscriber
-nc.Subscribe("foo", func(m *Msg) {
+nc.Subscribe("foo", func(m *nats.Msg) {
     fmt.Printf("Received a message: %s\n", string(m.Data))
 })
 
