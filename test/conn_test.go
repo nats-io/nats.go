@@ -41,18 +41,18 @@ func TestConnClosedCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	cbCalled := false
+	ch := make(chan bool)
 	o := nats.DefaultOptions
 	o.Url = nats.DefaultURL
 	o.ClosedCB = func(_ *nats.Conn) {
-		cbCalled = true
+		ch <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if !cbCalled {
+	if e := Wait(ch); e != nil {
 		t.Fatalf("Closed callback not triggered\n")
 	}
 }

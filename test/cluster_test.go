@@ -395,7 +395,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(nc *nats.Conn) {
 		// Suppress any additional calls
-		nc.Opts.DisconnectedCB = nil
+		nc.SetDisconnectHandler(nil)
 		dcbCalled = true
 		dch <- true
 	}
