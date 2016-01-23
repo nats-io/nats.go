@@ -147,6 +147,9 @@ const (
 
 	// Default server pool size
 	srvPoolSize = 4
+
+	// The size of the callback channels
+	cbChanSize = 8
 )
 
 // A Conn represents a bare connection to a nats-server.
@@ -178,6 +181,9 @@ type Conn struct {
 	ps      *parseState
 	ptmr    *time.Timer
 	pout    int
+
+	cbsChan chan func()
+	cbsDone chan struct{}
 }
 
 // A Subscription represents interest in a given subject.
@@ -458,6 +464,12 @@ func processUrlString(url string) []string {
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
+
+	// Start the connection and error handlers "dispatching" routine.
+	nc.cbsChan = make(chan func(), cbChanSize)
+	nc.cbsDone = make(chan struct{})
+	go nc.asyncCBDispatcher()
+
 	if nc.Opts.MaxPingsOut == 0 {
 		nc.Opts.MaxPingsOut = DefaultMaxPingOut
 	}
@@ -1047,7 +1059,9 @@ func (nc *Conn) doReconnect() {
 	dcb := nc.Opts.DisconnectedCB
 	if dcb != nil {
 		nc.mu.Unlock()
-		dcb(nc)
+		nc.cbsChan <- func() {
+			dcb(nc)
+		}
 		nc.mu.Lock()
 	}
 
@@ -1127,11 +1141,13 @@ func (nc *Conn) doReconnect() {
 		// Make sure to flush everything
 		nc.Flush()
 
-		// Call reconnectedCB if appropriate. We are already in a
-		// separate Go routine here, so ok to call direct.
+		// Call reconnectedCB if appropriate.
 		if rcb != nil {
-			rcb(nc)
+			nc.cbsChan <- func() {
+				rcb(nc)
+			}
 		}
+
 		return
 	}
 
@@ -1364,7 +1380,9 @@ slowConsumer:
 func (nc *Conn) processSlowConsumer(s *Subscription) {
 	nc.err = ErrSlowConsumer
 	if nc.Opts.AsyncErrorCB != nil && !s.sc {
-		go nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer)
+		nc.cbsChan <- func() {
+			nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer)
+		}
 	}
 	s.sc = true
 }
@@ -2153,20 +2171,40 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	}
 	nc.subs = nil
 
-	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if doCBs && nc.conn != nil && dcb != nil {
-		go dcb(nc)
+	var dcb ConnHandler
+	var ccb ConnHandler
+
+	// Capture callbacks under the lock
+	if doCBs {
+		if nc.conn != nil {
+			dcb = nc.Opts.DisconnectedCB
+		}
+		ccb = nc.Opts.ClosedCB
 	}
 
-	ccb := nc.Opts.ClosedCB
 	nc.mu.Unlock()
 
-	// Perform appropriate callback if needed for a connection closed.
-	if doCBs && ccb != nil {
-		ccb(nc)
+	// Perform appropriate callback if needed
+	if dcb != nil {
+		nc.cbsChan <- func() {
+			dcb(nc)
+		}
 	}
+	if ccb != nil {
+		nc.cbsChan <- func() {
+			ccb(nc)
+		}
+	}
+
 	nc.mu.Lock()
+
+	if nc.cbsDone != nil {
+		// Close this channel to notify that we are done. The go routine will
+		// drain all remaining callbacks from cbsChan.
+		close(nc.cbsDone)
+		nc.cbsDone = nil
+	}
+
 	nc.status = status
 	nc.mu.Unlock()
 }
@@ -2233,4 +2271,27 @@ func (nc *Conn) MaxPayload() int64 {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.info.MaxPayload
+}
+
+func (nc *Conn) asyncCBDispatcher() {
+
+	// Capture things under lock
+	nc.mu.Lock()
+	ch := nc.cbsChan
+	done := nc.cbsDone
+	nc.mu.Unlock()
+
+	for {
+		select {
+		case cb := <-ch:
+			cb()
+		case <-done:
+			if len(ch) > 0 {
+				for cb := range ch {
+					cb()
+				}
+			}
+			return
+		}
+	}
 }

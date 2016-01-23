@@ -41,18 +41,18 @@ func TestConnClosedCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	cbCalled := false
+	cbCalled := make(chan bool)
 	o := nats.DefaultOptions
 	o.Url = nats.DefaultURL
 	o.ClosedCB = func(_ *nats.Conn) {
-		cbCalled = true
+		cbCalled <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if !cbCalled {
+	if err := Wait(cbCalled); err != nil {
 		t.Fatalf("Closed callback not triggered\n")
 	}
 }
@@ -358,4 +358,106 @@ func TestConnectVerbose(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
+}
+
+func TestCallbacksOrder(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	firstDisconnect := true
+	dtime1 := time.Time{}
+	dtime2 := time.Time{}
+	rtime := time.Time{}
+	atime1 := time.Time{}
+	atime2 := time.Time{}
+	ctime := time.Time{}
+
+	reconnected := make(chan bool)
+	closed := make(chan bool)
+
+	dch := func(nc *nats.Conn) {
+		time.Sleep(100 * time.Millisecond)
+		if firstDisconnect {
+			firstDisconnect = false
+			dtime1 = time.Now()
+		} else {
+			dtime2 = time.Now()
+		}
+	}
+
+	rch := func(nc *nats.Conn) {
+		time.Sleep(50 * time.Millisecond)
+		rtime = time.Now()
+		reconnected <- true
+	}
+
+	ech := func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		time.Sleep(20 * time.Millisecond)
+		if sub.Subject == "foo" {
+			atime1 = time.Now()
+		} else {
+			atime2 = time.Now()
+		}
+	}
+
+	cch := func(nc *nats.Conn) {
+		ctime = time.Now()
+		closed <- true
+	}
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.DisconnectHandler(dch),
+		nats.ReconnectHandler(rch),
+		nats.ClosedHandler(cch),
+		nats.ErrorHandler(ech),
+		nats.ReconnectWait(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v\n", err)
+	}
+
+	s.Shutdown()
+
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	var sub1 *nats.Subscription
+
+	recv := func(m *nats.Msg) {
+		time.Sleep(time.Second)
+		m.Sub.Unsubscribe()
+	}
+
+	sub1, err = nc.Subscribe("foo", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub1.SetPendingLimits(1, 100000)
+	for i := 0; i < 2; i++ {
+		nc.Publish("foo", []byte("test"))
+	}
+
+	var sub2 *nats.Subscription
+
+	sub2, err = nc.Subscribe("bar", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub2.SetPendingLimits(1, 100000)
+	for i := 0; i < 2; i++ {
+		nc.Publish("bar", []byte("test"))
+	}
+
+	if err := Wait(reconnected); err != nil {
+		t.Fatal("Did not get the reconnected callback")
+	}
+
+	nc.Close()
+
+	if err := Wait(closed); err != nil {
+		t.Fatal("Did not get the close callback")
+	}
+
+	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
+		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
+	}
 }
