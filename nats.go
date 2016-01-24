@@ -1525,7 +1525,9 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	if nc.isReconnecting() {
+	// (note that isReconnecting() could return true but nc.pending
+	// not be created yet).
+	if nc.pending != nil {
 		// Flush to underlying buffer.
 		nc.bw.Flush()
 		// Check if we are over
