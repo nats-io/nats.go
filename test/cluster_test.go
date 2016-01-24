@@ -136,7 +136,6 @@ func TestAuthServers(t *testing.T) {
 
 	pservers := strings.Join(plainServers, ",")
 	nc, err := nats.Connect(pservers, nats.DontRandomize(), nats.Timeout(5*time.Second))
-
 	if err == nil {
 		nc.Close()
 		t.Fatalf("Expect Auth failure, got no error\n")
@@ -395,7 +394,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(nc *nats.Conn) {
 		// Suppress any additional calls
-		nc.Opts.DisconnectedCB = nil
+		nc.SetDisconnectHandler(nil)
 		dcbCalled = true
 		dch <- true
 	}

@@ -37,7 +37,7 @@ const (
 	DefaultTimeout          = 2 * time.Second
 	DefaultPingInterval     = 2 * time.Minute
 	DefaultMaxPingOut       = 2
-	DefaultMaxChanLen       = 8192            //8k
+	DefaultMaxChanLen       = 8192            // 8k
 	DefaultReconnectBufSize = 8 * 1024 * 1024 // 8MB
 	RequestChanLen          = 8
 	LangString              = "go"
@@ -100,6 +100,9 @@ type ConnHandler func(*Conn)
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
 
+// asyncCB is used to preserve order for async callbacks.
+type asyncCB func()
+
 // Option is a function on the options for a connection.
 type Option func(*Options) error
 
@@ -147,6 +150,9 @@ const (
 
 	// Default server pool size
 	srvPoolSize = 4
+
+	// Channel size for the async callback handler.
+	asyncCBChanSize = 32
 )
 
 // A Conn represents a bare connection to a nats-server.
@@ -171,6 +177,7 @@ type Conn struct {
 	info    serverInfo
 	subs    map[int64]*Subscription
 	mch     chan *Msg
+	ach     chan asyncCB
 	pongs   []chan bool
 	scratch [scratchSize]byte
 	status  Status
@@ -458,6 +465,8 @@ func processUrlString(url string) []string {
 // Connect will attempt to connect to a NATS server with multiple options.
 func (o Options) Connect() (*Conn, error) {
 	nc := &Conn{Opts: o}
+
+	// Some default options processing.
 	if nc.Opts.MaxPingsOut == 0 {
 		nc.Opts.MaxPingsOut = DefaultMaxPingOut
 	}
@@ -473,6 +482,12 @@ func (o Options) Connect() (*Conn, error) {
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
 	}
+
+	// Create the async callback channel.
+	nc.ach = make(chan asyncCB, asyncCBChanSize)
+	// Spin up the async cb dispatcher.
+	go nc.asyncDispatch()
+
 	if err := nc.connect(); err != nil {
 		return nil, err
 	}
@@ -696,16 +711,16 @@ func (nc *Conn) waitForExits() {
 	nc.wg.Wait()
 }
 
-// spinUpSocketWatchers will launch the Go routines responsible for
+// spinUpGoRoutines will launch the Go routines responsible for
 // reading and writing to the socket. This will be launched via a
 // go routine itself to release any locks that may be held.
 // We also use a WaitGroup to make sure we only start them on a
 // reconnect when the previous ones have exited.
-func (nc *Conn) spinUpSocketWatchers() {
+func (nc *Conn) spinUpGoRoutines() {
 	// Make sure everything has exited.
 	nc.waitForExits()
 
-	// We will wait on both going forward.
+	// We will wait on both.
 	nc.wg.Add(2)
 
 	// Spin up the readLoop and the socket flusher.
@@ -781,7 +796,7 @@ func (nc *Conn) processConnectInit() error {
 	// Reset the number of PING sent out
 	nc.pout = 0
 
-	go nc.spinUpSocketWatchers()
+	go nc.spinUpGoRoutines()
 
 	return nil
 }
@@ -1044,11 +1059,8 @@ func (nc *Conn) doReconnect() {
 	nc.err = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if dcb != nil {
-		nc.mu.Unlock()
-		dcb(nc)
-		nc.mu.Lock()
+	if nc.Opts.DisconnectedCB != nil {
+		nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
 	}
 
 	for len(nc.srvPool) > 0 {
@@ -1118,8 +1130,10 @@ func (nc *Conn) doReconnect() {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
-		// snapshot the reconnect callback while lock is held.
-		rcb := nc.Opts.ReconnectedCB
+		// Queue up the reconnect callback.
+		if nc.Opts.ReconnectedCB != nil {
+			nc.ach <- func() { nc.Opts.ReconnectedCB(nc) }
+		}
 
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
@@ -1127,11 +1141,6 @@ func (nc *Conn) doReconnect() {
 		// Make sure to flush everything
 		nc.Flush()
 
-		// Call reconnectedCB if appropriate. We are already in a
-		// separate Go routine here, so ok to call direct.
-		if rcb != nil {
-			rcb(nc)
-		}
 		return
 	}
 
@@ -1172,6 +1181,35 @@ func (nc *Conn) processOpErr(err error) {
 	nc.err = err
 	nc.mu.Unlock()
 	nc.Close()
+}
+
+// Marker to close the channel to kick out the Go routine.
+func (nc *Conn) closeAsyncFunc() asyncCB {
+	return func() {
+		nc.mu.Lock()
+		if nc.ach != nil {
+			close(nc.ach)
+			nc.ach = nil
+		}
+		nc.mu.Unlock()
+	}
+}
+
+// asyncDispatch is responsible for calling any async callbacks
+func (nc *Conn) asyncDispatch() {
+	// snapshot since they can change from underneath of us.
+	nc.mu.Lock()
+	ach := nc.ach
+	nc.mu.Unlock()
+
+	// Loop on the channel and process async callbacks.
+	for {
+		if f, ok := <-ach; !ok {
+			return
+		} else {
+			f()
+		}
+	}
 }
 
 // readLoop() will sit on the socket reading and processing the
@@ -1364,7 +1402,7 @@ slowConsumer:
 func (nc *Conn) processSlowConsumer(s *Subscription) {
 	nc.err = ErrSlowConsumer
 	if nc.Opts.AsyncErrorCB != nil && !s.sc {
-		go nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer)
+		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, s, ErrSlowConsumer) }
 	}
 	s.sc = true
 }
@@ -1455,9 +1493,8 @@ func (nc *Conn) processErr(e string) {
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
-		doCbs := (nc.status != CONNECTING)
 		nc.mu.Unlock()
-		nc.close(CLOSED, doCbs)
+		nc.Close()
 	}
 }
 
@@ -2154,19 +2191,15 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.subs = nil
 
 	// Perform appropriate callback if needed for a disconnect.
-	dcb := nc.Opts.DisconnectedCB
-	if doCBs && nc.conn != nil && dcb != nil {
-		go dcb(nc)
+	if doCBs {
+		if nc.Opts.DisconnectedCB != nil && nc.conn != nil {
+			nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
+		}
+		if nc.Opts.ClosedCB != nil {
+			nc.ach <- func() { nc.Opts.ClosedCB(nc) }
+		}
+		nc.ach <- nc.closeAsyncFunc()
 	}
-
-	ccb := nc.Opts.ClosedCB
-	nc.mu.Unlock()
-
-	// Perform appropriate callback if needed for a connection closed.
-	if doCBs && ccb != nil {
-		ccb(nc)
-	}
-	nc.mu.Lock()
 	nc.status = status
 	nc.mu.Unlock()
 }

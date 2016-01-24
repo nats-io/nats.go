@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,18 +45,18 @@ func TestConnClosedCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	cbCalled := false
+	ch := make(chan bool)
 	o := nats.DefaultOptions
 	o.Url = nats.DefaultURL
 	o.ClosedCB = func(_ *nats.Conn) {
-		cbCalled = true
+		ch <- true
 	}
 	nc, err := o.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
-	if !cbCalled {
+	if e := Wait(ch); e != nil {
 		t.Fatalf("Closed callback not triggered\n")
 	}
 }
@@ -358,4 +362,215 @@ func TestConnectVerbose(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	nc.Close()
+}
+
+func isRunningInAsyncCBDispatcher() error {
+	var stacks []byte
+
+	stacksSize := 10000
+
+	for {
+		stacks = make([]byte, stacksSize)
+		n := runtime.Stack(stacks, false)
+		if n == stacksSize {
+			stacksSize *= stacksSize
+			continue
+		}
+		break
+	}
+
+	strStacks := string(stacks)
+
+	if strings.Contains(strStacks, "asyncDispatch") {
+		return nil
+	}
+
+	return errors.New(fmt.Sprintf("Callback not executed from dispatcher:\n %s\n", strStacks))
+}
+
+func TestCallbacksOrder(t *testing.T) {
+	authS, authSOpts := RunServerWithConfig("./configs/tls.conf")
+	defer authS.Shutdown()
+
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	firstDisconnect := true
+	dtime1 := time.Time{}
+	dtime2 := time.Time{}
+	rtime := time.Time{}
+	atime1 := time.Time{}
+	atime2 := time.Time{}
+	ctime := time.Time{}
+
+	cbErrors := make(chan error, 20)
+
+	reconnected := make(chan bool)
+	closed := make(chan bool)
+	asyncErr := make(chan bool, 2)
+	recvCh := make(chan bool, 2)
+	recvCh1 := make(chan bool)
+	recvCh2 := make(chan bool)
+
+	dch := func(nc *nats.Conn) {
+		if err := isRunningInAsyncCBDispatcher(); err != nil {
+			cbErrors <- err
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+		if firstDisconnect {
+			firstDisconnect = false
+			dtime1 = time.Now()
+		} else {
+			dtime2 = time.Now()
+		}
+	}
+
+	rch := func(nc *nats.Conn) {
+		if err := isRunningInAsyncCBDispatcher(); err != nil {
+			cbErrors <- err
+			reconnected <- true
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		rtime = time.Now()
+		reconnected <- true
+	}
+
+	ech := func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		if err := isRunningInAsyncCBDispatcher(); err != nil {
+			cbErrors <- err
+			asyncErr <- true
+			return
+		}
+		if sub.Subject == "foo" {
+			time.Sleep(20 * time.Millisecond)
+			atime1 = time.Now()
+		} else {
+			atime2 = time.Now()
+		}
+		asyncErr <- true
+	}
+
+	cch := func(nc *nats.Conn) {
+		if err := isRunningInAsyncCBDispatcher(); err != nil {
+			cbErrors <- err
+			closed <- true
+			return
+		}
+		ctime = time.Now()
+		closed <- true
+	}
+
+	url := net.JoinHostPort(authSOpts.Host, strconv.Itoa(authSOpts.Port))
+	url = "nats://" + url + "," + nats.DefaultURL
+
+	nc, err := nats.Connect(url,
+		nats.DisconnectHandler(dch),
+		nats.ReconnectHandler(rch),
+		nats.ClosedHandler(cch),
+		nats.ErrorHandler(ech),
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.DontRandomize())
+	if err != nil {
+		t.Fatalf("Unable to connect: %v\n", err)
+	}
+	defer nc.Close()
+
+	ncp, err := nats.Connect(nats.DefaultURL,
+		nats.ReconnectWait(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v\n", err)
+	}
+	defer ncp.Close()
+
+	// Wait to make sure that if we have closed (incorrectly) the
+	// asyncCBDispatcher during the connect process, this is caught here.
+	time.Sleep(time.Second)
+
+	s.Shutdown()
+
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	if err := Wait(reconnected); err != nil {
+		t.Fatal("Did not get the reconnected callback")
+	}
+
+	var sub1 *nats.Subscription
+	var sub2 *nats.Subscription
+
+	recv := func(m *nats.Msg) {
+		// Signal that one message is received
+		recvCh <- true
+
+		// We will now block
+		if m.Subject == "foo" {
+			<-recvCh1
+		} else {
+			<-recvCh2
+		}
+		m.Sub.Unsubscribe()
+	}
+
+	sub1, err = nc.Subscribe("foo", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub1.SetPendingLimits(1, 100000)
+
+	sub2, err = nc.Subscribe("bar", recv)
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v\n", err)
+	}
+	sub2.SetPendingLimits(1, 100000)
+
+	nc.Flush()
+
+	ncp.Publish("foo", []byte("test"))
+	ncp.Publish("bar", []byte("test"))
+	ncp.Flush()
+
+	// Wait notification that message were received
+	err = Wait(recvCh)
+	if err == nil {
+		err = Wait(recvCh)
+	}
+	if err != nil {
+		t.Fatal("Did not receive message")
+	}
+
+	for i := 0; i < 2; i++ {
+		ncp.Publish("foo", []byte("test"))
+		ncp.Publish("bar", []byte("test"))
+	}
+	ncp.Flush()
+
+	if err := Wait(asyncErr); err != nil {
+		t.Fatal("Did not get the async callback")
+	}
+	if err := Wait(asyncErr); err != nil {
+		t.Fatal("Did not get the async callback")
+	}
+
+	close(recvCh1)
+	close(recvCh2)
+
+	nc.Close()
+
+	if err := Wait(closed); err != nil {
+		t.Fatal("Did not get the close callback")
+	}
+
+	if len(cbErrors) > 0 {
+		t.Fatalf("%v", <-cbErrors)
+	}
+
+	if (dtime1 == time.Time{}) || (dtime2 == time.Time{}) || (rtime == time.Time{}) || (atime1 == time.Time{}) || (atime2 == time.Time{}) || (ctime == time.Time{}) {
+		t.Fatalf("Some callbacks did not fire:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
+	}
+
+	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
+		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
+	}
 }
