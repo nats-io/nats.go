@@ -1035,11 +1035,6 @@ func (nc *Conn) doReconnect() {
 	// can't do defer here.
 	nc.mu.Lock()
 
-	// Create a new pending buffer to underpin the bufio Writer while
-	// we are reconnecting.
-	nc.pending = &bytes.Buffer{}
-	nc.bw = bufio.NewWriterSize(nc.pending, nc.Opts.ReconnectBufSize)
-
 	// Clear any errors.
 	nc.err = nil
 
@@ -1163,6 +1158,12 @@ func (nc *Conn) processOpErr(err error) {
 			nc.conn.Close()
 			nc.conn = nil
 		}
+
+		// Create a new pending buffer to underpin the bufio Writer while
+		// we are reconnecting.
+		nc.pending = &bytes.Buffer{}
+		nc.bw = bufio.NewWriterSize(nc.pending, nc.Opts.ReconnectBufSize)
+
 		go nc.doReconnect()
 		nc.mu.Unlock()
 		return
@@ -1525,9 +1526,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	// (note that isReconnecting() could return true but nc.pending
-	// not be created yet).
-	if nc.pending != nil {
+	if nc.isReconnecting() {
 		// Flush to underlying buffer.
 		nc.bw.Flush()
 		// Check if we are over
