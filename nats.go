@@ -1493,9 +1493,8 @@ func (nc *Conn) processErr(e string) {
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
-		doCbs := (nc.status != CONNECTING)
 		nc.mu.Unlock()
-		nc.close(CLOSED, doCbs)
+		nc.Close()
 	}
 }
 
