@@ -57,7 +57,10 @@ func (nc *Conn) parse(buf []byte) error {
 	var i int
 	var b byte
 
-	for i, b = range buf {
+	// Move to loop instead of range syntax to allow jumping of i
+	for i = 0; i < len(buf); i++ {
+		b = buf[i]
+
 		switch nc.ps.state {
 		case OP_START:
 			switch b {
@@ -116,6 +119,11 @@ func (nc *Conn) parse(buf []byte) error {
 					return err
 				}
 				nc.ps.drop, nc.ps.as, nc.ps.state = 0, i+1, MSG_PAYLOAD
+
+				// jump ahead with the index. If this overruns
+				// what is left we fall out and process split
+				// buffer.
+				i = nc.ps.as + nc.ps.ma.size - 1
 			default:
 				if nc.ps.argBuf != nil {
 					nc.ps.argBuf = append(nc.ps.argBuf, b)
@@ -127,7 +135,24 @@ func (nc *Conn) parse(buf []byte) error {
 					nc.processMsg(nc.ps.msgBuf)
 					nc.ps.argBuf, nc.ps.msgBuf, nc.ps.state = nil, nil, MSG_END
 				} else {
-					nc.ps.msgBuf = append(nc.ps.msgBuf, b)
+					// copy as much as we can to the buffer and skip ahead.
+					toCopy := nc.ps.ma.size - len(nc.ps.msgBuf)
+					avail := len(buf) - i
+
+					if avail < toCopy {
+						toCopy = avail
+					}
+
+					if toCopy > 0 {
+						start := len(nc.ps.msgBuf)
+						// This is needed for copy to work.
+						nc.ps.msgBuf = nc.ps.msgBuf[:start+toCopy]
+						copy(nc.ps.msgBuf[start:], buf[i:i+toCopy])
+						// Update our index
+						i = (i + toCopy) - 1
+					} else {
+						nc.ps.msgBuf = append(nc.ps.msgBuf, b)
+					}
 				}
 			} else if i-nc.ps.as >= nc.ps.ma.size {
 				nc.processMsg(buf[nc.ps.as:i])
@@ -271,7 +296,7 @@ func (nc *Conn) parse(buf []byte) error {
 	// Check for split buffer scenarios
 	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG) && nc.ps.argBuf == nil {
 		nc.ps.argBuf = nc.ps.scratch[:0]
-		nc.ps.argBuf = append(nc.ps.argBuf, buf[nc.ps.as:(i+1)-nc.ps.drop]...)
+		nc.ps.argBuf = append(nc.ps.argBuf, buf[nc.ps.as:i-nc.ps.drop]...)
 		// FIXME, check max len
 	}
 	// Check for split msg
@@ -281,9 +306,18 @@ func (nc *Conn) parse(buf []byte) error {
 		if nc.ps.argBuf == nil {
 			nc.cloneMsgArg()
 		}
-		// FIXME: copy better here? Make whole buf if large?
-		nc.ps.msgBuf = nc.ps.scratch[len(nc.ps.argBuf):len(nc.ps.argBuf)]
-		nc.ps.msgBuf = append(nc.ps.msgBuf, (buf[nc.ps.as:])...)
+
+		// If we will overflow the scratch buffer, just create a
+		// new buffer to hold the split message.
+		if nc.ps.ma.size > cap(nc.scratch)-len(nc.ps.argBuf) {
+			lrem := len(buf[nc.ps.as:])
+
+			nc.ps.msgBuf = make([]byte, lrem, nc.ps.ma.size)
+			copy(nc.ps.msgBuf, buf[nc.ps.as:])
+		} else {
+			nc.ps.msgBuf = nc.ps.scratch[len(nc.ps.argBuf):len(nc.ps.argBuf)]
+			nc.ps.msgBuf = append(nc.ps.msgBuf, (buf[nc.ps.as:])...)
+		}
 	}
 
 	return nil
