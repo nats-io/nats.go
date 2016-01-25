@@ -6,6 +6,7 @@ package nats
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -32,8 +33,10 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 // Reconnect tests
 ////////////////////////////////////////////////////////////////////////////////
 
+const TEST_PORT = 8368
+
 var reconnectOpts = Options{
-	Url:            "nats://localhost:22222",
+	Url:            fmt.Sprintf("nats://localhost:%d", TEST_PORT),
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -51,7 +54,7 @@ func RunServerWithOptions(opts server.Options) *server.Server {
 }
 
 func TestReconnectServerStats(t *testing.T) {
-	ts := RunServerOnPort(22222)
+	ts := RunServerOnPort(TEST_PORT)
 
 	opts := reconnectOpts
 	nc, _ := opts.Connect()
@@ -61,7 +64,7 @@ func TestReconnectServerStats(t *testing.T) {
 	ts.Shutdown()
 	// server is stopped here...
 
-	ts = RunServerOnPort(22222)
+	ts = RunServerOnPort(TEST_PORT)
 	defer ts.Shutdown()
 
 	if err := nc.FlushTimeout(5 * time.Second); err != nil {
@@ -79,7 +82,7 @@ func TestReconnectServerStats(t *testing.T) {
 }
 
 func TestParseStateReconnectFunctionality(t *testing.T) {
-	ts := RunServerOnPort(22222)
+	ts := RunServerOnPort(TEST_PORT)
 	ch := make(chan bool)
 
 	opts := reconnectOpts
@@ -131,7 +134,7 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Failed to publish message: %v\n", err)
 	}
 
-	ts = RunServerOnPort(22222)
+	ts = RunServerOnPort(TEST_PORT)
 	defer ts.Shutdown()
 
 	if err := ec.FlushTimeout(5 * time.Second); err != nil {
