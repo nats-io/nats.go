@@ -1,6 +1,7 @@
 package nats_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,8 +10,12 @@ import (
 	"github.com/nats-io/nats/encoders/protobuf/testdata"
 )
 
+// Since we import above nats packages, we need to have a different
+// const name than TEST_PORT that we used on the other packages.
+const ENC_TEST_PORT = 8268
+
 var options = Options{
-	Url:            "nats://localhost:22222",
+	Url:            fmt.Sprintf("nats://localhost:%d", ENC_TEST_PORT),
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -22,7 +27,7 @@ var options = Options{
 ////////////////////////////////////////////////////////////////////////////////
 
 func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
-	ts := RunServerOnPort(22222)
+	ts := RunServerOnPort(ENC_TEST_PORT)
 	defer ts.Shutdown()
 	opts := options
 	nc, _ := opts.Connect()
@@ -48,7 +53,7 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 }
 
 func TestPublishErrorAfterInvalidPublishMessage(t *testing.T) {
-	ts := RunServerOnPort(22222)
+	ts := RunServerOnPort(ENC_TEST_PORT)
 	defer ts.Shutdown()
 	opts := options
 	nc, _ := opts.Connect()
