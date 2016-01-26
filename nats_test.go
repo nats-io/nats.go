@@ -6,6 +6,7 @@ package nats
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -273,4 +274,143 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222, nats://localhost:1223, nats://localhost:1224", multiExpected)
 	check(" nats://localhost:1222, nats://localhost:1223, nats://localhost:1224 ", multiExpected)
 	check("nats://localhost:1222,   nats://localhost:1223  ,nats://localhost:1224", multiExpected)
+}
+
+func TestParserSplitMsg(t *testing.T) {
+
+	nc := &Conn{}
+	nc.ps = &parseState{}
+
+	buf := []byte("MSG a\r\n")
+	err := nc.parse(buf)
+	if err == nil {
+		t.Fatal("Expected an error")
+	}
+	nc.ps = &parseState{}
+
+	buf = []byte("MSG a b c\r\n")
+	err = nc.parse(buf)
+	if err == nil {
+		t.Fatal("Expected an error")
+	}
+	nc.ps = &parseState{}
+
+	expectedCount := uint64(1)
+	expectedSize := uint64(3)
+
+	buf = []byte("MSG a")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if nc.ps.argBuf == nil {
+		t.Fatal("Arg buffer should have been created")
+	}
+
+	buf = []byte(" 1 3\r\nf")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if nc.ps.ma.size != 3 {
+		t.Fatalf("Wrong msg size: %d instead of 3", nc.ps.ma.size)
+	}
+	if nc.ps.ma.sid != 1 {
+		t.Fatalf("Wrong sid: %d instead of 1", nc.ps.ma.sid)
+	}
+	if string(nc.ps.ma.subject) != "a" {
+		t.Fatalf("Wrong subject: '%s' instead of 'a'", string(nc.ps.ma.subject))
+	}
+	if nc.ps.msgBuf == nil {
+		t.Fatal("Msg buffer should have been created")
+	}
+
+	buf = []byte("oo\r\n")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
+		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
+	}
+	if (nc.ps.argBuf != nil) || (nc.ps.msgBuf != nil) {
+		t.Fatal("Buffers should be nil now")
+	}
+
+	buf = []byte("MSG a 1 3\r\nfo")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if nc.ps.ma.size != 3 {
+		t.Fatalf("Wrong msg size: %d instead of 3", nc.ps.ma.size)
+	}
+	if nc.ps.ma.sid != 1 {
+		t.Fatalf("Wrong sid: %d instead of 1", nc.ps.ma.sid)
+	}
+	if string(nc.ps.ma.subject) != "a" {
+		t.Fatalf("Wrong subject: '%s' instead of 'a'", string(nc.ps.ma.subject))
+	}
+	if nc.ps.argBuf == nil {
+		t.Fatal("Arg buffer should have been created")
+	}
+	if nc.ps.msgBuf == nil {
+		t.Fatal("Msg buffer should have been created")
+	}
+
+	expectedCount++
+	expectedSize += 3
+
+	buf = []byte("o\r\n")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
+		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
+	}
+	if (nc.ps.argBuf != nil) || (nc.ps.msgBuf != nil) {
+		t.Fatal("Buffers should be nil now")
+	}
+
+	msgSize := len(nc.scratch) + 100
+	buf = []byte(fmt.Sprintf("MSG a 1 b %d\r\n\foo", msgSize))
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if nc.ps.ma.size != msgSize {
+		t.Fatalf("Wrong msg size: %d instead of %d", nc.ps.ma.size, msgSize)
+	}
+	if nc.ps.ma.sid != 1 {
+		t.Fatalf("Wrong sid: %d instead of 1", nc.ps.ma.sid)
+	}
+	if string(nc.ps.ma.subject) != "a" {
+		t.Fatalf("Wrong subject: '%s' instead of 'a'", string(nc.ps.ma.subject))
+	}
+	if string(nc.ps.ma.reply) != "b" {
+		t.Fatalf("Wrong reply: '%s' instead of 'b'", string(nc.ps.ma.reply))
+	}
+	if nc.ps.argBuf == nil {
+		t.Fatal("Arg buffer should have been created")
+	}
+	if nc.ps.msgBuf == nil {
+		t.Fatal("Msg buffer should have been created")
+	}
+
+	expectedCount++
+	expectedSize += uint64(msgSize)
+
+	buf = make([]byte, msgSize)
+	buf = append(buf, '\r', '\n')
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
+		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
+	}
+	if (nc.ps.argBuf != nil) || (nc.ps.msgBuf != nil) {
+		t.Fatal("Buffers should be nil now")
+	}
 }
