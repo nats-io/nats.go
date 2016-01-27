@@ -373,6 +373,48 @@ func TestParserSplitMsg(t *testing.T) {
 		t.Fatal("Buffers should be nil now")
 	}
 
+	buf = []byte("MSG a 1 6\r\nfo")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if nc.ps.ma.size != 6 {
+		t.Fatalf("Wrong msg size: %d instead of 3", nc.ps.ma.size)
+	}
+	if nc.ps.ma.sid != 1 {
+		t.Fatalf("Wrong sid: %d instead of 1", nc.ps.ma.sid)
+	}
+	if string(nc.ps.ma.subject) != "a" {
+		t.Fatalf("Wrong subject: '%s' instead of 'a'", string(nc.ps.ma.subject))
+	}
+	if nc.ps.argBuf == nil {
+		t.Fatal("Arg buffer should have been created")
+	}
+	if nc.ps.msgBuf == nil {
+		t.Fatal("Msg buffer should have been created")
+	}
+
+	buf = []byte("ob")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+
+	expectedCount++
+	expectedSize += 6
+
+	buf = []byte("ar\r\n")
+	err = nc.parse(buf)
+	if err != nil {
+		t.Fatalf("Parser error: %v", err)
+	}
+	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
+		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
+	}
+	if (nc.ps.argBuf != nil) || (nc.ps.msgBuf != nil) {
+		t.Fatal("Buffers should be nil now")
+	}
+
 	msgSize := len(nc.scratch) + 100
 	buf = []byte(fmt.Sprintf("MSG a 1 b %d\r\n\foo", msgSize))
 	err = nc.parse(buf)
