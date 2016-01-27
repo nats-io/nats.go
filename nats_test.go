@@ -517,7 +517,7 @@ func TestParserShouldFail(t *testing.T) {
 	if err := c.parse([]byte("-ERRx\r\n")); err == nil {
 		t.Fatal("Should have received a parse error")
 	}
-}		
+}
 
 func TestParserSplitMsg(t *testing.T) {
 
