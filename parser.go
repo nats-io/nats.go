@@ -342,6 +342,9 @@ func (nc *Conn) processMsgArgs(arg []byte) error {
 	default:
 		return fmt.Errorf("nats: processMsgArgs Parse Error: '%s'", arg)
 	}
+	if nc.ps.ma.sid < 0 {
+		return fmt.Errorf("nats: processMsgArgs Bad or Missing Sid: '%s'", arg)
+	}
 	if nc.ps.ma.size < 0 {
 		return fmt.Errorf("nats: processMsgArgs Bad or Missing Size: '%s'", arg)
 	}
