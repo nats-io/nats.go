@@ -5,6 +5,8 @@ package nats
 ////////////////////////////////////////////////////////////////////////////////
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
@@ -276,4 +278,243 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222, nats://localhost:1223, nats://localhost:1224", multiExpected)
 	check(" nats://localhost:1222, nats://localhost:1223, nats://localhost:1224 ", multiExpected)
 	check("nats://localhost:1222,   nats://localhost:1223  ,nats://localhost:1224", multiExpected)
+}
+
+func TestParserPing(t *testing.T) {
+	c := &Conn{}
+	fake := &bytes.Buffer{}
+	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+
+	c.ps = &parseState{}
+
+	if c.ps.state != OP_START {
+		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
+	}
+	ping := []byte("PING\r\n")
+	err := c.parse(ping[:1])
+	if err != nil || c.ps.state != OP_P {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping[1:2])
+	if err != nil || c.ps.state != OP_PI {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping[2:3])
+	if err != nil || c.ps.state != OP_PIN {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping[3:4])
+	if err != nil || c.ps.state != OP_PING {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping[4:5])
+	if err != nil || c.ps.state != OP_PING {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping[5:6])
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(ping)
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	// Should tolerate spaces
+	ping = []byte("PING  \r")
+	err = c.parse(ping)
+	if err != nil || c.ps.state != OP_PING {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	c.ps.state = OP_START
+	ping = []byte("PING  \r  \n")
+	err = c.parse(ping)
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+}
+
+func TestParserErr(t *testing.T) {
+	c := &Conn{}
+	c.status = CLOSED
+	fake := &bytes.Buffer{}
+	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+
+	c.ps = &parseState{}
+
+	if c.ps.state != OP_START {
+		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
+	}
+	errProto := []byte("-ERR  " + STALE_CONNECTION + "\r\n")
+	err := c.parse(errProto[:1])
+	if err != nil || c.ps.state != OP_MINUS {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[1:2])
+	if err != nil || c.ps.state != OP_MINUS_E {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[2:3])
+	if err != nil || c.ps.state != OP_MINUS_ER {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[3:4])
+	if err != nil || c.ps.state != OP_MINUS_ERR {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[4:5])
+	if err != nil || c.ps.state != OP_MINUS_ERR_SPC {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[5:6])
+	if err != nil || c.ps.state != OP_MINUS_ERR_SPC {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+
+	// Check with split arg buffer
+	err = c.parse(errProto[6:7])
+	if err != nil || c.ps.state != MINUS_ERR_ARG {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[7:10])
+	if err != nil || c.ps.state != MINUS_ERR_ARG {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[10:])
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+
+	// Check without split arg buffer
+	errProto = []byte("-ERR " + STALE_CONNECTION + "\r\n")
+	err = c.parse(errProto)
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+}
+
+func TestParserOK(t *testing.T) {
+	c := &Conn{}
+	c.ps = &parseState{}
+
+	if c.ps.state != OP_START {
+		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
+	}
+	errProto := []byte("+OKay\r\n")
+	err := c.parse(errProto[:1])
+	if err != nil || c.ps.state != OP_PLUS {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[1:2])
+	if err != nil || c.ps.state != OP_PLUS_O {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[2:3])
+	if err != nil || c.ps.state != OP_PLUS_OK {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	err = c.parse(errProto[3:])
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+}
+
+func TestParserShouldFail(t *testing.T) {
+	c := &Conn{}
+	c.ps = &parseState{}
+
+	if err := c.parse([]byte(" PING")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("POO")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("Px")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("PIx")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("PINx")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	// Stop here because 'PING' protos are tolerant for anything between PING and \n
+
+	c.ps.state = OP_START
+	if err := c.parse([]byte("POx")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("PONx")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	// Stop here because 'PONG' protos are tolerant for anything between PONG and \n
+
+	c.ps.state = OP_START
+	if err := c.parse([]byte("ZOO")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("Mx\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSx\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSGx\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG  foo\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG \r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG foo 1\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG foo bar 1\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG foo bar 1 baz\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("MSG foo 1 bar baz\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("+x\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("+Ox\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("-x\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("-Ex\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("-ERx\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
+	c.ps.state = OP_START
+	if err := c.parse([]byte("-ERRx\r\n")); err == nil {
+		t.Fatal("Should have received a parse error")
+	}
 }
