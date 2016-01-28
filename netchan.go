@@ -31,10 +31,14 @@ func chPublish(c *EncodedConn, chVal reflect.Value, subject string) {
 			return
 		}
 		if e := c.Publish(subject, val.Interface()); e != nil {
+			// Do this under lock.
+			c.Conn.mu.Lock()
+			defer c.Conn.mu.Unlock()
+
 			if c.Conn.Opts.AsyncErrorCB != nil {
 				// FIXME(dlc) - Not sure this is the right thing to do.
 				// FIXME(ivan) - If the connection is not yet closed, try to schedule the callback
-				if c.Conn.IsClosed() {
+				if c.Conn.isClosed() {
 					go c.Conn.Opts.AsyncErrorCB(c.Conn, nil, e)
 				} else {
 					c.Conn.ach <- func() { c.Conn.Opts.AsyncErrorCB(c.Conn, nil, e) }
