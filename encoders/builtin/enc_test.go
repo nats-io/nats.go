@@ -225,14 +225,27 @@ func TestMarshalBool(t *testing.T) {
 	ec := NewEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
+	expected := make(chan bool, 1)
 
 	ec.Subscribe("enc_bool", func(b bool) {
-		if b != false {
+		val := <-expected
+		if b != val {
 			t.Fatal("Boolean values did not match")
 		}
 		ch <- true
 	})
+
+	expected <- false
 	ec.Publish("enc_bool", false)
+	if e := test.Wait(ch); e != nil {
+		if ec.LastError() != nil {
+			e = ec.LastError()
+		}
+		t.Fatalf("Did not receive the message: %s", e)
+	}
+
+	expected <- true
+	ec.Publish("enc_bool", true)
 	if e := test.Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
