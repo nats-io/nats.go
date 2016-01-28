@@ -33,7 +33,12 @@ func chPublish(c *EncodedConn, chVal reflect.Value, subject string) {
 		if e := c.Publish(subject, val.Interface()); e != nil {
 			if c.Conn.Opts.AsyncErrorCB != nil {
 				// FIXME(dlc) - Not sure this is the right thing to do.
-				go c.Conn.Opts.AsyncErrorCB(c.Conn, nil, e)
+				// FIXME(ivan) - If the connection is not yet closed, try to schedule the callback
+				if c.Conn.IsClosed() {
+					go c.Conn.Opts.AsyncErrorCB(c.Conn, nil, e)
+				} else {
+					c.Conn.ach <- func() { c.Conn.Opts.AsyncErrorCB(c.Conn, nil, e) }
+				}
 			}
 			return
 		}
@@ -68,7 +73,7 @@ func (c *EncodedConn) bindRecvChan(subject, queue string, channel interface{}) (
 		if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
 			c.Conn.err = errors.New("nats: Got an error trying to unmarshal: " + err.Error())
 			if c.Conn.Opts.AsyncErrorCB != nil {
-				go c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, c.Conn.err)
+				c.Conn.ach <- func() { c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, c.Conn.err) }
 			}
 			return
 		}

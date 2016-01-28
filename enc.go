@@ -176,6 +176,10 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 		return nil, errors.New("nats: Handler required for EncodedConn Subscription")
 	}
 	argType, numArgs := argInfo(cb)
+	if argType == nil {
+		return nil, errors.New("nats: Handler requires at least one argument")
+	}
+
 	cbValue := reflect.ValueOf(cb)
 	wantsRaw := (argType == emptyMsgType)
 
@@ -192,7 +196,9 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 			}
 			if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
 				if c.Conn.Opts.AsyncErrorCB != nil {
-					go c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, errors.New("nats: Got an error trying to unmarshal: "+err.Error()))
+					c.Conn.ach <- func() {
+						c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, errors.New("nats: Got an error trying to unmarshal: "+err.Error()))
+					}
 				}
 				return
 			}

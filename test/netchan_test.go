@@ -95,6 +95,27 @@ func TestFailedChannelSend(t *testing.T) {
 	if e := Wait(wch); e != nil {
 		t.Fatal("Failed to call async err handler")
 	}
+
+	ec = NewEConn(t)
+	defer ec.Close()
+
+	nc = ec.Conn
+	bch := make(chan []byte)
+
+	nc.Opts.AsyncErrorCB = func(c *nats.Conn, s *nats.Subscription, e error) {
+		wch <- true
+	}
+
+	if err := ec.BindSendChan("foo", bch); err != nil {
+		t.Fatalf("Failed to bind to a receive channel: %v\n", err)
+	}
+
+	buf := make([]byte, 2*1024*1024)
+	bch <- buf
+
+	if e := Wait(wch); e != nil {
+		t.Fatal("Failed to call async err handler")
+	}
 }
 
 func TestSimpleRecvChan(t *testing.T) {
