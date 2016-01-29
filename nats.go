@@ -350,6 +350,27 @@ func RootCAs(file ...string) Option {
 	}
 }
 
+// ClientCert is a helper option to provide the client certificate from a file. If Secure is
+// not already set this will set it as well
+func ClientCert(certFile, keyFile string) Option {
+	return func(o *Options) error {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return fmt.Errorf("nats: error loading client certificate: %v", err)
+		}
+		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("nats: error parsing client certificate: %v", err)
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSConfig.Certificates = []tls.Certificate{cert}
+		o.Secure = true
+		return nil
+	}
+}
+
 // NoReconnect is an Option to turn off reconnect behavior.
 func NoReconnect() Option {
 	return func(o *Options) error {

@@ -115,28 +115,39 @@ func TestServerSecureConnections(t *testing.T) {
 	// Make sure this succeeds
 	nc, err := nats.Connect(secureURL, nats.Secure())
 	if err != nil {
-		t.Fatal("Failed to create secure (TLS) connection", err)
+		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
 	defer nc.Close()
 
 	omsg := []byte("Hello World")
+	checkRecv := make(chan bool)
+
 	received := 0
 	nc.Subscribe("foo", func(m *nats.Msg) {
 		received += 1
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
+		checkRecv <- true
 	})
 	err = nc.Publish("foo", omsg)
 	if err != nil {
-		t.Fatal("Failed to publish on secure (TLS) connection", err)
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
 	}
 	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed receiving message")
+	}
+
 	nc.Close()
 
 	// Server required, but not requested.
 	nc, err = nats.Connect(secureURL)
 	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
+		if nc != nil {
+			nc.Close()
+		}
 		t.Fatal("Should have failed to create secure (TLS) connection")
 	}
 
@@ -147,6 +158,9 @@ func TestServerSecureConnections(t *testing.T) {
 
 	nc, err = nats.Connect(nats.DefaultURL, nats.Secure())
 	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
+		if nc != nil {
+			nc.Close()
+		}
 		t.Fatalf("Should have failed to create connection: %v", err)
 	}
 
@@ -160,20 +174,100 @@ func TestServerSecureConnections(t *testing.T) {
 	pool := x509.NewCertPool()
 	ok := pool.AppendCertsFromPEM([]byte(rootPEM))
 	if !ok {
-		t.Fatalf("failed to parse root certificate")
+		t.Fatal("failed to parse root certificate")
 	}
 
-	tls := &tls.Config{
+	tls1 := &tls.Config{
 		ServerName: opts.Host,
 		RootCAs:    pool,
 		MinVersion: tls.VersionTLS12,
 	}
 
-	nc, err = nats.Connect(secureURL, nats.Secure(tls))
+	nc, err = nats.Connect(secureURL, nats.Secure(tls1))
 	if err != nil {
 		t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
 	}
 	defer nc.Close()
+
+	tls2 := &tls.Config{
+		ServerName: "OtherHostName",
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	nc2, err := nats.Connect(secureURL, nats.Secure(tls1, tls2))
+	if err == nil {
+		nc2.Close()
+		t.Fatal("Was expecting an error!")
+	}
+}
+
+func TestClientCertificate(t *testing.T) {
+
+	s, opts := RunServerWithConfig("./configs/tlsverify.conf")
+	defer s.Shutdown()
+
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureURL := fmt.Sprintf("nats://%s", endpoint)
+
+	// Make sure this fails
+	nc, err := nats.Connect(secureURL, nats.Secure())
+	if err == nil {
+		nc.Close()
+		t.Fatal("Sould have failed (TLS) connection without client certificate")
+	}
+
+	// Check parameters validity
+	nc, err = nats.Connect(secureURL, nats.ClientCert("", ""))
+	if err == nil {
+		nc.Close()
+		t.Fatal("Sould have failed due to invalid parameters")
+	}
+
+	// Should fail because wrong key
+	nc, err = nats.Connect(secureURL,
+		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/key.pem"))
+	if err == nil {
+		nc.Close()
+		t.Fatal("Sould have failed due to invalid key")
+	}
+
+	// Should fail because no CA
+	nc, err = nats.Connect(secureURL,
+		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+	if err == nil {
+		nc.Close()
+		t.Fatal("Sould have failed due to missing ca")
+	}
+
+	nc, err = nats.Connect(secureURL,
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+	if err != nil {
+		t.Fatalf("Failed to create (TLS) connection: %v", err)
+	}
+	defer nc.Close()
+
+	omsg := []byte("Hello!")
+	checkRecv := make(chan bool)
+
+	received := 0
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		received += 1
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+		checkRecv <- true
+	})
+	err = nc.Publish("foo", omsg)
+	if err != nil {
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
+	}
+	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed to receive message")
+	}
 }
 
 func TestServerTLSHintConnections(t *testing.T) {
