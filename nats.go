@@ -1489,7 +1489,7 @@ func (nc *Conn) LastError() error {
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
-	if e == STALE_CONNECTION {
+	if strings.ToLower(e) == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
 		nc.mu.Lock()
