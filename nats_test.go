@@ -344,7 +344,12 @@ func TestParserErr(t *testing.T) {
 	if c.ps.state != OP_START {
 		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
 	}
-	errProto := []byte("-ERR  " + STALE_CONNECTION + "\r\n")
+
+	// TODO: Server should be changed to have an ErrStaleConnection error.
+	// so we would do this:
+	// errProto := []byte("-ERR  " + server.ErrStaleConnection.Error() + "\r\n")
+	// in the meantime, use the server's value:
+	errProto := []byte("-ERR  Stale Connection\r\n")
 	err := c.parse(errProto[:1])
 	if err != nil || c.ps.state != OP_MINUS {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
@@ -379,14 +384,37 @@ func TestParserErr(t *testing.T) {
 	if err != nil || c.ps.state != MINUS_ERR_ARG {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
-	err = c.parse(errProto[10:])
+	err = c.parse(errProto[10 : len(errProto)-2])
+	if err != nil || c.ps.state != MINUS_ERR_ARG {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	if c.ps.argBuf == nil {
+		t.Fatal("ArgBuf should not be nil")
+	}
+	if string(c.ps.argBuf) != STALE_CONNECTION {
+		t.Fatalf("Wrong error, got '%v' expected '%v'", string(c.ps.argBuf), STALE_CONNECTION)
+	}
+
+	err = c.parse(errProto[len(errProto)-2:])
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 
 	// Check without split arg buffer
-	errProto = []byte("-ERR " + STALE_CONNECTION + "\r\n")
-	err = c.parse(errProto)
+	// See comment about server's error
+	// errProto = []byte("-ERR " + server.ErrStaleConnection.Error() + "\r\n")
+	errProto = []byte("-ERR Stale Connection\r\n")
+	err = c.parse(errProto[:len(errProto)-2])
+	if err != nil || c.ps.state != MINUS_ERR_ARG {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	if c.ps.argBuf == nil {
+		t.Fatal("ArgBuf should not be nil")
+	}
+	if string(c.ps.argBuf) != STALE_CONNECTION {
+		t.Fatalf("Wrong error, got '%v' expected '%v'", string(c.ps.argBuf), STALE_CONNECTION)
+	}
+	err = c.parse(errProto[len(errProto)-2:])
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}

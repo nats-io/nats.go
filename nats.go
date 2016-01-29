@@ -44,7 +44,7 @@ const (
 )
 
 // STALE_CONNECTION is for detection and proper handling of stale connections.
-const STALE_CONNECTION = "stale connection"
+const STALE_CONNECTION = "Stale Connection"
 
 // Errors
 var (
