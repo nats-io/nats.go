@@ -44,7 +44,7 @@ const (
 )
 
 // STALE_CONNECTION is for detection and proper handling of stale connections.
-const STALE_CONNECTION = "Stale Connection"
+const STALE_CONNECTION = "stale connection"
 
 // Errors
 var (
@@ -1489,7 +1489,7 @@ func (nc *Conn) LastError() error {
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
-	if e == STALE_CONNECTION {
+	if strings.ToLower(e) == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
 		nc.mu.Lock()

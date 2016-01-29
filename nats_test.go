@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,8 +392,10 @@ func TestParserErr(t *testing.T) {
 	if c.ps.argBuf == nil {
 		t.Fatal("ArgBuf should not be nil")
 	}
-	if string(c.ps.argBuf) != STALE_CONNECTION {
-		t.Fatalf("Wrong error, got '%v' expected '%v'", string(c.ps.argBuf), STALE_CONNECTION)
+	// processErr converts incoming error to lower case to do the check
+	lowerCaseErr := strings.ToLower(string(c.ps.argBuf))
+	if lowerCaseErr != STALE_CONNECTION {
+		t.Fatalf("Wrong error, got '%v' expected '%v'", lowerCaseErr, STALE_CONNECTION)
 	}
 
 	err = c.parse(errProto[len(errProto)-2:])
