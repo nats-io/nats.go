@@ -117,16 +117,11 @@ nc, err := nats.Connect("tls://nats.demo.io:4443")
 // We provide a helper method to make this case easier.
 nc, err = nats.Connect("tls://localhost:4443", nats.RootCAs("./configs/certs/ca.pem"))
 
+// If the server requires client certificate, there is an helper function for that too:
+nc, err = nats.Connect("tls://localhost:4443", nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+
 // You can also supply a complete tls.Config
-config := &tls.Config{
-    ServerName: opts.Host,
-    RootCAs:    pool,
-    MinVersion: tls.VersionTLS12,
-}
 
-nc, err = nats.Connect("nats://localhost:4443", nats.Secure(config))
-
-// If the server requires client certificates..
 certFile := "./configs/certs/client-cert.pem"
 keyFile := "./configs/certs/client-key.pem"
 cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -135,9 +130,10 @@ if err != nil {
 }
 
 config := &tls.Config{
-    Certificates: []tls.Certificate{cert},
-    ServerName:   opts.Host,
-    MinVersion:   tls.VersionTLS12,
+    ServerName: 	opts.Host,
+    Certificates: 	[]tls.Certificate{cert},
+    RootCAs:    	pool,
+    MinVersion: 	tls.VersionTLS12,
 }
 
 nc, err = nats.Connect("nats://localhost:4443", nats.Secure(config))
