@@ -404,17 +404,7 @@ func TestParserErr(t *testing.T) {
 	// See comment about server's error
 	// errProto = []byte("-ERR " + server.ErrStaleConnection.Error() + "\r\n")
 	errProto = []byte("-ERR Stale Connection\r\n")
-	err = c.parse(errProto[:len(errProto)-2])
-	if err != nil || c.ps.state != MINUS_ERR_ARG {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	if c.ps.argBuf == nil {
-		t.Fatal("ArgBuf should not be nil")
-	}
-	if string(c.ps.argBuf) != STALE_CONNECTION {
-		t.Fatalf("Wrong error, got '%v' expected '%v'", string(c.ps.argBuf), STALE_CONNECTION)
-	}
-	err = c.parse(errProto[len(errProto)-2:])
+	err = c.parse(errProto)
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
