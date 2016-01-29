@@ -658,8 +658,10 @@ func TestParserSplitMsg(t *testing.T) {
 		t.Fatal("Buffers should be nil now")
 	}
 
-	msgSize := len(nc.scratch) + 100
-	buf = []byte(fmt.Sprintf("MSG a 1 b %d\r\n\foo", msgSize))
+	// Let's have a msg that is bigger than the parser's scratch size.
+	// Since we prepopulate the msg with 'foo', adding 3 to the size.
+	msgSize := cap(nc.ps.scratch) + 100 + 3
+	buf = []byte(fmt.Sprintf("MSG a 1 b %d\r\nfoo", msgSize))
 	err = nc.parse(buf)
 	if err != nil {
 		t.Fatalf("Parser error: %v", err)
@@ -686,16 +688,45 @@ func TestParserSplitMsg(t *testing.T) {
 	expectedCount++
 	expectedSize += uint64(msgSize)
 
-	buf = make([]byte, msgSize)
-	buf = append(buf, '\r', '\n')
+	bufSize := msgSize - 3
+
+	buf = make([]byte, bufSize)
+	for i := 0; i < bufSize; i++ {
+		buf[i] = byte('a' + (i % 26))
+	}
+
 	err = nc.parse(buf)
 	if err != nil {
 		t.Fatalf("Parser error: %v", err)
 	}
+	if nc.ps.state != MSG_PAYLOAD {
+		t.Fatalf("Wrong state: %v instead of %v", nc.ps.state, MSG_PAYLOAD)
+	}
+	if nc.ps.ma.size != msgSize {
+		t.Fatalf("Wrong (ma) msg size: %d instead of %d", nc.ps.ma.size, msgSize)
+	}
+	if len(nc.ps.msgBuf) != msgSize {
+		t.Fatalf("Wrong msg size: %d instead of %d", len(nc.ps.msgBuf), msgSize)
+	}
+	// Check content:
+	if string(nc.ps.msgBuf[0:3]) != "foo" {
+		t.Fatalf("Wrong msg content: %s", string(nc.ps.msgBuf))
+	}
+	for k := 3; k < nc.ps.ma.size; k++ {
+		if nc.ps.msgBuf[k] != byte('a'+((k-3)%26)) {
+			t.Fatalf("Wrong msg content: %s", string(nc.ps.msgBuf))
+		}
+	}
+
+	buf = []byte("\r\n")
+	err = nc.parse(buf)
 	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
 		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
 	}
 	if (nc.ps.argBuf != nil) || (nc.ps.msgBuf != nil) {
 		t.Fatal("Buffers should be nil now")
+	}
+	if nc.ps.state != OP_START {
+		t.Fatalf("Wrong state: %v", nc.ps.state)
 	}
 }

@@ -309,7 +309,7 @@ func (nc *Conn) parse(buf []byte) error {
 
 		// If we will overflow the scratch buffer, just create a
 		// new buffer to hold the split message.
-		if nc.ps.ma.size > cap(nc.scratch)-len(nc.ps.argBuf) {
+		if nc.ps.ma.size > cap(nc.ps.scratch)-len(nc.ps.argBuf) {
 			lrem := len(buf[nc.ps.as:])
 
 			nc.ps.msgBuf = make([]byte, lrem, nc.ps.ma.size)
