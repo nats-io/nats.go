@@ -87,14 +87,23 @@ func TestFailedChannelSend(t *testing.T) {
 	}
 
 	nc.Flush()
-	nc.Close()
 
-	// This should trigger an async error.
-	ch <- true
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+	}()
 
-	if e := Wait(wch); e != nil {
-		t.Fatal("Failed to call async err handler")
-	}
+	func() {
+		for {
+			select {
+			case ch <- true:
+			case <-wch:
+				return
+			case <-time.After(time.Second):
+				t.Fatal("Failed to get async error cb")
+			}
+		}
+	}()
 
 	ec = NewEConn(t)
 	defer ec.Close()
