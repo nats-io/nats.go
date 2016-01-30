@@ -1772,13 +1772,12 @@ func (nc *Conn) removeSub(s *Subscription) {
 	delete(nc.subs, s.sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mch != nil {
-		// Release callers on NextMsg for SyncSubscription only
-		if s.typ == SyncSubscription {
-			close(s.mch)
-		}
-		s.mch = nil
+	// Release callers on NextMsg for SyncSubscription only
+	if s.mch != nil && s.typ == SyncSubscription {
+		close(s.mch)
 	}
+	s.mch = nil
+
 	// Mark as invalid
 	s.conn = nil
 	s.closed = true
@@ -2139,10 +2138,10 @@ func (nc *Conn) resendSubscriptions() {
 			}
 
 			// adjustedMax could be 0 here if the number of delivered msgs
-			// reached the max, but the delivery msg thread or NextMsg has not
-			// yet removed the subscription. It will, so for now simply continue.
+			// reached the max, if so unsubscribe.
 			if adjustedMax == 0 {
 				s.mu.Unlock()
+				nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
 				continue
 			}
 		}
