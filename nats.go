@@ -1719,9 +1719,9 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	return s, e
 }
 
-// QueueSubscribeSyncWithChan is syntactic sugar for ChanQueueSubscribe(subject, ch).
+// QueueSubscribeSyncWithChan is syntactic sugar for ChanQueueSubscribe(subject, group, ch).
 func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, ch)
+	return nc.subscribe(subj, queue, nil, ch)
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
