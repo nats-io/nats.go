@@ -189,12 +189,6 @@ type Conn struct {
 
 // A Subscription represents interest in a given subject.
 type Subscription struct {
-	// Keep all members for which we use atomic at the beginning of the
-	// struct and make sure they are all 64bits (or use padding if necessary).
-	// atomic.* functions crash on 32bit machines if operand is not aligned
-	// at 64bit. See https://github.com/golang/go/issues/599
-	delivered uint64
-
 	mu  sync.Mutex
 	sid int64
 
@@ -207,6 +201,7 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
+	delivered  uint64
 	max        uint64
 	conn       *Conn
 	mcb        MsgHandler
@@ -1364,14 +1359,6 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
-	// This is a catch all for more than max messages delivered.
-	if sub.max > 0 && sub.delivered > sub.max {
-		sub.mu.Unlock()
-		nc.removeSub(sub)
-		nc.mu.Unlock()
-		return
-	}
-
 	// Sub internal stats
 	sub.pMsgs++
 	sub.pBytes += len(m.Data)
@@ -1785,9 +1772,12 @@ func (nc *Conn) removeSub(s *Subscription) {
 	delete(nc.subs, s.sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mch != nil {
-		s.mch = nil
+	// Release callers on NextMsg for SyncSubscription only
+	if s.mch != nil && s.typ == SyncSubscription {
+		close(s.mch)
 	}
+	s.mch = nil
+
 	// Mark as invalid
 	s.conn = nil
 	s.closed = true
@@ -2140,9 +2130,26 @@ func (nc *Conn) Buffered() (int, error) {
 // server. Used in reconnects
 func (nc *Conn) resendSubscriptions() {
 	for _, s := range nc.subs {
-		nc.bw.WriteString(fmt.Sprintf(subProto, s.Subject, s.Queue, s.sid))
+		adjustedMax := uint64(0)
+		s.mu.Lock()
 		if s.max > 0 {
-			maxStr := strconv.Itoa(int(s.max))
+			if s.delivered < s.max {
+				adjustedMax = s.max - s.delivered
+			}
+
+			// adjustedMax could be 0 here if the number of delivered msgs
+			// reached the max, if so unsubscribe.
+			if adjustedMax == 0 {
+				s.mu.Unlock()
+				nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
+				continue
+			}
+		}
+		s.mu.Unlock()
+
+		nc.bw.WriteString(fmt.Sprintf(subProto, s.Subject, s.Queue, s.sid))
+		if adjustedMax > 0 {
+			maxStr := strconv.Itoa(int(adjustedMax))
 			nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 		}
 	}
