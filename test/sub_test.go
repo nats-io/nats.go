@@ -817,6 +817,65 @@ func TestChanQueueSubscriber(t *testing.T) {
 	}
 }
 
+func TestQueueChanQueueSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Create our own channel.
+	ch1 := make(chan *nats.Msg, 64)
+	ch2 := make(chan *nats.Msg, 64)
+
+	nc.QueueSubscribeSyncWithChan("foo", "bar", ch1)
+	nc.QueueSubscribeSyncWithChan("foo", "bar", ch2)
+
+	// Send some messages to ourselves.
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	recv1 := 0
+	recv2 := 0
+	tm := time.NewTimer(5 * time.Second)
+	defer tm.Stop()
+	runTimer := time.NewTimer(500 * time.Millisecond)
+	defer runTimer.Stop()
+
+	chk := func(ok bool, which int) {
+		if !ok {
+			t.Fatalf("Got an error reading from channel")
+		} else {
+			if which == 1 {
+				recv1++
+			} else {
+				recv2++
+			}
+		}
+	}
+
+	// Go ahead and receive
+recvLoop:
+	for {
+		select {
+		case _, ok := <-ch1:
+			chk(ok, 1)
+		case _, ok := <-ch2:
+			chk(ok, 2)
+		case <-tm.C:
+			t.Fatalf("Timed out waiting on messages")
+		case <-runTimer.C:
+			break recvLoop
+		}
+	}
+
+	if recv1+recv2 > total {
+		t.Fatalf("Received more messages than expected: %v vs %v", (recv1 + recv2), total)
+	}
+}
+
 func TestCloseChanOnSubscriber(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
