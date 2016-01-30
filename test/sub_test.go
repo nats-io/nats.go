@@ -2,6 +2,7 @@ package test
 
 import (
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,6 +109,136 @@ func TestClientASyncAutoUnsub(t *testing.T) {
 
 	if atomic.LoadInt32(&received) != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
+	}
+}
+
+func TestAutoUnsubAndReconnect(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	rch := make(chan bool)
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v", err)
+	}
+	defer nc.Close()
+
+	received := int32(0)
+	max := int32(10)
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		atomic.AddInt32(&received, 1)
+	})
+	if err != nil {
+		t.Fatalf("Failed to subscribe: %v", err)
+	}
+	sub.AutoUnsubscribe(int(max))
+
+	// Send less than the max
+	total := int(max / 2)
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+	nc.Flush()
+
+	// Restart the server
+	s.Shutdown()
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	// and wait to reconnect
+	if err := Wait(rch); err != nil {
+		t.Fatal("Failed to get the reconnect cb")
+	}
+
+	// Now send more than the total max.
+	total = int(3 * max)
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+	nc.Flush()
+
+	// Wait a bit before checking.
+	time.Sleep(50 * time.Millisecond)
+
+	// We should have received only up-to-max messages.
+	if atomic.LoadInt32(&received) != max {
+		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
+	}
+}
+
+func TestAutoUnsubWithParallelNextMsgCalls(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	rch := make(chan bool, 1)
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v", err)
+	}
+	defer nc.Close()
+
+	numRoutines := 3
+	max := 100
+	total := max * 2
+	received := int64(0)
+
+	var wg sync.WaitGroup
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Failed to subscribe: %v", err)
+	}
+	sub.AutoUnsubscribe(int(max))
+	nc.Flush()
+
+	wg.Add(numRoutines)
+
+	for i := 0; i < numRoutines; i++ {
+		go func(s *nats.Subscription, idx int) {
+			for {
+				// The first to reach the max delivered will cause the
+				// subscription to be removed, which will kick out all
+				// other calls to NextMsg. So don't be afraid of the long
+				// timeout.
+				_, err := s.NextMsg(3 * time.Second)
+				if err != nil {
+					break
+				}
+				atomic.AddInt64(&received, 1)
+			}
+			wg.Done()
+		}(sub, i)
+	}
+
+	msg := []byte("Hello")
+	for i := 0; i < max/2; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	s.Shutdown()
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	// Make sure we got the reconnected cb
+	if err := Wait(rch); err != nil {
+		t.Fatal("Failed to get reconnected cb")
+	}
+
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", msg)
+	}
+	nc.Flush()
+
+	wg.Wait()
+	if atomic.LoadInt64(&received) != int64(max) {
+		t.Fatalf("Wrong number of received msg: %v instead of %v", atomic.LoadInt64(&received), max)
 	}
 }
 
