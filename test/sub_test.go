@@ -242,6 +242,91 @@ func TestAutoUnsubWithParallelNextMsgCalls(t *testing.T) {
 	}
 }
 
+func TestAutoUnsubscribeFromCallback(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		t.Fatalf("Unable to connect: %v", err)
+	}
+	defer nc.Close()
+
+	max := 10
+	resetUnsubMark := int64(max / 2)
+	limit := int64(100)
+	received := int64(0)
+
+	msg := []byte("Hello")
+
+	// Auto-unsubscribe within the callback with a value lower
+	// than what was already received.
+
+	sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
+		r := atomic.AddInt64(&received, 1)
+		if r == resetUnsubMark {
+			m.Sub.AutoUnsubscribe(int(r - 1))
+			nc.Flush()
+		}
+		if r == limit {
+			// Something went wrong... fail now
+			t.Fatal("Got more messages than expected")
+		}
+		nc.Publish("foo", msg)
+	})
+	if err != nil {
+		t.Fatalf("Failed to subscribe: %v", err)
+	}
+	sub.AutoUnsubscribe(int(max))
+	nc.Flush()
+
+	// Trigger the first message, the other are sent from the callback.
+	nc.Publish("foo", msg)
+	nc.Flush()
+
+	time.Sleep(100 * time.Millisecond)
+
+	recv := atomic.LoadInt64(&received)
+	if recv != resetUnsubMark {
+		t.Fatalf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
+			max, resetUnsubMark, recv)
+	}
+
+	// Now check with AutoUnsubscribe with higher value than original
+	received = int64(0)
+	newMax := int64(2 * max)
+
+	sub, err = nc.Subscribe("foo", func(m *nats.Msg) {
+		r := atomic.AddInt64(&received, 1)
+		if r == resetUnsubMark {
+			m.Sub.AutoUnsubscribe(int(newMax))
+			nc.Flush()
+		}
+		if r == limit {
+			// Something went wrong... fail now
+			t.Fatal("Got more messages than expected")
+		}
+		nc.Publish("foo", msg)
+	})
+	if err != nil {
+		t.Fatalf("Failed to subscribe: %v", err)
+	}
+	sub.AutoUnsubscribe(int(max))
+	nc.Flush()
+
+	// Trigger the first message, the other are sent from the callback.
+	nc.Publish("foo", msg)
+	nc.Flush()
+
+	time.Sleep(100 * time.Millisecond)
+
+	recv = atomic.LoadInt64(&received)
+	if recv != newMax {
+		t.Fatalf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
+			max, newMax, recv)
+	}
+}
+
 func TestCloseSubRelease(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
