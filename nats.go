@@ -132,7 +132,7 @@ type Options struct {
 	ReconnectBufSize int
 
 	// The size of the buffered channel used between the socket
-	// Go routine and the message delivery or SyncSubscriptions.
+	// Go routine and the message delivery for SyncSubscriptions.
 	// NOTE: This does not afffect AsyncSubscriptions which are
 	// dictated by PendingLimits()
 	SubChanLen int
@@ -218,9 +218,11 @@ type Subscription struct {
 	pTail *Msg
 	pCond *sync.Cond
 
-	// Pending stats
+	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
 	pBytes      int
+	pMsgsMax    int
+	pBytesMax   int
 	pMsgsLimit  int
 	pBytesLimit int
 	dropped     int
@@ -1359,9 +1361,15 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
-	// Sub internal stats
+	// Subscription internal stats
 	sub.pMsgs++
+	if sub.pMsgs > sub.pMsgsMax {
+		sub.pMsgsMax = sub.pMsgs
+	}
 	sub.pBytes += len(m.Data)
+	if sub.pBytes > sub.pBytesMax {
+		sub.pBytesMax = sub.pBytes
+	}
 
 	// Check for a Slow Consumer
 	if sub.pMsgs > sub.pMsgsLimit || sub.pBytes > sub.pBytesLimit {
@@ -1960,6 +1968,33 @@ func (s *Subscription) Pending() (int, int, error) {
 		return -1, -1, ErrTypeSubscription
 	}
 	return s.pMsgs, s.pBytes, nil
+}
+
+// MaxPending returns the maximum number of queued messages and queued bytes seen so far.
+func (s *Subscription) MaxPending() (int, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return -1, -1, ErrBadSubscription
+	}
+	if s.typ == ChanSubscription {
+		return -1, -1, ErrTypeSubscription
+	}
+	return s.pMsgsMax, s.pBytesMax, nil
+}
+
+// ClearMaxPending resets the maximums seen so far.
+func (s *Subscription) ClearMaxPending() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return ErrBadSubscription
+	}
+	if s.typ == ChanSubscription {
+		return ErrTypeSubscription
+	}
+	s.pMsgsMax, s.pBytesMax = 0, 0
+	return nil
 }
 
 // Pending Limits
