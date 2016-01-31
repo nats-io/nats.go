@@ -940,6 +940,24 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 		t.Fatalf("Expected bytes of %d or %d, got %d\n",
 			total*mlen, (total-1)*mlen, b)
 	}
+
+	// Make sure max has been set and is the same
+	mm, bm, _ := sub.MaxPending()
+	if mm != m {
+		t.Fatalf("Expected max msgs (%d) to be same as pending msgs (%d)\n", mm, m)
+	}
+	if bm != b {
+		t.Fatalf("Expected max bytes (%d) to be same as pending bytes (%d)\n", bm, b)
+	}
+	// Check that clear works.
+	sub.ClearMaxPending()
+	mm, bm, _ = sub.MaxPending()
+	if mm != 0 {
+		t.Fatalf("Expected max msgs to be 0 vs %d after clearing\n", mm)
+	}
+	if bm != 0 {
+		t.Fatalf("Expected max bytes to be 0 vs %d after clearing\n", bm)
+	}
 }
 
 func TestAsyncSubscriptionPendingDrain(t *testing.T) {
