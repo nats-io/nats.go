@@ -122,8 +122,8 @@ func TestSimplePublishNoData(t *testing.T) {
 }
 
 func TestPublishFailOnSlowConsumer(t *testing.T) {
-	// This whole test should be removed when/if we decide to fix the fact
-	// that the publish should not fail because of an async error.
+	// FIXME(dlc): Remove this test when preventing failure to Publish()
+	// because of async error.
 
 	s := RunDefaultServer()
 	defer s.Shutdown()

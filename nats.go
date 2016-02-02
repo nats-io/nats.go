@@ -538,21 +538,6 @@ const (
 	okProto    = _OK_OP_ + _CRLF_
 )
 
-/*
-// Commenting this out since it is not used for now and reduce test coverage
-func (nc *Conn) debugPool(str string) {
-	_, cur := nc.currentServer()
-	fmt.Printf("%s\n", str)
-	for i, s := range nc.srvPool {
-		if s == cur {
-			fmt.Printf("\t*%d: %v\n", i+1, s.url)
-		} else {
-			fmt.Printf("\t%d: %v\n", i+1, s.url)
-		}
-	}
-}
-*/
-
 // Return the currently selected server
 func (nc *Conn) currentServer() (int, *srv) {
 	for i, s := range nc.srvPool {
