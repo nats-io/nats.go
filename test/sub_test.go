@@ -46,6 +46,9 @@ func TestServerAutoUnsub(t *testing.T) {
 	if sub.IsValid() {
 		t.Fatal("Expected subscription to be invalid after hitting max")
 	}
+	if err := sub.AutoUnsubscribe(10); err == nil {
+		t.Fatal("Calling AutoUnsubscribe() on closed subscription should fail")
+	}
 	delta := (runtime.NumGoroutine() - base)
 	if delta > 0 {
 		t.Fatalf("%d Go routines still exist post max subscriptions hit", delta)
@@ -83,6 +86,9 @@ func TestClientSyncAutoUnsub(t *testing.T) {
 	if sub.IsValid() {
 		t.Fatal("Expected subscription to be invalid after hitting max")
 	}
+	if err := sub.AutoUnsubscribe(10); err == nil {
+		t.Fatal("Calling AutoUnsubscribe() ob closed subscription should fail")
+	}
 }
 
 func TestClientASyncAutoUnsub(t *testing.T) {
@@ -109,6 +115,9 @@ func TestClientASyncAutoUnsub(t *testing.T) {
 
 	if atomic.LoadInt32(&received) != max {
 		t.Fatalf("Received %d msgs, wanted only %d\n", received, max)
+	}
+	if err := sub.AutoUnsubscribe(10); err == nil {
+		t.Fatal("Calling AutoUnsubscribe() on closed subscription should fail")
 	}
 }
 
@@ -558,6 +567,11 @@ func TestAsyncErrHandler(t *testing.T) {
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
 		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
 	}
+
+	sub.Unsubscribe()
+	if _, err := sub.Dropped(); err == nil {
+		t.Fatal("Calling Dropped() on closed subscription should fail")
+	}
 }
 
 func TestAsyncErrHandlerChanSubscription(t *testing.T) {
@@ -614,6 +628,11 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
 		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
+	}
+
+	sub.Unsubscribe()
+	if _, err := sub.Dropped(); err == nil {
+		t.Fatal("Calling Dropped() on closed subscription should fail")
 	}
 }
 
@@ -736,6 +755,11 @@ func TestChanSubscriber(t *testing.T) {
 
 	// Create our own channel.
 	ch := make(chan *nats.Msg, 128)
+
+	// Channel is mandatory
+	if _, err := nc.ChanSubscribe("foo", nil); err == nil {
+		t.Fatal("Creating subscription without channel should have failed")
+	}
 
 	_, err := nc.ChanSubscribe("foo", ch)
 	if err != nil {
@@ -958,6 +982,19 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	if bm != 0 {
 		t.Fatalf("Expected max bytes to be 0 vs %d after clearing\n", bm)
 	}
+
+	sub.Unsubscribe()
+
+	// These calls should fail once the subscription is closed.
+	if _, _, err := sub.Pending(); err == nil {
+		t.Fatal("Calling Pending() on closed subscription should fail")
+	}
+	if _, _, err := sub.MaxPending(); err == nil {
+		t.Fatal("Calling MaxPending() on closed subscription should fail")
+	}
+	if err := sub.ClearMaxPending(); err == nil {
+		t.Fatal("Calling ClearMaxPending() on closed subscription should fail")
+	}
 }
 
 func TestAsyncSubscriptionPendingDrain(t *testing.T) {
@@ -991,6 +1028,11 @@ func TestAsyncSubscriptionPendingDrain(t *testing.T) {
 	if b != 0 {
 		t.Fatalf("Expected bytes of 0, got %d\n", b)
 	}
+
+	sub.Unsubscribe()
+	if _, err := sub.Delivered(); err == nil {
+		t.Fatal("Calling Delivered() on closed subscription should fail")
+	}
 }
 
 func TestSyncSubscriptionPendingDrain(t *testing.T) {
@@ -1023,6 +1065,11 @@ func TestSyncSubscriptionPendingDrain(t *testing.T) {
 	}
 	if b != 0 {
 		t.Fatalf("Expected bytes of 0, got %d\n", b)
+	}
+
+	sub.Unsubscribe()
+	if _, err := sub.Delivered(); err == nil {
+		t.Fatal("Calling Delivered() on closed subscription should fail")
 	}
 }
 
@@ -1093,6 +1140,13 @@ func TestSubscriptionTypes(t *testing.T) {
 	if _, _, err := sub.Pending(); err != nil {
 		t.Fatalf("We should be able to call Pending()")
 	}
+	sub.Unsubscribe()
+	if err := sub.SetPendingLimits(1, 100); err == nil {
+		t.Fatal("Calling SetPendingLimits() on closed subscription should fail")
+	}
+	if _, _, err := sub.PendingLimits(); err == nil {
+		t.Fatal("Calling PendingLimits() on closed subscription should fail")
+	}
 
 	sub, _ = nc.SubscribeSync("foo")
 	defer sub.Unsubscribe()
@@ -1105,6 +1159,13 @@ func TestSubscriptionTypes(t *testing.T) {
 	}
 	if _, _, err := sub.Pending(); err != nil {
 		t.Fatalf("We should be able to call Pending()")
+	}
+	sub.Unsubscribe()
+	if err := sub.SetPendingLimits(1, 100); err == nil {
+		t.Fatal("Calling SetPendingLimits() on closed subscription should fail")
+	}
+	if _, _, err := sub.PendingLimits(); err == nil {
+		t.Fatal("Calling PendingLimits() on closed subscription should fail")
 	}
 
 	sub, _ = nc.ChanSubscribe("foo", make(chan *nats.Msg))
@@ -1119,4 +1180,14 @@ func TestSubscriptionTypes(t *testing.T) {
 	if _, _, err := sub.Pending(); err == nil {
 		t.Fatalf("We should NOT be able to call Pending() on ChanSubscriber")
 	}
+	if _, _, err := sub.MaxPending(); err == nil {
+		t.Fatalf("We should NOT be able to call MaxPending() on ChanSubscriber")
+	}
+	if err := sub.ClearMaxPending(); err == nil {
+		t.Fatalf("We should NOT be able to call ClearMaxPending() on ChanSubscriber")
+	}
+	if _, _, err := sub.PendingLimits(); err == nil {
+		t.Fatalf("We should NOT be able to call PendingLimits() on ChanSubscriber")
+	}
+
 }

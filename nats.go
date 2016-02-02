@@ -538,6 +538,8 @@ const (
 	okProto    = _OK_OP_ + _CRLF_
 )
 
+/*
+// Commenting this out since it is not used for now and reduce test coverage
 func (nc *Conn) debugPool(str string) {
 	_, cur := nc.currentServer()
 	fmt.Printf("%s\n", str)
@@ -549,6 +551,7 @@ func (nc *Conn) debugPool(str string) {
 		}
 	}
 }
+*/
 
 // Return the currently selected server
 func (nc *Conn) currentServer() (int, *srv) {
@@ -2198,7 +2201,7 @@ func (nc *Conn) clearPendingFlushCalls() {
 	// Clear any queued pongs, e.g. pending flush calls.
 	for _, ch := range nc.pongs {
 		if ch != nil {
-			ch <- true
+			close(ch)
 		}
 	}
 	nc.pongs = nil
