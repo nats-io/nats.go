@@ -411,6 +411,20 @@ func TestParserErr(t *testing.T) {
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
+
+	// Other types of errors should close the connection and set LastError() to
+	// that error.
+	expectedError := "Any other error"
+	errProto = []byte("-ERR " + expectedError + "\r\n")
+	err = c.parse(errProto)
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	// LastError() contains: 'nats: <error>', so check that expectedError is contained
+	// in LastError().
+	if !strings.Contains(c.LastError().Error(), expectedError) {
+		t.Fatalf("Unexpected error: '%v' instead of '%v'", c.LastError().Error(), expectedError)
+	}
 }
 
 func TestParserOK(t *testing.T) {

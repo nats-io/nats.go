@@ -121,6 +121,40 @@ func TestSimplePublishNoData(t *testing.T) {
 	}
 }
 
+func TestPublishFailOnSlowConsumer(t *testing.T) {
+	// FIXME(dlc): Remove this test when preventing failure to Publish()
+	// because of async error.
+
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Unable to create subscription: %v", err)
+	}
+
+	if err := sub.SetPendingLimits(1, 1000); err != nil {
+		t.Fatalf("Unable to set pending limits: %v", err)
+	}
+
+	var pubErr error
+
+	msg := []byte("Hello")
+	for i := 0; i < 10; i++ {
+		pubErr = nc.Publish("foo", msg)
+		if pubErr != nil {
+			break
+		}
+		nc.Flush()
+	}
+
+	if pubErr == nil || pubErr != nats.ErrSlowConsumer {
+		t.Fatalf("Expected '%v', got '%v'", nats.ErrSlowConsumer, pubErr)
+	}
+}
+
 func TestAsyncSubscribe(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -129,6 +163,11 @@ func TestAsyncSubscribe(t *testing.T) {
 
 	omsg := []byte("Hello World")
 	ch := make(chan bool)
+
+	// Callback is mandatory
+	if _, err := nc.Subscribe("foo", nil); err == nil {
+		t.Fatal("Creating subscription without callback should have failed")
+	}
 
 	_, err := nc.Subscribe("foo", func(m *nats.Msg) {
 		if !bytes.Equal(m.Data, omsg) {
@@ -194,11 +233,19 @@ func TestFlush(t *testing.T) {
 	for i := 0; i < 10000; i++ {
 		nc.Publish("flush", omsg)
 	}
+	if err := nc.FlushTimeout(0); err == nil {
+		t.Fatal("Calling FlushTimeout() with invalid timeout should fail")
+	}
 	if err := nc.Flush(); err != nil {
 		t.Fatalf("Received error from flush: %s\n", err)
 	}
 	if nb, _ := nc.Buffered(); nb > 0 {
 		t.Fatalf("Outbound buffer not empty: %d bytes\n", nb)
+	}
+
+	nc.Close()
+	if _, err := nc.Buffered(); err == nil {
+		t.Fatal("Calling Buffered() on closed connection should fail")
 	}
 }
 
@@ -490,5 +537,59 @@ func TestBadSubject(t *testing.T) {
 	}
 	if err != nats.ErrBadSubject {
 		t.Fatalf("Expected a ErrBadSubject error: Got %v\n", err)
+	}
+}
+
+func TestOptions(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.Name("myName"), nats.MaxReconnects(2), nats.ReconnectWait(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	rch := make(chan bool)
+	cch := make(chan bool)
+
+	nc.SetReconnectHandler(func(_ *nats.Conn) { rch <- true })
+	nc.SetClosedHandler(func(_ *nats.Conn) { cch <- true })
+
+	s.Shutdown()
+
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	if err := Wait(rch); err != nil {
+		t.Fatal("Failed getting reconnected cb")
+	}
+
+	nc.Close()
+
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed getting closed cb")
+	}
+
+	nc, err = nats.Connect(nats.DefaultURL, nats.NoReconnect())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	nc.SetReconnectHandler(func(_ *nats.Conn) { rch <- true })
+	nc.SetClosedHandler(func(_ *nats.Conn) { cch <- true })
+
+	s.Shutdown()
+
+	// We should not get a reconnect cb this time
+	if err := WaitTime(rch, time.Second); err == nil {
+		t.Fatal("Unexpected reconnect cb")
+	}
+
+	nc.Close()
+
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed getting closed cb")
 	}
 }

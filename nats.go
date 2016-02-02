@@ -538,18 +538,6 @@ const (
 	okProto    = _OK_OP_ + _CRLF_
 )
 
-func (nc *Conn) debugPool(str string) {
-	_, cur := nc.currentServer()
-	fmt.Printf("%s\n", str)
-	for i, s := range nc.srvPool {
-		if s == cur {
-			fmt.Printf("\t*%d: %v\n", i+1, s.url)
-		} else {
-			fmt.Printf("\t%d: %v\n", i+1, s.url)
-		}
-	}
-}
-
 // Return the currently selected server
 func (nc *Conn) currentServer() (int, *srv) {
 	for i, s := range nc.srvPool {
@@ -2198,7 +2186,7 @@ func (nc *Conn) clearPendingFlushCalls() {
 	// Clear any queued pongs, e.g. pending flush calls.
 	for _, ch := range nc.pongs {
 		if ch != nil {
-			ch <- true
+			close(ch)
 		}
 	}
 	nc.pongs = nil

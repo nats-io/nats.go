@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -381,6 +383,116 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	}
 }
 
+func TestMoreErrOnConnect(t *testing.T) {
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	done := make(chan bool)
+	case1 := make(chan bool)
+	case2 := make(chan bool)
+	case3 := make(chan bool)
+
+	go func() {
+		for i := 0; i < 4; i++ {
+			conn, err := l.Accept()
+			if err != nil {
+				t.Fatalf("Error accepting client connection: %v\n", err)
+			}
+			switch i {
+			case 0:
+				// Send back a partial INFO and close the connection.
+				conn.Write([]byte("INFO"))
+			case 1:
+				// Send just INFO
+				conn.Write([]byte("INFO\r\n"))
+				// Stick around a bit
+				<-case1
+			case 2:
+				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
+				// Send complete INFO
+				conn.Write([]byte(info))
+				// Read connect and ping commands sent from the client
+				br := bufio.NewReaderSize(conn, 1024)
+				if _, err := br.ReadString('\n'); err != nil {
+					t.Fatalf("Expected CONNECT from client, got: %s", err)
+				}
+				if _, err := br.ReadString('\n'); err != nil {
+					t.Fatalf("Expected PING from client, got: %s", err)
+				}
+				// Client expect +OK, send it but then something else than PONG
+				conn.Write([]byte("+OK\r\n"))
+				// Stick around a bit
+				<-case2
+			case 3:
+				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
+				// Send complete INFO
+				conn.Write([]byte(info))
+				// Read connect and ping commands sent from the client
+				br := bufio.NewReaderSize(conn, 1024)
+				if _, err := br.ReadString('\n'); err != nil {
+					t.Fatalf("Expected CONNECT from client, got: %s", err)
+				}
+				if _, err := br.ReadString('\n'); err != nil {
+					t.Fatalf("Expected PING from client, got: %s", err)
+				}
+				// Client expect +OK, send it but then something else than PONG
+				conn.Write([]byte("+OK\r\nXXX\r\n"))
+				// Stick around a bit
+				<-case3
+			}
+
+			conn.Close()
+		}
+
+		// Hang around until asked to quit
+		<-done
+	}()
+
+	natsURL := fmt.Sprintf("nats://localhost:%d", addr.Port)
+
+	if nc, err := nats.Connect(natsURL, nats.Timeout(20*time.Millisecond)); err == nil {
+		nc.Close()
+		t.Fatal("Expected bad INFO err, got none")
+	}
+
+	if nc, err := nats.Connect(natsURL, nats.Timeout(20*time.Millisecond)); err == nil {
+		close(case1)
+		nc.Close()
+		t.Fatal("Expected bad INFO err, got none")
+	}
+
+	close(case1)
+
+	opts := nats.DefaultOptions
+	opts.Servers = []string{natsURL}
+	opts.Timeout = 20 * time.Millisecond
+	opts.Verbose = true
+
+	if nc, err := opts.Connect(); err == nil {
+		close(case2)
+		nc.Close()
+		t.Fatal("Expected bad INFO err, got none")
+	}
+
+	close(case2)
+
+	if nc, err := opts.Connect(); err == nil {
+		close(case3)
+		nc.Close()
+		t.Fatal("Expected bad INFO err, got none")
+	}
+
+	close(case3)
+
+	close(done)
+}
+
 func TestErrOnMaxPayloadLimit(t *testing.T) {
 	expectedMaxPayload := int64(10)
 	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":%d}\r\n"
@@ -667,4 +779,213 @@ func TestCallbacksOrder(t *testing.T) {
 	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
 		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
 	}
+}
+
+func TestFlushReleaseOnClose(t *testing.T) {
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+	done := make(chan bool)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected CONNECT from client, got: %s", err)
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		// Hang around until asked to quit
+		<-done
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.AllowReconnect = false
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
+
+	// First try a FlushTimeout() and make sure we timeout
+	if err := nc.FlushTimeout(50 * time.Millisecond); err == nil || err != nats.ErrTimeout {
+		t.Fatalf("Expected a timeout error, got: %v", err)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		nc.Close()
+	}()
+
+	if err := nc.Flush(); err == nil {
+		t.Fatal("Expected error on Flush() released by Close()")
+	}
+
+	close(done)
+}
+
+func TestMaxPendingOut(t *testing.T) {
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+	done := make(chan bool)
+	cch := make(chan bool)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected CONNECT from client, got: %s", err)
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		// Hang around until asked to quit
+		<-done
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.PingInterval = 20 * time.Millisecond
+	opts.MaxPingsOut = 2
+	opts.AllowReconnect = false
+	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
+
+	// After 60 ms, we should have closed the connection
+	time.Sleep(100 * time.Millisecond)
+
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed to get ClosedCB")
+	}
+	if nc.LastError() != nats.ErrStaleConnection {
+		t.Fatalf("Expected to get %v, got %v", nats.ErrStaleConnection, nc.LastError())
+	}
+
+	close(done)
+}
+
+func TestErrInReadLoop(t *testing.T) {
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+	done := make(chan bool)
+	cch := make(chan bool)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected CONNECT from client, got: %s", err)
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		// Read (and ignore) the SUB from the client
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected SUB from client, got: %s", err)
+		}
+
+		// Send something that should make the subscriber fail.
+		conn.Write([]byte("Ivan"))
+
+		// Hang around until asked to quit
+		<-done
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.AllowReconnect = false
+	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
+
+	received := int64(0)
+
+	nc.Subscribe("foo", func(_ *nats.Msg) {
+		atomic.AddInt64(&received, 1)
+	})
+
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed to get ClosedCB")
+	}
+
+	recv := int(atomic.LoadInt64(&received))
+	if recv != 0 {
+		t.Fatalf("Should not have received messages, got: %d", recv)
+	}
+
+	close(done)
 }
