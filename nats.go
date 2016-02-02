@@ -1441,7 +1441,9 @@ func (nc *Conn) flusher() {
 			return
 		}
 		if bw.Buffered() > 0 {
-			nc.err = bw.Flush()
+			if err := bw.Flush(); err != nil {
+				nc.err = err
+			}
 		}
 		nc.mu.Unlock()
 	}
