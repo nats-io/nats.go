@@ -1724,8 +1724,8 @@ func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*S
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Subscription, error) {
 	nc.mu.Lock()
 	// ok here, but defer is generally expensive
-	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
+	defer nc.kickFlusher()
 
 	// Check for some error conditions.
 	if nc.isClosed() {
