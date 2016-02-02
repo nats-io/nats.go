@@ -1838,8 +1838,8 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	nc.mu.Lock()
 	// ok here, but defer is expensive
-	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
+	defer nc.kickFlusher()
 
 	if nc.isClosed() {
 		return ErrConnectionClosed
