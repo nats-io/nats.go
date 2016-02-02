@@ -808,7 +808,9 @@ func (nc *Conn) processConnectInit() error {
 }
 
 // Main connect function. Will connect to the nats-server
-func (nc *Conn) connect() (returnedErr error) {
+func (nc *Conn) connect() error {
+	var returnedErr error
+
 	// Create actual socket connection
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
@@ -848,7 +850,7 @@ func (nc *Conn) connect() (returnedErr error) {
 	if returnedErr == nil && nc.status != CONNECTED {
 		returnedErr = ErrNoServers
 	}
-	return
+	return returnedErr
 }
 
 // This will check to see if the connection should be
@@ -890,8 +892,7 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 
 	// Parse the protocol
-	err = nc.processInfo(c.args)
-	if err != nil {
+	if err := nc.processInfo(c.args); err != nil {
 		return err
 	}
 
