@@ -397,9 +397,10 @@ func TestMoreErrOnConnect(t *testing.T) {
 	case1 := make(chan bool)
 	case2 := make(chan bool)
 	case3 := make(chan bool)
+	case4 := make(chan bool)
 
 	go func() {
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 5; i++ {
 			conn, err := l.Accept()
 			if err != nil {
 				t.Fatalf("Error accepting client connection: %v\n", err)
@@ -445,6 +446,12 @@ func TestMoreErrOnConnect(t *testing.T) {
 				conn.Write([]byte("+OK\r\nXXX\r\n"))
 				// Stick around a bit
 				<-case3
+			case 4:
+				info := fmt.Sprintf("INFO {'x'}\r\n")
+				// Send INFO with JSON marshall error
+				conn.Write([]byte(info))
+				// Stick around a bit
+				<-case4
 			}
 
 			conn.Close()
@@ -458,13 +465,13 @@ func TestMoreErrOnConnect(t *testing.T) {
 
 	if nc, err := nats.Connect(natsURL, nats.Timeout(20*time.Millisecond)); err == nil {
 		nc.Close()
-		t.Fatal("Expected bad INFO err, got none")
+		t.Fatal("Expected error, got none")
 	}
 
 	if nc, err := nats.Connect(natsURL, nats.Timeout(20*time.Millisecond)); err == nil {
 		close(case1)
 		nc.Close()
-		t.Fatal("Expected bad INFO err, got none")
+		t.Fatal("Expected error, got none")
 	}
 
 	close(case1)
@@ -477,7 +484,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 	if nc, err := opts.Connect(); err == nil {
 		close(case2)
 		nc.Close()
-		t.Fatal("Expected bad INFO err, got none")
+		t.Fatal("Expected error, got none")
 	}
 
 	close(case2)
@@ -485,10 +492,18 @@ func TestMoreErrOnConnect(t *testing.T) {
 	if nc, err := opts.Connect(); err == nil {
 		close(case3)
 		nc.Close()
-		t.Fatal("Expected bad INFO err, got none")
+		t.Fatal("Expected error, got none")
 	}
 
 	close(case3)
+
+	if nc, err := opts.Connect(); err == nil {
+		close(case4)
+		nc.Close()
+		t.Fatal("Expected error, got none")
+	}
+
+	close(case4)
 
 	close(done)
 }

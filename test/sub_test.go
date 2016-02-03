@@ -937,8 +937,12 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	total := 100
 	msg := []byte("0123456789")
 
+	inCb := make(chan bool)
+	block := make(chan bool)
+
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
-		time.Sleep(1 * time.Second)
+		inCb <- true
+		<-block
 	})
 	defer sub.Unsubscribe()
 
@@ -946,6 +950,11 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 		nc.Publish("foo", msg)
 	}
 	nc.Flush()
+
+	// Wait that a message is received, so checks are safe
+	if err := Wait(inCb); err != nil {
+		t.Fatal("No message received")
+	}
 
 	// Test old way
 	q, _ := sub.QueuedMsgs()
@@ -956,22 +965,26 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	// New way, make sure the same and check bytes.
 	m, b, _ := sub.Pending()
 	mlen := len(msg)
+	totalSize := total * mlen
 
 	if m != total && m != total-1 {
 		t.Fatalf("Expected msgs of %d or %d, got %d\n", total, total-1, m)
 	}
-	if b != total*mlen && b != (total-1)*mlen {
+	if b != totalSize && b != totalSize-mlen {
 		t.Fatalf("Expected bytes of %d or %d, got %d\n",
-			total*mlen, (total-1)*mlen, b)
+			totalSize, totalSize-mlen, b)
 	}
 
-	// Make sure max has been set and is the same
+	// Make sure max has been set. Since we block after the first message is
+	// received, MaxPending should be >= total - 1 and <= total
 	mm, bm, _ := sub.MaxPending()
-	if mm != m {
-		t.Fatalf("Expected max msgs (%d) to be same as pending msgs (%d)\n", mm, m)
+	if mm < total-1 || mm > total {
+		t.Fatalf("Expected max msgs (%d) to be between %d and %d\n",
+			mm, total-1, total)
 	}
-	if bm != b {
-		t.Fatalf("Expected max bytes (%d) to be same as pending bytes (%d)\n", bm, b)
+	if bm < totalSize-mlen || bm > totalSize {
+		t.Fatalf("Expected max bytes (%d) to be between %d and %d\n",
+			bm, totalSize, totalSize-mlen)
 	}
 	// Check that clear works.
 	sub.ClearMaxPending()
@@ -983,6 +996,7 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 		t.Fatalf("Expected max bytes to be 0 vs %d after clearing\n", bm)
 	}
 
+	close(block)
 	sub.Unsubscribe()
 
 	// These calls should fail once the subscription is closed.

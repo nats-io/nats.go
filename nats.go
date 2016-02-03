@@ -809,6 +809,8 @@ func (nc *Conn) processConnectInit() error {
 
 // Main connect function. Will connect to the nats-server
 func (nc *Conn) connect() error {
+	var returnedErr error
+
 	// Create actual socket connection
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
@@ -826,9 +828,10 @@ func (nc *Conn) connect() error {
 			if err == nil {
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
+				returnedErr = nil
 				break
 			} else {
-				nc.err = err
+				returnedErr = err
 				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false)
 				nc.mu.Lock()
@@ -838,16 +841,16 @@ func (nc *Conn) connect() error {
 			// Cancel out default connection refused, will trigger the
 			// No servers error conditional
 			if matched, _ := regexp.Match(`connection refused`, []byte(err.Error())); matched {
-				nc.err = nil
+				returnedErr = nil
 			}
 		}
 	}
 	defer nc.mu.Unlock()
 
-	if nc.err == nil && nc.status != CONNECTED {
-		nc.err = ErrNoServers
+	if returnedErr == nil && nc.status != CONNECTED {
+		returnedErr = ErrNoServers
 	}
-	return nc.err
+	return returnedErr
 }
 
 // This will check to see if the connection should be
@@ -889,7 +892,9 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 
 	// Parse the protocol
-	nc.processInfo(c.args)
+	if err := nc.processInfo(c.args); err != nil {
+		return err
+	}
 
 	err = nc.checkForSecure()
 	if err != nil {
@@ -928,8 +933,7 @@ func (nc *Conn) connectProto() (string, error) {
 		o.Secure, o.Name, LangString, Version}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
-		nc.err = ErrJsonParse
-		return _EMPTY_, nc.err
+		return _EMPTY_, ErrJsonParse
 	}
 	return fmt.Sprintf(conProto, b), nil
 }
@@ -1023,13 +1027,6 @@ func parseControl(line string, c *control) {
 	}
 }
 
-func (nc *Conn) processDisconnect() {
-	nc.status = DISCONNECTED
-	if nc.err != nil {
-		return
-	}
-}
-
 // flushReconnectPending will push the pending items that were
 // gathered while we were in a RECONNECTING state to the socket.
 func (nc *Conn) flushReconnectPendingItems() {
@@ -1055,6 +1052,9 @@ func (nc *Conn) doReconnect() {
 	// Hold the lock manually and release where needed below,
 	// can't do defer here.
 	nc.mu.Lock()
+
+	// Clear any queued pongs, e.g. pending flush calls.
+	nc.clearPendingFlushCalls()
 
 	// Clear any errors.
 	nc.err = nil
@@ -1184,7 +1184,7 @@ func (nc *Conn) processOpErr(err error) {
 		return
 	}
 
-	nc.processDisconnect()
+	nc.status = DISCONNECTED
 	nc.err = err
 	nc.mu.Unlock()
 	nc.Close()
@@ -1441,7 +1441,11 @@ func (nc *Conn) flusher() {
 			return
 		}
 		if bw.Buffered() > 0 {
-			nc.err = bw.Flush()
+			if err := bw.Flush(); err != nil {
+				if nc.err == nil {
+					nc.err = err
+				}
+			}
 		}
 		nc.mu.Unlock()
 	}
@@ -1477,11 +1481,11 @@ func (nc *Conn) processOK() {
 
 // processInfo is used to parse the info messages sent
 // from the server.
-func (nc *Conn) processInfo(info string) {
+func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
-		return
+		return nil
 	}
-	nc.err = json.Unmarshal([]byte(info), &nc.info)
+	return json.Unmarshal([]byte(info), &nc.info)
 }
 
 // LastError reports the last error encountered via the Connection.
@@ -1559,12 +1563,6 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return ErrConnectionClosed
 	}
 
-	if nc.err != nil {
-		err := nc.err
-		nc.mu.Unlock()
-		return err
-	}
-
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
 	if nc.isReconnecting() {
@@ -1606,20 +1604,15 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	msgh = append(msgh, _CRLF_...)
 
 	// FIXME, do deadlines here
-	if _, err := nc.bw.Write(msgh); err != nil {
-		defer nc.mu.Unlock()
-		nc.err = err
-		return err
+	_, err := nc.bw.Write(msgh)
+	if err == nil {
+		_, err = nc.bw.Write(data)
 	}
-	if _, err := nc.bw.Write(data); err != nil {
-		defer nc.mu.Unlock()
-		nc.err = err
-		return err
+	if err == nil {
+		_, err = nc.bw.WriteString(_CRLF_)
 	}
-
-	if _, err := nc.bw.WriteString(_CRLF_); err != nil {
-		defer nc.mu.Unlock()
-		nc.err = err
+	if err != nil {
+		nc.mu.Unlock()
 		return err
 	}
 
@@ -2115,11 +2108,6 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		if !ok {
 			err = ErrConnectionClosed
 		} else {
-			nc.mu.Lock()
-			if nc.err != nil && nc.err != ErrSlowConsumer {
-				err = nc.err
-			}
-			nc.mu.Unlock()
 			close(ch)
 		}
 	case <-t.C:
@@ -2179,10 +2167,8 @@ func (nc *Conn) resendSubscriptions() {
 }
 
 // This will clear any pending flush calls and release pending calls.
+// Lock is assumed to be held by the caller.
 func (nc *Conn) clearPendingFlushCalls() {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-
 	// Clear any queued pongs, e.g. pending flush calls.
 	for _, ch := range nc.pongs {
 		if ch != nil {
@@ -2209,10 +2195,10 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.kickFlusher()
 	nc.mu.Unlock()
 
+	nc.mu.Lock()
+
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
-
-	nc.mu.Lock()
 
 	if nc.ptmr != nil {
 		nc.ptmr.Stop()

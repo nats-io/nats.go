@@ -121,10 +121,7 @@ func TestSimplePublishNoData(t *testing.T) {
 	}
 }
 
-func TestPublishFailOnSlowConsumer(t *testing.T) {
-	// FIXME(dlc): Remove this test when preventing failure to Publish()
-	// because of async error.
-
+func TestPublishDoesNotFailOnSlowConsumer(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 	nc := NewDefaultConnection(t)
@@ -150,8 +147,8 @@ func TestPublishFailOnSlowConsumer(t *testing.T) {
 		nc.Flush()
 	}
 
-	if pubErr == nil || pubErr != nats.ErrSlowConsumer {
-		t.Fatalf("Expected '%v', got '%v'", nats.ErrSlowConsumer, pubErr)
+	if pubErr != nil {
+		t.Fatalf("Publish() should not fail because of slow consumer. Got '%v'", pubErr)
 	}
 }
 
