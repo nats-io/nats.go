@@ -1442,7 +1442,9 @@ func (nc *Conn) flusher() {
 		}
 		if bw.Buffered() > 0 {
 			if err := bw.Flush(); err != nil {
-				nc.err = err
+				if nc.err == nil {
+					nc.err = err
+				}
 			}
 		}
 		nc.mu.Unlock()
