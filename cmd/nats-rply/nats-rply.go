@@ -1,5 +1,4 @@
 // Copyright 2012-2016 Apcera Inc. All rights reserved.
-// +build ignore
 
 package main
 
@@ -11,9 +10,9 @@ import (
 	"github.com/nats-io/nats"
 )
 
-// NOTE: Use tls scheme for TLS, e.g. nats-sub -s tls://demo.nats.io:4443 foo
+// NOTE: Use tls scheme for TLS, e.g. nats-rply -s tls://demo.nats.io:4443 foo hello
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> \n")
+	log.Fatalf("Usage: nats-rply [-s server][-t] <subject> <reponse>\n")
 }
 
 func printMsg(m *nats.Msg, i int) {
@@ -29,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 1 {
+	if len(args) < 2 {
 		usage()
 	}
 
@@ -38,11 +37,12 @@ func main() {
 		log.Fatalf("Can't connect: %v\n", err)
 	}
 
-	subj, i := args[0], 0
+	subj, reply, i := args[0], args[1], 0
 
 	nc.Subscribe(subj, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
+		nc.Publish(msg.Reply, []byte(reply))
 	})
 
 	log.Printf("Listening on [%s]\n", subj)
