@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -342,15 +341,15 @@ func TestParserErr(t *testing.T) {
 
 	c.ps = &parseState{}
 
+	// This test focuses on the parser only, not how the error is
+	// actually processed by the upper layer.
+
 	if c.ps.state != OP_START {
 		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
 	}
 
-	// TODO: Server should be changed to have an ErrStaleConnection error.
-	// so we would do this:
-	// errProto := []byte("-ERR  " + server.ErrStaleConnection.Error() + "\r\n")
-	// in the meantime, use the server's value:
-	errProto := []byte("-ERR  Stale Connection\r\n")
+	expectedError := "'Any kind of error'"
+	errProto := []byte("-ERR  " + expectedError + "\r\n")
 	err := c.parse(errProto[:1])
 	if err != nil || c.ps.state != OP_MINUS {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
@@ -392,38 +391,20 @@ func TestParserErr(t *testing.T) {
 	if c.ps.argBuf == nil {
 		t.Fatal("ArgBuf should not be nil")
 	}
-	// processErr converts incoming error to lower case to do the check
-	lowerCaseErr := strings.ToLower(string(c.ps.argBuf))
-	if lowerCaseErr != STALE_CONNECTION {
-		t.Fatalf("Wrong error, got '%v' expected '%v'", lowerCaseErr, STALE_CONNECTION)
+	s := string(c.ps.argBuf)
+	if s != expectedError {
+		t.Fatalf("Expected %v, got %v", expectedError, s)
 	}
-
 	err = c.parse(errProto[len(errProto)-2:])
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 
 	// Check without split arg buffer
-	// See comment about server's error
-	// errProto = []byte("-ERR " + server.ErrStaleConnection.Error() + "\r\n")
-	errProto = []byte("-ERR Stale Connection\r\n")
+	errProto = []byte("-ERR 'Any error'\r\n")
 	err = c.parse(errProto)
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-
-	// Other types of errors should close the connection and set LastError() to
-	// that error.
-	expectedError := "Any other error"
-	errProto = []byte("-ERR " + expectedError + "\r\n")
-	err = c.parse(errProto)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// LastError() contains: 'nats: <error>', so check that expectedError is contained
-	// in LastError().
-	if !strings.Contains(c.LastError().Error(), expectedError) {
-		t.Fatalf("Unexpected error: '%v' instead of '%v'", c.LastError().Error(), expectedError)
 	}
 }
 

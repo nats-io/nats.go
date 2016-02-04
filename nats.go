@@ -986,9 +986,20 @@ func (nc *Conn) sendConnect() error {
 	// We expect a PONG
 	if line != pongProto {
 		// But it could be something else, like -ERR
-		if strings.HasPrefix(line, _ERR_OP_) {
-			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
-		}
+
+		// We used to call ReadLine(), which would strip the '\r\n' but there
+		// were some issues using this call. ReadString('\n') keeps the carriage
+		// return, so we will remove it.
+		// All these calls are safe if things are not present. Also, may not be
+		// supper efficient, but this is executed only once per connection, and
+		// only in case of error.
+		line = strings.TrimRight(line, "\r\n")
+		line = strings.TrimPrefix(line, _ERR_OP_)
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "'")
+		line = strings.TrimRight(line, "'")
+		line = strings.ToLower(line)
+
 		return errors.New("nats: " + line)
 	}
 
@@ -1496,8 +1507,16 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
+	// As of now, the server sends error surrounded with"'".
+	// The calls below will remove them (if present) and also convert
+	// to lower cases. This code will work even if server stops using
+	// the quotes one day.
+	e = strings.TrimLeft(e, "'")
+	e = strings.TrimRight(e, "'")
+	e = strings.ToLower(e)
+
 	// FIXME(dlc) - process Slow Consumer signals special.
-	if strings.ToLower(e) == STALE_CONNECTION {
+	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
 		nc.mu.Lock()
