@@ -33,6 +33,9 @@ var (
 
 // Encode
 func (pb *ProtobufEncoder) Encode(subject string, v interface{}) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
 	i, found := v.(proto.Message)
 	if !found {
 		return nil, ErrInvalidProtoMsgEncode
@@ -47,6 +50,9 @@ func (pb *ProtobufEncoder) Encode(subject string, v interface{}) ([]byte, error)
 
 // Decode
 func (pb *ProtobufEncoder) Decode(subject string, data []byte, vPtr interface{}) error {
+	if _, ok := vPtr.(*interface{}); ok {
+		return nil
+	}
 	i, found := vPtr.(proto.Message)
 	if !found {
 		return ErrInvalidProtoMsgDecode
