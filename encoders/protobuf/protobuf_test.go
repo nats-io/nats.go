@@ -3,6 +3,7 @@ package protobuf_test
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats"
 	"github.com/nats-io/nats/test"
@@ -45,6 +46,35 @@ func TestProtoMarshalStruct(t *testing.T) {
 	ec.Publish("protobuf_test", me)
 	if e := test.Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestProtoNilRequest(t *testing.T) {
+	s := test.RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewProtoEncodedConn(t)
+	defer ec.Close()
+
+	testPerson := &pb.Person{Name: "Anatolii", Age: 25, Address: "Ukraine, Nikolaev"}
+
+	//Subscribe with empty interface shouldn't failed on empty message
+	ec.Subscribe("nil_test", func(_, reply string, _ interface{}) {
+		ec.Publish(reply, testPerson)
+	})
+
+	resp := new(pb.Person)
+
+	//Request with nil argument shouldn't failed with nil argument
+	err := ec.Request("nil_test", nil, resp, 100*time.Millisecond)
+	ec.Flush()
+
+	if err != nil {
+		t.Error("Fail to send empty message via encoded proto connection")
+	}
+
+	if !reflect.DeepEqual(testPerson, resp) {
+		t.Error("Fail to receive encoded response")
 	}
 }
 
