@@ -57,7 +57,7 @@ var (
 	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
 	ErrTimeout              = errors.New("nats: timeout")
 	ErrBadTimeout           = errors.New("nats: timeout invalid")
-	ErrAuthorization        = errors.New("nats: authorization failed")
+	ErrAuthorization        = errors.New("nats: authorization violation")
 	ErrNoServers            = errors.New("nats: no servers available for connection")
 	ErrJsonParse            = errors.New("nats: connect message, json parse err")
 	ErrChanArg              = errors.New("nats: argument needs to be a channel type")
@@ -938,6 +938,13 @@ func (nc *Conn) connectProto() (string, error) {
 	return fmt.Sprintf(conProto, b), nil
 }
 
+// normalizeErr removes the prefix -ERR, trim spaces and remove the quotes.
+func normalizeErr(line string) string {
+	s := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, _ERR_OP_)))
+	s = strings.TrimLeft(strings.TrimRight(s, "'"), "'")
+	return s
+}
+
 // Send a connect protocol message to the server, issue user/password if
 // applicable. Will wait for a flush to return from the server for error
 // processing.
@@ -987,20 +994,18 @@ func (nc *Conn) sendConnect() error {
 	if line != pongProto {
 		// But it could be something else, like -ERR
 
-		// We used to call ReadLine(), which would strip the '\r\n' but there
-		// were some issues using this call. ReadString('\n') keeps the carriage
-		// return, so we will remove it.
-		// All these calls are safe if things are not present. Also, may not be
-		// supper efficient, but this is executed only once per connection, and
-		// only in case of error.
+		// Since we no longer use ReadLine(), trim the trailing "\r\n"
 		line = strings.TrimRight(line, "\r\n")
-		line = strings.TrimPrefix(line, _ERR_OP_)
-		line = strings.TrimSpace(line)
-		line = strings.TrimLeft(line, "'")
-		line = strings.TrimRight(line, "'")
-		line = strings.ToLower(line)
 
-		return errors.New("nats: " + line)
+		// If it's a server error...
+		if strings.HasPrefix(line, _ERR_OP_) {
+			// Remove -ERR, trim spaces and quotes, and convert to lower case.
+			line = normalizeErr(line)
+			return errors.New("nats: " + line)
+		}
+
+		// Notify that we got an unexpected protocol.
+		return errors.New(fmt.Sprintf("nats: expected '%s', got '%s'", _PONG_OP_, line))
 	}
 
 	// This is where we are truly connected.
@@ -1507,13 +1512,8 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
-	// As of now, the server sends error surrounded with"'".
-	// The calls below will remove them (if present) and also convert
-	// to lower cases. This code will work even if server stops using
-	// the quotes one day.
-	e = strings.TrimLeft(e, "'")
-	e = strings.TrimRight(e, "'")
-	e = strings.ToLower(e)
+	// Trim, remove quotes, convert to lower case.
+	e = normalizeErr(e)
 
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {

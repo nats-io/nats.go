@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -744,5 +745,43 @@ func TestParserSplitMsg(t *testing.T) {
 	}
 	if nc.ps.state != OP_START {
 		t.Fatalf("Wrong state: %v", nc.ps.state)
+	}
+}
+
+func TestNormalizeError(t *testing.T) {
+	received := "Typical Error"
+	expected := strings.ToLower(received)
+	if s := normalizeErr("-ERR '" + received + "'"); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
+	}
+
+	received = "Trim Surrounding Spaces"
+	expected = strings.ToLower(received)
+	if s := normalizeErr("-ERR    '" + received + "'   "); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
+	}
+
+	received = "Trim Surrounding Spaces Without Quotes"
+	expected = strings.ToLower(received)
+	if s := normalizeErr("-ERR    " + received + "   "); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
+	}
+
+	received = "Error Without Quotes"
+	expected = strings.ToLower(received)
+	if s := normalizeErr("-ERR " + received); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
+	}
+
+	received = "Error With Quote Only On Left"
+	expected = strings.ToLower(received)
+	if s := normalizeErr("-ERR '" + received); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
+	}
+
+	received = "Error With Quote Only On Right"
+	expected = strings.ToLower(received)
+	if s := normalizeErr("-ERR " + received + "'"); s != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 }
