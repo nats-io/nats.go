@@ -590,3 +590,93 @@ func TestOptions(t *testing.T) {
 		t.Fatal("Failed getting closed cb")
 	}
 }
+
+func TestNilConnection(t *testing.T) {
+	var nc *nats.Conn
+	data := []byte("ok")
+
+	// Publish
+	if err := nc.Publish("foo", data); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if err := nc.PublishMsg(nil); err == nil || err != nats.ErrInvalidMsg {
+		t.Fatalf("Expected ErrInvalidMsg error, got %v\n", err)
+	}
+	if err := nc.PublishMsg(&nats.Msg{}); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if err := nc.PublishRequest("foo", "reply", data); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+
+	// Subscribe
+	if _, err := nc.Subscribe("foo", nil); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if _, err := nc.SubscribeSync("foo"); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if _, err := nc.QueueSubscribe("foo", "bar", nil); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	ch := make(chan *nats.Msg)
+	if _, err := nc.ChanSubscribe("foo", ch); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if _, err := nc.ChanQueueSubscribe("foo", "bar", ch); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if _, err := nc.QueueSubscribeSyncWithChan("foo", "bar", ch); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+
+	// Flush
+	if err := nc.Flush(); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if err := nc.FlushTimeout(time.Millisecond); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+
+	// Nil Subscribers
+	var sub *nats.Subscription
+	if sub.Type() != nats.NilSubscription {
+		t.Fatalf("Got wrong type for nil subscription, %v\n", sub.Type())
+	}
+	if sub.IsValid() != false {
+		t.Fatalf("Expected IsVlaid() to return false")
+	}
+	if err := sub.Unsubscribe(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected Unsubscribe to return proper error, got %v\n", err)
+	}
+	if err := sub.AutoUnsubscribe(1); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, err := sub.NextMsg(time.Millisecond); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, err := sub.QueuedMsgs(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, _, err := sub.Pending(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, _, err := sub.MaxPending(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if err := sub.ClearMaxPending(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, _, err := sub.PendingLimits(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if err := sub.SetPendingLimits(1, 1); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, err := sub.Delivered(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+	if _, err := sub.Dropped(); err == nil || err != nats.ErrBadSubscription {
+		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
+	}
+}
