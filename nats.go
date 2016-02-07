@@ -59,7 +59,7 @@ var (
 	ErrBadTimeout           = errors.New("nats: timeout invalid")
 	ErrAuthorization        = errors.New("nats: authorization failed")
 	ErrNoServers            = errors.New("nats: no servers available for connection")
-	ErrJsonParse            = errors.New("nats: connect message, json parse err")
+	ErrJsonParse            = errors.New("nats: connect message, json parse error")
 	ErrChanArg              = errors.New("nats: argument needs to be a channel type")
 	ErrMaxPayload           = errors.New("nats: maximum payload exceeded")
 	ErrMaxMessages          = errors.New("nats: maximum messages delivered")
@@ -67,6 +67,8 @@ var (
 	ErrMultipleTLSConfigs   = errors.New("nats: multiple tls.Configs not allowed")
 	ErrNoInfoReceived       = errors.New("nats: protocol exception, INFO not received")
 	ErrReconnectBufExceeded = errors.New("nats: outbound buffer limit exceeded")
+	ErrInvalidConnection    = errors.New("nats: invalid connection")
+	ErrInvalidMsg           = errors.New("nats: invalid message or message nil")
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -444,6 +446,9 @@ func ErrorHandler(cb ErrHandler) Option {
 
 // SetDisconnectHandler will set the disconnect event handler.
 func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
+	if nc == nil {
+		return
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.DisconnectedCB = dcb
@@ -451,6 +456,9 @@ func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 
 // SetReconnectHandler will set the reconnect event handler.
 func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
+	if nc == nil {
+		return
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.ReconnectedCB = rcb
@@ -458,6 +466,9 @@ func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 
 // SetClosedHandler will set the reconnect event handler.
 func (nc *Conn) SetClosedHandler(cb ConnHandler) {
+	if nc == nil {
+		return
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.ClosedCB = cb
@@ -465,6 +476,9 @@ func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 
 // SetErrHandler will set the async error handler.
 func (nc *Conn) SetErrorHandler(cb ErrHandler) {
+	if nc == nil {
+		return
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.AsyncErrorCB = cb
@@ -746,6 +760,9 @@ func (nc *Conn) spinUpGoRoutines() {
 
 // Report the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
+	if nc == nil {
+		return _EMPTY_
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
@@ -756,6 +773,9 @@ func (nc *Conn) ConnectedUrl() string {
 
 // Report the connected server's Id
 func (nc *Conn) ConnectedServerId() string {
+	if nc == nil {
+		return _EMPTY_
+	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.status != CONNECTED {
@@ -1490,6 +1510,9 @@ func (nc *Conn) processInfo(info string) error {
 
 // LastError reports the last error encountered via the Connection.
 func (nc *Conn) LastError() error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
 	return nc.err
 }
 
@@ -1528,6 +1551,9 @@ func (nc *Conn) Publish(subj string, data []byte) error {
 // PublishMsg publishes the Msg structure, which includes the
 // Subject, an optional Reply and an optional Data field.
 func (nc *Conn) PublishMsg(m *Msg) error {
+	if m == nil {
+		return ErrInvalidMsg
+	}
 	return nc.publish(m.Subject, m.Reply, m.Data)
 }
 
@@ -1545,6 +1571,9 @@ const digits = "0123456789"
 // Sends a protocol data message by queueing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
 	if subj == "" {
 		return ErrBadSubject
 	}
@@ -1679,6 +1708,9 @@ func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscript
 
 // SubscribeSync is syntactic sugar for Subscribe(subject, nil).
 func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
+	if nc == nil {
+		return nil, ErrInvalidConnection
+	}
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	s, e := nc.subscribe(subj, _EMPTY_, nil, mch)
 	if s != nil {
@@ -1715,6 +1747,9 @@ func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*S
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Subscription, error) {
+	if nc == nil {
+		return nil, ErrInvalidConnection
+	}
 	nc.mu.Lock()
 	// ok here, but defer is generally expensive
 	defer nc.mu.Unlock()
@@ -1783,10 +1818,14 @@ const (
 	AsyncSubscription = SubscriptionType(iota)
 	SyncSubscription
 	ChanSubscription
+	NilSubscription
 )
 
 // Type returns the type of Subscription.
 func (s *Subscription) Type() SubscriptionType {
+	if s == nil {
+		return NilSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.typ
@@ -1796,6 +1835,9 @@ func (s *Subscription) Type() SubscriptionType {
 // is still active. This will return false if the subscription has
 // already been closed.
 func (s *Subscription) IsValid() bool {
+	if s == nil {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.conn != nil
@@ -1803,6 +1845,9 @@ func (s *Subscription) IsValid() bool {
 
 // Unsubscribe will remove interest in the given subject.
 func (s *Subscription) Unsubscribe() error {
+	if s == nil {
+		return ErrBadSubscription
+	}
 	s.mu.Lock()
 	conn := s.conn
 	s.mu.Unlock()
@@ -1817,6 +1862,9 @@ func (s *Subscription) Unsubscribe() error {
 // This can be useful when sending a request to an unknown number
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
+	if s == nil {
+		return ErrBadSubscription
+	}
 	s.mu.Lock()
 	conn := s.conn
 	s.mu.Unlock()
@@ -1863,6 +1911,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
 func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
+	if s == nil {
+		return nil, ErrBadSubscription
+	}
 	s.mu.Lock()
 	if s.connClosed {
 		s.mu.Unlock()
@@ -1940,6 +1991,9 @@ func (s *Subscription) QueuedMsgs() (int, error) {
 
 // Pending returns the number of queued messages and queued bytes in the client for this subscription.
 func (s *Subscription) Pending() (int, int, error) {
+	if s == nil {
+		return -1, -1, ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1953,6 +2007,9 @@ func (s *Subscription) Pending() (int, int, error) {
 
 // MaxPending returns the maximum number of queued messages and queued bytes seen so far.
 func (s *Subscription) MaxPending() (int, int, error) {
+	if s == nil {
+		return -1, -1, ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1966,6 +2023,9 @@ func (s *Subscription) MaxPending() (int, int, error) {
 
 // ClearMaxPending resets the maximums seen so far.
 func (s *Subscription) ClearMaxPending() error {
+	if s == nil {
+		return ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1986,6 +2046,9 @@ const (
 
 // PendingLimits returns the current limits for this subscription.
 func (s *Subscription) PendingLimits() (int, int, error) {
+	if s == nil {
+		return -1, -1, ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -1999,6 +2062,9 @@ func (s *Subscription) PendingLimits() (int, int, error) {
 
 // SetPendingLimits sets the limits for pending msgs and bytes for this subscription.
 func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
+	if s == nil {
+		return ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -2013,6 +2079,9 @@ func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
 
 // Delivered returns the number of delivered messages for this subscription.
 func (s *Subscription) Delivered() (int64, error) {
+	if s == nil {
+		return -1, ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -2026,6 +2095,9 @@ func (s *Subscription) Delivered() (int64, error) {
 // the server declares the connection a SlowConsumer, this number may not be
 // valid.
 func (s *Subscription) Dropped() (int, error) {
+	if s == nil {
+		return -1, ErrBadSubscription
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
@@ -2087,6 +2159,9 @@ func (nc *Conn) processPingTimer() {
 
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
 	if timeout <= 0 {
 		return ErrBadTimeout
 	}
