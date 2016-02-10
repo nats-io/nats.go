@@ -57,7 +57,7 @@ var (
 	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
 	ErrTimeout              = errors.New("nats: timeout")
 	ErrBadTimeout           = errors.New("nats: timeout invalid")
-	ErrAuthorization        = errors.New("nats: authorization failed")
+	ErrAuthorization        = errors.New("nats: authorization violation")
 	ErrNoServers            = errors.New("nats: no servers available for connection")
 	ErrJsonParse            = errors.New("nats: connect message, json parse error")
 	ErrChanArg              = errors.New("nats: argument needs to be a channel type")
@@ -958,6 +958,13 @@ func (nc *Conn) connectProto() (string, error) {
 	return fmt.Sprintf(conProto, b), nil
 }
 
+// normalizeErr removes the prefix -ERR, trim spaces and remove the quotes.
+func normalizeErr(line string) string {
+	s := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, _ERR_OP_)))
+	s = strings.TrimLeft(strings.TrimRight(s, "'"), "'")
+	return s
+}
+
 // Send a connect protocol message to the server, issue user/password if
 // applicable. Will wait for a flush to return from the server for error
 // processing.
@@ -1006,10 +1013,19 @@ func (nc *Conn) sendConnect() error {
 	// We expect a PONG
 	if line != pongProto {
 		// But it could be something else, like -ERR
+
+		// Since we no longer use ReadLine(), trim the trailing "\r\n"
+		line = strings.TrimRight(line, "\r\n")
+
+		// If it's a server error...
 		if strings.HasPrefix(line, _ERR_OP_) {
-			return errors.New("nats: " + strings.TrimPrefix(line, _ERR_OP_))
+			// Remove -ERR, trim spaces and quotes, and convert to lower case.
+			line = normalizeErr(line)
+			return errors.New("nats: " + line)
 		}
-		return errors.New("nats: " + line)
+
+		// Notify that we got an unexpected protocol.
+		return errors.New(fmt.Sprintf("nats: expected '%s', got '%s'", _PONG_OP_, line))
 	}
 
 	// This is where we are truly connected.
@@ -1519,8 +1535,11 @@ func (nc *Conn) LastError() error {
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
 func (nc *Conn) processErr(e string) {
+	// Trim, remove quotes, convert to lower case.
+	e = normalizeErr(e)
+
 	// FIXME(dlc) - process Slow Consumer signals special.
-	if strings.ToLower(e) == STALE_CONNECTION {
+	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else {
 		nc.mu.Lock()

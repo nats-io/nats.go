@@ -141,7 +141,7 @@ func TestAuthServers(t *testing.T) {
 		t.Fatalf("Expect Auth failure, got no error\n")
 	}
 
-	if matched, _ := regexp.Match(`Authorization`, []byte(err.Error())); !matched {
+	if matched, _ := regexp.Match(`authorization`, []byte(err.Error())); !matched {
 		t.Fatalf("Wrong error, wanted Auth failure, got '%s'\n", err)
 	}
 

@@ -27,6 +27,12 @@ func TestAuth(t *testing.T) {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 
+	// This test may be a bit too strict for the future, but for now makes
+	// sure that we correctly process the -ERR content on connect.
+	if err.Error() != nats.ErrAuthorization.Error() {
+		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
+	}
+
 	nc, err := nats.Connect("nats://derek:foo@localhost:8232")
 	if err != nil {
 		t.Fatal("Should have connected successfully with a token")

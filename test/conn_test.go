@@ -1004,3 +1004,198 @@ func TestErrInReadLoop(t *testing.T) {
 
 	close(done)
 }
+
+func TestErrStaleConnection(t *testing.T) {
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+	done := make(chan bool)
+	dch := make(chan bool)
+	rch := make(chan bool)
+	cch := make(chan bool)
+	sch := make(chan bool)
+
+	firstDisconnect := true
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := l.Accept()
+			if err != nil {
+				t.Fatalf("Error accepting client connection: %v\n", err)
+			}
+			defer conn.Close()
+			info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+			conn.Write([]byte(info))
+
+			// Read connect and ping commands sent from the client
+			br := bufio.NewReaderSize(conn, 1024)
+			if _, err := br.ReadString('\n'); err != nil {
+				t.Fatalf("Expected CONNECT from client, got: %s", err)
+			}
+			if _, err := br.ReadString('\n'); err != nil {
+				t.Fatalf("Expected PING from client, got: %s", err)
+			}
+			conn.Write([]byte("PONG\r\n"))
+
+			if i == 0 {
+				// Wait a tiny, and simulate a Stale Connection
+				time.Sleep(50 * time.Millisecond)
+				conn.Write([]byte("-ERR 'Stale Connection'\r\n"))
+
+				// The client should try to reconnect. When getting the
+				// disconnected callback, it will close this channel.
+				<-sch
+
+				// Close the connection and go back to accept the new
+				// connection.
+				conn.Close()
+			} else {
+				// Hang around a bit
+				<-done
+			}
+		}
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.AllowReconnect = true
+	opts.DisconnectedCB = func(_ *nats.Conn) {
+		// Interested only in the first disconnect cb
+		if firstDisconnect {
+			firstDisconnect = false
+			close(sch)
+			dch <- true
+		}
+	}
+	opts.ReconnectedCB = func(_ *nats.Conn) { rch <- true }
+	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
+	opts.ReconnectWait = 20 * time.Millisecond
+	opts.MaxReconnect = 100
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
+
+	// We should first gets disconnected
+	if err := Wait(dch); err != nil {
+		t.Fatal("Failed to get DisconnectedCB")
+	}
+
+	// Then reconneted..
+	if err := Wait(rch); err != nil {
+		t.Fatal("Failed to get ReconnectedCB")
+	}
+
+	// Now close the connection
+	nc.Close()
+
+	// We should get the closed cb
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed to get ClosedCB")
+	}
+
+	close(done)
+}
+
+func TestServerErrorClosesConnection(t *testing.T) {
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+	done := make(chan bool)
+	dch := make(chan bool)
+	cch := make(chan bool)
+
+	serverSentError := "Any Error"
+	reconnected := int64(0)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected CONNECT from client, got: %s", err)
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			t.Fatalf("Expected PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		// Wait a tiny, and simulate a Stale Connection
+		time.Sleep(50 * time.Millisecond)
+		conn.Write([]byte("-ERR '" + serverSentError + "'\r\n"))
+
+		// Hang around a bit
+		<-done
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+
+	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+	opts := nats.DefaultOptions
+	opts.AllowReconnect = true
+	opts.DisconnectedCB = func(_ *nats.Conn) { dch <- true }
+	opts.ReconnectedCB = func(_ *nats.Conn) { atomic.AddInt64(&reconnected, 1) }
+	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
+	opts.ReconnectWait = 20 * time.Millisecond
+	opts.MaxReconnect = 100
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected INFO message with custom max payload, got: %s", err)
+	}
+	defer nc.Close()
+
+	// The server sends an error that should cause the client to simply close
+	// the connection.
+
+	// We should first gets disconnected
+	if err := Wait(dch); err != nil {
+		t.Fatal("Failed to get DisconnectedCB")
+	}
+
+	// We should get the closed cb
+	if err := Wait(cch); err != nil {
+		t.Fatal("Failed to get ClosedCB")
+	}
+
+	// We should not have been reconnected
+	if atomic.LoadInt64(&reconnected) != 0 {
+		t.Fatal("ReconnectedCB should not have been invoked")
+	}
+
+	// Check LastError(), it should be "nats: <server error in lower case>"
+	lastErr := nc.LastError().Error()
+	expectedErr := "nats: " + strings.ToLower(serverSentError)
+	if lastErr != expectedErr {
+		t.Fatalf("Expected error: '%v', got '%v'", expectedErr, lastErr)
+	}
+
+	close(done)
+}
