@@ -378,6 +378,73 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
+	var myServers = []string{
+		"nats://localhost:1222",
+		"nats://localhost:4443",
+	}
+	s1 := RunServerOnPort(1222)
+	defer s1.Shutdown()
+
+	s2, _ := RunServerWithConfig("./configs/tlsverify.conf")
+	defer s2.Shutdown()
+
+	opts := nats.DefaultOptions
+	opts.Servers = myServers
+	opts.NoRandomize = true
+	opts.MaxReconnect = 5
+	opts.ReconnectWait = (25 * time.Millisecond)
+
+	dcbCalled := false
+	dch := make(chan bool)
+	opts.DisconnectedCB = func(_ *nats.Conn) {
+		dcbCalled = true
+		dch <- true
+	}
+
+	closedCbCalled := false
+	cch := make(chan bool)
+
+	opts.ClosedCB = func(_ *nats.Conn) {
+		closedCbCalled = true
+		cch <- true
+	}
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+	defer nc.Close()
+
+	s1.Shutdown()
+
+	// wait for disconnect
+	if e := WaitTime(dch, 2*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	// Wait for ClosedCB
+	if e := WaitTime(cch, 2*time.Second); e != nil {
+		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", nc.Reconnects)
+	}
+
+	// Make sure we have not exceeded MaxReconnect
+	if nc.Reconnects != uint64(opts.MaxReconnect) {
+		t.Fatalf("Num reconnects was %v, expected %v", nc.Reconnects, opts.MaxReconnect)
+	}
+
+	// Make sure we are not still reconnecting..
+	if !closedCbCalled {
+		t.Logf("%+v\n", nc)
+		t.Fatal("Closed CB was not triggered, should have been.")
+	}
+
+	// Expect connection to be closed...
+	if nc.IsClosed() != true {
+		t.Fatalf("Wrong status: %d\n", nc.Status())
+	}
+}
+
 func TestTimeoutOnNoServers(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
