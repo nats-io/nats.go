@@ -1138,15 +1138,15 @@ func (nc *Conn) doReconnect() {
 		// We are reconnected
 		nc.Reconnects++
 
-		// Clear out server stats for the server we connected to..
-		cur.didConnect = true
-		cur.reconnects = 0
-
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
 			nc.status = RECONNECTING
 			continue
 		}
+
+		// Clear out server stats for the server we connected to..
+		cur.didConnect = true
+		cur.reconnects = 0
 
 		// Send existing subscription state
 		nc.resendSubscriptions()
