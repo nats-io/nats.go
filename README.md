@@ -118,7 +118,7 @@ nc, err := nats.Connect("tls://nats.demo.io:4443")
 nc, err = nats.Connect("tls://localhost:4443", nats.RootCAs("./configs/certs/ca.pem"))
 
 // If the server requires client certificate, there is an helper function for that too:
-cert := nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+cert := nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem")
 nc, err = nats.Connect("tls://localhost:4443", cert)
 
 // You can also supply a complete tls.Config
