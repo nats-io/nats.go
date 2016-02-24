@@ -128,10 +128,10 @@ func TestAuthServers(t *testing.T) {
 	}
 
 	as1 := RunServerOnPort(1222)
-	as1.SetAuthMethod(auth)
+	as1.SetClientAuthMethod(auth)
 	defer as1.Shutdown()
 	as2 := RunServerOnPort(1224)
-	as2.SetAuthMethod(auth)
+	as2.SetClientAuthMethod(auth)
 	defer as2.Shutdown()
 
 	pservers := strings.Join(plainServers, ",")

@@ -18,7 +18,7 @@ func TestAuth(t *testing.T) {
 		Username: "derek",
 		Password: "foo",
 	}
-	s.SetAuthMethod(auth)
+	s.SetClientAuthMethod(auth)
 
 	defer s.Shutdown()
 
@@ -48,7 +48,7 @@ func TestAuthFailNoDisconnectCB(t *testing.T) {
 		Username: "derek",
 		Password: "foo",
 	}
-	s.SetAuthMethod(auth)
+	s.SetClientAuthMethod(auth)
 
 	defer s.Shutdown()
 
@@ -84,7 +84,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 		Username: "ivan",
 		Password: "foo",
 	}
-	ts2.SetAuthMethod(auth)
+	ts2.SetClientAuthMethod(auth)
 	defer ts2.Shutdown()
 
 	ts3 := RunServerOnPort(23234)
@@ -136,7 +136,7 @@ func TestTokenAuth(t *testing.T) {
 	secret := "S3Cr3T0k3n!"
 	// Auth is pluggable, so need to set here..
 	auth := &auth.Token{Token: secret}
-	s.SetAuthMethod(auth)
+	s.SetClientAuthMethod(auth)
 
 	defer s.Shutdown()
 
