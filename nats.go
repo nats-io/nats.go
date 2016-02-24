@@ -6,15 +6,13 @@ package nats
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"net/url"
 	"regexp"
@@ -24,12 +22,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	mrand "math/rand"
+	"github.com/nats-io/nuid"
 )
 
 // Default Constants
 const (
-	Version                 = "1.1.7"
+	Version                 = "1.1.9"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -622,8 +620,8 @@ func (nc *Conn) setupServerPool() error {
 	}
 
 	var srvrs []string
-	source := mrand.NewSource(time.Now().UnixNano())
-	r := mrand.New(source)
+	source := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(source)
 
 	if nc.Opts.NoRandomize {
 		srvrs = nc.Opts.Servers
@@ -1695,14 +1693,18 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg
 
 // InboxPrefix is the prefix for all inbox subjects.
 const InboxPrefix = "_INBOX."
+const inboxPrefixLen = len(InboxPrefix)
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
 func NewInbox() string {
-	u := make([]byte, 13)
-	io.ReadFull(rand.Reader, u)
-	return fmt.Sprintf("%s%s", InboxPrefix, hex.EncodeToString(u))
+	var b [inboxPrefixLen + 22]byte
+	pres := b[:inboxPrefixLen]
+	copy(pres, InboxPrefix)
+	ns := b[inboxPrefixLen:]
+	copy(ns, nuid.Next())
+	return string(b[:])
 }
 
 // Subscribe will express interest in the given subject. The subject

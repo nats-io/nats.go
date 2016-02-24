@@ -100,3 +100,9 @@ func BenchmarkSyncSubscriptionCreationSpeed(b *testing.B) {
 		nc.SubscribeSync("foo")
 	}
 }
+
+func BenchmarkInboxCreation(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		nats.NewInbox()
+	}
+}
