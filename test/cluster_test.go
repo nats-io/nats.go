@@ -311,7 +311,7 @@ func TestProperReconnectDelay(t *testing.T) {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
-	// Wait, want to make sure we don't spin on reconnect to non-existant servers.
+	// Wait, want to make sure we don't spin on reconnect to non-existent servers.
 	time.Sleep(1 * time.Second)
 
 	// Make sure we are still reconnecting..

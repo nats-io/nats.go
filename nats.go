@@ -922,7 +922,7 @@ func (nc *Conn) processExpectedInfo() error {
 	return nil
 }
 
-// Sends a protocol control message by queueing into the bufio writer
+// Sends a protocol control message by queuing into the bufio writer
 // and kicking the flush Go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.mu.Lock()
@@ -1585,7 +1585,7 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 const digits = "0123456789"
 
 // publish is the internal function to publish messages to a nats-server.
-// Sends a protocol data message by queueing into the bufio writer
+// Sends a protocol data message by queuing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, data []byte) error {
 	if nc == nil {
