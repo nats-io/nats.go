@@ -3,6 +3,7 @@ package test
 import (
 	"math"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -219,7 +220,7 @@ func TestHotSpotReconnect(t *testing.T) {
 	defer s1.Shutdown()
 
 	var srvrs string
-	if isWindows {
+	if runtime.GOOS == "windows" {
 		srvrs = strings.Join(testServers[:5], ",")
 	} else {
 		srvrs = servers
@@ -335,7 +336,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 
 	opts := nats.DefaultOptions
 	// Reduce the list of servers for Windows tests
-	if isWindows {
+	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
 	} else {
@@ -407,7 +408,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	opts := nats.DefaultOptions
 	opts.Servers = myServers
 	opts.NoRandomize = true
-	if isWindows {
+	if runtime.GOOS == "windows" {
 		opts.MaxReconnect = 2
 	} else {
 		opts.MaxReconnect = 5
@@ -472,7 +473,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
-	if isWindows {
+	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
 		opts.ReconnectWait = (100 * time.Millisecond)
@@ -521,7 +522,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 		t.Fatal("Did not receive a closed callback message")
 	}
 
-	if !isWindows {
+	if runtime.GOOS != "windows" {
 		timeWait := time.Since(startWait)
 
 		// Use 500ms as variable time delta
