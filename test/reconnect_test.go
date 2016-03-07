@@ -100,44 +100,6 @@ var reconnectOpts = nats.Options{
 	Timeout:        nats.DefaultTimeout,
 }
 
-func TestConnCloseBreaksReconnectLoop(t *testing.T) {
-	ts := startReconnectServer(t)
-	defer ts.Shutdown()
-
-	cch := make(chan bool)
-
-	opts := reconnectOpts
-	// Bump the max reconnect attempts
-	opts.MaxReconnect = 100
-	opts.ClosedCB = func(_ *nats.Conn) {
-		cch <- true
-	}
-	nc, err := opts.Connect()
-	if err != nil {
-		t.Fatalf("Should have connected ok: %v", err)
-	}
-	defer nc.Close()
-	nc.Flush()
-
-	// Shutdown the server
-	ts.Shutdown()
-
-	// Wait a second, then close the connection
-	time.Sleep(time.Second)
-
-	// Close the connection, this should break the reconnect loop.
-	// Do this in a go routine since the issue was that Close()
-	// would block until the reconnect loop is done.
-	go nc.Close()
-
-	// Even on Windows (where a createConn takes more than a second)
-	// we should be able to break the reconnect loop with the following
-	// timeout.
-	if err := WaitTime(cch, 3*time.Second); err != nil {
-		t.Fatal("Did not get a closed callback")
-	}
-}
-
 func TestBasicReconnectFunctionality(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
