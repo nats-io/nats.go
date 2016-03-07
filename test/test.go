@@ -5,6 +5,7 @@ package test
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/nats-io/gnatsd/server"
@@ -12,6 +13,12 @@ import (
 
 	gnatsd "github.com/nats-io/gnatsd/test"
 )
+
+var isWindows bool
+
+func init() {
+	isWindows = (runtime.GOOS == "windows")
+}
 
 // So that we can pass tests and benchmarks...
 type tLogger interface {
