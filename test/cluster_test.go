@@ -172,10 +172,15 @@ func TestBasicClusterReconnect(t *testing.T) {
 	dch := make(chan bool)
 	rch := make(chan bool)
 
+	dcbCalled := false
+
 	opts := []nats.Option{nats.DontRandomize(),
 		nats.DisconnectHandler(func(nc *nats.Conn) {
 			// Suppress any additional callbacks
-			nc.SetDisconnectHandler(nil)
+			if dcbCalled {
+				return
+			}
+			dcbCalled = true
 			dch <- true
 		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
@@ -209,8 +214,15 @@ func TestBasicClusterReconnect(t *testing.T) {
 	// Make sure we did not wait on reconnect for default time.
 	// Reconnect should be fast since it will be a switch to the
 	// second server and not be dependent on server restart time.
+
+	// On Windows, a failed connect takes more than a second, so
+	// account for that.
+	maxDuration := 100 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		maxDuration = 1100 * time.Millisecond
+	}
 	reconnectTime := time.Since(reconnectTimeStart)
-	if reconnectTime > (100 * time.Millisecond) {
+	if reconnectTime > maxDuration {
 		t.Fatalf("Took longer than expected to reconnect: %v\n", reconnectTime)
 	}
 }
@@ -286,8 +298,13 @@ func TestProperReconnectDelay(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
+	var srvs string
 	opts := nats.DefaultOptions
-	opts.Servers = testServers
+	if runtime.GOOS == "windows" {
+		srvs = strings.Join(testServers[:2], ",")
+	} else {
+		srvs = strings.Join(testServers, ",")
+	}
 	opts.NoRandomize = true
 
 	dcbCalled := false
@@ -296,7 +313,9 @@ func TestProperReconnectDelay(t *testing.T) {
 
 	dcb := func(nc *nats.Conn) {
 		// Suppress any additional calls
-		nc.SetDisconnectHandler(nil)
+		if dcbCalled {
+			return
+		}
 		dcbCalled = true
 		dch <- true
 	}
@@ -305,7 +324,7 @@ func TestProperReconnectDelay(t *testing.T) {
 		closedCbCalled = true
 	}
 
-	nc, err := nats.Connect(servers, nats.DontRandomize(), nats.DisconnectHandler(dcb), nats.ClosedHandler(ccb))
+	nc, err := nats.Connect(srvs, nats.DontRandomize(), nats.DisconnectHandler(dcb), nats.ClosedHandler(ccb))
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
