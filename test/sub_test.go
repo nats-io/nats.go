@@ -354,7 +354,9 @@ func TestCloseSubRelease(t *testing.T) {
 		t.Fatalf("Expected an error from NextMsg")
 	}
 	elapsed := time.Since(start)
-	if elapsed > 10*time.Millisecond {
+
+	// On Windows, the minimum waitTime is at least 15ms.
+	if elapsed > 20*time.Millisecond {
 		t.Fatalf("Too much time has elapsed to release NextMsg: %dms",
 			(elapsed / time.Millisecond))
 	}

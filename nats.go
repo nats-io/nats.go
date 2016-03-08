@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1105,15 +1106,27 @@ func (nc *Conn) doReconnect() {
 			break
 		}
 
+		sleepTime := int64(0)
+
 		// Sleep appropriate amount of time before the
 		// connection attempt if connecting to same server
 		// we just got disconnected from..
 		if time.Since(cur.lastAttempt) < nc.Opts.ReconnectWait {
-			sleepTime := nc.Opts.ReconnectWait - time.Since(cur.lastAttempt)
-			nc.mu.Unlock()
-			time.Sleep(sleepTime)
-			nc.mu.Lock()
+			sleepTime = int64(nc.Opts.ReconnectWait - time.Since(cur.lastAttempt))
 		}
+
+		// On Windows, createConn() will take more than a second when no
+		// server is running at that address. So it could be that the
+		// time elapsed between reconnect attempts is always > than
+		// the set option. Release the lock to give a chance to a parallel
+		// nc.Close() to break the loop.
+		nc.mu.Unlock()
+		if sleepTime <= 0 {
+			runtime.Gosched()
+		} else {
+			time.Sleep(time.Duration(sleepTime))
+		}
+		nc.mu.Lock()
 
 		// Check if we have been closed first.
 		if nc.isClosed() {

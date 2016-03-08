@@ -3,6 +3,7 @@ package test
 import (
 	"math"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -171,10 +172,15 @@ func TestBasicClusterReconnect(t *testing.T) {
 	dch := make(chan bool)
 	rch := make(chan bool)
 
+	dcbCalled := false
+
 	opts := []nats.Option{nats.DontRandomize(),
 		nats.DisconnectHandler(func(nc *nats.Conn) {
 			// Suppress any additional callbacks
-			nc.SetDisconnectHandler(nil)
+			if dcbCalled {
+				return
+			}
+			dcbCalled = true
 			dch <- true
 		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
@@ -208,8 +214,15 @@ func TestBasicClusterReconnect(t *testing.T) {
 	// Make sure we did not wait on reconnect for default time.
 	// Reconnect should be fast since it will be a switch to the
 	// second server and not be dependent on server restart time.
+
+	// On Windows, a failed connect takes more than a second, so
+	// account for that.
+	maxDuration := 100 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		maxDuration = 1100 * time.Millisecond
+	}
 	reconnectTime := time.Since(reconnectTimeStart)
-	if reconnectTime > (100 * time.Millisecond) {
+	if reconnectTime > maxDuration {
 		t.Fatalf("Took longer than expected to reconnect: %v\n", reconnectTime)
 	}
 }
@@ -217,6 +230,13 @@ func TestBasicClusterReconnect(t *testing.T) {
 func TestHotSpotReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
+
+	var srvrs string
+	if runtime.GOOS == "windows" {
+		srvrs = strings.Join(testServers[:5], ",")
+	} else {
+		srvrs = servers
+	}
 
 	numClients := 32
 	clients := []*nats.Conn{}
@@ -230,8 +250,7 @@ func TestHotSpotReconnect(t *testing.T) {
 	}
 
 	for i := 0; i < numClients; i++ {
-		//		nc, err := opts.Connect()
-		nc, err := nats.Connect(servers, opts...)
+		nc, err := nats.Connect(srvrs, opts...)
 		if err != nil {
 			t.Fatalf("Expected to connect, got err: %v\n", err)
 		}
@@ -279,8 +298,13 @@ func TestProperReconnectDelay(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
+	var srvs string
 	opts := nats.DefaultOptions
-	opts.Servers = testServers
+	if runtime.GOOS == "windows" {
+		srvs = strings.Join(testServers[:2], ",")
+	} else {
+		srvs = strings.Join(testServers, ",")
+	}
 	opts.NoRandomize = true
 
 	dcbCalled := false
@@ -289,7 +313,9 @@ func TestProperReconnectDelay(t *testing.T) {
 
 	dcb := func(nc *nats.Conn) {
 		// Suppress any additional calls
-		nc.SetDisconnectHandler(nil)
+		if dcbCalled {
+			return
+		}
 		dcbCalled = true
 		dch <- true
 	}
@@ -298,7 +324,7 @@ func TestProperReconnectDelay(t *testing.T) {
 		closedCbCalled = true
 	}
 
-	nc, err := nats.Connect(servers, nats.DontRandomize(), nats.DisconnectHandler(dcb), nats.ClosedHandler(ccb))
+	nc, err := nats.Connect(srvs, nats.DontRandomize(), nats.DisconnectHandler(dcb), nats.ClosedHandler(ccb))
 	if err != nil {
 		t.Fatalf("Expected to connect, got err: %v\n", err)
 	}
@@ -328,9 +354,15 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
-	opts.Servers = testServers
+	// Reduce the list of servers for Windows tests
+	if runtime.GOOS == "windows" {
+		opts.Servers = testServers[:2]
+		opts.MaxReconnect = 2
+	} else {
+		opts.Servers = testServers
+		opts.MaxReconnect = 5
+	}
 	opts.NoRandomize = true
-	opts.MaxReconnect = 5
 	opts.ReconnectWait = (25 * time.Millisecond)
 
 	dcbCalled := false
@@ -356,13 +388,16 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 
 	s1.Shutdown()
 
+	// On Windows, creating a TCP connection to a server not running takes more than
+	// a second. So be generous with the WaitTime.
+
 	// wait for disconnect
-	if e := WaitTime(dch, 2*time.Second); e != nil {
+	if e := WaitTime(dch, 5*time.Second); e != nil {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
 	// Wait for ClosedCB
-	if e := WaitTime(cch, 2*time.Second); e != nil {
+	if e := WaitTime(cch, 5*time.Second); e != nil {
 		t.Fatal("Did not receive a closed callback message")
 	}
 
@@ -392,7 +427,11 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	opts := nats.DefaultOptions
 	opts.Servers = myServers
 	opts.NoRandomize = true
-	opts.MaxReconnect = 5
+	if runtime.GOOS == "windows" {
+		opts.MaxReconnect = 2
+	} else {
+		opts.MaxReconnect = 5
+	}
 	opts.ReconnectWait = (25 * time.Millisecond)
 
 	dcbCalled := false
@@ -418,13 +457,16 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 
 	s1.Shutdown()
 
+	// On Windows, creating a TCP connection to a server not running takes more than
+	// a second. So be generous with the WaitTime.
+
 	// wait for disconnect
-	if e := WaitTime(dch, 2*time.Second); e != nil {
+	if e := WaitTime(dch, 5*time.Second); e != nil {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
 	// Wait for ClosedCB
-	if e := WaitTime(cch, 2*time.Second); e != nil {
+	if e := WaitTime(cch, 5*time.Second); e != nil {
 		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", nc.Reconnects)
 	}
 
@@ -450,12 +492,17 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	defer s1.Shutdown()
 
 	opts := nats.DefaultOptions
-	opts.Servers = testServers
+	if runtime.GOOS == "windows" {
+		opts.Servers = testServers[:2]
+		opts.MaxReconnect = 2
+		opts.ReconnectWait = (100 * time.Millisecond)
+	} else {
+		opts.Servers = testServers
+		// 1 second total time wait
+		opts.MaxReconnect = 10
+		opts.ReconnectWait = (100 * time.Millisecond)
+	}
 	opts.NoRandomize = true
-
-	// 1 second total time wait
-	opts.MaxReconnect = 10
-	opts.ReconnectWait = (100 * time.Millisecond)
 
 	dcbCalled := false
 	dch := make(chan bool)
@@ -479,26 +526,31 @@ func TestTimeoutOnNoServers(t *testing.T) {
 
 	s1.Shutdown()
 
+	// On Windows, creating a connection to a non-running server takes
+	// more than a second. So be generous with WaitTime
+
 	// wait for disconnect
-	if e := WaitTime(dch, 2*time.Second); e != nil {
+	if e := WaitTime(dch, 5*time.Second); e != nil {
 		t.Fatal("Did not receive a disconnect callback message")
 	}
 
 	startWait := time.Now()
 
 	// Wait for ClosedCB
-	if e := WaitTime(cch, 2*time.Second); e != nil {
+	if e := WaitTime(cch, 5*time.Second); e != nil {
 		t.Fatal("Did not receive a closed callback message")
 	}
 
-	timeWait := time.Since(startWait)
+	if runtime.GOOS != "windows" {
+		timeWait := time.Since(startWait)
 
-	// Use 500ms as variable time delta
-	variable := (500 * time.Millisecond)
-	expected := (time.Duration(opts.MaxReconnect) * opts.ReconnectWait)
+		// Use 500ms as variable time delta
+		variable := (500 * time.Millisecond)
+		expected := (time.Duration(opts.MaxReconnect) * opts.ReconnectWait)
 
-	if timeWait > (expected + variable) {
-		t.Fatalf("Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
+		if timeWait > (expected + variable) {
+			t.Fatalf("Waited too long for Closed state: %d\n", timeWait/time.Millisecond)
+		}
 	}
 }
 
