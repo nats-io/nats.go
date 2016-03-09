@@ -902,7 +902,7 @@ recvLoop:
 	}
 }
 
-func TestCloseChanOnSubscriber(t *testing.T) {
+func TestUnsubscribeChanOnSubscriber(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -920,6 +920,32 @@ func TestCloseChanOnSubscriber(t *testing.T) {
 	}
 
 	sub.Unsubscribe()
+	for len(ch) > 0 {
+		<-ch
+	}
+	// Make sure we can send to the channel still.
+	// Test that we do not close it.
+	ch <- &nats.Msg{}
+}
+
+func TestCloseChanOnSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	// Create our own channel.
+	ch := make(chan *nats.Msg, 8)
+	nc.ChanSubscribe("foo", ch)
+
+	// Send some messages to ourselves.
+	total := 100
+	for i := 0; i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	nc.Close()
 	for len(ch) > 0 {
 		<-ch
 	}

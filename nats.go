@@ -2324,10 +2324,11 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	for _, s := range nc.subs {
 		s.mu.Lock()
 
-		if s.mch != nil {
+		// Release callers on NextMsg for SyncSubscription only
+		if s.mch != nil && s.typ == SyncSubscription {
 			close(s.mch)
-			s.mch = nil
 		}
+		s.mch = nil
 		// Mark as invalid, for signalling to deliverMsgs
 		s.closed = true
 		// Mark connection closed in subscription
