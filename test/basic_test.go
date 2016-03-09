@@ -184,6 +184,98 @@ func TestAsyncSubscribe(t *testing.T) {
 	}
 }
 
+func TestAsyncSubscribeRoutineLeakOnUnsubscribe(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	ch := make(chan bool)
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	// Take the base once the connection is established, but before
+	// the subscriber is created.
+	base := runtime.NumGoroutine()
+
+	sub, err := nc.Subscribe("foo", func(m *nats.Msg) { ch <- true })
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+
+	// Send to ourself
+	nc.Publish("foo", []byte("hello"))
+
+	// This ensures that the async delivery routine is up and running.
+	if err := Wait(ch); err != nil {
+		t.Fatal("Failed to receive message")
+	}
+
+	// Make sure to give it time to go back into wait
+	time.Sleep(200 * time.Millisecond)
+
+	// Explicit unsubscribe
+	sub.Unsubscribe()
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	delta := (runtime.NumGoroutine() - base)
+	if delta > 0 {
+		t.Fatalf("%d Go routines still exist post Unsubscribe()", delta)
+	}
+}
+
+func TestAsyncSubscribeRoutineLeakOnClose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	ch := make(chan bool)
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	// Take the base before creating the connection, since we are going
+	// to close it before taking the delta.
+	base := runtime.NumGoroutine()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	_, err := nc.Subscribe("foo", func(m *nats.Msg) { ch <- true })
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+
+	// Send to ourself
+	nc.Publish("foo", []byte("hello"))
+
+	// This ensures that the async delivery routine is up and running.
+	if err := Wait(ch); err != nil {
+		t.Fatal("Failed to receive message")
+	}
+
+	// Make sure to give it time to go back into wait
+	time.Sleep(200 * time.Millisecond)
+
+	// Close connection without explicit unsubscribe
+	nc.Close()
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	delta := (runtime.NumGoroutine() - base)
+	if delta > 0 {
+		t.Fatalf("%d Go routines still exist post Close()", delta)
+	}
+}
+
 func TestSyncSubscribe(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
