@@ -40,6 +40,29 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	nc.Close()
 }
 
+func TestLeakingGoRoutinesOnFailedConnect(t *testing.T) {
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	base := runtime.NumGoroutine()
+
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err == nil {
+		nc.Close()
+		t.Fatalf("Expected failure to connect")
+	}
+
+	// Give time for things to settle before capturing the number of
+	// go routines
+	time.Sleep(500 * time.Millisecond)
+
+	delta := (runtime.NumGoroutine() - base)
+	if delta > 0 {
+		t.Fatalf("%d Go routines still exist post Close()", delta)
+	}
+}
+
 func TestConnectedServer(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

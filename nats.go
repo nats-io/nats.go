@@ -516,12 +516,14 @@ func (o Options) Connect() (*Conn, error) {
 
 	// Create the async callback channel.
 	nc.ach = make(chan asyncCB, asyncCBChanSize)
-	// Spin up the async cb dispatcher.
-	go nc.asyncDispatch()
 
 	if err := nc.connect(); err != nil {
 		return nil, err
 	}
+
+	// Spin up the async cb dispatcher on success
+	go nc.asyncDispatch()
+
 	return nc, nil
 }
 
