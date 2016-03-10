@@ -2334,6 +2334,10 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		s.closed = true
 		// Mark connection closed in subscription
 		s.connClosed = true
+		// If we have an async subscription, signals it to exit
+		if s.typ == AsyncSubscription && s.pCond != nil {
+			s.pCond.Signal()
+		}
 
 		s.mu.Unlock()
 	}
