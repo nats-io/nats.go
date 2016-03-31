@@ -408,7 +408,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	}
 
 	// Expect connection to be closed...
-	if nc.IsClosed() != true {
+	if !nc.IsClosed() {
 		t.Fatalf("Wrong status: %d\n", nc.Status())
 	}
 }
@@ -482,7 +482,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	}
 
 	// Expect connection to be closed...
-	if nc.IsClosed() != true {
+	if !nc.IsClosed() {
 		t.Fatalf("Wrong status: %d\n", nc.Status())
 	}
 }

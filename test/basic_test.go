@@ -758,8 +758,8 @@ func TestNilConnection(t *testing.T) {
 	if sub.Type() != nats.NilSubscription {
 		t.Fatalf("Got wrong type for nil subscription, %v\n", sub.Type())
 	}
-	if sub.IsValid() != false {
-		t.Fatalf("Expected IsVlaid() to return false")
+	if sub.IsValid() {
+		t.Fatalf("Expected IsValid() to return false")
 	}
 	if err := sub.Unsubscribe(); err == nil || err != nats.ErrBadSubscription {
 		t.Fatalf("Expected Unsubscribe to return proper error, got %v\n", err)

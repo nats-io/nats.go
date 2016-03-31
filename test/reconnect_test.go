@@ -390,20 +390,20 @@ func TestIsClosed(t *testing.T) {
 	nc := NewConnection(t, 22222)
 	defer nc.Close()
 
-	if nc.IsClosed() == true {
+	if nc.IsClosed() {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
 	ts.Shutdown()
-	if nc.IsClosed() == true {
+	if nc.IsClosed() {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
 	ts = startReconnectServer(t)
 	defer ts.Shutdown()
-	if nc.IsClosed() == true {
+	if nc.IsClosed() {
 		t.Fatalf("IsClosed returned true when the connection is still open.")
 	}
 	nc.Close()
-	if nc.IsClosed() == false {
+	if !nc.IsClosed() {
 		t.Fatalf("IsClosed returned false after Close() was called.")
 	}
 }
@@ -434,7 +434,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	}
 	defer nc.Close()
 
-	if nc.IsReconnecting() == true {
+	if nc.IsReconnecting() {
 		t.Fatalf("IsReconnecting returned true when the connection is still open.")
 	}
 	if status := nc.Status(); status != nats.CONNECTED {
@@ -446,7 +446,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	if e := Wait(disconnectedch); e != nil {
 		t.Fatalf("Disconnect callback wasn't triggered: %v", e)
 	}
-	if nc.IsReconnecting() == false {
+	if !nc.IsReconnecting() {
 		t.Fatalf("IsReconnecting returned false when the client is reconnecting.")
 	}
 	if status := nc.Status(); status != nats.RECONNECTING {
@@ -460,7 +460,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	if e := Wait(reconnectch); e != nil {
 		t.Fatalf("Reconnect callback wasn't triggered: %v", e)
 	}
-	if nc.IsReconnecting() == true {
+	if nc.IsReconnecting() {
 		t.Fatalf("IsReconnecting returned true after the connection was reconnected.")
 	}
 	if status := nc.Status(); status != nats.CONNECTED {
@@ -469,7 +469,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 
 	// Close the connection, reconnecting should still be false
 	nc.Close()
-	if nc.IsReconnecting() == true {
+	if nc.IsReconnecting() {
 		t.Fatalf("IsReconnecting returned true after Close() was called.")
 	}
 	if status := nc.Status(); status != nats.CLOSED {
