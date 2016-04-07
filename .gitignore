@@ -26,7 +26,14 @@ _testmain.go
 \#*\#
 .\#*
 
+# vi/vim
+.??*.swp
+
 # Mac
 .DS_Store
+
+# Eclipse
+.project
+.settings/
 
 # bin
