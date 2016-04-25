@@ -28,7 +28,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.1.9"
+	Version                 = "1.2.0"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
