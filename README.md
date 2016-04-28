@@ -258,14 +258,17 @@ nc, err = nats.Connect(servers, nats.MaxReconnects(5), nats.ReconnectWait(2 * ti
 // Optionally disable randomization of the server pool
 nc, err = nats.Connect(servers, nats.DontRandomize())
 
-// Setup callbacks to be notified on disconnects and reconnects
+// Setup callbacks to be notified on disconnects, reconnects and connection closed.
 nc, err = nats.Connect(servers,
 	nats.DisconnectHandler(func(nc *nats.Conn) {
 		fmt.Printf("Got disconnected!\n")
 	}),
 	nats.ReconnectHandler(func(_ *nats.Conn) {
 		fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())
-	})
+	}),
+	nats.ClosedHandler(func(nc *nats.Conn) {
+		fmt.Printf("Connection closed. Reason: %q\n", nc.LastError())
+	}),
 )
 
 ```
