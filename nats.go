@@ -1537,7 +1537,9 @@ func (nc *Conn) processInfo(info string) error {
 	return json.Unmarshal([]byte(info), &nc.info)
 }
 
-// LastError reports the last error encountered via the Connection.
+// LastError reports the last error encountered via the connection.
+// It can be used reliably within ClosedCB in order to find out reason
+// why connection was closed for example.
 func (nc *Conn) LastError() error {
 	if nc == nil {
 		return ErrInvalidConnection
