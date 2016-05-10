@@ -134,7 +134,7 @@ type Options struct {
 
 	// The size of the buffered channel used between the socket
 	// Go routine and the message delivery for SyncSubscriptions.
-	// NOTE: This does not afffect AsyncSubscriptions which are
+	// NOTE: This does not affect AsyncSubscriptions which are
 	// dictated by PendingLimits()
 	SubChanLen int
 }
@@ -324,7 +324,7 @@ func Secure(tls ...*tls.Config) Option {
 	}
 }
 
-// RootCAs is a helper option to provide the RootCAs pool from a list of fileNames. If Secure is
+// RootCAs is a helper option to provide the RootCAs pool from a list of filenames. If Secure is
 // not already set this will set it as well.
 func RootCAs(file ...string) Option {
 	return func(o *Options) error {
@@ -1725,7 +1725,8 @@ func NewInbox() string {
 }
 
 // Subscribe will express interest in the given subject. The subject
-// can have wildcards (partial:*, full:>). Messages will be delivered// to the associated MsgHandler. If no MsgHandler is given, the
+// can have wildcards (partial:*, full:>). Messages will be delivered
+// to the associated MsgHandler. If no MsgHandler is given, the
 // subscription is a synchronous subscription and can be polled via
 // Subscription.NextMsg().
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
