@@ -2424,3 +2424,17 @@ func (nc *Conn) MaxPayload() int64 {
 	defer nc.mu.Unlock()
 	return nc.info.MaxPayload
 }
+
+// AuthRequired will return if the connected server requires authorization.
+func (nc *Conn) AuthRequired() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.info.AuthRequired
+}
+
+// TLSRequired will return if the connected server requires TLS connections.
+func (nc *Conn) TLSRequired() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.info.TLSRequired
+}
