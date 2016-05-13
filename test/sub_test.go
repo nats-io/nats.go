@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -1161,6 +1162,173 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	if b != mlen {
 		t.Fatalf("Expected bytes of %d, got %d\n", mlen, b)
 	}
+}
+
+func TestSetPendingLimits(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	payload := []byte("hello")
+	payloadLen := len(payload)
+	toSend := 100
+
+	var sub *nats.Subscription
+
+	// Check for invalid values
+	invalid := func() error {
+		if err := sub.SetPendingLimits(0, 1); err == nil {
+			return fmt.Errorf("Setting limit with 0 should fail")
+		}
+		if err := sub.SetPendingLimits(1, 0); err == nil {
+			return fmt.Errorf("Setting limit with 0 should fail")
+		}
+		return nil
+	}
+	// function to send messages
+	send := func(subject string, count int) {
+		for i := 0; i < count; i++ {
+			if err := nc.Publish(subject, payload); err != nil {
+				t.Fatalf("Unexpected error on publish: %v", err)
+			}
+		}
+		nc.Flush()
+	}
+
+	// Check pending vs expected values
+	var limitCount, limitBytes int
+	var expectedCount, expectedBytes int
+	checkPending := func() error {
+		lc, lb, err := sub.PendingLimits()
+		if err != nil {
+			return err
+		}
+		if lc != limitCount || lb != limitBytes {
+			return fmt.Errorf("Unexpected limits, expected %v msgs %v bytes, got %v msgs %v bytes",
+				limitCount, limitBytes, lc, lb)
+		}
+		msgs, bytes, err := sub.Pending()
+		if err != nil {
+			return fmt.Errorf("Unexpected error getting pending counts: %v", err)
+		}
+		if (msgs != expectedCount && msgs != expectedCount-1) ||
+			(bytes != expectedBytes && bytes != expectedBytes-payloadLen) {
+			return fmt.Errorf("Unexpected counts, expected %v msgs %v bytes, got %v msgs %v bytes",
+				expectedCount, expectedBytes, msgs, bytes)
+		}
+		return nil
+	}
+
+	recv := make(chan bool)
+	block := make(chan bool)
+	cb := func(m *nats.Msg) {
+		recv <- true
+		<-block
+		m.Sub.Unsubscribe()
+	}
+	subj := "foo"
+	sub, err := nc.Subscribe(subj, cb)
+	if err != nil {
+		t.Fatalf("Unexpected error on subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+	if err := invalid(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	// Check we apply limit only for size
+	limitCount = -1
+	limitBytes = (toSend / 2) * payloadLen
+	if err := sub.SetPendingLimits(limitCount, limitBytes); err != nil {
+		t.Fatalf("Unexpected error setting limits: %v", err)
+	}
+	// Send messages
+	send(subj, toSend)
+	// Wait for message to be received
+	if err := Wait(recv); err != nil {
+		t.Fatal("Did not get our message")
+	}
+	expectedBytes = limitBytes
+	expectedCount = limitBytes / payloadLen
+	if err := checkPending(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	// Release callback
+	block <- true
+
+	subj = "bar"
+	sub, err = nc.Subscribe(subj, cb)
+	if err != nil {
+		t.Fatalf("Unexpected error on subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+	// Check we apply limit only for count
+	limitCount = toSend / 4
+	limitBytes = -1
+	if err := sub.SetPendingLimits(limitCount, limitBytes); err != nil {
+		t.Fatalf("Unexpected error setting limits: %v", err)
+	}
+	// Send messages
+	send(subj, toSend)
+	// Wait for message to be received
+	if err := Wait(recv); err != nil {
+		t.Fatal("Did not get our message")
+	}
+	expectedCount = limitCount
+	expectedBytes = limitCount * payloadLen
+	if err := checkPending(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	// Release callback
+	block <- true
+
+	subj = "baz"
+	sub, err = nc.SubscribeSync(subj)
+	if err != nil {
+		t.Fatalf("Unexpected error on subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+	if err := invalid(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	// Check we apply limit only for size
+	limitCount = -1
+	limitBytes = (toSend / 2) * payloadLen
+	if err := sub.SetPendingLimits(limitCount, limitBytes); err != nil {
+		t.Fatalf("Unexpected error setting limits: %v", err)
+	}
+	// Send messages
+	send(subj, toSend)
+	expectedBytes = limitBytes
+	expectedCount = limitBytes / payloadLen
+	if err := checkPending(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	sub.Unsubscribe()
+	nc.Flush()
+
+	subj = "boz"
+	sub, err = nc.SubscribeSync(subj)
+	if err != nil {
+		t.Fatalf("Unexpected error on subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+	// Check we apply limit only for count
+	limitCount = toSend / 4
+	limitBytes = -1
+	if err := sub.SetPendingLimits(limitCount, limitBytes); err != nil {
+		t.Fatalf("Unexpected error setting limits: %v", err)
+	}
+	// Send messages
+	send(subj, toSend)
+	expectedCount = limitCount
+	expectedBytes = limitCount * payloadLen
+	if err := checkPending(); err != nil {
+		t.Fatalf("%v", err)
+	}
+	sub.Unsubscribe()
+	nc.Flush()
 }
 
 func TestSubscriptionTypes(t *testing.T) {
