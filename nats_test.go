@@ -785,3 +785,28 @@ func TestNormalizeError(t *testing.T) {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 }
+
+func TestAuthTimeoutWithDelayedDisconnect(t *testing.T) {
+	ts := RunServerOnPort(TEST_PORT)
+	defer ts.Shutdown()
+
+	reconnected := false
+	rch := make(chan bool)
+
+	opts := reconnectOpts
+	opts.ReconnectedCB = func(nc *Conn) {
+		reconnected = true
+		rch <- true
+	}
+	nc, _ := opts.Connect()
+	defer nc.Close()
+
+	// inject an authorization timeout into the connection, which should
+	// trigger a reconnect.
+	nc.processErr("Authorization Timeout")
+	Wait(rch)
+
+	if reconnected == false {
+		t.Fatalf("Did not reconnect after authorization timeout")
+	}
+}

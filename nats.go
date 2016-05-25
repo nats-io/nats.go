@@ -42,8 +42,11 @@ const (
 	LangString              = "go"
 )
 
-// STALE_CONNECTION is for detection and proper handling of stale connections.
-const STALE_CONNECTION = "stale connection"
+// errors values for detection and proper handling of out of band errors.
+const (
+	STALE_CONNECTION = "stale connection"
+	AUTH_TIMEOUT     = "authorization timeout"
+)
 
 // Errors
 var (
@@ -70,6 +73,7 @@ var (
 	ErrInvalidMsg           = errors.New("nats: invalid message or message nil")
 	ErrInvalidArg           = errors.New("nats: invalid argument")
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
+	ErrAuthorizationTimeout = errors.New("nats: " + AUTH_TIMEOUT)
 )
 
 var DefaultOptions = Options{
@@ -1558,6 +1562,8 @@ func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
+	} else if e == AUTH_TIMEOUT {
+		nc.processOpErr(ErrAuthorizationTimeout)
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
