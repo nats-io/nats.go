@@ -42,7 +42,7 @@ const (
 	LangString              = "go"
 )
 
-// errors values for detection and proper handling of out of band errors.
+// Error values for detection and proper handling of out of band errors.
 const (
 	STALE_CONNECTION = "stale connection"
 	AUTH_TIMEOUT     = "authorization timeout"
