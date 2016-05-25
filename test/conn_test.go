@@ -1005,7 +1005,7 @@ func TestErrInReadLoop(t *testing.T) {
 	close(done)
 }
 
-func TestErrStaleConnection(t *testing.T) {
+func testReconnectOnServerError(t *testing.T, serverErr string) {
 	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"ssl_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
@@ -1047,7 +1047,7 @@ func TestErrStaleConnection(t *testing.T) {
 			if i == 0 {
 				// Wait a tiny, and simulate a Stale Connection
 				time.Sleep(50 * time.Millisecond)
-				conn.Write([]byte("-ERR 'Stale Connection'\r\n"))
+				conn.Write([]byte(serverErr))
 
 				// The client should try to reconnect. When getting the
 				// disconnected callback, it will close this channel.
@@ -1107,6 +1107,14 @@ func TestErrStaleConnection(t *testing.T) {
 	}
 
 	close(done)
+}
+
+func TestErrStaleConnection(t *testing.T) {
+	testReconnectOnServerError(t, "-ERR 'Stale Connection'\r\n")
+}
+
+func TestErrAuthorizationTimeout(t *testing.T) {
+	testReconnectOnServerError(t, "-ERR 'Authorization Timeout'\r\n")
 }
 
 func TestServerErrorClosesConnection(t *testing.T) {
