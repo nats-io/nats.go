@@ -1199,3 +1199,20 @@ func TestServerErrorClosesConnection(t *testing.T) {
 
 	close(done)
 }
+
+func TestUseDefaultTimeout(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	opts := &nats.Options{
+		Servers: []string{nats.DefaultURL},
+	}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc.Close()
+	if nc.Opts.Timeout != nats.DefaultTimeout {
+		t.Fatalf("Expected Timeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Timeout)
+	}
+}

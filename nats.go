@@ -510,6 +510,10 @@ func (o Options) Connect() (*Conn, error) {
 	if nc.Opts.ReconnectBufSize == 0 {
 		nc.Opts.ReconnectBufSize = DefaultReconnectBufSize
 	}
+	// Ensure that Timeout is not 0
+	if nc.Opts.Timeout == 0 {
+		nc.Opts.Timeout = DefaultTimeout
+	}
 
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
