@@ -106,3 +106,24 @@ func BenchmarkInboxCreation(b *testing.B) {
 		nats.NewInbox()
 	}
 }
+
+func BenchmarkRequest(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	ok := []byte("ok")
+	nc.Subscribe("req", func(m *nats.Msg) {
+		nc.Publish(m.Reply, ok)
+	})
+	b.StartTimer()
+	b.ReportAllocs()
+	q := []byte("q")
+	for i := 0; i < b.N; i++ {
+		_, err := nc.Request("req", q, 1*time.Second)
+		if err != nil {
+			b.Fatalf("Err %v\n", err)
+		}
+	}
+}

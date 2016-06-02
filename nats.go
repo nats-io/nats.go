@@ -1698,20 +1698,22 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
-func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (m *Msg, err error) {
+func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	inbox := NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
+
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch)
 	if err != nil {
 		return nil, err
 	}
 	s.AutoUnsubscribe(1)
+	defer s.Unsubscribe()
+
 	err = nc.PublishRequest(subj, inbox, data)
-	if err == nil {
-		m, err = s.NextMsg(timeout)
+	if err != nil {
+		return nil, err
 	}
-	s.Unsubscribe()
-	return
+	return s.NextMsg(timeout)
 }
 
 // InboxPrefix is the prefix for all inbox subjects.
@@ -1955,7 +1957,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 // NextMsg() will return the next message available to a synchronous subscriber
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
-func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
+func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
 	}
@@ -1990,6 +1992,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	s.mu.Unlock()
 
 	var ok bool
+	var msg *Msg
+
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 
@@ -2024,7 +2028,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		return nil, ErrTimeout
 	}
 
-	return
+	return msg, nil
 }
 
 // Queued returns the number of queued messages in the client for this subscription.
