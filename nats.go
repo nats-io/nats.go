@@ -1403,20 +1403,22 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
-	// Subscription internal stats
-	sub.pMsgs++
-	if sub.pMsgs > sub.pMsgsMax {
-		sub.pMsgsMax = sub.pMsgs
-	}
-	sub.pBytes += len(m.Data)
-	if sub.pBytes > sub.pBytesMax {
-		sub.pBytesMax = sub.pBytes
-	}
+	// Subscription internal stats (applicable only for non ChanSubscription's)
+	if sub.typ != ChanSubscription {
+		sub.pMsgs++
+		if sub.pMsgs > sub.pMsgsMax {
+			sub.pMsgsMax = sub.pMsgs
+		}
+		sub.pBytes += len(m.Data)
+		if sub.pBytes > sub.pBytesMax {
+			sub.pBytesMax = sub.pBytes
+		}
 
-	// Check for a Slow Consumer
-	if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
-		(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
-		goto slowConsumer
+		// Check for a Slow Consumer
+		if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
+			(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
+			goto slowConsumer
+		}
 	}
 
 	// We have two modes of delivery. One is the channel, used by channel
@@ -1450,8 +1452,10 @@ slowConsumer:
 	sub.dropped++
 	nc.processSlowConsumer(sub)
 	// Undo stats from above
-	sub.pMsgs--
-	sub.pBytes -= len(m.Data)
+	if sub.typ != ChanSubscription {
+		sub.pMsgs--
+		sub.pBytes -= len(m.Data)
+	}
 	sub.mu.Unlock()
 	nc.mu.Unlock()
 	return
