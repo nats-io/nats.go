@@ -45,6 +45,11 @@ func main() {
 		printMsg(msg, i)
 		nc.Publish(msg.Reply, []byte(reply))
 	})
+	nc.Flush()
+
+	if err := nc.LastError(); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("Listening on [%s]\n", subj)
 	if *showTime {

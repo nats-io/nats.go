@@ -28,7 +28,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.2.0"
+	Version                 = "1.2.2"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -44,6 +44,9 @@ const (
 
 // STALE_CONNECTION is for detection and proper handling of stale connections.
 const STALE_CONNECTION = "stale connection"
+
+// PERMISSIONS_ERR is for when nats server subject authorization has failed.
+const PERMISSIONS_ERR = "permissions violation"
 
 // Errors
 var (
@@ -1471,6 +1474,15 @@ func (nc *Conn) processSlowConsumer(s *Subscription) {
 	s.sc = true
 }
 
+// processPermissionsViolation is called when the server signals a subject
+// permissions violation on either publish or subscribe.
+func (nc *Conn) processPermissionsViolation(err string) {
+	nc.err = errors.New("nats: " + err)
+	if nc.Opts.AsyncErrorCB != nil {
+		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, nc.err) }
+	}
+}
+
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher() {
@@ -1566,6 +1578,8 @@ func (nc *Conn) processErr(e string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
+	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
+		nc.processPermissionsViolation(e)
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)

@@ -23,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 1 {
+	if len(args) < 2 {
 		usage()
 	}
 
@@ -38,5 +38,9 @@ func main() {
 	nc.Publish(subj, msg)
 	nc.Flush()
 
-	log.Printf("Published [%s] : '%s'\n", subj, msg)
+	if err := nc.LastError(); err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Published [%s] : '%s'\n", subj, msg)
+	}
 }

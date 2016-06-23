@@ -35,10 +35,14 @@ func main() {
 	defer nc.Close()
 	subj, payload := args[0], []byte(args[1])
 
-	msg, err := nc.Request(subj, []byte(payload), 1000*time.Millisecond)
+	msg, err := nc.Request(subj, []byte(payload), 100*time.Millisecond)
 	if err != nil {
+		if nc.LastError() != nil {
+			log.Fatalf("Error in Request: %v\n", nc.LastError())
+		}
 		log.Fatalf("Error in Request: %v\n", err)
 	}
+
 	log.Printf("Published [%s] : '%s'\n", subj, payload)
 	log.Printf("Received [%v] : '%s'\n", msg.Subject, string(msg.Data))
 }
