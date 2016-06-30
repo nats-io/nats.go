@@ -133,7 +133,10 @@ func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs in
 
 	args := flag.Args()
 	subj := args[0]
-	msg := make([]byte, messageSize)
+	var msg []byte
+	if(messageSize > 0) {
+		msg = make([]byte, messageSize)
+	}
 
 	start := time.Now()
 
