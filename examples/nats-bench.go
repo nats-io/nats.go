@@ -1,17 +1,21 @@
 // Copyright 2015 Apcera Inc. All rights reserved.
-// +build ignore
 
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"encoding/csv"
+	"encoding/json"
 
 	"github.com/nats-io/nats"
 )
@@ -25,7 +29,7 @@ const (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] <subject>\n", nats.DefaultURL)
+	log.Fatalf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] [-o jsonfile] [-csv csvfile] <subject>\n", nats.DefaultURL)
 }
 
 var subStatChan chan *stats
@@ -37,7 +41,9 @@ func main() {
 	var numPubs = flag.Int("np", DefaultNumPubs, "Number of Concurrent Publishers")
 	var numSubs = flag.Int("ns", DefaultNumSubs, "Number of Concurrent Subscribers")
 	var numMsgs = flag.Int("n", DefaultNumMsgs, "Number of Messages to Publish")
-	var messageSize = flag.Int("ms", DefaultMessageSize, "Size of the message.")
+	var msgSize = flag.Int("ms", DefaultMessageSize, "Size of the message.")
+	var csvFile = flag.String("csv", "", "Save bench data to csv file")
+	var jsonFile = flag.String("o", "", "Save raw data to json file")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -66,15 +72,17 @@ func main() {
 
 	// Run Subscribers first
 	startwg.Add(*numSubs)
+	subCounts := msgsPerClient(*numMsgs, *numSubs)
 	for i := 0; i < *numSubs; i++ {
-		go runSubscriber(&startwg, &donewg, opts, (*numMsgs)*(*numPubs))
+		go runSubscriber(&startwg, &donewg, opts, subCounts[i], *msgSize)
 	}
 	startwg.Wait()
 
 	// Now Publishers
 	startwg.Add(*numPubs)
+	pubCounts := msgsPerClient(*numMsgs, *numPubs)
 	for i := 0; i < *numPubs; i++ {
-		go runPublisher(&startwg, &donewg, opts, *numMsgs, *messageSize)
+		go runPublisher(&startwg, &donewg, opts, pubCounts[i], *msgSize)
 	}
 
 	log.Printf("Starting benchmark [msgs=%d, pubs=%d, subs=%d]\n", *numMsgs, *numPubs, *numSubs)
@@ -82,8 +90,7 @@ func main() {
 	startwg.Wait()
 	start := time.Now()
 	donewg.Wait()
-	interval := time.Since(start)
-	delta := interval.Seconds()
+	end := time.Now()
 
 	close(pubStatChan)
 	pubStats := newStatSums()
@@ -97,33 +104,23 @@ func main() {
 		subStats.addStat(s)
 	}
 
-	msgCount := pubStats.msgCount + subStats.msgCount
-	msgThroughput := commaFormat(int64(float64(msgCount) / delta))
-	fmt.Printf("NATS (Publishers/Subscribers) throughput is %s msgs/sec (%d msgs in %v)\n", msgThroughput, msgCount, interval)
+	bench := newBenchStats(start, end, pubStats, subStats)
+	fmt.Print(bench.human())
 
-	if len(pubStats.clients) > 0 {
-		fmt.Printf("Publisher Stats (%d) %v\n", *numPubs, pubStats)
-		if len(pubStats.clients) > 1 {
-			for i, stat := range pubStats.clients {
-				fmt.Printf("  [%d] %v\n", i+1, stat)
-			}
-			fmt.Printf("  %s\n", pubStats.minMaxAverage())
-		}
+	if "" != *jsonFile {
+		json := bench.json()
+		ioutil.WriteFile(*jsonFile, []byte(json), 0644)
+		fmt.Printf("Saved JSON data for the run in %s\n", *jsonFile)
 	}
 
-	if len(subStats.clients) > 0 {
-		fmt.Printf("Subscriber Stats (%d) %v\n", *numSubs, subStats)
-		if len(subStats.clients) > 1 {
-			for i, stat := range subStats.clients {
-				fmt.Printf("  [%d] %v\n", i+1, stat)
-			}
-			fmt.Printf("  %s\n", subStats.minMaxAverage())
-		}
+	if "" != *csvFile {
+		csv := bench.csv()
+		ioutil.WriteFile(*csvFile, []byte(csv), 0644)
+		fmt.Printf("Saved metric data in csv file %s\n", *csvFile)
 	}
-
 }
 
-func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs int, messageSize int) {
+func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs int, msgSize int) {
 	nc, err := opts.Connect()
 	if err != nil {
 		log.Fatalf("Can't connect: %v\n", err)
@@ -134,8 +131,8 @@ func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs in
 	args := flag.Args()
 	subj := args[0]
 	var msg []byte
-	if(messageSize > 0) {
-		msg = make([]byte, messageSize)
+	if msgSize > 0 {
+		msg = make([]byte, msgSize)
 	}
 
 	start := time.Now()
@@ -143,13 +140,13 @@ func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs in
 	for i := 0; i < numMsgs; i++ {
 		nc.Publish(subj, msg)
 	}
-	pubStatChan <- newStats(start, time.Now(), nc, true)
+	pubStatChan <- newStats(numMsgs, msgSize, start, time.Now(), nc, true)
 
 	nc.Flush()
 	donewg.Done()
 }
 
-func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs int) {
+func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs int, msgSize int) {
 	nc, err := opts.Connect()
 	if err != nil {
 		log.Fatalf("Can't connect: %v\n", err)
@@ -163,7 +160,7 @@ func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs i
 	nc.Subscribe(subj, func(msg *nats.Msg) {
 		received++
 		if received >= numMsgs {
-			subStatChan <- newStats(start, time.Now(), nc, false)
+			subStatChan <- newStats(numMsgs, msgSize, start, time.Now(), nc, false)
 			donewg.Done()
 			nc.Close()
 		}
@@ -173,54 +170,69 @@ func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs i
 }
 
 type stats struct {
-	msgCount uint64
-	ioBytes  uint64
-	start    time.Time
-	end      time.Time
+	JobCount int
+	MsgBytes uint64
+	IOBytes  uint64
+	MsgCount uint64
+	Start    time.Time
+	End      time.Time
 }
 
-func (s *stats) throughput() float64 {
-	return float64(s.ioBytes) / s.duration().Seconds()
-}
-
-func (s *stats) rate() int64 {
-	return int64(float64(s.msgCount) / s.duration().Seconds())
-}
-
-func newStats(start, end time.Time, nc *nats.Conn, isPub bool) *stats {
-	s := stats{start: start, end: end}
+func newStats(jobCount int, msgSize int, start, end time.Time, nc *nats.Conn, isPub bool) *stats {
+	s := stats{JobCount: jobCount, Start: start, End: end}
+	s.MsgBytes = uint64(msgSize * jobCount)
 	if isPub {
-		s.msgCount = nc.OutMsgs
-		s.ioBytes = nc.OutBytes
+		s.MsgCount = nc.OutMsgs
+		s.IOBytes = nc.OutBytes
 	} else {
-		s.msgCount = nc.InMsgs
-		s.ioBytes = nc.InBytes
+		s.MsgCount = nc.InMsgs
+		s.IOBytes = nc.InBytes
 	}
 	return &s
 }
 
+func (s *stats) throughput() float64 {
+	return float64(s.MsgBytes) / s.duration().Seconds()
+}
+
+func (s *stats) rate() int64 {
+	return int64(float64(s.JobCount) / s.duration().Seconds())
+}
+
 func (s *stats) String() string {
 	rate := commaFormat(s.rate())
-	messages := commaFormat(int64(s.msgCount))
+	jobMessages := commaFormat(int64(s.JobCount))
+	protocolMessages := commaFormat(int64(s.MsgCount - uint64(s.JobCount)))
 	throughput := humanBytes(s.throughput(), false)
-	return fmt.Sprintf("%s msgs/sec | %s msgs in %v | %s/sec", rate, messages, s.duration(), throughput)
+	return fmt.Sprintf("%s msgs/sec | %s (%s pmsgs) msgs in %v | %s/sec", rate, jobMessages, protocolMessages, s.duration(), throughput)
 }
 
 func (s *stats) duration() time.Duration {
-	return s.end.Sub(s.start)
+	return s.End.Sub(s.Start)
 }
 
 func (s *stats) Seconds() float64 {
 	return s.duration().Seconds()
 }
 
+type statSums struct {
+	stats
+	Clients []*stats
+}
+
+func newStatSums() *statSums {
+	s := new(statSums)
+	s.Clients = make([]*stats, 0, 0)
+	return s
+}
+
 func (s *statSums) minMaxAverage() string {
-	return fmt.Sprintf("min %s | avg %s | max %s | stddev %s msgs\n", commaFormat(s.minRate()), commaFormat(s.avgRate()), commaFormat(s.maxRate()), commaFormat(int64(s.stddev())))
+	return fmt.Sprintf("min %s | avg %s | max %s | stddev %s msgs", commaFormat(s.minRate()), commaFormat(s.avgRate()), commaFormat(s.maxRate()), commaFormat(int64(s.stddev())))
 }
 
 func (s *statSums) minRate() int64 {
 	m := int64(0)
-	for i, c := range s.clients {
+	for i, c := range s.Clients {
 		if i == 0 {
 			m = c.rate()
 		}
@@ -231,7 +243,7 @@ func (s *statSums) minRate() int64 {
 
 func (s *statSums) maxRate() int64 {
 	m := int64(0)
-	for i, c := range s.clients {
+	for i, c := range s.Clients {
 		if i == 0 {
 			m = c.rate()
 		}
@@ -242,50 +254,138 @@ func (s *statSums) maxRate() int64 {
 
 func (s *statSums) avgRate() int64 {
 	sum := uint64(0)
-	for _, c := range s.clients {
+	for _, c := range s.Clients {
 		sum += uint64(c.rate())
 	}
-	return int64(sum / uint64(len(s.clients)))
+	return int64(sum / uint64(len(s.Clients)))
 }
 
 func (s *statSums) stddev() float64 {
 	avg := float64(s.avgRate())
 	sum := float64(0)
-	for _, c := range s.clients {
+	for _, c := range s.Clients {
 		sum += math.Pow(float64(c.rate())-avg, 2)
 	}
-	variance := sum / float64(len(s.clients))
+	variance := sum / float64(len(s.Clients))
 	return math.Sqrt(variance)
 }
 
-type statSums struct {
-	stats
-	clients []*stats
-}
-
-func newStatSums() *statSums {
-	s := new(statSums)
-	s.clients = make([]*stats, 0, 0)
-	return s
-}
-
 func (s *statSums) addStat(e *stats) {
-	s.clients = append(s.clients, e)
+	s.Clients = append(s.Clients, e)
 
-	if len(s.clients) == 1 {
-		s.start = e.start
-		s.end = e.end
+	if len(s.Clients) == 1 {
+		s.Start = e.Start
+		s.End = e.End
 	}
-	s.ioBytes += e.ioBytes
-	s.msgCount += e.msgCount
+	s.IOBytes += e.IOBytes
+	s.JobCount += e.JobCount
+	s.MsgCount += e.MsgCount
+	s.MsgBytes += e.MsgBytes
 
-	if e.start.Before(s.start) {
-		s.start = e.start
+	if e.Start.Before(s.Start) {
+		s.Start = e.Start
 	}
 
-	if e.end.After(s.end) {
-		s.end = e.end
+	if e.End.After(s.End) {
+		s.End = e.End
 	}
+}
+
+type benchStats struct {
+	stats
+	PubStats *statSums
+	SubStats *statSums
+}
+
+func newBenchStats(start, end time.Time, pubStats, subStats *statSums) *benchStats {
+	bs := benchStats{PubStats: pubStats, SubStats: subStats}
+	bs.Start = start
+	bs.End = end
+	bs.MsgBytes = pubStats.MsgBytes + subStats.MsgBytes
+	bs.IOBytes = pubStats.IOBytes + subStats.IOBytes
+	bs.MsgCount = pubStats.MsgCount + subStats.MsgCount
+	bs.JobCount = pubStats.JobCount + subStats.JobCount
+	return &bs
+}
+
+func (b *benchStats) human() string {
+	var buffer bytes.Buffer
+	jobCount := commaFormat(int64(b.JobCount))
+	msgThroughput := commaFormat(b.rate())
+	buffer.WriteString(fmt.Sprintf("NATS (Publishers/Subscribers) throughput is %s msgs/sec (%s msgs in %v)\n", msgThroughput, jobCount, b.duration()))
+
+	overhead := b.IOBytes - b.MsgBytes
+	buffer.WriteString(fmt.Sprintf("Data/Overhead: %s / %s\n", humanBytes(float64(b.MsgBytes), false), humanBytes(float64(overhead), false)))
+
+	pubCount := len(b.PubStats.Clients)
+	if pubCount > 0 {
+		buffer.WriteString(fmt.Sprintf(" Publisher Stats (%d) %v\n", pubCount, b.PubStats))
+		if pubCount > 1 {
+			for i, stat := range b.PubStats.Clients {
+				buffer.WriteString(fmt.Sprintf("  [%d] %v\n", i+1, stat))
+			}
+			buffer.WriteString(fmt.Sprintf("  %s\n", b.PubStats.minMaxAverage()))
+		}
+	}
+
+	subCount := len(b.SubStats.Clients)
+	if subCount > 0 {
+		buffer.WriteString(fmt.Sprintf(" Subscriber Stats (%d) %v\n", subCount, b.SubStats))
+		if subCount > 1 {
+			for i, stat := range b.SubStats.Clients {
+				buffer.WriteString(fmt.Sprintf("  [%d] %v\n", i+1, stat))
+			}
+			buffer.WriteString(fmt.Sprintf("  %s\n", b.SubStats.minMaxAverage()))
+		}
+	}
+	return buffer.String()
+}
+
+func (b *benchStats) json() string {
+	var buffer bytes.Buffer
+	bytes, _ := json.Marshal(b)
+	json.Indent(&buffer, bytes, "", " ")
+	return buffer.String()
+}
+
+type results struct {
+	Desc         string
+	MsgCnt       int
+	MsgBytes     uint64
+	MsgsPerSec   int64
+	BytesPerSec  float64
+	DurationSecs float64
+}
+
+func (b *benchStats) results() []results {
+	pubs := len(b.PubStats.Clients)
+	subs := len(b.SubStats.Clients)
+	buf := make([]results, pubs+subs)
+	var s *stats
+	for i := 0; i < pubs; i++ {
+		s = b.PubStats.Clients[i]
+		buf[i] = results{Desc: fmt.Sprintf("P%d", i+1), MsgCnt: s.JobCount, MsgBytes: s.MsgBytes, MsgsPerSec: s.rate(), BytesPerSec: s.throughput(), DurationSecs: s.duration().Seconds()}
+	}
+	for i := 0; i < subs; i++ {
+		s = b.SubStats.Clients[i]
+		buf[pubs+i] = results{Desc: fmt.Sprintf("S%d", i+1), MsgCnt: s.JobCount, MsgBytes: s.MsgBytes, MsgsPerSec: s.rate(), BytesPerSec: s.throughput(), DurationSecs: s.duration().Seconds()}
+	}
+	return buf
+}
+
+func (b *benchStats) csv() string {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	writer.Write([]string{"ClientID", "MsgCount", "MsgBytes", "MsgsPerSec", "BytesPerSec", "DurationSecs"})
+	for _, i := range b.results() {
+		r := []string{i.Desc, fmt.Sprintf("%d", i.MsgCnt), fmt.Sprintf("%d", i.MsgBytes), fmt.Sprintf("%d", i.MsgsPerSec), fmt.Sprintf("%f", i.BytesPerSec), fmt.Sprintf("%f", i.DurationSecs)}
+		err := writer.Write(r)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	writer.Flush()
+	return buffer.String()
 }
 
 func commaFormat(n int64) string {
@@ -336,4 +436,21 @@ func max(x, y int64) int64 {
 		return x
 	}
 	return y
+}
+
+func msgsPerClient(numMsgs, numClients int) []int {
+	var counts []int
+	if numClients == 0 || numMsgs == 0 {
+		return counts
+	}
+	counts = make([]int, numClients)
+	mc := numMsgs / numClients
+	for i := 0; i < numClients; i++ {
+		counts[i] = mc
+	}
+	extra := numMsgs % numClients
+	for i := 0; i < extra; i++ {
+		counts[i]++
+	}
+	return counts
 }
