@@ -191,7 +191,6 @@ func TestBenchStrings(t *testing.T) {
 	s := bench.String()
 	lines := strings.Split(s, "\n")
 	if len(lines) != 5 {
-		t.Fail()
 		t.Fatal("Expected 5 lines of output: header, overhead, pub header, sub headers, empty")
 	}
 
