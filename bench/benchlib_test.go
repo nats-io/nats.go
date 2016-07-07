@@ -31,7 +31,7 @@ func TestDuration(t *testing.T) {
 	s := millionMessagesSecondSample(1)
 	duration := s.End.Sub(s.Start)
 	if duration != s.Duration() || duration != time.Second {
-		t.Fail()
+		t.Fatal("Expected sample duration to be 1 second")
 	}
 }
 
@@ -39,28 +39,28 @@ func TestSeconds(t *testing.T) {
 	s := millionMessagesSecondSample(1)
 	seconds := s.End.Sub(s.Start).Seconds()
 	if seconds != s.Seconds() || seconds != 1.0 {
-		t.Fail()
+		t.Fatal("Expected sample seconds to be 1 second")
 	}
 }
 
 func TestRate(t *testing.T) {
 	s := millionMessagesSecondSample(60)
 	if s.Rate() != Million {
-		t.Fail()
+		t.Fatal("Expected rate at 1 million msgs")
 	}
 }
 
 func TestThoughput(t *testing.T) {
 	s := millionMessagesSecondSample(60)
 	if s.Throughput() != Million*Byte {
-		t.Fail()
+		t.Fatal("Expected throughput at 1 million bytes")
 	}
 }
 
 func TestStrings(t *testing.T) {
 	s := millionMessagesSecondSample(60)
 	if len(s.String()) == 0 {
-		t.Fail()
+		t.Fatal("Sample didn't provide a String")
 	}
 }
 
@@ -70,7 +70,7 @@ func TestGroupDuration(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	duration := sg.End.Sub(sg.Start)
 	if duration != sg.Duration() || duration != time.Duration(2)*time.Second {
-		t.Fail()
+		t.Fatal("Expected aggregate duration to be 2.0 seconds")
 	}
 }
 
@@ -81,7 +81,7 @@ func TestGroupSeconds(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(3))
 	seconds := sg.End.Sub(sg.Start).Seconds()
 	if seconds != sg.Seconds() || seconds != 3.0 {
-		t.Fail()
+		t.Fatal("Expected aggregate seconds to be 3.0 seconds")
 	}
 }
 
@@ -91,7 +91,7 @@ func TestGroupRate(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.Rate() != Million*2 {
-		t.Fail()
+		t.Fatal("Expected MsgRate at 2 million")
 	}
 }
 
@@ -101,7 +101,7 @@ func TestGroupThoughput(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.Throughput() != 2*Million*Byte {
-		t.Fail()
+		t.Fatal("Expected througput at 2 million bytes")
 	}
 }
 
@@ -111,7 +111,7 @@ func TestMinMaxRate(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.MinRate() != sg.MaxRate() {
-		t.Fail()
+		t.Fatal("Expected MinRate == MaxRate")
 	}
 }
 
@@ -121,7 +121,7 @@ func TestAvgRate(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.MinRate() != sg.AvgRate() {
-		t.Fail()
+		t.Fatal("Expected MinRate == AvgRate")
 	}
 }
 
@@ -131,7 +131,7 @@ func TestStdDev(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.StdDev() != 0.0 {
-		t.Fail()
+		t.Fatal("Expected stddev to be zero")
 	}
 }
 
@@ -141,18 +141,22 @@ func TestBenchSetup(t *testing.T) {
 	bench.AddPubSample(millionMessagesSecondSample(1))
 	bench.Close()
 	if len(bench.RunID) == 0 {
-		t.Fail()
+		t.Fatal("Bench doesn't have a RunID")
 	}
-	if len(bench.Pubs.Samples) != 1 || len(bench.Subs.Samples) != 1 {
-		t.Fail()
+	if len(bench.Pubs.Samples) != 1 {
+		t.Fatal("Expected one publisher")
 	}
-
-	if bench.MsgCnt != 2*Million || bench.IOBytes != 2*Million*8 {
-		t.Fail()
+	if len(bench.Subs.Samples) != 1 {
+		t.Fatal("Expected one subscriber")
 	}
-
+	if bench.MsgCnt != 2*Million {
+		t.Fatal("Expected 2 million msgs")
+	}
+	if bench.IOBytes != 2*Million*8 {
+		t.Fatal("Expected 2 million bytes")
+	}
 	if bench.Duration() != time.Second {
-		t.Fail()
+		t.Fatal("Expected duration to be 1 second")
 	}
 }
 
@@ -172,14 +176,13 @@ func TestCsv(t *testing.T) {
 	bench := makeBench(1, 1)
 	csv := bench.CSV()
 	lines := strings.Split(csv, "\n")
-	// there's a header line and trailing ""
 	if len(lines) != 4 {
-		t.Fail()
+		t.Fatal("Expected 4 lines of output from the CSV string")
 	}
 
 	fields := strings.Split(lines[1], ",")
 	if len(fields) != 7 {
-		t.Fail()
+		t.Fatal("Expected 7 fields")
 	}
 }
 
@@ -187,35 +190,34 @@ func TestBenchStrings(t *testing.T) {
 	bench := makeBench(1, 1)
 	s := bench.String()
 	lines := strings.Split(s, "\n")
-	// header, overhead, pub header, sub headers, empty
 	if len(lines) != 5 {
 		t.Fail()
+		t.Fatal("Expected 5 lines of output: header, overhead, pub header, sub headers, empty")
 	}
 
 	bench = makeBench(2, 2)
 	s = bench.String()
 	lines = strings.Split(s, "\n")
-	// header, overhead, pub header, pub x 2, stats, sub headers, sub x 2, stats, empty
 	if len(lines) != 11 {
-		t.Fail()
+		t.Fatal("Expected 11 lines of output: header, overhead, pub header, pub x 2, stats, sub headers, sub x 2, stats, empty")
 	}
 }
 
 func TestMsgsPerClient(t *testing.T) {
 	zero := MsgsPerClient(0, 0)
 	if len(zero) != 0 {
-		t.Fail()
+		t.Fatal("Expected 0 length for 0 clients")
 	}
 	onetwo := MsgsPerClient(1, 2)
 	if len(onetwo) != 2 || onetwo[0] != 1 || onetwo[1] != 0 {
-		t.Fail()
+		t.Fatal("Expected uneven distribution")
 	}
 	twotwo := MsgsPerClient(2, 2)
 	if len(twotwo) != 2 || twotwo[0] != 1 || twotwo[1] != 1 {
-		t.Fail()
+		t.Fatal("Expected even distribution")
 	}
 	threetwo := MsgsPerClient(3, 2)
 	if len(threetwo) != 2 || threetwo[0] != 2 || threetwo[1] != 1 {
-		t.Fail()
+		t.Fatal("Expected uneven distribution")
 	}
 }

@@ -1,4 +1,4 @@
-// Copyright 2012-2016 Apcera Inc. All rights reserved.
+// Copyright 2016 Apcera Inc. All rights reserved.
 
 package bench
 
@@ -97,7 +97,10 @@ func (bm *Benchmark) AddPubSample(s *Sample) {
 func (bm *Benchmark) CSV() string {
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
-	writer.Write([]string{"#RunID", "ClientID", "MsgCount", "MsgBytes", "MsgsPerSec", "BytesPerSec", "DurationSecs"})
+	headers := []string{"#RunID", "ClientID", "MsgCount", "MsgBytes", "MsgsPerSec", "BytesPerSec", "DurationSecs"}
+	if err := writer.Write(headers); err != nil {
+		log.Fatal("Error while serializing headers %q: %v", headers, err)
+	}
 	groups := []*SampleGroup{bm.Subs, bm.Pubs}
 	pre := "S"
 	for i, g := range groups {
@@ -106,8 +109,7 @@ func (bm *Benchmark) CSV() string {
 		}
 		for j, c := range g.Samples {
 			r := []string{bm.RunID, fmt.Sprintf("%s%d", pre, j), fmt.Sprintf("%d", c.MsgCnt), fmt.Sprintf("%d", c.MsgBytes), fmt.Sprintf("%d", c.Rate()), fmt.Sprintf("%f", c.Throughput()), fmt.Sprintf("%f", c.Duration().Seconds())}
-			err := writer.Write(r)
-			if err != nil {
+			if err := writer.Write(r); err != nil {
 				log.Fatalf("Error while serializing %v: %v", c, err)
 			}
 		}
