@@ -113,9 +113,9 @@ func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs in
 	for i := 0; i < numMsgs; i++ {
 		nc.Publish(subj, msg)
 	}
+	nc.Flush()
 	benchmark.AddPubSample(bench.NewSample(numMsgs, msgSize, start, time.Now(), nc))
 
-	nc.Flush()
 	donewg.Done()
 }
 
