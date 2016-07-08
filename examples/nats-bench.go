@@ -55,7 +55,7 @@ func main() {
 	}
 	opts.Secure = *tls
 
-	benchmark = bench.NewBenchmark(*numSubs, *numPubs)
+	benchmark = bench.NewBenchmark("NATS", *numSubs, *numPubs)
 
 	var startwg sync.WaitGroup
 	var donewg sync.WaitGroup

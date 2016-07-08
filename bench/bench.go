@@ -34,6 +34,7 @@ type SampleGroup struct {
 // Benchmark to hold the various Samples organized by publishers and subscribers
 type Benchmark struct {
 	Sample
+	Name       string
 	RunID      string
 	Pubs       *SampleGroup
 	Subs       *SampleGroup
@@ -43,8 +44,8 @@ type Benchmark struct {
 
 // NewBenchmark initializes a Benchmark. After creating a bench call AddSubSample/AddPubSample.
 // When done collecting samples, call EndBenchmark
-func NewBenchmark(subCnt, pubCnt int) *Benchmark {
-	bm := Benchmark{RunID: nuid.Next()}
+func NewBenchmark(name string, subCnt, pubCnt int) *Benchmark {
+	bm := Benchmark{Name: name, RunID: nuid.Next()}
 	bm.Subs = NewSampleGroup()
 	bm.Pubs = NewSampleGroup()
 	bm.subChannel = make(chan *Sample, subCnt)
@@ -235,7 +236,7 @@ func (bm *Benchmark) String() string {
 	var buffer bytes.Buffer
 	jobCount := commaFormat(int64(bm.JobMsgCnt))
 	msgRate := commaFormat(bm.Rate())
-	buffer.WriteString(fmt.Sprintf("NATS (Publishers/Subscribers) throughput is %s msgs/sec (%s msgs in %v)\n", msgRate, jobCount, bm.Duration()))
+	buffer.WriteString(fmt.Sprintf("%s (Publishers/Subscribers) throughput is %s msgs/sec (%s msgs in %v)\n", bm.Name, msgRate, jobCount, bm.Duration()))
 
 	overhead := bm.IOBytes - bm.MsgBytes
 	buffer.WriteString(fmt.Sprintf("Data/Overhead: %s / %s\n", humanBytes(float64(bm.MsgBytes), false), humanBytes(float64(overhead), false)))

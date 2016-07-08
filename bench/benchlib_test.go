@@ -136,7 +136,7 @@ func TestStdDev(t *testing.T) {
 }
 
 func TestBenchSetup(t *testing.T) {
-	bench := NewBenchmark(1, 1)
+	bench := NewBenchmark("test", 1, 1)
 	bench.AddSubSample(millionMessagesSecondSample(1))
 	bench.AddPubSample(millionMessagesSecondSample(1))
 	bench.Close()
@@ -161,7 +161,7 @@ func TestBenchSetup(t *testing.T) {
 }
 
 func makeBench(subs, pubs int) *Benchmark {
-	bench := NewBenchmark(subs, pubs)
+	bench := NewBenchmark("test", subs, pubs)
 	for i := 0; i < subs; i++ {
 		bench.AddSubSample(millionMessagesSecondSample(1))
 	}
