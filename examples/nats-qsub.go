@@ -14,7 +14,7 @@ import (
 
 // NOTE: Use tls scheme for TLS, e.g. nats-qsub -s tls://demo.nats.io:4443 foo
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject> <queue-group>\n")
+	log.Fatalf("Usage: nats-qsub [-s server] [-t] <subject> <queue-group>\n")
 }
 
 func printMsg(m *nats.Msg, i int) {
