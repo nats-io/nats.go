@@ -64,9 +64,8 @@ func main() {
 
 	// Run Subscribers first
 	startwg.Add(*numSubs)
-	subCounts := bench.MsgsPerClient(*numMsgs, *numSubs)
 	for i := 0; i < *numSubs; i++ {
-		go runSubscriber(&startwg, &donewg, opts, subCounts[i], *msgSize)
+		go runSubscriber(&startwg, &donewg, opts, *numMsgs, *msgSize)
 	}
 	startwg.Wait()
 

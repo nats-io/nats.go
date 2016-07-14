@@ -266,7 +266,7 @@ func (bm *Benchmark) Report() string {
 		buffer.WriteString(fmt.Sprintf("%s%sPub stats: %s\n", indent, maybeTitle, bm.Pubs))
 		if len(bm.Pubs.Samples) > 1 {
 			for i, stat := range bm.Pubs.Samples {
-				buffer.WriteString(fmt.Sprintf("%s [%d] %v\n", indent, i+1, stat))
+				buffer.WriteString(fmt.Sprintf("%s [%d] %v (%d msgs)\n", indent, i+1, stat, stat.JobMsgCnt))
 			}
 			buffer.WriteString(fmt.Sprintf("%s %s\n", indent, bm.Pubs.Statistics()))
 		}
@@ -280,7 +280,7 @@ func (bm *Benchmark) Report() string {
 		buffer.WriteString(fmt.Sprintf("%s%sSub stats: %s\n", indent, maybeTitle, bm.Subs))
 		if len(bm.Subs.Samples) > 1 {
 			for i, stat := range bm.Subs.Samples {
-				buffer.WriteString(fmt.Sprintf("%s [%d] %v\n", indent, i+1, stat))
+				buffer.WriteString(fmt.Sprintf("%s [%d] %v (%d msgs)\n", indent, i+1, stat, stat.JobMsgCnt))
 			}
 			buffer.WriteString(fmt.Sprintf("%s %s\n", indent, bm.Subs.Statistics()))
 		}
