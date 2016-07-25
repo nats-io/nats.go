@@ -858,55 +858,59 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 
 	for typeSubs := 0; typeSubs < 3; typeSubs++ {
 
-		// Create our own channel.
-		ch := make(chan *nats.Msg, total)
+		func() {
+			// Create our own channel.
+			ch := make(chan *nats.Msg, total)
 
-		var err error
-		switch typeSubs {
-		case 0:
-			_, err = nc.ChanSubscribe("foo", ch)
-		case 1:
-			_, err = nc.ChanQueueSubscribe("foo", "bar", ch)
-		case 2:
-			_, err = nc.QueueSubscribeSyncWithChan("foo", "bar", ch)
-		}
-		if err != nil {
-			t.Fatalf("Unexpected error on subscribe: %v", err)
-		}
+			var err error
+			var sub *nats.Subscription
+			switch typeSubs {
+			case 0:
+				sub, err = nc.ChanSubscribe("foo", ch)
+			case 1:
+				sub, err = nc.ChanQueueSubscribe("foo", "bar", ch)
+			case 2:
+				sub, err = nc.QueueSubscribeSyncWithChan("foo", "bar", ch)
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
 
-		// Send some messages to ourselves.
-		go func() {
-			for i := 0; i < total; i++ {
-				if err := nc.Publish("foo", []byte("Hello")); err != nil {
-					t.Fatalf("Unexpected error on publish: %v", err)
+			// Send some messages to ourselves.
+			go func() {
+				for i := 0; i < total; i++ {
+					if err := nc.Publish("foo", []byte("Hello")); err != nil {
+						t.Fatalf("Unexpected error on publish: %v", err)
+					}
+				}
+			}()
+
+			received := 0
+			tm := time.NewTimer(5 * time.Second)
+			defer tm.Stop()
+
+			chk := func(ok bool) {
+				if !ok {
+					t.Fatalf("Got an error reading from channel")
+				} else {
+					received++
+				}
+			}
+
+			// Go ahead and receive
+			for {
+				select {
+				case _, ok := <-ch:
+					chk(ok)
+				case <-tm.C:
+					t.Fatalf("Timed out waiting on messages")
+				}
+				if received >= total {
+					return
 				}
 			}
 		}()
-
-		received := 0
-		tm := time.NewTimer(5 * time.Second)
-		defer tm.Stop()
-
-		chk := func(ok bool) {
-			if !ok {
-				t.Fatalf("Got an error reading from channel")
-			} else {
-				received++
-			}
-		}
-
-		// Go ahead and receive
-		for {
-			select {
-			case _, ok := <-ch:
-				chk(ok)
-			case <-tm.C:
-				t.Fatalf("Timed out waiting on messages")
-			}
-			if received >= total {
-				return
-			}
-		}
 	}
 }
 
