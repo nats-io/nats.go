@@ -268,8 +268,32 @@ nc, err = nats.Connect(servers,
 	}),
 	nats.ClosedHandler(func(nc *nats.Conn) {
 		fmt.Printf("Connection closed. Reason: %q\n", nc.LastError())
-	}),
+	})
 )
+
+// When connecting to a mesh of servers with auto-discovery capabilities,
+// you may need to provide a username/password or token in order to connect
+// to any server in that mesh when authentication is required.
+// Instead of providing the credentials in the initial URL, you will use
+// new option setters:
+nc, err = nats.Connect("nats://localhost:4222", nats.UserInfo("foo", "bar"))
+
+// For token based authentication:
+nc, err = nats.Connect("nats://localhost:4222", nats.Token("S3cretT0ken"))
+
+// You can even pass the two at the same time in case one of the server
+// in the mesh requires token instead of user name and password.
+nc, err = nats.Connect("nats://localhost:4222",
+    nats.UserInfo("foo", "bar"),
+    nats.Token("S3cretT0ken"))
+
+// Note that if credentials are specified in the initial URLs, they take
+// precedence on the credentials specfied through the options.
+// For instance, in the connect call below, the client library will use
+// the user "my" and password "pwd" to connect to locahost:4222, however,
+// it will use username "foo" and password "bar" when (re)connecting to
+// a different server URL that it got as part of the auto-discovery.
+nc, err = nats.Connect("nats://my:pwd@localhost:4222", nats.UserInfo("foo", "bar"))
 
 ```
 
