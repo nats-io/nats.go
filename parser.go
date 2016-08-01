@@ -50,6 +50,12 @@ const (
 	OP_PO
 	OP_PON
 	OP_PONG
+	OP_I
+	OP_IN
+	OP_INF
+	OP_INFO
+	OP_INFO_SPC
+	INFO_ARG
 )
 
 // parse is the fast protocol parser engine.
@@ -72,6 +78,8 @@ func (nc *Conn) parse(buf []byte) error {
 				nc.ps.state = OP_PLUS
 			case '-':
 				nc.ps.state = OP_MINUS
+			case 'I', 'i':
+				nc.ps.state = OP_I
 			default:
 				goto parseErr
 			}
@@ -289,12 +297,67 @@ func (nc *Conn) parse(buf []byte) error {
 				nc.processPing()
 				nc.ps.drop, nc.ps.state = 0, OP_START
 			}
+		case OP_I:
+			switch b {
+			case 'N', 'n':
+				nc.ps.state = OP_IN
+			default:
+				goto parseErr
+			}
+		case OP_IN:
+			switch b {
+			case 'F', 'f':
+				nc.ps.state = OP_INF
+			default:
+				goto parseErr
+			}
+		case OP_INF:
+			switch b {
+			case 'O', 'o':
+				nc.ps.state = OP_INFO
+			default:
+				goto parseErr
+			}
+		case OP_INFO:
+			switch b {
+			case ' ', '\t':
+				nc.ps.state = OP_INFO_SPC
+			default:
+				goto parseErr
+			}
+		case OP_INFO_SPC:
+			switch b {
+			case ' ', '\t':
+				continue
+			default:
+				nc.ps.state = INFO_ARG
+				nc.ps.as = i
+			}
+		case INFO_ARG:
+			switch b {
+			case '\r':
+				nc.ps.drop = 1
+			case '\n':
+				var arg []byte
+				if nc.ps.argBuf != nil {
+					arg = nc.ps.argBuf
+					nc.ps.argBuf = nil
+				} else {
+					arg = buf[nc.ps.as : i-nc.ps.drop]
+				}
+				nc.processAsyncInfo(arg)
+				nc.ps.drop, nc.ps.as, nc.ps.state = 0, i+1, OP_START
+			default:
+				if nc.ps.argBuf != nil {
+					nc.ps.argBuf = append(nc.ps.argBuf, b)
+				}
+			}
 		default:
 			goto parseErr
 		}
 	}
 	// Check for split buffer scenarios
-	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG) && nc.ps.argBuf == nil {
+	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG || nc.ps.state == INFO_ARG) && nc.ps.argBuf == nil {
 		nc.ps.argBuf = nc.ps.scratch[:0]
 		nc.ps.argBuf = append(nc.ps.argBuf, buf[nc.ps.as:i-nc.ps.drop]...)
 		// FIXME, check max len

@@ -38,6 +38,19 @@ func TestAuth(t *testing.T) {
 		t.Fatal("Should have connected successfully with a token")
 	}
 	nc.Close()
+
+	// Use Options
+	nc, err = nats.Connect("nats://localhost:8232", nats.UserInfo("derek", "foo"))
+	if err != nil {
+		t.Fatalf("Should have connected successfully with a token: %v", err)
+	}
+	nc.Close()
+	// Verify that credentials in URL take precedence.
+	nc, err = nats.Connect("nats://derek:foo@localhost:8232", nats.UserInfo("foo", "bar"))
+	if err != nil {
+		t.Fatalf("Should have connected successfully with a token: %v", err)
+	}
+	nc.Close()
 }
 
 func TestAuthFailNoDisconnectCB(t *testing.T) {
@@ -145,10 +158,23 @@ func TestTokenAuth(t *testing.T) {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 
-	tokenUrl := fmt.Sprintf("nats://%s@localhost:8232", secret)
-	nc, err := nats.Connect(tokenUrl)
+	tokenURL := fmt.Sprintf("nats://%s@localhost:8232", secret)
+	nc, err := nats.Connect(tokenURL)
 	if err != nil {
 		t.Fatal("Should have connected successfully")
+	}
+	nc.Close()
+
+	// Use Options
+	nc, err = nats.Connect("nats://localhost:8232", nats.Token(secret))
+	if err != nil {
+		t.Fatalf("Should have connected successfully: %v", err)
+	}
+	nc.Close()
+	// Verify that token in the URL takes precedence.
+	nc, err = nats.Connect(tokenURL, nats.Token("badtoken"))
+	if err != nil {
+		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
 }

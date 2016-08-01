@@ -141,6 +141,10 @@ type Options struct {
 	// NOTE: This does not affect AsyncSubscriptions which are
 	// dictated by PendingLimits()
 	SubChanLen int
+
+	User     string
+	Password string
+	Token    string
 }
 
 const (
@@ -176,6 +180,7 @@ type Conn struct {
 	url     *url.URL
 	conn    net.Conn
 	srvPool []*srv
+	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
 	bw      *bufio.Writer
 	pending *bytes.Buffer
 	fch     chan bool
@@ -261,14 +266,24 @@ type srv struct {
 }
 
 type serverInfo struct {
-	Id           string `json:"server_id"`
-	Host         string `json:"host"`
-	Port         uint   `json:"port"`
-	Version      string `json:"version"`
-	AuthRequired bool   `json:"auth_required"`
-	TLSRequired  bool   `json:"tls_required"`
-	MaxPayload   int64  `json:"max_payload"`
+	Id           string   `json:"server_id"`
+	Host         string   `json:"host"`
+	Port         uint     `json:"port"`
+	Version      string   `json:"version"`
+	AuthRequired bool     `json:"auth_required"`
+	TLSRequired  bool     `json:"tls_required"`
+	MaxPayload   int64    `json:"max_payload"`
+	ConnectURLs  []string `json:"connect_urls,omitempty"`
 }
+
+const (
+	// clientProtoZero is the original client protocol from 2009.
+	// http://nats.io/documentation/internals/nats-protocol/
+	clientProtoZero = iota
+	// clientProtoInfo signals a client can receive more then the original INFO block.
+	// This can be used to update clients on other cluster members, etc.
+	clientProtoInfo
+)
 
 type connectInfo struct {
 	Verbose  bool   `json:"verbose"`
@@ -280,6 +295,7 @@ type connectInfo struct {
 	Name     string `json:"name"`
 	Lang     string `json:"lang"`
 	Version  string `json:"version"`
+	Protocol int    `json:"protocol"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -441,6 +457,25 @@ func ClosedHandler(cb ConnHandler) Option {
 func ErrorHandler(cb ErrHandler) Option {
 	return func(o *Options) error {
 		o.AsyncErrorCB = cb
+		return nil
+	}
+}
+
+// UserInfo is an Option to set the username and password to
+// use when not included directly in the URLs.
+func UserInfo(user, password string) Option {
+	return func(o *Options) error {
+		o.User = user
+		o.Password = password
+		return nil
+	}
+}
+
+// Token is an Option to set the token to use when not included
+// directly in the URLs.
+func Token(token string) Option {
+	return func(o *Options) error {
+		o.Token = token
 		return nil
 	}
 }
@@ -621,44 +656,31 @@ const tlsScheme = "tls"
 // the NoRandomize flag is set.
 func (nc *Conn) setupServerPool() error {
 	nc.srvPool = make([]*srv, 0, srvPoolSize)
+	nc.urls = make(map[string]struct{}, srvPoolSize)
 	if nc.Opts.Url != _EMPTY_ {
-		u, err := url.Parse(nc.Opts.Url)
-		if err != nil {
+		if err := nc.addURLToPool(nc.Opts.Url); err != nil {
 			return err
 		}
-		s := &srv{url: u}
-		nc.srvPool = append(nc.srvPool, s)
 	}
 
-	var srvrs []string
-	source := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(source)
-
-	if nc.Opts.NoRandomize {
-		srvrs = nc.Opts.Servers
-	} else {
-		in := r.Perm(len(nc.Opts.Servers))
-		for _, i := range in {
-			srvrs = append(srvrs, nc.Opts.Servers[i])
-		}
-	}
-	for _, urlString := range srvrs {
-		u, err := url.Parse(urlString)
-		if err != nil {
+	// Create srv objects from each url string in nc.Opts.Servers
+	// and add them to the pool
+	for _, urlString := range nc.Opts.Servers {
+		if err := nc.addURLToPool(urlString); err != nil {
 			return err
 		}
-		s := &srv{url: u}
-		nc.srvPool = append(nc.srvPool, s)
+	}
+
+	// Randomize if allowed to
+	if !nc.Opts.NoRandomize {
+		nc.shufflePool()
 	}
 
 	// Place default URL if pool is empty.
 	if len(nc.srvPool) <= 0 {
-		u, err := url.Parse(DefaultURL)
-		if err != nil {
+		if err := nc.addURLToPool(DefaultURL); err != nil {
 			return err
 		}
-		s := &srv{url: u}
-		nc.srvPool = append(nc.srvPool, s)
 	}
 
 	// Check for Scheme hint to move to TLS mode.
@@ -673,6 +695,31 @@ func (nc *Conn) setupServerPool() error {
 	}
 
 	return nc.pickServer()
+}
+
+// addURLToPool adds an entry to the server pool
+func (nc *Conn) addURLToPool(sURL string) error {
+	u, err := url.Parse(sURL)
+	if err != nil {
+		return err
+	}
+	s := &srv{url: u}
+	nc.srvPool = append(nc.srvPool, s)
+	nc.urls[u.Host] = struct{}{}
+	return nil
+}
+
+// shufflePool swaps randomly elements in the server pool
+func (nc *Conn) shufflePool() {
+	if len(nc.srvPool) <= 1 {
+		return
+	}
+	source := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(source)
+	for i := range nc.srvPool {
+		j := r.Intn(i + 1)
+		nc.srvPool[i], nc.srvPool[j] = nc.srvPool[j], nc.srvPool[i]
+	}
 }
 
 // createConn will connect to the server and wrap the appropriate
@@ -844,7 +891,10 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	nc.mu.Lock()
-	for i := range nc.srvPool {
+	// Get the size of the pool. The pool may change inside a loop
+	// iteration due to INFO protocol.
+	poolSize := len(nc.srvPool)
+	for i := 0; i < poolSize; i++ {
 		nc.url = nc.srvPool[i].url
 
 		if err := nc.createConn(); err == nil {
@@ -866,6 +916,9 @@ func (nc *Conn) connect() error {
 				nc.mu.Lock()
 				nc.url = nil
 			}
+			// Refresh our view of pool length since it may have been
+			// modified when processing the INFO protocol.
+			poolSize = len(nc.srvPool)
 		} else {
 			// Cancel out default connection refused, will trigger the
 			// No servers error conditional
@@ -956,10 +1009,15 @@ func (nc *Conn) connectProto() (string, error) {
 			user = u.Username()
 			pass, _ = u.Password()
 		}
+	} else {
+		// Take from options (pssibly all empty strings)
+		user = nc.Opts.User
+		pass = nc.Opts.Password
+		token = nc.Opts.Token
 	}
 	cinfo := connectInfo{o.Verbose, o.Pedantic,
 		user, pass, token,
-		o.Secure, o.Name, LangString, Version}
+		o.Secure, o.Name, LangString, Version, clientProtoInfo}
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		return _EMPTY_, ErrJsonParse
@@ -1552,11 +1610,38 @@ func (nc *Conn) processOK() {
 
 // processInfo is used to parse the info messages sent
 // from the server.
+// This function May update the server pool.
 func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
 		return nil
 	}
-	return json.Unmarshal([]byte(info), &nc.info)
+	if err := json.Unmarshal([]byte(info), &nc.info); err != nil {
+		return err
+	}
+	updated := false
+	urls := nc.info.ConnectURLs
+	for _, curl := range urls {
+		if _, present := nc.urls[curl]; !present {
+			if err := nc.addURLToPool(fmt.Sprintf("nats://%s", curl)); err != nil {
+				continue
+			}
+			updated = true
+		}
+	}
+	if updated && !nc.Opts.NoRandomize {
+		nc.shufflePool()
+	}
+	return nil
+}
+
+// processAsyncInfo does the same than processInfo, but is called
+// from the parser. Calls processInfo under connection's lock
+// protection.
+func (nc *Conn) processAsyncInfo(info []byte) {
+	nc.mu.Lock()
+	// Ignore errors, we will simply not update the server pool...
+	nc.processInfo(string(info))
+	nc.mu.Unlock()
 }
 
 // LastError reports the last error encountered via the connection.
