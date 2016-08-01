@@ -55,7 +55,7 @@ const (
 	OP_INF
 	OP_INFO
 	OP_INFO_SPC
-	OP_INFO_ARG
+	INFO_ARG
 )
 
 // parse is the fast protocol parser engine.
@@ -330,10 +330,10 @@ func (nc *Conn) parse(buf []byte) error {
 			case ' ', '\t':
 				continue
 			default:
-				nc.ps.state = OP_INFO_ARG
+				nc.ps.state = INFO_ARG
 				nc.ps.as = i
 			}
-		case OP_INFO_ARG:
+		case INFO_ARG:
 			switch b {
 			case '\r':
 				nc.ps.drop = 1
@@ -357,7 +357,7 @@ func (nc *Conn) parse(buf []byte) error {
 		}
 	}
 	// Check for split buffer scenarios
-	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG) && nc.ps.argBuf == nil {
+	if (nc.ps.state == MSG_ARG || nc.ps.state == MINUS_ERR_ARG || nc.ps.state == INFO_ARG) && nc.ps.argBuf == nil {
 		nc.ps.argBuf = nc.ps.scratch[:0]
 		nc.ps.argBuf = append(nc.ps.argBuf, buf[nc.ps.as:i-nc.ps.drop]...)
 		// FIXME, check max len

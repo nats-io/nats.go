@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	"github.com/nats-io/gnatsd/server"
 	gnatsd "github.com/nats-io/gnatsd/test"
+	"runtime"
 )
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
@@ -30,6 +32,23 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	case <-time.After(timeout):
 	}
 	return errors.New("timeout")
+}
+
+func stackFatalf(t *testing.T, f string, args ...interface{}) {
+	lines := make([]string, 0, 32)
+	msg := fmt.Sprintf(f, args...)
+	lines = append(lines, msg)
+
+	// Generate the Stack of callers: Skip us and verify* frames.
+	for i := 2; true; i++ {
+		_, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		msg := fmt.Sprintf("%d - %s:%d", i, file, line)
+		lines = append(lines, msg)
+	}
+	t.Fatalf("%s", strings.Join(lines, "\n"))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -834,8 +853,40 @@ func TestAsyncINFO(t *testing.T) {
 	// Server pool needs to be setup
 	c.setupServerPool()
 
+	// Partials requiring argBuf
+	expectedServer := serverInfo{
+		Id:           "test",
+		Host:         "localhost",
+		Port:         4222,
+		Version:      "1.2.3",
+		AuthRequired: true,
+		TLSRequired:  true,
+		MaxPayload:   2 * 1024 * 1024,
+		ConnectURLs:  []string{"localhost:5222", "localhost:6222"},
+	}
+	b, _ := json.Marshal(expectedServer)
+	info = []byte(fmt.Sprintf("INFO %s\r\n", b))
+	if c.ps.state != OP_START {
+		t.Fatalf("Expected OP_START vs %d\n", c.ps.state)
+	}
+	err = c.parse(info[:9])
+	if err != nil || c.ps.state != INFO_ARG || c.ps.argBuf == nil {
+		t.Fatalf("Unexpected: %d err: %v argBuf: %v\n", c.ps.state, err, c.ps.argBuf)
+	}
+	err = c.parse(info[9:11])
+	if err != nil || c.ps.state != INFO_ARG || c.ps.argBuf == nil {
+		t.Fatalf("Unexpected: %d err: %v argBuf: %v\n", c.ps.state, err, c.ps.argBuf)
+	}
+	err = c.parse(info[11:])
+	if err != nil || c.ps.state != OP_START || c.ps.argBuf != nil {
+		t.Fatalf("Unexpected: %d err: %v argBuf: %v\n", c.ps.state, err, c.ps.argBuf)
+	}
+	if !reflect.DeepEqual(c.info, expectedServer) {
+		t.Fatalf("Expected server info to be: %v, got: %v", expectedServer, c.info)
+	}
+
 	// Good INFOs
-	good := []string{"INFO {}\r\n", "INFO {} \r\n", "INFO { \"server_id\": \"test\"  }   \r\n", "INFO {\"connect_urls\":[]}\r\n"}
+	good := []string{"INFO {}\r\n", "INFO  {}\r\n", "INFO {} \r\n", "INFO { \"server_id\": \"test\"  }   \r\n", "INFO {\"connect_urls\":[]}\r\n"}
 	for _, gi := range good {
 		c.ps = &parseState{}
 		err = c.parse([]byte(gi))
@@ -845,7 +896,7 @@ func TestAsyncINFO(t *testing.T) {
 	}
 
 	// Wrong INFOs
-	wrong := []string{"INFOx {}\r\n", "INFO{}\r\n", "INFO {}"}
+	wrong := []string{"IxNFO {}\r\n", "INxFO {}\r\n", "INFxO {}\r\n", "INFOx {}\r\n", "INFO{}\r\n", "INFO {}"}
 	for _, wi := range wrong {
 		c.ps = &parseState{}
 		err = c.parse([]byte(wi))
@@ -857,19 +908,19 @@ func TestAsyncINFO(t *testing.T) {
 	checkPool := func(urls ...string) {
 		// Check both pool and urls map
 		if len(c.srvPool) != len(urls) {
-			t.Fatalf("Pool should have %d elements, has %d", len(urls), len(c.srvPool))
+			stackFatalf(t, "Pool should have %d elements, has %d", len(urls), len(c.srvPool))
 		}
 		if len(c.urls) != len(urls) {
-			t.Fatalf("Map should have %d elements, has %d", len(urls), len(c.urls))
+			stackFatalf(t, "Map should have %d elements, has %d", len(urls), len(c.urls))
 		}
 		for i, url := range urls {
 			if c.Opts.NoRandomize {
 				if c.srvPool[i].url.Host != url {
-					t.Fatalf("Pool should have %q at index %q, has %q", url, i, c.srvPool[i].url.Host)
+					stackFatalf(t, "Pool should have %q at index %q, has %q", url, i, c.srvPool[i].url.Host)
 				}
 			} else {
 				if _, present := c.urls[url]; !present {
-					t.Fatalf("Pool should have %q", url)
+					stackFatalf(t, "Pool should have %q", url)
 				}
 			}
 		}
@@ -881,6 +932,8 @@ func TestAsyncINFO(t *testing.T) {
 	c.Opts.NoRandomize = true
 	// Reset the pool
 	c.setupServerPool()
+	// Reinitialize the parser
+	c.ps = &parseState{}
 
 	info = []byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n")
 	err = c.parse(info)
