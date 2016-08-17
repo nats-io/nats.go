@@ -2500,6 +2500,13 @@ func (nc *Conn) IsReconnecting() bool {
 	return nc.isReconnecting()
 }
 
+// IsConnected tests if a Conn is connected.
+func (nc *Conn) IsConnected() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.isConnected()
+}
+
 // Status returns the current state of the connection.
 func (nc *Conn) Status() Status {
 	nc.mu.Lock()

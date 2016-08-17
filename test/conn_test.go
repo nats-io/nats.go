@@ -37,8 +37,14 @@ func TestConnectionStatus(t *testing.T) {
 	if nc.Status() != nats.CONNECTED {
 		t.Fatal("Should have status set to CONNECTED")
 	}
+	if !nc.IsConnected() {
+		t.Fatal("Should have status set to CONNECTED")
+	}
 	nc.Close()
 	if nc.Status() != nats.CLOSED {
+		t.Fatal("Should have status set to CLOSED")
+	}
+	if !nc.IsClosed() {
 		t.Fatal("Should have status set to CLOSED")
 	}
 }
