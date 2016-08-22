@@ -1021,3 +1021,42 @@ func TestAsyncINFO(t *testing.T) {
 		t.Fatal("Pool does not seem to be randomized")
 	}
 }
+
+func TestConnServers(t *testing.T) {
+	opts := DefaultOptions
+	c := &Conn{Opts: opts}
+	c.ps = &parseState{}
+	c.setupServerPool()
+
+	checkServers := func(urls ...string) {
+		var found bool
+		servers := c.Servers()
+		if len(servers) != len(urls) {
+			stackFatalf(t, "Server list should have %d elements, has %d", len(urls), len(c.srvPool))
+		}
+
+		for _, url := range urls {
+			found = false
+			for _, server := range servers {
+				if url == server {
+					found = true
+					break
+				}
+			}
+			if !found {
+				stackFatalf(t, "Server list is missing %q", url)
+			}
+		}
+	}
+
+	// check the default url
+	checkServers("nats://localhost:4222")
+
+	// Add a new URL
+	err := c.parse([]byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n"))
+	if err != nil {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	// Server list should now contain both the default and the new url.
+	checkServers("nats://localhost:4222", "nats://localhost:5222")
+}

@@ -2507,6 +2507,19 @@ func (nc *Conn) IsConnected() bool {
 	return nc.isConnected()
 }
 
+// Servers returns the list of known servers, including additional
+// servers discovered after a connection has been established.
+func (nc *Conn) Servers() []string {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	poolSize := len(nc.srvPool)
+	servers := make([]string, poolSize)
+	for i := 0; i < poolSize; i++ {
+		servers[i] = nc.srvPool[i].url.String()
+	}
+	return servers
+}
+
 // Status returns the current state of the connection.
 func (nc *Conn) Status() Status {
 	nc.mu.Lock()
