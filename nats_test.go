@@ -1032,7 +1032,7 @@ func TestConnServers(t *testing.T) {
 		var found bool
 		servers := c.Servers()
 		if len(servers) != len(urls) {
-			stackFatalf(t, "Server list should have %d elements, has %d", len(urls), len(c.srvPool))
+			stackFatalf(t, "Server list should have %d elements, has %d", len(urls), len(servers))
 		}
 
 		for _, url := range urls {
