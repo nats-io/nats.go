@@ -2508,9 +2508,7 @@ func (nc *Conn) IsConnected() bool {
 }
 
 // Servers returns the list of known server urls, including additional
-// servers discovered after a connection has been established.  URLs passed
-// into NATS through the API be preserved in their original form, but any
-// credentials in a URL will never be visible outside of the application.
+// servers discovered after a connection has been established.
 func (nc *Conn) Servers() []string {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
