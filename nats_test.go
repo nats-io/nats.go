@@ -1028,29 +1028,31 @@ func TestConnServers(t *testing.T) {
 	c.ps = &parseState{}
 	c.setupServerPool()
 
-	checkServers := func(urls ...string) {
+	validateURLs := func(serverUrls []string, expectedUrls ...string) {
 		var found bool
-		servers := c.Servers()
-		if len(servers) != len(urls) {
-			stackFatalf(t, "Server list should have %d elements, has %d", len(urls), len(servers))
+		if len(serverUrls) != len(expectedUrls) {
+			stackFatalf(t, "Array should have %d elements, has %d", len(expectedUrls), len(serverUrls))
 		}
 
-		for _, url := range urls {
+		for _, ev := range expectedUrls {
 			found = false
-			for _, server := range servers {
-				if url == server {
+			for _, av := range serverUrls {
+				if ev == av {
 					found = true
 					break
 				}
 			}
 			if !found {
-				stackFatalf(t, "Server list is missing %q", url)
+				stackFatalf(t, "array is missing %q in %v", ev, serverUrls)
 			}
 		}
 	}
 
 	// check the default url
-	checkServers("nats://localhost:4222")
+	validateURLs(c.Servers(), "nats://localhost:4222")
+	if len(c.ImplicitServers()) != 0 {
+		t.Fatalf("Expected no implicit servers")
+	}
 
 	// Add a new URL
 	err := c.parse([]byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n"))
@@ -1058,5 +1060,15 @@ func TestConnServers(t *testing.T) {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	// Server list should now contain both the default and the new url.
-	checkServers("nats://localhost:4222", "nats://localhost:5222")
+	validateURLs(c.Servers(), "nats://localhost:4222", "nats://localhost:5222")
+	// Implicit servers should only contain the new url.
+	validateURLs(c.ImplicitServers(), "nats://localhost:5222")
+
+	// verify user credentials are stripped out.
+	opts.Servers = []string{"nats://user:pass@localhost:4333", "nats://token@localhost:4444"}
+	c = &Conn{Opts: opts}
+	c.ps = &parseState{}
+	c.setupServerPool()
+
+	validateURLs(c.Servers(), "nats://localhost:4333", "nats://localhost:4444")
 }
