@@ -2511,7 +2511,7 @@ func (nc *Conn) IsConnected() bool {
 // caller must lock
 func (nc *Conn) getServers(implicitOnly bool) []string {
 	poolSize := len(nc.srvPool)
-	servers := make([]string, 0)
+	var servers = make([]string, 0)
 	for i := 0; i < poolSize; i++ {
 		if implicitOnly && !nc.srvPool[i].isImplicit {
 			continue
