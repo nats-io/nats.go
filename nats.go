@@ -814,7 +814,7 @@ func (nc *Conn) spinUpGoRoutines() {
 	nc.mu.Unlock()
 }
 
-// Report the connected server's Url
+// ConnectedUrl reports the connected server's Url
 func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
 		return _EMPTY_
@@ -827,7 +827,20 @@ func (nc *Conn) ConnectedUrl() string {
 	return nc.url.String()
 }
 
-// Report the connected server's Id
+// ConnectedHost reports the connected server's Host
+func (nc *Conn) ConnectedHost() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.url.Host
+}
+
+// ConnectedServerId reports the connected server's Id
 func (nc *Conn) ConnectedServerId() string {
 	if nc == nil {
 		return _EMPTY_
