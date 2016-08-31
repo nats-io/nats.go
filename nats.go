@@ -837,7 +837,7 @@ func (nc *Conn) ConnectedHost() string {
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.url.Host
+	return fmt.Sprintf("nats://%s", nc.url.Host)
 }
 
 // ConnectedServerId reports the connected server's Id

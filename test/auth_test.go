@@ -61,7 +61,7 @@ func TestAuth(t *testing.T) {
 
 	// Confirm we can get the connected host without credentials as well
 	got = nc.ConnectedHost()
-	expected = "localhost:8232"
+	expected = "nats://localhost:8232"
 	if got != expected {
 		t.Errorf("Expected url as %s got: %s", expected, got)
 	}
