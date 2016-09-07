@@ -657,11 +657,6 @@ const tlsScheme = "tls"
 func (nc *Conn) setupServerPool() error {
 	nc.srvPool = make([]*srv, 0, srvPoolSize)
 	nc.urls = make(map[string]struct{}, srvPoolSize)
-	if nc.Opts.Url != _EMPTY_ {
-		if err := nc.addURLToPool(nc.Opts.Url); err != nil {
-			return err
-		}
-	}
 
 	// Create srv objects from each url string in nc.Opts.Servers
 	// and add them to the pool
@@ -676,8 +671,20 @@ func (nc *Conn) setupServerPool() error {
 		nc.shufflePool()
 	}
 
-	// Place default URL if pool is empty.
-	if len(nc.srvPool) <= 0 {
+	// Normally, if this one is set, Options.Servers should not be,
+	// but we always allowed that, so continue to do so.
+	if nc.Opts.Url != _EMPTY_ {
+		// Add to the end of the array
+		if err := nc.addURLToPool(nc.Opts.Url); err != nil {
+			return err
+		}
+		// Then swap it with first to guarantee that Options.Url is tried first.
+		last := len(nc.srvPool) - 1
+		if last > 0 {
+			nc.srvPool[0], nc.srvPool[last] = nc.srvPool[last], nc.srvPool[0]
+		}
+	} else if len(nc.srvPool) <= 0 {
+		// Place default URL if pool is empty.
 		if err := nc.addURLToPool(DefaultURL); err != nil {
 			return err
 		}
@@ -891,10 +898,8 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	nc.mu.Lock()
-	// Get the size of the pool. The pool may change inside a loop
-	// iteration due to INFO protocol.
-	poolSize := len(nc.srvPool)
-	for i := 0; i < poolSize; i++ {
+	// The pool may change inside theloop iteration due to INFO protocol.
+	for i := 0; i < len(nc.srvPool); i++ {
 		nc.url = nc.srvPool[i].url
 
 		if err := nc.createConn(); err == nil {
@@ -916,9 +921,6 @@ func (nc *Conn) connect() error {
 				nc.mu.Lock()
 				nc.url = nil
 			}
-			// Refresh our view of pool length since it may have been
-			// modified when processing the INFO protocol.
-			poolSize = len(nc.srvPool)
 		} else {
 			// Cancel out default connection refused, will trigger the
 			// No servers error conditional
