@@ -223,6 +223,30 @@ func TestServersRandomize(t *testing.T) {
 	if !reflect.DeepEqual(testServers, clientServers) {
 		t.Fatalf("ServerPool list should not be randomized\n")
 	}
+
+	// Although the original intent was that if Opts.Url is
+	// set, Opts.Servers is not (and vice versa), the behavior
+	// is that Opts.Url is always first, even when randomization
+	// is enabled. So make sure that this is still the case.
+	opts = DefaultOptions
+	opts.Url = DefaultURL
+	opts.Servers = testServers
+	nc = &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Problem setting up Server Pool: %v\n", err)
+	}
+	// Build []string from srvPool
+	clientServers = []string{}
+	for _, s := range nc.srvPool {
+		clientServers = append(clientServers, s.url.String())
+	}
+	// In theory this could happen..
+	if reflect.DeepEqual(testServers, clientServers) {
+		t.Fatalf("ServerPool list not randomized\n")
+	}
+	if clientServers[0] != DefaultURL {
+		t.Fatalf("Options.Url should be first in the array, got %v", clientServers[0])
+	}
 }
 
 func TestSelectNextServer(t *testing.T) {
