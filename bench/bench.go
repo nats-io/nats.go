@@ -254,16 +254,16 @@ func (bm *Benchmark) Report() string {
 	var buffer bytes.Buffer
 
 	indent := ""
+	if !bm.Pubs.HasSamples() && !bm.Subs.HasSamples() {
+		return "No publisher or subscribers. Nothing to report."
+	}
+
 	if bm.Pubs.HasSamples() && bm.Subs.HasSamples() {
 		buffer.WriteString(fmt.Sprintf("%s Pub/Sub stats: %s\n", bm.Name, bm))
 		indent += " "
 	}
 	if bm.Pubs.HasSamples() {
-		maybeTitle := ""
-		if !bm.Subs.HasSamples() {
-			maybeTitle = bm.Name + " "
-		}
-		buffer.WriteString(fmt.Sprintf("%s%sPub stats: %s\n", indent, maybeTitle, bm.Pubs))
+		buffer.WriteString(fmt.Sprintf("%sPub stats: %s\n", indent, bm.Pubs))
 		if len(bm.Pubs.Samples) > 1 {
 			for i, stat := range bm.Pubs.Samples {
 				buffer.WriteString(fmt.Sprintf("%s [%d] %v (%d msgs)\n", indent, i+1, stat, stat.JobMsgCnt))
@@ -273,11 +273,7 @@ func (bm *Benchmark) Report() string {
 	}
 
 	if bm.Subs.HasSamples() {
-		maybeTitle := ""
-		if !bm.Subs.HasSamples() {
-			maybeTitle = bm.Name + " "
-		}
-		buffer.WriteString(fmt.Sprintf("%s%sSub stats: %s\n", indent, maybeTitle, bm.Subs))
+		buffer.WriteString(fmt.Sprintf("%sSub stats: %s\n", indent, bm.Subs))
 		if len(bm.Subs.Samples) > 1 {
 			for i, stat := range bm.Subs.Samples {
 				buffer.WriteString(fmt.Sprintf("%s [%d] %v (%d msgs)\n", indent, i+1, stat, stat.JobMsgCnt))
