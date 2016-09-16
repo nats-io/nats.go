@@ -1653,7 +1653,10 @@ func (nc *Conn) LastError() error {
 	if nc == nil {
 		return ErrInvalidConnection
 	}
-	return nc.err
+	nc.mu.Lock()
+	err := nc.err
+	nc.mu.Unlock()
+	return err
 }
 
 // processErr processes any error messages from the server and

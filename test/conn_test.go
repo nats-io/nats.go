@@ -1222,3 +1222,30 @@ func TestUseDefaultTimeout(t *testing.T) {
 		t.Fatalf("Expected Timeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Timeout)
 	}
 }
+
+func TestNoRaceOnLastError(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	dch := func(c *nats.Conn) {
+		// Just access LastError to make sure that there is no race
+		if c.LastError() != nil {
+			if c.LastError().Error() == "" {
+			}
+		}
+	}
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.DisconnectHandler(dch),
+		nats.ReconnectWait(5*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v\n", err)
+	}
+	defer nc.Close()
+
+	for i := 0; i < 10; i++ {
+		s.Shutdown()
+		time.Sleep(10 * time.Millisecond)
+		s = RunDefaultServer()
+	}
+	s.Shutdown()
+}
