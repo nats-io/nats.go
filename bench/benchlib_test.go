@@ -54,7 +54,7 @@ func TestRate(t *testing.T) {
 func TestThoughput(t *testing.T) {
 	s := millionMessagesSecondSample(60)
 	if s.Throughput() != Million*MsgSize {
-		t.Fatal("Expected throughput at %d million bytes/sec", MsgSize)
+		t.Fatalf("Expected throughput at %d million bytes/sec", MsgSize)
 	}
 }
 
