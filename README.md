@@ -2,7 +2,7 @@
 A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io).
 
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nats-io/nats)](https://goreportcard.com/report/github.com/nats-io/nats) [![Build Status](https://travis-ci.org/nats-io/nats.svg?branch=master)](http://travis-ci.org/nats-io/nats) [![GoDoc](http://godoc.org/github.com/nats-io/nats?status.png)](http://godoc.org/github.com/nats-io/nats) [![Coverage Status](https://coveralls.io/repos/nats-io/nats/badge.svg?branch=master)](https://coveralls.io/r/nats-io/nats?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nats-io/nats)](https://goreportcard.com/report/github.com/nats-io/nats) [![Build Status](https://travis-ci.org/nats-io/nats.svg?branch=master)](http://travis-ci.org/nats-io/nats) [![GoDoc](https://godoc.org/github.com/nats-io/nats?status.svg)](http://godoc.org/github.com/nats-io/nats) [![Coverage Status](https://coveralls.io/repos/nats-io/nats/badge.svg?branch=master)](https://coveralls.io/r/nats-io/nats?branch=master)
 
 ## Installation
 
