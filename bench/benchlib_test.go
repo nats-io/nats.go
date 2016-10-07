@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	Byte    = 8
+	MsgSize = 8
 	Million = 1000 * 1000
 )
 
@@ -21,9 +21,9 @@ func millionMessagesSecondSample(seconds int) *Sample {
 	end := start.Add(time.Second * time.Duration(seconds))
 	nc := new(nats.Conn)
 
-	s := NewSample(messages, Byte, start, end, nc)
+	s := NewSample(messages, MsgSize, start, end, nc)
 	s.MsgCnt = uint64(messages)
-	s.MsgBytes = uint64(messages * Byte)
+	s.MsgBytes = uint64(messages * MsgSize)
 	s.IOBytes = s.MsgBytes
 	return s
 }
@@ -53,8 +53,8 @@ func TestRate(t *testing.T) {
 
 func TestThoughput(t *testing.T) {
 	s := millionMessagesSecondSample(60)
-	if s.Throughput() != Million*Byte {
-		t.Fatal("Expected throughput at 1 million bytes")
+	if s.Throughput() != Million*MsgSize {
+		t.Fatalf("Expected throughput at %d million bytes/sec", MsgSize)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestGroupRate(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.Rate() != Million*2 {
-		t.Fatal("Expected MsgRate at 2 million")
+		t.Fatal("Expected MsgRate at 2 million msg/sec")
 	}
 }
 
@@ -101,8 +101,8 @@ func TestGroupThoughput(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(1))
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
-	if sg.Throughput() != 2*Million*Byte {
-		t.Fatal("Expected througput at 2 million bytes")
+	if sg.Throughput() != 2*Million*MsgSize {
+		t.Fatalf("Expected througput at %d million bytes/sec", 2*MsgSize)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestBenchSetup(t *testing.T) {
 	if bench.MsgCnt != 2*Million {
 		t.Fatal("Expected 2 million msgs")
 	}
-	if bench.IOBytes != 2*Million*8 {
-		t.Fatal("Expected 2 million bytes")
+	if bench.IOBytes != 2*Million*MsgSize {
+		t.Fatalf("Expected %d million bytes", 2*MsgSize)
 	}
 	if bench.Duration() != time.Second {
 		t.Fatal("Expected duration to be 1 second")
