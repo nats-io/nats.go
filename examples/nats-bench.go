@@ -47,7 +47,7 @@ func main() {
 		usage()
 	}
 
-	if *numMsgs < 1 {
+	if *numMsgs <= 0 {
 		log.Fatal("Number of messages should be greater than zero.")
 	}
 
