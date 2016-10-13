@@ -13,6 +13,7 @@ import (
 
 	"github.com/nats-io/nats"
 	"github.com/nats-io/nats/bench"
+	"crypto/rand"
 )
 
 // Some sane defaults
@@ -102,14 +103,11 @@ func runPublisher(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs in
 
 	args := flag.Args()
 	subj := args[0]
-	var msg []byte
-	if msgSize > 0 {
-		msg = make([]byte, msgSize)
-	}
-
 	start := time.Now()
 
 	for i := 0; i < numMsgs; i++ {
+		var msg = make([]byte, msgSize)
+		_, _ = rand.Read(msg)
 		nc.Publish(subj, msg)
 	}
 	nc.Flush()
