@@ -2534,10 +2534,10 @@ func (nc *Conn) Servers() []string {
 	return nc.getServers(false)
 }
 
-// ImplicitServers returns only the server urls that have been discovered
+// DiscoveredServers returns only the server urls that have been discovered
 // after a connection has been established. If authentication is enabled,
 // use UserInfo or Token when connecting with these urls.
-func (nc *Conn) ImplicitServers() []string {
+func (nc *Conn) DiscoveredServers() []string {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.getServers(true)
