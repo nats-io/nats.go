@@ -84,6 +84,9 @@ var DefaultOptions = Options{
 	MaxPingsOut:      DefaultMaxPingOut,
 	SubChanLen:       DefaultMaxChanLen,
 	ReconnectBufSize: DefaultReconnectBufSize,
+	Dialer: &net.Dialer{
+		Timeout: DefaultTimeout,
+	},
 }
 
 // Status represents the state of the connection.
@@ -145,6 +148,9 @@ type Options struct {
 	User     string
 	Password string
 	Token    string
+
+	// Dialer allows users setting a custom Dialer
+	Dialer *net.Dialer
 }
 
 const (
@@ -480,6 +486,15 @@ func Token(token string) Option {
 	}
 }
 
+// Dialer is an Option to set the dialer which will be used when
+// attempting to establish a connection.
+func Dialer(dialer *net.Dialer) Option {
+	return func(o *Options) error {
+		o.Dialer = dialer
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -551,6 +566,13 @@ func (o Options) Connect() (*Conn, error) {
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
+	}
+
+	// Allow custom Dialer for connecting using DialTimeout by default
+	if nc.Opts.Dialer == nil {
+		nc.Opts.Dialer = &net.Dialer{
+			Timeout: nc.Opts.Timeout,
+		}
 	}
 
 	if err := nc.setupServerPool(); err != nil {
@@ -741,7 +763,9 @@ func (nc *Conn) createConn() (err error) {
 	} else {
 		cur.lastAttempt = time.Now()
 	}
-	nc.conn, err = net.DialTimeout("tcp", nc.url.Host, nc.Opts.Timeout)
+
+	dialer := nc.Opts.Dialer
+	nc.conn, err = dialer.Dial("tcp", nc.url.Host)
 	if err != nil {
 		return err
 	}
