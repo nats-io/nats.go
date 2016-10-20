@@ -1045,3 +1045,54 @@ func TestAsyncINFO(t *testing.T) {
 		t.Fatal("Pool does not seem to be randomized")
 	}
 }
+
+func TestConnServers(t *testing.T) {
+	opts := DefaultOptions
+	c := &Conn{Opts: opts}
+	c.ps = &parseState{}
+	c.setupServerPool()
+
+	validateURLs := func(serverUrls []string, expectedUrls ...string) {
+		var found bool
+		if len(serverUrls) != len(expectedUrls) {
+			stackFatalf(t, "Array should have %d elements, has %d", len(expectedUrls), len(serverUrls))
+		}
+
+		for _, ev := range expectedUrls {
+			found = false
+			for _, av := range serverUrls {
+				if ev == av {
+					found = true
+					break
+				}
+			}
+			if !found {
+				stackFatalf(t, "array is missing %q in %v", ev, serverUrls)
+			}
+		}
+	}
+
+	// check the default url
+	validateURLs(c.Servers(), "nats://localhost:4222")
+	if len(c.DiscoveredServers()) != 0 {
+		t.Fatalf("Expected no discovered servers")
+	}
+
+	// Add a new URL
+	err := c.parse([]byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n"))
+	if err != nil {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+	// Server list should now contain both the default and the new url.
+	validateURLs(c.Servers(), "nats://localhost:4222", "nats://localhost:5222")
+	// Discovered servers should only contain the new url.
+	validateURLs(c.DiscoveredServers(), "nats://localhost:5222")
+
+	// verify user credentials are stripped out.
+	opts.Servers = []string{"nats://user:pass@localhost:4333", "nats://token@localhost:4444"}
+	c = &Conn{Opts: opts}
+	c.ps = &parseState{}
+	c.setupServerPool()
+
+	validateURLs(c.Servers(), "nats://localhost:4333", "nats://localhost:4444")
+}
