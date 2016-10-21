@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nats-io/nats/util"
 	"github.com/nats-io/nuid"
 )
 
@@ -791,13 +792,13 @@ func (nc *Conn) makeTLSConn() {
 	// default to InsecureSkipVerify.
 	// TODO(dlc) - We should make the more secure version the default.
 	if nc.Opts.TLSConfig != nil {
-		tlsCopy := *nc.Opts.TLSConfig
+		tlsCopy := util.CloneTLSConfig(nc.Opts.TLSConfig)
 		// If its blank we will override it with the current host
 		if tlsCopy.ServerName == _EMPTY_ {
 			h, _, _ := net.SplitHostPort(nc.url.Host)
 			tlsCopy.ServerName = h
 		}
-		nc.conn = tls.Client(nc.conn, &tlsCopy)
+		nc.conn = tls.Client(nc.conn, tlsCopy)
 	} else {
 		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	}
