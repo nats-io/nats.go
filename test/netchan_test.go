@@ -332,6 +332,9 @@ func BenchmarkPublishSpeedViaChan(b *testing.B) {
 		b.Fatalf("Could not connect: %v\n", err)
 	}
 	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
+	if err != nil {
+		b.Fatalf("Failed creating encoded connection: %v\n", err)
+	}
 	defer ec.Close()
 
 	ch := make(chan int32, 1024)
