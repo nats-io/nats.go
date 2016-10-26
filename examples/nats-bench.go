@@ -47,6 +47,10 @@ func main() {
 		usage()
 	}
 
+	if *numMsgs <= 0 {
+		log.Fatal("Number of messages should be greater than zero.")
+	}
+
 	// Setup the option block
 	opts := nats.DefaultOptions
 	opts.Servers = strings.Split(*urls, ",")
