@@ -59,7 +59,7 @@ func BenchmarkPubSubSpeed(b *testing.B) {
 		}
 		// Don't overrun ourselves and be a slow consumer, server will cut us off
 		if int32(i)-atomic.LoadInt32(&received) > 32768 {
-			time.Sleep(100)
+			time.Sleep(100 * time.Nanosecond)
 		}
 	}
 
