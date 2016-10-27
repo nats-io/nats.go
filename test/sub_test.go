@@ -498,6 +498,196 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 	bch <- true
 }
 
+func TestSlowConsumerTimeoutUnbufferedChanSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	dropped := int32(0)
+	nc := NewDefaultConnection(t)
+	nc.SetErrorHandler(func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		// Capture number of dropped messages
+		d, _ := sub.Dropped()
+		atomic.StoreInt32(&dropped, int32(d))
+	})
+	defer nc.Close()
+
+	// Create our own channel with a buffer smaller
+	// than the message burst that we will be receiving.
+	ch1 := make(chan *nats.Msg)
+	doneCh := make(chan struct{})
+	sub, err := nc.ChanSubscribe("foo", ch1)
+	if err != nil {
+		t.Fatalf("Error subscribing using a channel: %s", err)
+	}
+	sub.SetSlowConsumerTimeout(2 * time.Second)
+
+	// Send messages with a larger burst than what the
+	// channel buffer supports.
+	total := int32(2048)
+	received := int32(0)
+	go func() {
+		for range ch1 {
+			atomic.AddInt32(&received, 1)
+			if atomic.LoadInt32(&received) >= total {
+				doneCh <- struct{}{}
+			}
+		}
+	}()
+	for i := int32(0); i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	tm := time.NewTimer(5 * time.Second)
+	defer tm.Stop()
+
+Wait:
+	// Go ahead and receive
+	for {
+		select {
+		case <-doneCh:
+			break Wait
+		case <-tm.C:
+			r := atomic.LoadInt32(&received)
+			d := atomic.LoadInt32(&dropped)
+			t.Fatalf("Timed out waiting for all messages. Dropped: %d - Received: %d", d, r)
+		}
+	}
+
+	d := atomic.LoadInt32(&dropped)
+	if d > int32(0) {
+		t.Fatalf("Expected no messages to have been dropped. Got: %d", d)
+	}
+}
+
+func TestSlowConsumerTimeoutBufferedChanSubscriber(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	dropped := int32(0)
+	nc := NewDefaultConnection(t)
+	nc.SetErrorHandler(func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		// Capture number of dropped messages
+		d, _ := sub.Dropped()
+		atomic.StoreInt32(&dropped, int32(d))
+	})
+	defer nc.Close()
+
+	// Create our own channel with a buffer smaller
+	// than the message burst that we will be receiving.
+	ch1 := make(chan *nats.Msg, 8)
+	doneCh := make(chan struct{})
+	sub, err := nc.ChanSubscribe("foo", ch1)
+	if err != nil {
+		t.Fatalf("Error creating chan subscription: %s", err)
+	}
+	sub.SetSlowConsumerTimeout(2 * time.Second)
+
+	// Send messages with a larger burst than what the
+	// channel buffer supports.
+	total := int32(2048)
+	received := int32(0)
+	go func() {
+		for range ch1 {
+			atomic.AddInt32(&received, 1)
+			if atomic.LoadInt32(&received) >= total {
+				doneCh <- struct{}{}
+			}
+		}
+	}()
+	for i := int32(0); i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+
+	tm := time.NewTimer(5 * time.Second)
+	defer tm.Stop()
+
+	// Go ahead and receive
+Wait:
+	for {
+		select {
+		case <-doneCh:
+			break Wait
+		case <-tm.C:
+			r := atomic.LoadInt32(&received)
+			d := atomic.LoadInt32(&dropped)
+			t.Fatalf("Timed out waiting for all messages. Dropped: %d - Received: %d", d, r)
+		}
+	}
+
+	d := atomic.LoadInt32(&dropped)
+	if d > int32(0) {
+		t.Fatalf("Expected no messages to have been dropped. Got: %d", d)
+	}
+}
+
+func TestSlowChanSubscriberBuffered(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	dropped := int32(0)
+	nc := NewDefaultConnection(t)
+	nc.SetErrorHandler(func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		// Capture number of dropped messages
+		d, _ := sub.Dropped()
+		atomic.StoreInt32(&dropped, int32(d))
+	})
+	defer nc.Close()
+
+	// Create our own channel with a buffer smaller
+	// than the message burst that we will be receiving.
+	ch1 := make(chan *nats.Msg, 64)
+	doneCh := make(chan struct{})
+	sub, err := nc.ChanSubscribe("foo", ch1)
+	if err != nil {
+		t.Fatalf("Error creating chan subscription: %s", err)
+	}
+	sub.SetSlowConsumerTimeout(2 * time.Second)
+
+	// Send messages with a larger burst than what the
+	// channel buffer supports.
+	received := int32(0)
+	slowProcessing := int32(200)
+	total := int32(1024)
+	go func() {
+		for range ch1 {
+			atomic.AddInt32(&received, 1)
+
+			// Block consuming from channel causing
+			// client to drop messages
+			if atomic.LoadInt32(&received) == slowProcessing {
+				time.Sleep(3 * time.Second)
+			}
+
+			// One gets dropped due to being a slow consumer
+			if atomic.LoadInt32(&received) == total-1 {
+				doneCh <- struct{}{}
+			}
+		}
+	}()
+	for i := int32(0); i < total; i++ {
+		nc.Publish("foo", []byte("Hello"))
+	}
+	nc.Flush()
+
+	// Wait for all messages to have been delivered
+	// and slow consumer staged reached.
+Wait:
+	for {
+		select {
+		case <-doneCh:
+			break Wait
+		case <-time.After(5 * time.Second):
+			d := atomic.LoadInt32(&dropped)
+			t.Fatalf("Timed out waiting for all messages. Dropped: %d", d)
+		}
+	}
+
+	d := atomic.LoadInt32(&dropped)
+	if d != 1 {
+		t.Fatalf("Expected messages to have been dropped. Got: %d", d)
+	}
+}
+
 func TestAsyncErrHandler(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
