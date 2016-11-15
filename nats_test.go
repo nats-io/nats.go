@@ -7,17 +7,17 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"encoding/json"
 	"github.com/nats-io/gnatsd/server"
 	gnatsd "github.com/nats-io/gnatsd/test"
-	"runtime"
 )
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
@@ -779,7 +779,9 @@ func TestParserSplitMsg(t *testing.T) {
 	}
 
 	buf = []byte("\r\n")
-	err = nc.parse(buf)
+	if err := nc.parse(buf); err != nil {
+		t.Fatalf("Unexpected error during parsing: %v", err)
+	}
 	if (nc.Statistics.InMsgs != expectedCount) || (nc.Statistics.InBytes != expectedSize) {
 		t.Fatalf("Wrong stats: %d - %d instead of %d - %d", nc.Statistics.InMsgs, nc.Statistics.InBytes, expectedCount, expectedSize)
 	}

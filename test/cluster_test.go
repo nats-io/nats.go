@@ -365,10 +365,8 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	opts.NoRandomize = true
 	opts.ReconnectWait = (25 * time.Millisecond)
 
-	dcbCalled := false
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *nats.Conn) {
-		dcbCalled = true
 		dch <- true
 	}
 
@@ -434,10 +432,8 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	}
 	opts.ReconnectWait = (25 * time.Millisecond)
 
-	dcbCalled := false
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(_ *nats.Conn) {
-		dcbCalled = true
 		dch <- true
 	}
 
@@ -504,12 +500,10 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	}
 	opts.NoRandomize = true
 
-	dcbCalled := false
 	dch := make(chan bool)
 	opts.DisconnectedCB = func(nc *nats.Conn) {
 		// Suppress any additional calls
 		nc.SetDisconnectHandler(nil)
-		dcbCalled = true
 		dch <- true
 	}
 
