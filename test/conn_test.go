@@ -360,7 +360,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		// Send back a mal-formed INFO.
@@ -375,7 +375,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
-			t.Fatal("Expected bad INFO err, got none")
+			t.Errorf("Expected bad INFO err, got none")
 		}
 		ch <- true
 	}()
@@ -409,7 +409,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			conn, err := l.Accept()
 			if err != nil {
-				t.Fatalf("Error accepting client connection: %v\n", err)
+				t.Errorf("Error accepting client connection: %v\n", err)
 			}
 			switch i {
 			case 0:
@@ -427,10 +427,10 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Read connect and ping commands sent from the client
 				br := bufio.NewReaderSize(conn, 1024)
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected CONNECT from client, got: %s", err)
+					t.Errorf("Expected CONNECT from client, got: %s", err)
 				}
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected PING from client, got: %s", err)
+					t.Errorf("Expected PING from client, got: %s", err)
 				}
 				// Client expect +OK, send it but then something else than PONG
 				conn.Write([]byte("+OK\r\n"))
@@ -443,10 +443,10 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Read connect and ping commands sent from the client
 				br := bufio.NewReaderSize(conn, 1024)
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected CONNECT from client, got: %s", err)
+					t.Errorf("Expected CONNECT from client, got: %s", err)
 				}
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected PING from client, got: %s", err)
+					t.Errorf("Expected PING from client, got: %s", err)
 				}
 				// Client expect +OK, send it but then something else than PONG
 				conn.Write([]byte("+OK\r\nXXX\r\n"))
@@ -534,7 +534,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	go func() {
 		conn, err = l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, expectedMaxPayload)
@@ -544,7 +544,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		line := make([]byte, 111)
 		_, err := conn.Read(line)
 		if err != nil {
-			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+			t.Errorf("Expected CONNECT and PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 		// Hang around a bit to not err on EOF in client.
@@ -818,7 +818,7 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -827,10 +827,10 @@ func TestFlushReleaseOnClose(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			t.Errorf("Expected CONNECT from client, got: %s", err)
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			t.Errorf("Expected PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 
@@ -885,7 +885,7 @@ func TestMaxPendingOut(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -894,10 +894,10 @@ func TestMaxPendingOut(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			t.Errorf("Expected CONNECT from client, got: %s", err)
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			t.Errorf("Expected PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 
@@ -951,7 +951,7 @@ func TestErrInReadLoop(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -960,16 +960,16 @@ func TestErrInReadLoop(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			t.Errorf("Expected CONNECT from client, got: %s", err)
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			t.Errorf("Expected PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 
 		// Read (and ignore) the SUB from the client
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected SUB from client, got: %s", err)
+			t.Errorf("Expected SUB from client, got: %s", err)
 		}
 
 		// Send something that should make the subscriber fail.
@@ -1034,7 +1034,7 @@ func TestErrStaleConnection(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			conn, err := l.Accept()
 			if err != nil {
-				t.Fatalf("Error accepting client connection: %v\n", err)
+				t.Errorf("Error accepting client connection: %v\n", err)
 			}
 			defer conn.Close()
 			info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -1043,10 +1043,10 @@ func TestErrStaleConnection(t *testing.T) {
 			// Read connect and ping commands sent from the client
 			br := bufio.NewReaderSize(conn, 1024)
 			if _, err := br.ReadString('\n'); err != nil {
-				t.Fatalf("Expected CONNECT from client, got: %s", err)
+				t.Errorf("Expected CONNECT from client, got: %s", err)
 			}
 			if _, err := br.ReadString('\n'); err != nil {
-				t.Fatalf("Expected PING from client, got: %s", err)
+				t.Errorf("Expected PING from client, got: %s", err)
 			}
 			conn.Write([]byte("PONG\r\n"))
 
@@ -1136,7 +1136,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			t.Errorf("Error accepting client connection: %v\n", err)
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -1145,10 +1145,10 @@ func TestServerErrorClosesConnection(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			t.Errorf("Expected CONNECT from client, got: %s", err)
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			t.Errorf("Expected PING from client, got: %s", err)
 		}
 		conn.Write([]byte("PONG\r\n"))
 
