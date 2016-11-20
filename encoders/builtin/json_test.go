@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats"
-	"github.com/nats-io/nats/encoders/builtin"
-	"github.com/nats-io/nats/test"
+	"github.com/nats-io/go-nats"
+	"github.com/nats-io/go-nats/encoders/builtin"
+	"github.com/nats-io/go-nats/test"
 )
 
 func NewJsonEncodedConn(tl test.TestLogger) *nats.EncodedConn {

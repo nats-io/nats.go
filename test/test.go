@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/nats-io/gnatsd/server"
-	"github.com/nats-io/nats"
+	"github.com/nats-io/go-nats"
 
 	gnatsd "github.com/nats-io/gnatsd/test"
 )

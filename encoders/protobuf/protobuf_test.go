@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats"
-	"github.com/nats-io/nats/test"
+	"github.com/nats-io/go-nats"
+	"github.com/nats-io/go-nats/test"
 
-	"github.com/nats-io/nats/encoders/protobuf"
-	pb "github.com/nats-io/nats/encoders/protobuf/testdata"
+	"github.com/nats-io/go-nats/encoders/protobuf"
+	pb "github.com/nats-io/go-nats/encoders/protobuf/testdata"
 )
 
 const TEST_PORT = 8068
