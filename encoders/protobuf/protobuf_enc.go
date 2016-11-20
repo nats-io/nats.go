@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/nats-io/nats"
+	"github.com/nats-io/go-nats"
 )
 
 // Additional index for registered Encoders.

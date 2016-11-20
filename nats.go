@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nats-io/nats/util"
+	"github.com/nats-io/go-nats/util"
 	"github.com/nats-io/nuid"
 )
 

@@ -6,7 +6,7 @@ mkdir cov
 go test -v -covermode=atomic -coverprofile=./cov/nats.out
 go test -v -covermode=atomic -coverprofile=./cov/builtin.out ./encoders/builtin
 go test -v -covermode=atomic -coverprofile=./cov/protobuf.out ./encoders/protobuf
-go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/nats ./test
+go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/go-nats ./test
 gocovmerge ./cov/*.out > acc.out
 rm -rf ./cov
 
