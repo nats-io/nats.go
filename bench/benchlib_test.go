@@ -2,7 +2,7 @@ package bench
 
 import (
 	"fmt"
-	"github.com/nats-io/nats"
+	"github.com/nats-io/go-nats"
 	"strings"
 	"testing"
 	"time"
