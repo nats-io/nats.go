@@ -49,7 +49,7 @@ nc.Subscribe("help", func(m *Msg) {
 })
 
 // Close connection
-nc := nats.Connect("nats://localhost:4222")
+nc, _ := nats.Connect("nats://localhost:4222")
 nc.Close();
 ```
 
