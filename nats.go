@@ -60,6 +60,7 @@ var (
 	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
 	ErrTimeout              = errors.New("nats: timeout")
 	ErrBadTimeout           = errors.New("nats: timeout invalid")
+	ErrFlusherTimeout       = errors.New("nats: flusher timeout")
 	ErrAuthorization        = errors.New("nats: authorization violation")
 	ErrNoServers            = errors.New("nats: no servers available for connection")
 	ErrJsonParse            = errors.New("nats: connect message, json parse error")
@@ -129,6 +130,11 @@ type Options struct {
 	MaxReconnect   int
 	ReconnectWait  time.Duration
 	Timeout        time.Duration
+
+	// FlusherTimeout is the maximum time to wait for the flusher loop
+	// to be able to finish writing to the underlying socket.
+	FlusherTimeout time.Duration
+
 	PingInterval   time.Duration // disabled if 0 or negative
 	MaxPingsOut    int
 	ClosedCB       ConnHandler
@@ -1580,6 +1586,7 @@ func (nc *Conn) flusher() {
 	bw := nc.bw
 	conn := nc.conn
 	fch := nc.fch
+	flusherTimeout := nc.Opts.FlusherTimeout
 	nc.mu.Unlock()
 
 	if conn == nil || bw == nil {
@@ -1598,6 +1605,12 @@ func (nc *Conn) flusher() {
 			return
 		}
 		if bw.Buffered() > 0 {
+			// Allow customizing how long we should wait for a flush to be done
+			// to prevent unhealthy connections blocking the client for too long.
+			if flusherTimeout > 0 {
+				conn.SetWriteDeadline(time.Now().Add(flusherTimeout))
+			}
+
 			if err := bw.Flush(); err != nil {
 				if nc.err == nil {
 					nc.err = err
@@ -1806,7 +1819,6 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	msgh = append(msgh, b[i:]...)
 	msgh = append(msgh, _CRLF_...)
 
-	// FIXME, do deadlines here
 	_, err := nc.bw.Write(msgh)
 	if err == nil {
 		_, err = nc.bw.Write(data)
