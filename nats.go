@@ -60,7 +60,6 @@ var (
 	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
 	ErrTimeout              = errors.New("nats: timeout")
 	ErrBadTimeout           = errors.New("nats: timeout invalid")
-	ErrFlusherTimeout       = errors.New("nats: flusher timeout")
 	ErrAuthorization        = errors.New("nats: authorization violation")
 	ErrNoServers            = errors.New("nats: no servers available for connection")
 	ErrJsonParse            = errors.New("nats: connect message, json parse error")
@@ -1616,6 +1615,7 @@ func (nc *Conn) flusher() {
 					nc.err = err
 				}
 			}
+			conn.SetWriteDeadline(time.Time{})
 		}
 		nc.mu.Unlock()
 	}

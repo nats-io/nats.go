@@ -1340,7 +1340,7 @@ func TestCustomFlusherTimeout(t *testing.T) {
 		Servers: []string{nats.DefaultURL},
 
 		// Use short flusher timeout to trigger the error
-		FlusherTimeout: 1 * time.Millisecond,
+		FlusherTimeout: 1 * time.Microsecond,
 
 		// Upon failure to be able to exercice ping pong interval
 		// then we will hit this timeout and disconnect
