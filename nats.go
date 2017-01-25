@@ -1011,12 +1011,7 @@ func (nc *Conn) processExpectedInfo() error {
 		return err
 	}
 
-	err = nc.checkForSecure()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return nc.checkForSecure()
 }
 
 // Sends a protocol control message by queuing into the bufio writer

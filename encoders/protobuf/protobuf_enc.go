@@ -58,9 +58,5 @@ func (pb *ProtobufEncoder) Decode(subject string, data []byte, vPtr interface{})
 		return ErrInvalidProtoMsgDecode
 	}
 
-	err := proto.Unmarshal(data, i)
-	if err != nil {
-		return err
-	}
-	return nil
+	return proto.Unmarshal(data, i)
 }
