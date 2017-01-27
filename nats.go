@@ -1654,18 +1654,24 @@ func (nc *Conn) processInfo(info string) error {
 	if err := json.Unmarshal([]byte(info), &nc.info); err != nil {
 		return err
 	}
-	updated := false
 	urls := nc.info.ConnectURLs
-	for _, curl := range urls {
-		if _, present := nc.urls[curl]; !present {
-			if err := nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true); err != nil {
-				continue
+	if len(urls) > 0 {
+		// If randomization is allowed, shuffle the received array, not the
+		// entire pool. We want to preserve the pool's order up to this point
+		// (this would otherwise be problematic for the (re)connect loop).
+		if !nc.Opts.NoRandomize {
+			for i := range urls {
+				j := rand.Intn(i + 1)
+				urls[i], urls[j] = urls[j], urls[i]
 			}
-			updated = true
 		}
-	}
-	if updated && !nc.Opts.NoRandomize {
-		nc.shufflePool()
+		for _, curl := range urls {
+			if _, present := nc.urls[curl]; !present {
+				if err := nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true); err != nil {
+					continue
+				}
+			}
+		}
 	}
 	return nil
 }
