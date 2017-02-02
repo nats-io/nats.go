@@ -1312,7 +1312,7 @@ func TestCustomFlusherTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to be able to connect, got: %s", err)
 	}
-	doneCh := make(chan struct{}, 0)
+	doneCh := make(chan struct{})
 	payload := ""
 	for i := 0; i < 8192; i++ {
 		payload += "A"
