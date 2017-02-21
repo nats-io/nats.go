@@ -1826,8 +1826,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.mu.Lock()
 
 	// Proactively reject payloads over the threshold set by server.
-	var msgSize int64
-	msgSize = int64(len(data))
+	msgSize := int64(len(data))
 	if msgSize > nc.info.MaxPayload {
 		nc.mu.Unlock()
 		return ErrMaxPayload
