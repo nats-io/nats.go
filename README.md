@@ -35,7 +35,7 @@ m, err := sub.NextMsg(timeout)
 // Channel Subscriber
 ch := make(chan *nats.Msg, 64)
 sub, err := nc.ChanSubscribe("foo", ch)
-msg <- ch
+msg := <- ch
 
 // Unsubscribe
 sub.Unsubscribe()
