@@ -1,2 +1,3 @@
 github.com/nats-io/go-nats/*_test.go:SA2002
 github.com/nats-io/go-nats/*/*_test.go:SA2002
+github.com/nats-io/go-nats/nats.go:SA6000
