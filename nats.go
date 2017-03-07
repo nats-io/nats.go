@@ -246,7 +246,7 @@ type Conn struct {
 	Statistics
 	mu      sync.Mutex
 	Opts    Options
-	wg      sync.WaitGroup
+	wg      *sync.WaitGroup
 	url     *url.URL
 	conn    net.Conn
 	srvPool []*srv
@@ -872,7 +872,7 @@ func (nc *Conn) makeTLSConn() {
 
 // waitForExits will wait for all socket watcher Go routines to
 // be shutdown before proceeding.
-func (nc *Conn) waitForExits() {
+func (nc *Conn) waitForExits(wg *sync.WaitGroup) {
 	// Kick old flusher forcefully.
 	select {
 	case nc.fch <- true:
@@ -880,7 +880,9 @@ func (nc *Conn) waitForExits() {
 	}
 
 	// Wait for any previous go routines.
-	nc.wg.Wait()
+	if wg != nil {
+		wg.Wait()
+	}
 }
 
 // spinUpGoRoutines will launch the Go routines responsible for
@@ -890,14 +892,16 @@ func (nc *Conn) waitForExits() {
 // reconnect when the previous ones have exited.
 func (nc *Conn) spinUpGoRoutines() {
 	// Make sure everything has exited.
-	nc.waitForExits()
+	nc.waitForExits(nc.wg)
 
+	// Create a new waitGroup instance for this run.
+	nc.wg = &sync.WaitGroup{}
 	// We will wait on both.
 	nc.wg.Add(2)
 
 	// Spin up the readLoop and the socket flusher.
-	go nc.readLoop()
-	go nc.flusher()
+	go nc.readLoop(nc.wg)
+	go nc.flusher(nc.wg)
 
 	nc.mu.Lock()
 	if nc.Opts.PingInterval > 0 {
@@ -1232,7 +1236,10 @@ func (nc *Conn) flushReconnectPendingItems() {
 func (nc *Conn) doReconnect() {
 	// We want to make sure we have the other watchers shutdown properly
 	// here before we proceed past this point.
-	nc.waitForExits()
+	nc.mu.Lock()
+	wg := nc.wg
+	nc.mu.Unlock()
+	nc.waitForExits(wg)
 
 	// FIXME(dlc) - We have an issue here if we have
 	// outstanding flush points (pongs) and they were not
@@ -1423,9 +1430,9 @@ func (nc *Conn) asyncDispatch() {
 // readLoop() will sit on the socket reading and processing the
 // protocol from the server. It will dispatch appropriately based
 // on the op type.
-func (nc *Conn) readLoop() {
+func (nc *Conn) readLoop(wg *sync.WaitGroup) {
 	// Release the wait group on exit
-	defer nc.wg.Done()
+	defer wg.Done()
 
 	// Create a parseState if needed.
 	nc.mu.Lock()
@@ -1629,9 +1636,9 @@ func (nc *Conn) processPermissionsViolation(err string) {
 
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
-func (nc *Conn) flusher() {
+func (nc *Conn) flusher(wg *sync.WaitGroup) {
 	// Release the wait group
-	defer nc.wg.Done()
+	defer wg.Done()
 
 	// snapshot the bw and conn since they can change from underneath of us.
 	nc.mu.Lock()
