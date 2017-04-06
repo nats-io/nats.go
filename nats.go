@@ -2238,9 +2238,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 		return nil
 	}
 
-	if timeout <= 0 {
-		// Most likely using a context for the cancellation instead
-		// so we prevent firing the timer altogether.
+	// Check if have context that we can use for cancellation.
+	if s.ctx != nil {
 		select {
 		case m, ok := <-mch:
 			if !ok {
@@ -2254,23 +2253,25 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 		case <-s.ctx.Done():
 			return nil, s.ctx.Err()
 		}
-	} else {
-		t := time.NewTimer(timeout)
-		defer t.Stop()
 
-		select {
-		case m, ok := <-mch:
-			if !ok {
-				return nil, ErrConnectionClosed
-			}
-			err := processMsg(m)
-			if err != nil {
-				return nil, err
-			}
-			msg = m
-		case <-t.C:
-			return nil, ErrTimeout
+		return msg, nil
+	}
+
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+
+	select {
+	case m, ok := <-mch:
+		if !ok {
+			return nil, ErrConnectionClosed
 		}
+		err := processMsg(m)
+		if err != nil {
+			return nil, err
+		}
+		msg = m
+	case <-t.C:
+		return nil, ErrTimeout
 	}
 
 	return msg, nil

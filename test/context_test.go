@@ -265,8 +265,9 @@ func TestSubNextMsgWithDeadlineContext(t *testing.T) {
 
 	sub, err := nc.SubscribeSync("slow")
 	if err != nil {
-
+		t.Fatalf("Expected to be able to subscribe: %s", err)
 	}
+
 	for i := 0; i < 2; i++ {
 		err := nc.Publish("slow", []byte("OK"))
 		if err != nil {

@@ -71,10 +71,9 @@ func (s *Subscription) SetContext(ctx context.Context) {
 // to a synchronous subscriber or block until one is available until context
 // gets canceled.
 func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
-	s.SetContext(ctx)
-
 	// Call NextMsg from subscription but disabling the timeout
 	// as we rely on the context for the cancellation instead.
+	s.SetContext(ctx)
 	msg, err := s.NextMsg(0)
 	if err != nil {
 		// Also prefer error from context in case it has occurred.
