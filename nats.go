@@ -2174,17 +2174,6 @@ type cntxt interface {
 	Err() error
 }
 
-// emptyCtx which is never canceled and has no values.
-// https://github.com/golang/go/blob/dc6af19ff8b44e56abc1217af27fe098c78c932b/src/context/context.go#L167-L195
-type emptyCtx int
-
-func (*emptyCtx) Done() <-chan struct{} {
-	return nil
-}
-func (*emptyCtx) Err() error {
-	return nil
-}
-
 // NextMsg() will return the next message available to a synchronous subscriber
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
@@ -2222,24 +2211,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	max := s.max
 	s.mu.Unlock()
 
-	var ok bool
 	var msg *Msg
-
-	t := time.NewTimer(timeout)
-	if timeout <= 0 {
-		// Most likely using a context for the cancellation instead
-		// so we prevent firing the timer altogether.
-		t.Stop()
-	} else {
-		s.ctx = new(emptyCtx)
-		defer t.Stop()
-	}
-
-	select {
-	case msg, ok = <-mch:
-		if !ok {
-			return nil, ErrConnectionClosed
-		}
+	processMsg := func(msg *Msg) error {
 		// Update some stats.
 		s.mu.Lock()
 		s.delivered++
@@ -2252,7 +2225,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 
 		if max > 0 {
 			if delivered > max {
-				return nil, ErrMaxMessages
+				return ErrMaxMessages
 			}
 			// Remove subscription if we have reached max.
 			if delivered == max {
@@ -2261,10 +2234,43 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 				nc.mu.Unlock()
 			}
 		}
-	case <-t.C:
-		return nil, ErrTimeout
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
+
+		return nil
+	}
+
+	if timeout <= 0 {
+		// Most likely using a context for the cancellation instead
+		// so we prevent firing the timer altogether.
+		select {
+		case m, ok := <-mch:
+			if !ok {
+				return nil, ErrConnectionClosed
+			}
+			err := processMsg(m)
+			if err != nil {
+				return nil, err
+			}
+			msg = m
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		}
+	} else {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+
+		select {
+		case m, ok := <-mch:
+			if !ok {
+				return nil, ErrConnectionClosed
+			}
+			err := processMsg(m)
+			if err != nil {
+				return nil, err
+			}
+			msg = m
+		case <-t.C:
+			return nil, ErrTimeout
+		}
 	}
 
 	return msg, nil
