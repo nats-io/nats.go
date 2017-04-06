@@ -463,12 +463,14 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 
 	// Wait for ClosedCB
 	if e := WaitTime(cch, 5*time.Second); e != nil {
-		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", nc.Reconnects)
+		reconnects := nc.Stats().Reconnects
+		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", reconnects)
 	}
 
 	// Make sure we have not exceeded MaxReconnect
-	if nc.Reconnects != uint64(opts.MaxReconnect) {
-		t.Fatalf("Num reconnects was %v, expected %v", nc.Reconnects, opts.MaxReconnect)
+	reconnects := nc.Stats().Reconnects
+	if reconnects != uint64(opts.MaxReconnect) {
+		t.Fatalf("Num reconnects was %v, expected %v", reconnects, opts.MaxReconnect)
 	}
 
 	// Make sure we are not still reconnecting..
