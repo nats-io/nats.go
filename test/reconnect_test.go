@@ -617,7 +617,7 @@ func TestReconnectBufSize(t *testing.T) {
 
 	// This should fail since we have exhausted the backing buffer.
 	if err := nc.Publish("foo", msg); err == nil {
-		//		t.Fatalf("Expected to fail to publish message: got no error\n")
+		t.Fatalf("Expected to fail to publish message: got no error\n")
 	}
 	nc.Buffered()
 }

@@ -1228,21 +1228,28 @@ func TestNoRaceOnLastError(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
+	// Access LastError in disconnection and closed handlers to make sure
+	// that there is no race and that we are capturing the error.
 	dch := func(c *nats.Conn) {
-		// Just access LastError to make sure that there is no race
 		if c.LastError() != nil {
-			if c.LastError().Error() == "" {
-			}
+			t.Errorf("Unexpected error in disconnect handler: %s", c.LastError())
+		}
+	}
+	cch := func(c *nats.Conn) {
+		if c.LastError() != nil && c.LastError().Error() == "" {
+			t.Errorf("Expected error in closed handler to not be empty: %s", c.LastError())
 		}
 	}
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.DisconnectHandler(dch),
+		nats.ClosedHandler(cch),
 		nats.ReconnectWait(5*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
 	defer nc.Close()
 
+	// Restart the server several times to trigger a reconnection.
 	for i := 0; i < 10; i++ {
 		s.Shutdown()
 		time.Sleep(10 * time.Millisecond)
