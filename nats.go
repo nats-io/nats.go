@@ -306,6 +306,9 @@ type Subscription struct {
 	pMsgsLimit  int
 	pBytesLimit int
 	dropped     int
+
+	// context used along with the subscription.
+	ctx cntxt
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -2165,6 +2168,13 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	return nil
 }
 
+// cntxt implements the Context interface for pre-go1.7 clients
+type cntxt interface {
+	Deadline() (deadline time.Time, ok bool)
+	Done() <-chan struct{}
+	Err() error
+}
+
 // NextMsg() will return the next message available to a synchronous subscriber
 // or block until one is available. A timeout can be used to return when no
 // message has been delivered.
@@ -2206,7 +2216,13 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	var msg *Msg
 
 	t := time.NewTimer(timeout)
-	defer t.Stop()
+	if timeout <= 0 {
+		// Most likely using a context for the cancellation
+		// instead so we prevent timer from firing altogether.
+		t.Stop()
+	} else {
+		defer t.Stop()
+	}
 
 	select {
 	case msg, ok = <-mch:
@@ -2234,9 +2250,10 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 				nc.mu.Unlock()
 			}
 		}
-
 	case <-t.C:
 		return nil, ErrTimeout
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
 	}
 
 	return msg, nil

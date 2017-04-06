@@ -251,3 +251,58 @@ func TestRequestWithDeadlineContext(t *testing.T) {
 		t.Errorf("Expected %q error, got: %q", expected, err.Error())
 	}
 }
+
+func TestSubNextMsgWithDeadlineContext(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
+	defer cancelCB() // should always be called, not discarded, to prevent context leak
+
+	sub, err := nc.SubscribeSync("slow")
+	if err != nil {
+
+	}
+	for i := 0; i < 2; i++ {
+		err := nc.Publish("slow", []byte("OK"))
+		if err != nil {
+			t.Fatalf("Expected publish to not fail: %s", err)
+		}
+		// Enough time to get a couple of messages
+		time.Sleep(40 * time.Millisecond)
+
+		msg, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			t.Fatalf("Expected to receive message: %s", err)
+		}
+		got := string(msg.Data)
+		expected := "OK"
+		if got != expected {
+			t.Errorf("Expected to receive %s, got: %s", expected, got)
+		}
+	}
+
+	// Third message will fail because the context will be canceled by now
+	_, err = sub.NextMsgWithContext(ctx)
+	if err == nil {
+		t.Fatalf("Expected to fail receiving a message: %s", err)
+	}
+
+	// Reported error is "context deadline exceeded" from Context package,
+	// which implements net.Error Timeout interface.
+	type timeoutError interface {
+		Timeout() bool
+	}
+	timeoutErr, ok := err.(timeoutError)
+	if !ok || !timeoutErr.Timeout() {
+		t.Errorf("Expected to have a timeout error")
+	}
+	expected := `context deadline exceeded`
+	if !strings.Contains(err.Error(), expected) {
+		t.Errorf("Expected %q error, got: %q", expected, err.Error())
+	}
+}

@@ -22,6 +22,7 @@ func (nc *Conn) RequestWithContext(
 	s, err := nc.subscribe(inbox, _EMPTY_, func(msg *Msg) {
 		recvCh <- msg
 	}, ch)
+
 	if err != nil {
 		// If we errored here but context has been canceled
 		// then still return the error from context.
@@ -57,4 +58,32 @@ func (nc *Conn) RequestWithContext(
 		break
 	}
 	return recvMsg, nil
+}
+
+// SetContext makes the subscription be aware of context cancellation.
+func (s *Subscription) SetContext(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ctx = ctx
+}
+
+// NextMsgWithContext takes a context and returns the next message available
+// to a synchronous subscriber or block until one is available until context
+// gets canceled.
+func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
+	s.SetContext(ctx)
+
+	// Call NextMsg from subscription but disabling the timeout
+	// as we rely on the context for the cancellation instead.
+	msg, err := s.NextMsg(0)
+	if err != nil {
+		// Also prefer error from context in case it has occurred.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+
+	return msg, err
 }
