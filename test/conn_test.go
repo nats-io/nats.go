@@ -1229,20 +1229,21 @@ func TestNoRaceOnLastError(t *testing.T) {
 	defer s.Shutdown()
 
 	// Access LastError in disconnection and closed handlers to make sure
-	// that there is no race and that we are capturing the error.
+	// that there is no race. It is possible in some cases that
+	// nc.LastError() returns a non nil error. We don't care here about the
+	// returned value.
 	dch := func(c *nats.Conn) {
-		if c.LastError() != nil {
-			t.Errorf("Unexpected error in disconnect handler: %s", c.LastError())
-		}
+		c.LastError()
 	}
+	closedCh := make(chan struct{})
 	cch := func(c *nats.Conn) {
-		if c.LastError() != nil && c.LastError().Error() == "" {
-			t.Errorf("Expected error in closed handler to not be empty: %s", c.LastError())
-		}
+		c.LastError()
+		closedCh <- struct{}{}
 	}
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.DisconnectHandler(dch),
 		nats.ClosedHandler(cch),
+		nats.MaxReconnects(-1),
 		nats.ReconnectWait(5*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
@@ -1255,7 +1256,13 @@ func TestNoRaceOnLastError(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		s = RunDefaultServer()
 	}
+	nc.Close()
 	s.Shutdown()
+	select {
+	case <-closedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for the closed callback")
+	}
 }
 
 func TestUseCustomDialer(t *testing.T) {
