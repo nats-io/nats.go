@@ -2168,11 +2168,21 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	return nil
 }
 
-// cntxt implements the Context interface for pre-go1.7 clients
+// cntxt implements part of the Context interface for pre-go1.7 clients support.
 type cntxt interface {
-	Deadline() (deadline time.Time, ok bool)
 	Done() <-chan struct{}
 	Err() error
+}
+
+// emptyCtx which is never canceled and has no values.
+// https://github.com/golang/go/blob/dc6af19ff8b44e56abc1217af27fe098c78c932b/src/context/context.go#L167-L195
+type emptyCtx int
+
+func (*emptyCtx) Done() <-chan struct{} {
+	return nil
+}
+func (*emptyCtx) Err() error {
+	return nil
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber
@@ -2217,10 +2227,11 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 
 	t := time.NewTimer(timeout)
 	if timeout <= 0 {
-		// Most likely using a context for the cancellation
-		// instead so we prevent timer from firing altogether.
+		// Most likely using a context for the cancellation instead
+		// so we prevent firing the timer altogether.
 		t.Stop()
 	} else {
+		s.ctx = new(emptyCtx)
 		defer t.Stop()
 	}
 
