@@ -21,14 +21,6 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch)
 	if err != nil {
-		// If we errored here but context has been canceled already
-		// then return the error from the context instead.
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
 		return nil, err
 	}
 	s.AutoUnsubscribe(1)
@@ -36,22 +28,15 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 
 	err = nc.PublishRequest(subj, inbox, data)
 	if err != nil {
-		// Use error from context instead if already canceled.
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
 		return nil, err
 	}
 
 	return s.NextMsgWithContext(ctx)
 }
 
-// NextMsgWithContext takes a context and returns the next message available
-// to a synchronous subscriber, blocking until either one is available or
-// context gets canceled.
+// NextMsgWithContext takes a context and returns the next message
+// available to a synchronous subscriber, blocking until it is delivered
+// or context gets canceled.
 func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	if ctx == nil {
 		panic("nil context")
@@ -60,35 +45,15 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		return nil, ErrBadSubscription
 	}
 
-	// Add validateNextMsgState func and reuse
 	s.mu.Lock()
-	if s.connClosed {
+	err := s.validateNextMsgState()
+	if err != nil {
 		s.mu.Unlock()
-		return nil, ErrConnectionClosed
-	}
-	if s.mch == nil {
-		if s.max > 0 && s.delivered >= s.max {
-			s.mu.Unlock()
-			return nil, ErrMaxMessages
-		} else if s.closed {
-			s.mu.Unlock()
-			return nil, ErrBadSubscription
-		}
-	}
-	if s.mcb != nil {
-		s.mu.Unlock()
-		return nil, ErrSyncSubRequired
-	}
-	if s.sc {
-		s.sc = false
-		s.mu.Unlock()
-		return nil, ErrSlowConsumer
+		return nil, err
 	}
 
 	// snapshot
-	nc := s.conn
 	mch := s.mch
-	max := s.max
 	s.mu.Unlock()
 
 	var ok bool
@@ -99,26 +64,9 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		// Update some stats.
-		s.mu.Lock()
-		s.delivered++
-		delivered := s.delivered
-		if s.typ == SyncSubscription {
-			s.pMsgs--
-			s.pBytes -= len(msg.Data)
-		}
-		s.mu.Unlock()
-
-		if max > 0 {
-			if delivered > max {
-				return nil, ErrMaxMessages
-			}
-			// Remove subscription if we have reached max.
-			if delivered == max {
-				nc.mu.Lock()
-				nc.removeSub(s)
-				nc.mu.Unlock()
-			}
+		err := s.processNextMsgDelivered(msg)
+		if err != nil {
+			return nil, err
 		}
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -141,13 +89,6 @@ func (c *EncodedConn) RequestWithContext(
 	}
 	b, err := c.Enc.Encode(subject, v)
 	if err != nil {
-		// Use error from context instead if already canceled.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		return err
 	}
 	m, err := c.Conn.RequestWithContext(ctx, subject, b)
@@ -158,15 +99,8 @@ func (c *EncodedConn) RequestWithContext(
 		mPtr := vPtr.(*Msg)
 		*mPtr = *m
 	} else {
-		err = c.Enc.Decode(m.Subject, m.Data, vPtr)
+		err := c.Enc.Decode(m.Subject, m.Data, vPtr)
 		if err != nil {
-			// Use error from context instead if already canceled.
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
 			return err
 		}
 	}
