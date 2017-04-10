@@ -13,9 +13,6 @@ import (
 // RequestWithContext takes a context, a subject and payload
 // in bytes and request expecting a single response.
 func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte) (*Msg, error) {
-	if ctx == nil {
-		panic("nil context")
-	}
 	inbox := NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
@@ -38,9 +35,6 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 // available to a synchronous subscriber, blocking until it is delivered
 // or context gets canceled.
 func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
-	if ctx == nil {
-		panic("nil context")
-	}
 	if s == nil {
 		return nil, ErrBadSubscription
 	}
@@ -79,9 +73,6 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 // using the provided cancellation context with the Inbox reply
 // for the data v. A response will be decoded into the vPtrResponse.
 func (c *EncodedConn) RequestWithContext(ctx context.Context, subject string, v interface{}, vPtr interface{}) error {
-	if ctx == nil {
-		panic("nil context")
-	}
 	b, err := c.Enc.Encode(subject, v)
 	if err != nil {
 		return err

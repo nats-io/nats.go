@@ -419,7 +419,7 @@ func TestContextSubNextMsgWithCancel(t *testing.T) {
 
 	// We do not have another message pending so timer will
 	// cancel the context.
-	resp, err = sub2.NextMsgWithContext(ctx)
+	_, err = sub2.NextMsgWithContext(ctx)
 	if err == nil {
 		t.Fatalf("Expected request with context to fail: %s", err)
 	}
@@ -602,7 +602,7 @@ func TestContextEncodedRequestWithTimeoutCanceled(t *testing.T) {
 	// Fast request should not fail
 	req := &request{Message: "Hello"}
 	resp := &response{}
-	err = c.RequestWithContext(ctx, "fast", req, resp)
+	c.RequestWithContext(ctx, "fast", req, resp)
 	expectedCode := 200
 	if resp.Code != expectedCode {
 		t.Errorf("Expected to receive %d, got: %d", expectedCode, resp.Code)
