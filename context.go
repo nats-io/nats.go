@@ -78,12 +78,7 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 // RequestWithContext will create an Inbox and perform a Request
 // using the provided cancellation context with the Inbox reply
 // for the data v. A response will be decoded into the vPtrResponse.
-func (c *EncodedConn) RequestWithContext(
-	ctx context.Context,
-	subject string,
-	v interface{},
-	vPtr interface{},
-) error {
+func (c *EncodedConn) RequestWithContext(ctx context.Context, subject string, v interface{}, vPtr interface{}) error {
 	if ctx == nil {
 		panic("nil context")
 	}
