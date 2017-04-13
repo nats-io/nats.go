@@ -60,7 +60,9 @@ func Example_nats_Connect_SubscribeSync() {
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1 * time.Second)
+
+	// Expecting to timeout here since no one has published a message.
+	m, err := sub.NextMsg(1 * time.Millisecond)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
@@ -78,8 +80,9 @@ func Example_nats_Subscription_NextMsg() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
+	// Expecting to timeout here since no one has published a message.
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1 * time.Second)
+	m, err := sub.NextMsg(1 * time.Millisecond)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
