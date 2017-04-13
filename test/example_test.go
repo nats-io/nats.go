@@ -218,8 +218,13 @@ func Example_nats_Subscription_AutoUnsubscribe() {
 
 	received, wanted, total := 0, 10, 100
 
+	doneCh := make(chan struct{})
+	defer close(doneCh)
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
 		received++
+		if received >= wanted {
+			doneCh <- struct{}{}
+		}
 	})
 	sub.AutoUnsubscribe(wanted)
 
@@ -228,7 +233,11 @@ func Example_nats_Subscription_AutoUnsubscribe() {
 	}
 	nc.Flush()
 
-	fmt.Printf("Received = %d", received)
+	select {
+	case <-doneCh:
+		fmt.Printf("Received = %d", received)
+	case <-time.After(5 * time.Second):
+	}
 
 	// Output:
 	// Received = 10
