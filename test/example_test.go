@@ -1,4 +1,4 @@
-package nats_test
+package test
 
 import (
 	"fmt"
@@ -9,6 +9,8 @@ import (
 
 // Shows different ways to create a Conn
 func ExampleConnect() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
 
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
@@ -35,6 +37,9 @@ func ExampleConnect() {
 
 // This Example shows an asynchronous subscriber.
 func ExampleConn_Subscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -48,6 +53,9 @@ func ExampleConn_Subscribe() {
 
 // This Example shows a synchronous subscriber.
 func ExampleConn_SubscribeSync() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -64,6 +72,9 @@ func ExampleConn_SubscribeSync() {
 }
 
 func ExampleSubscription_NextMsg() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -80,6 +91,9 @@ func ExampleSubscription_NextMsg() {
 }
 
 func ExampleSubscription_Unsubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -92,6 +106,9 @@ func ExampleSubscription_Unsubscribe() {
 }
 
 func ExampleConn_Publish() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -102,6 +119,9 @@ func ExampleConn_Publish() {
 }
 
 func ExampleConn_PublishMsg() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -113,6 +133,9 @@ func ExampleConn_PublishMsg() {
 }
 
 func ExampleConn_Flush() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -130,6 +153,9 @@ func ExampleConn_Flush() {
 }
 
 func ExampleConn_FlushTimeout() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -148,6 +174,9 @@ func ExampleConn_FlushTimeout() {
 }
 
 func ExampleConn_Request() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -164,6 +193,9 @@ func ExampleConn_Request() {
 }
 
 func ExampleConn_QueueSubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -178,6 +210,9 @@ func ExampleConn_QueueSubscribe() {
 }
 
 func ExampleSubscription_AutoUnsubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -200,6 +235,9 @@ func ExampleSubscription_AutoUnsubscribe() {
 }
 
 func ExampleConn_Close() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
 
@@ -209,6 +247,9 @@ func ExampleConn_Close() {
 
 // Shows how to wrap a Conn into an EncodedConn
 func ExampleNewEncodedConn() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	c.Close()
@@ -221,6 +262,9 @@ func ExampleNewEncodedConn() {
 // by passing it in. The encoder will be used to properly
 // encode the raw Go type
 func ExampleEncodedConn_Publish() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -244,6 +288,9 @@ func ExampleEncodedConn_Publish() {
 // can also vary to include additional data, such as subject
 // and reply subjects.
 func ExampleEncodedConn_Subscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -273,6 +320,9 @@ func ExampleEncodedConn_Subscribe() {
 // subject for publish operations. The Encoder attached to the
 // EncodedConn will be used for marshalling.
 func ExampleEncodedConn_BindSendChan() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -297,6 +347,9 @@ func ExampleEncodedConn_BindSendChan() {
 // subject for subscribe operations. The Encoder attached to the
 // EncodedConn will be used for un-marshalling.
 func ExampleEncodedConn_BindRecvChan() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
