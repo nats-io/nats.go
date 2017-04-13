@@ -8,7 +8,7 @@ import (
 )
 
 // Shows different ways to create a Conn
-func ExampleConnect() {
+func Example_nats_Connect() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -36,7 +36,7 @@ func ExampleConnect() {
 }
 
 // This Example shows an asynchronous subscriber.
-func ExampleConn_Subscribe() {
+func Example_nats_Connect_Subscribe() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -52,7 +52,7 @@ func ExampleConn_Subscribe() {
 }
 
 // This Example shows a synchronous subscriber.
-func ExampleConn_SubscribeSync() {
+func Example_nats_Connect_SubscribeSync() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -71,7 +71,7 @@ func ExampleConn_SubscribeSync() {
 	// NextMsg timed out.
 }
 
-func ExampleSubscription_NextMsg() {
+func Example_nats_Subscription_NextMsg() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -90,7 +90,7 @@ func ExampleSubscription_NextMsg() {
 	// NextMsg timed out.
 }
 
-func ExampleSubscription_Unsubscribe() {
+func Example_nats_Subscription_Unsubscribe() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -105,7 +105,7 @@ func ExampleSubscription_Unsubscribe() {
 	//
 }
 
-func ExampleConn_Publish() {
+func Example_nats_Connect_Publish() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -118,7 +118,7 @@ func ExampleConn_Publish() {
 	//
 }
 
-func ExampleConn_PublishMsg() {
+func Example_nats_Connect_PublishMsg() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -132,7 +132,7 @@ func ExampleConn_PublishMsg() {
 	//
 }
 
-func ExampleConn_Flush() {
+func Example_nats_Connect_Flush() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -152,7 +152,7 @@ func ExampleConn_Flush() {
 	//
 }
 
-func ExampleConn_FlushTimeout() {
+func Example_nats_Connect_FlushTimeout() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -173,7 +173,7 @@ func ExampleConn_FlushTimeout() {
 	//
 }
 
-func ExampleConn_Request() {
+func Example_nats_Connect_Request() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -192,7 +192,7 @@ func ExampleConn_Request() {
 	// I will help you
 }
 
-func ExampleConn_QueueSubscribe() {
+func Example_nats_Connect_QueueSubscribe() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -209,7 +209,7 @@ func ExampleConn_QueueSubscribe() {
 	//
 }
 
-func ExampleSubscription_AutoUnsubscribe() {
+func Example_nats_Subscription_AutoUnsubscribe() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -234,7 +234,7 @@ func ExampleSubscription_AutoUnsubscribe() {
 	// Received = 10
 }
 
-func ExampleConn_Close() {
+func Example_nats_Connect_Close() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -246,7 +246,7 @@ func ExampleConn_Close() {
 }
 
 // Shows how to wrap a Conn into an EncodedConn
-func ExampleNewEncodedConn() {
+func Example_nats_NewEncodedConn() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -261,7 +261,7 @@ func ExampleNewEncodedConn() {
 // EncodedConn can publish virtually anything just
 // by passing it in. The encoder will be used to properly
 // encode the raw Go type
-func ExampleEncodedConn_Publish() {
+func Example_nats_EncodedConn_Publish() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -287,7 +287,7 @@ func ExampleEncodedConn_Publish() {
 // method of the registered Encoder. The callback signature
 // can also vary to include additional data, such as subject
 // and reply subjects.
-func ExampleEncodedConn_Subscribe() {
+func Example_nats_EncodedConn_Subscribe() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -319,7 +319,7 @@ func ExampleEncodedConn_Subscribe() {
 // BindSendChan() allows binding of a Go channel to a nats
 // subject for publish operations. The Encoder attached to the
 // EncodedConn will be used for marshalling.
-func ExampleEncodedConn_BindSendChan() {
+func Example_nats_EncodedConn_BindSendChan() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -346,7 +346,7 @@ func ExampleEncodedConn_BindSendChan() {
 // BindRecvChan() allows binding of a Go channel to a nats
 // subject for subscribe operations. The Encoder attached to the
 // EncodedConn will be used for un-marshalling.
-func ExampleEncodedConn_BindRecvChan() {
+func Example_nats_EncodedConn_BindRecvChan() {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
