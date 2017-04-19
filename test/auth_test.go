@@ -45,11 +45,27 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("Should have connected successfully with a token: %v", err)
 	}
 	nc.Close()
+
 	// Verify that credentials in URL take precedence.
 	nc, err = nats.Connect("nats://derek:foo@localhost:8232", nats.UserInfo("foo", "bar"))
 	if err != nil {
 		t.Fatalf("Should have connected successfully with a token: %v", err)
 	}
+
+	// Confirm credentials are part of the url
+	got := nc.ConnectedUrl()
+	expected := "nats://derek:foo@localhost:8232"
+	if got != expected {
+		t.Errorf("Expected url as %s got: %s", expected, got)
+	}
+
+	// Confirm we can get the connected host without credentials as well
+	got = nc.ConnectedHost()
+	expected = "nats://localhost:8232"
+	if got != expected {
+		t.Errorf("Expected url as %s got: %s", expected, got)
+	}
+
 	nc.Close()
 }
 
