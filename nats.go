@@ -1612,7 +1612,6 @@ slowConsumer:
 	}
 	sub.mu.Unlock()
 	nc.mu.Unlock()
-	return
 }
 
 // processSlowConsumer will set SlowConsumer state and fire the
