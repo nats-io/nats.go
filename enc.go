@@ -119,7 +119,7 @@ func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, t
 
 // Handler is a specific callback used for Subscribe. It is generalized to
 // an interface{}, but we will discover its format and arguments at runtime
-// and perform the correct callback, including de-marshalling JSON strings
+// and perform the correct callback, including de-marshaling JSON strings
 // back into the appropriate struct based on the signature of the Handler.
 //
 // Handlers are expected to have one of four signatures.
