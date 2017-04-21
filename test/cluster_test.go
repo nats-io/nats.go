@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/gnatsd/auth"
+	"github.com/nats-io/gnatsd/test"
 	"github.com/nats-io/go-nats"
 )
 
@@ -123,16 +123,15 @@ func TestAuthServers(t *testing.T) {
 		"nats://localhost:1224",
 	}
 
-	auth := &auth.Plain{
-		Username: "derek",
-		Password: "foo",
-	}
+	opts := test.DefaultTestOptions
+	opts.Username = "derek"
+	opts.Password = "foo"
 
-	as1 := RunServerOnPort(1222)
-	as1.SetClientAuthMethod(auth)
+	opts.Port = 1222
+	as1 := RunServerWithOptions(opts)
 	defer as1.Shutdown()
-	as2 := RunServerOnPort(1224)
-	as2.SetClientAuthMethod(auth)
+	opts.Port = 1224
+	as2 := RunServerWithOptions(opts)
 	defer as2.Shutdown()
 
 	pservers := strings.Join(plainServers, ",")

@@ -76,7 +76,7 @@ func TestConnectedServer(t *testing.T) {
 	}
 	srv := nc.ConnectedServerId()
 	if srv == "" {
-		t.Fatal("Expeced a connected server id")
+		t.Fatal("Expected a connected server id")
 	}
 	nc.Close()
 	u = nc.ConnectedUrl()
