@@ -1,4 +1,4 @@
-package nats_test
+package test
 
 import (
 	"fmt"
@@ -8,7 +8,9 @@ import (
 )
 
 // Shows different ways to create a Conn
-func ExampleConnect() {
+func Example_nats_Connect() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
 
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
@@ -28,70 +30,115 @@ func ExampleConnect() {
 
 	nc, _ = opts.Connect()
 	nc.Close()
+
+	// Output:
+	//
 }
 
 // This Example shows an asynchronous subscriber.
-func ExampleConn_Subscribe() {
+func Example_nats_Connect_Subscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	nc.Subscribe("foo", func(m *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	})
+
+	// Output:
+	//
 }
 
 // This Example shows a synchronous subscriber.
-func ExampleConn_SubscribeSync() {
+func Example_nats_Connect_SubscribeSync() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1 * time.Second)
+
+	// Expecting to timeout here since no one has published a message.
+	m, err := sub.NextMsg(1 * time.Millisecond)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
 		fmt.Println("NextMsg timed out.")
 	}
+
+	// Output:
+	// NextMsg timed out.
 }
 
-func ExampleSubscription_NextMsg() {
+func Example_nats_Subscription_NextMsg() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
+	// Expecting to timeout here since no one has published a message.
 	sub, _ := nc.SubscribeSync("foo")
-	m, err := sub.NextMsg(1 * time.Second)
+	m, err := sub.NextMsg(1 * time.Millisecond)
 	if err == nil {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 	} else {
 		fmt.Println("NextMsg timed out.")
 	}
+
+	// Output:
+	// NextMsg timed out.
 }
 
-func ExampleSubscription_Unsubscribe() {
+func Example_nats_Subscription_Unsubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	sub, _ := nc.SubscribeSync("foo")
 	// ...
 	sub.Unsubscribe()
+
+	// Output:
+	//
 }
 
-func ExampleConn_Publish() {
+func Example_nats_Connect_Publish() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	nc.Publish("foo", []byte("Hello World!"))
+
+	// Output:
+	//
 }
 
-func ExampleConn_PublishMsg() {
+func Example_nats_Connect_PublishMsg() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	msg := &nats.Msg{Subject: "foo", Reply: "bar", Data: []byte("Hello World!")}
 	nc.PublishMsg(msg)
+
+	// Output:
+	//
 }
 
-func ExampleConn_Flush() {
+func Example_nats_Connect_Flush() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -103,9 +150,15 @@ func ExampleConn_Flush() {
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
 	}
+
+	// Output:
+	//
 }
 
-func ExampleConn_FlushTimeout() {
+func Example_nats_Connect_FlushTimeout() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -118,19 +171,34 @@ func ExampleConn_FlushTimeout() {
 	if err == nil {
 		// Everything has been processed by the server for nc *Conn.
 	}
+
+	// Output:
+	//
 }
 
-func ExampleConn_Request() {
+func Example_nats_Connect_Request() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	nc.Subscribe("foo", func(m *nats.Msg) {
 		nc.Publish(m.Reply, []byte("I will help you"))
 	})
-	nc.Request("foo", []byte("help"), 50*time.Millisecond)
+	response, err := nc.Request("foo", []byte("help"), 50*time.Millisecond)
+	if err == nil {
+		fmt.Println(string(response.Data))
+	}
+
+	// Output:
+	// I will help you
 }
 
-func ExampleConn_QueueSubscribe() {
+func Example_nats_Connect_QueueSubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -139,16 +207,27 @@ func ExampleConn_QueueSubscribe() {
 	nc.QueueSubscribe("foo", "worker_group", func(_ *nats.Msg) {
 		received++
 	})
+
+	// Output:
+	//
 }
 
-func ExampleSubscription_AutoUnsubscribe() {
+func Example_nats_Subscription_AutoUnsubscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
 	received, wanted, total := 0, 10, 100
 
+	doneCh := make(chan struct{})
+	defer close(doneCh)
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
 		received++
+		if received >= wanted {
+			doneCh <- struct{}{}
+		}
 	})
 	sub.AutoUnsubscribe(wanted)
 
@@ -157,25 +236,47 @@ func ExampleSubscription_AutoUnsubscribe() {
 	}
 	nc.Flush()
 
-	fmt.Printf("Received = %d", received)
+	select {
+	case <-doneCh:
+		fmt.Printf("Received = %d", received)
+	case <-time.After(5 * time.Second):
+	}
+
+	// Output:
+	// Received = 10
 }
 
-func ExampleConn_Close() {
+func Example_nats_Connect_Close() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Close()
+
+	// Output:
+	//
 }
 
 // Shows how to wrap a Conn into an EncodedConn
-func ExampleNewEncodedConn() {
+func Example_nats_NewEncodedConn() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	c.Close()
+
+	// Output:
+	//
 }
 
 // EncodedConn can publish virtually anything just
 // by passing it in. The encoder will be used to properly
 // encode the raw Go type
-func ExampleEncodedConn_Publish() {
+func Example_nats_EncodedConn_Publish() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -188,6 +289,9 @@ func ExampleEncodedConn_Publish() {
 
 	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
 	c.Publish("hello", me)
+
+	// Output:
+	//
 }
 
 // EncodedConn's subscribers will automatically decode the
@@ -195,7 +299,10 @@ func ExampleEncodedConn_Publish() {
 // method of the registered Encoder. The callback signature
 // can also vary to include additional data, such as subject
 // and reply subjects.
-func ExampleEncodedConn_Subscribe() {
+func Example_nats_EncodedConn_Subscribe() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -216,12 +323,18 @@ func ExampleEncodedConn_Subscribe() {
 
 	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
 	c.Publish("hello", me)
+
+	// Output:
+	//
 }
 
 // BindSendChan() allows binding of a Go channel to a nats
 // subject for publish operations. The Encoder attached to the
 // EncodedConn will be used for marshalling.
-func ExampleEncodedConn_BindSendChan() {
+func Example_nats_EncodedConn_BindSendChan() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -237,12 +350,18 @@ func ExampleEncodedConn_BindSendChan() {
 
 	me := &person{Name: "derek", Age: 22, Address: "85 Second St"}
 	ch <- me
+
+	// Output:
+	//
 }
 
 // BindRecvChan() allows binding of a Go channel to a nats
 // subject for subscribe operations. The Encoder attached to the
 // EncodedConn will be used for un-marshalling.
-func ExampleEncodedConn_BindRecvChan() {
+func Example_nats_EncodedConn_BindRecvChan() {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
 	defer c.Close()
@@ -263,4 +382,7 @@ func ExampleEncodedConn_BindRecvChan() {
 	who := <-ch
 
 	fmt.Printf("%v says hello!\n", who)
+
+	// Output:
+	// &{derek 85 Second St 22} says hello!
 }
