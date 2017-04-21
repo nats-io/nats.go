@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -132,7 +131,7 @@ func TestServerSecureConnections(t *testing.T) {
 
 	received := 0
 	nc.Subscribe("foo", func(m *nats.Msg) {
-		received += 1
+		received++
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
@@ -222,14 +221,14 @@ func TestClientCertificate(t *testing.T) {
 	nc, err := nats.Connect(secureURL, nats.Secure())
 	if err == nil {
 		nc.Close()
-		t.Fatal("Sould have failed (TLS) connection without client certificate")
+		t.Fatal("Should have failed (TLS) connection without client certificate")
 	}
 
 	// Check parameters validity
 	nc, err = nats.Connect(secureURL, nats.ClientCert("", ""))
 	if err == nil {
 		nc.Close()
-		t.Fatal("Sould have failed due to invalid parameters")
+		t.Fatal("Should have failed due to invalid parameters")
 	}
 
 	// Should fail because wrong key
@@ -237,7 +236,7 @@ func TestClientCertificate(t *testing.T) {
 		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/key.pem"))
 	if err == nil {
 		nc.Close()
-		t.Fatal("Sould have failed due to invalid key")
+		t.Fatal("Should have failed due to invalid key")
 	}
 
 	// Should fail because no CA
@@ -245,7 +244,7 @@ func TestClientCertificate(t *testing.T) {
 		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
 	if err == nil {
 		nc.Close()
-		t.Fatal("Sould have failed due to missing ca")
+		t.Fatal("Should have failed due to missing ca")
 	}
 
 	nc, err = nats.Connect(secureURL,
@@ -261,7 +260,7 @@ func TestClientCertificate(t *testing.T) {
 
 	received := 0
 	nc.Subscribe("foo", func(m *nats.Msg) {
-		received += 1
+		received++
 		if !bytes.Equal(m.Data, omsg) {
 			t.Fatal("Message received does not match")
 		}
@@ -613,7 +612,7 @@ func isRunningInAsyncCBDispatcher() error {
 		return nil
 	}
 
-	return errors.New(fmt.Sprintf("Callback not executed from dispatcher:\n %s\n", strStacks))
+	return fmt.Errorf("callback not executed from dispatcher:\n %s", strStacks)
 }
 
 func TestCallbacksOrder(t *testing.T) {
