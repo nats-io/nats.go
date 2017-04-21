@@ -853,6 +853,8 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+	ncp := NewDefaultConnection(t)
+	defer ncp.Close()
 
 	// There was a defect that prevented to receive more than
 	// the default pending message limit. Trying to send more
@@ -879,11 +881,12 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 				t.Fatalf("Unexpected error on subscribe: %v", err)
 			}
 			defer sub.Unsubscribe()
+			nc.Flush()
 
-			// Send some messages to ourselves.
+			// Send some messages
 			go func() {
 				for i := 0; i < total; i++ {
-					if err := nc.Publish("foo", []byte("Hello")); err != nil {
+					if err := ncp.Publish("foo", []byte("Hello")); err != nil {
 						t.Fatalf("Unexpected error on publish: %v", err)
 					}
 				}
