@@ -191,6 +191,10 @@ type Options struct {
 	// successfully reconnected.
 	ReconnectedCB ConnHandler
 
+	// DiscoveredServersCB sets the callback that is invoked whenever a new
+	// server has joined the cluster.
+	DiscoveredServersCB ConnHandler
+
 	// AsyncErrorCB sets the async error handler (e.g. slow consumer errors)
 	AsyncErrorCB ErrHandler
 
@@ -261,6 +265,7 @@ type Conn struct {
 	pongs   []chan bool
 	scratch [scratchSize]byte
 	status  Status
+	initc   bool // true if the connection is performing the initial connect
 	err     error
 	ps      *parseState
 	ptmr    *time.Timer
@@ -524,6 +529,14 @@ func ClosedHandler(cb ConnHandler) Option {
 	}
 }
 
+// DiscoveredServersHandler is an Option to set the new servers handler.
+func DiscoveredServersHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.DiscoveredServersCB = cb
+		return nil
+	}
+}
+
 // ErrHandler is an Option to set the async error  handler.
 func ErrorHandler(cb ErrHandler) Option {
 	return func(o *Options) error {
@@ -580,6 +593,16 @@ func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.ReconnectedCB = rcb
+}
+
+// SetDiscoveredServersHandler will set the discovered servers handler.
+func (nc *Conn) SetDiscoveredServersHandler(dscb ConnHandler) {
+	if nc == nil {
+		return
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.DiscoveredServersCB = dscb
 }
 
 // SetClosedHandler will set the reconnect event handler.
@@ -991,6 +1014,7 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	nc.mu.Lock()
+	nc.initc = true
 	// The pool may change inside theloop iteration due to INFO protocol.
 	for i := 0; i < len(nc.srvPool); i++ {
 		nc.url = nc.srvPool[i].url
@@ -1022,6 +1046,7 @@ func (nc *Conn) connect() error {
 			}
 		}
 	}
+	nc.initc = false
 	defer nc.mu.Unlock()
 
 	if returnedErr == nil && nc.status != CONNECTED {
@@ -1724,6 +1749,7 @@ func (nc *Conn) processInfo(info string) error {
 	}
 	urls := nc.info.ConnectURLs
 	if len(urls) > 0 {
+		added := false
 		// If randomization is allowed, shuffle the received array, not the
 		// entire pool. We want to preserve the pool's order up to this point
 		// (this would otherwise be problematic for the (re)connect loop).
@@ -1738,7 +1764,11 @@ func (nc *Conn) processInfo(info string) error {
 				if err := nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true); err != nil {
 					continue
 				}
+				added = true
 			}
+		}
+		if added && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
+			nc.ach <- func() { nc.Opts.DiscoveredServersCB(nc) }
 		}
 	}
 	return nil
