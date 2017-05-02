@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/go-nats/util"
@@ -1333,7 +1332,7 @@ func (nc *Conn) doReconnect() {
 		}
 
 		// We are reconnected
-		atomic.AddUint64(&nc.Reconnects, 1)
+		nc.Reconnects++
 
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
@@ -1559,8 +1558,8 @@ func (nc *Conn) processMsg(data []byte) {
 	nc.subsMu.RLock()
 
 	// Stats
-	atomic.AddUint64(&nc.InMsgs, 1)
-	atomic.AddUint64(&nc.InBytes, uint64(len(data)))
+	nc.InMsgs++
+	nc.InBytes += uint64(len(data))
 
 	sub := nc.subs[nc.ps.ma.sid]
 	if sub == nil {
@@ -1929,8 +1928,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return err
 	}
 
-	atomic.AddUint64(&nc.OutMsgs, 1)
-	atomic.AddUint64(&nc.OutBytes, uint64(len(data)))
+	nc.OutMsgs++
+	nc.OutBytes += uint64(len(data))
 
 	if len(nc.fch) == 0 {
 		nc.kickFlusher()
@@ -2728,13 +2727,20 @@ func (nc *Conn) isConnected() bool {
 
 // Stats will return a race safe copy of the Statistics section for the connection.
 func (nc *Conn) Stats() Statistics {
-	return Statistics{
-		InMsgs:     atomic.LoadUint64(&nc.InMsgs),
-		InBytes:    atomic.LoadUint64(&nc.InBytes),
-		OutMsgs:    atomic.LoadUint64(&nc.OutMsgs),
-		OutBytes:   atomic.LoadUint64(&nc.OutBytes),
-		Reconnects: atomic.LoadUint64(&nc.Reconnects),
+	// Stats are updated either under connection's mu or subsMu mutexes.
+	// Lock both to safely get them.
+	nc.mu.Lock()
+	nc.subsMu.RLock()
+	stats := Statistics{
+		InMsgs:     nc.InMsgs,
+		InBytes:    nc.InBytes,
+		OutMsgs:    nc.OutMsgs,
+		OutBytes:   nc.OutBytes,
+		Reconnects: nc.Reconnects,
 	}
+	nc.subsMu.RUnlock()
+	nc.mu.Unlock()
+	return stats
 }
 
 // MaxPayload returns the size limit that a message payload can have.
