@@ -2,10 +2,12 @@ package test
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/nats-io/gnatsd/server"
 	"github.com/nats-io/gnatsd/test"
 	"github.com/nats-io/go-nats"
 )
@@ -165,4 +167,53 @@ func TestTokenAuth(t *testing.T) {
 		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
+}
+
+func TestPermViolation(t *testing.T) {
+	opts := test.DefaultTestOptions
+	opts.Port = 8232
+	opts.Users = []*server.User{
+		&server.User{
+			Username: "ivan",
+			Password: "pwd",
+			Permissions: &server.Permissions{
+				Publish:   []string{"foo"},
+				Subscribe: []string{"bar"},
+			},
+		},
+	}
+	s := RunServerWithOptions(opts)
+	defer s.Shutdown()
+
+	ch := make(chan bool)
+	errCB := func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		if strings.Contains(err.Error(), nats.PERMISSIONS_ERR) {
+			ch <- true
+		}
+	}
+	nc, err := nats.Connect(
+		fmt.Sprintf("nats://ivan:pwd@localhost:%d", opts.Port),
+		nats.ErrorHandler(errCB))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	for i := 0; i < 2; i++ {
+		switch i {
+		case 0:
+			// Cause a publish error
+			nc.Publish("bar", []byte("fail"))
+		case 1:
+			// Cause a subscribe error
+			nc.Subscribe("foo", func(_ *nats.Msg) {})
+		}
+		// We should get the async error cb
+		if err := Wait(ch); err != nil {
+			t.Fatal("Did not get our callback")
+		}
+		// Make sure connection has not been closed
+		if nc.IsClosed() {
+			t.Fatal("Connection should be not be closed")
+		}
+	}
 }
