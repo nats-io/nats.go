@@ -72,6 +72,7 @@ var (
 	ErrInvalidConnection    = errors.New("nats: invalid connection")
 	ErrInvalidMsg           = errors.New("nats: invalid message or message nil")
 	ErrInvalidArg           = errors.New("nats: invalid argument")
+	ErrInvalidContext       = errors.New("nats: invalid context")
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 

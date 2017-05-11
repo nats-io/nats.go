@@ -811,3 +811,106 @@ func TestContextEncodedRequestWithDeadline(t *testing.T) {
 		t.Errorf("Expected %q error, got: %q", expected, err.Error())
 	}
 }
+
+func TestContextRequestConnClosed(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	ctx, cancelCB := context.WithCancel(context.Background())
+	defer cancelCB()
+
+	time.AfterFunc(100*time.Millisecond, func() {
+		cancelCB()
+	})
+
+	nc.Close()
+	_, err := nc.RequestWithContext(ctx, "foo", []byte(""))
+	if err == nil {
+		t.Fatalf("Expected request to fail with error")
+	}
+	if err != nats.ErrConnectionClosed {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+}
+
+func TestContextBadSubscription(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+	ctx, cancelCB := context.WithCancel(context.Background())
+	defer cancelCB()
+	time.AfterFunc(100*time.Millisecond, func() {
+		cancelCB()
+	})
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Expected to be able to subscribe: %s", err)
+	}
+
+	err = sub.Unsubscribe()
+	if err != nil {
+		t.Fatalf("Expected to be able to unsubscribe: %s", err)
+	}
+
+	_, err = sub.NextMsgWithContext(ctx)
+	if err == nil {
+		t.Fatalf("Expected to fail getting next message with context")
+	}
+
+	if err != nats.ErrBadSubscription {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+}
+
+func TestContextInvalid(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
+	if err != nil {
+		t.Fatalf("Unable to create encoded connection: %v", err)
+	}
+	defer c.Close()
+
+	_, err = nc.RequestWithContext(nil, "foo", []byte(""))
+	if err == nil {
+		t.Fatalf("Expected request to fail with error")
+	}
+	if err != nats.ErrInvalidContext {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Expected to be able to subscribe: %s", err)
+	}
+
+	_, err = sub.NextMsgWithContext(nil)
+	if err == nil {
+		t.Fatalf("Expected request to fail with error")
+	}
+	if err != nats.ErrInvalidContext {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+
+	type request struct {
+		Message string `json:"message"`
+	}
+	type response struct {
+		Code int `json:"code"`
+	}
+	req := &request{Message: "Hello"}
+	resp := &response{}
+	err = c.RequestWithContext(nil, "slow", req, resp)
+	if err == nil {
+		t.Fatalf("Expected request with context to reach deadline: %s", err)
+	}
+	if err != nats.ErrInvalidContext {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+}
