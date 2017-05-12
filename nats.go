@@ -1656,10 +1656,12 @@ slowConsumer:
 // processPermissionsViolation is called when the server signals a subject
 // permissions violation on either publish or subscribe.
 func (nc *Conn) processPermissionsViolation(err string) {
+	nc.mu.Lock()
 	nc.err = errors.New("nats: " + err)
 	if nc.Opts.AsyncErrorCB != nil {
 		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, nc.err) }
 	}
+	nc.mu.Unlock()
 }
 
 // flusher is a separate Go routine that will process flush requests for the write
