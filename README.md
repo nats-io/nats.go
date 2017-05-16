@@ -297,11 +297,39 @@ nc, err = nats.Connect("nats://my:pwd@localhost:4222", nats.UserInfo("foo", "bar
 
 ```
 
+## Context support (+Go 1.7)
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
+nc, err := nats.Connect(nats.DefaultURL)
+
+// Request with context
+msg, err := nc.RequestWithContext(ctx, "foo", []byte("bar"))
+
+// Synchronous subscriber with context
+sub, err := nc.SubscribeSync("foo")
+msg, err := sub.NextMsgWithContext(ctx)
+
+// Encoded Request with context
+c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
+type request struct {
+	Message string `json:"message"`
+}
+type response struct {
+	Code int `json:"code"`
+}
+req := &request{Message: "Hello"}
+resp := &response{}
+err := c.RequestWithContext(ctx, "foo", req, resp)
+```
+
 ## License
 
 (The MIT License)
 
-Copyright (c) 2012-2016 Apcera Inc.
+Copyright (c) 2012-2017 Apcera Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
