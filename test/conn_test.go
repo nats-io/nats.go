@@ -1297,7 +1297,7 @@ func TestUseCustomDialer(t *testing.T) {
 		t.Fatalf("Unexpected error on connect: %v", err)
 	}
 	defer nc2.Close()
-	if !nc2.Opts.Dialer.DualStack {
+	if !nc2.Opts.Dialer.(*net.Dialer).DualStack {
 		t.Fatalf("Expected for dialer to be customized to use dual stack support")
 	}
 
@@ -1307,8 +1307,8 @@ func TestUseCustomDialer(t *testing.T) {
 		t.Fatalf("Unexpected error on connect: %v", err)
 	}
 	defer nc3.Close()
-	if nc3.Opts.Dialer.Timeout != nats.DefaultTimeout {
-		t.Fatalf("Expected DialTimeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
+	if nc3.Opts.Dialer.(*net.Dialer).Timeout != nats.DefaultTimeout {
+		t.Fatalf("Expected DialTimeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.(*net.Dialer).Timeout)
 	}
 }
 

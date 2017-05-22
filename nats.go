@@ -101,6 +101,13 @@ const (
 	CONNECTING
 )
 
+// NetDialer abstracts the net.Dialer.Dial(network, address)
+// operation, allowing pre-authorized connections like
+// the gnatsd/health.Icc structure for internal clients.
+type NetDialer interface {
+	Dial(network, address string) (net.Conn, error)
+}
+
 // ConnHandler is used for asynchronous events such as
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
@@ -218,7 +225,7 @@ type Options struct {
 	Token string
 
 	// Dialer allows users setting a custom Dialer
-	Dialer *net.Dialer
+	Dialer NetDialer
 }
 
 const (
@@ -350,6 +357,7 @@ type serverInfo struct {
 	TLSRequired  bool     `json:"tls_required"`
 	MaxPayload   int64    `json:"max_payload"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
+	Rank         int      `json:"health_rank"`
 }
 
 const (
@@ -566,7 +574,7 @@ func Token(token string) Option {
 
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
-func Dialer(dialer *net.Dialer) Option {
+func Dialer(dialer NetDialer) Option {
 	return func(o *Options) error {
 		o.Dialer = dialer
 		return nil
@@ -2789,4 +2797,84 @@ func (nc *Conn) TLSRequired() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.info.TLSRequired
+}
+
+// ServerLocation() reports
+// the connected server's details
+// in a ServerLoc structure
+// allocated for this call.
+//
+// The return value will be (nil, ErrInvalidConnection)
+// if we are not connected.
+//
+// Atomic (consistent) access
+// to the combination of these
+// settings is needed by
+// the health agent.
+func (nc *Conn) ServerLocation() (*ServerLoc, error) {
+
+	if nc == nil {
+		return nil, ErrInvalidConnection
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if nc.status != CONNECTED {
+		return nil, ErrInvalidConnection
+	}
+
+	sloc := &ServerLoc{
+		ID:   nc.info.Id,
+		Rank: nc.info.Rank,
+	}
+
+	host, sport, err := net.SplitHostPort(
+		nc.conn.RemoteAddr().String(),
+	)
+	if err != nil {
+		return sloc, err
+	}
+	sloc.Host = host
+
+	port, err := strconv.Atoi(sport)
+	if err != nil {
+		return sloc, err
+	}
+	sloc.Port = port
+
+	return sloc, nil
+}
+
+// ServerLoc atomically provides
+// server identity, location, and rank.
+// It is used by the health-agent.
+type ServerLoc struct {
+	ID   string `json:"serverId"`
+	Host string `json:"host"`
+	Port int    `json:"port"`
+
+	// Are we the leader?
+	IsLeader bool `json:"leader"`
+
+	// LeaseExpires is zero for any
+	// non-leader. For the leader,
+	// LeaseExpires tells you when
+	// the leaders lease expires.
+	LeaseExpires time.Time `json:"leaseExpires"`
+
+	// lower rank is leader until lease
+	// expires. Ties are broken by ID.
+	// Rank should be assignable on the
+	// gnatsd command line with -rank to
+	// let the operator prioritize
+	// leadership for certain hosts.
+	Rank int `json:"rank"`
+}
+
+func (s *ServerLoc) String() string {
+	by, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(by)
 }

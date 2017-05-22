@@ -1146,3 +1146,39 @@ func TestConnServers(t *testing.T) {
 
 	validateURLs(c.Servers(), "nats://localhost:4333", "nats://localhost:4444")
 }
+
+////// ServerLocation test
+
+func TestServerLocation(t *testing.T) {
+	ts := RunServerOnPort(TEST_PORT)
+	defer ts.Shutdown()
+
+	opts := reconnectOpts
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("nc.Connect() unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	sloc, err := nc.ServerLocation()
+	if err != nil {
+		t.Fatalf("nc.ServerLocation() unexpected error: %v", err)
+	}
+	if sloc.ID == "" {
+		t.Fatalf("nc.ServerLocation() returned bad ID")
+	}
+	if sloc.Port != TEST_PORT {
+		t.Fatalf("nc.ServerLocation() returned bad Port")
+	}
+	if sloc.Host == "" {
+		t.Fatalf("nc.ServerLocation() failed to supply Host")
+	}
+	if sloc.Rank != 0 {
+		t.Fatalf("nc.ServerLocation() default "+
+			"rank of 0 expected; instead: %v", sloc.Rank)
+	}
+	str := sloc.String()
+	if str[0] != '{' {
+		t.Fatalf("String() method for ServerLoc did not give JSON.")
+	}
+}
