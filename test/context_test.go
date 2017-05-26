@@ -13,13 +13,22 @@ import (
 	"github.com/nats-io/go-nats"
 )
 
-func TestContextRequestWithTimeout(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+func TestContextRequestWithNilConnection(t *testing.T) {
+	var nc *nats.Conn
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
+	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelCB() // should always be called, not discarded, to prevent context leak
 
+	_, err := nc.RequestWithContext(ctx, "fast", []byte(""))
+	if err == nil {
+		t.Fatalf("Expected request with context and nil connection to fail\n")
+	}
+	if err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected nats.ErrInvalidConnection, got %v\n, err")
+	}
+}
+
+func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 	nc.Subscribe("slow", func(m *nats.Msg) {
 		// Simulates latency into the client so that timeout is hit.
 		time.Sleep(200 * time.Millisecond)
@@ -71,13 +80,30 @@ func TestContextRequestWithTimeout(t *testing.T) {
 	}
 }
 
-func TestContextRequestWithTimeoutCanceled(t *testing.T) {
+func TestContextRequestWithTimeout(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	testContextRequestWithTimeout(t, nc)
+}
+
+func TestOldContextRequestWithTimeout(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	testContextRequestWithTimeout(t, nc)
+}
+
+func testContextRequestWithTimeoutCanceled(t *testing.T, nc *nats.Conn) {
 	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancelCB()
 
@@ -124,13 +150,30 @@ func TestContextRequestWithTimeoutCanceled(t *testing.T) {
 	}
 }
 
-func TestContextRequestWithCancel(t *testing.T) {
+func TestContextRequestWithTimeoutCanceled(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	testContextRequestWithTimeoutCanceled(t, nc)
+}
+
+func TestOldContextRequestWithTimeoutCanceled(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	testContextRequestWithTimeoutCanceled(t, nc)
+}
+
+func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 	ctx, cancelCB := context.WithCancel(context.Background())
 	defer cancelCB() // should always be called, not discarded, to prevent context leak
 
@@ -201,13 +244,30 @@ func TestContextRequestWithCancel(t *testing.T) {
 	}
 }
 
-func TestContextRequestWithDeadline(t *testing.T) {
+func TestContextRequestWithCancel(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	testContextRequestWithCancel(t, nc)
+}
+
+func TestOldContextRequestWithCancel(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	testContextRequestWithCancel(t, nc)
+}
+
+func testContextRequestWithDeadline(t *testing.T, nc *nats.Conn) {
 	deadline := time.Now().Add(100 * time.Millisecond)
 	ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
 	defer cancelCB() // should always be called, not discarded, to prevent context leak
@@ -250,6 +310,29 @@ func TestContextRequestWithDeadline(t *testing.T) {
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected %q error, got: %q", expected, err.Error())
 	}
+}
+
+func TestContextRequestWithDeadline(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	testContextRequestWithDeadline(t, nc)
+}
+
+func TestOldContextRequestWithDeadline(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	testContextRequestWithDeadline(t, nc)
 }
 
 func TestContextSubNextMsgWithTimeout(t *testing.T) {
