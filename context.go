@@ -16,7 +16,58 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 	if ctx == nil {
 		return nil, ErrInvalidContext
 	}
+	if nc == nil {
+		return nil, ErrInvalidConnection
+	}
 
+	// snapshot
+	var doSetup, useOldRequestStyle bool
+	nc.mu.Lock()
+	useOldRequestStyle = nc.Opts.UseOldRequestStyle
+	doSetup = (nc.respMux == nil)
+	nc.mu.Unlock()
+
+	// If user wants the old style.
+	if useOldRequestStyle {
+		return nc.oldRequestWithContext(ctx, subj, data)
+	}
+
+	// Make sure scoped subscription is setup at least once on first
+	// call to Request(). Will handle duplicates in createRespMux.
+	if doSetup {
+		if err := nc.createRespMux(); err != nil {
+			return nil, err
+		}
+	}
+	// Create literal Inbox and map to a chan msg.
+	mch := make(chan *Msg, RequestChanLen)
+	nc.mu.Lock()
+	respInbox := nc.newRespInbox()
+	nc.respMap[respToken(respInbox)] = mch
+	nc.mu.Unlock()
+
+	err := nc.PublishRequest(subj, respInbox, data)
+	if err != nil {
+		return nil, err
+	}
+
+	var ok bool
+	var msg *Msg
+
+	select {
+	case msg, ok = <-mch:
+		if !ok {
+			return nil, ErrConnectionClosed
+		}
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return msg, nil
+}
+
+// oldRequestWithContext utilizes inbox and subscription per request.
+func (nc *Conn) oldRequestWithContext(ctx context.Context, subj string, data []byte) (*Msg, error) {
 	inbox := NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
