@@ -24,7 +24,7 @@ func TestContextRequestWithNilConnection(t *testing.T) {
 		t.Fatalf("Expected request with context and nil connection to fail\n")
 	}
 	if err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected nats.ErrInvalidConnection, got %v\n, err")
+		t.Fatalf("Expected nats.ErrInvalidConnection, got %v\n", err)
 	}
 }
 
