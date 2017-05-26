@@ -1968,18 +1968,20 @@ func (nc *Conn) respHandler(m *Msg) {
 	rt := respToken(m.Subject)
 
 	nc.mu.Lock()
-	// Just return if closed, let Request timeout.
-	if nc.isClosed() {
-		nc.mu.Unlock()
-		return
-	}
-
 	// Grab mch
 	mch := nc.respMap[rt]
 	// Delete the key regardless, one response only.
 	// FIXME(dlc) - should we track responses past 1
 	// just statistics wise?
 	delete(nc.respMap, rt)
+
+	// Just return if closed, kick out Request by
+	// closing channel.
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		close(mch)
+		return
+	}
 	nc.mu.Unlock()
 
 	// Don't block, let Request timeout instead, mch is
@@ -2068,7 +2070,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 			return nil, ErrConnectionClosed
 		}
 	case <-t.C:
-		if nc.isClosed() {
+		if nc.IsClosed() {
 			return nil, ErrConnectionClosed
 		}
 		return nil, ErrTimeout
@@ -2746,6 +2748,20 @@ func (nc *Conn) clearPendingFlushCalls() {
 	nc.pongs = nil
 }
 
+// This will clear any pending Request calls.
+// Lock is assumed to be held by the caller.
+func (nc *Conn) clearPendingRequestCalls() {
+	if nc.respMap == nil {
+		return
+	}
+	for _, ch := range nc.respMap {
+		if ch != nil {
+			close(ch)
+		}
+	}
+	nc.pongs = nil
+}
+
 // Low level close call that will do correct cleanup and set
 // desired status. Also controls whether user defined callbacks
 // will be triggered. The lock should not be held entering this
@@ -2767,6 +2783,9 @@ func (nc *Conn) close(status Status, doCBs bool) {
 
 	// Clear any queued pongs, e.g. pending flush calls.
 	nc.clearPendingFlushCalls()
+
+	// Clear any queued and blocking Requests.
+	nc.clearPendingRequestCalls()
 
 	if nc.ptmr != nil {
 		nc.ptmr.Stop()

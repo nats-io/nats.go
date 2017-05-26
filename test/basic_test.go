@@ -603,7 +603,7 @@ func TestRequestClose(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		nc.Close()
 	}()
-	if _, err := nc.Request("foo", []byte("help"), 500*time.Millisecond); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
+	if _, err := nc.Request("foo", []byte("help"), 2*time.Second); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
 		t.Fatalf("Expected connection error: got %v", err)
 	}
 	wg.Wait()
