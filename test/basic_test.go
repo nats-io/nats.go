@@ -589,12 +589,33 @@ func TestSimultaneousRequests(t *testing.T) {
 	wg.Wait()
 }
 
+func TestRequestClose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+	}()
+	if _, err := nc.Request("foo", []byte("help"), 500*time.Millisecond); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
+		t.Fatalf("Expected connection error: got %v", err)
+	}
+	wg.Wait()
+}
+
 func TestRequestCloseTimeout(t *testing.T) {
 	// Make sure we return a timeout when we close
 	// the connection even if response is queued.
 
 	s := RunDefaultServer()
 	defer s.Shutdown()
+
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 

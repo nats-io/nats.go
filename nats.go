@@ -2068,6 +2068,9 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 			return nil, ErrConnectionClosed
 		}
 	case <-t.C:
+		if nc.isClosed() {
+			return nil, ErrConnectionClosed
+		}
 		return nil, ErrTimeout
 	}
 
