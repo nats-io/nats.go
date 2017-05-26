@@ -2070,9 +2070,6 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 			return nil, ErrConnectionClosed
 		}
 	case <-t.C:
-		if nc.IsClosed() {
-			return nil, ErrConnectionClosed
-		}
 		return nil, ErrTimeout
 	}
 
@@ -2759,7 +2756,6 @@ func (nc *Conn) clearPendingRequestCalls() {
 			close(ch)
 		}
 	}
-	nc.pongs = nil
 }
 
 // Low level close call that will do correct cleanup and set
