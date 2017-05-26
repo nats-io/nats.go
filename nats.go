@@ -184,11 +184,11 @@ type Options struct {
 	ClosedCB ConnHandler
 
 	// DisconnectedCB sets the disconnected handler that is called
-	// whenever we are disconnected.
+	// whenever the connection is disconnected.
 	DisconnectedCB ConnHandler
 
 	// ReconnectedCB sets the reconnected handler called whenever
-	// successfully reconnected.
+	// the connection is successfully reconnected.
 	ReconnectedCB ConnHandler
 
 	// DiscoveredServersCB sets the callback that is invoked whenever a new
@@ -220,8 +220,8 @@ type Options struct {
 	// Dialer allows a custom Dialer when forming connections.
 	Dialer *net.Dialer
 
-	// UseOldRequestStyle force older method of Requests that utilize a new Inbox
-	// and Subscription for each request.
+	// UseOldRequestStyle forces the old method of Requests that utilize
+	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
 }
 
@@ -1961,8 +1961,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	return nil
 }
 
-// respHandler is the global respnse handler. It will look up
-// the apprioriate channel based on the last token and place
+// respHandler is the global response handler. It will look up
+// the appropriate channel based on the last token and place
 // the message on the channel if possible.
 func (nc *Conn) respHandler(m *Msg) {
 	rt := respToken(m.Subject)
@@ -2006,7 +2006,6 @@ func (nc *Conn) createRespMux() error {
 	// We could be racing here. So will we double check
 	// respMux here and discard the new one if set.
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.respMux == nil {
 		nc.respSub = ginbox
 		nc.respMux = s
@@ -2015,10 +2014,12 @@ func (nc *Conn) createRespMux() error {
 		// Discard duplicate, don't set others.
 		defer s.Unsubscribe()
 	}
+	nc.mu.Unlock()
 	return nil
 }
 
-// New style request that will mux on a single Subscription.
+// Request will send a request payload and deliver the response message,
+// or an error, including a timeout if no message was received properly.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
