@@ -2751,9 +2751,10 @@ func (nc *Conn) clearPendingRequestCalls() {
 	if nc.respMap == nil {
 		return
 	}
-	for _, ch := range nc.respMap {
+	for key, ch := range nc.respMap {
 		if ch != nil {
 			close(ch)
+			delete(nc.respMap, key)
 		}
 	}
 }
