@@ -1968,20 +1968,18 @@ func (nc *Conn) respHandler(m *Msg) {
 	rt := respToken(m.Subject)
 
 	nc.mu.Lock()
+	// Just return if closed.
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		return
+	}
+
 	// Grab mch
 	mch := nc.respMap[rt]
 	// Delete the key regardless, one response only.
 	// FIXME(dlc) - should we track responses past 1
 	// just statistics wise?
 	delete(nc.respMap, rt)
-
-	// Just return if closed, kick out Request by
-	// closing channel.
-	if nc.isClosed() {
-		nc.mu.Unlock()
-		close(mch)
-		return
-	}
 	nc.mu.Unlock()
 
 	// Don't block, let Request timeout instead, mch is
