@@ -503,6 +503,29 @@ func TestRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestOldRequest(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		nc.Publish(m.Reply, response)
+	})
+	msg, err := nc.Request("foo", []byte("help"), 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Received an error on Request test: %s", err)
+	}
+	if !bytes.Equal(msg.Data, response) {
+		t.Fatalf("Received invalid response")
+	}
+}
+
 func TestRequest(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -538,6 +561,71 @@ func TestRequestNoBody(t *testing.T) {
 	}
 	if !bytes.Equal(msg.Data, response) {
 		t.Fatalf("Received invalid response")
+	}
+}
+
+func TestSimultaneousRequests(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		nc.Publish(m.Reply, response)
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			if _, err := nc.Request("foo", nil, 2*time.Second); err != nil {
+				t.Fatalf("Expected to receive a timeout error")
+			} else {
+				wg.Done()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRequestClose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+	}()
+	if _, err := nc.Request("foo", []byte("help"), 2*time.Second); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
+		t.Fatalf("Expected connection error: got %v", err)
+	}
+	wg.Wait()
+}
+
+func TestRequestCloseTimeout(t *testing.T) {
+	// Make sure we return a timeout when we close
+	// the connection even if response is queued.
+
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		nc.Publish(m.Reply, response)
+		nc.Close()
+	})
+	if _, err := nc.Request("foo", nil, 1*time.Second); err == nil {
+		t.Fatalf("Expected to receive a timeout error")
 	}
 }
 
