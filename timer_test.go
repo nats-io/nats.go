@@ -8,7 +8,7 @@ import (
 )
 
 func TestTimerPool(t *testing.T) {
-	// This test modifies runtime behaviour and must not be run concurrently
+	// This test modifies runtime behavior and must not be run concurrently
 	// with other tests so we can't call t.Parallel
 
 	// Force a single P to avoid the current goroutine from being scheduled
