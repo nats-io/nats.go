@@ -2056,8 +2056,8 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 		return nil, err
 	}
 
-	t := time.NewTimer(timeout)
-	defer t.Stop()
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
 
 	var ok bool
 	var msg *Msg
@@ -2380,8 +2380,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	var ok bool
 	var msg *Msg
 
-	t := time.NewTimer(timeout)
-	defer t.Stop()
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
 
 	select {
 	case msg, ok = <-mch:
@@ -2652,8 +2652,8 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
-	t := time.NewTimer(timeout)
-	defer t.Stop()
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
 
 	ch := make(chan bool) // FIXME: Inefficient?
 	nc.sendPing(ch)
