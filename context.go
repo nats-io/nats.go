@@ -40,12 +40,13 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 	token := respToken(respInbox)
 	nc.respMap[token] = mch
 	createSub := nc.respMux == nil
+	ginbox := nc.respSub
 	nc.mu.Unlock()
 
 	if createSub {
 		// Make sure scoped subscription is setup only once.
 		var err error
-		nc.respSetup.Do(func() { err = nc.createRespMux() })
+		nc.respSetup.Do(func() { err = nc.createRespMux(ginbox) })
 		if err != nil {
 			return nil, err
 		}

@@ -1998,11 +1998,8 @@ func (nc *Conn) respHandler(m *Msg) {
 // additional terminal token. The subscription will be on
 // a wildcard. Caller is responsible for ensuring this is
 // only called once.
-func (nc *Conn) createRespMux() error {
-	nc.mu.Lock()
-	ginbox := nc.respSub
-	nc.mu.Unlock()
-	s, err := nc.Subscribe(ginbox, nc.respHandler)
+func (nc *Conn) createRespMux(respSub string) error {
+	s, err := nc.Subscribe(respSub, nc.respHandler)
 	if err != nil {
 		return err
 	}
@@ -2038,12 +2035,13 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 	token := respToken(respInbox)
 	nc.respMap[token] = mch
 	createSub := nc.respMux == nil
+	ginbox := nc.respSub
 	nc.mu.Unlock()
 
 	if createSub {
 		// Make sure scoped subscription is setup only once.
 		var err error
-		nc.respSetup.Do(func() { err = nc.createRespMux() })
+		nc.respSetup.Do(func() { err = nc.createRespMux(ginbox) })
 		if err != nil {
 			return nil, err
 		}
