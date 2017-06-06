@@ -323,6 +323,9 @@ type Subscription struct {
 	pMsgsLimit  int
 	pBytesLimit int
 	dropped     int
+
+	// SlowConsumer timeout for channel based subscriptions.
+	sct time.Duration
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -1625,10 +1628,24 @@ func (nc *Conn) processMsg(data []byte) {
 	// We have two modes of delivery. One is the channel, used by channel
 	// subscribers and syncSubscribers, the other is a linked list for async.
 	if sub.mch != nil {
-		select {
-		case sub.mch <- m:
-		default:
-			goto slowConsumer
+		if sub.sct > 0 {
+			// Try to send message to the subscription channel otherwise
+			// drop the message in case the consumer is not processing
+			// them fast enough and trigger async error callback reporting
+			// a slow consumer error.
+			select {
+			case sub.mch <- m:
+			case <-time.After(sub.sct):
+				goto slowConsumer
+			}
+		} else {
+			// If no slow consumer timeout is set, then we drop messages
+			// whenever the channel is not ready.
+			select {
+			case sub.mch <- m:
+			default:
+				goto slowConsumer
+			}
 		}
 	} else {
 		// Push onto the async pList
@@ -2556,6 +2573,14 @@ func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
 	}
 	s.pMsgsLimit, s.pBytesLimit = msgLimit, bytesLimit
 	return nil
+}
+
+// SetSlowConsumerTimeout sets the deadline to wait before dropping mesages
+// when mode of delivery for subscription is a channel.
+func (s *Subscription) SetSlowConsumerTimeout(timeout time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sct = timeout
 }
 
 // Delivered returns the number of delivered messages for this subscription.
