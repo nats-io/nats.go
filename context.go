@@ -65,6 +65,9 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 			return nil, ErrConnectionClosed
 		}
 	case <-ctx.Done():
+		nc.mu.Lock()
+		delete(nc.respMap, token)
+		nc.mu.Unlock()
 		return nil, ctx.Err()
 	}
 
