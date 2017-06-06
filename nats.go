@@ -1996,17 +1996,19 @@ func (nc *Conn) respHandler(m *Msg) {
 // Create the response subscription we will use for all
 // new style responses. This will be on an _INBOX with an
 // additional terminal token. The subscription will be on
-// a wildcard. Caller is responsible for synchronization.
+// a wildcard. Caller is responsible for ensuring this is
+// only called once.
 func (nc *Conn) createRespMux() error {
-	// _INBOX wildcard
-	ginbox := fmt.Sprintf("%s.*", NewInbox())
+	nc.mu.Lock()
+	ginbox := nc.respSub
+	nc.mu.Unlock()
 	s, err := nc.Subscribe(ginbox, nc.respHandler)
 	if err != nil {
 		return err
 	}
-	nc.respSub = ginbox
+	nc.mu.Lock()
 	nc.respMux = s
-	nc.respMap = make(map[string]chan *Msg)
+	nc.mu.Unlock()
 	return nil
 }
 
@@ -2017,31 +2019,35 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 		return nil, ErrInvalidConnection
 	}
 
-	// snapshot
 	nc.mu.Lock()
-	useOldRequestStyle := nc.Opts.UseOldRequestStyle
-	nc.mu.Unlock()
-
 	// If user wants the old style.
-	if useOldRequestStyle {
+	if nc.Opts.UseOldRequestStyle {
+		nc.mu.Unlock()
 		return nc.oldRequest(subj, data, timeout)
 	}
 
-	// Make sure scoped subscription is setup only once on first call to
-	// Request().
-	var err error
-	nc.respSetup.Do(func() { err = nc.createRespMux() })
-	if err != nil {
-		return nil, err
+	// Do setup for the new style.
+	if nc.respMap == nil {
+		// _INBOX wildcard
+		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+		nc.respMap = make(map[string]chan *Msg)
 	}
-
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
-	nc.mu.Lock()
 	respInbox := nc.newRespInbox()
 	token := respToken(respInbox)
 	nc.respMap[token] = mch
+	createSub := nc.respMux == nil
 	nc.mu.Unlock()
+
+	if createSub {
+		// Make sure scoped subscription is setup only once.
+		var err error
+		nc.respSetup.Do(func() { err = nc.createRespMux() })
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if err := nc.PublishRequest(subj, respInbox, data); err != nil {
 		return nil, err
