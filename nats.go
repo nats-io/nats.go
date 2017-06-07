@@ -279,9 +279,10 @@ type Conn struct {
 	pout    int
 
 	// New style response handler
-	respSub string               // The wildcard subject
-	respMux *Subscription        // A single response subscription
-	respMap map[string]chan *Msg // Request map for the response msg channels
+	respSub   string               // The wildcard subject
+	respMux   *Subscription        // A single response subscription
+	respMap   map[string]chan *Msg // Request map for the response msg channels
+	respSetup sync.Once            // Ensures response subscription occurs once
 }
 
 // A Subscription represents interest in a given subject.
@@ -1995,25 +1996,15 @@ func (nc *Conn) respHandler(m *Msg) {
 // Create the response subscription we will use for all
 // new style responses. This will be on an _INBOX with an
 // additional terminal token. The subscription will be on
-// a wildcard.
-func (nc *Conn) createRespMux() error {
-	// _INBOX wildcard
-	ginbox := fmt.Sprintf("%s.*", NewInbox())
-	s, err := nc.Subscribe(ginbox, nc.respHandler)
+// a wildcard. Caller is responsible for ensuring this is
+// only called once.
+func (nc *Conn) createRespMux(respSub string) error {
+	s, err := nc.Subscribe(respSub, nc.respHandler)
 	if err != nil {
 		return err
 	}
-	// We could be racing here. So will we double check
-	// respMux here and discard the new one if set.
 	nc.mu.Lock()
-	if nc.respMux == nil {
-		nc.respSub = ginbox
-		nc.respMux = s
-		nc.respMap = make(map[string]chan *Msg)
-	} else {
-		// Discard duplicate, don't set others.
-		defer s.Unsubscribe()
-	}
+	nc.respMux = s
 	nc.mu.Unlock()
 	return nil
 }
@@ -2025,34 +2016,38 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 		return nil, ErrInvalidConnection
 	}
 
-	// snapshot
-	var doSetup, useOldRequestStyle bool
 	nc.mu.Lock()
-	useOldRequestStyle = nc.Opts.UseOldRequestStyle
-	doSetup = (nc.respMux == nil)
-	nc.mu.Unlock()
-
 	// If user wants the old style.
-	if useOldRequestStyle {
+	if nc.Opts.UseOldRequestStyle {
+		nc.mu.Unlock()
 		return nc.oldRequest(subj, data, timeout)
 	}
 
-	// Make sure scoped subscription is setup at least once on first
-	// call to Request(). Will handle duplicates in createRespMux.
-	if doSetup {
-		if err := nc.createRespMux(); err != nil {
-			return nil, err
-		}
+	// Do setup for the new style.
+	if nc.respMap == nil {
+		// _INBOX wildcard
+		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+		nc.respMap = make(map[string]chan *Msg)
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
-	nc.mu.Lock()
 	respInbox := nc.newRespInbox()
-	nc.respMap[respToken(respInbox)] = mch
+	token := respToken(respInbox)
+	nc.respMap[token] = mch
+	createSub := nc.respMux == nil
+	ginbox := nc.respSub
 	nc.mu.Unlock()
 
-	err := nc.PublishRequest(subj, respInbox, data)
-	if err != nil {
+	if createSub {
+		// Make sure scoped subscription is setup only once.
+		var err error
+		nc.respSetup.Do(func() { err = nc.createRespMux(ginbox) })
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := nc.PublishRequest(subj, respInbox, data); err != nil {
 		return nil, err
 	}
 
@@ -2068,6 +2063,9 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 			return nil, ErrConnectionClosed
 		}
 	case <-t.C:
+		nc.mu.Lock()
+		delete(nc.respMap, token)
+		nc.mu.Unlock()
 		return nil, ErrTimeout
 	}
 
