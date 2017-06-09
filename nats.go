@@ -48,6 +48,9 @@ const STALE_CONNECTION = "stale connection"
 // PERMISSIONS_ERR is for when nats server subject authorization has failed.
 const PERMISSIONS_ERR = "permissions violation"
 
+// AUTHORIZATION_ERR is for when nats server user authorization has failed.
+const AUTHORIZATION_ERR = "authorization violation"
+
 // Errors
 var (
 	ErrConnectionClosed     = errors.New("nats: connection closed")
@@ -1685,6 +1688,17 @@ func (nc *Conn) processPermissionsViolation(err string) {
 	nc.mu.Unlock()
 }
 
+// processAuthorizationViolation is called when the server signals a user
+// authorization violation.
+func (nc *Conn) processAuthorizationViolation(err string) {
+	nc.mu.Lock()
+	nc.err = ErrAuthorization
+	if nc.Opts.AsyncErrorCB != nil {
+		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, ErrAuthorization) }
+	}
+	nc.mu.Unlock()
+}
+
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
 func (nc *Conn) flusher(wg *sync.WaitGroup) {
@@ -1831,6 +1845,8 @@ func (nc *Conn) processErr(e string) {
 		nc.processOpErr(ErrStaleConnection)
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
 		nc.processPermissionsViolation(e)
+	} else if strings.HasPrefix(e, AUTHORIZATION_ERR) {
+		nc.processAuthorizationViolation(e)
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + e)
