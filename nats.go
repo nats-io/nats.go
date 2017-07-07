@@ -265,7 +265,7 @@ type Conn struct {
 	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
 	bw      *bufio.Writer
 	pending *bytes.Buffer
-	fch     chan bool
+	fch     chan struct{}
 	info    serverInfo
 	ssid    int64
 	subsMu  sync.RWMutex
@@ -922,7 +922,7 @@ func (nc *Conn) makeTLSConn() {
 func (nc *Conn) waitForExits(wg *sync.WaitGroup) {
 	// Kick old flusher forcefully.
 	select {
-	case nc.fch <- true:
+	case nc.fch <- struct{}{}:
 	default:
 	}
 
@@ -992,7 +992,7 @@ func (nc *Conn) setup() {
 	nc.subs = make(map[int64]*Subscription)
 	nc.pongs = make([]chan bool, 0, 8)
 
-	nc.fch = make(chan bool, flushChanSize)
+	nc.fch = make(chan struct{}, flushChanSize)
 
 	// Setup scratch outbound buffer for PUB
 	pub := nc.scratch[:len(_PUB_P_)]
@@ -1860,7 +1860,7 @@ func (nc *Conn) processErr(e string) {
 func (nc *Conn) kickFlusher() {
 	if nc.bw != nil {
 		select {
-		case nc.fch <- true:
+		case nc.fch <- struct{}{}:
 		default:
 		}
 	}
