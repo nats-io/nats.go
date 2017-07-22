@@ -55,7 +55,7 @@ func TestConnClosedCB(t *testing.T) {
 	defer s.Shutdown()
 
 	ch := make(chan bool)
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.Url = nats.DefaultURL
 	o.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
@@ -75,7 +75,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 	defer s.Shutdown()
 
 	ch := make(chan bool)
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
 	o.DisconnectedCB = func(_ *nats.Conn) {
@@ -96,7 +96,7 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	defer s.Shutdown()
 
 	ch := make(chan bool)
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
 	o.DisconnectedCB = func(nc *nats.Conn) {
@@ -484,7 +484,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 
 	close(case1)
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Servers = []string{natsURL}
 	opts.Timeout = 20 * time.Millisecond
 	opts.Verbose = true
@@ -557,7 +557,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
 	if err != nil {
@@ -583,7 +583,7 @@ func TestConnectVerbose(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.Verbose = true
 
 	nc, err := o.Connect()
@@ -844,7 +844,7 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = false
 	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
@@ -911,7 +911,7 @@ func TestMaxPendingOut(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.PingInterval = 20 * time.Millisecond
 	opts.MaxPingsOut = 2
 	opts.AllowReconnect = false
@@ -985,7 +985,7 @@ func TestErrInReadLoop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = false
 	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
 	opts.Servers = []string{natsURL}
@@ -1075,7 +1075,7 @@ func TestErrStaleConnection(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = true
 	opts.DisconnectedCB = func(_ *nats.Conn) {
 		// Interested only in the first disconnect cb
@@ -1166,7 +1166,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = true
 	opts.DisconnectedCB = func(_ *nats.Conn) { dch <- true }
 	opts.ReconnectedCB = func(_ *nats.Conn) { atomic.AddInt64(&reconnected, 1) }
@@ -1429,7 +1429,7 @@ func TestNewServers(t *testing.T) {
 	defer nc2.Close()
 	nc2.SetDiscoveredServersHandler(cb)
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Url = nats.DefaultURL
 	opts.DiscoveredServersCB = cb
 	nc3, err := opts.Connect()

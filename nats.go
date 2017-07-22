@@ -79,19 +79,27 @@ var (
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 
-var DefaultOptions = Options{
-	AllowReconnect:   true,
-	MaxReconnect:     DefaultMaxReconnect,
-	ReconnectWait:    DefaultReconnectWait,
-	Timeout:          DefaultTimeout,
-	PingInterval:     DefaultPingInterval,
-	MaxPingsOut:      DefaultMaxPingOut,
-	SubChanLen:       DefaultMaxChanLen,
-	ReconnectBufSize: DefaultReconnectBufSize,
-	Dialer: &net.Dialer{
-		Timeout: DefaultTimeout,
-	},
+func GetDefaultOptions() Options {
+	opts := Options{
+		AllowReconnect:   true,
+		MaxReconnect:     DefaultMaxReconnect,
+		ReconnectWait:    DefaultReconnectWait,
+		Timeout:          DefaultTimeout,
+		PingInterval:     DefaultPingInterval,
+		MaxPingsOut:      DefaultMaxPingOut,
+		SubChanLen:       DefaultMaxChanLen,
+		ReconnectBufSize: DefaultReconnectBufSize,
+		Dialer: &net.Dialer{
+			Timeout: DefaultTimeout,
+		},
+	}
+	return opts
 }
+
+// DEPRECATED: Use GetDefaultOptions() instead.
+// DefaultOptions is not safe for use by multiple clients.
+// For details see #308.
+var DefaultOptions = GetDefaultOptions()
 
 // Status represents the state of the connection.
 type Status int
@@ -399,7 +407,7 @@ type MsgHandler func(msg *Msg)
 // Comma separated arrays are also supported, e.g. urlA, urlB.
 // Options start with the defaults but can be overridden.
 func Connect(url string, options ...Option) (*Conn, error) {
-	opts := DefaultOptions
+	opts := GetDefaultOptions()
 	opts.Servers = processUrlString(url)
 	for _, opt := range options {
 		if err := opt(&opts); err != nil {

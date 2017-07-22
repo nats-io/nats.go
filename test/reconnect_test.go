@@ -15,7 +15,7 @@ func startReconnectServer(t *testing.T) *server.Server {
 }
 
 func TestReconnectTotalTime(t *testing.T) {
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	totalReconnectTime := time.Duration(opts.MaxReconnect) * opts.ReconnectWait
 	if totalReconnectTime < (2 * time.Minute) {
 		t.Fatalf("Total reconnect time should be at least 2 mins: Currently %v\n",
@@ -28,7 +28,7 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 	defer ts.Shutdown()
 
 	ch := make(chan bool)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = false
 	opts.ClosedCB = func(_ *nats.Conn) {
@@ -52,7 +52,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	defer ts.Shutdown()
 	ch := make(chan bool)
 	dch := make(chan bool)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 2
@@ -414,7 +414,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 
 	disconnectedch := make(chan bool)
 	reconnectch := make(chan bool)
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
@@ -483,7 +483,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 
 	reconnectch := make(chan bool)
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://localhost:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
@@ -544,7 +544,7 @@ func TestReconnectVerbose(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.Verbose = true
 	rch := make(chan bool)
 	o.ReconnectedCB = func(_ *nats.Conn) {
@@ -580,7 +580,7 @@ func TestReconnectBufSize(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	o := nats.DefaultOptions
+	o := nats.GetDefaultOptions()
 	o.ReconnectBufSize = 32 // 32 bytes
 
 	dch := make(chan bool)
