@@ -26,7 +26,7 @@ var testServers = []string{
 var servers = strings.Join(testServers, ",")
 
 func TestServersOption(t *testing.T) {
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.NoRandomize = true
 
 	_, err := opts.Connect()
@@ -298,7 +298,7 @@ func TestProperReconnectDelay(t *testing.T) {
 	defer s1.Shutdown()
 
 	var srvs string
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	if runtime.GOOS == "windows" {
 		srvs = strings.Join(testServers[:2], ",")
 	} else {
@@ -352,7 +352,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	// Reduce the list of servers for Windows tests
 	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
@@ -421,7 +421,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	s2, _ := RunServerWithConfig("./configs/tlsverify.conf")
 	defer s2.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Servers = myServers
 	opts.NoRandomize = true
 	if runtime.GOOS == "windows" {
@@ -488,7 +488,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
@@ -554,7 +554,7 @@ func TestPingReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Servers = testServers
 	opts.NoRandomize = true
 	opts.ReconnectWait = 200 * time.Millisecond

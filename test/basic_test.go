@@ -109,7 +109,7 @@ func TestBadOptionTimeoutConnect(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 	opts.Timeout = -1
 	opts.Url = "nats://localhost:4222"
 

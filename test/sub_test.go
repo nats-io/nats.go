@@ -505,7 +505,7 @@ func TestAsyncErrHandler(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 
 	nc, err := opts.Connect()
 	if err != nil {
@@ -584,7 +584,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	opts := nats.DefaultOptions
+	opts := nats.GetDefaultOptions()
 
 	nc, err := opts.Connect()
 	if err != nil {
