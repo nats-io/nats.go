@@ -1312,6 +1312,30 @@ func TestUseCustomDialer(t *testing.T) {
 	}
 }
 
+func TestDefaultOptionsDialer(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	opts1 := nats.DefaultOptions
+	opts2 := nats.DefaultOptions
+
+	nc1, err := opts1.Connect()
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc1.Close()
+
+	nc2, err := opts2.Connect()
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc2.Close()
+
+	if nc1.Opts.Dialer == nc2.Opts.Dialer {
+		t.Fatalf("Expected each connection to have its own dialer")
+	}
+}
+
 func TestCustomFlusherTimeout(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
