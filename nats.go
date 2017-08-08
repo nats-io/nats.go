@@ -79,8 +79,9 @@ var (
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 
+// GetDefaultOptions returns default configuration options for the client.
 func GetDefaultOptions() Options {
-	opts := Options{
+	return Options{
 		AllowReconnect:   true,
 		MaxReconnect:     DefaultMaxReconnect,
 		ReconnectWait:    DefaultReconnectWait,
@@ -89,11 +90,7 @@ func GetDefaultOptions() Options {
 		MaxPingsOut:      DefaultMaxPingOut,
 		SubChanLen:       DefaultMaxChanLen,
 		ReconnectBufSize: DefaultReconnectBufSize,
-		Dialer: &net.Dialer{
-			Timeout: DefaultTimeout,
-		},
 	}
-	return opts
 }
 
 // DEPRECATED: Use GetDefaultOptions() instead.
