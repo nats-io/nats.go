@@ -28,7 +28,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.3.0"
+	Version                 = "1.3.1"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -275,7 +275,6 @@ type Conn struct {
 	ssid    int64
 	subsMu  sync.RWMutex
 	subs    map[int64]*Subscription
-	mch     chan *Msg
 	ach     chan asyncCB
 	pongs   []chan struct{}
 	scratch [scratchSize]byte
@@ -376,7 +375,7 @@ type serverInfo struct {
 const (
 	// clientProtoZero is the original client protocol from 2009.
 	// http://nats.io/documentation/internals/nats-protocol/
-	clientProtoZero = iota
+	/* clientProtoZero */ _ = iota
 	// clientProtoInfo signals a client can receive more then the original INFO block.
 	// This can be used to update clients on other cluster members, etc.
 	clientProtoInfo
@@ -719,8 +718,6 @@ const (
 const (
 	_OK_OP_   = "+OK"
 	_ERR_OP_  = "-ERR"
-	_MSG_OP_  = "MSG"
-	_PING_OP_ = "PING"
 	_PONG_OP_ = "PONG"
 	_INFO_OP_ = "INFO"
 )
@@ -729,7 +726,6 @@ const (
 	conProto   = "CONNECT %s" + _CRLF_
 	pingProto  = "PING" + _CRLF_
 	pongProto  = "PONG" + _CRLF_
-	pubProto   = "PUB %s %s %d" + _CRLF_
 	subProto   = "SUB %s %s %d" + _CRLF_
 	unsubProto = "UNSUB %d %s" + _CRLF_
 	okProto    = _OK_OP_ + _CRLF_
