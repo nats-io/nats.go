@@ -4,11 +4,9 @@
 rm -rf ./cov
 mkdir cov
 go test -v -covermode=atomic -coverprofile=./cov/nats.out
-go test -v -covermode=atomic -coverprofile=./cov/builtin.out ./encoders/builtin
-go test -v -covermode=atomic -coverprofile=./cov/protobuf.out ./encoders/protobuf
 go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/go-nats ./test
-go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/go-nats/encoders/builtin ./test -run EncBuiltin
-go test -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/go-nats/encoders/protobuf ./test -run EncProto
+go test -v -covermode=atomic -coverprofile=./cov/builtin.out -coverpkg=github.com/nats-io/go-nats/encoders/builtin ./test -run EncBuiltin
+go test -v -covermode=atomic -coverprofile=./cov/protobuf.out -coverpkg=github.com/nats-io/go-nats/encoders/protobuf ./test -run EncProto
 gocovmerge ./cov/*.out > acc.out
 rm -rf ./cov
 
