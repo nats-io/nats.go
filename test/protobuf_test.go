@@ -11,8 +11,6 @@ import (
 	pb "github.com/nats-io/go-nats/encoders/protobuf/testdata"
 )
 
-// const TEST_PORT = 8068
-
 func NewProtoEncodedConn(tl TestLogger) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), protobuf.PROTOBUF_ENCODER)
 	if err != nil {
