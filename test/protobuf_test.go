@@ -1,4 +1,4 @@
-package protobuf_test
+package test
 
 import (
 	"reflect"
@@ -6,24 +6,21 @@ import (
 	"time"
 
 	"github.com/nats-io/go-nats"
-	"github.com/nats-io/go-nats/test"
 
 	"github.com/nats-io/go-nats/encoders/protobuf"
 	pb "github.com/nats-io/go-nats/encoders/protobuf/testdata"
 )
 
-const TEST_PORT = 8068
-
-func NewProtoEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), protobuf.PROTOBUF_ENCODER)
+func NewProtoEncodedConn(tl TestLogger) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), protobuf.PROTOBUF_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	return ec
 }
 
-func TestProtoMarshalStruct(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncProtoMarshalStruct(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewProtoEncodedConn(t)
@@ -44,13 +41,13 @@ func TestProtoMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("protobuf_test", me)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
-func TestProtoNilRequest(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncProtoNilRequest(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewProtoEncodedConn(t)
@@ -97,7 +94,7 @@ func BenchmarkPublishProtobufStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewProtoEncodedConn(b)
@@ -122,7 +119,7 @@ func BenchmarkPublishProtobufStruct(b *testing.B) {
 
 	for n := 0; n < b.N; n++ {
 		ec.Publish("protobuf_test", me)
-		if e := test.Wait(ch); e != nil {
+		if e := Wait(ch); e != nil {
 			b.Fatal("Did not receive the message")
 		}
 	}

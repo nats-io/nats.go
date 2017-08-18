@@ -1,6 +1,6 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2017 Apcera Inc. All rights reserved.
 
-package builtin_test
+package test
 
 import (
 	"bytes"
@@ -9,24 +9,23 @@ import (
 
 	"github.com/nats-io/go-nats"
 	"github.com/nats-io/go-nats/encoders/builtin"
-	"github.com/nats-io/go-nats/test"
 )
 
 const TEST_PORT = 8168
 
-func NewEConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewConnection(t, TEST_PORT), nats.DEFAULT_ENCODER)
+func NewDefaultEConn(t *testing.T) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewConnection(t, TEST_PORT), nats.DEFAULT_ENCODER)
 	if err != nil {
 		t.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	return ec
 }
 
-func TestConstructorErrs(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinConstructorErrs(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	c := test.NewConnection(t, TEST_PORT)
+	c := NewConnection(t, TEST_PORT)
 	_, err := nats.NewEncodedConn(nil, "default")
 	if err == nil {
 		t.Fatal("Expected err for nil connection")
@@ -43,11 +42,11 @@ func TestConstructorErrs(t *testing.T) {
 
 }
 
-func TestMarshalString(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalString(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -60,7 +59,7 @@ func TestMarshalString(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_string", testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -68,11 +67,11 @@ func TestMarshalString(t *testing.T) {
 	}
 }
 
-func TestMarshalBytes(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalBytes(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -85,7 +84,7 @@ func TestMarshalBytes(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_bytes", testBytes)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -93,11 +92,11 @@ func TestMarshalBytes(t *testing.T) {
 	}
 }
 
-func TestMarshalInt(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalInt(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -110,7 +109,7 @@ func TestMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_int", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -118,11 +117,11 @@ func TestMarshalInt(t *testing.T) {
 	}
 }
 
-func TestMarshalInt32(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalInt32(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -135,7 +134,7 @@ func TestMarshalInt32(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_int", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -143,11 +142,11 @@ func TestMarshalInt32(t *testing.T) {
 	}
 }
 
-func TestMarshalInt64(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalInt64(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -160,7 +159,7 @@ func TestMarshalInt64(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_int", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -168,11 +167,11 @@ func TestMarshalInt64(t *testing.T) {
 	}
 }
 
-func TestMarshalFloat32(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalFloat32(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -185,7 +184,7 @@ func TestMarshalFloat32(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_float", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -193,11 +192,11 @@ func TestMarshalFloat32(t *testing.T) {
 	}
 }
 
-func TestMarshalFloat64(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalFloat64(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 
@@ -210,7 +209,7 @@ func TestMarshalFloat64(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("enc_float", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -218,11 +217,11 @@ func TestMarshalFloat64(t *testing.T) {
 	}
 }
 
-func TestMarshalBool(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinMarshalBool(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 	ch := make(chan bool)
 	expected := make(chan bool, 1)
@@ -237,7 +236,7 @@ func TestMarshalBool(t *testing.T) {
 
 	expected <- false
 	ec.Publish("enc_bool", false)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -246,7 +245,7 @@ func TestMarshalBool(t *testing.T) {
 
 	expected <- true
 	ec.Publish("enc_bool", true)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -254,11 +253,11 @@ func TestMarshalBool(t *testing.T) {
 	}
 }
 
-func TestExtendedSubscribeCB(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinExtendedSubscribeCB(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	ch := make(chan bool)
@@ -276,7 +275,7 @@ func TestExtendedSubscribeCB(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish(subject, testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -284,11 +283,11 @@ func TestExtendedSubscribeCB(t *testing.T) {
 	}
 }
 
-func TestExtendedSubscribeCB2(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinExtendedSubscribeCB2(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	ch := make(chan bool)
@@ -310,7 +309,7 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 		ch <- true
 	})
 	ec.PublishRequest(oSubj, oReply, testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -318,11 +317,11 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 	}
 }
 
-func TestRawMsgSubscribeCB(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinRawMsgSubscribeCB(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	ch := make(chan bool)
@@ -345,7 +344,7 @@ func TestRawMsgSubscribeCB(t *testing.T) {
 		ch <- true
 	})
 	ec.PublishRequest(oSubj, oReply, testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		if ec.LastError() != nil {
 			e = ec.LastError()
 		}
@@ -353,11 +352,11 @@ func TestRawMsgSubscribeCB(t *testing.T) {
 	}
 }
 
-func TestEncRequest(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinRequest(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	expectedResp := "I can help!"
@@ -377,11 +376,11 @@ func TestEncRequest(t *testing.T) {
 	}
 }
 
-func TestEncRequestReceivesMsg(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinRequestReceivesMsg(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	expectedResp := "I can help!"
@@ -401,11 +400,11 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 	}
 }
 
-func TestAsyncMarshalErr(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinAsyncMarshalErr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ec := NewEConn(t)
+	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
 	ch := make(chan bool)
@@ -422,12 +421,12 @@ func TestAsyncMarshalErr(t *testing.T) {
 	}
 
 	ec.Publish(subject, testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatalf("Did not receive the message: %s", e)
 	}
 }
 
-func TestEncodeNil(t *testing.T) {
+func TestEncBuiltinEncodeNil(t *testing.T) {
 	de := &builtin.DefaultEncoder{}
 	_, err := de.Encode("foo", nil)
 	if err != nil {
@@ -435,7 +434,7 @@ func TestEncodeNil(t *testing.T) {
 	}
 }
 
-func TestDecodeDefault(t *testing.T) {
+func TestEncBuiltinDecodeDefault(t *testing.T) {
 	de := &builtin.DefaultEncoder{}
 	b, err := de.Encode("foo", 22)
 	if err != nil {

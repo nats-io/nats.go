@@ -1,6 +1,6 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2017 Apcera Inc. All rights reserved.
 
-package builtin_test
+package test
 
 import (
 	"reflect"
@@ -9,19 +9,18 @@ import (
 
 	"github.com/nats-io/go-nats"
 	"github.com/nats-io/go-nats/encoders/builtin"
-	"github.com/nats-io/go-nats/test"
 )
 
-func NewJsonEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), nats.JSON_ENCODER)
+func NewJsonEncodedConn(tl TestLogger) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), nats.JSON_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
 	return ec
 }
 
-func TestJsonMarshalString(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinJsonMarshalString(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -37,13 +36,13 @@ func TestJsonMarshalString(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("json_string", testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
-func TestJsonMarshalInt(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinJsonMarshalInt(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -59,7 +58,7 @@ func TestJsonMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("json_int", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
@@ -72,8 +71,8 @@ type person struct {
 	Assets   map[string]uint
 }
 
-func TestJsonMarshalStruct(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinJsonMarshalStruct(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -98,7 +97,7 @@ func TestJsonMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("json_struct", me)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
@@ -122,7 +121,7 @@ func BenchmarkPublishJsonStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(b)
@@ -147,14 +146,14 @@ func BenchmarkPublishJsonStruct(b *testing.B) {
 
 	for n := 0; n < b.N; n++ {
 		ec.Publish("json_struct", me)
-		if e := test.Wait(ch); e != nil {
+		if e := Wait(ch); e != nil {
 			b.Fatal("Did not receive the message")
 		}
 	}
 
 }
 
-func TestNotMarshableToJson(t *testing.T) {
+func TestEncBuiltinNotMarshableToJson(t *testing.T) {
 	je := &builtin.JsonEncoder{}
 	ch := make(chan bool)
 	_, err := je.Encode("foo", ch)
@@ -163,8 +162,8 @@ func TestNotMarshableToJson(t *testing.T) {
 	}
 }
 
-func TestFailedEncodedPublish(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+func TestEncBuiltinFailedEncodedPublish(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewJsonEncodedConn(t)
@@ -190,7 +189,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 	}
 }
 
-func TestDecodeConditionals(t *testing.T) {
+func TestEncBuiltinDecodeConditionals(t *testing.T) {
 	je := &builtin.JsonEncoder{}
 
 	b, err := je.Encode("foo", 22)
