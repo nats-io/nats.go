@@ -19,7 +19,7 @@ func NewJsonEncodedConn(tl TestLogger) *nats.EncodedConn {
 	return ec
 }
 
-func TestJsonMarshalString(t *testing.T) {
+func TestEncBuiltinJsonMarshalString(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -41,7 +41,7 @@ func TestJsonMarshalString(t *testing.T) {
 	}
 }
 
-func TestJsonMarshalInt(t *testing.T) {
+func TestEncBuiltinJsonMarshalInt(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -71,7 +71,7 @@ type person struct {
 	Assets   map[string]uint
 }
 
-func TestJsonMarshalStruct(t *testing.T) {
+func TestEncBuiltinJsonMarshalStruct(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -153,7 +153,7 @@ func BenchmarkPublishJsonStruct(b *testing.B) {
 
 }
 
-func TestNotMarshableToJson(t *testing.T) {
+func TestEncBuiltinNotMarshableToJson(t *testing.T) {
 	je := &builtin.JsonEncoder{}
 	ch := make(chan bool)
 	_, err := je.Encode("foo", ch)
@@ -162,7 +162,7 @@ func TestNotMarshableToJson(t *testing.T) {
 	}
 }
 
-func TestFailedEncodedPublish(t *testing.T) {
+func TestEncBuiltinFailedEncodedPublish(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -189,7 +189,7 @@ func TestFailedEncodedPublish(t *testing.T) {
 	}
 }
 
-func TestDecodeConditionals(t *testing.T) {
+func TestEncBuiltinDecodeConditionals(t *testing.T) {
 	je := &builtin.JsonEncoder{}
 
 	b, err := je.Encode("foo", 22)

@@ -21,7 +21,7 @@ func NewProtoEncodedConn(tl TestLogger) *nats.EncodedConn {
 	return ec
 }
 
-func TestProtoMarshalStruct(t *testing.T) {
+func TestEncProtoMarshalStruct(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -48,7 +48,7 @@ func TestProtoMarshalStruct(t *testing.T) {
 	}
 }
 
-func TestProtoNilRequest(t *testing.T) {
+func TestEncProtoNilRequest(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 

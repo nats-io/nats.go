@@ -21,7 +21,7 @@ func NewDefaultEConn(t *testing.T) *nats.EncodedConn {
 	return ec
 }
 
-func TestConstructorErrs(t *testing.T) {
+func TestEncBuiltinConstructorErrs(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -42,7 +42,7 @@ func TestConstructorErrs(t *testing.T) {
 
 }
 
-func TestMarshalString(t *testing.T) {
+func TestEncBuiltinMarshalString(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -67,7 +67,7 @@ func TestMarshalString(t *testing.T) {
 	}
 }
 
-func TestMarshalBytes(t *testing.T) {
+func TestEncBuiltinMarshalBytes(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -92,7 +92,7 @@ func TestMarshalBytes(t *testing.T) {
 	}
 }
 
-func TestMarshalInt(t *testing.T) {
+func TestEncBuiltinMarshalInt(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -117,7 +117,7 @@ func TestMarshalInt(t *testing.T) {
 	}
 }
 
-func TestMarshalInt32(t *testing.T) {
+func TestEncBuiltinMarshalInt32(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -142,7 +142,7 @@ func TestMarshalInt32(t *testing.T) {
 	}
 }
 
-func TestMarshalInt64(t *testing.T) {
+func TestEncBuiltinMarshalInt64(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -167,7 +167,7 @@ func TestMarshalInt64(t *testing.T) {
 	}
 }
 
-func TestMarshalFloat32(t *testing.T) {
+func TestEncBuiltinMarshalFloat32(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -192,7 +192,7 @@ func TestMarshalFloat32(t *testing.T) {
 	}
 }
 
-func TestMarshalFloat64(t *testing.T) {
+func TestEncBuiltinMarshalFloat64(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -217,7 +217,7 @@ func TestMarshalFloat64(t *testing.T) {
 	}
 }
 
-func TestMarshalBool(t *testing.T) {
+func TestEncBuiltinMarshalBool(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -253,7 +253,7 @@ func TestMarshalBool(t *testing.T) {
 	}
 }
 
-func TestExtendedSubscribeCB(t *testing.T) {
+func TestEncBuiltinExtendedSubscribeCB(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -283,7 +283,7 @@ func TestExtendedSubscribeCB(t *testing.T) {
 	}
 }
 
-func TestExtendedSubscribeCB2(t *testing.T) {
+func TestEncBuiltinExtendedSubscribeCB2(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -317,7 +317,7 @@ func TestExtendedSubscribeCB2(t *testing.T) {
 	}
 }
 
-func TestRawMsgSubscribeCB(t *testing.T) {
+func TestEncBuiltinRawMsgSubscribeCB(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -352,7 +352,7 @@ func TestRawMsgSubscribeCB(t *testing.T) {
 	}
 }
 
-func TestEncRequest(t *testing.T) {
+func TestEncBuiltinRequest(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -376,7 +376,7 @@ func TestEncRequest(t *testing.T) {
 	}
 }
 
-func TestEncRequestReceivesMsg(t *testing.T) {
+func TestEncBuiltinRequestReceivesMsg(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -400,7 +400,7 @@ func TestEncRequestReceivesMsg(t *testing.T) {
 	}
 }
 
-func TestAsyncMarshalErr(t *testing.T) {
+func TestEncBuiltinAsyncMarshalErr(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -426,7 +426,7 @@ func TestAsyncMarshalErr(t *testing.T) {
 	}
 }
 
-func TestEncodeNil(t *testing.T) {
+func TestEncBuiltinEncodeNil(t *testing.T) {
 	de := &builtin.DefaultEncoder{}
 	_, err := de.Encode("foo", nil)
 	if err != nil {
@@ -434,7 +434,7 @@ func TestEncodeNil(t *testing.T) {
 	}
 }
 
-func TestDecodeDefault(t *testing.T) {
+func TestEncBuiltinDecodeDefault(t *testing.T) {
 	de := &builtin.DefaultEncoder{}
 	b, err := de.Encode("foo", 22)
 	if err != nil {

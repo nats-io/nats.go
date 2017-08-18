@@ -17,7 +17,7 @@ func NewGobEncodedConn(tl TestLogger) *nats.EncodedConn {
 	return ec
 }
 
-func TestGobMarshalString(t *testing.T) {
+func TestEncBuiltinGobMarshalString(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -39,7 +39,7 @@ func TestGobMarshalString(t *testing.T) {
 	}
 }
 
-func TestGobMarshalInt(t *testing.T) {
+func TestEncBuiltinGobMarshalInt(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
@@ -61,7 +61,7 @@ func TestGobMarshalInt(t *testing.T) {
 	}
 }
 
-func TestGobMarshalStruct(t *testing.T) {
+func TestEncBuiltinGobMarshalStruct(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
