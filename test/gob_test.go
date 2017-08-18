@@ -1,17 +1,16 @@
-// Copyright 2012-2015 Apcera Inc. All rights reserved.
+// Copyright 2012-2017 Apcera Inc. All rights reserved.
 
-package builtin_test
+package test
 
 import (
 	"reflect"
 	"testing"
 
 	"github.com/nats-io/go-nats"
-	"github.com/nats-io/go-nats/test"
 )
 
-func NewGobEncodedConn(tl test.TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(test.NewConnection(tl, TEST_PORT), nats.GOB_ENCODER)
+func NewGobEncodedConn(tl TestLogger) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), nats.GOB_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -19,7 +18,7 @@ func NewGobEncodedConn(tl test.TestLogger) *nats.EncodedConn {
 }
 
 func TestGobMarshalString(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -35,13 +34,13 @@ func TestGobMarshalString(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("gob_string", testString)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestGobMarshalInt(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -57,13 +56,13 @@ func TestGobMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("gob_int", testN)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
 
 func TestGobMarshalStruct(t *testing.T) {
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(t)
@@ -88,7 +87,7 @@ func TestGobMarshalStruct(t *testing.T) {
 	})
 
 	ec.Publish("gob_struct", me)
-	if e := test.Wait(ch); e != nil {
+	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
 }
@@ -97,7 +96,7 @@ func BenchmarkPublishGobStruct(b *testing.B) {
 	// stop benchmark for set-up
 	b.StopTimer()
 
-	s := test.RunServerOnPort(TEST_PORT)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ec := NewGobEncodedConn(b)
@@ -122,7 +121,7 @@ func BenchmarkPublishGobStruct(b *testing.B) {
 
 	for n := 0; n < b.N; n++ {
 		ec.Publish("gob_struct", me)
-		if e := test.Wait(ch); e != nil {
+		if e := Wait(ch); e != nil {
 			b.Fatal("Did not receive the message")
 		}
 	}
