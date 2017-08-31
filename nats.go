@@ -2248,7 +2248,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		nc.bw.WriteString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+		fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
 	}
 	return sub, nil
 }
@@ -2368,7 +2368,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		fmt.Fprintf(nc.bw, unsubProto, s.sid, maxStr)
 	}
 	return nil
 }
@@ -2732,16 +2732,16 @@ func (nc *Conn) resendSubscriptions() {
 			// reached the max, if so unsubscribe.
 			if adjustedMax == 0 {
 				s.mu.Unlock()
-				nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
+				fmt.Fprintf(nc.bw, unsubProto, s.sid, _EMPTY_)
 				continue
 			}
 		}
 		s.mu.Unlock()
 
-		nc.bw.WriteString(fmt.Sprintf(subProto, s.Subject, s.Queue, s.sid))
+		fmt.Fprintf(nc.bw, subProto, s.Subject, s.Queue, s.sid)
 		if adjustedMax > 0 {
 			maxStr := strconv.Itoa(int(adjustedMax))
-			nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+			fmt.Fprintf(nc.bw, unsubProto, s.sid, maxStr)
 		}
 	}
 }
