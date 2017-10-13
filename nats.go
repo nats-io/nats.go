@@ -2670,7 +2670,10 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	t := globalTimerPool.Get(timeout)
 	defer globalTimerPool.Put(t)
 
-	ch := make(chan struct{})
+	// Create a buffered channel to prevent chan send to block
+	// in processPong() if this code here times out just when
+	// PONG was received.
+	ch := make(chan struct{}, 1)
 	nc.sendPing(ch)
 	nc.mu.Unlock()
 
