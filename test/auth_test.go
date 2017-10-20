@@ -185,11 +185,9 @@ func TestPermViolation(t *testing.T) {
 	s := RunServerWithOptions(opts)
 	defer s.Shutdown()
 
-	ch := make(chan bool)
+	errCh := make(chan error, 2)
 	errCB := func(_ *nats.Conn, _ *nats.Subscription, err error) {
-		if strings.Contains(err.Error(), nats.PERMISSIONS_ERR) {
-			ch <- true
-		}
+		errCh <- err
 	}
 	nc, err := nats.Connect(
 		fmt.Sprintf("nats://ivan:pwd@localhost:%d", opts.Port),
@@ -198,22 +196,28 @@ func TestPermViolation(t *testing.T) {
 		t.Fatalf("Error on connect: %v", err)
 	}
 	defer nc.Close()
-	for i := 0; i < 2; i++ {
-		switch i {
-		case 0:
-			// Cause a publish error
-			nc.Publish("bar", []byte("fail"))
-		case 1:
-			// Cause a subscribe error
-			nc.Subscribe("foo", func(_ *nats.Msg) {})
+
+	// Cause a publish error
+	nc.Publish("bar", []byte("fail"))
+	// Cause a subscribe error
+	nc.Subscribe("foo", func(_ *nats.Msg) {})
+
+	expectedErrorTypes := []string{"publish", "subscription"}
+	for _, expectedErr := range expectedErrorTypes {
+		select {
+		case e := <-errCh:
+			if !strings.Contains(e.Error(), nats.PERMISSIONS_ERR) {
+				t.Fatalf("Did not receive error about permissions")
+			}
+			if !strings.Contains(e.Error(), expectedErr) {
+				t.Fatalf("Did not receive error about %q, got %v", expectedErr, e.Error())
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Did not get the permission error")
 		}
-		// We should get the async error cb
-		if err := Wait(ch); err != nil {
-			t.Fatal("Did not get our callback")
-		}
-		// Make sure connection has not been closed
-		if nc.IsClosed() {
-			t.Fatal("Connection should be not be closed")
-		}
+	}
+	// Make sure connection has not been closed
+	if nc.IsClosed() {
+		t.Fatal("Connection should be not be closed")
 	}
 }
