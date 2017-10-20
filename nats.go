@@ -787,7 +787,7 @@ const tlsScheme = "tls"
 
 // Create the server pool using the options given.
 // We will place a Url option first, followed by any
-// Server Options. We will randomize the server pool unlesss
+// Server Options. We will randomize the server pool unless
 // the NoRandomize flag is set.
 func (nc *Conn) setupServerPool() error {
 	nc.srvPool = make([]*srv, 0, srvPoolSize)
