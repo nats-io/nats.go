@@ -450,7 +450,7 @@ func RootCAs(file ...string) Option {
 			if err != nil || rootPEM == nil {
 				return fmt.Errorf("nats: error loading or parsing rootCA file: %v", err)
 			}
-			ok := pool.AppendCertsFromPEM([]byte(rootPEM))
+			ok := pool.AppendCertsFromPEM(rootPEM)
 			if !ok {
 				return fmt.Errorf("nats: failed to parse root certificate from %q", f)
 			}
