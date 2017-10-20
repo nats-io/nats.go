@@ -1682,9 +1682,11 @@ slowConsumer:
 // permissions violation on either publish or subscribe.
 func (nc *Conn) processPermissionsViolation(err string) {
 	nc.mu.Lock()
-	nc.err = errors.New("nats: " + err)
+	// create error here so we can pass it as a closure to the async cb dispatcher.
+	e := errors.New("nats: " + err)
+	nc.err = e
 	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, nc.err) }
+		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, e) }
 	}
 	nc.mu.Unlock()
 }
