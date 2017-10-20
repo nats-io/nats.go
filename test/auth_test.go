@@ -212,6 +212,8 @@ func TestPermViolation(t *testing.T) {
 			if !strings.Contains(e.Error(), expectedErr) {
 				t.Fatalf("Did not receive error about %q, got %v", expectedErr, e.Error())
 			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Did not get the permission error")
 		}
 	}
 	// Make sure connection has not been closed
