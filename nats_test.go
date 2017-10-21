@@ -103,6 +103,50 @@ func TestReconnectServerStats(t *testing.T) {
 	}
 }
 
+func TestReconnectPendingPongs(t *testing.T) {
+	ts := RunServerOnPort(TEST_PORT)
+
+	opts := reconnectOpts
+	opts.MaxPingsOut = 2
+	opts.MaxReconnect = -1
+
+	nc, _ := opts.Connect()
+	defer nc.Close()
+	nc.Flush()
+
+	// Force shutdown to server, which will cause flush calls
+	// to timeout while reconnecting.
+	ts.Shutdown()
+
+	var pendingPongs int
+	for i := 0; i < 10000; i++ {
+		nc.FlushTimeout(1 * time.Millisecond)
+
+		nc.mu.Lock()
+		pendingPongs = len(nc.pongs)
+		if pendingPongs > opts.MaxPingsOut {
+			nc.mu.Unlock()
+			t.Fatalf("Unexpected number of max pings out, got: %d", pendingPongs)
+		}
+		nc.mu.Unlock()
+	}
+
+	// Check number of pending pongs on reconnect
+	ts = RunServerOnPort(TEST_PORT)
+	defer ts.Shutdown()
+
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("Error on Flush: %v", err)
+	}
+	nc.mu.Lock()
+	pendingPongs = len(nc.pongs)
+	if pendingPongs > opts.MaxPingsOut {
+		nc.mu.Unlock()
+		t.Fatalf("Unexpected number of max pings out, got: %d", pendingPongs)
+	}
+	nc.mu.Unlock()
+}
+
 func TestParseStateReconnectFunctionality(t *testing.T) {
 	ts := RunServerOnPort(TEST_PORT)
 	ch := make(chan bool)

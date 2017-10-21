@@ -2616,7 +2616,10 @@ func (nc *Conn) removeFlushEntry(ch chan struct{}) bool {
 	}
 	for i, c := range nc.pongs {
 		if c == ch {
-			nc.pongs[i] = nil
+			// Swap entry to be removed with the one at the beginning,
+			// then resize the list to discard it.
+			nc.pongs[i], nc.pongs[0] = nc.pongs[0], nil
+			nc.pongs = nc.pongs[1:]
 			return true
 		}
 	}
