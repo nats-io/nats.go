@@ -1266,6 +1266,15 @@ func TestNoRaceOnLastError(t *testing.T) {
 	}
 }
 
+type customDialer struct {
+	ch chan bool
+}
+
+func (cd *customDialer) Dial(network, address string) (net.Conn, error) {
+	cd.ch <- true
+	return nil, fmt.Errorf("on purpose")
+}
+
 func TestUseCustomDialer(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -1309,6 +1318,51 @@ func TestUseCustomDialer(t *testing.T) {
 	defer nc3.Close()
 	if nc3.Opts.Dialer.Timeout != nats.DefaultTimeout {
 		t.Fatalf("Expected DialTimeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
+	}
+
+	// Create custom dialer that return error on Dial().
+	cdialer := &customDialer{ch: make(chan bool, 1)}
+
+	// When both Dialer and CustomDialer are set, CustomDialer
+	// should take precedence. That means that the connection
+	// should fail for these two set of options.
+	options := []*nats.Options{
+		&nats.Options{Dialer: dialer, CustomDialer: cdialer},
+		&nats.Options{CustomDialer: cdialer},
+	}
+	for _, o := range options {
+		o.Servers = []string{nats.DefaultURL}
+		nc, err := o.Connect()
+		// As of now, Connect() would not return the actual dialer error,
+		// instead it returns "no server available for connections".
+		// So use go channel to ensure that custom dialer's Dial() method
+		// was invoked.
+		if err == nil {
+			if nc != nil {
+				nc.Close()
+			}
+			t.Fatal("Expected error, got none")
+		}
+		if err := Wait(cdialer.ch); err != nil {
+			t.Fatal("Did not get our notification")
+		}
+	}
+	// Same with variadic
+	foptions := [][]nats.Option{
+		[]nats.Option{nats.Dialer(dialer), nats.SetCustomDialer(cdialer)},
+		[]nats.Option{nats.SetCustomDialer(cdialer)},
+	}
+	for _, fos := range foptions {
+		nc, err := nats.Connect(nats.DefaultURL, fos...)
+		if err == nil {
+			if nc != nil {
+				nc.Close()
+			}
+			t.Fatal("Expected error, got none")
+		}
+		if err := Wait(cdialer.ch); err != nil {
+			t.Fatal("Did not get our notification")
+		}
 	}
 }
 

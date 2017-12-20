@@ -123,6 +123,12 @@ type asyncCB func()
 // Option is a function on the options for a connection.
 type Option func(*Options) error
 
+// CustomDialer can be used to specify any dialer, not necessarily
+// a *net.Dialer.
+type CustomDialer interface {
+	Dial(network, address string) (net.Conn, error)
+}
+
 // Options can be used to create a customized connection.
 type Options struct {
 
@@ -225,8 +231,13 @@ type Options struct {
 	// Token sets the token to be used when connecting to a server.
 	Token string
 
-	// Dialer allows a custom Dialer when forming connections.
+	// Dialer allows a custom net.Dialer when forming connections.
+	// DEPRECATED: should use CustomDialer instead.
 	Dialer *net.Dialer
+
+	// CustomDialer allows to specify a custom dialer (not necessarily
+	// a *net.Dialer).
+	CustomDialer CustomDialer
 
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
@@ -586,9 +597,20 @@ func Token(token string) Option {
 
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
+// DEPRECATED: Should use CustomDialer instead.
 func Dialer(dialer *net.Dialer) Option {
 	return func(o *Options) error {
 		o.Dialer = dialer
+		return nil
+	}
+}
+
+// SetCustomDialer is an Option to set a custom dialer which will be
+// used when attempting to establish a connection. If both Dialer
+// and CustomDialer are specified, CustomDialer takes precedence.
+func SetCustomDialer(dialer CustomDialer) Option {
+	return func(o *Options) error {
+		o.CustomDialer = dialer
 		return nil
 	}
 }
@@ -877,7 +899,13 @@ func (nc *Conn) createConn() (err error) {
 		cur.lastAttempt = time.Now()
 	}
 
-	dialer := nc.Opts.Dialer
+	// CustomDialer takes precedence. If not set, use Opts.Dialer which
+	// is set to a default *net.Dialer (in Connect()) if not explicitly
+	// set by the user.
+	dialer := nc.Opts.CustomDialer
+	if dialer == nil {
+		dialer = nc.Opts.Dialer
+	}
 	nc.conn, err = dialer.Dial("tcp", nc.url.Host)
 	if err != nil {
 		return err
