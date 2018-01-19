@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/go-nats/util"
@@ -351,6 +352,12 @@ type Msg struct {
 	Data    []byte
 	Sub     *Subscription
 	next    *Msg
+	barrier *barrierInfo
+}
+
+type barrierInfo struct {
+	refs int64
+	f    func()
 }
 
 // Tracks various stats received and sent on this connection,
@@ -1571,6 +1578,13 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			if s.pHead == nil {
 				s.pTail = nil
 			}
+			if m.barrier != nil {
+				s.mu.Unlock()
+				if atomic.AddInt64(&m.barrier.refs, -1) == 0 {
+					m.barrier.f()
+				}
+				continue
+			}
 			s.pMsgs--
 			s.pBytes -= len(m.Data)
 		}
@@ -1599,6 +1613,19 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			break
 		}
 	}
+	// Check for barrier messages
+	s.mu.Lock()
+	for m := s.pHead; m != nil; m = s.pHead {
+		if m.barrier != nil {
+			s.mu.Unlock()
+			if atomic.AddInt64(&m.barrier.refs, -1) == 0 {
+				m.barrier.f()
+			}
+			s.mu.Lock()
+		}
+		s.pHead = m.next
+	}
+	s.mu.Unlock()
 }
 
 // processMsg is called by parse and will place the msg on the
@@ -3005,4 +3032,49 @@ func (nc *Conn) TLSRequired() bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.info.TLSRequired
+}
+
+// Barrier schedules the given function `f` to all registered asynchronous
+// subscriptions.
+// Only the last subscription to see this barrier will invoke the function.
+// If no subscription is registered at the time of this call, `f()` is invoked
+// right away.
+// ErrConnectionClosed is returned if the connection is closed prior to
+// the call.
+func (nc *Conn) Barrier(f func()) error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+	nc.subsMu.Lock()
+	defer nc.subsMu.Unlock()
+	// Need to figure out how many non chan subscriptions there are
+	numSubs := 0
+	for _, sub := range nc.subs {
+		if sub.typ == AsyncSubscription {
+			numSubs++
+		}
+	}
+	if numSubs == 0 {
+		f()
+		return nil
+	}
+	barrier := &barrierInfo{refs: int64(numSubs), f: f}
+	for _, sub := range nc.subs {
+		sub.mu.Lock()
+		if sub.mch == nil {
+			msg := &Msg{barrier: barrier}
+			// Push onto the async pList
+			if sub.pTail != nil {
+				sub.pTail.next = msg
+			} else {
+				sub.pHead = msg
+				sub.pCond.Signal()
+			}
+			sub.pTail = msg
+		}
+		sub.mu.Unlock()
+	}
+	return nil
 }
