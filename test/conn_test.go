@@ -700,7 +700,9 @@ func TestCallbacksOrder(t *testing.T) {
 		nats.ClosedHandler(cch),
 		nats.ErrorHandler(ech),
 		nats.ReconnectWait(50*time.Millisecond),
-		nats.DontRandomize())
+		nats.DontRandomize(),
+		nats.ReconnectBufSize(10*1024))
+
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
