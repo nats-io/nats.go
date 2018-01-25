@@ -576,6 +576,21 @@ func TestReconnectVerbose(t *testing.T) {
 	}
 }
 
+func TestReconnectBufSizeOption(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect("nats://localhost:4222", nats.ReconnectBufSize(32))
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	if nc.Opts.ReconnectBufSize != 32 {
+		t.Fatalf("ReconnectBufSize should be 32 but it is %d", nc.Opts.ReconnectBufSize)
+	}
+}
+
 func TestReconnectBufSize(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
