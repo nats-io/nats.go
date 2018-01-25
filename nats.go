@@ -535,6 +535,14 @@ func MaxReconnects(max int) Option {
 	}
 }
 
+// ReconnectBufSize sets the buffer size of messages kept while busy reconnecting
+func ReconnectBufSize(size int) Option {
+	return func(o *Options) error {
+		o.ReconnectBufSize = size
+		return nil
+	}
+}
+
 // Timeout is an Option to set the timeout for Dial on a connection.
 func Timeout(t time.Duration) Option {
 	return func(o *Options) error {
@@ -575,7 +583,7 @@ func DiscoveredServersHandler(cb ConnHandler) Option {
 	}
 }
 
-// ErrHandler is an Option to set the async error  handler.
+// ErrorHandler is an Option to set the async error  handler.
 func ErrorHandler(cb ErrHandler) Option {
 	return func(o *Options) error {
 		o.AsyncErrorCB = cb
@@ -622,7 +630,7 @@ func SetCustomDialer(dialer CustomDialer) Option {
 	}
 }
 
-// UseOldRequestyStyle is an Option to force usage of the old Request style.
+// UseOldRequestStyle is an Option to force usage of the old Request style.
 func UseOldRequestStyle() Option {
 	return func(o *Options) error {
 		o.UseOldRequestStyle = true
@@ -672,7 +680,7 @@ func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 	nc.Opts.ClosedCB = cb
 }
 
-// SetErrHandler will set the async error handler.
+// SetErrorHandler will set the async error handler.
 func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 	if nc == nil {
 		return
