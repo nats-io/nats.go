@@ -15,7 +15,6 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1109,7 +1108,7 @@ func (nc *Conn) connect() error {
 		} else {
 			// Cancel out default connection refused, will trigger the
 			// No servers error conditional
-			if matched, _ := regexp.Match(`connection refused`, []byte(err.Error())); matched {
+			if strings.Contains(err.Error(), "connection refused") {
 				returnedErr = nil
 			}
 		}
