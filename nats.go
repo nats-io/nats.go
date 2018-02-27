@@ -1849,29 +1849,54 @@ func (nc *Conn) processInfo(info string) error {
 	if err := json.Unmarshal([]byte(info), &nc.info); err != nil {
 		return err
 	}
+	// Note about pool randomization: when the pool was first created,
+	// it was randomized (if allowed). We keep the order the same (removing
+	// implicit servers that are no longer sent to us). New URLs are sent
+	// to us in no specific order so don't need extra randomization.
+	hasNew := false
+	// This is what we got from the server we are connected to.
 	urls := nc.info.ConnectURLs
-	if len(urls) > 0 {
-		added := false
-		// If randomization is allowed, shuffle the received array, not the
-		// entire pool. We want to preserve the pool's order up to this point
-		// (this would otherwise be problematic for the (re)connect loop).
-		if !nc.Opts.NoRandomize {
-			for i := range urls {
-				j := rand.Intn(i + 1)
-				urls[i], urls[j] = urls[j], urls[i]
-			}
+	// Transform that to a map for easy lookups
+	tmp := make(map[string]struct{}, len(urls))
+	for _, curl := range urls {
+		tmp[curl] = struct{}{}
+	}
+	// Walk the pool and removed the implicit servers that are no longer in the
+	// given array/map
+	sp := nc.srvPool
+	for i := 0; i < len(sp); i++ {
+		srv := sp[i]
+		curl := srv.url.Host
+		// Check if this URL is in the INFO protocol
+		_, inInfo := tmp[curl]
+		// Remove from the temp map so that at the end we are left with only
+		// new (or restarted) servers that need to be added to the pool.
+		delete(tmp, curl)
+		// Keep the implicit one if we are currently connected to it.
+		if !srv.isImplicit || srv.url == nc.url {
+			delete(tmp, curl)
+			continue
 		}
-		for _, curl := range urls {
-			if _, present := nc.urls[curl]; !present {
-				if err := nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true); err != nil {
-					continue
-				}
-				added = true
-			}
+		if !inInfo {
+			// Remove from server pool. Keep current order.
+			copy(sp[i:], sp[i+1:])
+			nc.srvPool = sp[:len(sp)-1]
+			sp = nc.srvPool
+			i--
 		}
-		if added && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
-			nc.ach <- func() { nc.Opts.DiscoveredServersCB(nc) }
+	}
+	// If there are any left in the tmp map, these are new (or restarted) servers
+	// and need to be added to the pool.
+	for curl := range tmp {
+		// Before adding, check if this is a new (as in never seen) URL.
+		// This is used to figure out if we invoke the DiscoveredServersCB
+		if _, present := nc.urls[curl]; !present {
+			hasNew = true
 		}
+		nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true)
+	}
+	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
+		nc.ach <- func() { nc.Opts.DiscoveredServersCB(nc) }
 	}
 	return nil
 }

@@ -40,7 +40,7 @@ func stackFatalf(t *testing.T, f string, args ...interface{}) {
 	lines = append(lines, msg)
 
 	// Generate the Stack of callers: Skip us and verify* frames.
-	for i := 2; true; i++ {
+	for i := 1; true; i++ {
 		_, file, line, ok := runtime.Caller(i)
 		if !ok {
 			break
@@ -935,7 +935,7 @@ func TestAsyncINFO(t *testing.T) {
 		}
 	}
 
-	checkPool := func(inThatOrder bool, urls ...string) {
+	checkPool := func(urls ...string) {
 		// Check both pool and urls map
 		if len(c.srvPool) != len(urls) {
 			stackFatalf(t, "Pool should have %d elements, has %d", len(urls), len(c.srvPool))
@@ -943,35 +943,27 @@ func TestAsyncINFO(t *testing.T) {
 		if len(c.urls) != len(urls) {
 			stackFatalf(t, "Map should have %d elements, has %d", len(urls), len(c.urls))
 		}
-		for i, url := range urls {
-			if inThatOrder {
-				if c.srvPool[i].url.Host != url {
-					stackFatalf(t, "Pool should have %q at index %q, has %q", url, i, c.srvPool[i].url.Host)
-				}
-			} else {
-				if _, present := c.urls[url]; !present {
-					stackFatalf(t, "Pool should have %q", url)
-				}
+		for _, url := range urls {
+			if _, present := c.urls[url]; !present {
+				stackFatalf(t, "Pool should have %q", url)
 			}
 		}
 	}
 
 	// Now test the decoding of "connect_urls"
 
-	// No randomize for now
-	c.Opts.NoRandomize = true
 	// Reset the pool
 	c.setupServerPool()
 	// Reinitialize the parser
 	c.ps = &parseState{}
 
-	info = []byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n")
+	info = []byte("INFO {\"connect_urls\":[\"localhost:4222\", \"localhost:5222\"]}\r\n")
 	err = c.parse(info)
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	// Pool now should contain localhost:4222 (the default URL) and localhost:5222
-	checkPool(true, "localhost:4222", "localhost:5222")
+	checkPool("localhost:4222", "localhost:5222")
 
 	// Make sure that if client receives the same, it is not added again.
 	err = c.parse(info)
@@ -979,84 +971,16 @@ func TestAsyncINFO(t *testing.T) {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	// Pool should still contain localhost:4222 (the default URL) and localhost:5222
-	checkPool(true, "localhost:4222", "localhost:5222")
+	checkPool("localhost:4222", "localhost:5222")
 
 	// Receive a new URL
-	info = []byte("INFO {\"connect_urls\":[\"localhost:6222\"]}\r\n")
+	info = []byte("INFO {\"connect_urls\":[\"localhost:4222\", \"localhost:5222\", \"localhost:6222\"]}\r\n")
 	err = c.parse(info)
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	// Pool now should contain localhost:4222 (the default URL) localhost:5222 and localhost:6222
-	checkPool(true, "localhost:4222", "localhost:5222", "localhost:6222")
-
-	// Receive more than 1 URL at once
-	info = []byte("INFO {\"connect_urls\":[\"localhost:7222\", \"localhost:8222\"]}\r\n")
-	err = c.parse(info)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// Pool now should contain localhost:4222 (the default URL) localhost:5222, localhost:6222
-	// localhost:7222 and localhost:8222
-	checkPool(true, "localhost:4222", "localhost:5222", "localhost:6222", "localhost:7222", "localhost:8222")
-
-	// Test with pool randomization now. Note that with randominzation,
-	// the initial pool is randomize, then each array of urls that the
-	// client gets from the INFO protocol is randomized, but added to
-	// the end of the pool.
-	c.Opts.NoRandomize = false
-	c.setupServerPool()
-
-	info = []byte("INFO {\"connect_urls\":[\"localhost:5222\"]}\r\n")
-	err = c.parse(info)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// Pool now should contain localhost:4222 (the default URL) and localhost:5222
-	checkPool(true, "localhost:4222", "localhost:5222")
-
-	// Make sure that if client receives the same, it is not added again.
-	err = c.parse(info)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// Pool should still contain localhost:4222 (the default URL) and localhost:5222
-	checkPool(true, "localhost:4222", "localhost:5222")
-
-	// Receive a new URL
-	info = []byte("INFO {\"connect_urls\":[\"localhost:6222\"]}\r\n")
-	err = c.parse(info)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// Pool now should contain localhost:4222 (the default URL) localhost:5222 and localhost:6222
-	checkPool(true, "localhost:4222", "localhost:5222", "localhost:6222")
-
-	// Receive more than 1 URL at once. Add more than 2 to increase the chance of
-	// the array being shuffled.
-	info = []byte("INFO {\"connect_urls\":[\"localhost:7222\", \"localhost:8222\", " +
-		"\"localhost:9222\", \"localhost:10222\", \"localhost:11222\"]}\r\n")
-	err = c.parse(info)
-	if err != nil || c.ps.state != OP_START {
-		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-	}
-	// Pool now should contain localhost:4222 (the default URL) localhost:5222, localhost:6222
-	// localhost:7222, localhost:8222, localhost:9222, localhost:10222 and localhost:11222
-	checkPool(false, "localhost:4222", "localhost:5222", "localhost:6222", "localhost:7222", "localhost:8222",
-		"localhost:9222", "localhost:10222", "localhost:11222")
-
-	// Finally, check that (part of) the pool should be randomized.
-	allUrls := []string{"localhost:4222", "localhost:5222", "localhost:6222", "localhost:7222", "localhost:8222",
-		"localhost:9222", "localhost:10222", "localhost:11222"}
-	same := 0
-	for i, url := range c.srvPool {
-		if url.url.Host == allUrls[i] {
-			same++
-		}
-	}
-	if same == len(allUrls) {
-		t.Fatal("Pool does not seem to be randomized")
-	}
+	checkPool("localhost:4222", "localhost:5222", "localhost:6222")
 
 	// Check that pool may be randomized on setup, but new URLs are always
 	// added at end of pool.
