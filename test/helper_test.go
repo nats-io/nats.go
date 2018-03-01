@@ -5,6 +5,8 @@ package test
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/nats-io/gnatsd/server"
@@ -35,6 +37,23 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	case <-time.After(timeout):
 	}
 	return errors.New("timeout")
+}
+
+func stackFatalf(t tLogger, f string, args ...interface{}) {
+	lines := make([]string, 0, 32)
+	msg := fmt.Sprintf(f, args...)
+	lines = append(lines, msg)
+
+	// Generate the Stack of callers: Skip us and verify* frames.
+	for i := 1; true; i++ {
+		_, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		msg := fmt.Sprintf("%d - %s:%d", i, file, line)
+		lines = append(lines, msg)
+	}
+	t.Fatalf("%s", strings.Join(lines, "\n"))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
