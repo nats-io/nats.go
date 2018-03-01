@@ -1474,10 +1474,12 @@ func (nc *Conn) processOpErr(err error) {
 			nc.conn = nil
 		}
 
-		// Create a new pending buffer to underpin the bufio Writer while
-		// we are reconnecting.
-		nc.pending = &bytes.Buffer{}
-		nc.bw = bufio.NewWriterSize(nc.pending, nc.Opts.ReconnectBufSize)
+		// Reset pending buffers before reconnecting.
+		if nc.pending == nil {
+			nc.pending = new(bytes.Buffer)
+		}
+		nc.pending.Reset()
+		nc.bw.Reset(nc.pending)
 
 		go nc.doReconnect()
 		nc.mu.Unlock()
