@@ -652,7 +652,7 @@ func (d *checkPoolUpdatedDialer) Dial(network, address string) (net.Conn, error)
 }
 
 func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
-	if err := serverVersionAtLeast(1, 0, 6); err != nil {
+	if err := serverVersionAtLeast(1, 0, 7); err != nil {
 		t.Skipf(err.Error())
 	}
 	s1Opts := test.DefaultTestOptions
