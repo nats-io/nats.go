@@ -1874,9 +1874,9 @@ func (nc *Conn) processInfo(info string) error {
 		// Remove from the temp map so that at the end we are left with only
 		// new (or restarted) servers that need to be added to the pool.
 		delete(tmp, curl)
-		// Keep the implicit one if we are currently connected to it.
+		// Keep servers that were set through Options, but also the one that
+		// we are currently connected to (even if it is a discovered server).
 		if !srv.isImplicit || srv.url == nc.url {
-			delete(tmp, curl)
 			continue
 		}
 		if !inInfo {
