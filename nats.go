@@ -3077,12 +3077,11 @@ func (nc *Conn) TLSRequired() bool {
 // the call.
 func (nc *Conn) Barrier(f func()) error {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.isClosed() {
+		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
 	nc.subsMu.Lock()
-	defer nc.subsMu.Unlock()
 	// Need to figure out how many non chan subscriptions there are
 	numSubs := 0
 	for _, sub := range nc.subs {
@@ -3091,6 +3090,8 @@ func (nc *Conn) Barrier(f func()) error {
 		}
 	}
 	if numSubs == 0 {
+		nc.subsMu.Unlock()
+		nc.mu.Unlock()
 		f()
 		return nil
 	}
@@ -3110,5 +3111,7 @@ func (nc *Conn) Barrier(f func()) error {
 		}
 		sub.mu.Unlock()
 	}
+	nc.subsMu.Unlock()
+	nc.mu.Unlock()
 	return nil
 }
