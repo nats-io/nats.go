@@ -1743,4 +1743,18 @@ func TestBarrier(t *testing.T) {
 	if err := nc.Barrier(func() { ch <- true }); err != nats.ErrConnectionClosed {
 		t.Fatalf("Expected error %v, got %v", nats.ErrConnectionClosed, err)
 	}
+
+	// Check that one can call connection methods from Barrier
+	// when there is no async subscriptions
+	nc = NewDefaultConnection(t)
+	defer nc.Close()
+
+	if err := nc.Barrier(func() {
+		ch <- nc.TLSRequired()
+	}); err != nil {
+		t.Fatalf("Error on Barrier: %v", err)
+	}
+	if err := Wait(ch); err != nil {
+		t.Fatal("Barrier was blocked")
+	}
 }
