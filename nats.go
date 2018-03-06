@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -1243,44 +1244,69 @@ func (nc *Conn) sendConnect() error {
 		return err
 	}
 
-	// Now read the response from the server.
-	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
-	line, err := br.ReadString('\n')
+	// We don't want to read more than we need here, otherwise
+	// we would need to transfer the excess read data to the readLoop.
+	// Since in normal situations we just are looking for a PONG\r\n,
+	// reading byte-by-byte here is ok.
+	proto, err := nc.readProto()
 	if err != nil {
 		return err
 	}
 
 	// If opts.Verbose is set, handle +OK
-	if nc.Opts.Verbose && line == okProto {
+	if nc.Opts.Verbose && proto == okProto {
 		// Read the rest now...
-		line, err = br.ReadString('\n')
+		proto, err = nc.readProto()
 		if err != nil {
 			return err
 		}
 	}
 
 	// We expect a PONG
-	if line != pongProto {
+	if proto != pongProto {
 		// But it could be something else, like -ERR
 
 		// Since we no longer use ReadLine(), trim the trailing "\r\n"
-		line = strings.TrimRight(line, "\r\n")
+		proto = strings.TrimRight(proto, "\r\n")
 
 		// If it's a server error...
-		if strings.HasPrefix(line, _ERR_OP_) {
+		if strings.HasPrefix(proto, _ERR_OP_) {
 			// Remove -ERR, trim spaces and quotes, and convert to lower case.
-			line = normalizeErr(line)
-			return errors.New("nats: " + line)
+			proto = normalizeErr(proto)
+			return errors.New("nats: " + proto)
 		}
 
 		// Notify that we got an unexpected protocol.
-		return fmt.Errorf("nats: expected '%s', got '%s'", _PONG_OP_, line)
+		return fmt.Errorf("nats: expected '%s', got '%s'", _PONG_OP_, proto)
 	}
 
 	// This is where we are truly connected.
 	nc.status = CONNECTED
 
 	return nil
+}
+
+// reads a protocol one byte at a time.
+func (nc *Conn) readProto() (string, error) {
+	var (
+		_buf     = [10]byte{}
+		buf      = _buf[:0]
+		b        = [1]byte{}
+		protoEnd = byte('\n')
+	)
+	for {
+		if _, err := nc.conn.Read(b[:1]); err != nil {
+			// Do not report EOF error
+			if err == io.EOF {
+				return string(buf), nil
+			}
+			return "", err
+		}
+		buf = append(buf, b[0])
+		if b[0] == protoEnd {
+			return string(buf), nil
+		}
+	}
 }
 
 // A control protocol line.
