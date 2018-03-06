@@ -1478,12 +1478,16 @@ func TestCustomFlusherTimeout(t *testing.T) {
 
 func TestNewServers(t *testing.T) {
 	s1Opts := test.DefaultTestOptions
+	s1Opts.Host = "127.0.0.1"
+	s1Opts.Port = 4222
 	s1Opts.Cluster.Host = "localhost"
 	s1Opts.Cluster.Port = 6222
 	s1 := test.RunServer(&s1Opts)
 	defer s1.Shutdown()
 
 	s2Opts := test.DefaultTestOptions
+	s2Opts.Host = "127.0.0.1"
+	s2Opts.Port = 4223
 	s2Opts.Port = s1Opts.Port + 1
 	s2Opts.Cluster.Host = "localhost"
 	s2Opts.Cluster.Port = 6223
@@ -1527,6 +1531,8 @@ func TestNewServers(t *testing.T) {
 
 	// Start a new server.
 	s3Opts := test.DefaultTestOptions
+	s1Opts.Host = "127.0.0.1"
+	s1Opts.Port = 4224
 	s3Opts.Port = s2Opts.Port + 1
 	s3Opts.Cluster.Host = "localhost"
 	s3Opts.Cluster.Port = 6224
