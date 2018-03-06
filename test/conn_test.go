@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1742,5 +1743,75 @@ func TestBarrier(t *testing.T) {
 	// an error.
 	if err := nc.Barrier(func() { ch <- true }); err != nats.ErrConnectionClosed {
 		t.Fatalf("Expected error %v, got %v", nats.ErrConnectionClosed, err)
+	}
+}
+
+func TestReceiveInfoRightAfterFirstPong(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Error on listen: %v", err)
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+	addr := tl.Addr().(*net.TCPAddr)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		c, err := tl.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Send the initial INFO
+		c.Write([]byte("INFO {}\r\n"))
+		buf := make([]byte, 0, 100)
+		b := make([]byte, 100)
+		for {
+			n, err := c.Read(b)
+			if err != nil {
+				return
+			}
+			buf = append(buf, b[:n]...)
+			if bytes.Contains(buf, []byte("PING\r\n")) {
+				break
+			}
+		}
+		// Send PONG and following INFO in one go (or at least try).
+		// The processing of PONG in sendConnect() should leave the
+		// rest for the readLoop to process.
+		c.Write([]byte(fmt.Sprintf("PONG\r\nINFO {\"connect_urls\":[\"127.0.0.1:%d\", \"me:1\"]}\r\n", addr.Port)))
+		// Wait for client to disconnect
+		for {
+			if _, err := c.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	var (
+		ds      []string
+		timeout = time.Now().Add(2 * time.Second)
+		ok      = false
+	)
+	for time.Now().Before(timeout) {
+		ds = nc.DiscoveredServers()
+		if len(ds) == 1 && ds[0] == "nats://me:1" {
+			ok = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	nc.Close()
+	wg.Wait()
+	if !ok {
+		t.Fatalf("Unexpected discovered servers: %v", ds)
 	}
 }

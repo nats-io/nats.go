@@ -1243,9 +1243,11 @@ func (nc *Conn) sendConnect() error {
 		return err
 	}
 
-	// Now read the response from the server.
-	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
-	line, err := br.ReadString('\n')
+	// We don't want to read more than we need here, otherwise
+	// we would need to transfer the excess read data to the readLoop.
+	// Since in normal situations we just are looking for a PONG\r\n,
+	// reading byte-by-byte here is ok.
+	line, err := nc.readStringUpTo('\n')
 	if err != nil {
 		return err
 	}
@@ -1253,7 +1255,7 @@ func (nc *Conn) sendConnect() error {
 	// If opts.Verbose is set, handle +OK
 	if nc.Opts.Verbose && line == okProto {
 		// Read the rest now...
-		line, err = br.ReadString('\n')
+		line, err = nc.readStringUpTo('\n')
 		if err != nil {
 			return err
 		}
@@ -1281,6 +1283,24 @@ func (nc *Conn) sendConnect() error {
 	nc.status = CONNECTED
 
 	return nil
+}
+
+// read byte-by-byte from the connection until the given 'c' character is found.
+func (nc *Conn) readStringUpTo(c byte) (string, error) {
+	var (
+		_buf = [10]byte{}
+		buf  = _buf[:0]
+		b    = [1]byte{}
+	)
+	for {
+		if _, err := nc.conn.Read(b[:1]); err != nil {
+			return "", err
+		}
+		buf = append(buf, b[0])
+		if b[0] == c {
+			return string(buf), nil
+		}
+	}
 }
 
 // A control protocol line.
