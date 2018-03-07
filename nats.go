@@ -264,8 +264,8 @@ const (
 	nuidSize = 22
 )
 
-// A NatsPublisher publishes a NATS message.
-type NATSPublisher interface {
+// A Publisher publishes a NATS message.
+type Publisher interface {
 	// Publish publishes the data argument to the given subject. The data
 	// argument is left untouched and needs to be correctly interpreted on
 	// the receiver.
@@ -281,7 +281,7 @@ type NATSPublisher interface {
 	PublishRequest(subj, reply string, data []byte) error
 }
 
-// A Conn implements NATSPublisher and represents a bare connection to a nats-server.
+// A Conn implements Publisher and represents a bare connection to a nats-server.
 // It can send and receive []byte payloads.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
