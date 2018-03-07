@@ -265,7 +265,24 @@ const (
 	nuidSize = 22
 )
 
-// A Conn represents a bare connection to a nats-server.
+// A Publisher publishes a NATS message.
+type Publisher interface {
+	// Publish publishes the data argument to the given subject. The data
+	// argument is left untouched and needs to be correctly interpreted on
+	// the receiver.
+	Publish(string, []byte) error
+
+	// PublishMsg publishes the Msg structure, which includes the
+	// Subject, an optional Reply and an optional Data field.
+	PublishMsg(m *Msg) error
+
+	// PublishRequest will perform a Publish() excpecting a response on the
+	// reply subject. Use Request() for automatically waiting for a response
+	// inline.
+	PublishRequest(subj, reply string, data []byte) error
+}
+
+// A Conn implements Publisher and represents a bare connection to a nats-server.
 // It can send and receive []byte payloads.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
