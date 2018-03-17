@@ -1874,8 +1874,18 @@ func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
 		return nil
 	}
-	if err := json.Unmarshal([]byte(info), &nc.info); err != nil {
+	ncInfo := serverInfo{}
+	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
 		return err
+	}
+	// Copy content into connection's info structure.
+	nc.info = ncInfo
+	// The array could be empty/not present on initial connect,
+	// if advertise is disabled on that server, or servers that
+	// did not include themselves in the async INFO protocol.
+	// If empty, do not remove the implicit servers from the pool.
+	if len(ncInfo.ConnectURLs) == 0 {
+		return nil
 	}
 	// Note about pool randomization: when the pool was first created,
 	// it was randomized (if allowed). We keep the order the same (removing
