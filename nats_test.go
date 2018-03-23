@@ -77,9 +77,8 @@ func TestVersionMatchesTag(t *testing.T) {
 		t.Fatalf("Expect tag to start with `v`, tag is: %s", tag)
 	}
 	// Strip the `v` from the tag for the version comparison.
-	tag = tag[1:]
-	if Version != tag {
-		t.Fatalf("Version (%s) does not match tag (%s)", Version, tag)
+	if Version != tag[1:] {
+		t.Fatalf("Version (%s) does not match tag (%s)", Version, tag[1:])
 	}
 }
 
