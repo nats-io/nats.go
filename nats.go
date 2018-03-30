@@ -2249,18 +2249,18 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 }
 
 // InboxPrefix is the prefix for all inbox subjects.
-const InboxPrefix = "_INBOX."
-const inboxPrefixLen = len(InboxPrefix)
-const respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
+var InboxPrefix = "_INBOX."
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
 func NewInbox() string {
-	var b [inboxPrefixLen + nuidSize]byte
-	pres := b[:inboxPrefixLen]
+	prelen := len(InboxPrefix)
+	size := prelen + nuidSize
+	b := make([]byte, size, size)
+	pres := b[:prelen]
 	copy(pres, InboxPrefix)
-	ns := b[inboxPrefixLen:]
+	ns := b[prelen:]
 	copy(ns, nuid.Next())
 	return string(b[:])
 }
@@ -2268,10 +2268,12 @@ func NewInbox() string {
 // Creates a new literal response subject that will trigger
 // the global subscription handler.
 func (nc *Conn) newRespInbox() string {
-	var b [inboxPrefixLen + (2 * nuidSize) + 1]byte
-	pres := b[:respInboxPrefixLen]
+	prelen := len(InboxPrefix)
+	size := prelen + (2 * nuidSize) + 1
+	b := make([]byte, size, size)
+	pres := b[:prelen+nuidSize+1]
 	copy(pres, nc.respSub)
-	ns := b[respInboxPrefixLen:]
+	ns := b[prelen+nuidSize+1:]
 	copy(ns, nuid.Next())
 	return string(b[:])
 }
@@ -2279,7 +2281,7 @@ func (nc *Conn) newRespInbox() string {
 // respToken will return the last token of a literal response inbox
 // which we use for the message channel lookup.
 func respToken(respInbox string) string {
-	return respInbox[respInboxPrefixLen:]
+	return respInbox[len(InboxPrefix)+nuidSize+1:]
 }
 
 // Subscribe will express interest in the given subject. The subject
