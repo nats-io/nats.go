@@ -546,6 +546,14 @@ func MaxReconnects(max int) Option {
 	}
 }
 
+// PingInterval is an Option to set the period for client ping commands
+func PingInterval(t time.Duration) Option {
+	return func(o *Options) error {
+		o.PingInterval = t
+		return nil
+	}
+}
+
 // ReconnectBufSize sets the buffer size of messages kept while busy reconnecting
 func ReconnectBufSize(size int) Option {
 	return func(o *Options) error {
