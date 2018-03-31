@@ -757,7 +757,11 @@ func TestOptions(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Name("myName"), nats.MaxReconnects(2), nats.ReconnectWait(50*time.Millisecond))
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.Name("myName"),
+		nats.MaxReconnects(2),
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.PingInterval(20*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
