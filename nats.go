@@ -1657,7 +1657,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 
 		// Deliver the message.
 		if m != nil && (max == 0 || delivered <= max) {
-			mcb(m)
+			go mcb(m)
 		}
 		// If we have hit the max for delivered msgs, remove sub.
 		if max > 0 && delivered >= max {
