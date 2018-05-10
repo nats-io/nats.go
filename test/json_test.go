@@ -52,6 +52,26 @@ func TestEncBuiltinJsonMarshalString(t *testing.T) {
 	}
 }
 
+func TestEncBuiltinJsonMarshalEmptyString(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+	ch := make(chan bool)
+
+	ec.Subscribe("json_empty_string", func(s string) {
+		if s != "" {
+			t.Fatalf("Received test of '%v', wanted empty string\n", s)
+		}
+		ch <- true
+	})
+	ec.Publish("json_empty_string", "")
+	if e := Wait(ch); e != nil {
+		t.Fatal("Did not receive the message")
+	}
+}
+
 func TestEncBuiltinJsonMarshalInt(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
@@ -69,6 +89,96 @@ func TestEncBuiltinJsonMarshalInt(t *testing.T) {
 		ch <- true
 	})
 	ec.Publish("json_int", testN)
+	if e := Wait(ch); e != nil {
+		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestEncBuiltinJsonMarshalBool(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+	ch := make(chan bool)
+
+	ec.Subscribe("json_bool", func(b bool) {
+		if !b {
+			t.Fatalf("Received test of '%v', wanted 'true'\n", b)
+		}
+		ch <- true
+	})
+	ec.Publish("json_bool", true)
+	if e := Wait(ch); e != nil {
+		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestEncBuiltinJsonMarshalNull(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+
+	type TestType struct{}
+	ch := make(chan bool)
+
+	var testValue *TestType
+
+	ec.Subscribe("json_null", func(i interface{}) {
+		if i != nil {
+			t.Fatalf("Received test of '%v', wanted 'nil'\n", i)
+		}
+		ch <- true
+	})
+	ec.Publish("json_null", testValue)
+	if e := Wait(ch); e != nil {
+		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestEncBuiltinJsonMarshalArray(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+
+	var a = []string{"a", "b", "c"}
+
+	ec.Subscribe("json_array", func(v []string) {
+		if !reflect.DeepEqual(v, a) {
+			t.Fatalf("Received test of '%v', wanted '%v'\n", v, a)
+		}
+		ch <- true
+	})
+	ec.Publish("json_array", a)
+	if e := Wait(ch); e != nil {
+		t.Fatal("Did not receive the message")
+	}
+}
+
+func TestEncBuiltinJsonMarshalEmptyArray(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewJsonEncodedConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool)
+
+	var a []string
+
+	ec.Subscribe("json_empty_array", func(v []string) {
+		if !reflect.DeepEqual(v, a) {
+			t.Fatalf("Received test of '%v', wanted '%v'\n", v, a)
+		}
+		ch <- true
+	})
+	ec.Publish("json_empty_array", a)
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive the message")
 	}
