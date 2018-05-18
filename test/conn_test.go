@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	_ "unsafe" // linkname
 
 	"github.com/nats-io/gnatsd/server"
 	"github.com/nats-io/gnatsd/test"
@@ -1960,4 +1961,43 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	}
 	nc.Close()
 	wg.Wait()
+}
+
+//go:linkname processErr github.com/nats-io/go-nats.(*Conn).processErr
+func processErr(*nats.Conn, string)
+
+func TestConnAsyncCBDeadlock(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	ch := make(chan bool)
+	o := nats.GetDefaultOptions()
+	o.Url = nats.DefaultURL
+	o.ClosedCB = func(_ *nats.Conn) {
+		ch <- true
+	}
+	o.AsyncErrorCB = func(nc *nats.Conn, sub *nats.Subscription, err error) {
+		// do something with nc that requires locking behind the scenes
+		_ = nc.LastError()
+	}
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+
+	wg := &sync.WaitGroup{}
+	for i := 0; i < 10000; i++ {
+		wg.Add(1)
+		go func() {
+			// overwhelm asyncCB with errors
+			processErr(nc, nats.AUTHORIZATION_ERR)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	nc.Close()
+	if e := Wait(ch); e != nil {
+		t.Fatal("Deadlock")
+	}
 }
