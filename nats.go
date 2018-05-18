@@ -284,7 +284,9 @@ type Conn struct {
 	// atomic.* functions crash on 32bit machines if operand is not aligned
 	// at 64bit. See https://github.com/golang/go/issues/599
 	Statistics
-	mu      sync.Mutex
+	mu sync.Mutex
+	// Opts holds the configuration of the Conn.
+	// Modifying the configuration of a running Conn is a race.
 	Opts    Options
 	wg      *sync.WaitGroup
 	url     *url.URL
@@ -1391,11 +1393,13 @@ func (nc *Conn) doReconnect() {
 
 	// Clear any errors.
 	nc.err = nil
-
+	disconnectedCB := nc.Opts.DisconnectedCB
+	nc.mu.Unlock()
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.Opts.DisconnectedCB != nil {
-		nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
+	if disconnectedCB != nil {
+		nc.ach <- func() { disconnectedCB(nc) }
 	}
+	nc.mu.Lock()
 
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
@@ -1476,13 +1480,14 @@ func (nc *Conn) doReconnect() {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
-		// Queue up the reconnect callback.
-		if nc.Opts.ReconnectedCB != nil {
-			nc.ach <- func() { nc.Opts.ReconnectedCB(nc) }
-		}
-
+		reconnectedCB := nc.Opts.ReconnectedCB
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
+
+		// Queue up the reconnect callback.
+		if reconnectedCB != nil {
+			nc.ach <- func() { reconnectedCB(nc) }
+		}
 
 		// Make sure to flush everything
 		nc.Flush()
@@ -1780,10 +1785,11 @@ slowConsumer:
 		// is already experiencing client-side slow consumer situation.
 		nc.mu.Lock()
 		nc.err = ErrSlowConsumer
-		if nc.Opts.AsyncErrorCB != nil {
-			nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, sub, ErrSlowConsumer) }
-		}
+		asyncErrorCB := nc.Opts.AsyncErrorCB
 		nc.mu.Unlock()
+		if asyncErrorCB != nil {
+			nc.ach <- func() { asyncErrorCB(nc, sub, ErrSlowConsumer) }
+		}
 	}
 }
 
@@ -1794,10 +1800,11 @@ func (nc *Conn) processPermissionsViolation(err string) {
 	// create error here so we can pass it as a closure to the async cb dispatcher.
 	e := errors.New("nats: " + err)
 	nc.err = e
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, e) }
-	}
+	asyncErrorCB := nc.Opts.AsyncErrorCB
 	nc.mu.Unlock()
+	if asyncErrorCB != nil {
+		nc.ach <- func() { asyncErrorCB(nc, nil, e) }
+	}
 }
 
 // processAuthorizationViolation is called when the server signals a user
@@ -1805,10 +1812,11 @@ func (nc *Conn) processPermissionsViolation(err string) {
 func (nc *Conn) processAuthorizationViolation(err string) {
 	nc.mu.Lock()
 	nc.err = ErrAuthorization
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, ErrAuthorization) }
-	}
+	asyncErrorCB := nc.Opts.AsyncErrorCB
 	nc.mu.Unlock()
+	if asyncErrorCB != nil {
+		nc.ach <- func() { asyncErrorCB(nc, nil, ErrAuthorization) }
+	}
 }
 
 // flusher is a separate Go routine that will process flush requests for the write
@@ -2981,18 +2989,24 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.subs = nil
 	nc.subsMu.Unlock()
 
+	nc.status = status
+
+	disconnectedCB := nc.Opts.DisconnectedCB
+	closedCB := nc.Opts.ClosedCB
+	conn := nc.conn
+	asyncFunc := nc.closeAsyncFunc()
+	nc.mu.Unlock()
+
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
-		if nc.Opts.DisconnectedCB != nil && nc.conn != nil {
-			nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
+		if disconnectedCB != nil && conn != nil {
+			nc.ach <- func() { disconnectedCB(nc) }
 		}
-		if nc.Opts.ClosedCB != nil {
-			nc.ach <- func() { nc.Opts.ClosedCB(nc) }
+		if closedCB != nil {
+			nc.ach <- func() { closedCB(nc) }
 		}
-		nc.ach <- nc.closeAsyncFunc()
+		nc.ach <- asyncFunc
 	}
-	nc.status = status
-	nc.mu.Unlock()
 }
 
 // Close will close the connection to the server. This call will release

@@ -27,6 +27,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1128,5 +1129,41 @@ func TestProcessErrAuthorizationError(t *testing.T) {
 		}
 	default:
 		t.Fatal("Expected error on channel")
+	}
+}
+
+func TestConnAsyncCBDeadlock(t *testing.T) {
+	s := RunServerOnPort(DefaultPort)
+	defer s.Shutdown()
+
+	ch := make(chan bool)
+	o := GetDefaultOptions()
+	o.Url = DefaultURL
+	o.ClosedCB = func(_ *Conn) {
+		ch <- true
+	}
+	o.AsyncErrorCB = func(nc *Conn, sub *Subscription, err error) {
+		// do something with nc that requires locking behind the scenes
+		_ = nc.LastError()
+	}
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+
+	wg := &sync.WaitGroup{}
+	for i := 0; i < cap(nc.ach)*10; i++ {
+		wg.Add(1)
+		go func() {
+			// overwhelm asyncCB with errors
+			nc.processErr(AUTHORIZATION_ERR)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	nc.Close()
+	if e := Wait(ch); e != nil {
+		t.Fatal("Deadlock")
 	}
 }
