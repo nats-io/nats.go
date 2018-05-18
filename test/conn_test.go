@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	_ "unsafe" // linkname
 
 	"github.com/nats-io/gnatsd/server"
 	"github.com/nats-io/gnatsd/test"
