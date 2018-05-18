@@ -1393,11 +1393,11 @@ func (nc *Conn) doReconnect() {
 
 	// Clear any errors.
 	nc.err = nil
-
+	disconnectedCB := nc.Opts.DisconnectedCB
 	nc.mu.Unlock()
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.Opts.DisconnectedCB != nil {
-		nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
+	if disconnectedCB != nil {
+		nc.ach <- func() { disconnectedCB(nc) }
 	}
 	nc.mu.Lock()
 
@@ -1480,12 +1480,13 @@ func (nc *Conn) doReconnect() {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
+		reconnectedCB := nc.Opts.ReconnectedCB
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
 
 		// Queue up the reconnect callback.
-		if nc.Opts.ReconnectedCB != nil {
-			nc.ach <- func() { nc.Opts.ReconnectedCB(nc) }
+		if reconnectedCB != nil {
+			nc.ach <- func() { reconnectedCB(nc) }
 		}
 
 		// Make sure to flush everything
@@ -1784,9 +1785,10 @@ slowConsumer:
 		// is already experiencing client-side slow consumer situation.
 		nc.mu.Lock()
 		nc.err = ErrSlowConsumer
+		asyncErrorCB := nc.Opts.AsyncErrorCB
 		nc.mu.Unlock()
-		if nc.Opts.AsyncErrorCB != nil {
-			nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, sub, ErrSlowConsumer) }
+		if asyncErrorCB != nil {
+			nc.ach <- func() { asyncErrorCB(nc, sub, ErrSlowConsumer) }
 		}
 	}
 }
@@ -1798,9 +1800,10 @@ func (nc *Conn) processPermissionsViolation(err string) {
 	// create error here so we can pass it as a closure to the async cb dispatcher.
 	e := errors.New("nats: " + err)
 	nc.err = e
+	asyncErrorCB := nc.Opts.AsyncErrorCB
 	nc.mu.Unlock()
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, e) }
+	if asyncErrorCB != nil {
+		nc.ach <- func() { asyncErrorCB(nc, nil, e) }
 	}
 }
 
@@ -1809,9 +1812,10 @@ func (nc *Conn) processPermissionsViolation(err string) {
 func (nc *Conn) processAuthorizationViolation(err string) {
 	nc.mu.Lock()
 	nc.err = ErrAuthorization
+	asyncErrorCB := nc.Opts.AsyncErrorCB
 	nc.mu.Unlock()
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach <- func() { nc.Opts.AsyncErrorCB(nc, nil, ErrAuthorization) }
+	if asyncErrorCB != nil {
+		nc.ach <- func() { asyncErrorCB(nc, nil, ErrAuthorization) }
 	}
 }
 
@@ -2986,17 +2990,22 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	nc.subsMu.Unlock()
 
 	nc.status = status
+
+	disconnectedCB := nc.Opts.DisconnectedCB
+	closedCB := nc.Opts.ClosedCB
+	conn := nc.conn
+	asyncFunc := nc.closeAsyncFunc()
 	nc.mu.Unlock()
 
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
-		if nc.Opts.DisconnectedCB != nil && nc.conn != nil {
-			nc.ach <- func() { nc.Opts.DisconnectedCB(nc) }
+		if disconnectedCB != nil && conn != nil {
+			nc.ach <- func() { disconnectedCB(nc) }
 		}
-		if nc.Opts.ClosedCB != nil {
-			nc.ach <- func() { nc.Opts.ClosedCB(nc) }
+		if closedCB != nil {
+			nc.ach <- func() { closedCB(nc) }
 		}
-		nc.ach <- nc.closeAsyncFunc()
+		nc.ach <- asyncFunc
 	}
 }
 
