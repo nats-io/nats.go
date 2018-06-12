@@ -761,7 +761,8 @@ func (o Options) Connect() (*Conn, error) {
 	}
 
 	// Create the async callback handler.
-	nc.ach = newAsyncCallbacksHandler()
+	nc.ach = &asyncCallbacksHandler{}
+	nc.ach.cond = sync.NewCond(&nc.ach.mu)
 
 	if err := nc.connect(); err != nil {
 		return nil, err
@@ -1542,13 +1543,6 @@ func (nc *Conn) processOpErr(err error) {
 	nc.err = err
 	nc.mu.Unlock()
 	nc.Close()
-}
-
-// Returns an initialized asyncCallbacksHandler object
-func newAsyncCallbacksHandler() *asyncCallbacksHandler {
-	ac := &asyncCallbacksHandler{}
-	ac.cond = sync.NewCond(&ac.mu)
-	return ac
 }
 
 // dispatch is responsible for calling any async callbacks
