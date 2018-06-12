@@ -1104,41 +1104,35 @@ func TestConnServers(t *testing.T) {
 }
 
 func TestProcessErrAuthorizationError(t *testing.T) {
-	ach := make(chan asyncCB, 1)
 	called := make(chan error, 1)
 	c := &Conn{
-		ach: ach,
+		ach: newAsyncCallbacksHandler(),
 		Opts: Options{
 			AsyncErrorCB: func(nc *Conn, sub *Subscription, err error) {
 				called <- err
 			},
 		},
 	}
+	go c.ach.asyncCBDispatcher()
+	defer c.ach.close()
 	c.processErr("Authorization Violation")
-	select {
-	case cb := <-ach:
-		cb()
-	default:
-		t.Fatal("Expected callback on channel")
-	}
-
 	select {
 	case err := <-called:
 		if err != ErrAuthorization {
 			t.Fatalf("Expected ErrAuthorization, got: %v", err)
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("Expected error on channel")
 	}
 }
 
 func TestConnAsyncCBDeadlock(t *testing.T) {
-	s := RunServerOnPort(DefaultPort)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ch := make(chan bool)
 	o := GetDefaultOptions()
-	o.Url = DefaultURL
+	o.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	o.ClosedCB = func(_ *Conn) {
 		ch <- true
 	}
@@ -1152,7 +1146,7 @@ func TestConnAsyncCBDeadlock(t *testing.T) {
 	}
 
 	wg := &sync.WaitGroup{}
-	for i := 0; i < cap(nc.ach)*10; i++ {
+	for i := 0; i < 300; i++ {
 		wg.Add(1)
 		go func() {
 			// overwhelm asyncCB with errors
