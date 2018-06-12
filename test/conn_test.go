@@ -828,11 +828,17 @@ func TestCallbacksOrder(t *testing.T) {
 	// Close the other connection
 	ncp.Close()
 
-	// Give a chance for the go routine to stop
-	time.Sleep(150 * time.Millisecond)
-	if isAsyncDispatcherRunning() {
-		t.Fatalf("The async callback dispatcher(s) should have stopped")
+	// Check that the go routine is gone. Allow plenty of time
+	// to avoid flappers.
+	timeout := time.Now().Add(5 * time.Second)
+	for time.Now().Before(timeout) {
+		if !isAsyncDispatcherRunning() {
+			// Good, we are done!
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
+	t.Fatalf("The async callback dispatcher(s) should have stopped")
 }
 
 func TestFlushReleaseOnClose(t *testing.T) {

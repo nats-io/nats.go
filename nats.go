@@ -1605,7 +1605,7 @@ func (ac *asyncCallbacksHandler) pushOrClose(f func(), close bool) {
 		ac.head = cb
 	}
 	ac.tail = cb
-	ac.cond.Signal()
+	ac.cond.Broadcast()
 }
 
 // readLoop() will sit on the socket reading and processing the
