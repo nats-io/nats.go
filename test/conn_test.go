@@ -607,28 +607,35 @@ func TestConnectVerbose(t *testing.T) {
 	nc.Close()
 }
 
-func isRunningInAsyncCBDispatcher() error {
-	var stacks []byte
-
-	stacksSize := 10000
-
+func getStacks(all bool) string {
+	var (
+		stacks     []byte
+		stacksSize = 10000
+		n          int
+	)
 	for {
 		stacks = make([]byte, stacksSize)
-		n := runtime.Stack(stacks, false)
+		n = runtime.Stack(stacks, all)
 		if n == stacksSize {
-			stacksSize *= stacksSize
+			stacksSize *= 2
 			continue
 		}
 		break
 	}
+	return string(stacks[:n])
+}
 
-	strStacks := string(stacks)
-
-	if strings.Contains(strStacks, "asyncDispatch") {
+func isRunningInAsyncCBDispatcher() error {
+	strStacks := getStacks(false)
+	if strings.Contains(strStacks, "asyncCBDispatcher") {
 		return nil
 	}
-
 	return fmt.Errorf("callback not executed from dispatcher:\n %s", strStacks)
+}
+
+func isAsyncDispatcherRunning() bool {
+	strStacks := getStacks(true)
+	return strings.Contains(strStacks, "asyncCBDispatcher")
 }
 
 func TestCallbacksOrder(t *testing.T) {
@@ -817,6 +824,21 @@ func TestCallbacksOrder(t *testing.T) {
 	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
 		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
 	}
+
+	// Close the other connection
+	ncp.Close()
+
+	// Check that the go routine is gone. Allow plenty of time
+	// to avoid flappers.
+	timeout := time.Now().Add(5 * time.Second)
+	for time.Now().Before(timeout) {
+		if !isAsyncDispatcherRunning() {
+			// Good, we are done!
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("The async callback dispatcher(s) should have stopped")
 }
 
 func TestFlushReleaseOnClose(t *testing.T) {

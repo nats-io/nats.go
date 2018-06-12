@@ -207,9 +207,9 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 			}
 			if err := c.Enc.Decode(m.Subject, m.Data, oPtr.Interface()); err != nil {
 				if c.Conn.Opts.AsyncErrorCB != nil {
-					c.Conn.ach <- func() {
+					c.Conn.ach.push(func() {
 						c.Conn.Opts.AsyncErrorCB(c.Conn, m.Sub, errors.New("nats: Got an error trying to unmarshal: "+err.Error()))
-					}
+					})
 				}
 				return
 			}

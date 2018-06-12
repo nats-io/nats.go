@@ -130,7 +130,17 @@ type ConnHandler func(*Conn)
 type ErrHandler func(*Conn, *Subscription, error)
 
 // asyncCB is used to preserve order for async callbacks.
-type asyncCB func()
+type asyncCB struct {
+	f    func()
+	next *asyncCB
+}
+
+type asyncCallbacksHandler struct {
+	mu   sync.Mutex
+	cond *sync.Cond
+	head *asyncCB
+	tail *asyncCB
+}
 
 // Option is a function on the options for a connection.
 type Option func(*Options) error
@@ -269,9 +279,6 @@ const (
 	// Default server pool size
 	srvPoolSize = 4
 
-	// Channel size for the async callback handler.
-	asyncCBChanSize = 32
-
 	// NUID size
 	nuidSize = 22
 )
@@ -300,7 +307,7 @@ type Conn struct {
 	ssid    int64
 	subsMu  sync.RWMutex
 	subs    map[int64]*Subscription
-	ach     chan asyncCB
+	ach     *asyncCallbacksHandler
 	pongs   []chan struct{}
 	scratch [scratchSize]byte
 	status  Status
@@ -753,15 +760,16 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
-	// Create the async callback channel.
-	nc.ach = make(chan asyncCB, asyncCBChanSize)
+	// Create the async callback handler.
+	nc.ach = &asyncCallbacksHandler{}
+	nc.ach.cond = sync.NewCond(&nc.ach.mu)
 
 	if err := nc.connect(); err != nil {
 		return nil, err
 	}
 
 	// Spin up the async cb dispatcher on success
-	go nc.asyncDispatch()
+	go nc.ach.asyncCBDispatcher()
 
 	return nc, nil
 }
@@ -1393,13 +1401,10 @@ func (nc *Conn) doReconnect() {
 
 	// Clear any errors.
 	nc.err = nil
-	disconnectedCB := nc.Opts.DisconnectedCB
-	nc.mu.Unlock()
 	// Perform appropriate callback if needed for a disconnect.
-	if disconnectedCB != nil {
-		nc.ach <- func() { disconnectedCB(nc) }
+	if nc.Opts.DisconnectedCB != nil {
+		nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
 	}
-	nc.mu.Lock()
 
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
@@ -1480,14 +1485,12 @@ func (nc *Conn) doReconnect() {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
-		reconnectedCB := nc.Opts.ReconnectedCB
+		// Queue up the reconnect callback.
+		if nc.Opts.ReconnectedCB != nil {
+			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
+		}
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
-
-		// Queue up the reconnect callback.
-		if reconnectedCB != nil {
-			nc.ach <- func() { reconnectedCB(nc) }
-		}
 
 		// Make sure to flush everything
 		nc.Flush()
@@ -1542,32 +1545,64 @@ func (nc *Conn) processOpErr(err error) {
 	nc.Close()
 }
 
-// Marker to close the channel to kick out the Go routine.
-func (nc *Conn) closeAsyncFunc() asyncCB {
-	return func() {
-		nc.mu.Lock()
-		if nc.ach != nil {
-			close(nc.ach)
-			nc.ach = nil
+// dispatch is responsible for calling any async callbacks
+func (ac *asyncCallbacksHandler) asyncCBDispatcher() {
+	for {
+		ac.mu.Lock()
+		// Protect for spurious wakeups. We should get out of the
+		// wait only if there is an element to pop from the list.
+		for ac.head == nil {
+			ac.cond.Wait()
 		}
-		nc.mu.Unlock()
+		cur := ac.head
+		ac.head = cur.next
+		if cur == ac.tail {
+			ac.tail = nil
+		}
+		ac.mu.Unlock()
+
+		// This signals that the dispatcher has been closed and all
+		// previous callbacks have been dispatched.
+		if cur.f == nil {
+			return
+		}
+		// Invoke callback outside of handler's lock
+		cur.f()
 	}
 }
 
-// asyncDispatch is responsible for calling any async callbacks
-func (nc *Conn) asyncDispatch() {
-	// snapshot since they can change from underneath of us.
-	nc.mu.Lock()
-	ach := nc.ach
-	nc.mu.Unlock()
+// Add the given function to the tail of the list and
+// signals the dispatcher.
+func (ac *asyncCallbacksHandler) push(f func()) {
+	ac.pushOrClose(f, false)
+}
 
-	// Loop on the channel and process async callbacks.
-	for {
-		if f, ok := <-ach; !ok {
-			return
-		} else {
-			f()
-		}
+// Signals that we are closing...
+func (ac *asyncCallbacksHandler) close() {
+	ac.pushOrClose(nil, true)
+}
+
+// Add the given function to the tail of the list and
+// signals the dispatcher.
+func (ac *asyncCallbacksHandler) pushOrClose(f func(), close bool) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	// Make sure that library is not calling push with nil function,
+	// since this is used to notify the dispatcher that it should stop.
+	if !close && f == nil {
+		panic("pushing a nil callback")
+	}
+	cb := &asyncCB{f: f}
+	if ac.tail != nil {
+		ac.tail.next = cb
+	} else {
+		ac.head = cb
+	}
+	ac.tail = cb
+	if close {
+		ac.cond.Broadcast()
+	} else {
+		ac.cond.Signal()
 	}
 }
 
@@ -1785,11 +1820,10 @@ slowConsumer:
 		// is already experiencing client-side slow consumer situation.
 		nc.mu.Lock()
 		nc.err = ErrSlowConsumer
-		asyncErrorCB := nc.Opts.AsyncErrorCB
-		nc.mu.Unlock()
-		if asyncErrorCB != nil {
-			nc.ach <- func() { asyncErrorCB(nc, sub, ErrSlowConsumer) }
+		if nc.Opts.AsyncErrorCB != nil {
+			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, sub, ErrSlowConsumer) })
 		}
+		nc.mu.Unlock()
 	}
 }
 
@@ -1800,11 +1834,10 @@ func (nc *Conn) processPermissionsViolation(err string) {
 	// create error here so we can pass it as a closure to the async cb dispatcher.
 	e := errors.New("nats: " + err)
 	nc.err = e
-	asyncErrorCB := nc.Opts.AsyncErrorCB
-	nc.mu.Unlock()
-	if asyncErrorCB != nil {
-		nc.ach <- func() { asyncErrorCB(nc, nil, e) }
+	if nc.Opts.AsyncErrorCB != nil {
+		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, e) })
 	}
+	nc.mu.Unlock()
 }
 
 // processAuthorizationViolation is called when the server signals a user
@@ -1812,11 +1845,10 @@ func (nc *Conn) processPermissionsViolation(err string) {
 func (nc *Conn) processAuthorizationViolation(err string) {
 	nc.mu.Lock()
 	nc.err = ErrAuthorization
-	asyncErrorCB := nc.Opts.AsyncErrorCB
-	nc.mu.Unlock()
-	if asyncErrorCB != nil {
-		nc.ach <- func() { asyncErrorCB(nc, nil, ErrAuthorization) }
+	if nc.Opts.AsyncErrorCB != nil {
+		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, ErrAuthorization) })
 	}
+	nc.mu.Unlock()
 }
 
 // flusher is a separate Go routine that will process flush requests for the write
@@ -1961,7 +1993,7 @@ func (nc *Conn) processInfo(info string) error {
 		nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true)
 	}
 	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
-		nc.ach <- func() { nc.Opts.DiscoveredServersCB(nc) }
+		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
 	}
 	return nil
 }
@@ -2991,22 +3023,17 @@ func (nc *Conn) close(status Status, doCBs bool) {
 
 	nc.status = status
 
-	disconnectedCB := nc.Opts.DisconnectedCB
-	closedCB := nc.Opts.ClosedCB
-	conn := nc.conn
-	asyncFunc := nc.closeAsyncFunc()
-	nc.mu.Unlock()
-
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
-		if disconnectedCB != nil && conn != nil {
-			nc.ach <- func() { disconnectedCB(nc) }
+		if nc.Opts.DisconnectedCB != nil && nc.conn != nil {
+			nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
 		}
-		if closedCB != nil {
-			nc.ach <- func() { closedCB(nc) }
+		if nc.Opts.ClosedCB != nil {
+			nc.ach.push(func() { nc.Opts.ClosedCB(nc) })
 		}
-		nc.ach <- asyncFunc
+		nc.ach.close()
 	}
+	nc.mu.Unlock()
 }
 
 // Close will close the connection to the server. This call will release

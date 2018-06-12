@@ -1103,42 +1103,13 @@ func TestConnServers(t *testing.T) {
 	validateURLs(c.Servers(), "nats://localhost:4333", "nats://localhost:4444")
 }
 
-func TestProcessErrAuthorizationError(t *testing.T) {
-	ach := make(chan asyncCB, 1)
-	called := make(chan error, 1)
-	c := &Conn{
-		ach: ach,
-		Opts: Options{
-			AsyncErrorCB: func(nc *Conn, sub *Subscription, err error) {
-				called <- err
-			},
-		},
-	}
-	c.processErr("Authorization Violation")
-	select {
-	case cb := <-ach:
-		cb()
-	default:
-		t.Fatal("Expected callback on channel")
-	}
-
-	select {
-	case err := <-called:
-		if err != ErrAuthorization {
-			t.Fatalf("Expected ErrAuthorization, got: %v", err)
-		}
-	default:
-		t.Fatal("Expected error on channel")
-	}
-}
-
 func TestConnAsyncCBDeadlock(t *testing.T) {
-	s := RunServerOnPort(DefaultPort)
+	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
 	ch := make(chan bool)
 	o := GetDefaultOptions()
-	o.Url = DefaultURL
+	o.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	o.ClosedCB = func(_ *Conn) {
 		ch <- true
 	}
@@ -1151,9 +1122,10 @@ func TestConnAsyncCBDeadlock(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 
+	total := 300
 	wg := &sync.WaitGroup{}
-	for i := 0; i < cap(nc.ach)*10; i++ {
-		wg.Add(1)
+	wg.Add(total)
+	for i := 0; i < total; i++ {
 		go func() {
 			// overwhelm asyncCB with errors
 			nc.processErr(AUTHORIZATION_ERR)
