@@ -1139,3 +1139,28 @@ func TestConnAsyncCBDeadlock(t *testing.T) {
 		t.Fatal("Deadlock")
 	}
 }
+
+func TestPingTimerLeakedOnClose(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	nc.Close()
+	// There was a bug (issue #338) that if connection
+	// was created and closed quickly, the pinger would
+	// be created from a go-routine and would cause the
+	// connection object to be retained until the ping
+	// timer fired.
+	// Wait a little bit and check if the timer is set.
+	// With the defect it would be.
+	time.Sleep(100 * time.Millisecond)
+	nc.mu.Lock()
+	pingTimerSet := nc.ptmr != nil
+	nc.mu.Unlock()
+	if pingTimerSet {
+		t.Fatal("Pinger timer should not be set")
+	}
+}

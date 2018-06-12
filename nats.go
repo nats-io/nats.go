@@ -295,7 +295,7 @@ type Conn struct {
 	// Opts holds the configuration of the Conn.
 	// Modifying the configuration of a running Conn is a race.
 	Opts    Options
-	wg      *sync.WaitGroup
+	wg      sync.WaitGroup
 	url     *url.URL
 	conn    net.Conn
 	srvPool []*srv
@@ -992,7 +992,7 @@ func (nc *Conn) makeTLSConn() {
 
 // waitForExits will wait for all socket watcher Go routines to
 // be shutdown before proceeding.
-func (nc *Conn) waitForExits(wg *sync.WaitGroup) {
+func (nc *Conn) waitForExits() {
 	// Kick old flusher forcefully.
 	select {
 	case nc.fch <- struct{}{}:
@@ -1000,38 +1000,7 @@ func (nc *Conn) waitForExits(wg *sync.WaitGroup) {
 	}
 
 	// Wait for any previous go routines.
-	if wg != nil {
-		wg.Wait()
-	}
-}
-
-// spinUpGoRoutines will launch the Go routines responsible for
-// reading and writing to the socket. This will be launched via a
-// go routine itself to release any locks that may be held.
-// We also use a WaitGroup to make sure we only start them on a
-// reconnect when the previous ones have exited.
-func (nc *Conn) spinUpGoRoutines() {
-	// Make sure everything has exited.
-	nc.waitForExits(nc.wg)
-
-	// Create a new waitGroup instance for this run.
-	nc.wg = &sync.WaitGroup{}
-	// We will wait on both.
-	nc.wg.Add(2)
-
-	// Spin up the readLoop and the socket flusher.
-	go nc.readLoop(nc.wg)
-	go nc.flusher(nc.wg)
-
-	nc.mu.Lock()
-	if nc.Opts.PingInterval > 0 {
-		if nc.ptmr == nil {
-			nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
-		} else {
-			nc.ptmr.Reset(nc.Opts.PingInterval)
-		}
-	}
-	nc.mu.Unlock()
+	nc.wg.Wait()
 }
 
 // Report the connected server's Url
@@ -1098,7 +1067,19 @@ func (nc *Conn) processConnectInit() error {
 	// Reset the number of PING sent out
 	nc.pout = 0
 
-	go nc.spinUpGoRoutines()
+	// Start or reset Timer
+	if nc.Opts.PingInterval > 0 {
+		if nc.ptmr == nil {
+			nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
+		} else {
+			nc.ptmr.Reset(nc.Opts.PingInterval)
+		}
+	}
+
+	// Start the readLoop and flusher go routines, we will wait on both on a reconnect event.
+	nc.wg.Add(2)
+	go nc.readLoop()
+	go nc.flusher()
 
 	return nil
 }
@@ -1378,15 +1359,20 @@ func (nc *Conn) flushReconnectPendingItems() {
 	}
 }
 
+// Stops the ping timer if set.
+// Connection lock is held on entry.
+func (nc *Conn) stopPingTimer() {
+	if nc.ptmr != nil {
+		nc.ptmr.Stop()
+	}
+}
+
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect() {
 	// We want to make sure we have the other watchers shutdown properly
 	// here before we proceed past this point.
-	nc.mu.Lock()
-	wg := nc.wg
-	nc.mu.Unlock()
-	nc.waitForExits(wg)
+	nc.waitForExits()
 
 	// FIXME(dlc) - We have an issue here if we have
 	// outstanding flush points (pongs) and they were not
@@ -1405,6 +1391,10 @@ func (nc *Conn) doReconnect() {
 	if nc.Opts.DisconnectedCB != nil {
 		nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
 	}
+
+	// This is used to wait on go routines exit if we start them in the loop
+	// but an error occurs after that.
+	waitForGoRoutines := false
 
 	for len(nc.srvPool) > 0 {
 		cur, err := nc.selectNextServer()
@@ -1433,6 +1423,11 @@ func (nc *Conn) doReconnect() {
 		} else {
 			time.Sleep(time.Duration(sleepTime))
 		}
+		// If the readLoop, etc.. go routines were started, wait for them to complete.
+		if waitForGoRoutines {
+			nc.waitForExits()
+			waitForGoRoutines = false
+		}
 		nc.mu.Lock()
 
 		// Check if we have been closed first.
@@ -1459,6 +1454,9 @@ func (nc *Conn) doReconnect() {
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
 			nc.status = RECONNECTING
+			// Reset the buffered writer to the pending buffer
+			// (was set to a buffered writer on nc.conn in createConn)
+			nc.bw.Reset(nc.pending)
 			continue
 		}
 
@@ -1476,6 +1474,14 @@ func (nc *Conn) doReconnect() {
 		nc.err = nc.bw.Flush()
 		if nc.err != nil {
 			nc.status = RECONNECTING
+			// Reset the buffered writer to the pending buffer (bytes.Buffer).
+			nc.bw.Reset(nc.pending)
+			// Stop the ping timer (if set)
+			nc.stopPingTimer()
+			// Since processConnectInit() returned without error, the
+			// go routines were started, so wait for them to return
+			// on the next iteration (after releasing the lock).
+			waitForGoRoutines = true
 			continue
 		}
 
@@ -1518,20 +1524,16 @@ func (nc *Conn) processOpErr(err error) {
 	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
 		// Set our new status
 		nc.status = RECONNECTING
-		if nc.ptmr != nil {
-			nc.ptmr.Stop()
-		}
+		// Stop ping timer if set
+		nc.stopPingTimer()
 		if nc.conn != nil {
 			nc.bw.Flush()
 			nc.conn.Close()
 			nc.conn = nil
 		}
 
-		// Reset pending buffers before reconnecting.
-		if nc.pending == nil {
-			nc.pending = new(bytes.Buffer)
-		}
-		nc.pending.Reset()
+		// Create pending buffer before reconnecting.
+		nc.pending = new(bytes.Buffer)
 		nc.bw.Reset(nc.pending)
 
 		go nc.doReconnect()
@@ -1609,9 +1611,9 @@ func (ac *asyncCallbacksHandler) pushOrClose(f func(), close bool) {
 // readLoop() will sit on the socket reading and processing the
 // protocol from the server. It will dispatch appropriately based
 // on the op type.
-func (nc *Conn) readLoop(wg *sync.WaitGroup) {
+func (nc *Conn) readLoop() {
 	// Release the wait group on exit
-	defer wg.Done()
+	defer nc.wg.Done()
 
 	// Create a parseState if needed.
 	nc.mu.Lock()
@@ -1853,9 +1855,9 @@ func (nc *Conn) processAuthorizationViolation(err string) {
 
 // flusher is a separate Go routine that will process flush requests for the write
 // bufio. This allows coalescing of writes to the underlying socket.
-func (nc *Conn) flusher(wg *sync.WaitGroup) {
+func (nc *Conn) flusher() {
 	// Release the wait group
-	defer wg.Done()
+	defer nc.wg.Done()
 
 	// snapshot the bw and conn since they can change from underneath of us.
 	nc.mu.Lock()
@@ -2986,9 +2988,9 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	// Clear any queued and blocking Requests.
 	nc.clearPendingRequestCalls()
 
-	if nc.ptmr != nil {
-		nc.ptmr.Stop()
-	}
+	// Stop ping timer if set.
+	nc.stopPingTimer()
+	nc.ptmr = nil
 
 	// Go ahead and make sure we have flushed the outbound
 	if nc.conn != nil {
