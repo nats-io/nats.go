@@ -437,7 +437,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Stick around a bit
 				<-case1
 			case 2:
-				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
+				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
 				// Send complete INFO
 				conn.Write([]byte(info))
 				// Read connect and ping commands sent from the client
@@ -453,7 +453,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Stick around a bit
 				<-case2
 			case 3:
-				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
+				info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
 				// Send complete INFO
 				conn.Write([]byte(info))
 				// Read connect and ping commands sent from the client
@@ -532,7 +532,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 
 func TestErrOnMaxPayloadLimit(t *testing.T) {
 	expectedMaxPayload := int64(10)
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.6.6\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":%d}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":%d}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -842,7 +842,7 @@ func TestCallbacksOrder(t *testing.T) {
 }
 
 func TestFlushReleaseOnClose(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -908,7 +908,7 @@ func TestFlushReleaseOnClose(t *testing.T) {
 }
 
 func TestMaxPendingOut(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -974,7 +974,7 @@ func TestMaxPendingOut(t *testing.T) {
 }
 
 func TestErrInReadLoop(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -1051,7 +1051,7 @@ func TestErrInReadLoop(t *testing.T) {
 }
 
 func TestErrStaleConnection(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -1155,7 +1155,7 @@ func TestErrStaleConnection(t *testing.T) {
 }
 
 func TestServerErrorClosesConnection(t *testing.T) {
-	serverInfo := "INFO {\"server_id\":\"foobar\",\"version\":\"0.7.3\",\"go\":\"go1.5.1\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
