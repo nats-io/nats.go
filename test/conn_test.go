@@ -1364,8 +1364,8 @@ func TestUseCustomDialer(t *testing.T) {
 	// should take precedence. That means that the connection
 	// should fail for these two set of options.
 	options := []*nats.Options{
-		&nats.Options{Dialer: dialer, CustomDialer: cdialer},
-		&nats.Options{CustomDialer: cdialer},
+		{Dialer: dialer, CustomDialer: cdialer},
+		{CustomDialer: cdialer},
 	}
 	for _, o := range options {
 		o.Servers = []string{nats.DefaultURL}
@@ -1386,8 +1386,8 @@ func TestUseCustomDialer(t *testing.T) {
 	}
 	// Same with variadic
 	foptions := [][]nats.Option{
-		[]nats.Option{nats.Dialer(dialer), nats.SetCustomDialer(cdialer)},
-		[]nats.Option{nats.SetCustomDialer(cdialer)},
+		{nats.Dialer(dialer), nats.SetCustomDialer(cdialer)},
+		{nats.SetCustomDialer(cdialer)},
 	}
 	for _, fos := range foptions {
 		nc, err := nats.Connect(nats.DefaultURL, fos...)

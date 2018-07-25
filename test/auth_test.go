@@ -186,7 +186,7 @@ func TestPermViolation(t *testing.T) {
 	opts := test.DefaultTestOptions
 	opts.Port = 8232
 	opts.Users = []*server.User{
-		&server.User{
+		{
 			Username: "ivan",
 			Password: "pwd",
 			Permissions: &server.Permissions{
