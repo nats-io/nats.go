@@ -40,7 +40,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.5.0"
+	Version                 = "1.6.0"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -88,6 +88,7 @@ var (
 	ErrInvalidMsg           = errors.New("nats: invalid message or message nil")
 	ErrInvalidArg           = errors.New("nats: invalid argument")
 	ErrInvalidContext       = errors.New("nats: invalid context")
+	ErrNoEchoNotSupported   = errors.New("nats: no echo option not supported by this server")
 	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -166,6 +167,11 @@ type Options struct {
 	// NoRandomize configures whether we will randomize the
 	// server pool.
 	NoRandomize bool
+
+	// NoEcho configures whether the server will echo back messages
+	// that are sent on this connection if we also have matching subscriptions.
+	// Note this is supported on servers >= version 1.2. Proto 1 or greater.
+	NoEcho bool
 
 	// Name is an optional name label which will be sent to the server
 	// on CONNECT to identify the client.
@@ -408,6 +414,7 @@ type serverInfo struct {
 	TLSRequired  bool     `json:"tls_required"`
 	MaxPayload   int64    `json:"max_payload"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
+	Proto        int      `json:"proto,omitempty"`
 }
 
 const (
@@ -430,6 +437,7 @@ type connectInfo struct {
 	Lang     string `json:"lang"`
 	Version  string `json:"version"`
 	Protocol int    `json:"protocol"`
+	Echo     bool   `json:"echo"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -535,6 +543,15 @@ func NoReconnect() Option {
 func DontRandomize() Option {
 	return func(o *Options) error {
 		o.NoRandomize = true
+		return nil
+	}
+}
+
+// NoEcho is an Option to turn off messages echoing back from a server.
+// Note this is supported on servers >= version 1.2. Proto 1 or greater.
+func NoEcho() Option {
+	return func(o *Options) error {
+		o.NoEcho = true
 		return nil
 	}
 }
@@ -1044,7 +1061,7 @@ func (nc *Conn) setup() {
 // Process a connected connection and initialize properly.
 func (nc *Conn) processConnectInit() error {
 
-	// Set out deadline for the whole connect process
+	// Set our deadline for the whole connect process
 	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
 	defer nc.conn.SetDeadline(time.Time{})
 
@@ -1203,18 +1220,25 @@ func (nc *Conn) connectProto() (string, error) {
 			pass, _ = u.Password()
 		}
 	} else {
-		// Take from options (pssibly all empty strings)
+		// Take from options (possibly all empty strings)
 		user = nc.Opts.User
 		pass = nc.Opts.Password
 		token = nc.Opts.Token
 	}
-	cinfo := connectInfo{o.Verbose, o.Pedantic,
-		user, pass, token,
-		o.Secure, o.Name, LangString, Version, clientProtoInfo}
+
+	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, token,
+		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho}
+
 	b, err := json.Marshal(cinfo)
 	if err != nil {
 		return _EMPTY_, ErrJsonParse
 	}
+
+	// Check if NoEcho is set and we have a server that supports it.
+	if o.NoEcho && nc.info.Proto < 1 {
+		return _EMPTY_, ErrNoEchoNotSupported
+	}
+
 	return fmt.Sprintf(conProto, b), nil
 }
 

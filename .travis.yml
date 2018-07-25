@@ -3,7 +3,6 @@ sudo: false
 go:
 - 1.10.x
 - 1.9.x
-- 1.8.x
 install:
 - go get -t ./...
 - go get github.com/nats-io/gnatsd
@@ -17,5 +16,5 @@ before_script:
 - misspell -error -locale US .
 - megacheck -ignore "$(cat staticcheck.ignore)" ./...
 script:
-- go test -i -race ./... 
+- go test -i -race ./...
 - if [[ "$TRAVIS_GO_VERSION" == 1.9.* ]]; then ./scripts/cov.sh TRAVIS; else go test -v -race ./...; fi

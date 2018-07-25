@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1162,5 +1163,62 @@ func TestPingTimerLeakedOnClose(t *testing.T) {
 	nc.mu.Unlock()
 	if pingTimerSet {
 		t.Fatal("Pinger timer should not be set")
+	}
+}
+
+func TestNoEcho(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+
+	nc, err := Connect(url, NoEcho())
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	r := int32(0)
+	_, err = nc.Subscribe("foo", func(m *Msg) {
+		atomic.AddInt32(&r, 1)
+	})
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	err = nc.Publish("foo", []byte("Hello World"))
+	if err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	nc.Flush()
+	nc.Flush()
+
+	if nr := atomic.LoadInt32(&r); nr != 0 {
+		t.Fatalf("Expected no messages echoed back, received %d\n", nr)
+	}
+}
+
+func TestNoEchoOldServer(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.Url = DefaultURL
+	opts.NoEcho = true
+
+	nc := &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Problem setting up Server Pool: %v\n", err)
+	}
+
+	// Old style with no proto, meaning 0. We need Proto:1 for NoEcho support.
+	oldInfo := "{\"server_id\":\"22\",\"version\":\"1.1.0\",\"go\":\"go1.10.2\",\"port\":4222,\"max_payload\":1048576}"
+
+	err := nc.processInfo(oldInfo)
+	if err != nil {
+		t.Fatalf("Error processing old style INFO: %v\n", err)
+	}
+
+	// Make sure connectProto generates an error.
+	_, err = nc.connectProto()
+	if err == nil {
+		t.Fatalf("Expected an error but got none\n")
 	}
 }
