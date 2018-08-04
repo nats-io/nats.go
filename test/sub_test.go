@@ -922,11 +922,11 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 				select {
 				case _, ok := <-ch:
 					chk(ok)
+					if received >= total {
+						return
+					}
 				case <-tm.C:
-					t.Fatalf("Timed out waiting on messages")
-				}
-				if received >= total {
-					return
+					t.Fatalf("Timed out waiting on messages for test %d, received %d", typeSubs, received)
 				}
 			}
 		}()
