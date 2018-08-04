@@ -41,6 +41,9 @@ msg := <- ch
 // Unsubscribe
 sub.Unsubscribe()
 
+// Drain
+sub.Drain()
+
 // Requests
 msg, err := nc.Request("help", []byte("help me"), 10*time.Millisecond)
 

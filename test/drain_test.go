@@ -32,7 +32,7 @@ func TestDrain(t *testing.T) {
 
 	done := make(chan bool)
 	received := int32(0)
-	expected := int32(32768)
+	expected := int32(8192)
 	numSubs := int32(1024)
 
 	checkDone := func() int32 {
@@ -67,7 +67,7 @@ func TestDrain(t *testing.T) {
 	select {
 	case <-done:
 		break
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		r := atomic.LoadInt32(&received)
 		if r != expected {
 			t.Fatalf("Did not receive all messages: %d of %d", r, expected)
