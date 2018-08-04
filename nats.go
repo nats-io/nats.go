@@ -2581,10 +2581,6 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 		pMsgs := sub.pMsgs
 		sub.mu.Unlock()
 
-		if pMsgs > 0 {
-			fmt.Printf("sub[%s] pMsgs=%d\n", sub.Subject, pMsgs)
-		}
-
 		if conn == nil || closed || pMsgs == 0 {
 			nc.mu.Lock()
 			nc.removeSub(sub)
