@@ -904,7 +904,7 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 			}
 
 			received := 0
-			tm := time.NewTimer(5 * time.Second)
+			tm := time.NewTimer(10 * time.Second)
 			defer tm.Stop()
 
 			chk := func(ok bool) {
