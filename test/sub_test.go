@@ -897,16 +897,14 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 			nc.Flush()
 
 			// Send some messages
-			go func() {
-				for i := 0; i < total; i++ {
-					if err := ncp.Publish("foo", []byte("Hello")); err != nil {
-						t.Fatalf("Unexpected error on publish: %v", err)
-					}
+			for i := 0; i < total; i++ {
+				if err := ncp.Publish("foo", []byte("Hello")); err != nil {
+					t.Fatalf("Unexpected error on publish: %v", err)
 				}
-			}()
+			}
 
 			received := 0
-			tm := time.NewTimer(5 * time.Second)
+			tm := time.NewTimer(10 * time.Second)
 			defer tm.Stop()
 
 			chk := func(ok bool) {
@@ -922,11 +920,11 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 				select {
 				case _, ok := <-ch:
 					chk(ok)
+					if received >= total {
+						return
+					}
 				case <-tm.C:
-					t.Fatalf("Timed out waiting on messages")
-				}
-				if received >= total {
-					return
+					t.Fatalf("Timed out waiting on messages for test %d, received %d", typeSubs, received)
 				}
 			}
 		}()

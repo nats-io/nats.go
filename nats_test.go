@@ -613,7 +613,6 @@ func TestParserShouldFail(t *testing.T) {
 }
 
 func TestParserSplitMsg(t *testing.T) {
-
 	nc := &Conn{}
 	nc.ps = &parseState{}
 

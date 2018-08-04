@@ -2465,6 +2465,13 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 	return sub, nil
 }
 
+// NumSubscriptions returns active number of subscriptions.
+func (nc *Conn) NumSubscriptions() int {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return len(nc.subs)
+}
+
 // Lock for nc should be held here upon entry
 func (nc *Conn) removeSub(s *Subscription) {
 	nc.subsMu.Lock()
@@ -2519,6 +2526,21 @@ func (s *Subscription) IsValid() bool {
 	return s.conn != nil
 }
 
+// Drain will remove interest but continue callbacks until all messages
+// have been processed.
+func (s *Subscription) Drain() error {
+	if s == nil {
+		return ErrBadSubscription
+	}
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
+		return ErrBadSubscription
+	}
+	return conn.unsubscribe(s, 0, true)
+}
+
 // Unsubscribe will remove interest in the given subject.
 func (s *Subscription) Unsubscribe() error {
 	if s == nil {
@@ -2530,13 +2552,50 @@ func (s *Subscription) Unsubscribe() error {
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, 0)
+	return conn.unsubscribe(s, 0, false)
+}
+
+// checkDrained will watch for a subscription to be fully drained
+// and then remove it.
+func (nc *Conn) checkDrained(sub *Subscription) {
+	if nc == nil || sub == nil {
+		return
+	}
+
+	// This allows us to know that whatever we have in the client pending
+	// is correct and the server will not send additional information.
+	nc.Flush()
+
+	// Once we are here we just wait for Pending to reach 0 or
+	// any other state to exit this go routine.
+	for {
+		// check connection is still valid.
+		if nc.IsClosed() {
+			return
+		}
+
+		// Check subscription state
+		sub.mu.Lock()
+		conn := sub.conn
+		closed := sub.closed
+		pMsgs := sub.pMsgs
+		sub.mu.Unlock()
+
+		if conn == nil || closed || pMsgs == 0 {
+			nc.mu.Lock()
+			nc.removeSub(sub)
+			nc.mu.Unlock()
+			return
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
 // processed by the server when max messages have been received.
 // This can be useful when sending a request to an unknown number
-// of subscribers. Request() uses this functionality.
+// of subscribers.
 func (s *Subscription) AutoUnsubscribe(max int) error {
 	if s == nil {
 		return ErrBadSubscription
@@ -2547,12 +2606,12 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 	if conn == nil {
 		return ErrBadSubscription
 	}
-	return conn.unsubscribe(s, max)
+	return conn.unsubscribe(s, max, false)
 }
 
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
+func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	nc.mu.Lock()
 	// ok here, but defer is expensive
 	defer nc.mu.Unlock()
@@ -2574,9 +2633,14 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	if max > 0 {
 		s.max = uint64(max)
 		maxStr = strconv.Itoa(max)
-	} else {
+	} else if !drainMode {
 		nc.removeSub(s)
 	}
+
+	if drainMode {
+		go nc.checkDrained(sub)
+	}
+
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
