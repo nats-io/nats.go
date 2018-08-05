@@ -22,8 +22,8 @@ import (
 	nats "github.com/nats-io/go-nats"
 )
 
-// Drain can be very useful for graceful shutdown of subscribers, especially
-// queue subscribers.
+// Drain can be very useful for graceful shutdown of subscribers.
+// Especially queue subscribers.
 func TestDrain(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -32,8 +32,49 @@ func TestDrain(t *testing.T) {
 
 	done := make(chan bool)
 	received := int32(0)
-	expected := int32(8192)
-	numSubs := int32(1024)
+	expected := int32(100)
+
+	cb := func(_ *nats.Msg) {
+		// Allow this to back up.
+		time.Sleep(time.Millisecond)
+		rcvd := atomic.AddInt32(&received, 1)
+		if rcvd >= expected {
+			done <- true
+		}
+	}
+
+	sub, err := nc.Subscribe("foo", cb)
+	if err != nil {
+		t.Fatalf("Error creating subscription; %v\n", err)
+	}
+
+	for i := int32(0); i < expected; i++ {
+		nc.Publish("foo", []byte("Don't forget about me"))
+	}
+
+	// Drain it and make sure we receive all messages.
+	sub.Drain()
+	select {
+	case <-done:
+		break
+	case <-time.After(2 * time.Second):
+		r := atomic.LoadInt32(&received)
+		if r != expected {
+			t.Fatalf("Did not receive all messages: %d of %d", r, expected)
+		}
+	}
+}
+
+func TestDrainQueueSub(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	done := make(chan bool)
+	received := int32(0)
+	expected := int32(4096)
+	numSubs := int32(32)
 
 	checkDone := func() int32 {
 		rcvd := atomic.AddInt32(&received, 1)
