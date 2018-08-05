@@ -32,7 +32,7 @@ func TestContextRequestWithNilConnection(t *testing.T) {
 
 	_, err := nc.RequestWithContext(ctx, "fast", []byte(""))
 	if err == nil {
-		t.Fatalf("Expected request with context and nil connection to fail\n")
+		t.Fatal("Expected request with context and nil connection to fail")
 	}
 	if err != nats.ErrInvalidConnection {
 		t.Fatalf("Expected nats.ErrInvalidConnection, got %v\n", err)
@@ -66,7 +66,7 @@ func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 	// Slow request hits timeout so expected to fail.
 	_, err = nc.RequestWithContext(ctx, "slow", []byte("world"))
 	if err == nil {
-		t.Fatalf("Expected request with timeout context to fail: %s", err)
+		t.Fatal("Expected request with timeout context to fail")
 	}
 
 	// Reported error is "context deadline exceeded" from Context package,
@@ -76,7 +76,7 @@ func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 	}
 	timeoutErr, ok := err.(timeoutError)
 	if !ok || !timeoutErr.Timeout() {
-		t.Errorf("Expected to have a timeout error")
+		t.Error("Expected to have a timeout error")
 	}
 	expected = `context deadline exceeded`
 	if !strings.Contains(err.Error(), expected) {
@@ -87,7 +87,7 @@ func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 	// has already timed out.
 	_, err = nc.RequestWithContext(ctx, "fast", []byte("world"))
 	if err == nil {
-		t.Fatalf("Expected request with context to fail: %s", err)
+		t.Fatal("Expected request with context to fail")
 	}
 }
 
