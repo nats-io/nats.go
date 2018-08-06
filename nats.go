@@ -51,6 +51,7 @@ const (
 	DefaultMaxChanLen       = 8192            // 8k
 	DefaultReconnectBufSize = 8 * 1024 * 1024 // 8MB
 	RequestChanLen          = 8
+	DefaultDrainTimeout     = 30 * time.Second
 	LangString              = "go"
 )
 
@@ -65,31 +66,34 @@ const AUTHORIZATION_ERR = "authorization violation"
 
 // Errors
 var (
-	ErrConnectionClosed     = errors.New("nats: connection closed")
-	ErrSecureConnRequired   = errors.New("nats: secure connection required")
-	ErrSecureConnWanted     = errors.New("nats: secure connection not available")
-	ErrBadSubscription      = errors.New("nats: invalid subscription")
-	ErrTypeSubscription     = errors.New("nats: invalid subscription type")
-	ErrBadSubject           = errors.New("nats: invalid subject")
-	ErrSlowConsumer         = errors.New("nats: slow consumer, messages dropped")
-	ErrTimeout              = errors.New("nats: timeout")
-	ErrBadTimeout           = errors.New("nats: timeout invalid")
-	ErrAuthorization        = errors.New("nats: authorization violation")
-	ErrNoServers            = errors.New("nats: no servers available for connection")
-	ErrJsonParse            = errors.New("nats: connect message, json parse error")
-	ErrChanArg              = errors.New("nats: argument needs to be a channel type")
-	ErrMaxPayload           = errors.New("nats: maximum payload exceeded")
-	ErrMaxMessages          = errors.New("nats: maximum messages delivered")
-	ErrSyncSubRequired      = errors.New("nats: illegal call on an async subscription")
-	ErrMultipleTLSConfigs   = errors.New("nats: multiple tls.Configs not allowed")
-	ErrNoInfoReceived       = errors.New("nats: protocol exception, INFO not received")
-	ErrReconnectBufExceeded = errors.New("nats: outbound buffer limit exceeded")
-	ErrInvalidConnection    = errors.New("nats: invalid connection")
-	ErrInvalidMsg           = errors.New("nats: invalid message or message nil")
-	ErrInvalidArg           = errors.New("nats: invalid argument")
-	ErrInvalidContext       = errors.New("nats: invalid context")
-	ErrNoEchoNotSupported   = errors.New("nats: no echo option not supported by this server")
-	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
+	ErrConnectionClosed       = errors.New("nats: connection closed")
+	ErrConnectionDraining     = errors.New("nats: connection draining")
+	ErrDrainTimeout           = errors.New("nats: draining connection timed out")
+	ErrConnectionReconnecting = errors.New("nats: connection reconnecting")
+	ErrSecureConnRequired     = errors.New("nats: secure connection required")
+	ErrSecureConnWanted       = errors.New("nats: secure connection not available")
+	ErrBadSubscription        = errors.New("nats: invalid subscription")
+	ErrTypeSubscription       = errors.New("nats: invalid subscription type")
+	ErrBadSubject             = errors.New("nats: invalid subject")
+	ErrSlowConsumer           = errors.New("nats: slow consumer, messages dropped")
+	ErrTimeout                = errors.New("nats: timeout")
+	ErrBadTimeout             = errors.New("nats: timeout invalid")
+	ErrAuthorization          = errors.New("nats: authorization violation")
+	ErrNoServers              = errors.New("nats: no servers available for connection")
+	ErrJsonParse              = errors.New("nats: connect message, json parse error")
+	ErrChanArg                = errors.New("nats: argument needs to be a channel type")
+	ErrMaxPayload             = errors.New("nats: maximum payload exceeded")
+	ErrMaxMessages            = errors.New("nats: maximum messages delivered")
+	ErrSyncSubRequired        = errors.New("nats: illegal call on an async subscription")
+	ErrMultipleTLSConfigs     = errors.New("nats: multiple tls.Configs not allowed")
+	ErrNoInfoReceived         = errors.New("nats: protocol exception, INFO not received")
+	ErrReconnectBufExceeded   = errors.New("nats: outbound buffer limit exceeded")
+	ErrInvalidConnection      = errors.New("nats: invalid connection")
+	ErrInvalidMsg             = errors.New("nats: invalid message or message nil")
+	ErrInvalidArg             = errors.New("nats: invalid argument")
+	ErrInvalidContext         = errors.New("nats: invalid context")
+	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
+	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -103,6 +107,7 @@ func GetDefaultOptions() Options {
 		MaxPingsOut:      DefaultMaxPingOut,
 		SubChanLen:       DefaultMaxChanLen,
 		ReconnectBufSize: DefaultReconnectBufSize,
+		DrainTimeout:     DefaultDrainTimeout,
 	}
 }
 
@@ -120,6 +125,7 @@ const (
 	CLOSED
 	RECONNECTING
 	CONNECTING
+	DRAINING
 )
 
 // ConnHandler is used for asynchronous events such as
@@ -208,6 +214,9 @@ type Options struct {
 
 	// Timeout sets the timeout for a Dial operation on a connection.
 	Timeout time.Duration
+
+	// DrainTimeout sets the timeout for a Drain Operation to complete.
+	DrainTimeout time.Duration
 
 	// FlusherTimeout is the maximum time to wait for the flusher loop
 	// to be able to finish writing to the underlying connection.
@@ -592,6 +601,14 @@ func ReconnectBufSize(size int) Option {
 func Timeout(t time.Duration) Option {
 	return func(o *Options) error {
 		o.Timeout = t
+		return nil
+	}
+}
+
+// DrainTimeout is an Option to set the timeout for draining a connection.
+func DrainTimeout(t time.Duration) Option {
+	return func(o *Options) error {
+		o.DrainTimeout = t
 		return nil
 	}
 }
@@ -2117,16 +2134,21 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	}
 	nc.mu.Lock()
 
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		return ErrConnectionClosed
+	}
+
+	if nc.isDraining() {
+		nc.mu.Unlock()
+		return ErrConnectionDraining
+	}
+
 	// Proactively reject payloads over the threshold set by server.
 	msgSize := int64(len(data))
 	if msgSize > nc.info.MaxPayload {
 		nc.mu.Unlock()
 		return ErrMaxPayload
-	}
-
-	if nc.isClosed() {
-		nc.mu.Unlock()
-		return ErrConnectionClosed
 	}
 
 	// Check if we are reconnecting, and if so check if
@@ -2430,6 +2452,9 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 	if nc.isClosed() {
 		return nil, ErrConnectionClosed
 	}
+	if nc.isDraining() {
+		return nil, ErrConnectionDraining
+	}
 
 	if cb == nil && ch == nil {
 		return nil, ErrBadSubscription
@@ -2551,6 +2576,9 @@ func (s *Subscription) Unsubscribe() error {
 	s.mu.Unlock()
 	if conn == nil {
 		return ErrBadSubscription
+	}
+	if conn.IsDraining() {
+		return ErrConnectionDraining
 	}
 	return conn.unsubscribe(s, 0, false)
 }
@@ -3153,6 +3181,91 @@ func (nc *Conn) IsConnected() bool {
 	return nc.isConnected()
 }
 
+// drainConnection will run in a separate Go routine and will
+// flush all publishes and drain all active subscriptions.
+func (nc *Conn) drainConnection() {
+	// Snapshot subs list.
+	nc.mu.Lock()
+	subs := make([]*Subscription, 0, len(nc.subs))
+	for _, s := range nc.subs {
+		subs = append(subs, s)
+	}
+	errCB := nc.Opts.AsyncErrorCB
+	drainWait := nc.Opts.DrainTimeout
+	nc.mu.Unlock()
+
+	pushErr := func(err error) {
+		nc.mu.Lock()
+		if errCB != nil {
+			nc.ach.push(func() { errCB(nc, nil, err) })
+		}
+		nc.mu.Unlock()
+	}
+
+	// Do publish drain via Flush() call.
+	err := nc.Flush()
+	if err != nil {
+		pushErr(err)
+		nc.Close()
+		return
+	}
+
+	// Now do subs
+	for _, s := range subs {
+		err := s.Drain()
+		// We will notify about these but continue
+		if err != nil {
+			pushErr(err)
+		}
+	}
+
+	// Wait for the subscriptions to drop to zero.
+	timeout := time.Now().Add(drainWait)
+	for time.Now().Before(timeout) {
+		if numSubs := nc.NumSubscriptions(); numSubs == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Check if we timed out.
+	if numSubs := nc.NumSubscriptions(); numSubs != 0 {
+		pushErr(ErrDrainTimeout)
+	}
+	// Move to closed state.
+	nc.Close()
+}
+
+// Drain will put a connection into a drain state. Publishes after this call
+// will fail. All subscriptions will be put into a drain state. Upon completion
+// the connection will be closed. Use the ClosedCB() option to know when the
+// connection has moved from draining to closed.
+func (nc *Conn) Drain() error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+	if nc.isConnecting() || nc.isReconnecting() {
+		return ErrConnectionReconnecting
+	}
+	if nc.isDraining() {
+		return nil
+	}
+
+	nc.status = DRAINING
+	go nc.drainConnection()
+	return nil
+}
+
+// IsDraining tests if a Conn is in the draining state.
+func (nc *Conn) IsDraining() bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.isDraining()
+}
+
 // caller must lock
 func (nc *Conn) getServers(implicitOnly bool) []string {
 	poolSize := len(nc.srvPool)
@@ -3211,6 +3324,11 @@ func (nc *Conn) isReconnecting() bool {
 // Test if Conn is connected or connecting.
 func (nc *Conn) isConnected() bool {
 	return nc.status == CONNECTED
+}
+
+// Test if Conn is in the draining state.
+func (nc *Conn) isDraining() bool {
+	return nc.status == DRAINING
 }
 
 // Stats will return a race safe copy of the Statistics section for the connection.

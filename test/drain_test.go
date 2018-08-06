@@ -217,3 +217,70 @@ func TestDrainSlowSubscriber(t *testing.T) {
 		return nil
 	})
 }
+
+func TestDrainConnection(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	done := make(chan bool)
+
+	closed := func(nc *nats.Conn) {
+		done <- true
+	}
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", nats.DefaultPort)
+	nc, err := nats.Connect(url, nats.ClosedHandler(closed))
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v\n", err)
+	}
+	defer nc.Close()
+
+	received := int32(0)
+	expected := int32(50)
+	sleep := 10 * time.Millisecond
+
+	// Create a slow subscriber
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		time.Sleep(sleep)
+		atomic.AddInt32(&received, 1)
+	})
+	if err != nil {
+		t.Fatalf("Error creating subscription; %v\n", err)
+	}
+
+	// Publish some messages
+	for i := int32(0); i < expected; i++ {
+		nc.Publish("foo", []byte("Slow Slow"))
+	}
+
+	drainStart := time.Now()
+	nc.Drain()
+
+	// Make sure we can't publish
+	if err := nc.Publish("foo", []byte("Slow Slow")); err == nil {
+		t.Fatalf("Expected to receive an error on Publish after drain\n")
+	}
+	// Same for subs
+	if err := sub.Unsubscribe(); err == nil {
+		t.Fatalf("Expected to receive an error on Unsubscribe after drain\n")
+	}
+	// Also can not create new subs
+	if _, err := nc.Subscribe("foo", func(_ *nats.Msg) {}); err == nil {
+		t.Fatalf("Expected to receive an error on new Subscription after drain\n")
+	}
+
+	// Wait for the closed state
+	select {
+	case <-done:
+		if time.Since(drainStart) < (sleep * time.Duration(expected)) {
+			t.Fatalf("Drain exited too soon\n")
+		}
+		r := atomic.LoadInt32(&received)
+		if r != expected {
+			t.Fatalf("Did not receive all messages from Drain, %d vs %d\n", r, expected)
+		}
+		break
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timedout waiting for closed state for connection\n")
+	}
+}
