@@ -1735,8 +1735,6 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 				continue
 			}
 			msgLen = len(m.Data)
-			//			s.pMsgs--
-			//			s.pBytes -= len(m.Data)
 		}
 		mcb := s.mcb
 		max = s.max
@@ -3218,9 +3216,8 @@ func (nc *Conn) drainConnection() {
 
 	// Do subs first
 	for _, s := range subs {
-		err := s.Drain()
-		// We will notify about these but continue.
-		if err != nil {
+		if err := s.Drain(); err != nil {
+			// We will notify about these but continue.
 			pushErr(err)
 		}
 	}
@@ -3256,10 +3253,11 @@ func (nc *Conn) drainConnection() {
 	nc.Close()
 }
 
-// Drain will put a connection into a drain state. Publishes after this call
-// will fail. All subscriptions will be put into a drain state. Upon completion
-// the connection will be closed. Use the ClosedCB() option to know when the
-// connection has moved from draining to closed.
+// Drain will put a connection into a drain state. All subscriptions will
+// immediately be put into a drain state. Upon completion, the publishers
+// will be drained and can not publish any additional messages. Upon draining
+// of the publishers, the connection will be closed. Use the ClosedCB()
+// option to know when the connection has moved from draining to closed.
 func (nc *Conn) Drain() error {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
