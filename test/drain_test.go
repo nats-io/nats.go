@@ -329,3 +329,68 @@ func TestDrainConnection(t *testing.T) {
 		t.Fatalf("Timeout waiting for all the responses\n")
 	}
 }
+
+func TestDrainConnectionAutoUnsub(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	errors := int32(0)
+	received := int32(0)
+	expected := int32(10)
+
+	done := make(chan bool)
+
+	closed := func(nc *nats.Conn) {
+		done <- true
+	}
+
+	errCb := func(nc *nats.Conn, s *nats.Subscription, err error) {
+		atomic.AddInt32(&errors, 1)
+	}
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", nats.DefaultPort)
+	nc, err := nats.Connect(url, nats.ErrorHandler(errCb), nats.ClosedHandler(closed))
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v\n", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		// So they back up a bit in client and allow drain to do its thing.
+		time.Sleep(10 * time.Millisecond)
+		atomic.AddInt32(&received, 1)
+
+	})
+	if err != nil {
+		t.Fatalf("Error creating subscription; %v\n", err)
+	}
+
+	sub.AutoUnsubscribe(int(expected))
+
+	// Publish some messages
+	for i := 0; i < 50; i++ {
+		nc.Publish("foo", []byte("Only 10 please!"))
+	}
+	// Flush here so messages coming back into client.
+	nc.Flush()
+
+	// Now add drain state.
+	time.Sleep(10 * time.Millisecond)
+	nc.Drain()
+
+	// Wait for the closed state from nc
+	select {
+	case <-done:
+		errs := atomic.LoadInt32(&errors)
+		if errs > 0 {
+			t.Fatalf("Did not expect any errors, got %d\n", errs)
+		}
+		r := atomic.LoadInt32(&received)
+		if r != expected {
+			t.Fatalf("Did not receive all messages from Drain, %d vs %d\n", r, expected)
+		}
+		break
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timeout waiting for closed state for connection\n")
+	}
+}
