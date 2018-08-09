@@ -190,7 +190,10 @@ func TestDrainSlowSubscriber(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	received := int32(0)
+
 	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		atomic.AddInt32(&received, 1)
 		time.Sleep(100 * time.Millisecond)
 	})
 	if err != nil {
@@ -198,21 +201,27 @@ func TestDrainSlowSubscriber(t *testing.T) {
 	}
 
 	total := 10
-
 	for i := 0; i < total; i++ {
 		nc.Publish("foo", []byte("Slow Slow"))
 	}
-
 	nc.Flush()
+
 	pmsgs, _, _ := sub.Pending()
 	if pmsgs != total && pmsgs != total-1 {
 		t.Fatalf("Expected most messages to be pending, but got %d vs %d\n", pmsgs, total)
 	}
+	sub.Drain()
+
 	// Should take a second or so to drain away.
 	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		pmsgs, _, _ := sub.Pending()
-		if pmsgs != 0 {
-			return fmt.Errorf("Expected no pending, got %d\n", pmsgs)
+		// Wait for it to become invalid. Once drained it is unsubscribed.
+		_, _, err := sub.Pending()
+		if err != nats.ErrBadSubscription {
+			return fmt.Errorf("Still valid")
+		}
+		r := int(atomic.LoadInt32(&received))
+		if r != total {
+			t.Fatalf("Did not receive all messages, got %d vs %d\n", r, total)
 		}
 		return nil
 	})
@@ -256,17 +265,18 @@ func TestDrainConnection(t *testing.T) {
 	drainStart := time.Now()
 	nc.Drain()
 
-	// Make sure we can't publish
-	if err := nc.Publish("foo", []byte("Slow Slow")); err == nil {
-		t.Fatalf("Expected to receive an error on Publish after drain\n")
-	}
-	// Same for subs
+	// Sub should be disabled immediately
 	if err := sub.Unsubscribe(); err == nil {
 		t.Fatalf("Expected to receive an error on Unsubscribe after drain\n")
 	}
-	// Also can not create new subs
+	// Also can not create any new subs
 	if _, err := nc.Subscribe("foo", func(_ *nats.Msg) {}); err == nil {
 		t.Fatalf("Expected to receive an error on new Subscription after drain\n")
+	}
+
+	// Make sure we can still publish, this is for any responses.
+	if err := nc.Publish("bar", []byte("Slow Slow")); err != nil {
+		t.Fatalf("Expected to not receive an error on Publish after drain, got %v\n", err)
 	}
 
 	// Wait for the closed state

@@ -580,11 +580,11 @@ func TestAsyncErrHandler(t *testing.T) {
 		t.Fatal("Failed to call async err handler")
 	}
 	// Make sure dropped stats is correct.
-	if d, _ := sub.Dropped(); d != toSend-limit {
-		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit, d)
+	if d, _ := sub.Dropped(); d != toSend-limit+1 {
+		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit+1, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
-		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
+		t.Fatalf("Expected err handler to be called only once, got %d\n", ae)
 	}
 
 	sub.Unsubscribe()

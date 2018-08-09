@@ -125,7 +125,8 @@ const (
 	CLOSED
 	RECONNECTING
 	CONNECTING
-	DRAINING
+	DRAINING_SUBS
+	DRAINING_PUBS
 )
 
 // ConnHandler is used for asynchronous events such as
@@ -1703,8 +1704,19 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 	var closed bool
 	var delivered, max uint64
 
+	// Used to account for adjustments to sub.pBytes when we wrap back around.
+	msgLen := -1
+
 	for {
 		s.mu.Lock()
+		// Do accounting for last msg delivered here so we only lock once
+		// and drain state trips after callback has returned.
+		if msgLen >= 0 {
+			s.pMsgs--
+			s.pBytes -= msgLen
+			msgLen = -1
+		}
+
 		if s.pHead == nil && !s.closed {
 			s.pCond.Wait()
 		}
@@ -1722,8 +1734,9 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 				}
 				continue
 			}
-			s.pMsgs--
-			s.pBytes -= len(m.Data)
+			msgLen = len(m.Data)
+			//			s.pMsgs--
+			//			s.pBytes -= len(m.Data)
 		}
 		mcb := s.mcb
 		max = s.max
@@ -2139,7 +2152,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return ErrConnectionClosed
 	}
 
-	if nc.isDraining() {
+	if nc.isDrainingPubs() {
 		nc.mu.Unlock()
 		return ErrConnectionDraining
 	}
@@ -3194,6 +3207,7 @@ func (nc *Conn) drainConnection() {
 	drainWait := nc.Opts.DrainTimeout
 	nc.mu.Unlock()
 
+	// for pushing errors with context.
 	pushErr := func(err error) {
 		nc.mu.Lock()
 		if errCB != nil {
@@ -3201,6 +3215,34 @@ func (nc *Conn) drainConnection() {
 		}
 		nc.mu.Unlock()
 	}
+
+	// Do subs first
+	for _, s := range subs {
+		err := s.Drain()
+		// We will notify about these but continue.
+		if err != nil {
+			pushErr(err)
+		}
+	}
+
+	// Wait for the subscriptions to drop to zero.
+	timeout := time.Now().Add(drainWait)
+	for time.Now().Before(timeout) {
+		if nc.NumSubscriptions() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Check if we timed out.
+	if nc.NumSubscriptions() != 0 {
+		pushErr(ErrDrainTimeout)
+	}
+
+	// Flip State
+	nc.mu.Lock()
+	nc.status = DRAINING_PUBS
+	nc.mu.Unlock()
 
 	// Do publish drain via Flush() call.
 	err := nc.Flush()
@@ -3210,28 +3252,6 @@ func (nc *Conn) drainConnection() {
 		return
 	}
 
-	// Now do subs
-	for _, s := range subs {
-		err := s.Drain()
-		// We will notify about these but continue
-		if err != nil {
-			pushErr(err)
-		}
-	}
-
-	// Wait for the subscriptions to drop to zero.
-	timeout := time.Now().Add(drainWait)
-	for time.Now().Before(timeout) {
-		if numSubs := nc.NumSubscriptions(); numSubs == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Check if we timed out.
-	if numSubs := nc.NumSubscriptions(); numSubs != 0 {
-		pushErr(ErrDrainTimeout)
-	}
 	// Move to closed state.
 	nc.Close()
 }
@@ -3254,7 +3274,7 @@ func (nc *Conn) Drain() error {
 		return nil
 	}
 
-	nc.status = DRAINING
+	nc.status = DRAINING_SUBS
 	go nc.drainConnection()
 	return nil
 }
@@ -3328,7 +3348,17 @@ func (nc *Conn) isConnected() bool {
 
 // Test if Conn is in the draining state.
 func (nc *Conn) isDraining() bool {
-	return nc.status == DRAINING
+	return nc.status == DRAINING_SUBS || nc.status == DRAINING_PUBS
+}
+
+// Test if Conn is in the draining state for subs.
+func (nc *Conn) isDrainingSubs() bool {
+	return nc.status == DRAINING_SUBS
+}
+
+// Test if Conn is in the draining state for pubs.
+func (nc *Conn) isDrainingPubs() bool {
+	return nc.status == DRAINING_PUBS
 }
 
 // Stats will return a race safe copy of the Statistics section for the connection.
