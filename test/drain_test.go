@@ -232,6 +232,7 @@ func TestDrainConnection(t *testing.T) {
 	defer s.Shutdown()
 
 	done := make(chan bool)
+	rdone := make(chan bool)
 
 	closed := func(nc *nats.Conn) {
 		done <- true
@@ -244,14 +245,36 @@ func TestDrainConnection(t *testing.T) {
 	}
 	defer nc.Close()
 
+	nc2, err := nats.Connect(url)
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v\n", err)
+	}
+	defer nc.Close()
+
 	received := int32(0)
+	responses := int32(0)
 	expected := int32(50)
 	sleep := 10 * time.Millisecond
 
-	// Create a slow subscriber
-	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+	// Create the listner for responses on "bar"
+	_, err = nc2.Subscribe("bar", func(_ *nats.Msg) {
+		r := atomic.AddInt32(&responses, 1)
+		if r == expected {
+			rdone <- true
+		}
+	})
+	if err != nil {
+		t.Fatalf("Error creating subscription for responses: %v\n", err)
+	}
+
+	// Create a slow subscriber for the responder
+	sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
 		time.Sleep(sleep)
 		atomic.AddInt32(&received, 1)
+		err := nc.Publish(m.Reply, []byte("Stop bugging me"))
+		if err != nil {
+			t.Errorf("Publisher received an error sending response: %v\n", err)
+		}
 	})
 	if err != nil {
 		t.Fatalf("Error creating subscription; %v\n", err)
@@ -259,7 +282,7 @@ func TestDrainConnection(t *testing.T) {
 
 	// Publish some messages
 	for i := int32(0); i < expected; i++ {
-		nc.Publish("foo", []byte("Slow Slow"))
+		nc.PublishRequest("foo", "bar", []byte("Slow Slow"))
 	}
 
 	drainStart := time.Now()
@@ -275,11 +298,11 @@ func TestDrainConnection(t *testing.T) {
 	}
 
 	// Make sure we can still publish, this is for any responses.
-	if err := nc.Publish("bar", []byte("Slow Slow")); err != nil {
+	if err := nc.Publish("baz", []byte("Slow Slow")); err != nil {
 		t.Fatalf("Expected to not receive an error on Publish after drain, got %v\n", err)
 	}
 
-	// Wait for the closed state
+	// Wait for the closed state from nc
 	select {
 	case <-done:
 		if time.Since(drainStart) < (sleep * time.Duration(expected)) {
@@ -291,6 +314,18 @@ func TestDrainConnection(t *testing.T) {
 		}
 		break
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Timedout waiting for closed state for connection\n")
+		t.Fatalf("Timeout waiting for closed state for connection\n")
+	}
+
+	// Now make sure all responses were received.
+	select {
+	case <-rdone:
+		r := atomic.LoadInt32(&responses)
+		if r != expected {
+			t.Fatalf("Did not receive all responses, %d vs %d\n", r, expected)
+		}
+		break
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timeout waiting for all the responses\n")
 	}
 }
