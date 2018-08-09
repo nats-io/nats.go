@@ -3351,11 +3351,6 @@ func (nc *Conn) isDraining() bool {
 	return nc.status == DRAINING_SUBS || nc.status == DRAINING_PUBS
 }
 
-// Test if Conn is in the draining state for subs.
-func (nc *Conn) isDrainingSubs() bool {
-	return nc.status == DRAINING_SUBS
-}
-
 // Test if Conn is in the draining state for pubs.
 func (nc *Conn) isDrainingPubs() bool {
 	return nc.status == DRAINING_PUBS
