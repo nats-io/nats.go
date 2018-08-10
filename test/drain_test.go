@@ -249,7 +249,7 @@ func TestDrainConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create default connection: %v", err)
 	}
-	defer nc.Close()
+	defer nc2.Close()
 
 	received := int32(0)
 	responses := int32(0)
