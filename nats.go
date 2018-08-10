@@ -3341,7 +3341,7 @@ func (nc *Conn) isReconnecting() bool {
 
 // Test if Conn is connected or connecting.
 func (nc *Conn) isConnected() bool {
-	return nc.status == CONNECTED
+	return nc.status == CONNECTED || nc.isDraining()
 }
 
 // Test if Conn is in the draining state.
