@@ -45,7 +45,7 @@ func TestDrain(t *testing.T) {
 
 	sub, err := nc.Subscribe("foo", cb)
 	if err != nil {
-		t.Fatalf("Error creating subscription; %v\n", err)
+		t.Fatalf("Error creating subscription; %v", err)
 	}
 
 	for i := int32(0); i < expected; i++ {
@@ -97,7 +97,7 @@ func TestDrainQueueSub(t *testing.T) {
 	for i := int32(0); i < numSubs; i++ {
 		_, err := nc.QueueSubscribe("foo", "bar", callback)
 		if err != nil {
-			t.Fatalf("Error creating subscription; %v\n", err)
+			t.Fatalf("Error creating subscription; %v", err)
 		}
 	}
 
@@ -145,32 +145,32 @@ func TestDrainUnSubs(t *testing.T) {
 	for i := 0; i < num; i++ {
 		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
 		if err != nil {
-			t.Fatalf("Error creating subscription; %v\n", err)
+			t.Fatalf("Error creating subscription; %v", err)
 		}
 		subs[i] = sub
 	}
 
 	if numSubs := nc.NumSubscriptions(); numSubs != num {
-		t.Fatalf("Expected %d subscriptions, got %d\n", num, numSubs)
+		t.Fatalf("Expected %d subscriptions, got %d", num, numSubs)
 	}
 	for i := 0; i < num; i++ {
 		subs[i].Unsubscribe()
 	}
 	if numSubs := nc.NumSubscriptions(); numSubs != 0 {
-		t.Fatalf("Expected no subscriptions, got %d\n", numSubs)
+		t.Fatalf("Expected no subscriptions, got %d", numSubs)
 	}
 
 	// Drain version
 	for i := 0; i < num; i++ {
 		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
 		if err != nil {
-			t.Fatalf("Error creating subscription; %v\n", err)
+			t.Fatalf("Error creating subscription; %v", err)
 		}
 		subs[i] = sub
 	}
 
 	if numSubs := nc.NumSubscriptions(); numSubs != num {
-		t.Fatalf("Expected %d subscriptions, got %d\n", num, numSubs)
+		t.Fatalf("Expected %d subscriptions, got %d", num, numSubs)
 	}
 	for i := 0; i < num; i++ {
 		subs[i].Drain()
@@ -197,7 +197,7 @@ func TestDrainSlowSubscriber(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	})
 	if err != nil {
-		t.Fatalf("Error creating subscription; %v\n", err)
+		t.Fatalf("Error creating subscription; %v", err)
 	}
 
 	total := 10
@@ -208,7 +208,7 @@ func TestDrainSlowSubscriber(t *testing.T) {
 
 	pmsgs, _, _ := sub.Pending()
 	if pmsgs != total && pmsgs != total-1 {
-		t.Fatalf("Expected most messages to be pending, but got %d vs %d\n", pmsgs, total)
+		t.Fatalf("Expected most messages to be pending, but got %d vs %d", pmsgs, total)
 	}
 	sub.Drain()
 
@@ -221,7 +221,7 @@ func TestDrainSlowSubscriber(t *testing.T) {
 		}
 		r := int(atomic.LoadInt32(&received))
 		if r != total {
-			t.Fatalf("Did not receive all messages, got %d vs %d\n", r, total)
+			t.Fatalf("Did not receive all messages, got %d vs %d", r, total)
 		}
 		return nil
 	})
@@ -241,13 +241,13 @@ func TestDrainConnection(t *testing.T) {
 	url := fmt.Sprintf("nats://127.0.0.1:%d", nats.DefaultPort)
 	nc, err := nats.Connect(url, nats.ClosedHandler(closed))
 	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
+		t.Fatalf("Failed to create default connection: %v", err)
 	}
 	defer nc.Close()
 
 	nc2, err := nats.Connect(url)
 	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
+		t.Fatalf("Failed to create default connection: %v", err)
 	}
 	defer nc.Close()
 
@@ -264,7 +264,7 @@ func TestDrainConnection(t *testing.T) {
 		}
 	})
 	if err != nil {
-		t.Fatalf("Error creating subscription for responses: %v\n", err)
+		t.Fatalf("Error creating subscription for responses: %v", err)
 	}
 
 	// Create a slow subscriber for the responder
@@ -277,7 +277,7 @@ func TestDrainConnection(t *testing.T) {
 		}
 	})
 	if err != nil {
-		t.Fatalf("Error creating subscription; %v\n", err)
+		t.Fatalf("Error creating subscription; %v", err)
 	}
 
 	// Publish some messages
@@ -290,16 +290,16 @@ func TestDrainConnection(t *testing.T) {
 
 	// Sub should be disabled immediately
 	if err := sub.Unsubscribe(); err == nil {
-		t.Fatalf("Expected to receive an error on Unsubscribe after drain\n")
+		t.Fatalf("Expected to receive an error on Unsubscribe after drain")
 	}
 	// Also can not create any new subs
 	if _, err := nc.Subscribe("foo", func(_ *nats.Msg) {}); err == nil {
-		t.Fatalf("Expected to receive an error on new Subscription after drain\n")
+		t.Fatalf("Expected to receive an error on new Subscription after drain")
 	}
 
 	// Make sure we can still publish, this is for any responses.
 	if err := nc.Publish("baz", []byte("Slow Slow")); err != nil {
-		t.Fatalf("Expected to not receive an error on Publish after drain, got %v\n", err)
+		t.Fatalf("Expected to not receive an error on Publish after drain, got %v", err)
 	}
 
 	// Wait for the closed state from nc
@@ -310,11 +310,11 @@ func TestDrainConnection(t *testing.T) {
 		}
 		r := atomic.LoadInt32(&received)
 		if r != expected {
-			t.Fatalf("Did not receive all messages from Drain, %d vs %d\n", r, expected)
+			t.Fatalf("Did not receive all messages from Drain, %d vs %d", r, expected)
 		}
 		break
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Timeout waiting for closed state for connection\n")
+		t.Fatalf("Timeout waiting for closed state for connection")
 	}
 
 	// Now make sure all responses were received.
@@ -322,11 +322,11 @@ func TestDrainConnection(t *testing.T) {
 	case <-rdone:
 		r := atomic.LoadInt32(&responses)
 		if r != expected {
-			t.Fatalf("Did not receive all responses, %d vs %d\n", r, expected)
+			t.Fatalf("Did not receive all responses, %d vs %d", r, expected)
 		}
 		break
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Timeout waiting for all the responses\n")
+		t.Fatalf("Timeout waiting for all the responses")
 	}
 }
 
@@ -351,7 +351,7 @@ func TestDrainConnectionAutoUnsub(t *testing.T) {
 	url := fmt.Sprintf("nats://127.0.0.1:%d", nats.DefaultPort)
 	nc, err := nats.Connect(url, nats.ErrorHandler(errCb), nats.ClosedHandler(closed))
 	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
+		t.Fatalf("Failed to create default connection: %v", err)
 	}
 	defer nc.Close()
 
@@ -362,7 +362,7 @@ func TestDrainConnectionAutoUnsub(t *testing.T) {
 
 	})
 	if err != nil {
-		t.Fatalf("Error creating subscription; %v\n", err)
+		t.Fatalf("Error creating subscription; %v", err)
 	}
 
 	sub.AutoUnsubscribe(int(expected))
@@ -383,14 +383,14 @@ func TestDrainConnectionAutoUnsub(t *testing.T) {
 	case <-done:
 		errs := atomic.LoadInt32(&errors)
 		if errs > 0 {
-			t.Fatalf("Did not expect any errors, got %d\n", errs)
+			t.Fatalf("Did not expect any errors, got %d", errs)
 		}
 		r := atomic.LoadInt32(&received)
 		if r != expected {
-			t.Fatalf("Did not receive all messages from Drain, %d vs %d\n", r, expected)
+			t.Fatalf("Did not receive all messages from Drain, %d vs %d", r, expected)
 		}
 		break
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Timeout waiting for closed state for connection\n")
+		t.Fatalf("Timeout waiting for closed state for connection")
 	}
 }

@@ -554,7 +554,7 @@ func TestAsyncErrHandler(t *testing.T) {
 			t.Fatal("Did not receive proper subscription")
 		}
 		if e != nats.ErrSlowConsumer {
-			t.Fatalf("Did not receive proper error: %v vs %v\n", e, nats.ErrSlowConsumer)
+			t.Fatalf("Did not receive proper error: %v vs %v", e, nats.ErrSlowConsumer)
 		}
 		// Suppress additional calls
 		if atomic.LoadInt64(&aeCalled) == 1 {
@@ -573,7 +573,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		nc.Publish(subj, b)
 	}
 	if err := nc.Flush(); err != nil {
-		t.Fatalf("Got an error on Flush:%v\n", err)
+		t.Fatalf("Got an error on Flush:%v", err)
 	}
 
 	if e := Wait(ch); e != nil {
@@ -581,10 +581,10 @@ func TestAsyncErrHandler(t *testing.T) {
 	}
 	// Make sure dropped stats is correct.
 	if d, _ := sub.Dropped(); d != toSend-limit+1 {
-		t.Fatalf("Expected Dropped to be %d, got %d\n", toSend-limit+1, d)
+		t.Fatalf("Expected Dropped to be %d, got %d", toSend-limit+1, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
-		t.Fatalf("Expected err handler to be called only once, got %d\n", ae)
+		t.Fatalf("Expected err handler to be called only once, got %d", ae)
 	}
 
 	sub.Unsubscribe()
@@ -601,7 +601,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 
 	nc, err := opts.Connect()
 	if err != nil {
-		t.Fatalf("Could not connect to server: %v\n", err)
+		t.Fatalf("Could not connect to server: %v", err)
 	}
 	defer nc.Close()
 
@@ -614,7 +614,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 	mch := make(chan *nats.Msg, limit)
 	sub, err := nc.ChanSubscribe(subj, mch)
 	if err != nil {
-		t.Fatalf("Could not subscribe: %v\n", err)
+		t.Fatalf("Could not subscribe: %v", err)
 	}
 	ch := make(chan bool)
 	aeCalled := int64(0)
@@ -622,7 +622,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
 		atomic.AddInt64(&aeCalled, 1)
 		if e != nats.ErrSlowConsumer {
-			t.Fatalf("Did not receive proper error: %v vs %v\n",
+			t.Fatalf("Did not receive proper error: %v vs %v",
 				e, nats.ErrSlowConsumer)
 		}
 		// Suppress additional calls
@@ -643,10 +643,10 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 	}
 	// Make sure dropped stats is correct.
 	if d, _ := sub.Dropped(); d != toSend-limit {
-		t.Fatalf("Expected Dropped to be %d, go %d\n", toSend-limit, d)
+		t.Fatalf("Expected Dropped to be %d, go %d", toSend-limit, d)
 	}
 	if ae := atomic.LoadInt64(&aeCalled); ae != 1 {
-		t.Fatalf("Expected err handler to be called once, got %d\n", ae)
+		t.Fatalf("Expected err handler to be called once, got %d", ae)
 	}
 
 	sub.Unsubscribe()
@@ -721,7 +721,7 @@ func TestAsyncSubscribersOnClose(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	seen := atomic.LoadInt32(&callbacks)
 	if seen != 1 {
-		t.Fatalf("Expected only one callback, received %d callbacks\n", seen)
+		t.Fatalf("Expected only one callback, received %d callbacks", seen)
 	}
 }
 
@@ -761,7 +761,7 @@ func TestNextMsgCallOnClosedSub(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error calling NextMsg() on closed subscription")
 	} else if err != nats.ErrBadSubscription {
-		t.Fatalf("Expected '%v', but got: '%v'\n", nats.ErrBadSubscription, err.Error())
+		t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err.Error())
 	}
 }
 
@@ -1075,7 +1075,7 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	// Test old way
 	q, _ := sub.QueuedMsgs()
 	if q != total && q != total-1 {
-		t.Fatalf("Expected %d or %d, got %d\n", total, total-1, q)
+		t.Fatalf("Expected %d or %d, got %d", total, total-1, q)
 	}
 
 	// New way, make sure the same and check bytes.
@@ -1084,10 +1084,10 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	totalSize := total * mlen
 
 	if m != total && m != total-1 {
-		t.Fatalf("Expected msgs of %d or %d, got %d\n", total, total-1, m)
+		t.Fatalf("Expected msgs of %d or %d, got %d", total, total-1, m)
 	}
 	if b != totalSize && b != totalSize-mlen {
-		t.Fatalf("Expected bytes of %d or %d, got %d\n",
+		t.Fatalf("Expected bytes of %d or %d, got %d",
 			totalSize, totalSize-mlen, b)
 	}
 
@@ -1095,21 +1095,21 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	// received, MaxPending should be >= total - 1 and <= total
 	mm, bm, _ := sub.MaxPending()
 	if mm < total-1 || mm > total {
-		t.Fatalf("Expected max msgs (%d) to be between %d and %d\n",
+		t.Fatalf("Expected max msgs (%d) to be between %d and %d",
 			mm, total-1, total)
 	}
 	if bm < totalSize-mlen || bm > totalSize {
-		t.Fatalf("Expected max bytes (%d) to be between %d and %d\n",
+		t.Fatalf("Expected max bytes (%d) to be between %d and %d",
 			bm, totalSize, totalSize-mlen)
 	}
 	// Check that clear works.
 	sub.ClearMaxPending()
 	mm, bm, _ = sub.MaxPending()
 	if mm != 0 {
-		t.Fatalf("Expected max msgs to be 0 vs %d after clearing\n", mm)
+		t.Fatalf("Expected max msgs to be 0 vs %d after clearing", mm)
 	}
 	if bm != 0 {
-		t.Fatalf("Expected max bytes to be 0 vs %d after clearing\n", bm)
+		t.Fatalf("Expected max bytes to be 0 vs %d after clearing", bm)
 	}
 
 	close(block)
@@ -1153,10 +1153,10 @@ func TestAsyncSubscriptionPendingDrain(t *testing.T) {
 
 	m, b, _ := sub.Pending()
 	if m != 0 {
-		t.Fatalf("Expected msgs of 0, got %d\n", m)
+		t.Fatalf("Expected msgs of 0, got %d", m)
 	}
 	if b != 0 {
-		t.Fatalf("Expected bytes of 0, got %d\n", b)
+		t.Fatalf("Expected bytes of 0, got %d", b)
 	}
 
 	sub.Unsubscribe()
@@ -1191,10 +1191,10 @@ func TestSyncSubscriptionPendingDrain(t *testing.T) {
 
 	m, b, _ := sub.Pending()
 	if m != 0 {
-		t.Fatalf("Expected msgs of 0, got %d\n", m)
+		t.Fatalf("Expected msgs of 0, got %d", m)
 	}
 	if b != 0 {
-		t.Fatalf("Expected bytes of 0, got %d\n", b)
+		t.Fatalf("Expected bytes of 0, got %d", b)
 	}
 
 	sub.Unsubscribe()
@@ -1224,7 +1224,7 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	// Test old way
 	q, _ := sub.QueuedMsgs()
 	if q != total && q != total-1 {
-		t.Fatalf("Expected %d or %d, got %d\n", total, total-1, q)
+		t.Fatalf("Expected %d or %d, got %d", total, total-1, q)
 	}
 
 	// New way, make sure the same and check bytes.
@@ -1232,10 +1232,10 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	mlen := len(msg)
 
 	if m != total {
-		t.Fatalf("Expected msgs of %d, got %d\n", total, m)
+		t.Fatalf("Expected msgs of %d, got %d", total, m)
 	}
 	if b != total*mlen {
-		t.Fatalf("Expected bytes of %d, got %d\n", total*mlen, b)
+		t.Fatalf("Expected bytes of %d, got %d", total*mlen, b)
 	}
 
 	// Now drain some down and make sure pending is correct
@@ -1244,10 +1244,10 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	}
 	m, b, _ = sub.Pending()
 	if m != 1 {
-		t.Fatalf("Expected msgs of 1, got %d\n", m)
+		t.Fatalf("Expected msgs of 1, got %d", m)
 	}
 	if b != mlen {
-		t.Fatalf("Expected bytes of %d, got %d\n", mlen, b)
+		t.Fatalf("Expected bytes of %d, got %d", mlen, b)
 	}
 }
 
@@ -1428,7 +1428,7 @@ func TestSubscriptionTypes(t *testing.T) {
 	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {})
 	defer sub.Unsubscribe()
 	if st := sub.Type(); st != nats.AsyncSubscription {
-		t.Fatalf("Expected AsyncSubscription, got %v\n", st)
+		t.Fatalf("Expected AsyncSubscription, got %v", st)
 	}
 	// Check Pending
 	if err := sub.SetPendingLimits(1, 100); err != nil {
@@ -1448,7 +1448,7 @@ func TestSubscriptionTypes(t *testing.T) {
 	sub, _ = nc.SubscribeSync("foo")
 	defer sub.Unsubscribe()
 	if st := sub.Type(); st != nats.SyncSubscription {
-		t.Fatalf("Expected SyncSubscription, got %v\n", st)
+		t.Fatalf("Expected SyncSubscription, got %v", st)
 	}
 	// Check Pending
 	if err := sub.SetPendingLimits(1, 100); err != nil {
@@ -1468,7 +1468,7 @@ func TestSubscriptionTypes(t *testing.T) {
 	sub, _ = nc.ChanSubscribe("foo", make(chan *nats.Msg))
 	defer sub.Unsubscribe()
 	if st := sub.Type(); st != nats.ChanSubscription {
-		t.Fatalf("Expected ChanSubscription, got %v\n", st)
+		t.Fatalf("Expected ChanSubscription, got %v", st)
 	}
 	// Check Pending
 	if err := sub.SetPendingLimits(1, 100); err == nil {
