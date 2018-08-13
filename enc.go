@@ -254,6 +254,15 @@ func (c *EncodedConn) Close() {
 	c.Conn.Close()
 }
 
+// Drain will put a connection into a drain state. All subscriptions will
+// immediately be put into a drain state. Upon completion, the publishers
+// will be drained and can not publish any additional messages. Upon draining
+// of the publishers, the connection will be closed. Use the ClosedCB()
+// option to know when the connection has moved from draining to closed.
+func (c *EncodedConn) Drain() error {
+	return c.Conn.Drain()
+}
+
 // LastError reports the last error encountered via the Connection.
 func (c *EncodedConn) LastError() error {
 	return c.Conn.err
