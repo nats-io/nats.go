@@ -19,6 +19,7 @@ go get github.com/nats-io/gnatsd
 
 ```go
 
+// Connect to a server
 nc, _ := nats.Connect(nats.DefaultURL)
 
 // Simple Publisher
@@ -52,9 +53,12 @@ nc.Subscribe("help", func(m *Msg) {
     nc.Publish(m.Reply, []byte("I can help!"))
 })
 
+// Drain connection (Preferred for responders)
+// Close() not needed if this is called.
+nc.Drain()
+
 // Close connection
-nc, _ := nats.Connect("nats://localhost:4222")
-nc.Close();
+nc.Close()
 ```
 
 ## Encoded Connections
