@@ -143,15 +143,23 @@ func runSubscriber(startwg, donewg *sync.WaitGroup, opts nats.Options, numMsgs i
 	subj := args[0]
 
 	received := 0
-	start := time.Now()
-	nc.Subscribe(subj, func(msg *nats.Msg) {
+	ch := make(chan time.Time, 2)
+	sub, _ := nc.Subscribe(subj, func(msg *nats.Msg) {
 		received++
+		if received == 1 {
+			ch <- time.Now()
+		}
 		if received >= numMsgs {
-			benchmark.AddSubSample(bench.NewSample(numMsgs, msgSize, start, time.Now(), nc))
-			donewg.Done()
-			nc.Close()
+			ch <- time.Now()
 		}
 	})
+	sub.SetPendingLimits(-1, -1)
 	nc.Flush()
 	startwg.Done()
+
+	start := <-ch
+	end := <-ch
+	benchmark.AddSubSample(bench.NewSample(numMsgs, msgSize, start, end, nc))
+	nc.Close()
+	donewg.Done()
 }
