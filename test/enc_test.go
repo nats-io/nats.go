@@ -457,3 +457,14 @@ func TestEncBuiltinDecodeDefault(t *testing.T) {
 		t.Fatalf("Expected an error decoding")
 	}
 }
+
+func TestEncDrainSupported(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewDefaultEConn(t)
+	err := ec.Drain()
+	if err != nil {
+		t.Fatalf("Expected no error calling Drain(), got %v", err)
+	}
+}
