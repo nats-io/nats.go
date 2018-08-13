@@ -297,6 +297,9 @@ const (
 
 	// NUID size
 	nuidSize = 22
+
+	// Default port used if none is specified in given URL(s)
+	defaultPortString = "4222"
 )
 
 // A Conn represents a bare connection to a nats-server.
@@ -942,9 +945,27 @@ func (nc *Conn) setupServerPool() error {
 
 // addURLToPool adds an entry to the server pool
 func (nc *Conn) addURLToPool(sURL string, implicit bool) error {
-	u, err := url.Parse(sURL)
-	if err != nil {
-		return err
+	if !strings.Contains(sURL, "://") {
+		sURL = "nats://" + sURL
+	}
+	var (
+		u   *url.URL
+		err error
+	)
+	for i := 0; i < 2; i++ {
+		u, err = url.Parse(sURL)
+		if err != nil {
+			return err
+		}
+		if u.Port() != "" {
+			break
+		}
+		// In case given URL is of the form "localhost:", just add
+		// the port number at the end, otherwise, add ":4222".
+		if sURL[len(sURL)-1] != ':' {
+			sURL += ":"
+		}
+		sURL += defaultPortString
 	}
 	s := &srv{url: u, isImplicit: implicit}
 	nc.srvPool = append(nc.srvPool, s)
@@ -1179,7 +1200,8 @@ func (nc *Conn) checkForSecure() error {
 	if o.Secure && !nc.info.TLSRequired {
 		return ErrSecureConnWanted
 	} else if nc.info.TLSRequired && !o.Secure {
-		return ErrSecureConnRequired
+		// Switch to Secure since server needs TLS.
+		o.Secure = true
 	}
 
 	// Need to rewrap with bufio

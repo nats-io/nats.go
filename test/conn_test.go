@@ -165,14 +165,12 @@ func TestServerSecureConnections(t *testing.T) {
 
 	nc.Close()
 
-	// Server required, but not requested.
+	// Server required, but not specified in Connect(), should switch automatically
 	nc, err = nats.Connect(secureURL)
-	if err == nil || nc != nil || err != nats.ErrSecureConnRequired {
-		if nc != nil {
-			nc.Close()
-		}
-		t.Fatal("Should have failed to create secure (TLS) connection")
+	if err != nil {
+		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
+	nc.Close()
 
 	// Test flag mismatch
 	// Wanted but not available..
@@ -1982,4 +1980,51 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	}
 	nc.Close()
 	wg.Wait()
+}
+
+func TestConnectWithSimplifiedURLs(t *testing.T) {
+	urls := []string{
+		"nats://127.0.0.1:4222",
+		"nats://127.0.0.1:",
+		"nats://127.0.0.1",
+		"127.0.0.1:",
+		"127.0.0.1",
+	}
+
+	connect := func(t *testing.T, url string) {
+		t.Helper()
+		nc, err := nats.Connect(url)
+		if err != nil {
+			t.Fatalf("URL %q expected to connect, got %v", url, err)
+		}
+		nc.Close()
+	}
+
+	// Start a server that listens on default port 4222.
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	// Try for every connection in the urls array.
+	for _, u := range urls {
+		connect(t, u)
+	}
+
+	s.Shutdown()
+
+	// Use this to build the options for us...
+	s, opts := RunServerWithConfig("configs/tls.conf")
+	s.Shutdown()
+	// Now change listen port to 4222 and remove auth
+	opts.Port = 4222
+	opts.Username = ""
+	opts.Password = ""
+	// and restart the server
+	s = RunServerWithOptions(*opts)
+	defer s.Shutdown()
+
+	// Test again against a server that wants TLS and check
+	// that we automatically switch to Secure.
+	for _, u := range urls {
+		connect(t, u)
+	}
 }
