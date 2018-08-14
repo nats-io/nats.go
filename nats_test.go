@@ -223,6 +223,50 @@ var testServers = []string{
 	"nats://localhost:1228",
 }
 
+func TestSimplifiedURLs(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.NoRandomize = true
+	opts.Servers = []string{
+		"nats://host1:1234",
+		"nats://host2:",
+		"nats://host3",
+		"host4:1234",
+		"host5:",
+		"host6",
+		"nats://[1:2:3:4]:1234",
+		"nats://[5:6:7:8]:",
+		"nats://[9:10:11:12]",
+		"[13:14:15:16]:",
+		"[17:18:19:20]:1234",
+	}
+
+	// We expect the result in the server pool to be:
+	expected := []string{
+		"nats://host1:1234",
+		"nats://host2:4222",
+		"nats://host3:4222",
+		"nats://host4:1234",
+		"nats://host5:4222",
+		"nats://host6:4222",
+		"nats://[1:2:3:4]:1234",
+		"nats://[5:6:7:8]:4222",
+		"nats://[9:10:11:12]:4222",
+		"nats://[13:14:15:16]:4222",
+		"nats://[17:18:19:20]:1234",
+	}
+
+	nc := &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Problem setting up Server Pool: %v\n", err)
+	}
+	// Check server pool directly
+	for i, u := range nc.srvPool {
+		if u.url.String() != expected[i] {
+			t.Fatalf("Expected url %q, got %q", expected[i], u.url.String())
+		}
+	}
+}
+
 func TestServersRandomize(t *testing.T) {
 	opts := GetDefaultOptions()
 	opts.Servers = testServers
