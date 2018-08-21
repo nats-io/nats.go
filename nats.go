@@ -2413,26 +2413,30 @@ func respToken(respInbox string) string {
 
 // Subscribe will express interest in the given subject. The subject
 // can have wildcards (partial:*, full:>). Messages will be delivered
-// to the associated MsgHandler. If no MsgHandler is given, the
-// subscription is a synchronous subscription and can be polled via
-// Subscription.NextMsg().
+// to the associated MsgHandler.
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, cb, nil)
 }
 
-// ChanSubscribe will place all messages received on the channel.
+// ChanSubscribe will express interest in the given subject and place
+// all messages received on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, nil, ch)
 }
 
-// ChanQueueSubscribe will place all messages received on the channel.
+// ChanQueueSubscribe will express interest in the given subject.
+// All subscribers with the same queue name will form the queue group
+// and only one member of the group will be selected to receive any given message,
+// which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
+// Note: This is the same than QueueSubscribeSyncWithChan.
 func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
 	return nc.subscribe(subj, group, nil, ch)
 }
 
-// SubscribeSync is syntactic sugar for Subscribe(subject, nil).
+// SubscribeSync will express interest on the given subject. Messages will
+// be received synchronously using Subscription.NextMsg().
 func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
@@ -2456,7 +2460,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
 // subject. All subscribers with the same queue name will form the queue
 // group and only one member of the group will be selected to receive any
-// given message synchronously.
+// given message synchronously using Subscription.NextMsg().
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	s, e := nc.subscribe(subj, queue, nil, mch)
@@ -2466,7 +2470,12 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	return s, e
 }
 
-// QueueSubscribeSyncWithChan is syntactic sugar for ChanQueueSubscribe(subject, group, ch).
+// QueueSubscribeSyncWithChan will express interest in the given subject.
+// All subscribers with the same queue name will form the queue group
+// and only one member of the group will be selected to receive any given message,
+// which will be placed on the channel.
+// You should not close the channel until sub.Unsubscribe() has been called.
+// Note: This is the same than ChanQueueSubscribe.
 func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
 	return nc.subscribe(subj, queue, nil, ch)
 }
