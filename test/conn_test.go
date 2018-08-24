@@ -2028,3 +2028,26 @@ func TestConnectWithSimplifiedURLs(t *testing.T) {
 		connect(t, u)
 	}
 }
+
+func TestNilOpts(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	// Test a single nil option
+	var o1, o2, o3 nats.Option
+	_, err := nats.Connect(nats.DefaultURL, o1)
+	if err != nil {
+		t.Fatalf("Unexpected error with one nil option: %v", err)
+	}
+
+	// Test nil, opt, nil
+	o2 = nats.ReconnectBufSize(2222)
+	nc, err := nats.Connect(nats.DefaultURL, o1, o2, o3)
+	if err != nil {
+		t.Fatalf("Unexpected error with multiple nil options: %v", err)
+	}
+	// check that the opt was set
+	if nc.Opts.ReconnectBufSize != 2222 {
+		t.Fatal("Unexpected error: option not set.")
+	}
+}
