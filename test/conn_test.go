@@ -1977,7 +1977,7 @@ func TestNilOpts(t *testing.T) {
 	o2 = nats.ReconnectBufSize(2222)
 	nc, err = nats.Connect(nats.DefaultURL, o1, o2, o3)
 	if err != nil {
-		t.Fatalf("Unexpected error with muliple nil options: %v", err)
+		t.Fatalf("Unexpected error with multiple nil options: %v", err)
 	}
 	// check that the opt was set
 	if nc.Opts.ReconnectBufSize != 2222 {
