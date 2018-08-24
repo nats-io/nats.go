@@ -435,8 +435,10 @@ func Connect(url string, options ...Option) (*Conn, error) {
 	opts := GetDefaultOptions()
 	opts.Servers = processUrlString(url)
 	for _, opt := range options {
-		if err := opt(&opts); err != nil {
-			return nil, err
+		if opt != nil {
+			if err := opt(&opts); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return opts.Connect()
