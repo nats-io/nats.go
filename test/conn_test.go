@@ -2035,14 +2035,14 @@ func TestNilOpts(t *testing.T) {
 
 	// Test a single nil option
 	var o1, o2, o3 nats.Option
-	nc, err := nats.Connect(nats.DefaultURL, o1)
+	_, err := nats.Connect(nats.DefaultURL, o1)
 	if err != nil {
 		t.Fatalf("Unexpected error with one nil option: %v", err)
 	}
 
 	// Test nil, opt, nil
 	o2 = nats.ReconnectBufSize(2222)
-	nc, err = nats.Connect(nats.DefaultURL, o1, o2, o3)
+	nc, err := nats.Connect(nats.DefaultURL, o1, o2, o3)
 	if err != nil {
 		t.Fatalf("Unexpected error with multiple nil options: %v", err)
 	}
