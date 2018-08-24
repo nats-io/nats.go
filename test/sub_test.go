@@ -63,10 +63,13 @@ func TestServerAutoUnsub(t *testing.T) {
 	if err := sub.AutoUnsubscribe(10); err == nil {
 		t.Fatal("Calling AutoUnsubscribe() on closed subscription should fail")
 	}
-	delta := (runtime.NumGoroutine() - base)
-	if delta > 0 {
-		t.Fatalf("%d Go routines still exist post max subscriptions hit", delta)
-	}
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - base)
+		if delta > 0 {
+			return fmt.Errorf("%d Go routines still exist post max subscriptions hit", delta)
+		}
+		return nil
+	})
 }
 
 func TestClientSyncAutoUnsub(t *testing.T) {
