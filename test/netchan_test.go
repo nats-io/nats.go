@@ -14,6 +14,7 @@
 package test
 
 import (
+	"fmt"
 	"runtime"
 	"testing"
 	"time"
@@ -265,13 +266,13 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	ec.Publish("foo", 22)
 	ec.Flush()
 
-	time.Sleep(100 * time.Millisecond)
-
-	delta := (runtime.NumGoroutine() - before)
-
-	if delta > 0 {
-		t.Fatalf("Leaked Go routine(s) : %d, closing channel should have closed them\n", delta)
-	}
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - before)
+		if delta > 0 {
+			return fmt.Errorf("Leaked Go routine(s) : %d, closing channel should have closed them", delta)
+		}
+		return nil
+	})
 }
 
 func TestRecvChanLeakGoRoutines(t *testing.T) {
@@ -294,14 +295,13 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	}
 	sub.Unsubscribe()
 
-	// Sleep a bit to wait for the Go routine to exit.
-	time.Sleep(500 * time.Millisecond)
-
-	delta := (runtime.NumGoroutine() - before)
-
-	if delta > 0 {
-		t.Fatalf("Leaked Go routine(s) : %d, closing channel should have closed them\n", delta)
-	}
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - before)
+		if delta > 0 {
+			return fmt.Errorf("Leaked Go routine(s) : %d, closing channel should have closed them", delta)
+		}
+		return nil
+	})
 }
 
 func TestRecvChanMultipleMessages(t *testing.T) {
