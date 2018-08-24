@@ -63,10 +63,13 @@ func TestServerAutoUnsub(t *testing.T) {
 	if err := sub.AutoUnsubscribe(10); err == nil {
 		t.Fatal("Calling AutoUnsubscribe() on closed subscription should fail")
 	}
-	delta := (runtime.NumGoroutine() - base)
-	if delta > 0 {
-		t.Fatalf("%d Go routines still exist post max subscriptions hit", delta)
-	}
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - base)
+		if delta > 0 {
+			return fmt.Errorf("%d Go routines still exist post max subscriptions hit", delta)
+		}
+		return nil
+	})
 }
 
 func TestClientSyncAutoUnsub(t *testing.T) {
@@ -307,13 +310,14 @@ func TestAutoUnsubscribeFromCallback(t *testing.T) {
 	nc.Publish("foo", msg)
 	nc.Flush()
 
-	time.Sleep(100 * time.Millisecond)
-
-	recv := atomic.LoadInt64(&received)
-	if recv != resetUnsubMark {
-		t.Fatalf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
-			max, resetUnsubMark, recv)
-	}
+	waitFor(t, time.Second, 100*time.Millisecond, func() error {
+		recv := atomic.LoadInt64(&received)
+		if recv != resetUnsubMark {
+			return fmt.Errorf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
+				max, resetUnsubMark, recv)
+		}
+		return nil
+	})
 
 	// Now check with AutoUnsubscribe with higher value than original
 	received = int64(0)
@@ -341,13 +345,14 @@ func TestAutoUnsubscribeFromCallback(t *testing.T) {
 	nc.Publish("foo", msg)
 	nc.Flush()
 
-	time.Sleep(100 * time.Millisecond)
-
-	recv = atomic.LoadInt64(&received)
-	if recv != newMax {
-		t.Fatalf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
-			max, newMax, recv)
-	}
+	waitFor(t, time.Second, 100*time.Millisecond, func() error {
+		recv := atomic.LoadInt64(&received)
+		if recv != newMax {
+			return fmt.Errorf("Wrong number of received messages. Original max was %v reset to %v, actual received: %v",
+				max, newMax, recv)
+		}
+		return nil
+	})
 }
 
 func TestCloseSubRelease(t *testing.T) {

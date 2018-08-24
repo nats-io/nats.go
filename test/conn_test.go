@@ -1771,9 +1771,9 @@ func TestBarrier(t *testing.T) {
 	if err := nc.Publish("bar", []byte("hello")); err != nil {
 		t.Fatalf("Error on publish: %v", err)
 	}
-	if err := nc.Flush(); err != nil {
-		t.Fatalf("Error on flush: %v", err)
-	}
+	// This could fail if the connection is closed before we get
+	// here.
+	nc.Flush()
 	if err := Wait(ch); err != nil {
 		t.Fatal("Barrier function was not invoked")
 	}
