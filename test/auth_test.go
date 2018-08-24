@@ -190,8 +190,8 @@ func TestPermViolation(t *testing.T) {
 			Username: "ivan",
 			Password: "pwd",
 			Permissions: &server.Permissions{
-				Publish:   []string{"foo"},
-				Subscribe: []string{"bar"},
+				Publish:   &server.SubjectPermission{Allow: []string{"foo"}},
+				Subscribe: &server.SubjectPermission{Allow: []string{"bar"}},
 			},
 		},
 	}
