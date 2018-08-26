@@ -31,6 +31,13 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
+	// Check whether the context is done already before making
+	// the request.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	nc.mu.Lock()
 	// If user wants the old style.
@@ -116,6 +123,11 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
 	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	s.mu.Lock()
 	err := s.validateNextMsgState()
@@ -124,7 +136,6 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		return nil, err
 	}
 
-	// snapshot
 	mch := s.mch
 	s.mu.Unlock()
 
