@@ -17,7 +17,6 @@ package test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -136,16 +135,6 @@ func testContextRequestWithTimeoutCanceled(t *testing.T, nc *nats.Conn) {
 
 	// Cancel the context already so that rest of requests fail.
 	cancelCB()
-
-	// Wait for context to be eventually canceled.
-	waitFor(t, 1*time.Millisecond, 50*time.Millisecond, func() error {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			return errors.New("Timeout waiting for context to be canceled")
-		}
-	})
 
 	// Context is already canceled so requests should immediately fail.
 	_, err = nc.RequestWithContext(ctx, "fast", []byte("world"))
