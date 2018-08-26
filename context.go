@@ -33,10 +33,8 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 	}
 	// Check whether the context is done already before making
 	// the request.
-	select {
-	case <-ctx.Done():
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
-	default:
 	}
 
 	nc.mu.Lock()
@@ -123,10 +121,8 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
 	}
-	select {
-	case <-ctx.Done():
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
-	default:
 	}
 
 	s.mu.Lock()
