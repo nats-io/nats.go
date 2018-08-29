@@ -1,6 +1,7 @@
 language: go
 sudo: false
 go:
+- 1.11.x
 - 1.10.x
 - 1.9.x
 install:
@@ -17,4 +18,4 @@ before_script:
 - megacheck -ignore "$(cat staticcheck.ignore)" ./...
 script:
 - go test -i -race ./...
-- if [[ "$TRAVIS_GO_VERSION" == 1.9.* ]]; then ./scripts/cov.sh TRAVIS; else go test -v -race ./...; fi
+- if [[ "$TRAVIS_GO_VERSION" == 1.11.* ]]; then ./scripts/cov.sh TRAVIS; else go test -v -race ./...; fi
