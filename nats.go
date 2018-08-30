@@ -286,6 +286,10 @@ type Options struct {
 	// behavior (see ReconnectBufSize).
 	PublishSync bool
 
+	// SubscribeSync flushes the buffer on every subscribe. When subscribe
+	// returns an error the subscription is not stored and it won't be recreated
+	// automatically when the client reconnects.
+	SubscribeSync bool
 }
 
 const (
@@ -2508,7 +2512,9 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 	nc.mu.Lock()
 	// ok here, but defer is generally expensive
 	defer nc.mu.Unlock()
-	defer nc.kickFlusher()
+	if !nc.Opts.SubscribeSync {
+		defer nc.kickFlusher()
+	}
 
 	// Check for some error conditions.
 	if nc.isClosed() {
@@ -2538,17 +2544,41 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 		sub.mch = ch
 	}
 
+	if nc.conn == nil {
+		return nil, ErrConnectionClosed
+	}
+
 	nc.subsMu.Lock()
 	nc.ssid++
 	sub.sid = nc.ssid
 	nc.subs[sub.sid] = sub
 	nc.subsMu.Unlock()
 
+	if nc.Opts.FlusherTimeout != 0 {
+		nc.conn.SetWriteDeadline(time.Now().Add(nc.Opts.FlusherTimeout))
+	}
+
+	var err error
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
-	if !nc.isReconnecting() {
-		fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
+	if nc.Opts.SubscribeSync || !nc.isReconnecting() {
+		_, err = fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
 	}
+	nc.conn.SetWriteDeadline(time.Time{})
+
+	if nc.Opts.SubscribeSync {
+		if err == nil {
+			err = nc.bw.Flush()
+		}
+		if err != nil {
+			nc.subsMu.Lock()
+			delete(nc.subs, sub.sid)
+			nc.subsMu.Unlock()
+			sub.close()
+			return nil, err
+		}
+	}
+
 	return sub, nil
 }
 
@@ -2564,6 +2594,10 @@ func (nc *Conn) removeSub(s *Subscription) {
 	nc.subsMu.Lock()
 	delete(nc.subs, s.sid)
 	nc.subsMu.Unlock()
+	s.close()
+}
+
+func (s *Subscription) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Release callers on NextMsg for SyncSubscription only
