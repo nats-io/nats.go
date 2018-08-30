@@ -280,6 +280,12 @@ type Options struct {
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
+
+	// PublishSync forces the buffer to be flushed to the socket on every
+	// published message. This mode disables the queueing / send on reconnect
+	// behavior (see ReconnectBufSize).
+	PublishSync bool
+
 }
 
 const (
@@ -2188,7 +2194,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	if nc.isReconnecting() {
+	if !nc.Opts.PublishSync && nc.isReconnecting() {
 		// Flush to underlying buffer.
 		nc.bw.Flush()
 		// Check if we are over
@@ -2226,6 +2232,13 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	msgh = append(msgh, b[i:]...)
 	msgh = append(msgh, _CRLF_...)
 
+	if nc.conn == nil {
+		nc.mu.Unlock()
+		return ErrConnectionClosed
+	}
+	if nc.Opts.FlusherTimeout != 0 {
+		nc.conn.SetWriteDeadline(time.Now().Add(nc.Opts.FlusherTimeout))
+	}
 	_, err := nc.bw.Write(msgh)
 	if err == nil {
 		_, err = nc.bw.Write(data)
@@ -2233,6 +2246,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	if err == nil {
 		_, err = nc.bw.WriteString(_CRLF_)
 	}
+	if err == nil && nc.Opts.PublishSync {
+		err = nc.bw.Flush()
+	}
+	nc.conn.SetWriteDeadline(time.Time{})
+
 	if err != nil {
 		nc.mu.Unlock()
 		return err
@@ -2241,7 +2259,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
-	if len(nc.fch) == 0 {
+	if !nc.Opts.PublishSync && len(nc.fch) == 0 {
 		nc.kickFlusher()
 	}
 	nc.mu.Unlock()
