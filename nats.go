@@ -17,6 +17,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -280,6 +281,10 @@ type Options struct {
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
+
+	// Background specifies context that should be use for background connection attempt
+	// if no context is specified Connect() call will be blocking
+	Background context.Context
 }
 
 const (
@@ -706,6 +711,14 @@ func UseOldRequestStyle() Option {
 	}
 }
 
+// Background is an Option to specify Context for background connection attempt
+func Background(ctx context.Context) Option {
+	return func(o *Options) error {
+		o.Background = ctx
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -804,12 +817,12 @@ func (o Options) Connect() (*Conn, error) {
 	nc.ach = &asyncCallbacksHandler{}
 	nc.ach.cond = sync.NewCond(&nc.ach.mu)
 
-	if err := nc.connect(); err != nil {
+	if o.Background != nil {
+		nc.bgConnect(o.Background)
+		return nc, nil
+	} else if err := nc.connect(); err != nil {
 		return nil, err
 	}
-
-	// Spin up the async cb dispatcher on success
-	go nc.ach.asyncCBDispatcher()
 
 	return nc, nil
 }
@@ -1185,10 +1198,41 @@ func (nc *Conn) connect() error {
 	nc.initc = false
 	defer nc.mu.Unlock()
 
-	if returnedErr == nil && nc.status != CONNECTED {
+	switch {
+	case returnedErr == nil && nc.status != CONNECTED:
 		returnedErr = ErrNoServers
+	case returnedErr == nil:
+		// Spin up the async cb dispatcher on success
+		go nc.ach.asyncCBDispatcher()
 	}
+
 	return returnedErr
+}
+
+func (nc *Conn) bgConnect(ctx context.Context) {
+	go func() {
+		for lastAttempt := time.Now(); ; lastAttempt = time.Now() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := nc.connect(); err == nil {
+					return
+				}
+			}
+
+			sleepTime := time.Duration(0)
+			if time.Since(lastAttempt) < nc.Opts.ReconnectWait {
+				sleepTime = nc.Opts.ReconnectWait - time.Since(lastAttempt)
+			}
+
+			if sleepTime <= 0 {
+				runtime.Gosched()
+			} else {
+				time.Sleep(sleepTime)
+			}
+		}
+	}()
 }
 
 // This will check to see if the connection should be
@@ -2188,7 +2232,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	if nc.isReconnecting() {
+	if nc.isReconnecting() || nc.isConnecting() {
 		// Flush to underlying buffer.
 		nc.bw.Flush()
 		// Check if we are over
