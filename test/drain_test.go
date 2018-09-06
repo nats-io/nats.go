@@ -15,6 +15,7 @@ package test
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -393,4 +394,52 @@ func TestDrainConnectionAutoUnsub(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("Timeout waiting for closed state for connection")
 	}
+}
+
+func TestDrainConnLastError(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	done := make(chan bool, 1)
+	closedCb := func(nc *nats.Conn) {
+		done <- true
+	}
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.ClosedHandler(closedCb),
+		nats.DrainTimeout(time.Millisecond))
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v", err)
+	}
+	defer nc.Close()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	if _, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		// So they back up a bit in client to make drain timeout
+		time.Sleep(100 * time.Millisecond)
+		wg.Done()
+
+	}); err != nil {
+		t.Fatalf("Error creating subscription; %v", err)
+	}
+
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	if err := nc.Drain(); err != nil {
+		t.Fatalf("Error on drain: %v", err)
+	}
+
+	select {
+	case <-done:
+		if e := nc.LastError(); e == nil || e != nats.ErrDrainTimeout {
+			t.Fatalf("Expected last error to be set to %v, got %v", nats.ErrDrainTimeout, e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timeout waiting for closed state for connection")
+	}
+
+	// Wait for subscription callback to return
+	wg.Wait()
 }

@@ -40,7 +40,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.6.0"
+	Version                 = "1.6.1"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -3241,6 +3241,7 @@ func (nc *Conn) drainConnection() {
 	// for pushing errors with context.
 	pushErr := func(err error) {
 		nc.mu.Lock()
+		nc.err = err
 		if errCB != nil {
 			nc.ach.push(func() { errCB(nc, nil, err) })
 		}
