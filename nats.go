@@ -428,6 +428,7 @@ type serverInfo struct {
 	MaxPayload   int64    `json:"max_payload"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	Proto        int      `json:"proto,omitempty"`
+	CID          uint64   `json:"client_id,omitempty"`
 }
 
 const (
@@ -3475,4 +3476,18 @@ func (nc *Conn) Barrier(f func()) error {
 	nc.subsMu.Unlock()
 	nc.mu.Unlock()
 	return nil
+}
+
+// GetCID returns the client ID assigned by the server the client
+// is currently connected to. Note that the value would change if
+// client reconnects. Also, returned value may be 0 if connecting
+// to a server pre 1.2.0, which did not send the CID back to the
+// client.
+func (nc *Conn) GetCID() (uint64, error) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.isClosed() {
+		return 0, ErrConnectionClosed
+	}
+	return nc.info.CID, nil
 }

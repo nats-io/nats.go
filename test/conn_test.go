@@ -2051,3 +2051,66 @@ func TestNilOpts(t *testing.T) {
 		t.Fatal("Unexpected error: option not set.")
 	}
 }
+
+func TestGetCID(t *testing.T) {
+	optsA := test.DefaultTestOptions
+	optsA.Port = -1
+	optsA.Cluster.Port = -1
+	srvA := RunServerWithOptions(optsA)
+	defer srvA.Shutdown()
+
+	optsB := test.DefaultTestOptions
+	optsB.Port = -1
+	optsB.Cluster.Port = -1
+	optsB.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", srvA.ClusterAddr().Port))
+	srvB := RunServerWithOptions(optsB)
+
+	ch := make(chan bool, 1)
+	nc1, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvA.Addr().(*net.TCPAddr).Port),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			ch <- true
+		}))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc1.Close()
+
+	cid, err := nc1.GetCID()
+	if err != nil {
+		t.Fatalf("Error getting CID: %v", err)
+	}
+	if cid == 0 {
+		t.Fatal("Unexpected cid value, make sure server is 1.2.0+")
+	}
+
+	nc2, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvB.Addr().(*net.TCPAddr).Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc2.Close()
+
+	// Stop server A, nc1 will reconnect to B, and should have different CID
+	srvA.Shutdown()
+	// Wait for nc1 to reconnect
+	if err := Wait(ch); err != nil {
+		t.Fatal("Did not reconnect")
+	}
+	newCID, err := nc1.GetCID()
+	if err != nil {
+		t.Fatalf("Error getting CID: %v", err)
+	}
+	if newCID == 0 {
+		t.Fatal("Unexpected cid value, make sure server is 1.2.0+")
+	}
+	if newCID == cid {
+		t.Fatalf("Expected different CID since server already had a client")
+	}
+	nc1.Close()
+	newCID, err = nc1.GetCID()
+	if err == nil {
+		t.Fatalf("Expected error, got none")
+	}
+	if newCID != 0 {
+		t.Fatalf("Expected 0 on connection closed, got %v", newCID)
+	}
+}
