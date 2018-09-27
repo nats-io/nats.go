@@ -2052,21 +2052,21 @@ func TestNilOpts(t *testing.T) {
 	}
 }
 
-func TestGetCID(t *testing.T) {
+func TestGetClientID(t *testing.T) {
+	if serverVersionAtLeast(1, 2, 0) != nil {
+		t.SkipNow()
+	}
 	optsA := test.DefaultTestOptions
 	optsA.Port = -1
 	optsA.Cluster.Port = -1
 	srvA := RunServerWithOptions(optsA)
 	defer srvA.Shutdown()
 
-	optsB := test.DefaultTestOptions
-	optsB.Port = -1
-	optsB.Cluster.Port = -1
-	optsB.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", srvA.ClusterAddr().Port))
-	srvB := RunServerWithOptions(optsB)
-
 	ch := make(chan bool, 1)
 	nc1, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvA.Addr().(*net.TCPAddr).Port),
+		nats.DiscoveredServersHandler(func(_ *nats.Conn) {
+			ch <- true
+		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			ch <- true
 		}))
@@ -2075,7 +2075,7 @@ func TestGetCID(t *testing.T) {
 	}
 	defer nc1.Close()
 
-	cid, err := nc1.GetCID()
+	cid, err := nc1.GetClientID()
 	if err != nil {
 		t.Fatalf("Error getting CID: %v", err)
 	}
@@ -2083,6 +2083,28 @@ func TestGetCID(t *testing.T) {
 		t.Fatal("Unexpected cid value, make sure server is 1.2.0+")
 	}
 
+	// Start a second server and verify that async INFO contains client ID
+	optsB := test.DefaultTestOptions
+	optsB.Port = -1
+	optsB.Cluster.Port = -1
+	optsB.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", srvA.ClusterAddr().Port))
+	srvB := RunServerWithOptions(optsB)
+	defer srvB.Shutdown()
+
+	// Wait for the discovered callback to fire
+	if err := Wait(ch); err != nil {
+		t.Fatal("Did not the discovered callback")
+	}
+	// Now check CID should be valid and same as before
+	newCID, err := nc1.GetClientID()
+	if err != nil {
+		t.Fatalf("Error getting CID: %v", err)
+	}
+	if newCID != cid {
+		t.Fatalf("Expected CID to be %v, got %v", cid, newCID)
+	}
+
+	// Create a client to server B
 	nc2, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvB.Addr().(*net.TCPAddr).Port))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -2095,7 +2117,7 @@ func TestGetCID(t *testing.T) {
 	if err := Wait(ch); err != nil {
 		t.Fatal("Did not reconnect")
 	}
-	newCID, err := nc1.GetCID()
+	newCID, err = nc1.GetClientID()
 	if err != nil {
 		t.Fatalf("Error getting CID: %v", err)
 	}
@@ -2106,11 +2128,63 @@ func TestGetCID(t *testing.T) {
 		t.Fatalf("Expected different CID since server already had a client")
 	}
 	nc1.Close()
-	newCID, err = nc1.GetCID()
+	newCID, err = nc1.GetClientID()
 	if err == nil {
 		t.Fatalf("Expected error, got none")
 	}
 	if newCID != 0 {
 		t.Fatalf("Expected 0 on connection closed, got %v", newCID)
 	}
+
+	// Stop clients and remaining server
+	nc1.Close()
+	nc2.Close()
+	srvB.Shutdown()
+
+	// Now have dummy server that returns no CID and check we get expected error.
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		conn, err := l.Accept()
+		if err != nil {
+			t.Fatalf("Error accepting client connection: %v\n", err)
+		}
+		defer conn.Close()
+		info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		line := make([]byte, 256)
+		_, err = conn.Read(line)
+		if err != nil {
+			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+		}
+		conn.Write([]byte("PONG\r\n"))
+		// Now wait to be notified that we can finish
+		<-ch
+	}()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	if cid, err := nc.GetClientID(); err != nats.ErrNoClientIDReturned || cid != 0 {
+		t.Fatalf("Expected err=%v and cid=0, got err=%v and cid=%v", nats.ErrNoClientIDReturned, err, cid)
+	}
+	// Release fake server
+	nc.Close()
+	ch <- true
+	wg.Wait()
 }

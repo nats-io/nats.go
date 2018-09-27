@@ -93,6 +93,7 @@ var (
 	ErrInvalidArg             = errors.New("nats: invalid argument")
 	ErrInvalidContext         = errors.New("nats: invalid context")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
+	ErrNoClientIDReturned     = errors.New("nats: client ID not returned by this server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -3478,16 +3479,19 @@ func (nc *Conn) Barrier(f func()) error {
 	return nil
 }
 
-// GetCID returns the client ID assigned by the server the client
-// is currently connected to. Note that the value would change if
-// client reconnects. Also, returned value may be 0 if connecting
-// to a server pre 1.2.0, which did not send the CID back to the
-// client.
-func (nc *Conn) GetCID() (uint64, error) {
+// GetClientID returns the client ID assigned by the server to which
+// the client is currently connected to. Note that the value may change if
+// the client reconnects.
+// This function returns ErrNoClientIDReturned if the server is of a
+// version prior to 1.2.0.
+func (nc *Conn) GetClientID() (uint64, error) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.isClosed() {
 		return 0, ErrConnectionClosed
+	}
+	if nc.info.CID == 0 {
+		return 0, ErrNoClientIDReturned
 	}
 	return nc.info.CID, nil
 }
