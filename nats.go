@@ -93,7 +93,7 @@ var (
 	ErrInvalidArg             = errors.New("nats: invalid argument")
 	ErrInvalidContext         = errors.New("nats: invalid context")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
-	ErrNoClientIDReturned     = errors.New("nats: client ID not returned by this server")
+	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -3491,7 +3491,7 @@ func (nc *Conn) GetClientID() (uint64, error) {
 		return 0, ErrConnectionClosed
 	}
 	if nc.info.CID == 0 {
-		return 0, ErrNoClientIDReturned
+		return 0, ErrClientIDNotSupported
 	}
 	return nc.info.CID, nil
 }

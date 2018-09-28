@@ -2180,8 +2180,8 @@ func TestGetClientID(t *testing.T) {
 	}
 	defer nc.Close()
 
-	if cid, err := nc.GetClientID(); err != nats.ErrNoClientIDReturned || cid != 0 {
-		t.Fatalf("Expected err=%v and cid=0, got err=%v and cid=%v", nats.ErrNoClientIDReturned, err, cid)
+	if cid, err := nc.GetClientID(); err != nats.ErrClientIDNotSupported || cid != 0 {
+		t.Fatalf("Expected err=%v and cid=0, got err=%v and cid=%v", nats.ErrClientIDNotSupported, err, cid)
 	}
 	// Release fake server
 	nc.Close()
