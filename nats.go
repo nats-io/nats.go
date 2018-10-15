@@ -93,6 +93,7 @@ var (
 	ErrInvalidArg             = errors.New("nats: invalid argument")
 	ErrInvalidContext         = errors.New("nats: invalid context")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
+	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -428,6 +429,7 @@ type serverInfo struct {
 	MaxPayload   int64    `json:"max_payload"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	Proto        int      `json:"proto,omitempty"`
+	CID          uint64   `json:"client_id,omitempty"`
 }
 
 const (
@@ -3475,4 +3477,21 @@ func (nc *Conn) Barrier(f func()) error {
 	nc.subsMu.Unlock()
 	nc.mu.Unlock()
 	return nil
+}
+
+// GetClientID returns the client ID assigned by the server to which
+// the client is currently connected to. Note that the value may change if
+// the client reconnects.
+// This function returns ErrNoClientIDReturned if the server is of a
+// version prior to 1.2.0.
+func (nc *Conn) GetClientID() (uint64, error) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.isClosed() {
+		return 0, ErrConnectionClosed
+	}
+	if nc.info.CID == 0 {
+		return 0, ErrClientIDNotSupported
+	}
+	return nc.info.CID, nil
 }
