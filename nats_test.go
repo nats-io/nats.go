@@ -34,6 +34,7 @@ import (
 
 	"github.com/nats-io/gnatsd/server"
 	gnatsd "github.com/nats-io/gnatsd/test"
+	"github.com/nats-io/nkeys"
 )
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
@@ -1263,5 +1264,59 @@ func TestNoEchoOldServer(t *testing.T) {
 	_, err = nc.connectProto()
 	if err == nil {
 		t.Fatalf("Expected an error but got none\n")
+	}
+}
+
+const seed = "SUAKYRHVIOREXV7EUZTBHUHL7NUMHPMAS7QMDU3GTIUWEI5LDNOXD43IZY"
+
+func TestNkeyAuth(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+
+	kp, _ := nkeys.FromSeed(seed)
+	pub, _ := kp.PublicKey()
+
+	sopts := gnatsd.DefaultTestOptions
+	sopts.Port = TEST_PORT
+	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: pub}}
+	ts := RunServerWithOptions(sopts)
+	defer ts.Shutdown()
+
+	opts := reconnectOpts
+	if _, err := opts.Connect(); err == nil {
+		t.Fatalf("Expected to fail with no nkey auth defined")
+	}
+	opts.Nkey = pub
+	if _, err := opts.Connect(); err != ErrNkeyButNoSigCB {
+		t.Fatalf("Expected to fail with nkey defined but no signature callback, got %v", err)
+	}
+	badSign := func(nonce []byte) []byte {
+		return []byte("VALID?")
+	}
+	opts.SignatureCB = badSign
+	if _, err := opts.Connect(); err == nil {
+		t.Fatalf("Expected to fail with nkey and bad signature callback")
+	}
+	goodSign := func(nonce []byte) []byte {
+		sig, err := kp.Sign(nonce)
+		if err != nil {
+			t.Fatalf("Failed signing nonce: %v", err)
+		}
+		return sig
+	}
+	opts.SignatureCB = goodSign
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Expected to succeed but got %v", err)
+	}
+
+	// Now disconnect by killing the server and restarting.
+	ts.Shutdown()
+	ts = RunServerWithOptions(sopts)
+	defer ts.Shutdown()
+
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("Error on Flush: %v", err)
 	}
 }
