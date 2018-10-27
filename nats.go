@@ -96,7 +96,7 @@ var (
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
 	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
 	ErrNkeyButNoSigCB         = errors.New("nats: Nkey defined without a signature handler")
-	ErrNkeysNoSupported       = errors.New("nats: Nkeys not supported by the server.")
+	ErrNkeysNoSupported       = errors.New("nats: Nkeys not supported by the server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -699,6 +699,19 @@ func Token(token string) Option {
 	}
 }
 
+// Nkey will set the public Nkey and the signature callback to
+// sign the server nonce.
+func Nkey(pubKey string, sigCB SignatureHandler) Option {
+	return func(o *Options) error {
+		o.Nkey = pubKey
+		o.SignatureCB = sigCB
+		if sigCB == nil {
+			return ErrNkeyButNoSigCB
+		}
+		return nil
+	}
+}
+
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
 // DEPRECATED: Should use CustomDialer instead.
@@ -1227,16 +1240,6 @@ func (nc *Conn) checkForSecure() error {
 		o.Secure = true
 	}
 
-	if o.Nkey != "" && nc.info.Nonce == "" {
-		return ErrNkeysNoSupported
-	}
-
-	// Check if we have an nkey but no signature callback
-	// defined.
-	if o.Nkey != "" && o.SignatureCB == nil {
-		return ErrNkeyButNoSigCB
-	}
-
 	// Need to rewrap with bufio
 	if o.Secure {
 		nc.makeTLSConn()
@@ -1264,6 +1267,15 @@ func (nc *Conn) processExpectedInfo() error {
 	// Parse the protocol
 	if err := nc.processInfo(c.args); err != nil {
 		return err
+	}
+
+	if nc.Opts.Nkey != "" && nc.info.Nonce == "" {
+		return ErrNkeysNoSupported
+	}
+
+	// Check if we have an nkey but no signature callback defined.
+	if nc.Opts.Nkey != "" && nc.Opts.SignatureCB == nil {
+		return ErrNkeyButNoSigCB
 	}
 
 	return nc.checkForSecure()
@@ -1301,7 +1313,7 @@ func (nc *Conn) connectProto() (string, error) {
 	}
 
 	if nkey != "" {
-		sigraw := nc.Opts.SignatureCB([]byte(nc.info.Nonce))
+		sigraw := o.SignatureCB([]byte(nc.info.Nonce))
 		sig = base64.StdEncoding.EncodeToString(sigraw)
 	}
 
@@ -2111,6 +2123,7 @@ func (nc *Conn) processInfo(info string) error {
 	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
 		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
 	}
+
 	return nil
 }
 
