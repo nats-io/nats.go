@@ -705,7 +705,7 @@ func Nkey(pubKey string, sigCB SignatureHandler) Option {
 	return func(o *Options) error {
 		o.Nkey = pubKey
 		o.SignatureCB = sigCB
-		if sigCB == nil {
+		if pubKey != "" && sigCB == nil {
 			return ErrNkeyButNoSigCB
 		}
 		return nil
@@ -821,6 +821,11 @@ func (o Options) Connect() (*Conn, error) {
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
+	}
+
+	// Check if we have an nkey but no signature callback defined.
+	if nc.Opts.Nkey != "" && nc.Opts.SignatureCB == nil {
+		return nil, ErrNkeyButNoSigCB
 	}
 
 	// Allow custom Dialer for connecting using DialTimeout by default
@@ -1271,11 +1276,6 @@ func (nc *Conn) processExpectedInfo() error {
 
 	if nc.Opts.Nkey != "" && nc.info.Nonce == "" {
 		return ErrNkeysNoSupported
-	}
-
-	// Check if we have an nkey but no signature callback defined.
-	if nc.Opts.Nkey != "" && nc.Opts.SignatureCB == nil {
-		return ErrNkeyButNoSigCB
 	}
 
 	return nc.checkForSecure()
