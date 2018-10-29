@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +95,8 @@ var (
 	ErrInvalidContext         = errors.New("nats: invalid context")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
 	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
+	ErrNkeyButNoSigCB         = errors.New("nats: Nkey defined without a signature handler")
+	ErrNkeysNoSupported       = errors.New("nats: Nkeys not supported by the server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 )
 
@@ -137,6 +140,11 @@ type ConnHandler func(*Conn)
 // ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
+
+// SignatureHandler is used to sign a nonce from the server while
+// authenticating with nkeys. The user should sign the nonce and
+// return the base64 encoded signature.
+type SignatureHandler func([]byte) []byte
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -260,6 +268,14 @@ type Options struct {
 	// NOTE: This does not affect AsyncSubscriptions which are
 	// dictated by PendingLimits()
 	SubChanLen int
+
+	// Nkey sets the public nkey that will be used to authenticate
+	// when connecting to the server
+	Nkey string
+
+	// SignatureCB designates the function used to sign the nonce
+	// presented from the server.
+	SignatureCB SignatureHandler
 
 	// User sets the username to be used when connecting to the server.
 	User string
@@ -430,6 +446,7 @@ type serverInfo struct {
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	Proto        int      `json:"proto,omitempty"`
 	CID          uint64   `json:"client_id,omitempty"`
+	Nonce        string   `json:"nonce,omitempty"`
 }
 
 const (
@@ -442,17 +459,19 @@ const (
 )
 
 type connectInfo struct {
-	Verbose  bool   `json:"verbose"`
-	Pedantic bool   `json:"pedantic"`
-	User     string `json:"user,omitempty"`
-	Pass     string `json:"pass,omitempty"`
-	Token    string `json:"auth_token,omitempty"`
-	TLS      bool   `json:"tls_required"`
-	Name     string `json:"name"`
-	Lang     string `json:"lang"`
-	Version  string `json:"version"`
-	Protocol int    `json:"protocol"`
-	Echo     bool   `json:"echo"`
+	Verbose   bool   `json:"verbose"`
+	Pedantic  bool   `json:"pedantic"`
+	Nkey      string `json:"nkey,omitempty"`
+	Signature string `json:"sig,omitempty"`
+	User      string `json:"user,omitempty"`
+	Pass      string `json:"pass,omitempty"`
+	Token     string `json:"auth_token,omitempty"`
+	TLS       bool   `json:"tls_required"`
+	Name      string `json:"name"`
+	Lang      string `json:"lang"`
+	Version   string `json:"version"`
+	Protocol  int    `json:"protocol"`
+	Echo      bool   `json:"echo"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -680,6 +699,19 @@ func Token(token string) Option {
 	}
 }
 
+// Nkey will set the public Nkey and the signature callback to
+// sign the server nonce.
+func Nkey(pubKey string, sigCB SignatureHandler) Option {
+	return func(o *Options) error {
+		o.Nkey = pubKey
+		o.SignatureCB = sigCB
+		if pubKey != "" && sigCB == nil {
+			return ErrNkeyButNoSigCB
+		}
+		return nil
+	}
+}
+
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
 // DEPRECATED: Should use CustomDialer instead.
@@ -789,6 +821,11 @@ func (o Options) Connect() (*Conn, error) {
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
+	}
+
+	// Check if we have an nkey but no signature callback defined.
+	if nc.Opts.Nkey != "" && nc.Opts.SignatureCB == nil {
+		return nil, ErrNkeyButNoSigCB
 	}
 
 	// Allow custom Dialer for connecting using DialTimeout by default
@@ -1237,6 +1274,10 @@ func (nc *Conn) processExpectedInfo() error {
 		return err
 	}
 
+	if nc.Opts.Nkey != "" && nc.info.Nonce == "" {
+		return ErrNkeysNoSupported
+	}
+
 	return nc.checkForSecure()
 }
 
@@ -1253,7 +1294,7 @@ func (nc *Conn) sendProto(proto string) {
 // applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
-	var user, pass, token string
+	var nkey, sig, user, pass, token string
 	u := nc.url.User
 	if u != nil {
 		// if no password, assume username is authToken
@@ -1268,10 +1309,17 @@ func (nc *Conn) connectProto() (string, error) {
 		user = nc.Opts.User
 		pass = nc.Opts.Password
 		token = nc.Opts.Token
+		nkey = nc.Opts.Nkey
 	}
 
-	cinfo := connectInfo{o.Verbose, o.Pedantic, user, pass, token,
-		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho}
+	if nkey != "" {
+		sigraw := o.SignatureCB([]byte(nc.info.Nonce))
+		sig = base64.StdEncoding.EncodeToString(sigraw)
+	}
+
+	cinfo := connectInfo{o.Verbose, o.Pedantic, nkey, sig,
+		user, pass, token, o.Secure, o.Name, LangString,
+		Version, clientProtoInfo, !o.NoEcho}
 
 	b, err := json.Marshal(cinfo)
 	if err != nil {
@@ -2075,6 +2123,7 @@ func (nc *Conn) processInfo(info string) error {
 	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
 		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
 	}
+
 	return nil
 }
 
