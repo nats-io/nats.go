@@ -297,6 +297,16 @@ type Options struct {
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
+
+	// PublishSync forces the buffer to be flushed to the socket on every
+	// published message. This mode disables the queueing / send on reconnect
+	// behavior (see ReconnectBufSize).
+	PublishSync bool
+
+	// SubscribeSync flushes the buffer on every subscribe. When subscribe
+	// returns an error the subscription is not stored and it won't be recreated
+	// automatically when the client reconnects.
+	SubscribeSync bool
 }
 
 const (
@@ -2239,7 +2249,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	if nc.isReconnecting() {
+	if !nc.Opts.PublishSync && nc.isReconnecting() {
 		// Flush to underlying buffer.
 		nc.bw.Flush()
 		// Check if we are over
@@ -2277,6 +2287,13 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	msgh = append(msgh, b[i:]...)
 	msgh = append(msgh, _CRLF_...)
 
+	if nc.conn == nil {
+		nc.mu.Unlock()
+		return ErrConnectionClosed
+	}
+	if nc.Opts.FlusherTimeout != 0 {
+		nc.conn.SetWriteDeadline(time.Now().Add(nc.Opts.FlusherTimeout))
+	}
 	_, err := nc.bw.Write(msgh)
 	if err == nil {
 		_, err = nc.bw.Write(data)
@@ -2284,6 +2301,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	if err == nil {
 		_, err = nc.bw.WriteString(_CRLF_)
 	}
+	if err == nil && nc.Opts.PublishSync {
+		err = nc.bw.Flush()
+	}
+	nc.conn.SetWriteDeadline(time.Time{})
+
 	if err != nil {
 		nc.mu.Unlock()
 		return err
@@ -2292,7 +2314,7 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 	nc.OutMsgs++
 	nc.OutBytes += uint64(len(data))
 
-	if len(nc.fch) == 0 {
+	if !nc.Opts.PublishSync && len(nc.fch) == 0 {
 		nc.kickFlusher()
 	}
 	nc.mu.Unlock()
@@ -2541,7 +2563,9 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 	nc.mu.Lock()
 	// ok here, but defer is generally expensive
 	defer nc.mu.Unlock()
-	defer nc.kickFlusher()
+	if !nc.Opts.SubscribeSync {
+		defer nc.kickFlusher()
+	}
 
 	// Check for some error conditions.
 	if nc.isClosed() {
@@ -2571,17 +2595,41 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 		sub.mch = ch
 	}
 
+	if nc.conn == nil {
+		return nil, ErrConnectionClosed
+	}
+
 	nc.subsMu.Lock()
 	nc.ssid++
 	sub.sid = nc.ssid
 	nc.subs[sub.sid] = sub
 	nc.subsMu.Unlock()
 
+	if nc.Opts.FlusherTimeout != 0 {
+		nc.conn.SetWriteDeadline(time.Now().Add(nc.Opts.FlusherTimeout))
+	}
+
+	var err error
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
-	if !nc.isReconnecting() {
-		fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
+	if nc.Opts.SubscribeSync || !nc.isReconnecting() {
+		_, err = fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
 	}
+	nc.conn.SetWriteDeadline(time.Time{})
+
+	if nc.Opts.SubscribeSync {
+		if err == nil {
+			err = nc.bw.Flush()
+		}
+		if err != nil {
+			nc.subsMu.Lock()
+			delete(nc.subs, sub.sid)
+			nc.subsMu.Unlock()
+			sub.close()
+			return nil, err
+		}
+	}
+
 	return sub, nil
 }
 
@@ -2597,6 +2645,10 @@ func (nc *Conn) removeSub(s *Subscription) {
 	nc.subsMu.Lock()
 	delete(nc.subs, s.sid)
 	nc.subsMu.Unlock()
+	s.close()
+}
+
+func (s *Subscription) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Release callers on NextMsg for SyncSubscription only

@@ -48,6 +48,7 @@ func main() {
 	var numMsgs = flag.Int("n", DefaultNumMsgs, "Number of Messages to Publish")
 	var msgSize = flag.Int("ms", DefaultMessageSize, "Size of the message.")
 	var csvFile = flag.String("csv", "", "Save bench data to csv file")
+	var publishSync = flag.Bool("publishsync", false, "Flush to the socket on publish")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -69,6 +70,7 @@ func main() {
 		opts.Servers[i] = strings.Trim(s, " ")
 	}
 	opts.Secure = *tls
+	opts.PublishSync = *publishSync
 
 	benchmark = bench.NewBenchmark("NATS", *numSubs, *numPubs)
 
