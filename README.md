@@ -115,6 +115,24 @@ c.Subscribe("help", func(subj, reply string, msg string) {
 c.Close();
 ```
 
+## Nkey Authentication (server versions >= 2.0.0)
+To authenticate with nkeys, the nkey seed should be in a read only file, e.g. seed.txt
+```bash
+> cat seed.txt
+# This is my seed nkey!
+SUAGMJH5XLGZKQQWAWKRZJIGMOU4HPFUYLXJMXOO5NLFEO2OOQJ5LPRDPM
+```
+
+This is a helper function which will load and decode and do the proper signing for the server nonce.
+It will clear memory in between invocations.
+You can choose to use the low level option and provide the public key and a signature callback on your own.
+
+```go
+opt, err := nats.NkeyOptionFromSeed("seed.txt")
+nc, err := nats.Connect(serverUrl, opt)
+
+```
+
 ## TLS
 
 ```go

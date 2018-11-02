@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/nats-io/go-nats/util"
+	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
 )
 
@@ -3543,4 +3544,75 @@ func (nc *Conn) GetClientID() (uint64, error) {
 		return 0, ErrClientIDNotSupported
 	}
 	return nc.info.CID, nil
+}
+
+// NkeyOptionFromSeed will load an nkey pair from a seed file.
+// It will return the NKey Option and will handle
+// signing of nonce challenges from the server. It will take
+// care to not hold keys in memory and to wipe memory.
+func NkeyOptionFromSeed(seedFile string) (Option, error) {
+	kp, err := nkeyPairFromSeedFile(seedFile)
+	if err != nil {
+		return nil, err
+	}
+	// Wipe our key on exit.
+	defer kp.Wipe()
+
+	pub, err := kp.PublicKey()
+	if err != nil {
+		return nil, err
+	}
+	if !nkeys.IsValidPublicUserKey(pub) {
+		return nil, fmt.Errorf("nats: Not a valid nkey user seed")
+	}
+	sigCB := func(nonce []byte) []byte {
+		return sigHandler(nonce, seedFile)
+	}
+	return Nkey(string(pub), sigCB), nil
+}
+
+func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
+	var seed []byte
+	contents, err := ioutil.ReadFile(seedFile)
+	if err != nil {
+		return nil, fmt.Errorf("nats: %v", err)
+	}
+	defer wipeSlice(contents)
+
+	lines := bytes.Split(contents, []byte("\n"))
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("SU")) {
+			seed = line
+			break
+		}
+	}
+	if seed == nil {
+		return nil, fmt.Errorf("nats: No nkey user seed found in %q", seedFile)
+	}
+	kp, err := nkeys.FromSeed(seed)
+	if err != nil {
+		return nil, err
+	}
+	return kp, nil
+}
+
+// Sign authentication challenges from the server.
+// Do not keep private seed in memory.
+func sigHandler(nonce []byte, seedFile string) []byte {
+	kp, err := nkeyPairFromSeedFile(seedFile)
+	if err != nil {
+		return nil
+	}
+	// Wipe our key on exit.
+	defer kp.Wipe()
+
+	sig, _ := kp.Sign(nonce)
+	return sig
+}
+
+// Just wipe slice with 'x', for clearing contents of nkey seed file.
+func wipeSlice(buf []byte) {
+	for i := range buf {
+		buf[i] = 'x'
+	}
 }

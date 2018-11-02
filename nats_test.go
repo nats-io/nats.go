@@ -1267,19 +1267,18 @@ func TestNoEchoOldServer(t *testing.T) {
 	}
 }
 
-const seed = "SUAKYRHVIOREXV7EUZTBHUHL7NUMHPMAS7QMDU3GTIUWEI5LDNOXD43IZY"
-
 func TestNkeyAuth(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
 	}
 
+	seed := []byte("SUAKYRHVIOREXV7EUZTBHUHL7NUMHPMAS7QMDU3GTIUWEI5LDNOXD43IZY")
 	kp, _ := nkeys.FromSeed(seed)
 	pub, _ := kp.PublicKey()
 
 	sopts := gnatsd.DefaultTestOptions
 	sopts.Port = TEST_PORT
-	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: pub}}
+	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: string(pub)}}
 	ts := RunServerWithOptions(sopts)
 	defer ts.Shutdown()
 
@@ -1287,7 +1286,7 @@ func TestNkeyAuth(t *testing.T) {
 	if _, err := opts.Connect(); err == nil {
 		t.Fatalf("Expected to fail with no nkey auth defined")
 	}
-	opts.Nkey = pub
+	opts.Nkey = string(pub)
 	if _, err := opts.Connect(); err != ErrNkeyButNoSigCB {
 		t.Fatalf("Expected to fail with nkey defined but no signature callback, got %v", err)
 	}

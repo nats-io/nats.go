@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2018 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -24,15 +24,15 @@ import (
 )
 
 // NOTE: Can test with demo servers.
-// nats-sub -s demo.nats.io <subject>
-// nats-sub -s demo.nats.io:4443 <subject> (TLS version)
+// nats-echo -s demo.nats.io <subject>
+// nats-echo -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [-t] <subject>")
+	log.Fatalf("Usage: nats-echo [-s server] [-t] [-nkey seedfile] <subject>")
 }
 
 func printMsg(m *nats.Msg, i int) {
-	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
+	log.Printf("[#%d] Echoing %q", i, m.Data)
 }
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 	}
 
 	// general options.
-	opts := []nats.Option{nats.Name("NATS Sample Subscriber")}
+	opts := []nats.Option{nats.Name("NATS Echo Service")}
 
 	// Use Nkey authentication.
 	if *nkeyFile != "" {
@@ -69,8 +69,10 @@ func main() {
 	subj, i := args[0], 0
 
 	nc.Subscribe(subj, func(msg *nats.Msg) {
-		i += 1
+		i++
 		printMsg(msg, i)
+		// Just echo back what they sent us.
+		nc.Publish(msg.Reply, msg.Data)
 	})
 	nc.Flush()
 
@@ -78,7 +80,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Listening on [%s]\n", subj)
+	log.Printf("Echo Service listening on [%s]\n", subj)
 	if *showTime {
 		log.SetFlags(log.LstdFlags)
 	}
