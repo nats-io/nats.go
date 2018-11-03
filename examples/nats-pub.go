@@ -22,24 +22,40 @@ import (
 	"github.com/nats-io/go-nats"
 )
 
-// NOTE: Use tls scheme for TLS, e.g. nats-pub -s tls://demo.nats.io:4443 foo hello
+// NOTE: Can test with demo servers.
+// nats-pub -s demo.nats.io <subject> <msg>
+// nats-pub -s demo.nats.io:4443 <subject> <msg> (TLS version)
+
 func usage() {
-	log.Fatalf("Usage: nats-pub [-s server (%s)] <subject> <msg> \n", nats.DefaultURL)
+	log.Fatalf("Usage: nats-pub [-s server] <subject> <msg>")
 }
 
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
+	var nkeyFile = flag.String("nkey", "", "Use the nkey seed file for authentication")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 2 {
+	if len(args) != 2 {
 		usage()
 	}
 
-	nc, err := nats.Connect(*urls)
+	// general options.
+	opts := []nats.Option{nats.Name("NATS Sample Publisher")}
+
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
+	}
+
+	nc, err := nats.Connect(*urls, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
