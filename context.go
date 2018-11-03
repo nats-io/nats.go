@@ -19,7 +19,9 @@ package nats
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"reflect"
+	"time"
 )
 
 // RequestWithContext takes a context, a subject and payload
@@ -49,6 +51,7 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 		// _INBOX wildcard
 		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
 		nc.respMap = make(map[string]chan *Msg)
+		nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
