@@ -44,7 +44,7 @@ func main() {
 		usage()
 	}
 
-	// general options.
+	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Sample Requestor")}
 
 	// Use Nkey authentication.
@@ -56,9 +56,10 @@ func main() {
 		opts = append(opts, opt)
 	}
 
+	// Connect to NATS
 	nc, err := nats.Connect(*urls, opts...)
 	if err != nil {
-		log.Fatalf("Can't connect: %v\n", err)
+		log.Fatal(err)
 	}
 	defer nc.Close()
 	subj, payload := args[0], []byte(args[1])
@@ -66,11 +67,11 @@ func main() {
 	msg, err := nc.Request(subj, []byte(payload), time.Second)
 	if err != nil {
 		if nc.LastError() != nil {
-			log.Fatalf("Error in Request: %v\n", nc.LastError())
+			log.Fatalf("%v for request", nc.LastError())
 		}
-		log.Fatalf("Error in Request: %v\n", err)
+		log.Fatalf("%v for request", err)
 	}
 
-	log.Printf("Published [%s] : '%s'\n", subj, payload)
-	log.Printf("Received [%v] : '%s'\n", msg.Subject, string(msg.Data))
+	log.Printf("Published [%s] : '%s'", subj, payload)
+	log.Printf("Received  [%v] : '%s'", msg.Subject, string(msg.Data))
 }

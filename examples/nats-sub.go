@@ -19,6 +19,7 @@ import (
 	"flag"
 	"log"
 	"runtime"
+	"time"
 
 	"github.com/nats-io/go-nats"
 )
@@ -32,7 +33,7 @@ func usage() {
 }
 
 func printMsg(m *nats.Msg, i int) {
-	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
+	log.Printf("[#%d] Received on [%s]: '%s'", i, m.Subject, string(m.Data))
 }
 
 func main() {
@@ -49,8 +50,9 @@ func main() {
 		usage()
 	}
 
-	// general options.
+	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Sample Subscriber")}
+	opts = setupConnOptions(opts)
 
 	// Use Nkey authentication.
 	if *nkeyFile != "" {
@@ -61,9 +63,10 @@ func main() {
 		opts = append(opts, opt)
 	}
 
+	// Connect to NATS
 	nc, err := nats.Connect(*urls, opts...)
 	if err != nil {
-		log.Fatalf("Can't connect: %v\n", err)
+		log.Fatal(err)
 	}
 
 	subj, i := args[0], 0
@@ -78,10 +81,29 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Listening on [%s]\n", subj)
+	log.Printf("Listening on [%s]", subj)
 	if *showTime {
 		log.SetFlags(log.LstdFlags)
 	}
 
 	runtime.Goexit()
+}
+
+func setupConnOptions(opts []nats.Option) []nats.Option {
+	totalWait := 10 * time.Minute
+	reconnectDelay := time.Second
+
+	opts = append(opts, nats.ReconnectWait(reconnectDelay))
+	opts = append(opts, nats.MaxReconnects(int(totalWait/reconnectDelay)))
+	opts = append(opts, nats.DisconnectHandler(func(nc *nats.Conn) {
+		log.Printf("Disconnected")
+		log.Printf("Reconnecting for next %.0fm", totalWait.Minutes())
+	}))
+	opts = append(opts, nats.ReconnectHandler(func(nc *nats.Conn) {
+		log.Printf("Reconnected [%s]", nc.ConnectedUrl())
+	}))
+	opts = append(opts, nats.ClosedHandler(func(nc *nats.Conn) {
+		log.Fatal("Exiting, no servers available")
+	}))
+	return opts
 }

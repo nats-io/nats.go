@@ -43,7 +43,7 @@ func main() {
 		usage()
 	}
 
-	// general options.
+	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Sample Publisher")}
 
 	// Use Nkey authentication.
@@ -55,6 +55,7 @@ func main() {
 		opts = append(opts, opt)
 	}
 
+	// Connect to NATS
 	nc, err := nats.Connect(*urls, opts...)
 	if err != nil {
 		log.Fatal(err)
