@@ -3608,7 +3608,7 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 
 	lines := bytes.Split(contents, []byte("\n"))
 	for _, line := range lines {
-		if bytes.HasPrefix(line, []byte("SU")) {
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("SU")) {
 			seed = line
 			break
 		}
