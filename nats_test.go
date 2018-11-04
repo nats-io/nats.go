@@ -1343,8 +1343,8 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 	}
 
 	seedFile := createTmpFile(t, []byte(`
-# No seed
-THIS_NOT_A_NKEY_SEED
+		# No seed
+		THIS_NOT_A_NKEY_SEED
 	`))
 	defer os.Remove(seedFile)
 	if _, err := NkeyOptionFromSeed(seedFile); err == nil || !strings.Contains(err.Error(), "seed found") {
@@ -1353,11 +1353,13 @@ THIS_NOT_A_NKEY_SEED
 	os.Remove(seedFile)
 
 	seedFile = createTmpFile(t, []byte(`
-# Invalid seed
-SUBADSEED
+		# Invalid seed
+		SUBADSEED
 	`))
-	if _, err := NkeyOptionFromSeed(seedFile); err == nil {
-		t.Fatal("Expected error got none")
+	// Make sure that we detect SU (trim space) but it still fails because
+	// this is not a valid NKey.
+	if _, err := NkeyOptionFromSeed(seedFile); err == nil || strings.Contains(err.Error(), "seed found") {
+		t.Fatalf("Expected error about invalid key, got %v", err)
 	}
 	os.Remove(seedFile)
 
