@@ -125,8 +125,6 @@ func BenchmarkNewInboxCreation(b *testing.B) {
 	defer s.Shutdown()
 	nc := NewDefaultConnection(b)
 	defer nc.Close()
-	// To trigger the resp setup
-	nc.Request("req", nil, 0)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {

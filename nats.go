@@ -2364,10 +2364,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 
 	// Do setup for the new style.
 	if nc.respMap == nil {
-		// _INBOX wildcard
-		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
-		nc.respMap = make(map[string]chan *Msg)
-		nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+		nc.initNewResp()
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
@@ -2455,10 +2452,21 @@ func NewInbox() string {
 	return string(b[:])
 }
 
+// Function to init new response structures.
+func (nc *Conn) initNewResp() {
+	// _INBOX wildcard
+	nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+	nc.respMap = make(map[string]chan *Msg)
+	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+}
+
 // newRespInbox creates a new literal response subject
 // that will trigger the mux subscription handler.
 // Lock should be held.
 func (nc *Conn) newRespInbox() string {
+	if nc.respMap == nil {
+		nc.initNewResp()
+	}
 	var b [respInboxPrefixLen + replySuffixLen]byte
 	pres := b[:respInboxPrefixLen]
 	copy(pres, nc.respSub)
