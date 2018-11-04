@@ -42,7 +42,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.6.1"
+	Version                 = "1.7.0"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -359,6 +359,7 @@ type Conn struct {
 	respMux   *Subscription        // A single response subscription
 	respMap   map[string]chan *Msg // Request map for the response msg channels
 	respSetup sync.Once            // Ensures response subscription occurs once
+	respRand  *rand.Rand           // Used for generating suffix.
 }
 
 // A Subscription represents interest in a given subject.
@@ -2363,9 +2364,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 
 	// Do setup for the new style.
 	if nc.respMap == nil {
-		// _INBOX wildcard
-		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
-		nc.respMap = make(map[string]chan *Msg)
+		nc.initNewResp()
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
@@ -2432,9 +2431,14 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 }
 
 // InboxPrefix is the prefix for all inbox subjects.
-const InboxPrefix = "_INBOX."
-const inboxPrefixLen = len(InboxPrefix)
-const respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
+const (
+	InboxPrefix        = "_INBOX."
+	inboxPrefixLen     = len(InboxPrefix)
+	respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
+	replySuffixLen     = 8 // Gives us 62^8
+	rdigits            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base               = 62
+)
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
@@ -2448,15 +2452,38 @@ func NewInbox() string {
 	return string(b[:])
 }
 
-// Creates a new literal response subject that will trigger
-// the global subscription handler.
+// Function to init new response structures.
+func (nc *Conn) initNewResp() {
+	// _INBOX wildcard
+	nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+	nc.respMap = make(map[string]chan *Msg)
+	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+}
+
+// newRespInbox creates a new literal response subject
+// that will trigger the mux subscription handler.
+// Lock should be held.
 func (nc *Conn) newRespInbox() string {
-	var b [inboxPrefixLen + (2 * nuidSize) + 1]byte
+	if nc.respMap == nil {
+		nc.initNewResp()
+	}
+	var b [respInboxPrefixLen + replySuffixLen]byte
 	pres := b[:respInboxPrefixLen]
 	copy(pres, nc.respSub)
-	ns := b[respInboxPrefixLen:]
-	copy(ns, nuid.Next())
+	rn := nc.respRand.Int63()
+	for i, l := respInboxPrefixLen, rn; i < len(b); i++ {
+		b[i] = rdigits[l%base]
+		l /= base
+	}
 	return string(b[:])
+}
+
+// NewRespInbox is the new format used for _INBOX.
+func (nc *Conn) NewRespInbox() string {
+	nc.mu.Lock()
+	s := nc.newRespInbox()
+	nc.mu.Unlock()
+	return s
 }
 
 // respToken will return the last token of a literal response inbox

@@ -18,7 +18,6 @@ package nats
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 )
 
@@ -46,9 +45,7 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 
 	// Do setup for the new style.
 	if nc.respMap == nil {
-		// _INBOX wildcard
-		nc.respSub = fmt.Sprintf("%s.*", NewInbox())
-		nc.respMap = make(map[string]chan *Msg)
+		nc.initNewResp()
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
