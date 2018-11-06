@@ -99,6 +99,7 @@ var (
 	ErrNkeyButNoSigCB         = errors.New("nats: Nkey defined without a signature handler")
 	ErrNkeysNoSupported       = errors.New("nats: Nkeys not supported by the server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
+	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -146,6 +147,9 @@ type ErrHandler func(*Conn, *Subscription, error)
 // authenticating with nkeys. The user should sign the nonce and
 // return the base64 encoded signature.
 type SignatureHandler func([]byte) []byte
+
+// AuthTokenHandler is used to generate a new token.
+type AuthTokenHandler func() string
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -286,6 +290,9 @@ type Options struct {
 
 	// Token sets the token to be used when connecting to a server.
 	Token string
+
+	// TokenHandler designates the function used to generate the token to be used when connecting to a server.
+	TokenHandler AuthTokenHandler
 
 	// Dialer allows a custom net.Dialer when forming connections.
 	// DEPRECATED: should use CustomDialer instead.
@@ -692,11 +699,28 @@ func UserInfo(user, password string) Option {
 	}
 }
 
-// Token is an Option to set the token to use when not included
-// directly in the URLs.
+// Token is an Option to set the token to use
+// when a token is not included directly in the URLs
+// and when a token handler is not provided.
 func Token(token string) Option {
 	return func(o *Options) error {
+		if o.TokenHandler != nil {
+			return ErrTokenAlreadySet
+		}
 		o.Token = token
+		return nil
+	}
+}
+
+// TokenHandler is an Option to set the token handler to use
+// when a token is not included directly in the URLs
+// and when a token is not set.
+func TokenHandler(cb AuthTokenHandler) Option {
+	return func(o *Options) error {
+		if o.Token != "" {
+			return ErrTokenAlreadySet
+		}
+		o.TokenHandler = cb
 		return nil
 	}
 }
@@ -1314,9 +1338,16 @@ func (nc *Conn) connectProto() (string, error) {
 		nkey = nc.Opts.Nkey
 	}
 
-	if nkey != "" {
+	if nkey != _EMPTY_ {
 		sigraw := o.SignatureCB([]byte(nc.info.Nonce))
 		sig = base64.StdEncoding.EncodeToString(sigraw)
+	}
+
+	if nc.Opts.TokenHandler != nil {
+		if token != _EMPTY_ {
+			return _EMPTY_, ErrTokenAlreadySet
+		}
+		token = nc.Opts.TokenHandler()
 	}
 
 	cinfo := connectInfo{o.Verbose, o.Pedantic, nkey, sig,
