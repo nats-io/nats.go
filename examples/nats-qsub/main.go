@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build ignore
-
 package main
 
 import (
 	"flag"
 	"log"
+	"os"
 	"runtime"
 	"time"
 
@@ -25,15 +24,15 @@ import (
 )
 
 // NOTE: Can test with demo servers.
-// nats-rply -s demo.nats.io <subject> <response>
-// nats-rply -s demo.nats.io:4443 <subject> <response> (TLS version)
+// nats-qsub -s demo.nats.io <subject> <queue>
+// nats-qsub -s demo.nats.io:4443 <subject> <queue> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-rply [-s server] [-t] <subject> <response>")
+	log.Fatalf("Usage: nats-qsub [-s server] [-t] <subject> <queue>")
 }
 
 func printMsg(m *nats.Msg, i int) {
-	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
+	log.Printf("[#%d] Received on [%s] Queue[%s] Pid[%d]: '%s'", i, m.Subject, m.Sub.Queue, os.Getpid(), string(m.Data))
 }
 
 func main() {
@@ -46,12 +45,12 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 2 {
+	if len(args) != 2 {
 		usage()
 	}
 
 	// Connect Options.
-	opts := []nats.Option{nats.Name("NATS Sample Responder")}
+	opts := []nats.Option{nats.Name("NATS Sample Queue Subscriber")}
 	opts = setupConnOptions(opts)
 
 	// Use Nkey authentication.
@@ -69,12 +68,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	subj, reply, i := args[0], args[1], 0
+	subj, queue, i := args[0], args[1], 0
 
-	nc.Subscribe(subj, func(msg *nats.Msg) {
+	nc.QueueSubscribe(subj, queue, func(msg *nats.Msg) {
 		i++
 		printMsg(msg, i)
-		nc.Publish(msg.Reply, []byte(reply))
 	})
 	nc.Flush()
 
