@@ -1,4 +1,4 @@
-// Copyright 2018 The NATS Authors
+// Copyright 2012-2018 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -10,8 +10,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// +build ignore
 
 package main
 
@@ -25,15 +23,15 @@ import (
 )
 
 // NOTE: Can test with demo servers.
-// nats-echo -s demo.nats.io <subject>
-// nats-echo -s demo.nats.io:4443 <subject> (TLS version)
+// nats-rply -s demo.nats.io <subject> <response>
+// nats-rply -s demo.nats.io:4443 <subject> <response> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-echo [-s server] [-t] [-nkey seedfile] <subject>")
+	log.Fatalf("Usage: nats-rply [-s server] [-t] <subject> <response>")
 }
 
 func printMsg(m *nats.Msg, i int) {
-	log.Printf("[#%d] Echoing to [%s]: %q", i, m.Reply, m.Data)
+	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
 }
 
 func main() {
@@ -46,12 +44,12 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) != 1 {
+	if len(args) < 2 {
 		usage()
 	}
 
 	// Connect Options.
-	opts := []nats.Option{nats.Name("NATS Echo Service")}
+	opts := []nats.Option{nats.Name("NATS Sample Responder")}
 	opts = setupConnOptions(opts)
 
 	// Use Nkey authentication.
@@ -69,15 +67,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	subj, i := args[0], 0
+	subj, reply, i := args[0], args[1], 0
 
-	nc.QueueSubscribe(subj, "echo", func(msg *nats.Msg) {
+	nc.Subscribe(subj, func(msg *nats.Msg) {
 		i++
-		if msg.Reply != "" {
-			printMsg(msg, i)
-			// Just echo back what they sent us.
-			nc.Publish(msg.Reply, msg.Data)
-		}
+		printMsg(msg, i)
+		nc.Publish(msg.Reply, []byte(reply))
 	})
 	nc.Flush()
 
@@ -85,7 +80,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Echo Service listening on [%s]\n", subj)
+	log.Printf("Listening on [%s]", subj)
 	if *showTime {
 		log.SetFlags(log.LstdFlags)
 	}
