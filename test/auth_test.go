@@ -98,31 +98,32 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 		"nats://localhost:23234",
 	}
 
-	ots2 := test.DefaultTestOptions
-	ots2.Port = 23233
-	ots2.Username = "ivan"
-	ots2.Password = "foo"
-	ts2 := RunServerWithOptions(ots2)
+	opts2 := test.DefaultTestOptions
+	opts2.Port = 23233
+	opts2.Username = "ivan"
+	opts2.Password = "foo"
+	ts2 := RunServerWithOptions(opts2)
 	defer ts2.Shutdown()
 
 	ts3 := RunServerOnPort(23234)
 	defer ts3.Shutdown()
 
 	reconnectch := make(chan bool)
+	defer close(reconnectch)
 
-	opts := nats.GetDefaultOptions()
-	opts.Servers = servers
-	opts.AllowReconnect = true
-	opts.NoRandomize = true
-	opts.MaxReconnect = 10
-	opts.ReconnectWait = 100 * time.Millisecond
+	copts := nats.GetDefaultOptions()
+	copts.Servers = servers
+	copts.AllowReconnect = true
+	copts.NoRandomize = true
+	copts.MaxReconnect = 10
+	copts.ReconnectWait = 100 * time.Millisecond
 
-	opts.ReconnectedCB = func(_ *nats.Conn) {
+	copts.ReconnectedCB = func(_ *nats.Conn) {
 		reconnectch <- true
 	}
 
 	// Connect
-	nc, err := opts.Connect()
+	nc, err := copts.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
@@ -145,6 +146,66 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 
 	if nc.ConnectedUrl() != servers[2] {
 		t.Fatalf("Should have reconnected to %s, reconnected to %s instead", servers[2], nc.ConnectedUrl())
+	}
+}
+
+func TestTokenHandlerReconnect(t *testing.T) {
+	var servers = []string{
+		"nats://localhost:8232",
+		"nats://localhost:8233",
+	}
+
+	ts := RunServerOnPort(8232)
+	defer ts.Shutdown()
+
+	opts2 := test.DefaultTestOptions
+	opts2.Port = 8233
+	secret := "S3Cr3T0k3n!"
+	opts2.Authorization = secret
+	ts2 := RunServerWithOptions(opts2)
+	defer ts2.Shutdown()
+
+	reconnectch := make(chan bool)
+	defer close(reconnectch)
+
+	copts := nats.GetDefaultOptions()
+	copts.Servers = servers
+	copts.AllowReconnect = true
+	copts.NoRandomize = true
+	copts.MaxReconnect = 10
+	copts.ReconnectWait = 100 * time.Millisecond
+
+	copts.TokenHandler = func() string {
+		return secret
+	}
+
+	copts.ReconnectedCB = func(_ *nats.Conn) {
+		reconnectch <- true
+	}
+
+	// Connect
+	nc, err := copts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	// Stop the server
+	ts.Shutdown()
+
+	// The client will try to connect to the second server and succeed.
+
+	// Wait for the reconnect CB.
+	if e := Wait(reconnectch); e != nil {
+		t.Fatal("Reconnect callback should have been triggered")
+	}
+
+	if nc.IsClosed() {
+		t.Fatal("Should have reconnected")
+	}
+
+	if nc.ConnectedUrl() != servers[1] {
+		t.Fatalf("Should have reconnected to %s, reconnected to %s instead", servers[1], nc.ConnectedUrl())
 	}
 }
 
@@ -174,12 +235,65 @@ func TestTokenAuth(t *testing.T) {
 		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
+	// Verify that token cannot be set when token handler is provided.
+	_, err = nats.Connect("nats://localhost:8232", nats.TokenHandler(func() string { return secret }), nats.Token(secret))
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+	// Verify that token handler cannot be provided when token is set.
+	_, err = nats.Connect("nats://localhost:8232", nats.Token(secret), nats.TokenHandler(func() string { return secret }))
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
 	// Verify that token in the URL takes precedence.
 	nc, err = nats.Connect(tokenURL, nats.Token("badtoken"))
 	if err != nil {
 		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
+}
+
+func TestTokenHandlerAuth(t *testing.T) {
+	opts := test.DefaultTestOptions
+	opts.Port = 8232
+	secret := "S3Cr3T0k3n!"
+	opts.Authorization = secret
+	s := RunServerWithOptions(opts)
+	defer s.Shutdown()
+
+	_, err := nats.Connect("nats://localhost:8232")
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+
+	tokenURL := fmt.Sprintf("nats://%s@localhost:8232", secret)
+	nc, err := nats.Connect(tokenURL)
+	if err != nil {
+		t.Fatal("Should have connected successfully")
+	}
+	nc.Close()
+
+	// Use Options
+	nc, err = nats.Connect("nats://localhost:8232", nats.TokenHandler(func() string { return secret }))
+	if err != nil {
+		t.Fatalf("Should have connected successfully: %v", err)
+	}
+	nc.Close()
+	// Verify that token cannot be set when token handler is provided.
+	_, err = nats.Connect("nats://localhost:8232", nats.TokenHandler(func() string { return secret }), nats.Token(secret))
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+	// Verify that token handler cannot be provided when token is set.
+	_, err = nats.Connect("nats://localhost:8232", nats.Token(secret), nats.TokenHandler(func() string { return secret }))
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
+	// Verify that token handler cannot be provided when token is in URL.
+	_, err = nats.Connect(tokenURL, nats.TokenHandler(func() string { return secret }))
+	if err == nil {
+		t.Fatal("Should have received an error while trying to connect")
+	}
 }
 
 func TestPermViolation(t *testing.T) {
