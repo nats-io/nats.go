@@ -233,8 +233,8 @@ type Options struct {
 	// DrainTimeout sets the timeout for a Drain Operation to complete.
 	DrainTimeout time.Duration
 
-	// FlusherTimeout is the maximum time to wait for the flusher loop
-	// to be able to finish writing to the underlying connection.
+	// FlusherTimeout is the maximum time to wait for write operations
+	// to the underlying connection to complete (including the flusher loop).
 	FlusherTimeout time.Duration
 
 	// PingInterval is the period at which the client will be sending ping
@@ -637,6 +637,14 @@ func ReconnectBufSize(size int) Option {
 func Timeout(t time.Duration) Option {
 	return func(o *Options) error {
 		o.Timeout = t
+		return nil
+	}
+}
+
+// FlusherTimeout is an Option to set the write (and flush) timeout on a connection.
+func FlusherTimeout(t time.Duration) Option {
+	return func(o *Options) error {
+		o.FlusherTimeout = t
 		return nil
 	}
 }
@@ -1053,6 +1061,14 @@ func (nc *Conn) shufflePool() {
 	}
 }
 
+func (nc *Conn) newBuffer() *bufio.Writer {
+	var w io.Writer = nc.conn
+	if nc.Opts.FlusherTimeout > 0 {
+		w = &timeoutWriter{conn: nc.conn, timeout: nc.Opts.FlusherTimeout}
+	}
+	return bufio.NewWriterSize(w, defaultBufSize)
+}
+
 // createConn will connect to the server and wrap the appropriate
 // bufio structures. It will do the right thing when an existing
 // connection is in place.
@@ -1088,7 +1104,7 @@ func (nc *Conn) createConn() (err error) {
 		// Move to pending buffer.
 		nc.bw.Flush()
 	}
-	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+	nc.bw = nc.newBuffer()
 	return nil
 }
 
@@ -1110,7 +1126,7 @@ func (nc *Conn) makeTLSConn() {
 	}
 	conn := nc.conn.(*tls.Conn)
 	conn.Handshake()
-	nc.bw = bufio.NewWriterSize(nc.conn, defaultBufSize)
+	nc.bw = nc.newBuffer()
 }
 
 // waitForExits will wait for all socket watcher Go routines to
@@ -2023,7 +2039,6 @@ func (nc *Conn) flusher() {
 	bw := nc.bw
 	conn := nc.conn
 	fch := nc.fch
-	flusherTimeout := nc.Opts.FlusherTimeout
 	nc.mu.Unlock()
 
 	if conn == nil || bw == nil {
@@ -2042,18 +2057,11 @@ func (nc *Conn) flusher() {
 			return
 		}
 		if bw.Buffered() > 0 {
-			// Allow customizing how long we should wait for a flush to be done
-			// to prevent unhealthy connections blocking the client for too long.
-			if flusherTimeout > 0 {
-				conn.SetWriteDeadline(time.Now().Add(flusherTimeout))
-			}
-
 			if err := bw.Flush(); err != nil {
 				if nc.err == nil {
 					nc.err = err
 				}
 			}
-			conn.SetWriteDeadline(time.Time{})
 		}
 		nc.mu.Unlock()
 	}
@@ -3673,4 +3681,23 @@ func wipeSlice(buf []byte) {
 	for i := range buf {
 		buf[i] = 'x'
 	}
+}
+
+type timeoutWriter struct {
+	timeout time.Duration
+	conn    net.Conn
+	err     error
+}
+
+// Write implements the io.Writer interface.
+func (tw *timeoutWriter) Write(p []byte) (int, error) {
+	if tw.err != nil {
+		return 0, tw.err
+	}
+
+	var n int
+	tw.conn.SetWriteDeadline(time.Now().Add(tw.timeout))
+	n, tw.err = tw.conn.Write(p)
+	tw.conn.SetWriteDeadline(time.Time{})
+	return n, tw.err
 }
