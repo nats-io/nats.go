@@ -1425,9 +1425,8 @@ func (nc *Conn) connectProto() (string, error) {
 		token = nc.Opts.TokenHandler()
 	}
 
-	cinfo := connectInfo{o.Verbose, o.Pedantic, string(ujwt),
-		nkey, sig, user, pass, token, o.Secure, o.Name, LangString,
-		Version, clientProtoInfo, !o.NoEcho}
+	cinfo := connectInfo{o.Verbose, o.Pedantic, ujwt, nkey, sig, user, pass, token,
+		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho}
 
 	b, err := json.Marshal(cinfo)
 	if err != nil {
