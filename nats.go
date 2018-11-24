@@ -28,6 +28,7 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -57,14 +58,16 @@ const (
 	LangString              = "go"
 )
 
-// STALE_CONNECTION is for detection and proper handling of stale connections.
-const STALE_CONNECTION = "stale connection"
+const (
+	// STALE_CONNECTION is for detection and proper handling of stale connections.
+	STALE_CONNECTION = "stale connection"
 
-// PERMISSIONS_ERR is for when nats server subject authorization has failed.
-const PERMISSIONS_ERR = "permissions violation"
+	// PERMISSIONS_ERR is for when nats server subject authorization has failed.
+	PERMISSIONS_ERR = "permissions violation"
 
-// AUTHORIZATION_ERR is for when nats server user authorization has failed.
-const AUTHORIZATION_ERR = "authorization violation"
+	// AUTHORIZATION_ERR is for when nats server user authorization has failed.
+	AUTHORIZATION_ERR = "authorization violation"
+)
 
 // Errors
 var (
@@ -96,8 +99,11 @@ var (
 	ErrInvalidContext         = errors.New("nats: invalid context")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
 	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
-	ErrNkeyButNoSigCB         = errors.New("nats: Nkey defined without a signature handler")
-	ErrNkeysNoSupported       = errors.New("nats: Nkeys not supported by the server")
+	ErrUserButNoSigCB         = errors.New("nats: user callback defined without a signature handler")
+	ErrNkeyButNoSigCB         = errors.New("nats: nkey defined without a signature handler")
+	ErrNoUserCB               = errors.New("nats: user callback not defined")
+	ErrNkeyAndUser            = errors.New("nats: user callback and nkey defined")
+	ErrNkeysNotSupported      = errors.New("nats: nkeys not supported by the server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
 )
@@ -143,10 +149,14 @@ type ConnHandler func(*Conn)
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
 
+// UserJWTHandler is used to fetch and return the account signed
+// JWT for this user.
+type UserJWTHandler func() (string, error)
+
 // SignatureHandler is used to sign a nonce from the server while
 // authenticating with nkeys. The user should sign the nonce and
 // return the base64 encoded signature.
-type SignatureHandler func([]byte) []byte
+type SignatureHandler func([]byte) ([]byte, error)
 
 // AuthTokenHandler is used to generate a new token.
 type AuthTokenHandler func() string
@@ -274,8 +284,12 @@ type Options struct {
 	// dictated by PendingLimits()
 	SubChanLen int
 
+	// UserJWT sets the callback handler that will fetch a user's JWT.
+	UserJWT UserJWTHandler
+
 	// Nkey sets the public nkey that will be used to authenticate
-	// when connecting to the server
+	// when connecting to the server. UserJWT and Nkey are mutually exclusive
+	// and if defined, UserJWT will take precedence.
 	Nkey string
 
 	// SignatureCB designates the function used to sign the nonce
@@ -470,6 +484,7 @@ const (
 type connectInfo struct {
 	Verbose   bool   `json:"verbose"`
 	Pedantic  bool   `json:"pedantic"`
+	UserJWT   string `json:"jwt,omitempty"`
 	Nkey      string `json:"nkey,omitempty"`
 	Signature string `json:"sig,omitempty"`
 	User      string `json:"user,omitempty"`
@@ -520,7 +535,6 @@ func Secure(tls ...*tls.Config) Option {
 	return func(o *Options) error {
 		o.Secure = true
 		// Use of variadic just simplifies testing scenarios. We only take the first one.
-		// fixme(DLC) - Could panic if more than one. Could also do TLS option.
 		if len(tls) > 1 {
 			return ErrMultipleTLSConfigs
 		}
@@ -725,6 +739,41 @@ func TokenHandler(cb AuthTokenHandler) Option {
 	}
 }
 
+// UserCredentials is a convenience function that takes a filename
+// for a user's JWT and a filename for the user's private Nkey seed.
+func UserCredentials(userOrChainedFile string, seedFiles ...string) Option {
+	userCB := func() (string, error) {
+		return userFromFile(userOrChainedFile)
+	}
+	var keyFile string
+	if len(seedFiles) > 0 {
+		keyFile = seedFiles[0]
+	} else {
+		keyFile = userOrChainedFile
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		return sigHandler(nonce, keyFile)
+	}
+	return UserJWT(userCB, sigCB)
+}
+
+// UserJWT will set the callbacks to retrieve the user's JWT and
+// the signature callback to sign the server nonce. This an the Nkey
+// option are mutually exclusive.
+func UserJWT(userCB UserJWTHandler, sigCB SignatureHandler) Option {
+	return func(o *Options) error {
+		if userCB == nil {
+			return ErrNoUserCB
+		}
+		if sigCB == nil {
+			return ErrUserButNoSigCB
+		}
+		o.UserJWT = userCB
+		o.SignatureCB = sigCB
+		return nil
+	}
+}
+
 // Nkey will set the public Nkey and the signature callback to
 // sign the server nonce.
 func Nkey(pubKey string, sigCB SignatureHandler) Option {
@@ -847,6 +896,11 @@ func (o Options) Connect() (*Conn, error) {
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
+	}
+
+	// Check first for user jwt callback being defined and nkey.
+	if nc.Opts.UserJWT != nil && nc.Opts.Nkey != "" {
+		return nil, ErrNkeyAndUser
 	}
 
 	// Check if we have an nkey but no signature callback defined.
@@ -1301,7 +1355,7 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 
 	if nc.Opts.Nkey != "" && nc.info.Nonce == "" {
-		return ErrNkeysNoSupported
+		return ErrNkeysNotSupported
 	}
 
 	return nc.checkForSecure()
@@ -1320,7 +1374,7 @@ func (nc *Conn) sendProto(proto string) {
 // applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
-	var nkey, sig, user, pass, token string
+	var nkey, sig, user, pass, token, ujwt string
 	u := nc.url.User
 	if u != nil {
 		// if no password, assume username is authToken
@@ -1332,14 +1386,35 @@ func (nc *Conn) connectProto() (string, error) {
 		}
 	} else {
 		// Take from options (possibly all empty strings)
-		user = nc.Opts.User
-		pass = nc.Opts.Password
-		token = nc.Opts.Token
-		nkey = nc.Opts.Nkey
+		user = o.User
+		pass = o.Password
+		token = o.Token
+		nkey = o.Nkey
 	}
 
-	if nkey != _EMPTY_ {
-		sigraw := o.SignatureCB([]byte(nc.info.Nonce))
+	// Look for user jwt.
+	if o.UserJWT != nil {
+		if jwt, err := o.UserJWT(); err != nil {
+			return _EMPTY_, err
+		} else {
+			ujwt = jwt
+		}
+		if nkey != _EMPTY_ {
+			return _EMPTY_, ErrNkeyAndUser
+		}
+	}
+
+	if ujwt != _EMPTY_ || nkey != _EMPTY_ {
+		if o.SignatureCB == nil {
+			if ujwt == _EMPTY_ {
+				return _EMPTY_, ErrNkeyButNoSigCB
+			}
+			return _EMPTY_, ErrUserButNoSigCB
+		}
+		sigraw, err := o.SignatureCB([]byte(nc.info.Nonce))
+		if err != nil {
+			return _EMPTY_, err
+		}
 		sig = base64.StdEncoding.EncodeToString(sigraw)
 	}
 
@@ -1350,8 +1425,8 @@ func (nc *Conn) connectProto() (string, error) {
 		token = nc.Opts.TokenHandler()
 	}
 
-	cinfo := connectInfo{o.Verbose, o.Pedantic, nkey, sig,
-		user, pass, token, o.Secure, o.Name, LangString,
+	cinfo := connectInfo{o.Verbose, o.Pedantic, string(ujwt),
+		nkey, sig, user, pass, token, o.Secure, o.Name, LangString,
 		Version, clientProtoInfo, !o.NoEcho}
 
 	b, err := json.Marshal(cinfo)
@@ -3623,10 +3698,45 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 	if !nkeys.IsValidPublicUserKey(pub) {
 		return nil, fmt.Errorf("nats: Not a valid nkey user seed")
 	}
-	sigCB := func(nonce []byte) []byte {
+	sigCB := func(nonce []byte) ([]byte, error) {
 		return sigHandler(nonce, seedFile)
 	}
 	return Nkey(string(pub), sigCB), nil
+}
+
+// This is a regex to match decorated jwts in keys/seeds.
+// .e.g.
+//  -----BEGIN NATS USER JWT-----
+//  eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5...
+//  ------END NATS USER JWT------
+//
+//  ************************* IMPORTANT *************************
+//  NKEY Seed printed below can be used sign and prove identity.
+//  NKEYs are sensitive and should be treated as secrets.
+//
+//  -----BEGIN USER NKEY SEED-----
+//  SUAIO3FHUX5PNV2LQIIP7TZ3N4L7TX3W53MQGEIVYFIGA635OZCKEYHFLM
+//  ------END USER NKEY SEED------
+
+var nscDecoratedRe = regexp.MustCompile(`\s*(?:(?:[-]{3,}[^\n]*[-]{3,}\n)(.+)(?:\n\s*[-]{3,}[^\n]*[-]{3,}\n))`)
+
+func userFromFile(userFile string) (string, error) {
+	contents, err := ioutil.ReadFile(userFile)
+	if err != nil {
+		return _EMPTY_, fmt.Errorf("nats: %v", err)
+	}
+	defer wipeSlice(contents)
+
+	items := nscDecoratedRe.FindAllSubmatch(contents, -1)
+	if len(items) == 0 {
+		return string(contents), nil
+	}
+	// First result should be the user JWT.
+	// We copy here so that if the file contained a seed file too we wipe appropriately.
+	raw := items[0][1]
+	tmp := make([]byte, len(raw))
+	copy(tmp, raw)
+	return string(tmp), nil
 }
 
 func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
@@ -3637,13 +3747,19 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 	}
 	defer wipeSlice(contents)
 
-	lines := bytes.Split(contents, []byte("\n"))
-	for _, line := range lines {
-		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("SU")) {
-			seed = line
-			break
+	items := nscDecoratedRe.FindAllSubmatch(contents, -1)
+	if len(items) > 1 {
+		seed = items[1][1]
+	} else {
+		lines := bytes.Split(contents, []byte("\n"))
+		for _, line := range lines {
+			if bytes.HasPrefix(bytes.TrimSpace(line), []byte("SU")) {
+				seed = line
+				break
+			}
 		}
 	}
+
 	if seed == nil {
 		return nil, fmt.Errorf("nats: No nkey user seed found in %q", seedFile)
 	}
@@ -3656,16 +3772,16 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 
 // Sign authentication challenges from the server.
 // Do not keep private seed in memory.
-func sigHandler(nonce []byte, seedFile string) []byte {
+func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
 	kp, err := nkeyPairFromSeedFile(seedFile)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	// Wipe our key on exit.
 	defer kp.Wipe()
 
 	sig, _ := kp.Sign(nonce)
-	return sig
+	return sig, nil
 }
 
 // Just wipe slice with 'x', for clearing contents of nkey seed file.
