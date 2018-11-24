@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -38,6 +39,14 @@ import (
 	gnatsd "github.com/nats-io/gnatsd/test"
 	"github.com/nats-io/nkeys"
 )
+
+func TestVersion(t *testing.T) {
+	// Semantic versioning
+	verRe := regexp.MustCompile(`\d+.\d+.\d+(-\S+)?`)
+	if !verRe.MatchString(Version) {
+		t.Fatalf("Version not compatible with semantic versioning: %q", Version)
+	}
+}
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
@@ -1269,6 +1278,126 @@ func TestNoEchoOldServer(t *testing.T) {
 	}
 }
 
+// Trust Server Tests
+
+var (
+	oSeed = []byte("SOAL7GTNI66CTVVNXBNQMG6V2HTDRWC3HGEP7D2OUTWNWSNYZDXWFOX4SU")
+	aSeed = []byte("SAANRM6JVDEYZTR6DXCWUSDDJHGOHAFITXEQBSEZSY5JENTDVRZ6WNKTTY")
+	uSeed = []byte("SUAIO3FHUX5PNV2LQIIP7TZ3N4L7TX3W53MQGEIVYFIGA635OZCKEYHFLM")
+
+	aJWT = "eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJJSTdKSU5JUENVWTZEU1JDSUpZT1daR0k0UlRGNUdCNjVZUUtSNE9RVlBCQlpBNFhCQlhRIiwiaWF0IjoxNTQyMzMxNzgwLCJpc3MiOiJPRDJXMkk0TVZSQTVUR1pMWjJBRzZaSEdWTDNPVEtGV1FKRklYNFROQkVSMjNFNlA0NlMzNDVZWSIsIm5hbWUiOiJmb28iLCJzdWIiOiJBQ1E1VkpLS1dEM0s1QzdSVkFFMjJNT1hESkFNTEdFTUZJM1NDR1JWUlpKSlFUTU9QTjMzQlhVSyIsInR5cGUiOiJhY2NvdW50IiwibmF0cyI6e319.Dg2A1NCJWvXhBQZN9QNHAq1KqsFIKxzLhYvD5yH0DYZPC0gXtdhLkwJ5uiooki6YvzR8UNQZ9XuWgDpNpwryDg"
+
+	uJWT = "eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJRVzRWWktISEJCUkFaSkFWREg3UjVDSk1RQ1pHWDZJM1FJWEJSMkdWSjRHSVRMRlJRMlpBIiwiaWF0IjoxNTQyMzg1NjMxLCJpc3MiOiJBQ1E1VkpLS1dEM0s1QzdSVkFFMjJNT1hESkFNTEdFTUZJM1NDR1JWUlpKSlFUTU9QTjMzQlhVSyIsIm5hbWUiOiJkZXJlayIsInN1YiI6IlVEMkZMTEdGRVJRVlFRM1NCS09OTkcyUU1JTVRaUUtLTFRVM0FWRzVJM0VRRUZIQlBHUEUyWFFTIiwidHlwZSI6InVzZXIiLCJuYXRzIjp7InB1YiI6e30sInN1YiI6e319fQ.6PmFNn3x0AH3V05oemO28riP63+QTvk9g/Qtt6wBcXJqgW6YSVxk6An1MjvTn1tH7S9tJ0zOIGp7/OLjP1tbBQ"
+
+	chained = `
+-----BEGIN NATS USER JWT-----
+eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJRVzRWWktISEJCUkFaSkFWREg3UjVDSk1RQ1pHWDZJM1FJWEJSMkdWSjRHSVRMRlJRMlpBIiwiaWF0IjoxNTQyMzg1NjMxLCJpc3MiOiJBQ1E1VkpLS1dEM0s1QzdSVkFFMjJNT1hESkFNTEdFTUZJM1NDR1JWUlpKSlFUTU9QTjMzQlhVSyIsIm5hbWUiOiJkZXJlayIsInN1YiI6IlVEMkZMTEdGRVJRVlFRM1NCS09OTkcyUU1JTVRaUUtLTFRVM0FWRzVJM0VRRUZIQlBHUEUyWFFTIiwidHlwZSI6InVzZXIiLCJuYXRzIjp7InB1YiI6e30sInN1YiI6e319fQ.6PmFNn3x0AH3V05oemO28riP63+QTvk9g/Qtt6wBcXJqgW6YSVxk6An1MjvTn1tH7S9tJ0zOIGp7/OLjP1tbBQ
+------END NATS USER JWT------
+
+************************* IMPORTANT *************************
+NKEY Seed printed below can be used sign and prove identity.
+NKEYs are sensitive and should be treated as secrets.
+
+-----BEGIN USER NKEY SEED-----
+SUAIO3FHUX5PNV2LQIIP7TZ3N4L7TX3W53MQGEIVYFIGA635OZCKEYHFLM
+------END USER NKEY SEED------
+`
+)
+
+func runTrustServer() *server.Server {
+	kp, _ := nkeys.FromSeed(oSeed)
+	pub, _ := kp.PublicKey()
+	opts := gnatsd.DefaultTestOptions
+	opts.Port = TEST_PORT
+	opts.TrustedNkeys = []string{string(pub)}
+	s := RunServerWithOptions(opts)
+	mr := &server.MemAccResolver{}
+	akp, _ := nkeys.FromSeed(aSeed)
+	apub, _ := akp.PublicKey()
+	mr.Store(string(apub), aJWT)
+	s.SetAccountResolver(mr)
+	return s
+}
+
+func TestBasicUserJWTAuth(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	_, err := Connect(url)
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+
+	jwtCB := func() (string, error) {
+		return uJWT, nil
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, _ := nkeys.FromSeed(uSeed)
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	// Try with user jwt but no sig
+	_, err = Connect(url, UserJWT(jwtCB, nil))
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+
+	// Try with user callback
+	_, err = Connect(url, UserJWT(nil, sigCB))
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+
+	nc, err := Connect(url, UserJWT(jwtCB, sigCB))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	nc.Close()
+}
+
+func TestUserCredentialsTwoFiles(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	userJWTFile := createTmpFile(t, []byte(uJWT))
+	defer os.Remove(userJWTFile)
+	userSeedFile := createTmpFile(t, uSeed)
+	defer os.Remove(userSeedFile)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	nc, err := Connect(url, UserCredentials(userJWTFile, userSeedFile))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	nc.Close()
+}
+
+func TestUserCredentialsChainedFile(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	chainedFile := createTmpFile(t, []byte(chained))
+	defer os.Remove(chainedFile)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	nc, err := Connect(url, UserCredentials(chainedFile))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	nc.Close()
+}
+
 func TestNkeyAuth(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
@@ -1292,19 +1421,19 @@ func TestNkeyAuth(t *testing.T) {
 	if _, err := opts.Connect(); err != ErrNkeyButNoSigCB {
 		t.Fatalf("Expected to fail with nkey defined but no signature callback, got %v", err)
 	}
-	badSign := func(nonce []byte) []byte {
-		return []byte("VALID?")
+	badSign := func(nonce []byte) ([]byte, error) {
+		return []byte("VALID?"), nil
 	}
 	opts.SignatureCB = badSign
 	if _, err := opts.Connect(); err == nil {
 		t.Fatalf("Expected to fail with nkey and bad signature callback")
 	}
-	goodSign := func(nonce []byte) []byte {
+	goodSign := func(nonce []byte) ([]byte, error) {
 		sig, err := kp.Sign(nonce)
 		if err != nil {
 			t.Fatalf("Failed signing nonce: %v", err)
 		}
-		return sig
+		return sig, nil
 	}
 	opts.SignatureCB = goodSign
 	nc, err := opts.Connect()
