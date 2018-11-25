@@ -354,10 +354,10 @@ type Conn struct {
 	// Modifying the configuration of a running Conn is a race.
 	Opts    Options
 	wg      sync.WaitGroup
-	url     *url.URL
-	conn    net.Conn
 	srvPool []*srv
+	current *srv
 	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
+	conn    net.Conn
 	bw      *bufio.Writer
 	pending *bytes.Buffer
 	fch     chan struct{}
@@ -972,7 +972,7 @@ func (nc *Conn) currentServer() (int, *srv) {
 		if s == nil {
 			continue
 		}
-		if s.url == nc.url {
+		if s == nc.current {
 			return i, s
 		}
 	}
@@ -996,22 +996,22 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 		nc.srvPool = sp[0 : num-1]
 	}
 	if len(nc.srvPool) <= 0 {
-		nc.url = nil
+		nc.current = nil
 		return nil, ErrNoServers
 	}
-	nc.url = nc.srvPool[0].url
+	nc.current = nc.srvPool[0]
 	return nc.srvPool[0], nil
 }
 
-// Will assign the correct server to the nc.Url
+// Will assign the correct server to nc.current
 func (nc *Conn) pickServer() error {
-	nc.url = nil
+	nc.current = nil
 	if len(nc.srvPool) <= 0 {
 		return ErrNoServers
 	}
 	for _, s := range nc.srvPool {
 		if s != nil {
-			nc.url = s.url
+			nc.current = s
 			return nil
 		}
 	}
@@ -1031,7 +1031,7 @@ func (nc *Conn) setupServerPool() error {
 	// Create srv objects from each url string in nc.Opts.Servers
 	// and add them to the pool.
 	for _, urlString := range nc.Opts.Servers {
-		if err := nc.addURLToPool(urlString, false); err != nil {
+		if err := nc.addURLToPool(urlString, false, false); err != nil {
 			return err
 		}
 	}
@@ -1045,7 +1045,7 @@ func (nc *Conn) setupServerPool() error {
 	// but we always allowed that, so continue to do so.
 	if nc.Opts.Url != _EMPTY_ {
 		// Add to the end of the array
-		if err := nc.addURLToPool(nc.Opts.Url, false); err != nil {
+		if err := nc.addURLToPool(nc.Opts.Url, false, false); err != nil {
 			return err
 		}
 		// Then swap it with first to guarantee that Options.Url is tried first.
@@ -1055,7 +1055,7 @@ func (nc *Conn) setupServerPool() error {
 		}
 	} else if len(nc.srvPool) <= 0 {
 		// Place default URL if pool is empty.
-		if err := nc.addURLToPool(DefaultURL, false); err != nil {
+		if err := nc.addURLToPool(DefaultURL, false, false); err != nil {
 			return err
 		}
 	}
@@ -1082,8 +1082,13 @@ func (nc *Conn) connScheme() string {
 	return "nats"
 }
 
+// Return true iff u.Hostname() is an IP address.
+func hostIsIP(u *url.URL) bool {
+	return net.ParseIP(u.Hostname()) != nil
+}
+
 // addURLToPool adds an entry to the server pool
-func (nc *Conn) addURLToPool(sURL string, implicit bool) error {
+func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	if !strings.Contains(sURL, "://") {
 		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
@@ -1108,21 +1113,17 @@ func (nc *Conn) addURLToPool(sURL string, implicit bool) error {
 	}
 	var tlsName string
 	if implicit {
+		curl := nc.current.url
 		// Check to see if we do not have a url.User but current connected
 		// url does. If so copy over.
-		if u.User == nil && nc.url.User != nil {
-			u.User = nc.url.User
+		if u.User == nil && curl.User != nil {
+			u.User = curl.User
 		}
 		// We are checking to see if we have a secure connection and are
 		// adding an implicit server that just has an IP. If so we will remember
 		// the current hostname we are connected to.
-		if nc.Opts.Secure {
-			if addr := net.ParseIP(u.Hostname()); addr != nil {
-				if caddr := net.ParseIP(nc.url.Hostname()); caddr == nil {
-					// This means we have a hostname for our current connected server.
-					tlsName = nc.url.Hostname()
-				}
-			}
+		if saveTLSName && hostIsIP(u) {
+			tlsName = curl.Hostname()
 		}
 	}
 
@@ -1173,7 +1174,7 @@ func (nc *Conn) createConn() (err error) {
 	if dialer == nil {
 		dialer = nc.Opts.Dialer
 	}
-	nc.conn, err = dialer.Dial("tcp", nc.url.Host)
+	nc.conn, err = dialer.Dial("tcp", nc.current.url.Host)
 	if err != nil {
 		return err
 	}
@@ -1209,7 +1210,7 @@ func (nc *Conn) makeTLSConn() {
 		if s.tlsName != _EMPTY_ {
 			tlsCopy.ServerName = s.tlsName
 		} else {
-			h, _, _ := net.SplitHostPort(nc.url.Host)
+			h, _, _ := net.SplitHostPort(nc.current.url.Host)
 			tlsCopy.ServerName = h
 		}
 	}
@@ -1242,7 +1243,7 @@ func (nc *Conn) ConnectedUrl() string {
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.url.String()
+	return nc.current.url.String()
 }
 
 // Report the connected server's Id
@@ -1324,7 +1325,7 @@ func (nc *Conn) connect() error {
 	nc.initc = true
 	// The pool may change inside the loop iteration due to INFO protocol.
 	for i := 0; i < len(nc.srvPool); i++ {
-		nc.url = nc.srvPool[i].url
+		nc.current = nc.srvPool[i]
 
 		if err := nc.createConn(); err == nil {
 			// This was moved out of processConnectInit() because
@@ -1343,7 +1344,7 @@ func (nc *Conn) connect() error {
 				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false)
 				nc.mu.Lock()
-				nc.url = nil
+				nc.current = nil
 			}
 		} else {
 			// Cancel out default connection refused, will trigger the
@@ -1427,7 +1428,7 @@ func (nc *Conn) sendProto(proto string) {
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
 	var nkey, sig, user, pass, token, ujwt string
-	u := nc.url.User
+	u := nc.current.url.User
 	if u != nil {
 		// if no password, assume username is authToken
 		if _, ok := u.Password(); !ok {
@@ -2250,7 +2251,7 @@ func (nc *Conn) processInfo(info string) error {
 		delete(tmp, curl)
 		// Keep servers that were set through Options, but also the one that
 		// we are currently connected to (even if it is a discovered server).
-		if !srv.isImplicit || srv.url == nc.url {
+		if !srv.isImplicit || srv.url == nc.current.url {
 			continue
 		}
 		if !inInfo {
@@ -2261,6 +2262,11 @@ func (nc *Conn) processInfo(info string) error {
 			i--
 		}
 	}
+	// Figure out if we should save off the current non-IP hostname if we encounter a bare IP.
+	var saveTLS bool
+	if nc.current != nil && nc.Opts.Secure && !hostIsIP(nc.current.url) {
+		saveTLS = true
+	}
 	// If there are any left in the tmp map, these are new (or restarted) servers
 	// and need to be added to the pool.
 	for curl := range tmp {
@@ -2269,7 +2275,7 @@ func (nc *Conn) processInfo(info string) error {
 		if _, present := nc.urls[curl]; !present {
 			hasNew = true
 		}
-		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true)
+		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
 	}
 	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
 		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
