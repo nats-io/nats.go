@@ -346,8 +346,8 @@ func TestSelectNextServer(t *testing.T) {
 	if err := nc.setupServerPool(); err != nil {
 		t.Fatalf("Problem setting up Server Pool: %v\n", err)
 	}
-	if nc.url != nc.srvPool[0].url {
-		t.Fatalf("Wrong default selection: %v\n", nc.url)
+	if nc.current != nc.srvPool[0] {
+		t.Fatalf("Wrong default selection: %v\n", nc.current.url)
 	}
 
 	sel, err := nc.selectNextServer()
@@ -358,8 +358,8 @@ func TestSelectNextServer(t *testing.T) {
 	if len(nc.srvPool) != len(testServers) {
 		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers))
 	}
-	if nc.url.String() != testServers[1] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.url, testServers[1])
+	if nc.current.url.String() != testServers[1] {
+		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.url, testServers[1])
 	}
 	if nc.srvPool[len(nc.srvPool)-1].url.String() != testServers[0] {
 		t.Fatalf("Did not push old to last position\n")
@@ -377,8 +377,8 @@ func TestSelectNextServer(t *testing.T) {
 	if len(nc.srvPool) != len(testServers)-1 {
 		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers)-1)
 	}
-	if nc.url.String() != testServers[2] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.url, testServers[2])
+	if nc.current.url.String() != testServers[2] {
+		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.url, testServers[2])
 	}
 	if nc.srvPool[len(nc.srvPool)-1].url.String() == testServers[1] {
 		t.Fatalf("Did not throw away the last server correctly\n")

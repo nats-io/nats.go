@@ -14,6 +14,9 @@
 package test
 
 import (
+	"fmt"
+	"net"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -648,4 +651,74 @@ func TestReconnectBufSize(t *testing.T) {
 		t.Fatalf("Expected to fail to publish message: got no error\n")
 	}
 	nc.Buffered()
+}
+
+// When a cluster is fronted by a single DNS name (desired) but communicates IPs to clients (also desired),
+// and we use TLS, we want to make sure we do the right thing connecting to an IP directly for TLS to work.
+// The reason this may happen is that the cluster has a single DNS name and a single certificate, but the cluster
+// wants to vend out IPs and not wait on DNS for topology changes and failover.
+func TestReconnectTLSHostNoIP(t *testing.T) {
+	sa, optsA := RunServerWithConfig("./configs/tls_noip_a.conf")
+	defer sa.Shutdown()
+	sb, optsB := RunServerWithConfig("./configs/tls_noip_b.conf")
+	defer sb.Shutdown()
+
+	// Wait for cluster to form.
+	wait := time.Now().Add(2 * time.Second)
+	for time.Now().Before(wait) {
+		sanr := sa.NumRoutes()
+		sbnr := sb.NumRoutes()
+		if sanr == 1 && sbnr == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	endpoint := fmt.Sprintf("%s:%d", optsA.Host, optsA.Port)
+	secureURL := fmt.Sprintf("tls://%s:%s@%s/", optsA.Username, optsA.Password, endpoint)
+
+	dch := make(chan bool)
+	dcb := func(_ *nats.Conn) { dch <- true }
+	rch := make(chan bool)
+	rcb := func(_ *nats.Conn) { rch <- true }
+
+	nc, err := nats.Connect(secureURL,
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.DisconnectHandler(dcb),
+		nats.ReconnectHandler(rcb))
+	if err != nil {
+		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
+	}
+	defer nc.Close()
+
+	// Wait for DiscoveredServers() to be 1.
+	wait = time.Now().Add(2 * time.Second)
+	for time.Now().Before(wait) {
+		if len(nc.DiscoveredServers()) == 1 {
+			break
+		}
+	}
+	// Make sure this is the server B info, and that it is an IP.
+	expectedDiscoverURL := fmt.Sprintf("tls://%s:%d", optsB.Host, optsB.Port)
+	eurl, err := url.Parse(expectedDiscoverURL)
+	if err != nil {
+		t.Fatalf("Expected to parse discovered server URL: %v", err)
+	}
+	if addr := net.ParseIP(eurl.Hostname()); addr == nil {
+		t.Fatalf("Expected the discovered server to be an IP, got %v", eurl.Hostname())
+	}
+	ds := nc.DiscoveredServers()
+	if ds[0] != expectedDiscoverURL {
+		t.Fatalf("Expected %q, got %q", expectedDiscoverURL, ds[0])
+	}
+
+	// Force us to switch servers.
+	sa.Shutdown()
+
+	if e := Wait(dch); e != nil {
+		t.Fatal("DisconnectedCB should have been triggered")
+	}
+	if e := WaitTime(rch, time.Second); e != nil {
+		t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
+	}
 }
