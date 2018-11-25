@@ -654,7 +654,7 @@ func TestReconnectBufSize(t *testing.T) {
 }
 
 // When a cluster is fronted by a single DNS name (desired) but communicates IPs to clients (also desired),
-// and we TLS, we want to make sure we do the right thing connecting to an IP directly for TLS to work.
+// and we use TLS, we want to make sure we do the right thing connecting to an IP directly for TLS to work.
 // The reason this may happen is that the cluster has a single DNS name and a single certificate, but the cluster
 // wants to vend out IPs and not wait on DNS for topology changes and failover.
 func TestReconnectTLSHostNoIP(t *testing.T) {

@@ -1206,9 +1206,8 @@ func (nc *Conn) makeTLSConn() {
 	}
 	// If its blank we will override it with the current host
 	if tlsCopy.ServerName == _EMPTY_ {
-		s := nc.srvPool[0]
-		if s.tlsName != _EMPTY_ {
-			tlsCopy.ServerName = s.tlsName
+		if nc.current.tlsName != _EMPTY_ {
+			tlsCopy.ServerName = nc.current.tlsName
 		} else {
 			h, _, _ := net.SplitHostPort(nc.current.url.Host)
 			tlsCopy.ServerName = h
