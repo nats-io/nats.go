@@ -456,6 +456,7 @@ type srv struct {
 	reconnects  int
 	lastAttempt time.Time
 	isImplicit  bool
+	tlsName     string
 }
 
 type serverInfo struct {
@@ -531,6 +532,7 @@ func Name(name string) Option {
 
 // Secure is an Option to enable TLS secure connections that skip server verification by default.
 // Pass a TLS Configuration for proper TLS.
+// NOTE: This should NOT be used in a production setting.
 func Secure(tls ...*tls.Config) Option {
 	return func(o *Options) error {
 		o.Secure = true
@@ -545,8 +547,8 @@ func Secure(tls ...*tls.Config) Option {
 	}
 }
 
-// RootCAs is a helper option to provide the RootCAs pool from a list of filenames. If Secure is
-// not already set this will set it as well.
+// RootCAs is a helper option to provide the RootCAs pool from a list of filenames.
+// If Secure is not already set this will set it as well.
 func RootCAs(file ...string) Option {
 	return func(o *Options) error {
 		pool := x509.NewCertPool()
@@ -569,8 +571,8 @@ func RootCAs(file ...string) Option {
 	}
 }
 
-// ClientCert is a helper option to provide the client certificate from a file. If Secure is
-// not already set this will set it as well
+// ClientCert is a helper option to provide the client certificate from a file.
+// If Secure is not already set this will set it as well.
 func ClientCert(certFile, keyFile string) Option {
 	return func(o *Options) error {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -1027,7 +1029,7 @@ func (nc *Conn) setupServerPool() error {
 	nc.urls = make(map[string]struct{}, srvPoolSize)
 
 	// Create srv objects from each url string in nc.Opts.Servers
-	// and add them to the pool
+	// and add them to the pool.
 	for _, urlString := range nc.Opts.Servers {
 		if err := nc.addURLToPool(urlString, false); err != nil {
 			return err
@@ -1072,10 +1074,18 @@ func (nc *Conn) setupServerPool() error {
 	return nc.pickServer()
 }
 
+// Helper function to return scheme
+func (nc *Conn) connScheme() string {
+	if nc.Opts.Secure {
+		return tlsScheme
+	}
+	return "nats"
+}
+
 // addURLToPool adds an entry to the server pool
 func (nc *Conn) addURLToPool(sURL string, implicit bool) error {
 	if !strings.Contains(sURL, "://") {
-		sURL = "nats://" + sURL
+		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
 	var (
 		u   *url.URL
@@ -1096,7 +1106,27 @@ func (nc *Conn) addURLToPool(sURL string, implicit bool) error {
 		}
 		sURL += defaultPortString
 	}
-	s := &srv{url: u, isImplicit: implicit}
+	var tlsName string
+	if implicit {
+		// Check to see if we do not have a url.User but current connected
+		// url does. If so copy over.
+		if u.User == nil && nc.url.User != nil {
+			u.User = nc.url.User
+		}
+		// We are checking to see if we have a secure connection and are
+		// adding an implicit server that just has an IP. If so we will remember
+		// the current hostname we are connected to.
+		if nc.Opts.Secure {
+			if addr := net.ParseIP(u.Hostname()); addr != nil {
+				if caddr := net.ParseIP(nc.url.Hostname()); caddr == nil {
+					// This means we have a hostname for our current connected server.
+					tlsName = nc.url.Hostname()
+				}
+			}
+		}
+	}
+
+	s := &srv{url: u, isImplicit: implicit, tlsName: tlsName}
 	nc.srvPool = append(nc.srvPool, s)
 	nc.urls[u.Host] = struct{}{}
 	return nil
@@ -1164,20 +1194,26 @@ func (nc *Conn) createConn() (err error) {
 
 // makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() {
-	// Allow the user to configure their own tls.Config structure, otherwise
-	// default to InsecureSkipVerify.
+	// Allow the user to configure their own tls.Config structure,
+	// otherwise default to InsecureSkipVerify.
 	// TODO(dlc) - We should make the more secure version the default.
+	var tlsCopy *tls.Config
 	if nc.Opts.TLSConfig != nil {
-		tlsCopy := util.CloneTLSConfig(nc.Opts.TLSConfig)
-		// If its blank we will override it with the current host
-		if tlsCopy.ServerName == _EMPTY_ {
+		tlsCopy = util.CloneTLSConfig(nc.Opts.TLSConfig)
+	} else {
+		tlsCopy = &tls.Config{InsecureSkipVerify: true}
+	}
+	// If its blank we will override it with the current host
+	if tlsCopy.ServerName == _EMPTY_ {
+		s := nc.srvPool[0]
+		if s.tlsName != _EMPTY_ {
+			tlsCopy.ServerName = s.tlsName
+		} else {
 			h, _, _ := net.SplitHostPort(nc.url.Host)
 			tlsCopy.ServerName = h
 		}
-		nc.conn = tls.Client(nc.conn, tlsCopy)
-	} else {
-		nc.conn = tls.Client(nc.conn, &tls.Config{InsecureSkipVerify: true})
 	}
+	nc.conn = tls.Client(nc.conn, tlsCopy)
 	conn := nc.conn.(*tls.Conn)
 	conn.Handshake()
 	nc.bw = nc.newBuffer()
@@ -2233,7 +2269,7 @@ func (nc *Conn) processInfo(info string) error {
 		if _, present := nc.urls[curl]; !present {
 			hasNew = true
 		}
-		nc.addURLToPool(fmt.Sprintf("nats://%s", curl), true)
+		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true)
 	}
 	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
 		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
