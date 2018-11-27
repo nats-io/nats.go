@@ -1356,7 +1356,7 @@ func TestUseCustomDialer(t *testing.T) {
 	}
 
 	// Create custom dialer that return error on Dial().
-	cdialer := &customDialer{ch: make(chan bool, 1)}
+	cdialer := &customDialer{ch: make(chan bool, 10)}
 
 	// When both Dialer and CustomDialer are set, CustomDialer
 	// should take precedence. That means that the connection

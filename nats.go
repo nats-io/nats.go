@@ -48,7 +48,7 @@ const (
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
 	DefaultReconnectWait    = 2 * time.Second
-	DefaultTimeout          = 2 * time.Second
+	DefaultTimeout          = 1 * time.Second
 	DefaultPingInterval     = 2 * time.Minute
 	DefaultMaxPingOut       = 2
 	DefaultMaxChanLen       = 8192            // 8k
@@ -877,8 +877,8 @@ func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 	nc.Opts.AsyncErrorCB = cb
 }
 
-// Process the url string argument to Connect. Return an array of
-// urls, even if only one.
+// Process the url string argument to Connect.
+// Return an array of urls, even if only one.
 func processUrlString(url string) []string {
 	urls := strings.Split(url, ",")
 	for i, s := range urls {
@@ -1111,6 +1111,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 		}
 		sURL += defaultPortString
 	}
+
 	var tlsName string
 	if implicit {
 		curl := nc.current.url
@@ -1167,14 +1168,38 @@ func (nc *Conn) createConn() (err error) {
 		cur.lastAttempt = time.Now()
 	}
 
+	// We will auto-expand host names if they resolve to multiple IPs
+	var hosts []string
+	u := nc.current.url
+
+	if net.ParseIP(u.Hostname()) == nil {
+		addrs, _ := net.LookupHost(u.Hostname())
+		for _, addr := range addrs {
+			hosts = append(hosts, fmt.Sprintf("%s:%s", addr, u.Port()))
+		}
+	}
+	// Fall back to what we were given.
+	if len(hosts) == 0 {
+		hosts = append(hosts, u.Host)
+	}
+
 	// CustomDialer takes precedence. If not set, use Opts.Dialer which
 	// is set to a default *net.Dialer (in Connect()) if not explicitly
 	// set by the user.
 	dialer := nc.Opts.CustomDialer
 	if dialer == nil {
-		dialer = nc.Opts.Dialer
+		// We will copy and shorten the timeout if we have multiple hosts to try.
+		copyDialer := *nc.Opts.Dialer
+		copyDialer.Timeout = copyDialer.Timeout / time.Duration(len(hosts))
+		dialer = &copyDialer
 	}
-	nc.conn, err = dialer.Dial("tcp", nc.current.url.Host)
+
+	for _, host := range hosts {
+		nc.conn, err = dialer.Dial("tcp", host)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return err
 	}
