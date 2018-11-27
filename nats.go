@@ -1172,7 +1172,7 @@ func (nc *Conn) createConn() (err error) {
 	var hosts []string
 	u := nc.current.url
 
-	if net.ParseIP(u.Hostname()) == nil && (nc.Opts.Secure || u.Scheme == tlsScheme) {
+	if net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
 		for _, addr := range addrs {
 			hosts = append(hosts, fmt.Sprintf("%s:%s", addr, u.Port()))
