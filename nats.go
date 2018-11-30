@@ -1492,7 +1492,7 @@ func (nc *Conn) connectProto() (string, error) {
 		if err != nil {
 			return _EMPTY_, err
 		}
-		sig = base64.StdEncoding.EncodeToString(sigraw)
+		sig = base64.RawURLEncoding.EncodeToString(sigraw)
 	}
 
 	if nc.Opts.TokenHandler != nil {
