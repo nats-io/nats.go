@@ -48,7 +48,7 @@ const (
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
 	DefaultReconnectWait    = 2 * time.Second
-	DefaultTimeout          = 1 * time.Second
+	DefaultTimeout          = 2 * time.Second
 	DefaultPingInterval     = 2 * time.Minute
 	DefaultMaxPingOut       = 2
 	DefaultMaxChanLen       = 8192            // 8k
