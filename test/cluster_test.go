@@ -167,7 +167,7 @@ func TestAuthServers(t *testing.T) {
 		t.Fatalf("Expect Auth failure, got no error\n")
 	}
 
-	if !strings.Contains(err.Error(), "authorization") {
+	if !strings.Contains(err.Error(), "Authorization") {
 		t.Fatalf("Wrong error, wanted Auth failure, got '%s'\n", err)
 	}
 
