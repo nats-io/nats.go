@@ -1529,7 +1529,7 @@ func (nc *Conn) connectProto() (string, error) {
 
 // normalizeErr removes the prefix -ERR, trim spaces and remove the quotes.
 func normalizeErr(line string) string {
-	s := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, _ERR_OP_)))
+	s := strings.TrimSpace(strings.TrimPrefix(line, _ERR_OP_))
 	s = strings.TrimLeft(strings.TrimRight(s, "'"), "'")
 	return s
 }
@@ -2342,20 +2342,22 @@ func (nc *Conn) LastError() error {
 
 // processErr processes any error messages from the server and
 // sets the connection's lastError.
-func (nc *Conn) processErr(e string) {
-	// Trim, remove quotes, convert to lower case.
-	e = normalizeErr(e)
+func (nc *Conn) processErr(ie string) {
+	// Trim, remove quotes
+	ne := normalizeErr(ie)
+	// convert to lower case.
+	e := strings.ToLower(ne)
 
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
-		nc.processPermissionsViolation(e)
+		nc.processPermissionsViolation(ne)
 	} else if strings.HasPrefix(e, AUTHORIZATION_ERR) {
-		nc.processAuthorizationViolation(e)
+		nc.processAuthorizationViolation(ne)
 	} else {
 		nc.mu.Lock()
-		nc.err = errors.New("nats: " + e)
+		nc.err = errors.New("nats: " + ne)
 		nc.mu.Unlock()
 		nc.Close()
 	}

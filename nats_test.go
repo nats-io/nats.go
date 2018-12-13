@@ -882,39 +882,33 @@ func TestParserSplitMsg(t *testing.T) {
 }
 
 func TestNormalizeError(t *testing.T) {
-	received := "Typical Error"
-	expected := strings.ToLower(received)
-	if s := normalizeErr("-ERR '" + received + "'"); s != expected {
+	expected := "Typical Error"
+	if s := normalizeErr("-ERR '" + expected + "'"); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 
-	received = "Trim Surrounding Spaces"
-	expected = strings.ToLower(received)
-	if s := normalizeErr("-ERR    '" + received + "'   "); s != expected {
+	expected = "Trim Surrounding Spaces"
+	if s := normalizeErr("-ERR    '" + expected + "'   "); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 
-	received = "Trim Surrounding Spaces Without Quotes"
-	expected = strings.ToLower(received)
-	if s := normalizeErr("-ERR    " + received + "   "); s != expected {
+	expected = "Trim Surrounding Spaces Without Quotes"
+	if s := normalizeErr("-ERR    " + expected + "   "); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 
-	received = "Error Without Quotes"
-	expected = strings.ToLower(received)
-	if s := normalizeErr("-ERR " + received); s != expected {
+	expected = "Error Without Quotes"
+	if s := normalizeErr("-ERR " + expected); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 
-	received = "Error With Quote Only On Left"
-	expected = strings.ToLower(received)
-	if s := normalizeErr("-ERR '" + received); s != expected {
+	expected = "Error With Quote Only On Left"
+	if s := normalizeErr("-ERR '" + expected); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 
-	received = "Error With Quote Only On Right"
-	expected = strings.ToLower(received)
-	if s := normalizeErr("-ERR " + received + "'"); s != expected {
+	expected = "Error With Quote Only On Right"
+	if s := normalizeErr("-ERR " + expected + "'"); s != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, s)
 	}
 }

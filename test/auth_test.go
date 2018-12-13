@@ -40,7 +40,7 @@ func TestAuth(t *testing.T) {
 
 	// This test may be a bit too strict for the future, but for now makes
 	// sure that we correctly process the -ERR content on connect.
-	if err.Error() != nats.ErrAuthorization.Error() {
+	if strings.ToLower(err.Error()) != nats.ErrAuthorization.Error() {
 		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
 	}
 
@@ -304,8 +304,8 @@ func TestPermViolation(t *testing.T) {
 			Username: "ivan",
 			Password: "pwd",
 			Permissions: &server.Permissions{
-				Publish:   &server.SubjectPermission{Allow: []string{"foo"}},
-				Subscribe: &server.SubjectPermission{Allow: []string{"bar"}},
+				Publish:   &server.SubjectPermission{Allow: []string{"Foo"}},
+				Subscribe: &server.SubjectPermission{Allow: []string{"Bar"}},
 			},
 		},
 	}
@@ -325,19 +325,25 @@ func TestPermViolation(t *testing.T) {
 	defer nc.Close()
 
 	// Cause a publish error
-	nc.Publish("bar", []byte("fail"))
+	nc.Publish("Bar", []byte("fail"))
 	// Cause a subscribe error
-	nc.Subscribe("foo", func(_ *nats.Msg) {})
+	nc.Subscribe("Foo", func(_ *nats.Msg) {})
 
 	expectedErrorTypes := []string{"publish", "subscription"}
 	for _, expectedErr := range expectedErrorTypes {
 		select {
 		case e := <-errCh:
-			if !strings.Contains(e.Error(), nats.PERMISSIONS_ERR) {
+			if !strings.Contains(strings.ToLower(e.Error()), nats.PERMISSIONS_ERR) {
 				t.Fatalf("Did not receive error about permissions")
 			}
-			if !strings.Contains(e.Error(), expectedErr) {
+			if !strings.Contains(strings.ToLower(e.Error()), expectedErr) {
 				t.Fatalf("Did not receive error about %q, got %v", expectedErr, e.Error())
+			}
+			// Make sure subject is not converted to lower case
+			if expectedErr == "publish" && !strings.Contains(e.Error(), "Bar") {
+				t.Fatalf("Subject Bar not found in error: %v", e)
+			} else if expectedErr == "subscribe" && !strings.Contains(e.Error(), "Foo") {
+				t.Fatalf("Subject Foo not found in error: %v", e)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Did not get the permission error")

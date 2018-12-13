@@ -1235,7 +1235,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 
 	// Check LastError(), it should be "nats: <server error in lower case>"
 	lastErr := nc.LastError().Error()
-	expectedErr := "nats: " + strings.ToLower(serverSentError)
+	expectedErr := "nats: " + serverSentError
 	if lastErr != expectedErr {
 		t.Fatalf("Expected error: '%v', got '%v'", expectedErr, lastErr)
 	}
