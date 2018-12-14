@@ -1555,3 +1555,40 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 	close(ch)
 	wg.Wait()
 }
+
+func TestLookupHostResultIsRandomized(t *testing.T) {
+	orgAddrs, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatalf("Error looking up host: %v", err)
+	}
+	if len(orgAddrs) < 2 {
+		t.Skip("localhost resolves to less than 2 addresses, so test not relevant")
+	}
+
+	opts := gnatsd.DefaultTestOptions
+	// For this test, important to be able to listen on both IPv4/v6
+	// because it is likely than in local test, localhost will resolve
+	// to ::1 and 127.0.0.1
+	opts.Host = "0.0.0.0"
+	opts.Port = TEST_PORT
+	s := RunServerWithOptions(opts)
+	defer s.Shutdown()
+
+	for i := 0; i < 10; i++ {
+		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		nc.mu.Lock()
+		host, _, _ := net.SplitHostPort(nc.conn.LocalAddr().String())
+		nc.mu.Unlock()
+		isFirst := host == orgAddrs[0]
+		nc.Close()
+		if !isFirst {
+			// We used one that is not the first of the resolved addresses,
+			// so we consider the test good in that IPs were randomized.
+			return
+		}
+	}
+	t.Fatalf("Always used first address returned by LookupHost")
+}
