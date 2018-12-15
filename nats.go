@@ -1178,18 +1178,18 @@ func (nc *Conn) createConn() (err error) {
 	}
 
 	// We will auto-expand host names if they resolve to multiple IPs
-	var hosts []string
+	hosts := map[string]struct{}{}
 	u := nc.current.url
 
 	if net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
 		for _, addr := range addrs {
-			hosts = append(hosts, fmt.Sprintf("%s:%s", addr, u.Port()))
+			hosts[net.JoinHostPort(addr, u.Port())] = struct{}{}
 		}
 	}
 	// Fall back to what we were given.
 	if len(hosts) == 0 {
-		hosts = append(hosts, u.Host)
+		hosts[u.Host] = struct{}{}
 	}
 
 	// CustomDialer takes precedence. If not set, use Opts.Dialer which
@@ -1203,7 +1203,7 @@ func (nc *Conn) createConn() (err error) {
 		dialer = &copyDialer
 	}
 
-	for _, host := range hosts {
+	for host := range hosts {
 		nc.conn, err = dialer.Dial("tcp", host)
 		if err == nil {
 			break
