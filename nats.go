@@ -1228,7 +1228,7 @@ func (nc *Conn) createConn() (err error) {
 }
 
 // makeTLSConn will wrap an existing Conn using TLS
-func (nc *Conn) makeTLSConn() {
+func (nc *Conn) makeTLSConn() error {
 	// Allow the user to configure their own tls.Config structure,
 	// otherwise default to InsecureSkipVerify.
 	// TODO(dlc) - We should make the more secure version the default.
@@ -1249,8 +1249,11 @@ func (nc *Conn) makeTLSConn() {
 	}
 	nc.conn = tls.Client(nc.conn, tlsCopy)
 	conn := nc.conn.(*tls.Conn)
-	conn.Handshake()
+	if err := conn.Handshake(); err != nil {
+		return err
+	}
 	nc.bw = nc.newBuffer()
+	return nil
 }
 
 // waitForExits will wait for all socket watcher Go routines to
@@ -1413,7 +1416,9 @@ func (nc *Conn) checkForSecure() error {
 
 	// Need to rewrap with bufio
 	if o.Secure {
-		nc.makeTLSConn()
+		if err := nc.makeTLSConn(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
