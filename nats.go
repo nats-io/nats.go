@@ -1229,14 +1229,12 @@ func (nc *Conn) createConn() (err error) {
 
 // makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() error {
-	// Allow the user to configure their own tls.Config structure,
-	// otherwise default to InsecureSkipVerify.
-	// TODO(dlc) - We should make the more secure version the default.
+	// Allow the user to configure their own tls.Config structure.
 	var tlsCopy *tls.Config
 	if nc.Opts.TLSConfig != nil {
 		tlsCopy = util.CloneTLSConfig(nc.Opts.TLSConfig)
 	} else {
-		tlsCopy = &tls.Config{InsecureSkipVerify: true}
+		tlsCopy = &tls.Config{}
 	}
 	// If its blank we will override it with the current host
 	if tlsCopy.ServerName == _EMPTY_ {

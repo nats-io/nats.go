@@ -136,7 +136,7 @@ func TestServerSecureConnections(t *testing.T) {
 	secureURL := fmt.Sprintf("nats://%s:%s@%s/", opts.Username, opts.Password, endpoint)
 
 	// Make sure this succeeds
-	nc, err := nats.Connect(secureURL, nats.Secure())
+	nc, err := nats.Connect(secureURL, nats.Secure(), nats.RootCAs("./configs/certs/ca.pem"))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestServerSecureConnections(t *testing.T) {
 	nc.Close()
 
 	// Server required, but not specified in Connect(), should switch automatically
-	nc, err = nats.Connect(secureURL)
+	nc, err = nats.Connect(secureURL, nats.RootCAs("./configs/certs/ca.pem"))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestServerSecureConnections(t *testing.T) {
 	ds := RunDefaultServer()
 	defer ds.Shutdown()
 
-	nc, err = nats.Connect(nats.DefaultURL, nats.Secure())
+	nc, err = nats.Connect(nats.DefaultURL, nats.Secure(), nats.RootCAs("./configs/certs/ca.pem"))
 	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
 		if nc != nil {
 			nc.Close()
@@ -204,7 +204,7 @@ func TestServerSecureConnections(t *testing.T) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	nc, err = nats.Connect(secureURL, nats.Secure(tls1))
+	nc, err = nats.Connect(secureURL, nats.Secure(tls1), nats.RootCAs("./configs/certs/ca.pem"))
 	if err != nil {
 		t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
 	}
@@ -1993,9 +1993,13 @@ func TestConnectWithSimplifiedURLs(t *testing.T) {
 		"127.0.0.1",
 	}
 
-	connect := func(t *testing.T, url string) {
+	connect := func(t *testing.T, url string, useRootCA bool) {
 		t.Helper()
-		nc, err := nats.Connect(url)
+		var opt nats.Option
+		if useRootCA {
+			opt = nats.RootCAs("./configs/certs/ca.pem")
+		}
+		nc, err := nats.Connect(url, opt)
 		if err != nil {
 			t.Fatalf("URL %q expected to connect, got %v", url, err)
 		}
@@ -2008,7 +2012,7 @@ func TestConnectWithSimplifiedURLs(t *testing.T) {
 
 	// Try for every connection in the urls array.
 	for _, u := range urls {
-		connect(t, u)
+		connect(t, u, false)
 	}
 
 	s.Shutdown()
@@ -2027,7 +2031,7 @@ func TestConnectWithSimplifiedURLs(t *testing.T) {
 	// Test again against a server that wants TLS and check
 	// that we automatically switch to Secure.
 	for _, u := range urls {
-		connect(t, u)
+		connect(t, u, true)
 	}
 }
 
@@ -2189,4 +2193,38 @@ func TestGetClientID(t *testing.T) {
 	nc.Close()
 	ch <- true
 	wg.Wait()
+}
+
+func TestTLSDontSkipVerify(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tls_noip_a.conf")
+	defer s.Shutdown()
+
+	// Connect with nats:// prefix to a server that requires TLS.
+	// The library will automatically switch to TLS, but we should
+	// not skip hostname verification.
+	sURL := fmt.Sprintf("nats://derek:porkchop@127.0.0.1:%d", opts.Port)
+	nc, err := nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"))
+	// Verify that error is about hostname verification
+	if err == nil || !strings.Contains(err.Error(), "IP SAN") {
+		if nc != nil {
+			nc.Close()
+		}
+		t.Fatalf("Expected error about hostname verification, got %v", err)
+	}
+	// Check that we can override skip verify by providing our own TLS Config.
+	nc, err = nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"),
+		nats.Secure(&tls.Config{InsecureSkipVerify: true}))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	nc.Close()
+
+	// Now change the URL to include hostname and verify that using
+	// nats:// scheme does work.
+	sURL = fmt.Sprintf("nats://derek:porkchop@%s:%d", opts.Host, opts.Port)
+	nc, err = nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	nc.Close()
 }
