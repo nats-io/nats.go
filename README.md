@@ -313,7 +313,7 @@ nc, err = nats.Connect(servers,
 	nats.DisconnectHandler(func(nc *nats.Conn) {
 		fmt.Printf("Got disconnected!\n")
 	}),
-	nats.ReconnectHandler(func(_ *nats.Conn) {
+	nats.ReconnectHandler(func(nc *nats.Conn) {
 		fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())
 	}),
 	nats.ClosedHandler(func(nc *nats.Conn) {
