@@ -21,7 +21,7 @@ import (
 	"time"
 
 	// Default Encoders
-	. "github.com/nats-io/go-nats/encoders/builtin"
+	"github.com/nats-io/go-nats/encoders/builtin"
 )
 
 // Encoder interface is for all register encoders
@@ -43,9 +43,9 @@ const (
 func init() {
 	encMap = make(map[string]Encoder)
 	// Register json, gob and default encoder
-	RegisterEncoder(JSON_ENCODER, &JsonEncoder{})
-	RegisterEncoder(GOB_ENCODER, &GobEncoder{})
-	RegisterEncoder(DEFAULT_ENCODER, &DefaultEncoder{})
+	RegisterEncoder(JSON_ENCODER, &builtin.JsonEncoder{})
+	RegisterEncoder(GOB_ENCODER, &builtin.GobEncoder{})
+	RegisterEncoder(DEFAULT_ENCODER, &builtin.DefaultEncoder{})
 }
 
 // EncodedConn are the preferred way to interface with NATS. They wrap a bare connection to
@@ -67,7 +67,7 @@ func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 	}
 	ec := &EncodedConn{Conn: c, Enc: EncoderForType(encType)}
 	if ec.Enc == nil {
-		return nil, fmt.Errorf("No encoder registered for '%s'", encType)
+		return nil, fmt.Errorf("no encoder registered for '%s'", encType)
 	}
 	return ec, nil
 }
