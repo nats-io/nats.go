@@ -18,6 +18,7 @@ go get github.com/nats-io/gnatsd
 ## Basic Usage
 
 ```go
+import nats "github.com/nats-io/go-nats"
 
 // Connect to a server
 nc, _ := nats.Connect(nats.DefaultURL)
