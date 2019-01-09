@@ -38,7 +38,7 @@ func TestServerAutoUnsub(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	nc.Flush()
 
-	base := runtime.NumGoroutine()
+	base := getStableNumGoroutine(t)
 
 	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
 		atomic.AddInt32(&received, 1)

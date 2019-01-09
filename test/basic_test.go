@@ -27,15 +27,34 @@ import (
 	"github.com/nats-io/go-nats"
 )
 
+// This function returns the number of go routines ensuring
+// that runtime.NumGoroutine() returns the same value
+// several times in a row with little delay between captures.
+// This will check for at most 500ms for value to be stable.
+func getStableNumGoroutine(t *testing.T) int {
+	t.Helper()
+	timeout := time.Now().Add(500 * time.Millisecond)
+	var base, old, same int
+	for time.Now().Before(timeout) {
+		base = runtime.NumGoroutine()
+		if old == base {
+			same++
+			if same == 8 {
+				return base
+			}
+		}
+		old = base
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Unable to get stable number of go routines")
+	return 0
+}
+
 func TestCloseLeakingGoRoutines(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	time.Sleep(500 * time.Millisecond)
-
-	base := runtime.NumGoroutine()
+	base := getStableNumGoroutine(t)
 
 	nc := NewDefaultConnection(t)
 
@@ -57,11 +76,8 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 }
 
 func TestLeakingGoRoutinesOnFailedConnect(t *testing.T) {
-	// Give time for things to settle before capturing the number of
-	// go routines
-	time.Sleep(500 * time.Millisecond)
 
-	base := runtime.NumGoroutine()
+	base := getStableNumGoroutine(t)
 
 	nc, err := nats.Connect(nats.DefaultURL)
 	if err == nil {
@@ -233,13 +249,9 @@ func TestAsyncSubscribeRoutineLeakOnUnsubscribe(t *testing.T) {
 
 	ch := make(chan bool)
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	time.Sleep(500 * time.Millisecond)
-
 	// Take the base once the connection is established, but before
 	// the subscriber is created.
-	base := runtime.NumGoroutine()
+	base := getStableNumGoroutine(t)
 
 	sub, err := nc.Subscribe("foo", func(m *nats.Msg) { ch <- true })
 	if err != nil {
@@ -277,13 +289,9 @@ func TestAsyncSubscribeRoutineLeakOnClose(t *testing.T) {
 
 	ch := make(chan bool)
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	time.Sleep(500 * time.Millisecond)
-
 	// Take the base before creating the connection, since we are going
 	// to close it before taking the delta.
-	base := runtime.NumGoroutine()
+	base := getStableNumGoroutine(t)
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()

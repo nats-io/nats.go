@@ -251,7 +251,7 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	ec.Flush()
 
-	before := runtime.NumGoroutine()
+	before := getStableNumGoroutine(t)
 
 	ch := make(chan int)
 
@@ -285,7 +285,7 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	ec.Flush()
 
-	before := runtime.NumGoroutine()
+	before := getStableNumGoroutine(t)
 
 	ch := make(chan int)
 
