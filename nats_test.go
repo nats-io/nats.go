@@ -1592,3 +1592,25 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 	}
 	t.Fatalf("Always used first address returned by LookupHost")
 }
+
+func TestConnectedAddr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	var nc *Conn
+	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
+		t.Fatalf("Expected empty result for nil connection, got %q", addr)
+	}
+	nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	expected := s.Addr().String()
+	if addr := nc.ConnectedAddr(); addr != expected {
+		t.Fatalf("Expected address %q, got %q", expected, addr)
+	}
+	nc.Close()
+	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
+		t.Fatalf("Expected empty result for closed connection, got %q", addr)
+	}
+}
