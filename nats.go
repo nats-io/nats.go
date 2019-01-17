@@ -1280,6 +1280,19 @@ func (nc *Conn) ConnectedUrl() string {
 	return nc.current.url.String()
 }
 
+// ConnectedAddr returns the connected server's IP
+func (nc *Conn) ConnectedAddr() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.conn.RemoteAddr().String()
+}
+
 // Report the connected server's Id
 func (nc *Conn) ConnectedServerId() string {
 	if nc == nil {
