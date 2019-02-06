@@ -26,12 +26,13 @@ import (
 // nats-req -s demo.nats.io:4443 <subject> <msg> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-req [-s server] [-creds file] <subject> <msg>")
+	log.Fatalf("Usage: nats-req [-s server] [-creds file] [-nkey file] <subject> <msg>")
 }
 
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var nkeyFile = flag.String("nkey", "", "NKey Seed File")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -45,9 +46,22 @@ func main() {
 	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Sample Requestor")}
 
+	if *userCreds != "" && *nkeyFile != "" {
+		log.Fatal("specify -seed or -creds")
+	}
+
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
+	}
+
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
 	}
 
 	// Connect to NATS

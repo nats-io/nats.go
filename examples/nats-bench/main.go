@@ -34,7 +34,7 @@ const (
 )
 
 func usage() {
-	log.Fatalf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] [-csv csvfile] <subject>\n", nats.DefaultURL)
+	log.Fatalf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] [-csv csvfile] [-creds file] [-nkey file] <subject>\n", nats.DefaultURL)
 }
 
 var benchmark *bench.Benchmark
@@ -48,6 +48,7 @@ func main() {
 	var msgSize = flag.Int("ms", DefaultMessageSize, "Size of the message.")
 	var csvFile = flag.String("csv", "", "Save bench data to csv file")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var nkeyFile = flag.String("nkey", "", "NKey Seed File")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -65,12 +66,25 @@ func main() {
 	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Benchmark")}
 
+	if *userCreds != "" && *nkeyFile != "" {
+		log.Fatal("specify -seed or -creds")
+	}
+
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
 	}
 
-	// Use TLS specfied
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
+	}
+
+	// Use TLS specified
 	if *tls {
 		opts = append(opts, nats.Secure(nil))
 	}

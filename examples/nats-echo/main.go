@@ -34,7 +34,7 @@ import (
 // nats-echo -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-echo [-s server] [-creds file] [-t] <subject>")
+	log.Fatalf("Usage: nats-echo [-s server] [-creds file] [-nkey seedfile] [-t] <subject>")
 }
 
 func printMsg(m *nats.Msg, i int) {
@@ -44,6 +44,7 @@ func printMsg(m *nats.Msg, i int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var nkeyFile = flag.String("nkey", "", "NKey Seed File")
 	var showTime = flag.Bool("t", false, "Display timestamps")
 	var geoloc = flag.Bool("geo", false, "Display geo location of echo service")
 	var geo string
@@ -65,9 +66,22 @@ func main() {
 	opts := []nats.Option{nats.Name("NATS Echo Service")}
 	opts = setupConnOptions(opts)
 
+	if *userCreds != "" && *nkeyFile != "" {
+		log.Fatal("specify -seed or -creds")
+	}
+
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
+	}
+
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
 	}
 
 	// Connect to NATS
