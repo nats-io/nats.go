@@ -129,19 +129,33 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		return nil, err
 	}
 
+	// snapshot
 	mch := s.mch
 	s.mu.Unlock()
 
 	var ok bool
 	var msg *Msg
 
+	// If something is available right away, let's optimize that case.
 	select {
 	case msg, ok = <-mch:
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		err := s.processNextMsgDelivered(msg)
-		if err != nil {
+		if err := s.processNextMsgDelivered(msg); err != nil {
+			return nil, err
+		} else {
+			return msg, nil
+		}
+	default:
+	}
+
+	select {
+	case msg, ok = <-mch:
+		if !ok {
+			return nil, ErrConnectionClosed
+		}
+		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
 		}
 	case <-ctx.Done():
