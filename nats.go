@@ -806,6 +806,15 @@ func Nkey(pubKey string, sigCB SignatureHandler) Option {
 	}
 }
 
+// SyncQueueLen will set the maximum queue len for the internal
+// channel used for SubscribeSync().
+func SyncQueueLen(max int) Option {
+	return func(o *Options) error {
+		o.SubChanLen = max
+		return nil
+	}
+}
+
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
 // DEPRECATED: Should use CustomDialer instead.
@@ -1018,6 +1027,7 @@ func (nc *Conn) pickServer() error {
 	if len(nc.srvPool) <= 0 {
 		return ErrNoServers
 	}
+
 	for _, s := range nc.srvPool {
 		if s != nil {
 			nc.current = s
@@ -3031,6 +3041,23 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	var ok bool
 	var msg *Msg
 
+	// If something is available right away, let's optimize that case.
+	select {
+	case msg, ok = <-mch:
+		if !ok {
+			return nil, ErrConnectionClosed
+		}
+		if err := s.processNextMsgDelivered(msg); err != nil {
+			return nil, err
+		} else {
+			return msg, nil
+		}
+	default:
+	}
+
+	// If we are here a message was not immediately available, so lets loop
+	// with a timeout.
+
 	t := globalTimerPool.Get(timeout)
 	defer globalTimerPool.Put(t)
 
@@ -3039,8 +3066,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 		if !ok {
 			return nil, ErrConnectionClosed
 		}
-		err := s.processNextMsgDelivered(msg)
-		if err != nil {
+		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
 		}
 	case <-t.C:

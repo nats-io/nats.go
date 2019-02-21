@@ -1614,3 +1614,55 @@ func TestConnectedAddr(t *testing.T) {
 		t.Fatalf("Expected empty result for closed connection, got %q", addr)
 	}
 }
+
+func BenchmarkNextMsgNoTimeout(b *testing.B) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ncp, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+	ncs, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT), SyncQueueLen(b.N))
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+
+	// Test processing speed so no long subject or payloads.
+	subj := "a"
+
+	sub, err := ncs.SubscribeSync(subj)
+	if err != nil {
+		b.Fatalf("Error subscribing: %v", err)
+	}
+	ncs.Flush()
+
+	// Set it up so we can internally queue all the messages.
+	sub.SetPendingLimits(b.N, b.N*1000)
+
+	for i := 0; i < b.N; i++ {
+		ncp.Publish(subj, nil)
+	}
+	ncp.Flush()
+
+	// Wait for them to all be queued up, testing NextMsg not server here.
+	// Only wait at most one second.
+	wait := time.Now().Add(time.Second)
+	for time.Now().Before(wait) {
+		nm, _, err := sub.Pending()
+		if err != nil {
+			b.Fatalf("Error on Pending() - %v", err)
+		}
+		if nm >= b.N {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := sub.NextMsg(10 * time.Millisecond); err != nil {
+			b.Fatalf("Error getting message[%d]: %v", i, err)
+		}
+	}
+}
