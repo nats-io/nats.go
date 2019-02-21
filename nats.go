@@ -97,6 +97,7 @@ var (
 	ErrInvalidMsg             = errors.New("nats: invalid message or message nil")
 	ErrInvalidArg             = errors.New("nats: invalid argument")
 	ErrInvalidContext         = errors.New("nats: invalid context")
+	ErrNoDeadlineContext      = errors.New("nats: context requires a deadline")
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
 	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
 	ErrUserButNoSigCB         = errors.New("nats: user callback defined without a signature handler")

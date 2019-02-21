@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -1007,5 +1007,32 @@ func TestContextInvalid(t *testing.T) {
 	}
 	if err != nats.ErrInvalidContext {
 		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+}
+
+func TestFlushWithContext(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	ctx := context.Background()
+
+	// No context should error.
+	if err := nc.FlushWithContext(nil); err != nats.ErrInvalidContext {
+		t.Fatalf("Expected '%v', got '%v'", nats.ErrInvalidContext, err)
+	}
+	// A context with no deadline set should error also.
+	if err := nc.FlushWithContext(ctx); err != nats.ErrNoDeadlineContext {
+		t.Fatalf("Expected '%v', got '%v'", nats.ErrNoDeadlineContext, err)
+	}
+
+	dctx, cancel := context.WithTimeout(ctx, 0)
+	defer cancel()
+
+	// A context with a deadline should return when expired.
+	if err := nc.FlushWithContext(dctx); err != context.DeadlineExceeded {
+		t.Fatalf("Expected '%v', got '%v'", context.DeadlineExceeded, err)
 	}
 }

@@ -165,6 +165,52 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	return msg, nil
 }
 
+// FlushWithContext will allow a context to control the duration
+// of a Flush() call. This context should be non-nil and should
+// have a deadline set. We will return an error if none is present.
+func (nc *Conn) FlushWithContext(ctx context.Context) error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	if ctx == nil {
+		return ErrInvalidContext
+	}
+	_, ok := ctx.Deadline()
+	if !ok {
+		return ErrNoDeadlineContext
+	}
+
+	nc.mu.Lock()
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		return ErrConnectionClosed
+	}
+	// Create a buffered channel to prevent chan send to block
+	// in processPong()
+	ch := make(chan struct{}, 1)
+	nc.sendPing(ch)
+	nc.mu.Unlock()
+
+	var err error
+
+	select {
+	case _, ok := <-ch:
+		if !ok {
+			err = ErrConnectionClosed
+		} else {
+			close(ch)
+		}
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+
+	if err != nil {
+		nc.removeFlushEntry(ch)
+	}
+
+	return err
+}
+
 // RequestWithContext will create an Inbox and perform a Request
 // using the provided cancellation context with the Inbox reply
 // for the data v. A response will be decoded into the vPtrResponse.
