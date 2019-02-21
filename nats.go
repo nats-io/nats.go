@@ -807,7 +807,7 @@ func Nkey(pubKey string, sigCB SignatureHandler) Option {
 }
 
 // SyncQueueLen will set the maximum queue len for the internal
-// channel used for SubsribeSync().
+// channel used for SubscribeSync().
 func SyncQueueLen(max int) Option {
 	return func(o *Options) error {
 		o.SubChanLen = max
