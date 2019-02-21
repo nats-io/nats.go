@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -43,7 +43,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.7.0"
+	Version                 = "1.7.2"
 	DefaultURL              = "nats://localhost:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
