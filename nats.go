@@ -1283,15 +1283,14 @@ func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	var url string
+
 	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
 	if nc.status != CONNECTED {
-		url = _EMPTY_
-	} else {
-		url = nc.current.url.String()
+		return  _EMPTY_
 	}
-	nc.mu.RUnlock()
-	return url
+	return nc.current.url.String()
 }
 
 // ConnectedAddr returns the connected server's IP
@@ -1299,15 +1298,14 @@ func (nc *Conn) ConnectedAddr() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	var addr string
+
 	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
 	if nc.status != CONNECTED {
-		addr = _EMPTY_
-	} else {
-		addr = nc.conn.RemoteAddr().String()
+		return _EMPTY_
 	}
-	nc.mu.RUnlock()
-	return addr
+	return nc.conn.RemoteAddr().String()
 }
 
 // Report the connected server's Id
@@ -1315,15 +1313,14 @@ func (nc *Conn) ConnectedServerId() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	var id string
+
 	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
 	if nc.status != CONNECTED {
-		id = _EMPTY_
-	} else {
-		id = nc.info.Id
+		return _EMPTY_
 	}
-	nc.mu.RUnlock()
-	return id
+	return nc.info.Id
 }
 
 // Low level setup for structs, etc
@@ -1970,14 +1967,14 @@ func (nc *Conn) readLoop() {
 	b := make([]byte, defaultBufSize)
 
 	for {
-		// FIXME(dlc): RWLock here?
-		nc.mu.Lock()
+		// ps is thread safe, so RLock is okay
+		nc.mu.RLock()
 		sb := nc.isClosed() || nc.isReconnecting()
 		if sb {
 			nc.ps = &parseState{}
 		}
 		conn := nc.conn
-		nc.mu.Unlock()
+		nc.mu.RUnlock()
 
 		if sb || conn == nil {
 			break
