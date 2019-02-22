@@ -330,7 +330,7 @@ const (
 	defaultBufSize = 32768
 
 	// The buffered size of the flush "kick" channel
-	flushChanSize = 1024
+	flushChanSize = 1
 
 	// Default server pool size
 	srvPoolSize = 4
