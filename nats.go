@@ -350,7 +350,7 @@ type Conn struct {
 	// atomic.* functions crash on 32bit machines if operand is not aligned
 	// at 64bit. See https://github.com/golang/go/issues/599
 	Statistics
-	mu sync.Mutex
+	mu sync.RWMutex
 	// Opts holds the configuration of the Conn.
 	// Modifying the configuration of a running Conn is a race.
 	Opts    Options
@@ -1283,12 +1283,15 @@ func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
+	var url string
+	nc.mu.RLock()
 	if nc.status != CONNECTED {
-		return _EMPTY_
+		url = _EMPTY_
+	} else {
+		url = nc.current.url.String()
 	}
-	return nc.current.url.String()
+	nc.mu.RUnlock()
+	return url
 }
 
 // ConnectedAddr returns the connected server's IP
@@ -1296,12 +1299,15 @@ func (nc *Conn) ConnectedAddr() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
+	var addr string
+	nc.mu.RLock()
 	if nc.status != CONNECTED {
-		return _EMPTY_
+		addr = _EMPTY_
+	} else {
+		addr = nc.conn.RemoteAddr().String()
 	}
-	return nc.conn.RemoteAddr().String()
+	nc.mu.RUnlock()
+	return addr
 }
 
 // Report the connected server's Id
@@ -1309,12 +1315,15 @@ func (nc *Conn) ConnectedServerId() string {
 	if nc == nil {
 		return _EMPTY_
 	}
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
+	var id string
+	nc.mu.RLock()
 	if nc.status != CONNECTED {
-		return _EMPTY_
+		id = _EMPTY_
+	} else {
+		id = nc.info.Id
 	}
-	return nc.info.Id
+	nc.mu.RUnlock()
+	return id
 }
 
 // Low level setup for structs, etc
@@ -2359,9 +2368,9 @@ func (nc *Conn) LastError() error {
 	if nc == nil {
 		return ErrInvalidConnection
 	}
-	nc.mu.Lock()
+	nc.mu.RLock()
 	err := nc.err
-	nc.mu.Unlock()
+	nc.mu.RUnlock()
 	return err
 }
 
@@ -2834,9 +2843,10 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 
 // NumSubscriptions returns active number of subscriptions.
 func (nc *Conn) NumSubscriptions() int {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return len(nc.subs)
+	nc.mu.RLock()
+	var num = len(nc.subs)
+	nc.mu.RUnlock()
+	return num
 }
 
 // Lock for nc should be held here upon entry
@@ -3365,8 +3375,8 @@ func (nc *Conn) Flush() error {
 // Buffered will return the number of bytes buffered to be sent to the server.
 // FIXME(dlc) take into account disconnected state.
 func (nc *Conn) Buffered() (int, error) {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
 	if nc.isClosed() || nc.bw == nil {
 		return -1, ErrConnectionClosed
 	}
@@ -3519,23 +3529,26 @@ func (nc *Conn) Close() {
 
 // IsClosed tests if a Conn has been closed.
 func (nc *Conn) IsClosed() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isClosed()
+	nc.mu.RLock()
+	var closed = nc.isClosed()
+	nc.mu.RUnlock()
+	return closed
 }
 
 // IsReconnecting tests if a Conn is reconnecting.
 func (nc *Conn) IsReconnecting() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isReconnecting()
+	nc.mu.RLock()
+	var isReconnecting = nc.isReconnecting()
+	nc.mu.RUnlock()
+	return isReconnecting
 }
 
 // IsConnected tests if a Conn is connected.
 func (nc *Conn) IsConnected() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isConnected()
+	nc.mu.RLock()
+	var isConnected = nc.isConnected()
+	nc.mu.RUnlock()
+	return isConnected
 }
 
 // drainConnection will run in a separate Go routine and will
@@ -3626,9 +3639,10 @@ func (nc *Conn) Drain() error {
 
 // IsDraining tests if a Conn is in the draining state.
 func (nc *Conn) IsDraining() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.isDraining()
+	nc.mu.RLock()
+	var isDraining = nc.isDraining()
+	nc.mu.RUnlock()
+	return isDraining
 }
 
 // caller must lock
@@ -3650,25 +3664,28 @@ func (nc *Conn) getServers(implicitOnly bool) []string {
 // authentication is enabled, use UserInfo or Token when connecting with
 // these urls.
 func (nc *Conn) Servers() []string {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.getServers(false)
+	nc.mu.RLock()
+	var servers = nc.getServers(false)
+	nc.mu.RUnlock()
+	return servers
 }
 
 // DiscoveredServers returns only the server urls that have been discovered
 // after a connection has been established. If authentication is enabled,
 // use UserInfo or Token when connecting with these urls.
 func (nc *Conn) DiscoveredServers() []string {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.getServers(true)
+	nc.mu.RLock()
+	var servers = nc.getServers(true)
+	nc.mu.RUnlock()
+	return servers
 }
 
 // Status returns the current state of the connection.
 func (nc *Conn) Status() Status {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.status
+	nc.mu.RLock()
+	var stat = nc.status
+	nc.mu.RUnlock()
+	return stat
 }
 
 // Test if Conn has been closed Lock is assumed held.
@@ -3723,23 +3740,26 @@ func (nc *Conn) Stats() Statistics {
 // This is set by the server configuration and delivered to the client
 // upon connect.
 func (nc *Conn) MaxPayload() int64 {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.info.MaxPayload
+	nc.mu.RLock()
+	var maxPayload = nc.info.MaxPayload
+	nc.mu.RUnlock()
+	return maxPayload
 }
 
 // AuthRequired will return if the connected server requires authorization.
 func (nc *Conn) AuthRequired() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.info.AuthRequired
+	nc.mu.RLock()
+	var authRequired = nc.info.AuthRequired
+	nc.mu.RUnlock()
+	return authRequired
 }
 
 // TLSRequired will return if the connected server requires TLS connections.
 func (nc *Conn) TLSRequired() bool {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	return nc.info.TLSRequired
+	nc.mu.RLock()
+	var tls = nc.info.TLSRequired
+	nc.mu.RUnlock()
+	return tls
 }
 
 // Barrier schedules the given function `f` to all registered asynchronous
@@ -3796,8 +3816,8 @@ func (nc *Conn) Barrier(f func()) error {
 // This function returns ErrNoClientIDReturned if the server is of a
 // version prior to 1.2.0.
 func (nc *Conn) GetClientID() (uint64, error) {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
 	if nc.isClosed() {
 		return 0, ErrConnectionClosed
 	}
