@@ -1413,11 +1413,10 @@ func (nc *Conn) connect() error {
 		}
 	}
 	nc.initc = false
-	defer nc.mu.Unlock()
-
 	if returnedErr == nil && nc.status != CONNECTED {
 		returnedErr = ErrNoServers
 	}
+	nc.mu.Unlock()
 	return returnedErr
 }
 
