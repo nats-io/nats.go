@@ -2655,9 +2655,9 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 const (
 	InboxPrefix        = "_INBOX."
 	InboxClientsPrefix = "_INBOX._CLIENTS."
-	replySuffixLen = 8 // Gives us 62^8
-	rdigits        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	base           = 62
+	replySuffixLen     = 8 // Gives us 62^8
+	rdigits            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base               = 62
 	delimer            = "."
 )
 
