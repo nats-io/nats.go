@@ -679,7 +679,7 @@ func TestAsyncSubscriberStarvation(t *testing.T) {
 	// Kickoff
 	nc.Subscribe("start", func(m *nats.Msg) {
 		// Helper Response
-		response := nats.NewInbox()
+		response := nats.NewInboxWithPath("_TMP")
 		nc.Subscribe(response, func(_ *nats.Msg) {
 			ch <- true
 		})

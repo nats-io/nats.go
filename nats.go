@@ -2585,7 +2585,7 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 
 	// Do setup for the new style.
 	if nc.respMap == nil {
-		nc.initNewResp()
+		nc.initNewClientResp()
 	}
 	// Create literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
@@ -2653,18 +2653,22 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 
 // InboxPrefix is the prefix for all inbox subjects.
 const (
+	replySuffixLen = 8 // Gives us 62^8
+	rdigits        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base           = 62
+)
+
+const (
 	InboxPrefix        = "_INBOX."
-	inboxPrefixLen     = len(InboxPrefix)
-	respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
-	replySuffixLen     = 8 // Gives us 62^8
-	rdigits            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	base               = 62
+	InboxClientsPrefix = "_INBOX._CLIENTS."
+	delimer            = "."
 )
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
 func NewInbox() string {
+	const inboxPrefixLen = len(InboxPrefix)
 	var b [inboxPrefixLen + nuidSize]byte
 	pres := b[:inboxPrefixLen]
 	copy(pres, InboxPrefix)
@@ -2673,10 +2677,38 @@ func NewInbox() string {
 	return string(b[:])
 }
 
+// NewInboxWithPath will return an inbox string which can be used for directed replies from
+// subscribers. These are guaranteed to be unique, but can be shared and subscribed
+// to by others.
+func NewInboxWithPath(inboxPath string) string {
+	return InboxPrefix + inboxPath + delimer + nuid.Next()
+}
+
+// NewClientInbox will return an inbox string which can be used for directed replies from
+// subscribers. These are guaranteed to be unique, but can be shared and subscribed
+// to by others.
+func NewClientInbox(clientId string) string {
+	return InboxClientsPrefix + clientId + delimer + nuid.Next()
+}
+
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
 	// _INBOX wildcard
-	nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+	nc.respSub = fmt.Sprintf("%s.*", NewInboxWithPath("_RESPSUB"))
+	nc.respMap = make(map[string]chan *Msg)
+	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+}
+
+// Function to init new response structures.
+func (nc *Conn) initNewClientResp() {
+	// _INBOX wildcard
+	const resp = "._RESPSUB.*"
+	if nc.Opts.Name == "" {
+		nc.respSub = NewInbox() + resp
+	} else {
+		nc.respSub = NewClientInbox(nc.Opts.Name) + resp
+	}
+
 	nc.respMap = make(map[string]chan *Msg)
 	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
@@ -2688,7 +2720,9 @@ func (nc *Conn) newRespInbox() string {
 	if nc.respMap == nil {
 		nc.initNewResp()
 	}
-	var b [respInboxPrefixLen + replySuffixLen]byte
+
+	respInboxPrefixLen := len(nc.respSub)
+	b := make([]byte, respInboxPrefixLen+replySuffixLen)
 	pres := b[:respInboxPrefixLen]
 	copy(pres, nc.respSub)
 	rn := nc.respRand.Int63()
@@ -2710,7 +2744,7 @@ func (nc *Conn) NewRespInbox() string {
 // respToken will return the last token of a literal response inbox
 // which we use for the message channel lookup.
 func respToken(respInbox string) string {
-	return respInbox[respInboxPrefixLen:]
+	return respInbox[len(respInbox)-replySuffixLen:]
 }
 
 // Subscribe will express interest in the given subject. The subject

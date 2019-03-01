@@ -693,6 +693,20 @@ func TestInbox(t *testing.T) {
 	}
 }
 
+func TestInboxWithPath(t *testing.T) {
+	inbox := nats.NewInboxWithPath("_TMP")
+	if matched, _ := regexp.Match(`_INBOX.\S`, []byte(inbox)); !matched {
+		t.Fatal("Bad INBOX format")
+	}
+}
+
+func TestClientInbox(t *testing.T) {
+	inbox := nats.NewClientInbox("TMP")
+	if matched, _ := regexp.Match(`_INBOX._CLIENTS.\S`, []byte(inbox)); !matched {
+		t.Fatal("Bad INBOX format")
+	}
+}
+
 func TestStats(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

@@ -120,6 +120,18 @@ func BenchmarkInboxCreation(b *testing.B) {
 	}
 }
 
+func BenchmarkInboxWithPathCreation(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		nats.NewInboxWithPath("_TMP")
+	}
+}
+
+func BenchmarkClientInboxCreation(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		nats.NewClientInbox("TMP_Client")
+	}
+}
+
 func BenchmarkNewInboxCreation(b *testing.B) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
