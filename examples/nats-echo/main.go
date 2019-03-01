@@ -34,7 +34,8 @@ import (
 // nats-echo -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-echo [-s server] [-creds file] [-t] <subject>")
+	log.Printf("Usage: nats-echo [-s server] [-creds file] [-t] <subject>\n")
+	flag.PrintDefaults()
 }
 
 func printMsg(m *nats.Msg, i int) {
@@ -157,7 +158,7 @@ func lookupGeo() string {
 	}
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
-	g := &geo{}
+	g := geo{}
 	if err := json.Unmarshal(body, &g); err != nil {
 		log.Fatalf("Error unmarshalling geo: %v", err)
 	}

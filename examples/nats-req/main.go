@@ -26,7 +26,8 @@ import (
 // nats-req -s demo.nats.io:4443 <subject> <msg> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-req [-s server] [-creds file] <subject> <msg>")
+	log.Printf("Usage: nats-req [-s server] [-creds file] <subject> <msg>\n")
+	flag.PrintDefaults()
 }
 
 func main() {

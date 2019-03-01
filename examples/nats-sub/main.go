@@ -27,7 +27,8 @@ import (
 // nats-sub -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-sub [-s server] [-creds file] [-t] <subject>")
+	log.Printf("Usage: nats-sub [-s server] [-creds file] [-t] <subject>\n")
+	flag.PrintDefaults()
 }
 
 func printMsg(m *nats.Msg, i int) {
