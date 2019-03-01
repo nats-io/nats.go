@@ -2653,14 +2653,11 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 
 // InboxPrefix is the prefix for all inbox subjects.
 const (
+	InboxPrefix        = "_INBOX."
+	InboxClientsPrefix = "_INBOX._CLIENTS."
 	replySuffixLen = 8 // Gives us 62^8
 	rdigits        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	base           = 62
-)
-
-const (
-	InboxPrefix        = "_INBOX."
-	InboxClientsPrefix = "_INBOX._CLIENTS."
 	delimer            = "."
 )
 
