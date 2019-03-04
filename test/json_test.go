@@ -232,7 +232,7 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
 
 	encoder := &builtin.JsonEncoder{}
 	for n := 0; n < b.N; n++ {
-		if _, err := encoder.Encode("protobuf_test", me); err != nil {
+		if _, err := encoder.Encode("json_benchmark_struct_marshal", me); err != nil {
 			b.Fatal("Couldn't serialize object", err)
 		}
 	}
@@ -255,7 +255,7 @@ func BenchmarkPublishJsonStruct(b *testing.B) {
 	me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
 	me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
-	ec.Subscribe("json_struct", func(p *person) {
+	ec.Subscribe("json_benchmark_struct_publish", func(p *person) {
 		if !reflect.DeepEqual(p, me) {
 			b.Fatalf("Did not receive the correct struct response")
 		}
