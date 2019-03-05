@@ -1315,8 +1315,8 @@ func TestUseCustomDialer(t *testing.T) {
 	defer s.Shutdown()
 
 	dialer := &net.Dialer{
-		Timeout:   10 * time.Second,
-		DualStack: true,
+		Timeout:       10 * time.Second,
+		FallbackDelay: -1,
 	}
 	opts := &nats.Options{
 		Servers: []string{nats.DefaultURL},
@@ -1333,16 +1333,16 @@ func TestUseCustomDialer(t *testing.T) {
 
 	// Should be possible to set via variadic func based Option setter
 	dialer2 := &net.Dialer{
-		Timeout:   5 * time.Second,
-		DualStack: true,
+		Timeout:       5 * time.Second,
+		FallbackDelay: -1,
 	}
 	nc2, err := nats.Connect(nats.DefaultURL, nats.Dialer(dialer2))
 	if err != nil {
 		t.Fatalf("Unexpected error on connect: %v", err)
 	}
 	defer nc2.Close()
-	if !nc2.Opts.Dialer.DualStack {
-		t.Fatalf("Expected for dialer to be customized to use dual stack support")
+	if nc2.Opts.Dialer.FallbackDelay > 0 {
+		t.Fatalf("Expected for dialer to be customized to disable dual stack support")
 	}
 
 	// By default, dialer still uses the DefaultTimeout
