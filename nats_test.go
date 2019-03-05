@@ -1289,7 +1289,7 @@ eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJBSFQzRzNXRElDS1FWQ1FUWFJUTldP
 ------END NATS USER JWT------
 
 ************************* IMPORTANT *************************
-NKEY Seed printed below can be used sign and prove identity.
+NKEY Seed printed below can be used to sign and prove identity.
 NKEYs are sensitive and should be treated as secrets.
 
 -----BEGIN USER NKEY SEED-----
@@ -1434,6 +1434,7 @@ func TestNkeyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to succeed but got %v", err)
 	}
+	defer nc.Close()
 
 	// Now disconnect by killing the server and restarting.
 	ts.Shutdown()
@@ -1561,36 +1562,67 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error looking up host: %v", err)
 	}
-	if len(orgAddrs) < 2 {
-		t.Skip("localhost resolves to less than 2 addresses, so test not relevant")
+
+	// We actually want the IPv4 and IPv6 addresses, so lets make sure.
+	if !reflect.DeepEqual(orgAddrs, []string{"::1", "127.0.0.1"}) {
+		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
 	}
 
 	opts := gnatsd.DefaultTestOptions
-	// For this test, important to be able to listen on both IPv4/v6
-	// because it is likely than in local test, localhost will resolve
-	// to ::1 and 127.0.0.1
-	opts.Host = "0.0.0.0"
+	opts.Host = "127.0.0.1"
 	opts.Port = TEST_PORT
-	s := RunServerWithOptions(opts)
-	defer s.Shutdown()
+	s1 := RunServerWithOptions(opts)
+	defer s1.Shutdown()
 
-	for i := 0; i < 10; i++ {
+	opts.Host = "::1"
+	s2 := RunServerWithOptions(opts)
+	defer s2.Shutdown()
+
+	for i := 0; i < 100; i++ {
 		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
 		if err != nil {
 			t.Fatalf("Error on connect: %v", err)
 		}
-		nc.mu.Lock()
-		host, _, _ := net.SplitHostPort(nc.conn.LocalAddr().String())
-		nc.mu.Unlock()
-		isFirst := host == orgAddrs[0]
-		nc.Close()
-		if !isFirst {
-			// We used one that is not the first of the resolved addresses,
-			// so we consider the test good in that IPs were randomized.
-			return
-		}
+		defer nc.Close()
 	}
-	t.Fatalf("Always used first address returned by LookupHost")
+
+	if ncls := s1.NumClients(); ncls < 35 || ncls > 65 {
+		t.Fatalf("Does not seem balanced between multiple servers: s1:%d, s2:%d", s1.NumClients(), s2.NumClients())
+	}
+}
+
+func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
+	orgAddrs, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatalf("Error looking up host: %v", err)
+	}
+
+	// We actually want the IPv4 and IPv6 addresses, so lets make sure.
+	if !reflect.DeepEqual(orgAddrs, []string{"::1", "127.0.0.1"}) {
+		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
+	}
+
+	opts := gnatsd.DefaultTestOptions
+	opts.Host = orgAddrs[0]
+	opts.Port = TEST_PORT
+	s1 := RunServerWithOptions(opts)
+	defer s1.Shutdown()
+
+	opts.Host = orgAddrs[1]
+	s2 := RunServerWithOptions(opts)
+	defer s2.Shutdown()
+
+	for i := 0; i < 100; i++ {
+		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT), DontRandomize())
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+	}
+
+	if ncls := s1.NumClients(); ncls != 100 {
+		t.Fatalf("Expected all clients on first server, only got %d of 100", ncls)
+	}
 }
 
 func TestConnectedAddr(t *testing.T) {

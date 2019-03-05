@@ -109,6 +109,10 @@ var (
 	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 // GetDefaultOptions returns default configuration options for the client.
 func GetDefaultOptions() Options {
 	return Options{
@@ -1189,18 +1193,18 @@ func (nc *Conn) createConn() (err error) {
 	}
 
 	// We will auto-expand host names if they resolve to multiple IPs
-	hosts := map[string]struct{}{}
+	hosts := []string{}
 	u := nc.current.url
 
 	if net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
 		for _, addr := range addrs {
-			hosts[net.JoinHostPort(addr, u.Port())] = struct{}{}
+			hosts = append(hosts, net.JoinHostPort(addr, u.Port()))
 		}
 	}
 	// Fall back to what we were given.
 	if len(hosts) == 0 {
-		hosts[u.Host] = struct{}{}
+		hosts = append(hosts, u.Host)
 	}
 
 	// CustomDialer takes precedence. If not set, use Opts.Dialer which
@@ -1214,7 +1218,12 @@ func (nc *Conn) createConn() (err error) {
 		dialer = &copyDialer
 	}
 
-	for host := range hosts {
+	if len(hosts) > 1 && !nc.Opts.NoRandomize {
+		rand.Shuffle(len(hosts), func(i, j int) {
+			hosts[i], hosts[j] = hosts[j], hosts[i]
+		})
+	}
+	for _, host := range hosts {
 		nc.conn, err = dialer.Dial("tcp", host)
 		if err == nil {
 			break
@@ -3520,7 +3529,9 @@ func (nc *Conn) close(status Status, doCBs bool) {
 // Close will close the connection to the server. This call will release
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
-	nc.close(CLOSED, true)
+	if nc != nil {
+		nc.close(CLOSED, true)
+	}
 }
 
 // IsClosed tests if a Conn has been closed.
