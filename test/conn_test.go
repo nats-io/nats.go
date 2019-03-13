@@ -224,7 +224,6 @@ func TestServerSecureConnections(t *testing.T) {
 }
 
 func TestClientCertificate(t *testing.T) {
-
 	s, opts := RunServerWithConfig("./configs/tlsverify.conf")
 	defer s.Shutdown()
 

@@ -2290,6 +2290,7 @@ func (nc *Conn) processInfo(info string) error {
 	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
 		return err
 	}
+
 	// Copy content into connection's info structure.
 	nc.info = ncInfo
 	// The array could be empty/not present on initial connect,
@@ -2336,10 +2337,8 @@ func (nc *Conn) processInfo(info string) error {
 		}
 	}
 	// Figure out if we should save off the current non-IP hostname if we encounter a bare IP.
-	var saveTLS bool
-	if nc.current != nil && nc.Opts.Secure && !hostIsIP(nc.current.url) {
-		saveTLS = true
-	}
+	saveTLS := nc.current != nil && !hostIsIP(nc.current.url)
+
 	// If there are any left in the tmp map, these are new (or restarted) servers
 	// and need to be added to the pool.
 	for curl := range tmp {
