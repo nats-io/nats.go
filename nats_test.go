@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -113,11 +114,11 @@ var reconnectOpts = Options{
 func RunServerOnPort(port int) *server.Server {
 	opts := gnatsd.DefaultTestOptions
 	opts.Port = port
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
-func RunServerWithOptions(opts server.Options) *server.Server {
-	return gnatsd.RunServer(&opts)
+func RunServerWithOptions(opts *server.Options) *server.Server {
+	return gnatsd.RunServer(opts)
 }
 
 func TestReconnectServerStats(t *testing.T) {
@@ -1304,7 +1305,7 @@ func runTrustServer() *server.Server {
 	opts := gnatsd.DefaultTestOptions
 	opts.Port = TEST_PORT
 	opts.TrustedKeys = []string{string(pub)}
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	mr := &server.MemAccResolver{}
 	akp, _ := nkeys.FromSeed(aSeed)
 	apub, _ := akp.PublicKey()
@@ -1392,6 +1393,70 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	nc.Close()
 }
 
+// If we are using TLS and have multiple servers we try to match the IP
+// from a discovered server with the expected hostname for certs without IP
+// designations. In certain cases where there is a not authorized error and
+// we were trying the second server with the IP only and getting an error
+// that was hard to understand for the end user. This did require
+// Opts.Secure = false, but the fix removed the check on Opts.Secure to decide
+// if we need to save off the hostname that we connected to first.
+func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	// Setup opts for both servers.
+	kp, _ := nkeys.FromSeed(oSeed)
+	pub, _ := kp.PublicKey()
+	opts := gnatsd.DefaultTestOptions
+	opts.Port = -1
+	opts.Cluster.Port = -1
+	opts.TrustedKeys = []string{string(pub)}
+	tc := &server.TLSConfigOpts{
+		CertFile: "./test/configs/certs/server_noip.pem",
+		KeyFile:  "./test/configs/certs/key_noip.pem",
+	}
+	var err error
+	if opts.TLSConfig, err = server.GenTLSConfig(tc); err != nil {
+		panic("Can't build TLCConfig")
+	}
+
+	// copy the opts for the second server.
+	opts2 := opts
+
+	sa := RunServerWithOptions(&opts)
+	defer sa.Shutdown()
+
+	routeAddr := fmt.Sprintf("nats-route://%s:%d", opts.Cluster.Host, opts.Cluster.Port)
+	rurl, _ := url.Parse(routeAddr)
+	opts2.Routes = []*url.URL{rurl}
+
+	sb := RunServerWithOptions(&opts2)
+	defer sb.Shutdown()
+
+	wait := time.Now().Add(2 * time.Second)
+	for time.Now().Before(wait) {
+		sanr := sa.NumRoutes()
+		sbnr := sb.NumRoutes()
+		if sanr == 1 && sbnr == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Make sure we get the right error here.
+	nc, err := Connect(fmt.Sprintf("nats://localhost:%d", opts.Port),
+		RootCAs("./test/configs/certs/ca.pem"),
+		UserCredentials("filenotfound.creds"))
+
+	if err == nil {
+		nc.Close()
+		t.Fatalf("Expected an error on missing credentials file")
+	}
+	if !strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatalf("Expected a missing file error, got %q", err)
+	}
+}
+
 func TestNkeyAuth(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
@@ -1404,7 +1469,7 @@ func TestNkeyAuth(t *testing.T) {
 	sopts := gnatsd.DefaultTestOptions
 	sopts.Port = TEST_PORT
 	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: string(pub)}}
-	ts := RunServerWithOptions(sopts)
+	ts := RunServerWithOptions(&sopts)
 	defer ts.Shutdown()
 
 	opts := reconnectOpts
@@ -1438,7 +1503,7 @@ func TestNkeyAuth(t *testing.T) {
 
 	// Now disconnect by killing the server and restarting.
 	ts.Shutdown()
-	ts = RunServerWithOptions(sopts)
+	ts = RunServerWithOptions(&sopts)
 	defer ts.Shutdown()
 
 	if err := nc.FlushTimeout(5 * time.Second); err != nil {
@@ -1571,11 +1636,11 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 	opts := gnatsd.DefaultTestOptions
 	opts.Host = "127.0.0.1"
 	opts.Port = TEST_PORT
-	s1 := RunServerWithOptions(opts)
+	s1 := RunServerWithOptions(&opts)
 	defer s1.Shutdown()
 
 	opts.Host = "::1"
-	s2 := RunServerWithOptions(opts)
+	s2 := RunServerWithOptions(&opts)
 	defer s2.Shutdown()
 
 	for i := 0; i < 100; i++ {
@@ -1605,11 +1670,11 @@ func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
 	opts := gnatsd.DefaultTestOptions
 	opts.Host = orgAddrs[0]
 	opts.Port = TEST_PORT
-	s1 := RunServerWithOptions(opts)
+	s1 := RunServerWithOptions(&opts)
 	defer s1.Shutdown()
 
 	opts.Host = orgAddrs[1]
-	s2 := RunServerWithOptions(opts)
+	s2 := RunServerWithOptions(&opts)
 	defer s2.Shutdown()
 
 	for i := 0; i < 100; i++ {
