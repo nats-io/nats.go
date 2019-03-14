@@ -2754,7 +2754,9 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	s, e := nc.subscribe(subj, _EMPTY_, nil, mch)
 	if s != nil {
+		s.mu.Lock()
 		s.typ = SyncSubscription
+		s.mu.Unlock()
 	}
 	return s, e
 }
@@ -2775,7 +2777,9 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	s, e := nc.subscribe(subj, queue, nil, mch)
 	if s != nil {
+		s.mu.Lock()
 		s.typ = SyncSubscription
+		s.mu.Unlock()
 	}
 	return s, e
 }
