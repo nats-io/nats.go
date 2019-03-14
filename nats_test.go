@@ -1712,6 +1712,32 @@ func TestConnectedAddr(t *testing.T) {
 	}
 }
 
+func TestSubscribeSyncRace(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	go func() {
+		time.Sleep(time.Millisecond)
+		nc.Close()
+	}()
+
+	subj := "foo.sync.race"
+	for i := 0; i < 10000; i++ {
+		if _, err := nc.SubscribeSync(subj); err != nil {
+			break
+		}
+		if _, err := nc.QueueSubscribeSync(subj, "gc"); err != nil {
+			break
+		}
+	}
+}
+
 func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()

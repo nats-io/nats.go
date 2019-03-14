@@ -2645,7 +2645,7 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 	inbox := NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2725,14 +2725,14 @@ func respToken(respInbox string) string {
 // can have wildcards (partial:*, full:>). Messages will be delivered
 // to the associated MsgHandler.
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb, nil)
+	return nc.subscribe(subj, _EMPTY_, cb, nil, false)
 }
 
 // ChanSubscribe will express interest in the given subject and place
 // all messages received on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, ch)
+	return nc.subscribe(subj, _EMPTY_, nil, ch, false)
 }
 
 // ChanQueueSubscribe will express interest in the given subject.
@@ -2742,7 +2742,7 @@ func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) 
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than QueueSubscribeSyncWithChan.
 func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, group, nil, ch)
+	return nc.subscribe(subj, group, nil, ch, false)
 }
 
 // SubscribeSync will express interest on the given subject. Messages will
@@ -2752,10 +2752,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 		return nil, ErrInvalidConnection
 	}
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, _EMPTY_, nil, mch)
-	if s != nil {
-		s.typ = SyncSubscription
-	}
+	s, e := nc.subscribe(subj, _EMPTY_, nil, mch, true)
 	return s, e
 }
 
@@ -2764,7 +2761,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 // only one member of the group will be selected to receive any given
 // message asynchronously.
 func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb, nil)
+	return nc.subscribe(subj, queue, cb, nil, false)
 }
 
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
@@ -2773,10 +2770,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // given message synchronously using Subscription.NextMsg().
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, queue, nil, mch)
-	if s != nil {
-		s.typ = SyncSubscription
-	}
+	s, e := nc.subscribe(subj, queue, nil, mch, true)
 	return s, e
 }
 
@@ -2787,11 +2781,11 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than ChanQueueSubscribe.
 func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil, ch)
+	return nc.subscribe(subj, queue, nil, ch, false)
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
@@ -2822,8 +2816,11 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg) (*Sub
 		sub.typ = AsyncSubscription
 		sub.pCond = sync.NewCond(&sub.mu)
 		go nc.waitForMsgs(sub)
-	} else {
+	} else if !isSync {
 		sub.typ = ChanSubscription
+		sub.mch = ch
+	} else { // Sync Subscription
+		sub.typ = SyncSubscription
 		sub.mch = ch
 	}
 
