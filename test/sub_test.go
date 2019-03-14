@@ -38,6 +38,10 @@ func TestServerAutoUnsub(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	nc.Flush()
 
+	// When this test is run by itself it's fine, but when run with others
+	// we need to make sure the go routines reading has settled.
+	time.Sleep(250 * time.Millisecond)
+
 	base := getStableNumGoroutine(t)
 
 	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
