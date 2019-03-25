@@ -28,7 +28,8 @@ import (
 // nats-qsub -s demo.nats.io:4443 <subject> <queue> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-qsub [-s server] [-creds file] [-t] <subject> <queue>")
+	log.Printf("Usage: nats-qsub [-s server] [-creds file] [-t] <subject> <queue>\n")
+	flag.PrintDefaults()
 }
 
 func printMsg(m *nats.Msg, i int) {

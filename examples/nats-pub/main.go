@@ -25,7 +25,8 @@ import (
 // nats-pub -s demo.nats.io:4443 <subject> <msg> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-pub [-s server] [-creds file] <subject> <msg>")
+	log.Printf("Usage: nats-pub [-s server] [-creds file] <subject> <msg>\n")
+	flag.PrintDefaults()
 }
 
 func main() {

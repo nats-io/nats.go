@@ -27,7 +27,8 @@ import (
 // nats-rply -s demo.nats.io:4443 <subject> <response> (TLS version)
 
 func usage() {
-	log.Fatalf("Usage: nats-rply [-s server] [-creds file] [-t] <subject> <response>")
+	log.Printf("Usage: nats-rply [-s server] [-creds file] [-t] <subject> <response>\n")
+	flag.PrintDefaults()
 }
 
 func printMsg(m *nats.Msg, i int) {
