@@ -477,7 +477,7 @@ func TestEncSubscribeParallel(t *testing.T) {
 	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
-	ch := make(chan bool)
+	ch := make(chan bool, 2)
 
 	oSubj := "parallel"
 
@@ -521,7 +521,7 @@ func TestEncQueueSubscribeParallel(t *testing.T) {
 	ec := NewDefaultEConn(t)
 	defer ec.Close()
 
-	ch := make(chan bool)
+	ch := make(chan bool, 2)
 
 	oSubj := "parallel"
 
