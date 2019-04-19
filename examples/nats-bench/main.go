@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ const (
 func usage() {
 	log.Printf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] [-csv csvfile] <subject>\n", nats.DefaultURL)
 	flag.PrintDefaults()
+	os.Exit(1)
 }
 
 var benchmark *bench.Benchmark
