@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -104,7 +104,7 @@ func TestVersionMatchesTag(t *testing.T) {
 const TEST_PORT = 8368
 
 var reconnectOpts = Options{
-	Url:            fmt.Sprintf("nats://localhost:%d", TEST_PORT),
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -1716,7 +1716,7 @@ func TestSubscribeSyncRace(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
@@ -1742,11 +1742,11 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ncp, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	ncp, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
 	if err != nil {
 		b.Fatalf("Error connecting: %v", err)
 	}
-	ncs, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT), SyncQueueLen(b.N))
+	ncs, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT), SyncQueueLen(b.N))
 	if err != nil {
 		b.Fatalf("Error connecting: %v", err)
 	}

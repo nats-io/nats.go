@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,7 +18,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats.go"
 )
 
 // NOTE: Can test with demo servers.
@@ -59,7 +59,7 @@ func main() {
 	defer nc.Close()
 	subj, payload := args[0], []byte(args[1])
 
-	msg, err := nc.Request(subj, []byte(payload), time.Second)
+	msg, err := nc.Request(subj, []byte(payload), 2*time.Second)
 	if err != nil {
 		if nc.LastError() != nil {
 			log.Fatalf("%v for request", nc.LastError())

@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/nats-io/go-nats"
-	"github.com/nats-io/go-nats/encoders/protobuf"
-	"github.com/nats-io/go-nats/encoders/protobuf/testdata"
+	. "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/encoders/protobuf"
+	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
 )
 
 // Since we import above nats packages, we need to have a different
@@ -28,7 +28,7 @@ import (
 const ENC_TEST_PORT = 8268
 
 var options = Options{
-	Url:            fmt.Sprintf("nats://localhost:%d", ENC_TEST_PORT),
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", ENC_TEST_PORT),
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,

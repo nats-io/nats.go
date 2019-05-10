@@ -1,4 +1,4 @@
-// Copyright 2013-2018 The NATS Authors
+// Copyright 2013-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/go-nats"
 	"github.com/nats-io/nats-server/server"
+	"github.com/nats-io/nats.go"
 )
 
 func startReconnectServer(t *testing.T) *server.Server {
@@ -45,7 +45,7 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 
 	ch := make(chan bool)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://localhost:22222"
+	opts.Url = "nats://127.0.0.1:22222"
 	opts.AllowReconnect = false
 	opts.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
@@ -69,7 +69,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	ch := make(chan bool)
 	dch := make(chan bool)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://localhost:22222"
+	opts.Url = "nats://127.0.0.1:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 2
 	opts.ReconnectWait = 1 * time.Second
@@ -109,7 +109,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 }
 
 var reconnectOpts = nats.Options{
-	Url:            "nats://localhost:22222",
+	Url:            "nats://127.0.0.1:22222",
 	AllowReconnect: true,
 	MaxReconnect:   10,
 	ReconnectWait:  100 * time.Millisecond,
@@ -431,7 +431,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	disconnectedch := make(chan bool)
 	reconnectch := make(chan bool)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://localhost:22222"
+	opts.Url = "nats://127.0.0.1:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
@@ -500,7 +500,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	reconnectch := make(chan bool)
 
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://localhost:22222"
+	opts.Url = "nats://127.0.0.1:22222"
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
@@ -596,7 +596,7 @@ func TestReconnectBufSizeOption(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	nc, err := nats.Connect("nats://localhost:4222", nats.ReconnectBufSize(32))
+	nc, err := nats.Connect("nats://127.0.0.1:4222", nats.ReconnectBufSize(32))
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}

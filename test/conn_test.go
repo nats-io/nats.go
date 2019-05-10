@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/go-nats"
 	"github.com/nats-io/nats-server/server"
 	"github.com/nats-io/nats-server/test"
+	"github.com/nats-io/nats.go"
 )
 
 func TestDefaultConnection(t *testing.T) {
@@ -384,7 +384,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	ch := make(chan bool)
 
 	go func() {
-		natsURL := fmt.Sprintf("nats://localhost:%d/", addr.Port)
+		natsURL := fmt.Sprintf("nats://127.0.0.1:%d/", addr.Port)
 		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
@@ -480,7 +480,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 		<-done
 	}()
 
-	natsURL := fmt.Sprintf("nats://localhost:%d", addr.Port)
+	natsURL := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
 
 	if nc, err := nats.Connect(natsURL, nats.Timeout(20*time.Millisecond)); err == nil {
 		nc.Close()
@@ -1514,7 +1514,7 @@ func TestNewServers(t *testing.T) {
 	s1Opts := test.DefaultTestOptions
 	s1Opts.Host = "127.0.0.1"
 	s1Opts.Port = 4222
-	s1Opts.Cluster.Host = "localhost"
+	s1Opts.Cluster.Host = "127.0.0.1"
 	s1Opts.Cluster.Port = 6222
 	s1 := test.RunServer(&s1Opts)
 	defer s1.Shutdown()
@@ -1523,9 +1523,9 @@ func TestNewServers(t *testing.T) {
 	s2Opts.Host = "127.0.0.1"
 	s2Opts.Port = 4223
 	s2Opts.Port = s1Opts.Port + 1
-	s2Opts.Cluster.Host = "localhost"
+	s2Opts.Cluster.Host = "127.0.0.1"
 	s2Opts.Cluster.Port = 6223
-	s2Opts.Routes = server.RoutesFromStr("nats://localhost:6222")
+	s2Opts.Routes = server.RoutesFromStr("nats://127.0.0.1:6222")
 	s2 := test.RunServer(&s2Opts)
 	defer s2.Shutdown()
 
@@ -1568,9 +1568,9 @@ func TestNewServers(t *testing.T) {
 	s1Opts.Host = "127.0.0.1"
 	s1Opts.Port = 4224
 	s3Opts.Port = s2Opts.Port + 1
-	s3Opts.Cluster.Host = "localhost"
+	s3Opts.Cluster.Host = "127.0.0.1"
 	s3Opts.Cluster.Port = 6224
-	s3Opts.Routes = server.RoutesFromStr("nats://localhost:6222")
+	s3Opts.Routes = server.RoutesFromStr("nats://127.0.0.1:6222")
 	s3 := test.RunServer(&s3Opts)
 	defer s3.Shutdown()
 
