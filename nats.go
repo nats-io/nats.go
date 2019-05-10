@@ -44,7 +44,7 @@ import (
 // Default Constants
 const (
 	Version                 = "1.7.2"
-	DefaultURL              = "nats://localhost:4222"
+	DefaultURL              = "nats://127.0.0.1:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
 	DefaultReconnectWait    = 2 * time.Second

@@ -36,8 +36,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/gnatsd/server"
-	gnatsd "github.com/nats-io/gnatsd/test"
+	"github.com/nats-io/nats-server/server"
+	natsserver "github.com/nats-io/nats-server/test"
 	"github.com/nats-io/nkeys"
 )
 
@@ -112,13 +112,13 @@ var reconnectOpts = Options{
 }
 
 func RunServerOnPort(port int) *server.Server {
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Port = port
 	return RunServerWithOptions(&opts)
 }
 
 func RunServerWithOptions(opts *server.Options) *server.Server {
-	return gnatsd.RunServer(opts)
+	return natsserver.RunServer(opts)
 }
 
 func TestReconnectServerStats(t *testing.T) {
@@ -1045,16 +1045,16 @@ func TestAsyncINFO(t *testing.T) {
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
-	// Pool now should contain localhost:4222 (the default URL) and localhost:5222
-	checkPool("localhost:4222", "localhost:5222")
+	// Pool now should contain 127.0.0.1:4222 (the default URL), localhost:4222 and localhost:5222
+	checkPool("127.0.0.1:4222", "localhost:4222", "localhost:5222")
 
 	// Make sure that if client receives the same, it is not added again.
 	err = c.parse(info)
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
-	// Pool should still contain localhost:4222 (the default URL) and localhost:5222
-	checkPool("localhost:4222", "localhost:5222")
+	// Pool should still contain 127.0.0.1:4222 (the default URL), localhost:4222 and localhost:5222
+	checkPool("127.0.0.1:4222", "localhost:4222", "localhost:5222")
 
 	// Receive a new URL
 	info = []byte("INFO {\"connect_urls\":[\"localhost:4222\", \"localhost:5222\", \"localhost:6222\"]}\r\n")
@@ -1062,8 +1062,8 @@ func TestAsyncINFO(t *testing.T) {
 	if err != nil || c.ps.state != OP_START {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
-	// Pool now should contain localhost:4222 (the default URL) localhost:5222 and localhost:6222
-	checkPool("localhost:4222", "localhost:5222", "localhost:6222")
+	// Pool now should contain 127.0.0.1:4222 (the default URL), localhost:4222, localhost:5222 and localhost:6222
+	checkPool("127.0.0.1:4222", "localhost:4222", "localhost:5222", "localhost:6222")
 
 	// Check that pool may be randomized on setup, but new URLs are always
 	// added at end of pool.
@@ -1130,7 +1130,7 @@ func TestConnServers(t *testing.T) {
 	}
 
 	// check the default url
-	validateURLs(c.Servers(), "nats://localhost:4222")
+	validateURLs(c.Servers(), "nats://127.0.0.1:4222")
 	if len(c.DiscoveredServers()) != 0 {
 		t.Fatalf("Expected no discovered servers")
 	}
@@ -1141,7 +1141,7 @@ func TestConnServers(t *testing.T) {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	// Server list should now contain both the default and the new url.
-	validateURLs(c.Servers(), "nats://localhost:4222", "nats://localhost:5222")
+	validateURLs(c.Servers(), "nats://127.0.0.1:4222", "nats://localhost:5222")
 	// Discovered servers should only contain the new url.
 	validateURLs(c.DiscoveredServers(), "nats://localhost:5222")
 
@@ -1302,7 +1302,7 @@ SUAMK2FG4MI6UE3ACF3FK3OIQBCEIEZV7NSWFFEW63UXMRLFM2XLAXK4GY
 func runTrustServer() *server.Server {
 	kp, _ := nkeys.FromSeed(oSeed)
 	pub, _ := kp.PublicKey()
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Port = TEST_PORT
 	opts.TrustedKeys = []string{string(pub)}
 	s := RunServerWithOptions(&opts)
@@ -1407,7 +1407,7 @@ func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 	// Setup opts for both servers.
 	kp, _ := nkeys.FromSeed(oSeed)
 	pub, _ := kp.PublicKey()
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.Cluster.Port = -1
 	opts.TrustedKeys = []string{string(pub)}
@@ -1466,7 +1466,7 @@ func TestNkeyAuth(t *testing.T) {
 	kp, _ := nkeys.FromSeed(seed)
 	pub, _ := kp.PublicKey()
 
-	sopts := gnatsd.DefaultTestOptions
+	sopts := natsserver.DefaultTestOptions
 	sopts.Port = TEST_PORT
 	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: string(pub)}}
 	ts := RunServerWithOptions(&sopts)
@@ -1633,7 +1633,7 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
 	}
 
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Host = "127.0.0.1"
 	opts.Port = TEST_PORT
 	s1 := RunServerWithOptions(&opts)
@@ -1667,7 +1667,7 @@ func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
 		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
 	}
 
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Host = orgAddrs[0]
 	opts.Port = TEST_PORT
 	s1 := RunServerWithOptions(&opts)

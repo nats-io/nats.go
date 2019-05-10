@@ -12,7 +12,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 go get github.com/nats-io/go-nats
 
 # Server
-go get github.com/nats-io/gnatsd
+go get github.com/nats-io/nats-server
 ```
 
 ## Basic Usage

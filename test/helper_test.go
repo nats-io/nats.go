@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nats-io/gnatsd/server"
 	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats-server/server"
 
-	gnatsd "github.com/nats-io/gnatsd/test"
+	natsserver "github.com/nats-io/nats-server/test"
 )
 
 // So that we can pass tests and benchmarks...
@@ -78,7 +78,7 @@ func NewDefaultConnection(t tLogger) *nats.Conn {
 
 // NewConnection forms connection on a given port.
 func NewConnection(t tLogger, port int) *nats.Conn {
-	url := fmt.Sprintf("nats://localhost:%d", port)
+	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
 	nc, err := nats.Connect(url)
 	if err != nil {
 		t.Fatalf("Failed to create default connection: %v\n", err)
@@ -97,7 +97,7 @@ func NewEConn(t tLogger) *nats.EncodedConn {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Running gnatsd server in separate Go routines
+// Running nats server in separate Go routines
 ////////////////////////////////////////////////////////////////////////////////
 
 // RunDefaultServer will run a server on the default port.
@@ -107,17 +107,17 @@ func RunDefaultServer() *server.Server {
 
 // RunServerOnPort will run a server on the given port.
 func RunServerOnPort(port int) *server.Server {
-	opts := gnatsd.DefaultTestOptions
+	opts := natsserver.DefaultTestOptions
 	opts.Port = port
 	return RunServerWithOptions(opts)
 }
 
 // RunServerWithOptions will run a server with the given options.
 func RunServerWithOptions(opts server.Options) *server.Server {
-	return gnatsd.RunServer(&opts)
+	return natsserver.RunServer(&opts)
 }
 
 // RunServerWithConfig will run a server with the given configuration file.
 func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
-	return gnatsd.RunServerWithConfig(configFile)
+	return natsserver.RunServerWithConfig(configFile)
 }
