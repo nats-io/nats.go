@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,19 +23,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/go-nats"
 	"github.com/nats-io/nats-server/server"
 	"github.com/nats-io/nats-server/test"
+	"github.com/nats-io/nats.go"
 )
 
 var testServers = []string{
-	"nats://localhost:1222",
-	"nats://localhost:1223",
-	"nats://localhost:1224",
-	"nats://localhost:1225",
-	"nats://localhost:1226",
-	"nats://localhost:1227",
-	"nats://localhost:1228",
+	"nats://127.0.0.1:1222",
+	"nats://127.0.0.1:1223",
+	"nats://127.0.0.1:1224",
+	"nats://127.0.0.1:1225",
+	"nats://127.0.0.1:1226",
+	"nats://127.0.0.1:1227",
+	"nats://127.0.0.1:1228",
 }
 
 var servers = strings.Join(testServers, ",")
@@ -74,7 +74,7 @@ func TestServersOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
-	if nc.ConnectedUrl() != "nats://localhost:1222" {
+	if nc.ConnectedUrl() != "nats://127.0.0.1:1222" {
 		nc.Close()
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
@@ -92,7 +92,7 @@ func TestServersOption(t *testing.T) {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
 	defer nc.Close()
-	if nc.ConnectedUrl() != "nats://localhost:1223" {
+	if nc.ConnectedUrl() != "nats://127.0.0.1:1223" {
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
 	}
@@ -119,7 +119,7 @@ func TestNewStyleServersOption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
-	if nc.ConnectedUrl() != "nats://localhost:1222" {
+	if nc.ConnectedUrl() != "nats://127.0.0.1:1222" {
 		nc.Close()
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
@@ -137,7 +137,7 @@ func TestNewStyleServersOption(t *testing.T) {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
 	defer nc.Close()
-	if nc.ConnectedUrl() != "nats://localhost:1223" {
+	if nc.ConnectedUrl() != "nats://127.0.0.1:1223" {
 		t.Fatalf("Does not report correct connection: %s\n",
 			nc.ConnectedUrl())
 	}
@@ -145,8 +145,8 @@ func TestNewStyleServersOption(t *testing.T) {
 
 func TestAuthServers(t *testing.T) {
 	var plainServers = []string{
-		"nats://localhost:1222",
-		"nats://localhost:1224",
+		"nats://127.0.0.1:1222",
+		"nats://127.0.0.1:1224",
 	}
 
 	opts := test.DefaultTestOptions
@@ -173,8 +173,8 @@ func TestAuthServers(t *testing.T) {
 
 	// Test that we can connect to a subsequent correct server.
 	var authServers = []string{
-		"nats://localhost:1222",
-		"nats://derek:foo@localhost:1224",
+		"nats://127.0.0.1:1222",
+		"nats://derek:foo@127.0.0.1:1224",
 	}
 	aservers := strings.Join(authServers, ",")
 	nc, err = nats.Connect(aservers, nats.DontRandomize(), nats.Timeout(5*time.Second))
@@ -438,8 +438,8 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 
 func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	var myServers = []string{
-		"nats://localhost:1222",
-		"nats://localhost:4443",
+		"nats://127.0.0.1:1222",
+		"nats://127.0.0.1:4443",
 	}
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()

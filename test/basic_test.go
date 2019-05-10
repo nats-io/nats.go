@@ -1,4 +1,4 @@
-// Copyright 2012-2018 The NATS Authors
+// Copyright 2012-2019 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats.go"
 )
 
 // This function returns the number of go routines ensuring
@@ -144,7 +144,7 @@ func TestBadOptionTimeoutConnect(t *testing.T) {
 
 	opts := nats.GetDefaultOptions()
 	opts.Timeout = -1
-	opts.Url = "nats://localhost:4222"
+	opts.Url = "nats://127.0.0.1:4222"
 
 	_, err := opts.Connect()
 	if err == nil {
