@@ -155,6 +155,10 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 
 	opts := reconnectOpts
 	dch := make(chan bool)
+	dErrCh := make(chan bool)
+	opts.DisconnectedErrCB = func(_ *Conn, _ error) {
+		dErrCh <- true
+	}
 	opts.DisconnectedCB = func(_ *Conn) {
 		dch <- true
 	}
@@ -194,8 +198,14 @@ func TestParseStateReconnectFunctionality(t *testing.T) {
 	ts.Shutdown()
 	// server is stopped here...
 
-	if err := Wait(dch); err != nil {
-		t.Fatal("Did not get the DisconnectedCB")
+	if err := Wait(dErrCh); err != nil {
+		t.Fatal("Did not get the DisconnectedErrCB")
+	}
+
+	select {
+	case <-dch:
+		t.Fatal("Get the DEPRECATED DisconnectedCB while DisconnectedErrCB was set")
+	default:
 	}
 
 	if err := ec.Publish("foo", testString); err != nil {

@@ -64,7 +64,7 @@ func TestAuth(t *testing.T) {
 	nc.Close()
 }
 
-func TestAuthFailNoDisconnectCB(t *testing.T) {
+func TestAuthFailNoDisconnectErrCB(t *testing.T) {
 	opts := test.DefaultTestOptions
 	opts.Port = 8232
 	opts.Username = "derek"
@@ -74,16 +74,16 @@ func TestAuthFailNoDisconnectCB(t *testing.T) {
 
 	copts := nats.GetDefaultOptions()
 	copts.Url = "nats://127.0.0.1:8232"
-	receivedDisconnectCB := int32(0)
-	copts.DisconnectedCB = func(nc *nats.Conn) {
-		atomic.AddInt32(&receivedDisconnectCB, 1)
+	receivedDisconnectErrCB := int32(0)
+	copts.DisconnectedErrCB = func(nc *nats.Conn, _ error) {
+		atomic.AddInt32(&receivedDisconnectErrCB, 1)
 	}
 
 	_, err := copts.Connect()
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
-	if atomic.LoadInt32(&receivedDisconnectCB) > 0 {
+	if atomic.LoadInt32(&receivedDisconnectErrCB) > 0 {
 		t.Fatal("Should not have received a disconnect callback on auth failure")
 	}
 }

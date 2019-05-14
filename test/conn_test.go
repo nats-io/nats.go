@@ -84,7 +84,7 @@ func TestConnClosedCB(t *testing.T) {
 	}
 }
 
-func TestCloseDisconnectedCB(t *testing.T) {
+func TestCloseDisconnectedErrCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -92,7 +92,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 	o := nats.GetDefaultOptions()
 	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
-	o.DisconnectedCB = func(_ *nats.Conn) {
+	o.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		ch <- true
 	}
 	nc, err := o.Connect()
@@ -105,7 +105,7 @@ func TestCloseDisconnectedCB(t *testing.T) {
 	}
 }
 
-func TestServerStopDisconnectedCB(t *testing.T) {
+func TestServerStopDisconnectedErrCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -113,7 +113,7 @@ func TestServerStopDisconnectedCB(t *testing.T) {
 	o := nats.GetDefaultOptions()
 	o.Url = nats.DefaultURL
 	o.AllowReconnect = false
-	o.DisconnectedCB = func(nc *nats.Conn) {
+	o.DisconnectedErrCB = func(nc *nats.Conn, _ error) {
 		ch <- true
 	}
 	nc, err := o.Connect()
@@ -1111,7 +1111,7 @@ func TestErrStaleConnection(t *testing.T) {
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
 	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = true
-	opts.DisconnectedCB = func(_ *nats.Conn) {
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		// Interested only in the first disconnect cb
 		if firstDisconnect {
 			firstDisconnect = false
@@ -1132,7 +1132,7 @@ func TestErrStaleConnection(t *testing.T) {
 
 	// We should first gets disconnected
 	if err := Wait(dch); err != nil {
-		t.Fatal("Failed to get DisconnectedCB")
+		t.Fatal("Failed to get DisconnectedErrCB")
 	}
 
 	// Then reconneted..
@@ -1202,7 +1202,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	natsURL := fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
 	opts := nats.GetDefaultOptions()
 	opts.AllowReconnect = true
-	opts.DisconnectedCB = func(_ *nats.Conn) { dch <- true }
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) { dch <- true }
 	opts.ReconnectedCB = func(_ *nats.Conn) { atomic.AddInt64(&reconnected, 1) }
 	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
 	opts.ReconnectWait = 20 * time.Millisecond
@@ -1219,7 +1219,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 
 	// We should first gets disconnected
 	if err := Wait(dch); err != nil {
-		t.Fatal("Failed to get DisconnectedCB")
+		t.Fatal("Failed to get DisconnectedErrCB")
 	}
 
 	// We should get the closed cb
@@ -1477,7 +1477,7 @@ func TestCustomFlusherTimeout(t *testing.T) {
 		PingInterval: 500 * time.Millisecond,
 	}
 
-	opts.DisconnectedCB = func(nc *nats.Conn) {
+	opts.DisconnectedErrCB = func(nc *nats.Conn, _ error) {
 		// Ping loops that test is done
 		doneCh <- struct{}{}
 	}
