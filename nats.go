@@ -269,13 +269,15 @@ type Options struct {
 
 	// DisconnectedCB sets the disconnected handler that is called
 	// whenever the connection is disconnected.
-	// Will not be called if DisconnectedErrCB was initiated.
-	// DEPRECATED. use DisconnectedErrCB which passes initial err
+	// Will not be called if DisconnectedErrCB is set
+	// DEPRECATED. Use DisconnectedErrCB which passes error that caused
+	// the disconnect event.
 	DisconnectedCB ConnHandler
 
 	// DisconnectedErrCB sets the disconnected error handler that is called
 	// whenever the connection is disconnected.
-	// DisconnectedCB will not be called if DisconnectedErrCB was initiated.
+	// Disconnected error could be nil in case if user closes connection.
+	// DisconnectedCB will not be called if DisconnectedErrCB is set
 	DisconnectedErrCB DisconnectErrHandler
 
 	// ReconnectedCB sets the reconnected handler called whenever
@@ -1444,7 +1446,7 @@ func (nc *Conn) connect() error {
 			} else {
 				returnedErr = err
 				nc.mu.Unlock()
-				nc.close(DISCONNECTED, false)
+				nc.close(DISCONNECTED, false, err)
 				nc.mu.Lock()
 				nc.current = nil
 			}
@@ -3483,7 +3485,7 @@ func (nc *Conn) clearPendingRequestCalls() {
 // desired status. Also controls whether user defined callbacks
 // will be triggered. The lock should not be held entering this
 // function. This function will handle the locking manually.
-func (nc *Conn) close(status Status, doCBs bool) {
+func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.mu.Lock()
 	if nc.isClosed() {
 		nc.status = status
@@ -3545,7 +3547,7 @@ func (nc *Conn) close(status Status, doCBs bool) {
 	if doCBs {
 		if nc.conn != nil {
 			if nc.Opts.DisconnectedErrCB != nil {
-				nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, ErrConnectionClosed) })
+				nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
 			} else if nc.Opts.DisconnectedCB != nil {
 				nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
 			}
@@ -3562,7 +3564,7 @@ func (nc *Conn) close(status Status, doCBs bool) {
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	if nc != nil {
-		nc.close(CLOSED, true)
+		nc.close(CLOSED, true, nil)
 	}
 }
 
