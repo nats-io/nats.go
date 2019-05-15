@@ -150,6 +150,10 @@ const (
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
 
+// DisconnectErrHandler is used to process asynchronous disconnected connections events,
+// with the error (if any) that caused the disconnect.
+type DisconnectErrHandler func(*Conn, error)
+
 // ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
 type ErrHandler func(*Conn, *Subscription, error)
@@ -266,7 +270,16 @@ type Options struct {
 
 	// DisconnectedCB sets the disconnected handler that is called
 	// whenever the connection is disconnected.
+	// Will not be called if DisconnectedErrCB is set
+	// DEPRECATED. Use DisconnectedErrCB which passes error that caused
+	// the disconnect event.
 	DisconnectedCB ConnHandler
+
+	// DisconnectedErrCB sets the disconnected error handler that is called
+	// whenever the connection is disconnected.
+	// Disconnected error could be nil, for instance when user explicitly closes the connection.
+	// DisconnectedCB will not be called if DisconnectedErrCB is set
+	DisconnectedErrCB DisconnectErrHandler
 
 	// ReconnectedCB sets the reconnected handler called whenever
 	// the connection is successfully reconnected.
@@ -687,6 +700,14 @@ func DrainTimeout(t time.Duration) Option {
 	}
 }
 
+// DisconnectErrHandler is an Option to set the disconnected error handler.
+func DisconnectedErrHandler(cb DisconnectErrHandler) Option {
+	return func(o *Options) error {
+		o.DisconnectedErrCB = cb
+		return nil
+	}
+}
+
 // DisconnectHandler is an Option to set the disconnected handler.
 func DisconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
@@ -851,6 +872,7 @@ func UseOldRequestStyle() Option {
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
+// DEPRECATED. use SetDisconnectErrHandler
 func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 	if nc == nil {
 		return
@@ -858,6 +880,16 @@ func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.DisconnectedCB = dcb
+}
+
+// SetDisconnectErrHandler will set the disconnect event handler.
+func (nc *Conn) SetDisconnectErrHandler(dcb DisconnectErrHandler) {
+	if nc == nil {
+		return
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	nc.Opts.DisconnectedErrCB = dcb
 }
 
 // SetReconnectHandler will set the reconnect event handler.
@@ -1415,7 +1447,7 @@ func (nc *Conn) connect() error {
 			} else {
 				returnedErr = err
 				nc.mu.Unlock()
-				nc.close(DISCONNECTED, false)
+				nc.close(DISCONNECTED, false, err)
 				nc.mu.Lock()
 				nc.current = nil
 			}
@@ -1719,7 +1751,7 @@ func (nc *Conn) stopPingTimer() {
 
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
-func (nc *Conn) doReconnect() {
+func (nc *Conn) doReconnect(err error) {
 	// We want to make sure we have the other watchers shutdown properly
 	// here before we proceed past this point.
 	nc.waitForExits()
@@ -1738,7 +1770,10 @@ func (nc *Conn) doReconnect() {
 	// Clear any errors.
 	nc.err = nil
 	// Perform appropriate callback if needed for a disconnect.
-	if nc.Opts.DisconnectedCB != nil {
+	// DisconnectedErrCB has priority over deprecated DisconnectedCB
+	if nc.Opts.DisconnectedErrCB != nil {
+		nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
+	} else if nc.Opts.DisconnectedCB != nil {
 		nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
 	}
 
@@ -1886,7 +1921,7 @@ func (nc *Conn) processOpErr(err error) {
 		nc.pending = new(bytes.Buffer)
 		nc.bw.Reset(nc.pending)
 
-		go nc.doReconnect()
+		go nc.doReconnect(err)
 		nc.mu.Unlock()
 		return
 	}
@@ -3451,7 +3486,7 @@ func (nc *Conn) clearPendingRequestCalls() {
 // desired status. Also controls whether user defined callbacks
 // will be triggered. The lock should not be held entering this
 // function. This function will handle the locking manually.
-func (nc *Conn) close(status Status, doCBs bool) {
+func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.mu.Lock()
 	if nc.isClosed() {
 		nc.status = status
@@ -3511,8 +3546,12 @@ func (nc *Conn) close(status Status, doCBs bool) {
 
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
-		if nc.Opts.DisconnectedCB != nil && nc.conn != nil {
-			nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+		if nc.conn != nil {
+			if nc.Opts.DisconnectedErrCB != nil {
+				nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
+			} else if nc.Opts.DisconnectedCB != nil {
+				nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+			}
 		}
 		if nc.Opts.ClosedCB != nil {
 			nc.ach.push(func() { nc.Opts.ClosedCB(nc) })
@@ -3526,7 +3565,7 @@ func (nc *Conn) close(status Status, doCBs bool) {
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	if nc != nil {
-		nc.close(CLOSED, true)
+		nc.close(CLOSED, true, nil)
 	}
 }
 

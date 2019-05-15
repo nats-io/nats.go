@@ -311,8 +311,8 @@ nc, err = nats.Connect(servers, nats.DontRandomize())
 
 // Setup callbacks to be notified on disconnects, reconnects and connection closed.
 nc, err = nats.Connect(servers,
-	nats.DisconnectHandler(func(nc *nats.Conn) {
-		fmt.Printf("Got disconnected!\n")
+	nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+		fmt.Printf("Got disconnected! Reason: %q\n", err)
 	}),
 	nats.ReconnectHandler(func(nc *nats.Conn) {
 		fmt.Printf("Got reconnected to %v!\n", nc.ConnectedUrl())

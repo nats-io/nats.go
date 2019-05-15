@@ -77,7 +77,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	opts.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
 	}
-	opts.DisconnectedCB = func(_ *nats.Conn) {
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		dch <- true
 	}
 	nc, err := opts.Connect()
@@ -97,7 +97,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	// We should wait to get the disconnected callback to ensure
 	// that we are in the process of reconnecting.
 	if e := Wait(dch); e != nil {
-		t.Fatal("DisconnectedCB should have been triggered")
+		t.Fatal("DisconnectedErrCB should have been triggered")
 	}
 
 	if !nc.IsReconnecting() {
@@ -163,7 +163,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 
 	opts := reconnectOpts
 
-	opts.DisconnectedCB = func(_ *nats.Conn) {
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		dch <- true
 	}
 
@@ -223,7 +223,7 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 
 	opts := reconnectOpts
 	dch := make(chan bool)
-	opts.DisconnectedCB = func(_ *nats.Conn) {
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		dch <- true
 	}
 	rch := make(chan bool)
@@ -436,7 +436,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
 
-	opts.DisconnectedCB = func(_ *nats.Conn) {
+	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		disconnectedch <- true
 	}
 	opts.ReconnectedCB = func(_ *nats.Conn) {
@@ -615,7 +615,7 @@ func TestReconnectBufSize(t *testing.T) {
 	o.ReconnectBufSize = 32 // 32 bytes
 
 	dch := make(chan bool)
-	o.DisconnectedCB = func(_ *nats.Conn) {
+	o.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		dch <- true
 	}
 
@@ -634,7 +634,7 @@ func TestReconnectBufSize(t *testing.T) {
 	s.Shutdown()
 
 	if e := Wait(dch); e != nil {
-		t.Fatal("DisconnectedCB should have been triggered")
+		t.Fatal("DisconnectedErrCB should have been triggered")
 	}
 
 	msg := []byte("food") // 4 bytes paylaod, total proto is 16 bytes
@@ -678,13 +678,13 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 	secureURL := fmt.Sprintf("tls://%s:%s@%s/", optsA.Username, optsA.Password, endpoint)
 
 	dch := make(chan bool)
-	dcb := func(_ *nats.Conn) { dch <- true }
+	dcb := func(_ *nats.Conn, _ error) { dch <- true }
 	rch := make(chan bool)
 	rcb := func(_ *nats.Conn) { rch <- true }
 
 	nc, err := nats.Connect(secureURL,
 		nats.RootCAs("./configs/certs/ca.pem"),
-		nats.DisconnectHandler(dcb),
+		nats.DisconnectedErrHandler(dcb),
 		nats.ReconnectHandler(rcb))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
@@ -716,7 +716,7 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 	sa.Shutdown()
 
 	if e := Wait(dch); e != nil {
-		t.Fatal("DisconnectedCB should have been triggered")
+		t.Fatal("DisconnectedErrCB should have been triggered")
 	}
 	if e := WaitTime(rch, time.Second); e != nil {
 		t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
