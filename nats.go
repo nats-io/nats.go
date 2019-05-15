@@ -150,7 +150,8 @@ const (
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
 
-// DisconnectErrHandler is used to process error which caused disconnected event.
+// DisconnectErrHandler is used to process asynchronous disconnected connections events,
+// with the error (if any) that caused the disconnect.
 type DisconnectErrHandler func(*Conn, error)
 
 // ErrHandler is used to process asynchronous errors encountered
@@ -276,7 +277,7 @@ type Options struct {
 
 	// DisconnectedErrCB sets the disconnected error handler that is called
 	// whenever the connection is disconnected.
-	// Disconnected error could be nil in case if user closes connection.
+	// Disconnected error could be nil, for instance when user explicitly closes the connection.
 	// DisconnectedCB will not be called if DisconnectedErrCB is set
 	DisconnectedErrCB DisconnectErrHandler
 
@@ -699,7 +700,7 @@ func DrainTimeout(t time.Duration) Option {
 	}
 }
 
-// DisconnectErrHandler is an Option to set the disconnected err handler.
+// DisconnectErrHandler is an Option to set the disconnected error handler.
 func DisconnectedErrHandler(cb DisconnectErrHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedErrCB = cb
