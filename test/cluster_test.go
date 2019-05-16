@@ -200,7 +200,7 @@ func TestBasicClusterReconnect(t *testing.T) {
 	dcbCalled := false
 
 	opts := []nats.Option{nats.DontRandomize(),
-		nats.DisconnectedErrHandler(func(nc *nats.Conn, _ error) {
+		nats.DisconnectErrHandler(func(nc *nats.Conn, _ error) {
 			// Suppress any additional callbacks
 			if dcbCalled {
 				return

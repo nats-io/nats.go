@@ -150,9 +150,9 @@ const (
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
 
-// DisconnectErrHandler is used to process asynchronous disconnected connections events,
-// with the error (if any) that caused the disconnect.
-type DisconnectErrHandler func(*Conn, error)
+// ConnErrHandler is used to process asynchronous events like
+// disconnected connection with the error (if any).
+type ConnErrHandler func(*Conn, error)
 
 // ErrHandler is used to process asynchronous errors encountered
 // while processing inbound messages.
@@ -279,7 +279,7 @@ type Options struct {
 	// whenever the connection is disconnected.
 	// Disconnected error could be nil, for instance when user explicitly closes the connection.
 	// DisconnectedCB will not be called if DisconnectedErrCB is set
-	DisconnectedErrCB DisconnectErrHandler
+	DisconnectedErrCB ConnErrHandler
 
 	// ReconnectedCB sets the reconnected handler called whenever
 	// the connection is successfully reconnected.
@@ -701,7 +701,7 @@ func DrainTimeout(t time.Duration) Option {
 }
 
 // DisconnectErrHandler is an Option to set the disconnected error handler.
-func DisconnectedErrHandler(cb DisconnectErrHandler) Option {
+func DisconnectErrHandler(cb ConnErrHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedErrCB = cb
 		return nil
@@ -709,6 +709,7 @@ func DisconnectedErrHandler(cb DisconnectErrHandler) Option {
 }
 
 // DisconnectHandler is an Option to set the disconnected handler.
+// DEPRECATED: Use DisconnectErrHandler.
 func DisconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedCB = cb
@@ -872,7 +873,7 @@ func UseOldRequestStyle() Option {
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
-// DEPRECATED. use SetDisconnectErrHandler
+// DEPRECATED: Use SetDisconnectErrHandler
 func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 	if nc == nil {
 		return
@@ -883,7 +884,7 @@ func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 }
 
 // SetDisconnectErrHandler will set the disconnect event handler.
-func (nc *Conn) SetDisconnectErrHandler(dcb DisconnectErrHandler) {
+func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 	if nc == nil {
 		return
 	}

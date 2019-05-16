@@ -684,7 +684,7 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 
 	nc, err := nats.Connect(secureURL,
 		nats.RootCAs("./configs/certs/ca.pem"),
-		nats.DisconnectedErrHandler(dcb),
+		nats.DisconnectErrHandler(dcb),
 		nats.ReconnectHandler(rcb))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
