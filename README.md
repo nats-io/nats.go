@@ -9,7 +9,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 
 ```bash
 # Go client
-go get github.com/nats-io/nats.go
+go get github.com/nats-io/nats.go/
 
 # Server
 go get github.com/nats-io/nats-server
