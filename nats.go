@@ -709,7 +709,7 @@ func DisconnectErrHandler(cb ConnErrHandler) Option {
 }
 
 // DisconnectHandler is an Option to set the disconnected handler.
-// DEPRECATED: Use Use DisconnectErrHandler.
+// DEPRECATED: Use DisconnectErrHandler.
 func DisconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedCB = cb
