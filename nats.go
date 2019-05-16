@@ -701,7 +701,7 @@ func DrainTimeout(t time.Duration) Option {
 }
 
 // DisconnectErrHandler is an Option to set the disconnected error handler.
-func DisconnectedErrHandler(cb ConnErrHandler) Option {
+func DisconnectErrHandler(cb ConnErrHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedErrCB = cb
 		return nil
@@ -709,6 +709,7 @@ func DisconnectedErrHandler(cb ConnErrHandler) Option {
 }
 
 // DisconnectHandler is an Option to set the disconnected handler.
+// DEPRECATED: Use Use DisconnectErrHandler.
 func DisconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedCB = cb
@@ -872,7 +873,7 @@ func UseOldRequestStyle() Option {
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
-// DEPRECATED. use SetDisconnectErrHandler
+// DEPRECATED: Use SetDisconnectErrHandler
 func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 	if nc == nil {
 		return
