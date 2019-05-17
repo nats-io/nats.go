@@ -38,6 +38,11 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+func showUsageAndExit(exitcode int) {
+	usage()
+	os.Exit(exitcode)
+}
+
 func printMsg(m *nats.Msg, i int) {
 	log.Printf("[#%d] Echoing to [%s]: %q", i, m.Reply, m.Data)
 }
@@ -46,6 +51,7 @@ func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
 	var showTime = flag.Bool("t", false, "Display timestamps")
+	var showHelp = flag.Bool("h", false, "Show help message")
 	var geoloc = flag.Bool("geo", false, "Display geo location of echo service")
 	var geo string
 
@@ -53,9 +59,13 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
+	if *showHelp {
+		showUsageAndExit(0)
+	}
+
 	args := flag.Args()
 	if len(args) != 1 {
-		usage()
+		showUsageAndExit(1)
 	}
 
 	// Lookup geo if requested

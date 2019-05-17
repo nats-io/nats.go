@@ -16,6 +16,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 	"runtime"
 	"time"
 
@@ -31,6 +32,11 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+func showUsageAndExit(exitcode int) {
+	usage()
+	os.Exit(exitcode)
+}
+
 func printMsg(m *nats.Msg, i int) {
 	log.Printf("[#%d] Received on [%s]: '%s'\n", i, m.Subject, string(m.Data))
 }
@@ -39,14 +45,19 @@ func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
 	var showTime = flag.Bool("t", false, "Display timestamps")
+	var showHelp = flag.Bool("h", false, "Show help message")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
+	if *showHelp {
+		showUsageAndExit(0)
+	}
+
 	args := flag.Args()
 	if len(args) < 2 {
-		usage()
+		showUsageAndExit(1)
 	}
 
 	// Connect Options.
