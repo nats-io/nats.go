@@ -16,6 +16,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -30,17 +31,27 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+func showUsageAndExit(exitcode int) {
+	usage()
+	os.Exit(exitcode)
+}
+
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var showHelp = flag.Bool("h", false, "Show help message")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
+	if *showHelp {
+		showUsageAndExit(0)
+	}
+
 	args := flag.Args()
 	if len(args) < 2 {
-		usage()
+		showUsageAndExit(1)
 	}
 
 	// Connect Options.

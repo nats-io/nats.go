@@ -37,7 +37,11 @@ const (
 func usage() {
 	log.Printf("Usage: nats-bench [-s server (%s)] [--tls] [-np NUM_PUBLISHERS] [-ns NUM_SUBSCRIBERS] [-n NUM_MSGS] [-ms MESSAGE_SIZE] [-csv csvfile] <subject>\n", nats.DefaultURL)
 	flag.PrintDefaults()
-	os.Exit(1)
+}
+
+func showUsageAndExit(exitcode int) {
+	usage()
+	os.Exit(exitcode)
 }
 
 var benchmark *bench.Benchmark
@@ -51,14 +55,19 @@ func main() {
 	var msgSize = flag.Int("ms", DefaultMessageSize, "Size of the message.")
 	var csvFile = flag.String("csv", "", "Save bench data to csv file")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var showHelp = flag.Bool("h", false, "Show help message")
 
 	log.SetFlags(0)
 	flag.Usage = usage
 	flag.Parse()
 
+	if *showHelp {
+		showUsageAndExit(0)
+	}
+
 	args := flag.Args()
 	if len(args) != 1 {
-		usage()
+		showUsageAndExit(1)
 	}
 
 	if *numMsgs <= 0 {
