@@ -125,7 +125,7 @@ The simplest form is to use the helper method UserCredentials(credsFilepath).
 nc, err := nats.Connect(url, UserCredentials("user.creds"))
 ```
 
-The helper methos creates two callback handlers to present the user JWT and sign the nonce challenge from the server.
+The helper methods creates two callback handlers to present the user JWT and sign the nonce challenge from the server.
 The core client library never has direct access to your private key and simply performs the callback for signing the server challenge.
 The helper will load and wipe and erase memory it uses for each connect or reconnect.
 
@@ -339,9 +339,9 @@ nc, err = nats.Connect("nats://localhost:4222",
     nats.Token("S3cretT0ken"))
 
 // Note that if credentials are specified in the initial URLs, they take
-// precedence on the credentials specfied through the options.
+// precedence on the credentials specified through the options.
 // For instance, in the connect call below, the client library will use
-// the user "my" and password "pwd" to connect to locahost:4222, however,
+// the user "my" and password "pwd" to connect to localhost:4222, however,
 // it will use username "foo" and password "bar" when (re)connecting to
 // a different server URL that it got as part of the auto-discovery.
 nc, err = nats.Connect("nats://my:pwd@localhost:4222", nats.UserInfo("foo", "bar"))
