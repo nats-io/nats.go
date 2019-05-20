@@ -82,7 +82,7 @@ func main() {
 		opts = append(opts, nats.UserCredentials(*userCreds))
 	}
 
-	// Use TLS specfied
+	// Use TLS specified
 	if *tls {
 		opts = append(opts, nats.Secure(nil))
 	}
