@@ -70,7 +70,7 @@ func main() {
 	defer nc.Close()
 	subj, payload := args[0], []byte(args[1])
 
-	msg, err := nc.Request(subj, []byte(payload), 2*time.Second)
+	msg, err := nc.Request(subj, payload, 2*time.Second)
 	if err != nil {
 		if nc.LastError() != nil {
 			log.Fatalf("%v for request", nc.LastError())
