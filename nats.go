@@ -43,7 +43,7 @@ import (
 
 // Default Constants
 const (
-	Version                 = "1.7.2"
+	Version                 = "2.0.0"
 	DefaultURL              = "nats://127.0.0.1:4222"
 	DefaultPort             = 4222
 	DefaultMaxReconnect     = 60
@@ -107,6 +107,8 @@ var (
 	ErrNkeysNotSupported      = errors.New("nats: nkeys not supported by the server")
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
+	ErrMsgNotBound            = errors.New("nats: message is not bound to subscription/connection")
+	ErrMsgNoReply             = errors.New("nats: message does not have a reply")
 )
 
 func init() {
@@ -3309,6 +3311,21 @@ func (s *Subscription) Dropped() (int, error) {
 		return -1, ErrBadSubscription
 	}
 	return s.dropped, nil
+}
+
+// Respond allows a convenient way to respond to requests in service based subscriptions.
+func (m *Msg) Respond(data []byte) error {
+	if m == nil || m.Sub == nil {
+		return ErrMsgNotBound
+	}
+	if m.Reply == "" {
+		return ErrMsgNoReply
+	}
+	m.Sub.mu.Lock()
+	nc := m.Sub.conn
+	m.Sub.mu.Unlock()
+	// No need to check the connection here since the call to publish will do all the checking.
+	return nc.Publish(m.Reply, data)
 }
 
 // FIXME: This is a hack

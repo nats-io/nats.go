@@ -31,6 +31,11 @@ nc.Subscribe("foo", func(m *nats.Msg) {
     fmt.Printf("Received a message: %s\n", string(m.Data))
 })
 
+// Responding to a request message
+nc.Subscribe("request", func(m *nats.Msg) {
+    m.Respond([]byte("answer is 42")
+})
+
 // Simple Sync Subscriber
 sub, err := nc.SubscribeSync("foo")
 m, err := sub.NextMsg(timeout)

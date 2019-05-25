@@ -362,6 +362,40 @@ func TestPubSubWithReply(t *testing.T) {
 	}
 }
 
+func TestMsgRespond(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	m := &nats.Msg{}
+	if err := m.Respond(nil); err != nats.ErrMsgNotBound {
+		t.Fatal("Expected ErrMsgNotBound error")
+	}
+
+	sub, err := nc.Subscribe("req", func(msg *nats.Msg) {
+		msg.Respond([]byte("42"))
+	})
+	if err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+
+	// Fake the bound notion by assigning Sub directly to test no reply.
+	m.Sub = sub
+	if err := m.Respond(nil); err != nats.ErrMsgNoReply {
+		t.Fatal("Expected ErrMsgNoReply error")
+	}
+
+	response, err := nc.Request("req", []byte("help"), 50*time.Millisecond)
+	if err != nil {
+		t.Fatal("Request Failed: ", err)
+	}
+
+	if string(response.Data) != "42" {
+		t.Fatalf("Expected '42', got %q", response.Data)
+	}
+}
+
 func TestFlush(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
