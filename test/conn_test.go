@@ -370,6 +370,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 
 	addr := tl.Addr().(*net.TCPAddr)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
@@ -383,6 +384,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 	// Used to synchronize
 	ch := make(chan bool)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		natsURL := fmt.Sprintf("nats://127.0.0.1:%d/", addr.Port)
 		nc, err := nats.Connect(natsURL)
@@ -418,6 +420,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 	case3 := make(chan bool)
 	case4 := make(chan bool)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		for i := 0; i < 5; i++ {
 			conn, err := l.Accept()
@@ -544,6 +547,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	var conn net.Conn
 	var err error
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err = l.Accept()
 		if err != nil {
@@ -851,6 +855,7 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	addr := tl.Addr().(*net.TCPAddr)
 	done := make(chan bool)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
@@ -918,6 +923,7 @@ func TestMaxPendingOut(t *testing.T) {
 	done := make(chan bool)
 	cch := make(chan bool)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
@@ -984,6 +990,7 @@ func TestErrInReadLoop(t *testing.T) {
 	done := make(chan bool)
 	cch := make(chan bool)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
@@ -1066,6 +1073,7 @@ func TestErrStaleConnection(t *testing.T) {
 
 	firstDisconnect := true
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		for i := 0; i < 2; i++ {
 			conn, err := l.Accept()
@@ -1169,6 +1177,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	serverSentError := "Any Error"
 	reconnected := int64(0)
 
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
@@ -1875,6 +1884,8 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	ch := make(chan bool, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		defer wg.Done()
 
@@ -2158,6 +2169,7 @@ func TestGetClientID(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		defer wg.Done()
 		conn, err := l.Accept()

@@ -972,6 +972,7 @@ func TestContextInvalid(t *testing.T) {
 	}
 	defer c.Close()
 
+	//lint:ignore SA1012 testing that passing nil fails
 	_, err = nc.RequestWithContext(nil, "foo", []byte(""))
 	if err == nil {
 		t.Fatal("Expected request to fail with error")
@@ -985,6 +986,7 @@ func TestContextInvalid(t *testing.T) {
 		t.Fatalf("Expected to be able to subscribe: %s", err)
 	}
 
+	//lint:ignore SA1012 testing that passing nil fails
 	_, err = sub.NextMsgWithContext(nil)
 	if err == nil {
 		t.Fatal("Expected request to fail with error")
@@ -1001,12 +1003,13 @@ func TestContextInvalid(t *testing.T) {
 	}
 	req := &request{Message: "Hello"}
 	resp := &response{}
+	//lint:ignore SA1012 testing that passing nil fails
 	err = c.RequestWithContext(nil, "slow", req, resp)
 	if err == nil {
-		t.Fatal("Expected request with context to reach deadline")
+		t.Fatal("Expected request to fail with error")
 	}
 	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
+		t.Errorf("Expected request to fail with invalid context: %s", err)
 	}
 }
 
@@ -1020,6 +1023,7 @@ func TestFlushWithContext(t *testing.T) {
 	ctx := context.Background()
 
 	// No context should error.
+	//lint:ignore SA1012 testing that passing nil fails
 	if err := nc.FlushWithContext(nil); err != nats.ErrInvalidContext {
 		t.Fatalf("Expected '%v', got '%v'", nats.ErrInvalidContext, err)
 	}
