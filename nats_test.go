@@ -1609,6 +1609,7 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 		// Now wait to be notified that we can finish
 		<-ch
 	}
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go rs(ch)
 
 	nc, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt)
@@ -1623,6 +1624,7 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 	ioutil.WriteFile(seedFile, []byte(`xxxxx`), 0666)
 	ch = make(chan bool, 1)
 	wg.Add(1)
+	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go rs(ch)
 
 	if _, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt); err == nil {

@@ -639,6 +639,7 @@ func TestSimultaneousRequests(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
+		//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 		go func() {
 			if _, err := nc.Request("foo", nil, 2*time.Second); err != nil {
 				t.Fatalf("Expected to receive a timeout error")
