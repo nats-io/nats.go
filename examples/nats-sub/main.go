@@ -108,7 +108,7 @@ func setupConnOptions(opts []nats.Option) []nats.Option {
 		log.Printf("Reconnected [%s]", nc.ConnectedUrl())
 	}))
 	opts = append(opts, nats.ClosedHandler(func(nc *nats.Conn) {
-		log.Fatal("Exiting, no servers available")
+		log.Fatalf("Exiting: %v", nc.LastError())
 	}))
 	return opts
 }

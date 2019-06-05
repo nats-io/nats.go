@@ -17,7 +17,7 @@ import (
 	"flag"
 	"log"
 	"os"
-	"runtime"
+	"os/signal"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -92,7 +92,15 @@ func main() {
 		log.SetFlags(log.LstdFlags)
 	}
 
-	runtime.Goexit()
+	// Setup the interrupt handler to drain so we don't miss
+	// requests when scaling down.
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	<-c
+	log.Println()
+	log.Printf("Draining...")
+	nc.Drain()
+	log.Fatalf("Exiting")
 }
 
 func setupConnOptions(opts []nats.Option) []nats.Option {
@@ -108,7 +116,7 @@ func setupConnOptions(opts []nats.Option) []nats.Option {
 		log.Printf("Reconnected [%s]", nc.ConnectedUrl())
 	}))
 	opts = append(opts, nats.ClosedHandler(func(nc *nats.Conn) {
-		log.Fatal("Exiting, no servers available")
+		log.Fatalf("Exiting: %v", nc.LastError())
 	}))
 	return opts
 }
