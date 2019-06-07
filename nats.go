@@ -363,7 +363,7 @@ const (
 
 // A Conn represents a bare connection to a nats-server.
 // It can send and receive []byte payloads.
-// The connection is thread-safe.
+// The connection is safe to use in multiple Go routines concurrently.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
 	// struct and make sure they are all 64bits (or use padding if necessary).
