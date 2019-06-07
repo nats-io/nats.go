@@ -15,6 +15,17 @@ go get github.com/nats-io/nats.go/
 go get github.com/nats-io/nats-server
 ```
 
+When using Go modules (`GO111MODULE=on`):
+
+```bash
+# Go client latest and explicit version
+go get github.com/nats-io/nats.go/@latest
+go get github.com/nats-io/nats.go/@v1.8.1
+
+# Server
+go get github.com/nats-io/nats-server/v2
+```
+
 ## Basic Usage
 
 ```go
