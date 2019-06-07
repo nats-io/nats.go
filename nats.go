@@ -363,6 +363,7 @@ const (
 
 // A Conn represents a bare connection to a nats-server.
 // It can send and receive []byte payloads.
+// The connection is thread-safe.
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
 	// struct and make sure they are all 64bits (or use padding if necessary).
@@ -3069,8 +3070,8 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 }
 
 // NextMsg will return the next message available to a synchronous subscriber
-// or block until one is available. A timeout can be used to return when no
-// message has been delivered.
+// or block until one is available. An error is returned if the subscription is invalid (ErrBadSubscription),
+// the connection is closed (ErrConnectionClosed), or the timeout is reached (ErrTimeout).
 func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
