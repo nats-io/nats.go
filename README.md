@@ -15,15 +15,18 @@ go get github.com/nats-io/nats.go/
 go get github.com/nats-io/nats-server
 ```
 
-When using Go modules (`GO111MODULE=on`):
+When using or transitioning to Go modules support:
 
 ```bash
-# Go client latest and explicit version
+# Go client latest or explicit version
 go get github.com/nats-io/nats.go/@latest
 go get github.com/nats-io/nats.go/@v1.8.1
 
-# Server
+# For latest NATS Server, add /v2 at the end
 go get github.com/nats-io/nats-server/v2
+
+# NATS Server v1 is installed otherwise
+# go get github.com/nats-io/nats-server
 ```
 
 ## Basic Usage
