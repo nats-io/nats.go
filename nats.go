@@ -166,7 +166,8 @@ type UserJWTHandler func() (string, error)
 
 // SignatureHandler is used to sign a nonce from the server while
 // authenticating with nkeys. The user should sign the nonce and
-// return the base64 encoded signature.
+// return the raw signature. The client will base64 encode this to
+// send to the server.
 type SignatureHandler func([]byte) ([]byte, error)
 
 // AuthTokenHandler is used to generate a new token.

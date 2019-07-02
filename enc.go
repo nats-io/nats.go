@@ -33,7 +33,7 @@ type Encoder interface {
 var encMap map[string]Encoder
 var encLock sync.Mutex
 
-// Indexe names into the Registered Encoders.
+// Indexed names into the Registered Encoders.
 const (
 	JSON_ENCODER    = "json"
 	GOB_ENCODER     = "gob"
