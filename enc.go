@@ -109,7 +109,7 @@ func (c *EncodedConn) PublishRequest(subject, reply string, v interface{}) error
 
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply for the data v. A response will be
-// decoded into the vPtrResponse.
+// decoded into the vPtr Response.
 func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, timeout time.Duration) error {
 	b, err := c.Enc.Encode(subject, v)
 	if err != nil {

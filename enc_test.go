@@ -55,11 +55,11 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 
 	c.Subscribe(testSubj, func(msg *Message) {})
 
-	//Publish invalid json to catch decode error in subscription callback
+	// Publish invalid json to catch decode error in subscription callback
 	c.Publish(testSubj, `foo`)
 	c.Flush()
 
-	//Next publish should be successful
+	// Next publish should be successful
 	if err := c.Publish(testSubj, Message{"2"}); err != nil {
 		t.Error("Fail to send correct json message after decode error in subscription")
 	}
@@ -76,10 +76,10 @@ func TestPublishErrorAfterInvalidPublishMessage(t *testing.T) {
 
 	c.Publish(testSubj, &testdata.Person{Name: "Anatolii"})
 
-	//Publish invalid protobuff message to catch decode error
+	// Publish invalid protobuf message to catch decode error
 	c.Publish(testSubj, "foo")
 
-	//Next publish with valid protobuf message should be successful
+	// Next publish with valid protobuf message should be successful
 	if err := c.Publish(testSubj, &testdata.Person{Name: "Anatolii"}); err != nil {
 		t.Error("Fail to send correct protobuf message after invalid message publishing", err)
 	}
@@ -266,5 +266,47 @@ func TestRequest(t *testing.T) {
 	}
 	if c2.LastError() != nil {
 		t.Fatalf("Unexpected connection error: %v", c2.LastError())
+	}
+}
+
+func TestRequestGOB(t *testing.T) {
+	ts := RunServerOnPort(ENC_TEST_PORT)
+	defer ts.Shutdown()
+
+	type Request struct {
+		Name string
+	}
+
+	type Person struct {
+		Name string
+		Age  int
+	}
+
+	nc, err := Connect(options.Url)
+	if err != nil {
+		t.Fatalf("Could not connect: %v", err)
+	}
+	defer nc.Close()
+
+	ec, err := NewEncodedConn(nc, GOB_ENCODER)
+	if err != nil {
+		t.Fatalf("Unable to create encoded connection: %v", err)
+	}
+	defer ec.Close()
+
+	ec.QueueSubscribe("foo.request", "g", func(subject, reply string, r *Request) {
+		if r.Name != "meg" {
+			t.Fatalf("Expected request to be 'meg', got %q", r)
+		}
+		response := &Person{Name: "meg", Age: 21}
+		ec.Publish(reply, response)
+	})
+
+	reply := Person{}
+	if err := ec.Request("foo.request", &Request{Name: "meg"}, &reply, time.Second); err != nil {
+		t.Fatalf("Failed to receive response: %v", err)
+	}
+	if reply.Name != "meg" || reply.Age != 21 {
+		t.Fatalf("Did not receive proper response, %+v", reply)
 	}
 }
