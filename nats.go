@@ -2904,7 +2904,6 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.mch = nil
 
 	// Mark as invalid
-	s.conn = nil
 	s.closed = true
 	if s.pCond != nil {
 		s.pCond.Broadcast()
@@ -2941,7 +2940,7 @@ func (s *Subscription) IsValid() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.conn != nil
+	return s.conn != nil && !s.closed
 }
 
 // Drain will remove interest but continue callbacks until all messages
@@ -2966,8 +2965,12 @@ func (s *Subscription) Unsubscribe() error {
 	}
 	s.mu.Lock()
 	conn := s.conn
+	closed := s.closed
 	s.mu.Unlock()
-	if conn == nil {
+	if conn == nil || conn.IsClosed() {
+		return ErrConnectionClosed
+	}
+	if closed {
 		return ErrBadSubscription
 	}
 	if conn.IsDraining() {
@@ -3023,8 +3026,9 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 	}
 	s.mu.Lock()
 	conn := s.conn
+	closed := s.closed
 	s.mu.Unlock()
-	if conn == nil {
+	if conn == nil || closed {
 		return ErrBadSubscription
 	}
 	return conn.unsubscribe(s, max, false)
@@ -3199,7 +3203,7 @@ func (s *Subscription) Pending() (int, int, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return -1, -1, ErrBadSubscription
 	}
 	if s.typ == ChanSubscription {
@@ -3215,7 +3219,7 @@ func (s *Subscription) MaxPending() (int, int, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return -1, -1, ErrBadSubscription
 	}
 	if s.typ == ChanSubscription {
@@ -3231,7 +3235,7 @@ func (s *Subscription) ClearMaxPending() error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return ErrBadSubscription
 	}
 	if s.typ == ChanSubscription {
@@ -3256,7 +3260,7 @@ func (s *Subscription) PendingLimits() (int, int, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return -1, -1, ErrBadSubscription
 	}
 	if s.typ == ChanSubscription {
@@ -3273,7 +3277,7 @@ func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return ErrBadSubscription
 	}
 	if s.typ == ChanSubscription {
@@ -3293,7 +3297,7 @@ func (s *Subscription) Delivered() (int64, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return -1, ErrBadSubscription
 	}
 	return int64(s.delivered), nil
@@ -3309,7 +3313,7 @@ func (s *Subscription) Dropped() (int, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
+	if s.conn == nil || s.closed {
 		return -1, ErrBadSubscription
 	}
 	return s.dropped, nil
