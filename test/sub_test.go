@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 )
 
 // More advanced tests on subscriptions
@@ -1495,5 +1496,37 @@ func TestSubscriptionTypes(t *testing.T) {
 	if _, _, err := sub.PendingLimits(); err == nil {
 		t.Fatalf("We should NOT be able to call PendingLimits() on ChanSubscriber")
 	}
+}
 
+func TestAutoUnsubOnSyncSubCanStillRespond(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	subj := nuid.Next()
+	sub, err := nc.SubscribeSync(subj)
+	if err != nil {
+		t.Fatalf("Error susbscribing: %v", err)
+	}
+	// When the single message is delivered, the
+	// auto unsub will reap the subscription removing
+	// the connection, make sure Respond still works.
+	if err := sub.AutoUnsubscribe(1); err != nil {
+		t.Fatalf("Error autounsub: %v", err)
+	}
+
+	inbox := nats.NewInbox()
+	if err = nc.PublishRequest(subj, inbox, nil); err != nil {
+		t.Fatalf("Error making request: %v", err)
+	}
+
+	m, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting next message")
+	}
+	if err := m.Respond(nil); err != nil {
+		t.Fatalf("Error responding: %v", err)
+	}
 }
