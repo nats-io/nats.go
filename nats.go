@@ -3100,10 +3100,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			s.mu.Lock()
-			err = s.validateNextMsgState()
-			s.mu.Unlock()
-			return nil, err
+			return nil, s.getNextMsgErr()
 		}
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
@@ -3122,10 +3119,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			s.mu.Lock()
-			err = s.validateNextMsgState()
-			s.mu.Unlock()
-			return nil, err
+			return nil, s.getNextMsgErr()
 		}
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
@@ -3160,6 +3154,18 @@ func (s *Subscription) validateNextMsgState() error {
 	}
 
 	return nil
+}
+
+// This is called when the sync channel has been closed.
+// The error returned will be either connection or subscription
+// closed depending on what caused NextMsg() to fail.
+func (s *Subscription) getNextMsgErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.connClosed {
+		return ErrConnectionClosed
+	}
+	return ErrBadSubscription
 }
 
 // processNextMsgDelivered takes a message and applies the needed

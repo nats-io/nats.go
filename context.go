@@ -140,10 +140,7 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			s.mu.Lock()
-			err = s.validateNextMsgState()
-			s.mu.Unlock()
-			return nil, err
+			return nil, s.getNextMsgErr()
 		}
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
@@ -156,10 +153,7 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			s.mu.Lock()
-			err = s.validateNextMsgState()
-			s.mu.Unlock()
-			return nil, err
+			return nil, s.getNextMsgErr()
 		}
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
