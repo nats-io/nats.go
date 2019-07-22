@@ -793,7 +793,7 @@ func TokenHandler(cb AuthTokenHandler) Option {
 // for a user's JWT and a filename for the user's private Nkey seed.
 func UserCredentials(userOrChainedFile string, seedFiles ...string) Option {
 	userCB := func() (string, error) {
-		return userFromFile(userOrChainedFile)
+		return UserFromFile(userOrChainedFile)
 	}
 	var keyFile string
 	if len(seedFiles) > 0 {
@@ -3900,7 +3900,7 @@ func (nc *Conn) GetClientID() (uint64, error) {
 // signing of nonce challenges from the server. It will take
 // care to not hold keys in memory and to wipe memory.
 func NkeyOptionFromSeed(seedFile string) (Option, error) {
-	kp, err := nkeyPairFromSeedFile(seedFile)
+	kp, err := NKeyPairFromSeedFile(seedFile)
 	if err != nil {
 		return nil, err
 	}
@@ -3936,7 +3936,8 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 
 var nscDecoratedRe = regexp.MustCompile(`\s*(?:(?:[-]{3,}[^\n]*[-]{3,}\n)(.+)(?:\n\s*[-]{3,}[^\n]*[-]{3,}\n))`)
 
-func userFromFile(userFile string) (string, error) {
+// UserFromFile extracts an user JWT stored in a creds file
+func UserFromFile(userFile string) (string, error) {
 	contents, err := ioutil.ReadFile(userFile)
 	if err != nil {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
@@ -3955,7 +3956,8 @@ func userFromFile(userFile string) (string, error) {
 	return string(tmp), nil
 }
 
-func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
+// NKeyPairFromSeedFile extracts an nkey seed stored in a creds file
+func NKeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 	var seed []byte
 	contents, err := ioutil.ReadFile(seedFile)
 	if err != nil {
@@ -3989,7 +3991,7 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 // Sign authentication challenges from the server.
 // Do not keep private seed in memory.
 func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
-	kp, err := nkeyPairFromSeedFile(seedFile)
+	kp, err := NKeyPairFromSeedFile(seedFile)
 	if err != nil {
 		return nil, err
 	}
