@@ -80,6 +80,7 @@ var (
 	ErrBadSubscription        = errors.New("nats: invalid subscription")
 	ErrTypeSubscription       = errors.New("nats: invalid subscription type")
 	ErrBadSubject             = errors.New("nats: invalid subject")
+	ErrBadQueueName           = errors.New("nats: invalid queue name")
 	ErrSlowConsumer           = errors.New("nats: slow consumer, messages dropped")
 	ErrTimeout                = errors.New("nats: timeout")
 	ErrBadTimeout             = errors.New("nats: timeout invalid")
@@ -2824,10 +2825,36 @@ func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*S
 	return nc.subscribe(subj, queue, nil, ch, false)
 }
 
+// badSubject will do quick test on whether a subject is acceptable.
+// Spaces are not allowed and all tokens should be > 0 in len.
+func badSubject(subj string) bool {
+	if strings.ContainsAny(subj, " \t\r\n") {
+		return true
+	}
+	tokens := strings.Split(subj, ".")
+	for _, t := range tokens {
+		if len(t) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// badQueue will check a queue name for whitespace.
+func badQueue(qname string) bool {
+	return strings.ContainsAny(qname, " \t\r\n")
+}
+
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
+	}
+	if badSubject(subj) {
+		return nil, ErrBadSubject
+	}
+	if queue != "" && badQueue(queue) {
+		return nil, ErrBadQueueName
 	}
 	nc.mu.Lock()
 	// ok here, but defer is generally expensive
