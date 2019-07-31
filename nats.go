@@ -28,7 +28,6 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -36,6 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nats-io/jwt"
 	"github.com/nats-io/nats.go/util"
 	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
@@ -67,6 +67,9 @@ const (
 
 	// AUTHORIZATION_ERR is for when nats server user authorization has failed.
 	AUTHORIZATION_ERR = "authorization violation"
+
+	// AUTHENTICATION_EXPIRED_ERR is for when nats server user authorization has expired.
+	AUTHENTICATION_EXPIRED_ERR = "user authentication expired"
 )
 
 // Errors
@@ -85,6 +88,7 @@ var (
 	ErrTimeout                = errors.New("nats: timeout")
 	ErrBadTimeout             = errors.New("nats: timeout invalid")
 	ErrAuthorization          = errors.New("nats: authorization violation")
+	ErrAuthExpired            = errors.New("nats: authentication expired")
 	ErrNoServers              = errors.New("nats: no servers available for connection")
 	ErrJsonParse              = errors.New("nats: connect message, json parse error")
 	ErrChanArg                = errors.New("nats: argument needs to be a channel type")
@@ -478,6 +482,7 @@ type srv struct {
 	didConnect  bool
 	reconnects  int
 	lastAttempt time.Time
+	lastErr     error
 	isImplicit  bool
 	tlsName     string
 }
@@ -2245,10 +2250,30 @@ func (nc *Conn) processPermissionsViolation(err string) {
 // processAuthorizationViolation is called when the server signals a user
 // authorization violation.
 func (nc *Conn) processAuthorizationViolation(err string) {
+	nc.processAuthError(ErrAuthorization)
+}
+
+// processAuthenticationExpired is called when the server signals a user
+// authorization has expired.
+func (nc *Conn) processAuthenticationExpired(err string) {
+	nc.processAuthError(ErrAuthExpired)
+}
+
+// processAuthError generally processing for auth errors. We want to do retries
+// unless we get the same error again. This allows us for instance to swap credentials
+// and have the app reconnect, but if nothing is changing we should bail.
+func (nc *Conn) processAuthError(err error) {
 	nc.mu.Lock()
-	nc.err = ErrAuthorization
+	nc.err = err
 	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, ErrAuthorization) })
+		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+	}
+	// We should give up if we tried twice on this server and got the
+	// same error.
+	if nc.current.lastErr == err {
+		defer nc.Close()
+	} else {
+		nc.current.lastErr = err
 	}
 	nc.mu.Unlock()
 }
@@ -2435,6 +2460,8 @@ func (nc *Conn) processErr(ie string) {
 		nc.processPermissionsViolation(ne)
 	} else if strings.HasPrefix(e, AUTHORIZATION_ERR) {
 		nc.processAuthorizationViolation(ne)
+	} else if strings.HasPrefix(e, AUTHENTICATION_EXPIRED_ERR) {
+		nc.processAuthenticationExpired(ne)
 	} else {
 		nc.mu.Lock()
 		nc.err = errors.New("nats: " + ne)
@@ -3947,70 +3974,20 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 	return Nkey(string(pub), sigCB), nil
 }
 
-// This is a regex to match decorated jwts in keys/seeds.
-// .e.g.
-//  -----BEGIN NATS USER JWT-----
-//  eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5...
-//  ------END NATS USER JWT------
-//
-//  ************************* IMPORTANT *************************
-//  NKEY Seed printed below can be used sign and prove identity.
-//  NKEYs are sensitive and should be treated as secrets.
-//
-//  -----BEGIN USER NKEY SEED-----
-//  SUAIO3FHUX5PNV2LQIIP7TZ3N4L7TX3W53MQGEIVYFIGA635OZCKEYHFLM
-//  ------END USER NKEY SEED------
-
-var nscDecoratedRe = regexp.MustCompile(`\s*(?:(?:[-]{3,}[^\n]*[-]{3,}\n)(.+)(?:\n\s*[-]{3,}[^\n]*[-]{3,}\n))`)
-
 func userFromFile(userFile string) (string, error) {
 	contents, err := ioutil.ReadFile(userFile)
 	if err != nil {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
 	}
-	defer wipeSlice(contents)
-
-	items := nscDecoratedRe.FindAllSubmatch(contents, -1)
-	if len(items) == 0 {
-		return string(contents), nil
-	}
-	// First result should be the user JWT.
-	// We copy here so that if the file contained a seed file too we wipe appropriately.
-	raw := items[0][1]
-	tmp := make([]byte, len(raw))
-	copy(tmp, raw)
-	return string(tmp), nil
+	return jwt.ParseDecoratedJWT(contents)
 }
 
 func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
-	var seed []byte
 	contents, err := ioutil.ReadFile(seedFile)
 	if err != nil {
 		return nil, fmt.Errorf("nats: %v", err)
 	}
-	defer wipeSlice(contents)
-
-	items := nscDecoratedRe.FindAllSubmatch(contents, -1)
-	if len(items) > 1 {
-		seed = items[1][1]
-	} else {
-		lines := bytes.Split(contents, []byte("\n"))
-		for _, line := range lines {
-			if bytes.HasPrefix(bytes.TrimSpace(line), []byte("SU")) {
-				seed = line
-				break
-			}
-		}
-	}
-
-	if seed == nil {
-		return nil, fmt.Errorf("nats: No nkey user seed found in %q", seedFile)
-	}
-	kp, err := nkeys.FromSeed(seed)
-	if err != nil {
-		return nil, err
-	}
-	return kp, nil
+	return jwt.ParseDecoratedNKey(contents)
 }
 
 // Sign authentication challenges from the server.
@@ -4025,13 +4002,6 @@ func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
 
 	sig, _ := kp.Sign(nonce)
 	return sig, nil
-}
-
-// Just wipe slice with 'x', for clearing contents of nkey seed file.
-func wipeSlice(buf []byte) {
-	for i := range buf {
-		buf[i] = 'x'
-	}
 }
 
 type timeoutWriter struct {
