@@ -1750,6 +1750,33 @@ func TestSubscribeSyncRace(t *testing.T) {
 	}
 }
 
+func TestBadSubjectsAndQueueNames(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	// Make sure we get errors on bad subjects (spaces, etc)
+	// We want the client to protect the user.
+	badSubs := []string{"foo bar", "foo..bar", ".foo", "bar.baz.", "baz\t.foo"}
+	for _, subj := range badSubs {
+		if _, err := nc.SubscribeSync(subj); err != ErrBadSubject {
+			t.Fatalf("Expected an error of ErrBadSubject for %q, got %v", subj, err)
+		}
+	}
+
+	badQueues := []string{"foo group", "group\t1", "g1\r\n2"}
+	for _, q := range badQueues {
+		if _, err := nc.QueueSubscribeSync("foo", q); err != ErrBadQueueName {
+			t.Fatalf("Expected an error of ErrBadQueueName for %q, got %v", q, err)
+		}
+	}
+}
+
 func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
