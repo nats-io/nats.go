@@ -1434,6 +1434,51 @@ func TestExpiredUserCredentials(t *testing.T) {
 	chainedFile := createTmpFile(t, creds)
 	defer os.Remove(chainedFile)
 
+	ch := make(chan bool)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	nc, err := Connect(url,
+		UserCredentials(chainedFile),
+		ReconnectWait(25*time.Millisecond),
+		MaxReconnects(-1),
+		ClosedHandler(func(nc *Conn) {
+			ch <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	defer nc.Close()
+
+	// We should give up since we get the same error on both tries.
+	if err := WaitTime(ch, 2*time.Second); err != nil {
+		t.Fatal("Should have closed after multiple failed attempts.")
+	}
+}
+
+func TestExpiredUserCredentialsRenewal(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	// Create user credentials that will expire in a short timeframe.
+	pub, priv := createNewUserKeys()
+	nuc := jwt.NewUserClaims(pub)
+	nuc.Expires = time.Now().Add(time.Second).Unix()
+	akp, _ := nkeys.FromSeed(aSeed)
+	ujwt, err := nuc.Encode(akp)
+	if err != nil {
+		t.Fatalf("Error encoding user jwt: %v", err)
+	}
+	creds, err := jwt.FormatUserConfig(ujwt, priv)
+	if err != nil {
+		t.Fatalf("Error encoding credentials: %v", err)
+	}
+	chainedFile := createTmpFile(t, creds)
+	defer os.Remove(chainedFile)
+
 	rch := make(chan bool)
 
 	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
