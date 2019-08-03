@@ -3974,11 +3974,19 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 	return Nkey(string(pub), sigCB), nil
 }
 
+// Just wipe slice with 'x', for clearing contents of creds or nkey seed file.
+func wipeSlice(buf []byte) {
+	for i := range buf {
+		buf[i] = 'x'
+	}
+}
+
 func userFromFile(userFile string) (string, error) {
 	contents, err := ioutil.ReadFile(userFile)
 	if err != nil {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
 	}
+	defer wipeSlice(contents)
 	return jwt.ParseDecoratedJWT(contents)
 }
 
@@ -3987,6 +3995,7 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats: %v", err)
 	}
+	defer wipeSlice(contents)
 	return jwt.ParseDecoratedNKey(contents)
 }
 
