@@ -1453,6 +1453,7 @@ func (nc *Conn) connect() error {
 			if err == nil {
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
+				nc.current.lastErr = nil
 				returnedErr = nil
 				break
 			} else {
@@ -1891,11 +1892,18 @@ func (nc *Conn) doReconnect(err error) {
 		if nc.Opts.ReconnectedCB != nil {
 			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
 		}
+
+		lastErr := nc.current.lastErr
+
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
 
 		// Make sure to flush everything
 		nc.Flush()
+
+		if lastErr != nil && !nc.IsClosed() {
+			nc.clearCurrentLastErr()
+		}
 
 		return
 	}
@@ -2275,6 +2283,14 @@ func (nc *Conn) processAuthError(err error) {
 	} else {
 		nc.current.lastErr = err
 	}
+	nc.mu.Unlock()
+}
+
+// clearCurrentLastErr will clear the last error when we know we have
+// successfully connected after a flush.
+func (nc *Conn) clearCurrentLastErr() {
+	nc.mu.Lock()
+	nc.current.lastErr = nil
 	nc.mu.Unlock()
 }
 
