@@ -1454,6 +1454,9 @@ func TestExpiredUserCredentials(t *testing.T) {
 	if err := WaitTime(ch, 2*time.Second); err != nil {
 		t.Fatal("Should have closed after multiple failed attempts.")
 	}
+	if stats := nc.Stats(); stats.Reconnects > 2 {
+		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
+	}
 }
 
 func TestExpiredUserCredentialsRenewal(t *testing.T) {

@@ -1623,7 +1623,6 @@ func normalizeErr(line string) string {
 // applicable. Will wait for a flush to return from the server for error
 // processing.
 func (nc *Conn) sendConnect() error {
-
 	// Construct the CONNECT protocol string
 	cProto, err := nc.connectProto()
 	if err != nil {
@@ -1850,6 +1849,17 @@ func (nc *Conn) doReconnect(err error) {
 
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
+			// If we have a lastErr recorded for this server
+			// do the normal processing here. We might get closed.
+			if nc.current.lastErr != nil {
+				nc.mu.Unlock()
+				nc.processErr(nc.err.Error())
+				nc.mu.Lock()
+				if nc.isClosed() {
+					break
+				}
+			}
+
 			nc.status = RECONNECTING
 			// Reset the buffered writer to the pending buffer
 			// (was set to a buffered writer on nc.conn in createConn)
