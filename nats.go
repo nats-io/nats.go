@@ -1852,8 +1852,9 @@ func (nc *Conn) doReconnect(err error) {
 			// If we have a lastErr recorded for this server
 			// do the normal processing here. We might get closed.
 			if nc.current.lastErr != nil {
+				err := nc.err
 				nc.mu.Unlock()
-				nc.processErr(nc.err.Error())
+				nc.processErr(err.Error())
 				nc.mu.Lock()
 				if nc.isClosed() {
 					break
