@@ -1453,6 +1453,7 @@ func (nc *Conn) connect() error {
 			if err == nil {
 				nc.srvPool[i].didConnect = true
 				nc.srvPool[i].reconnects = 0
+				nc.current.lastErr = nil
 				returnedErr = nil
 				break
 			} else {
@@ -1622,7 +1623,6 @@ func normalizeErr(line string) string {
 // applicable. Will wait for a flush to return from the server for error
 // processing.
 func (nc *Conn) sendConnect() error {
-
 	// Construct the CONNECT protocol string
 	cProto, err := nc.connectProto()
 	if err != nil {
@@ -1849,6 +1849,18 @@ func (nc *Conn) doReconnect(err error) {
 
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
+			// If we have a lastErr recorded for this server
+			// do the normal processing here. We might get closed.
+			if nc.current.lastErr != nil {
+				err := nc.err
+				nc.mu.Unlock()
+				nc.processErr(err.Error())
+				nc.mu.Lock()
+				if nc.isClosed() {
+					break
+				}
+			}
+
 			nc.status = RECONNECTING
 			// Reset the buffered writer to the pending buffer
 			// (was set to a buffered writer on nc.conn in createConn)
@@ -1891,11 +1903,18 @@ func (nc *Conn) doReconnect(err error) {
 		if nc.Opts.ReconnectedCB != nil {
 			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
 		}
+
+		lastErr := nc.current.lastErr
+
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
 
 		// Make sure to flush everything
 		nc.Flush()
+
+		if lastErr != nil && !nc.IsClosed() {
+			nc.clearCurrentLastErr()
+		}
 
 		return
 	}
@@ -2275,6 +2294,14 @@ func (nc *Conn) processAuthError(err error) {
 	} else {
 		nc.current.lastErr = err
 	}
+	nc.mu.Unlock()
+}
+
+// clearCurrentLastErr will clear the last error when we know we have
+// successfully connected after a flush.
+func (nc *Conn) clearCurrentLastErr() {
+	nc.mu.Lock()
+	nc.current.lastErr = nil
 	nc.mu.Unlock()
 }
 

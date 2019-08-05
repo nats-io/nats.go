@@ -1454,6 +1454,9 @@ func TestExpiredUserCredentials(t *testing.T) {
 	if err := WaitTime(ch, 2*time.Second); err != nil {
 		t.Fatal("Should have closed after multiple failed attempts.")
 	}
+	if stats := nc.Stats(); stats.Reconnects > 2 {
+		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
+	}
 }
 
 func TestExpiredUserCredentialsRenewal(t *testing.T) {
@@ -1514,8 +1517,18 @@ func TestExpiredUserCredentialsRenewal(t *testing.T) {
 		t.Fatal("Should have reconnected.")
 	}
 
+	// We should not have been closed.
 	if nc.IsClosed() {
 		t.Fatal("Got disconnected when we should have reconnected.")
+	}
+
+	// Check that we clear the lastErr that can cause the disconnect.
+	// Our reconnect CB will happen before the clear. So check after a bit.
+	time.Sleep(50 * time.Millisecond)
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.current.lastErr != nil {
+		t.Fatalf("Expected lastErr to be cleared, got %q", nc.current.lastErr)
 	}
 }
 
