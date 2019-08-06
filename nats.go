@@ -1852,9 +1852,10 @@ func (nc *Conn) doReconnect(err error) {
 			// If we have a lastErr recorded for this server
 			// do the normal processing here. We might get closed.
 			if nc.current.lastErr != nil {
-				err := nc.err
+				// Remove possible "nats: " prefix
+				errStr := strings.TrimPrefix(nc.err.Error(), "nats: ")
 				nc.mu.Unlock()
-				nc.processErr(err.Error())
+				nc.processErr(errStr)
 				nc.mu.Lock()
 				if nc.isClosed() {
 					break
@@ -1867,6 +1868,10 @@ func (nc *Conn) doReconnect(err error) {
 			nc.bw.Reset(nc.pending)
 			continue
 		}
+
+		// Clear possible lastErr under the connection lock after
+		// a successful processConnectInit().
+		nc.current.lastErr = nil
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
@@ -1904,17 +1909,11 @@ func (nc *Conn) doReconnect(err error) {
 			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
 		}
 
-		lastErr := nc.current.lastErr
-
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
 
 		// Make sure to flush everything
 		nc.Flush()
-
-		if lastErr != nil && !nc.IsClosed() {
-			nc.clearCurrentLastErr()
-		}
 
 		return
 	}
@@ -2294,14 +2293,6 @@ func (nc *Conn) processAuthError(err error) {
 	} else {
 		nc.current.lastErr = err
 	}
-	nc.mu.Unlock()
-}
-
-// clearCurrentLastErr will clear the last error when we know we have
-// successfully connected after a flush.
-func (nc *Conn) clearCurrentLastErr() {
-	nc.mu.Lock()
-	nc.current.lastErr = nil
 	nc.mu.Unlock()
 }
 
