@@ -2023,3 +2023,64 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 		}
 	}
 }
+
+func TestAuthErrorOnReconnect(t *testing.T) {
+	// This is a bit of an artificial test, but it is to demonstrate
+	// that if the client is disconnected from a server (not due to an auth error),
+	// it will still correctly stop the reconnection logic if it gets twice an
+	// auth error from the same server.
+
+	o1 := natsserver.DefaultTestOptions
+	o1.Port = -1
+	s1 := RunServerWithOptions(&o1)
+	defer s1.Shutdown()
+
+	o2 := natsserver.DefaultTestOptions
+	o2.Port = -1
+	o2.Username = "ivan"
+	o2.Password = "pwd"
+	s2 := RunServerWithOptions(&o2)
+	defer s2.Shutdown()
+
+	dch := make(chan bool)
+	cch := make(chan bool)
+
+	urls := fmt.Sprintf("nats://%s:%d, nats://%s:%d", o1.Host, o1.Port, o2.Host, o2.Port)
+	nc, err := Connect(urls,
+		ReconnectWait(25*time.Millisecond),
+		MaxReconnects(-1),
+		DontRandomize(),
+		DisconnectErrHandler(func(_ *Conn, e error) {
+			dch <- true
+		}),
+		ClosedHandler(func(_ *Conn) {
+			cch <- true
+		}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+	defer nc.Close()
+
+	s1.Shutdown()
+
+	// wait for disconnect
+	if e := WaitTime(dch, 5*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	// Wait for ClosedCB
+	if e := WaitTime(cch, 5*time.Second); e != nil {
+		reconnects := nc.Stats().Reconnects
+		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", reconnects)
+	}
+
+	// We should have stopped after 2 reconnects.
+	if reconnects := nc.Stats().Reconnects; reconnects != 2 {
+		t.Fatalf("Expected 2 reconnects, got %v", reconnects)
+	}
+
+	// Expect connection to be closed...
+	if !nc.IsClosed() {
+		t.Fatalf("Wrong status: %d\n", nc.Status())
+	}
+}
