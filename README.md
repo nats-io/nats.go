@@ -69,7 +69,7 @@ sub.Drain()
 msg, err := nc.Request("help", []byte("help me"), 10*time.Millisecond)
 
 // Replies
-nc.Subscribe("help", func(m *Msg) {
+nc.Subscribe("help", func(m *nats.Msg) {
     nc.Publish(m.Reply, []byte("I can help!"))
 })
 
