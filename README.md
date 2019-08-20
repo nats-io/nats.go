@@ -47,7 +47,7 @@ nc.Subscribe("foo", func(m *nats.Msg) {
 
 // Responding to a request message
 nc.Subscribe("request", func(m *nats.Msg) {
-    m.Respond([]byte("answer is 42")
+    m.Respond([]byte("answer is 42"))
 })
 
 // Simple Sync Subscriber
@@ -116,12 +116,12 @@ c.Publish("hello", me)
 
 // Unsubscribe
 sub, err := c.Subscribe("foo", nil)
-...
+// ...
 sub.Unsubscribe()
 
 // Requests
 var response string
-err := c.Request("help", "help me", &response, 10*time.Millisecond)
+err = c.Request("help", "help me", &response, 10*time.Millisecond)
 if err != nil {
     fmt.Printf("Request failed: %v\n", err)
 }
