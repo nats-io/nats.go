@@ -15,6 +15,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -205,6 +206,43 @@ func TestPublishDoesNotFailOnSlowConsumer(t *testing.T) {
 
 	if pubErr != nil {
 		t.Fatalf("Publish() should not fail because of slow consumer. Got '%v'", pubErr)
+	}
+}
+
+func TestPublishWrappers(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	wrapper := func(tag string) nats.PublishWrapper {
+		return func(fn nats.PublishFunc) nats.PublishFunc {
+			return func(nc *nats.Conn, ctx context.Context, subj, reply string, data []byte) error {
+				data = append(data, []byte(tag)...)
+				return fn(nc, ctx, subj, reply, data)
+			}
+		}
+	}
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", nats.DefaultPort)
+	nc, err := nats.Connect(url, nats.RegisterPublishWrappers(wrapper("one"), wrapper("two")))
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v\n", err)
+	}
+	defer nc.Close()
+
+	ch := make(chan bool)
+
+	if _, err := nc.Subscribe("foo", func(m *nats.Msg) {
+		if !bytes.Equal(m.Data, []byte("zeroonetwo")) {
+			t.Fatal("Message received does not match")
+		}
+		ch <- true
+	}); err != nil {
+		t.Fatal("Failed to subscribe: ", err)
+	}
+
+	nc.Publish("foo", []byte("zero"))
+	if e := Wait(ch); e != nil {
+		t.Fatal("Message not received for subscription")
 	}
 }
 
@@ -863,18 +901,31 @@ func TestOptions(t *testing.T) {
 func TestNilConnection(t *testing.T) {
 	var nc *nats.Conn
 	data := []byte("ok")
+	ctx := context.Background()
 
 	// Publish
 	if err := nc.Publish("foo", data); err == nil || err != nats.ErrInvalidConnection {
 		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
 	}
+	if err := nc.PublishWithContext(ctx, "foo", data); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
 	if err := nc.PublishMsg(nil); err == nil || err != nats.ErrInvalidMsg {
+		t.Fatalf("Expected ErrInvalidMsg error, got %v\n", err)
+	}
+	if err := nc.PublishMsgWithContext(ctx, nil); err == nil || err != nats.ErrInvalidMsg {
 		t.Fatalf("Expected ErrInvalidMsg error, got %v\n", err)
 	}
 	if err := nc.PublishMsg(&nats.Msg{}); err == nil || err != nats.ErrInvalidConnection {
 		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
 	}
+	if err := nc.PublishMsgWithContext(ctx, &nats.Msg{}); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
 	if err := nc.PublishRequest("foo", "reply", data); err == nil || err != nats.ErrInvalidConnection {
+		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
+	}
+	if err := nc.PublishRequestWithContext(ctx, "foo", "reply", data); err == nil || err != nats.ErrInvalidConnection {
 		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
 	}
 

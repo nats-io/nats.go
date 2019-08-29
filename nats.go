@@ -17,6 +17,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -202,6 +203,12 @@ type CustomDialer interface {
 	Dial(network, address string) (net.Conn, error)
 }
 
+// PublishFunc is the underlying method called for each publish.
+type PublishFunc func(nc *Conn, ctx context.Context, subj, reply string, data []byte) error
+
+// PublishWrapper defines a middleware for wrapping publish calls.
+type PublishWrapper func(PublishFunc) PublishFunc
+
 // Options can be used to create a customized connection.
 type Options struct {
 
@@ -347,6 +354,14 @@ type Options struct {
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
+
+	// PublishWrappers are middleware that when provided will be called with
+	// every publish call.  They are applied in reverse order, meaning that the
+	// first PublishWrapper in the slice is the outermost middleware and the
+	// last PublishWrapper in the slice is the innermost middleware.  Since the
+	// publish call method is defined on Connect, updating this Option after
+	// that point does nothing.
+	PublishWrappers []PublishWrapper
 }
 
 const (
@@ -404,6 +419,7 @@ type Conn struct {
 	ptmr    *time.Timer
 	pout    int
 	ar      bool // abort reconnect
+	publish PublishFunc
 
 	// New style response handler
 	respSub   string               // The wildcard subject
@@ -883,6 +899,18 @@ func UseOldRequestStyle() Option {
 	}
 }
 
+// RegisterPublishWrappers is an Option to set PublishWrappers. The given
+// middlewares will be called with each publish call.  They are applied in
+// reverse order from which they are registered, meaning that the first
+// PublishWrapper registered is the outermost middleware and the last
+// PublishWrapper registered is the innermost middleware.
+func RegisterPublishWrappers(fns ...PublishWrapper) Option {
+	return func(o *Options) error {
+		o.PublishWrappers = append(o.PublishWrappers, fns...)
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -993,6 +1021,14 @@ func (o Options) Connect() (*Conn, error) {
 			Timeout: nc.Opts.Timeout,
 		}
 	}
+
+	// Apply publisher middleware
+	call := publish
+	for i := len(nc.Opts.PublishWrappers) - 1; i >= 0; i-- {
+		// Apply wrappers in reverse order.
+		call = nc.Opts.PublishWrappers[i](call)
+	}
+	nc.publish = call
 
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
@@ -2515,7 +2551,20 @@ func (nc *Conn) kickFlusher() {
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
 func (nc *Conn) Publish(subj string, data []byte) error {
-	return nc.publish(subj, _EMPTY_, data)
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, context.Background(), subj, _EMPTY_, data)
+}
+
+// PublishWithContext publishes the data argument to the given subject. The
+// data argument is left untouched and needs to be correctly interpreted on the
+// receiver.
+func (nc *Conn) PublishWithContext(ctx context.Context, subj string, data []byte) error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, ctx, subj, _EMPTY_, data)
 }
 
 // PublishMsg publishes the Msg structure, which includes the
@@ -2524,14 +2573,42 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 	if m == nil {
 		return ErrInvalidMsg
 	}
-	return nc.publish(m.Subject, m.Reply, m.Data)
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, context.Background(), m.Subject, m.Reply, m.Data)
+}
+
+// PublishMsgWithContext publishes the Msg structure, which includes the
+// Subject, an optional Reply and an optional Data field.
+func (nc *Conn) PublishMsgWithContext(ctx context.Context, m *Msg) error {
+	if m == nil {
+		return ErrInvalidMsg
+	}
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, ctx, m.Subject, m.Reply, m.Data)
 }
 
 // PublishRequest will perform a Publish() excpecting a response on the
 // reply subject. Use Request() for automatically waiting for a response
 // inline.
 func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
-	return nc.publish(subj, reply, data)
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, context.Background(), subj, reply, data)
+}
+
+// PublishRequestWithContext will perform a Publish() expecting a response on
+// the reply subject. Use Request() for automatically waiting for a response
+// inline.
+func (nc *Conn) PublishRequestWithContext(ctx context.Context, subj, reply string, data []byte) error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.publish(nc, ctx, subj, reply, data)
 }
 
 // Used for handrolled itoa
@@ -2540,10 +2617,7 @@ const digits = "0123456789"
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queuing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
-func (nc *Conn) publish(subj, reply string, data []byte) error {
-	if nc == nil {
-		return ErrInvalidConnection
-	}
+func publish(nc *Conn, ctx context.Context, subj, reply string, data []byte) error {
 	if subj == "" {
 		return ErrBadSubject
 	}
@@ -3428,6 +3502,22 @@ func (m *Msg) Respond(data []byte) error {
 	m.Sub.mu.Unlock()
 	// No need to check the connection here since the call to publish will do all the checking.
 	return nc.Publish(m.Reply, data)
+}
+
+// RespondWithContext allows a convenient way to respond to requests in service
+// based subscriptions.
+func (m *Msg) RespondWithContext(ctx context.Context, data []byte) error {
+	if m == nil || m.Sub == nil {
+		return ErrMsgNotBound
+	}
+	if m.Reply == "" {
+		return ErrMsgNoReply
+	}
+	m.Sub.mu.Lock()
+	nc := m.Sub.conn
+	m.Sub.mu.Unlock()
+	// No need to check the connection here since the call to publish will do all the checking.
+	return nc.PublishWithContext(ctx, m.Reply, data)
 }
 
 // FIXME: This is a hack

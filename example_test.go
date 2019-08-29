@@ -14,6 +14,7 @@
 package nats_test
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -276,4 +277,18 @@ func ExampleEncodedConn_BindRecvChan() {
 	who := <-ch
 
 	fmt.Printf("%v says hello!\n", who)
+}
+
+// RegisterPublishWrappers allows registering of middleware to be called for
+// each publish call.  This example prints the subject and length of the data
+// to be sent.
+func ExampleRegisterPublishWrappers() {
+	publishWrapper := func(fn nats.PublishFunc) nats.PublishFunc {
+		return func(nc *nats.Conn, ctx context.Context, subj, reply string, data []byte) error {
+			fmt.Printf("subject: %s, bytes: %d\n", subj, len(data))
+			return fn(nc, ctx, subj, reply, data)
+		}
+	}
+	nc, _ := nats.Connect(nats.DefaultURL, nats.RegisterPublishWrappers(publishWrapper))
+	defer nc.Close()
 }
