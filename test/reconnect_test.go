@@ -722,3 +722,66 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 		t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
 	}
 }
+
+func TestConnCloseNoCallback(t *testing.T) {
+	ts := startReconnectServer(t)
+	defer ts.Shutdown()
+
+	cch := make(chan bool)
+	opts := reconnectOpts
+	opts.ClosedCB = func(_ *nats.Conn) {
+		cch <- true
+	}
+	opts.NoCallbacksAfterClientClose = true
+
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	nc.Flush()
+	// Close the connection, we don't expect to get a notification
+	nc.Close()
+	// Shutdown the server
+	ts.Shutdown()
+
+	// Even on Windows (where a createConn takes more than a second)
+	// we should be able to break the reconnect loop with the following
+	// timeout.
+	if err := WaitTime(cch, 3*time.Second); err != nil {
+		// yay no callback
+	} else {
+		t.Fatal("Got a closed callback, but shouldn't have")
+	}
+}
+
+func TestConnCloseNoCallbackFromOptionsFunc(t *testing.T) {
+	ts := startReconnectServer(t)
+	defer ts.Shutdown()
+
+	cch := make(chan bool)
+	nc, err := nats.Connect(reconnectOpts.Url, nats.NoCallbacksAfterClientClose(),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			cch <- true
+		}))
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	nc.Flush()
+	// Close the connection, we don't expect to get a notification
+	nc.Close()
+	// Shutdown the server
+	ts.Shutdown()
+
+	// Even on Windows (where a createConn takes more than a second)
+	// we should be able to break the reconnect loop with the following
+	// timeout.
+	if err := WaitTime(cch, 3*time.Second); err != nil {
+		// yay no callback
+	} else {
+		t.Fatal("Got a closed callback, but shouldn't have")
+	}
+}

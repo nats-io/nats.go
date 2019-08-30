@@ -347,6 +347,11 @@ type Options struct {
 	// UseOldRequestStyle forces the old method of Requests that utilize
 	// a new Inbox and a new Subscription for each request.
 	UseOldRequestStyle bool
+
+	// NoCallbacksAfterClientClose allows preventing the invocation of
+	// callbacks after Close() is called. Client won't receive notifications
+	// when Close is invoked by user code. Default is to invoke the callbacks.
+	NoCallbacksAfterClientClose bool
 }
 
 const (
@@ -879,6 +884,16 @@ func SetCustomDialer(dialer CustomDialer) Option {
 func UseOldRequestStyle() Option {
 	return func(o *Options) error {
 		o.UseOldRequestStyle = true
+		return nil
+	}
+}
+
+// NoCallbacksAfterClientClose is an Option to disable callbacks when user code
+// calls Close(). If close is initiated by any other condition, callbacks
+// if any will be invoked.
+func NoCallbacksAfterClientClose() Option {
+	return func(o *Options) error {
+		o.NoCallbacksAfterClientClose = true
 		return nil
 	}
 }
@@ -1929,7 +1944,7 @@ func (nc *Conn) doReconnect(err error) {
 		nc.err = ErrNoServers
 	}
 	nc.mu.Unlock()
-	nc.Close()
+	nc.close(CLOSED, true, nil)
 }
 
 // processOpErr handles errors from reading or parsing the protocol.
@@ -1964,7 +1979,7 @@ func (nc *Conn) processOpErr(err error) {
 	nc.status = DISCONNECTED
 	nc.err = err
 	nc.mu.Unlock()
-	nc.Close()
+	nc.close(CLOSED, true, nil)
 }
 
 // dispatch is responsible for calling any async callbacks
@@ -2496,7 +2511,7 @@ func (nc *Conn) processErr(ie string) {
 		nc.mu.Unlock()
 	}
 	if close {
-		nc.Close()
+		nc.close(CLOSED, true, nil)
 	}
 }
 
@@ -3691,7 +3706,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 // all blocking calls, such as Flush() and NextMsg()
 func (nc *Conn) Close() {
 	if nc != nil {
-		nc.close(CLOSED, true, nil)
+		nc.close(CLOSED, !nc.Opts.NoCallbacksAfterClientClose, nil)
 	}
 }
 
@@ -3770,12 +3785,12 @@ func (nc *Conn) drainConnection() {
 	err := nc.Flush()
 	if err != nil {
 		pushErr(err)
-		nc.Close()
+		nc.close(CLOSED, true, nil)
 		return
 	}
 
 	// Move to closed state.
-	nc.Close()
+	nc.close(CLOSED, true, nil)
 }
 
 // Drain will put a connection into a drain state. All subscriptions will
