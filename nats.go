@@ -28,6 +28,8 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -4016,12 +4018,57 @@ func wipeSlice(buf []byte) {
 }
 
 func userFromFile(userFile string) (string, error) {
-	contents, err := ioutil.ReadFile(userFile)
+	path, err := expandPath(userFile)
+	if err != nil {
+		return _EMPTY_, fmt.Errorf("nats: %v", err)
+	}
+
+	contents, err := ioutil.ReadFile(path)
 	if err != nil {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
 	}
 	defer wipeSlice(contents)
 	return jwt.ParseDecoratedJWT(contents)
+}
+
+func homeDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		homeDrive, homePath := os.Getenv("HOMEDRIVE"), os.Getenv("HOMEPATH")
+		userProfile := os.Getenv("USERPROFILE")
+
+		var home string
+		if homeDrive == "" || homePath == "" {
+			if userProfile == "" {
+				return _EMPTY_, errors.New("nats: failed to get home dir, require %HOMEDRIVE% and %HOMEPATH% or %USERPROFILE%")
+			}
+			home = userProfile
+		} else {
+			home = filepath.Join(homeDrive, homePath)
+		}
+
+		return home, nil
+	}
+
+	home := os.Getenv("HOME")
+	if home == "" {
+		return _EMPTY_, errors.New("nats: failed to get home dir, require $HOME")
+	}
+	return home, nil
+}
+
+func expandPath(p string) (string, error) {
+	p = os.ExpandEnv(p)
+
+	if !strings.HasPrefix(p, "~") {
+		return p, nil
+	}
+
+	home, err := homeDir()
+	if err != nil {
+		return _EMPTY_, err
+	}
+
+	return filepath.Join(home, p[1:]), nil
 }
 
 func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
