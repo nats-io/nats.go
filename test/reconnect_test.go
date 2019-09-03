@@ -727,61 +727,45 @@ func TestConnCloseNoCallback(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
 
-	cch := make(chan bool)
+	// create a connection that manually sets the options
+	var conns []*nats.Conn
+	cch := make(chan string, 2)
 	opts := reconnectOpts
 	opts.ClosedCB = func(_ *nats.Conn) {
-		cch <- true
+		cch <- "manual"
 	}
 	opts.NoCallbacksAfterClientClose = true
-
 	nc, err := opts.Connect()
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
-	defer nc.Close()
+	conns = append(conns, nc)
 
-	nc.Flush()
-	// Close the connection, we don't expect to get a notification
-	nc.Close()
-	// Shutdown the server
-	ts.Shutdown()
-
-	// Even on Windows (where a createConn takes more than a second)
-	// we should be able to break the reconnect loop with the following
-	// timeout.
-	if err := WaitTime(cch, 3*time.Second); err != nil {
-		// yay no callback
-	} else {
-		t.Fatal("Got a closed callback, but shouldn't have")
-	}
-}
-
-func TestConnCloseNoCallbackFromOptionsFunc(t *testing.T) {
-	ts := startReconnectServer(t)
-	defer ts.Shutdown()
-
-	cch := make(chan bool)
-	nc, err := nats.Connect(reconnectOpts.Url, nats.NoCallbacksAfterClientClose(),
+	// and another connection that uses the option
+	nc2, err := nats.Connect(reconnectOpts.Url, nats.NoCallbacksAfterClientClose(),
 		nats.ClosedHandler(func(_ *nats.Conn) {
-			cch <- true
+			cch <- "opts"
 		}))
 	if err != nil {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
-	defer nc.Close()
+	conns = append(conns, nc2)
 
-	nc.Flush()
-	// Close the connection, we don't expect to get a notification
-	nc.Close()
-	// Shutdown the server
-	ts.Shutdown()
+	// defer close() for safety, flush() and close()
+	for _, c := range conns {
+		defer c.Close()
+		c.Flush()
 
-	// Even on Windows (where a createConn takes more than a second)
-	// we should be able to break the reconnect loop with the following
-	// timeout.
-	if err := WaitTime(cch, 3*time.Second); err != nil {
-		// yay no callback
-	} else {
-		t.Fatal("Got a closed callback, but shouldn't have")
+		// Close the connection, we don't expect to get a notification
+		c.Close()
+	}
+
+	// if the timeout happens we didn't get data from the channel
+	// if we get a value from the channel that connection type failed.
+	select {
+	case <-time.After(500 * time.Millisecond):
+		// test passed - we timed so no callback was called
+	case what := <-cch:
+		t.Fatalf("%s issued a callback and it shouldn't have", what)
 	}
 }
