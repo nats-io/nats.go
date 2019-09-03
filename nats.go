@@ -17,6 +17,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -460,6 +461,7 @@ type Msg struct {
 	Reply   string
 	Data    []byte
 	Sub     *Subscription
+	Context context.Context
 	next    *Msg
 	barrier *barrierInfo
 }
@@ -2185,7 +2187,7 @@ func (nc *Conn) processMsg(data []byte) {
 	copy(msgPayload, data)
 
 	// FIXME(dlc): Should we recycle these containers?
-	m := &Msg{Data: msgPayload, Subject: subj, Reply: reply, Sub: sub}
+	m := &Msg{Data: msgPayload, Subject: subj, Reply: reply, Sub: sub, Context: context.Background()}
 
 	sub.mu.Lock()
 
