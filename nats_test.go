@@ -2181,3 +2181,39 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 		t.Fatalf("Wrong status: %d\n", nc.Status())
 	}
 }
+
+func TestStatsRace(t *testing.T) {
+	o := natsserver.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	ch := make(chan bool)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				return
+			default:
+				nc.Stats()
+			}
+		}
+	}()
+
+	nc.Subscribe("foo", func(_ *Msg) {})
+	for i := 0; i < 1000; i++ {
+		nc.Publish("foo", []byte("hello"))
+	}
+
+	close(ch)
+	wg.Wait()
+}
