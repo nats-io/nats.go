@@ -2164,8 +2164,8 @@ func (nc *Conn) processMsg(data []byte) {
 	nc.subsMu.RLock()
 
 	// Stats
-	nc.InMsgs++
-	nc.InBytes += uint64(len(data))
+	atomic.AddUint64(&nc.InMsgs, 1)
+	atomic.AddUint64(&nc.InBytes, uint64(len(data)))
 
 	sub := nc.subs[nc.ps.ma.sid]
 	if sub == nil {
@@ -3881,18 +3881,16 @@ func (nc *Conn) isDrainingPubs() bool {
 
 // Stats will return a race safe copy of the Statistics section for the connection.
 func (nc *Conn) Stats() Statistics {
-	// Stats are updated either under connection's mu or subsMu mutexes.
-	// Lock both to safely get them.
+	// Stats are updated either under connection's mu or with atomic operations
+	// for inbound stats in processMsg().
 	nc.mu.Lock()
-	nc.subsMu.RLock()
 	stats := Statistics{
-		InMsgs:     nc.InMsgs,
-		InBytes:    nc.InBytes,
+		InMsgs:     atomic.LoadUint64(&nc.InMsgs),
+		InBytes:    atomic.LoadUint64(&nc.InBytes),
 		OutMsgs:    nc.OutMsgs,
 		OutBytes:   nc.OutBytes,
 		Reconnects: nc.Reconnects,
 	}
-	nc.subsMu.RUnlock()
 	nc.mu.Unlock()
 	return stats
 }
