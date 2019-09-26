@@ -14,6 +14,7 @@
 package nats
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -93,7 +94,17 @@ func (c *EncodedConn) Publish(subject string, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	return c.Conn.publish(subject, _EMPTY_, b)
+	return c.Conn.publish(c.Conn, context.Background(), subject, _EMPTY_, b)
+}
+
+// PublishWithContext publishes the data argument to the given subject. The
+// data argument will be encoded using the associated encoder.
+func (c *EncodedConn) PublishWithContext(ctx context.Context, subject string, v interface{}) error {
+	b, err := c.Enc.Encode(subject, v)
+	if err != nil {
+		return err
+	}
+	return c.Conn.publish(c.Conn, ctx, subject, _EMPTY_, b)
 }
 
 // PublishRequest will perform a Publish() expecting a response on the
@@ -104,7 +115,18 @@ func (c *EncodedConn) PublishRequest(subject, reply string, v interface{}) error
 	if err != nil {
 		return err
 	}
-	return c.Conn.publish(subject, reply, b)
+	return c.Conn.publish(c.Conn, context.Background(), subject, reply, b)
+}
+
+// PublishRequestWithContext will perform a Publish() expecting a response on
+// the reply subject. Use Request() for automatically waiting for a response
+// inline.
+func (c *EncodedConn) PublishRequestWithContext(ctx context.Context, subject, reply string, v interface{}) error {
+	b, err := c.Enc.Encode(subject, v)
+	if err != nil {
+		return err
+	}
+	return c.Conn.publish(c.Conn, ctx, subject, reply, b)
 }
 
 // Request will create an Inbox and perform a Request() call

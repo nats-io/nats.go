@@ -65,7 +65,7 @@ func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte
 		}
 	}
 
-	err := nc.PublishRequest(subj, respInbox, data)
+	err := nc.PublishRequestWithContext(ctx, subj, respInbox, data)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (nc *Conn) oldRequestWithContext(ctx context.Context, subj string, data []b
 	s.AutoUnsubscribe(1)
 	defer s.Unsubscribe()
 
-	err = nc.PublishRequest(subj, inbox, data)
+	err = nc.PublishRequestWithContext(ctx, subj, inbox, data)
 	if err != nil {
 		return nil, err
 	}
