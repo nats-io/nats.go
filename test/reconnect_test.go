@@ -722,3 +722,50 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 		t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
 	}
 }
+
+func TestConnCloseNoCallback(t *testing.T) {
+	ts := startReconnectServer(t)
+	defer ts.Shutdown()
+
+	// create a connection that manually sets the options
+	var conns []*nats.Conn
+	cch := make(chan string, 2)
+	opts := reconnectOpts
+	opts.ClosedCB = func(_ *nats.Conn) {
+		cch <- "manual"
+	}
+	opts.NoCallbacksAfterClientClose = true
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	conns = append(conns, nc)
+
+	// and another connection that uses the option
+	nc2, err := nats.Connect(reconnectOpts.Url, nats.NoCallbacksAfterClientClose(),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			cch <- "opts"
+		}))
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	conns = append(conns, nc2)
+
+	// defer close() for safety, flush() and close()
+	for _, c := range conns {
+		defer c.Close()
+		c.Flush()
+
+		// Close the connection, we don't expect to get a notification
+		c.Close()
+	}
+
+	// if the timeout happens we didn't get data from the channel
+	// if we get a value from the channel that connection type failed.
+	select {
+	case <-time.After(500 * time.Millisecond):
+		// test passed - we timed so no callback was called
+	case what := <-cch:
+		t.Fatalf("%s issued a callback and it shouldn't have", what)
+	}
+}
