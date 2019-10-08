@@ -559,7 +559,7 @@ func TestRequestTimeout(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
-	if _, err := nc.Request("foo", []byte("help"), 10*time.Millisecond); err == nil {
+	if _, err := nc.Request("foo", []byte("help"), 10*time.Millisecond); err != nats.ErrTimeout {
 		t.Fatalf("Expected to receive a timeout error")
 	}
 }
