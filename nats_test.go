@@ -2217,3 +2217,37 @@ func TestStatsRace(t *testing.T) {
 	close(ch)
 	wg.Wait()
 }
+
+func TestRequestLeaksMapEntries(t *testing.T) {
+	o := natsserver.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *Msg) {
+		nc.Publish(m.Reply, response)
+	})
+
+	for i := 0; i < 100; i++ {
+		msg, err := nc.Request("foo", nil, 500*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Received an error on Request test: %s", err)
+		}
+		if !bytes.Equal(msg.Data, response) {
+			t.Fatalf("Received invalid response")
+		}
+	}
+	nc.mu.Lock()
+	num := len(nc.respMap)
+	nc.mu.Unlock()
+	if num != 0 {
+		t.Fatalf("Expected 0 entries in response map, got %d", num)
+	}
+}

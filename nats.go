@@ -412,10 +412,11 @@ type Conn struct {
 
 	// New style response handler
 	respSub   string               // The wildcard subject
+	respScanf string               // The scanf template to extract mux token
 	respMux   *Subscription        // A single response subscription
 	respMap   map[string]chan *Msg // Request map for the response msg channels
 	respSetup sync.Once            // Ensures response subscription occurs once
-	respRand  *rand.Rand           // Used for generating suffix.
+	respRand  *rand.Rand           // Used for generating suffix
 }
 
 // A Subscription represents interest in a given subject.
@@ -2647,9 +2648,8 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 // the appropriate channel based on the last token and place
 // the message on the channel if possible.
 func (nc *Conn) respHandler(m *Msg) {
-	rt := respToken(m.Subject)
-
 	nc.mu.Lock()
+
 	// Just return if closed.
 	if nc.isClosed() {
 		nc.mu.Unlock()
@@ -2657,11 +2657,19 @@ func (nc *Conn) respHandler(m *Msg) {
 	}
 
 	// Grab mch
+	rt := nc.respToken(m.Subject)
 	mch := nc.respMap[rt]
 	// Delete the key regardless, one response only.
-	// FIXME(dlc) - should we track responses past 1
-	// just statistics wise?
 	delete(nc.respMap, rt)
+	// If something went wrong and we only have one entry, use that.
+	// This can happen if the system rewrites the subject, e.g. js.
+	if mch == nil && len(nc.respMap) == 1 {
+		for k, v := range nc.respMap {
+			mch = v
+			delete(nc.respMap, k)
+			break
+		}
+	}
 	nc.mu.Unlock()
 
 	// Don't block, let Request timeout instead, mch is
@@ -2685,9 +2693,41 @@ func (nc *Conn) createRespMux(respSub string) error {
 		return err
 	}
 	nc.mu.Lock()
+	nc.respScanf = strings.Replace(respSub, "*", "%s", -1)
 	nc.respMux = s
 	nc.mu.Unlock()
 	return nil
+}
+
+// Helper to setup and send new request style requests. Return the chan to receive the response.
+func (nc *Conn) createNewRequestAndSend(subj string, data []byte) (chan *Msg, string, error) {
+	// Do setup for the new style if needed.
+	if nc.respMap == nil {
+		nc.initNewResp()
+	}
+	// Create new literal Inbox and map to a chan msg.
+	mch := make(chan *Msg, RequestChanLen)
+	respInbox := nc.newRespInbox()
+	token := respInbox[respInboxPrefixLen:]
+	nc.respMap[token] = mch
+	createSub := nc.respMux == nil
+	ginbox := nc.respSub
+	nc.mu.Unlock()
+
+	if createSub {
+		// Make sure scoped subscription is setup only once.
+		var err error
+		nc.respSetup.Do(func() { err = nc.createRespMux(ginbox) })
+		if err != nil {
+			return nil, token, err
+		}
+	}
+
+	if err := nc.PublishRequest(subj, respInbox, data); err != nil {
+		return nil, token, err
+	}
+
+	return mch, token, nil
 }
 
 // Request will send a request payload and deliver the response message,
@@ -2704,29 +2744,8 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 		return nc.oldRequest(subj, data, timeout)
 	}
 
-	// Do setup for the new style.
-	if nc.respMap == nil {
-		nc.initNewResp()
-	}
-	// Create literal Inbox and map to a chan msg.
-	mch := make(chan *Msg, RequestChanLen)
-	respInbox := nc.newRespInbox()
-	token := respToken(respInbox)
-	nc.respMap[token] = mch
-	createSub := nc.respMux == nil
-	ginbox := nc.respSub
-	nc.mu.Unlock()
-
-	if createSub {
-		// Make sure scoped subscription is setup only once.
-		var err error
-		nc.respSetup.Do(func() { err = nc.createRespMux(ginbox) })
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if err := nc.PublishRequest(subj, respInbox, data); err != nil {
+	mch, token, err := nc.createNewRequestAndSend(subj, data)
+	if err != nil {
 		return nil, err
 	}
 
@@ -2829,9 +2848,16 @@ func (nc *Conn) NewRespInbox() string {
 }
 
 // respToken will return the last token of a literal response inbox
-// which we use for the message channel lookup.
-func respToken(respInbox string) string {
-	return respInbox[respInboxPrefixLen:]
+// which we use for the message channel lookup. This needs to do a
+// scan to protect itself against the server changing the subject.
+// Lock should be held.
+func (nc *Conn) respToken(respInbox string) string {
+	var token string
+	n, err := fmt.Sscanf(respInbox, nc.respScanf, &token)
+	if err != nil || n != 1 {
+		return ""
+	}
+	return token
 }
 
 // Subscribe will express interest in the given subject. The subject
