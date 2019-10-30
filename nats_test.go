@@ -81,6 +81,21 @@ func stackFatalf(t *testing.T, f string, args ...interface{}) {
 	t.Fatalf("%s", strings.Join(lines, "\n"))
 }
 
+// Check the error channel for an error and if one is present,
+// calls t.Fatal(e.Error()). Note that this supports tests that
+// send nil to the error channel and so report error only if
+// e is != nil.
+func checkErrChannel(t *testing.T, errCh chan error) {
+	t.Helper()
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	default:
+	}
+}
+
 func TestVersionMatchesTag(t *testing.T) {
 	tag := os.Getenv("TRAVIS_TAG")
 	if tag == "" {
@@ -1871,15 +1886,13 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 
 	addr := tl.Addr().(*net.TCPAddr)
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
 	ch := make(chan bool, 1)
+	errCh := make(chan error, 1)
 	rs := func(ch chan bool) {
-		defer wg.Done()
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
@@ -1889,7 +1902,8 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 		br := bufio.NewReaderSize(conn, 10*1024)
 		line, _, _ := br.ReadLine()
 		if err != nil {
-			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
+			return
 		}
 		// If client got an error reading the seed, it will not send it
 		if bytes.Contains(line, []byte(`"sig":`)) {
@@ -1900,8 +1914,8 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 		}
 		// Now wait to be notified that we can finish
 		<-ch
+		errCh <- nil
 	}
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go rs(ch)
 
 	nc, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt)
@@ -1910,20 +1924,19 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 	}
 	nc.Close()
 	close(ch)
-	wg.Wait()
+
+	checkErrChannel(t, errCh)
 
 	// Now that option is already created, change content of file
 	ioutil.WriteFile(seedFile, []byte(`xxxxx`), 0666)
 	ch = make(chan bool, 1)
-	wg.Add(1)
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go rs(ch)
 
 	if _, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt); err == nil {
 		t.Fatal("Expected error, got none")
 	}
 	close(ch)
-	wg.Wait()
+	checkErrChannel(t, errCh)
 }
 
 func TestLookupHostResultIsRandomized(t *testing.T) {
