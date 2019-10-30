@@ -370,35 +370,36 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 
 	addr := tl.Addr().(*net.TCPAddr)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
+		errCh <- nil
 		defer conn.Close()
 		// Send back a mal-formed INFO.
 		conn.Write([]byte("INFOZ \r\n"))
 	}()
 
-	// Used to synchronize
-	ch := make(chan bool)
-
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		natsURL := fmt.Sprintf("nats://127.0.0.1:%d/", addr.Port)
 		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
-			t.Fatal("Expected bad INFO err, got none")
+			errCh <- fmt.Errorf("expected bad INFO err, got none")
+			return
 		}
-		ch <- true
+		errCh <- nil
 	}()
 
 	// Setup a timer to watch for deadlock
 	select {
-	case <-ch:
-		break
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
 	case <-time.After(time.Second):
 		t.Fatalf("Connect took too long, deadlock?")
 	}
@@ -420,12 +421,13 @@ func TestMoreErrOnConnect(t *testing.T) {
 	case3 := make(chan bool)
 	case4 := make(chan bool)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 5)
 	go func() {
 		for i := 0; i < 5; i++ {
 			conn, err := l.Accept()
 			if err != nil {
-				t.Fatalf("Error accepting client connection: %v\n", err)
+				errCh <- fmt.Errorf("error accepting client connection: %v", err)
+				return
 			}
 			switch i {
 			case 0:
@@ -443,10 +445,12 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Read connect and ping commands sent from the client
 				br := bufio.NewReaderSize(conn, 1024)
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected CONNECT from client, got: %s", err)
+					errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+					return
 				}
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected PING from client, got: %s", err)
+					errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+					return
 				}
 				// Client expect +OK, send it but then something else than PONG
 				conn.Write([]byte("+OK\r\n"))
@@ -459,10 +463,12 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Read connect and ping commands sent from the client
 				br := bufio.NewReaderSize(conn, 1024)
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected CONNECT from client, got: %s", err)
+					errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+					return
 				}
 				if _, err := br.ReadString('\n'); err != nil {
-					t.Fatalf("Expected PING from client, got: %s", err)
+					errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+					return
 				}
 				// Client expect +OK, send it but then something else than PONG
 				conn.Write([]byte("+OK\r\nXXX\r\n"))
@@ -528,6 +534,8 @@ func TestMoreErrOnConnect(t *testing.T) {
 	close(case4)
 
 	close(done)
+
+	checkErrChannel(t, errCh)
 }
 
 func TestErrOnMaxPayloadLimit(t *testing.T) {
@@ -547,11 +555,12 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	var conn net.Conn
 	var err error
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err = l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, expectedMaxPayload)
@@ -561,7 +570,8 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 		line := make([]byte, 111)
 		_, err := conn.Read(line)
 		if err != nil {
-			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
+			return
 		}
 		conn.Write([]byte("PONG\r\n"))
 		// Hang around a bit to not err on EOF in client.
@@ -592,6 +602,7 @@ func TestErrOnMaxPayloadLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected to succeed trying to send less than max payload, got: %s", err)
 	}
+	checkErrChannel(t, errCh)
 }
 
 func TestConnectVerbose(t *testing.T) {
@@ -855,11 +866,12 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	addr := tl.Addr().(*net.TCPAddr)
 	done := make(chan bool)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -868,10 +880,13 @@ func TestFlushReleaseOnClose(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
+
 		}
 		conn.Write([]byte("PONG\r\n"))
 
@@ -907,6 +922,7 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	}
 
 	close(done)
+	checkErrChannel(t, errCh)
 }
 
 func TestMaxPendingOut(t *testing.T) {
@@ -923,11 +939,12 @@ func TestMaxPendingOut(t *testing.T) {
 	done := make(chan bool)
 	cch := make(chan bool)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -936,10 +953,12 @@ func TestMaxPendingOut(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
 		}
 		conn.Write([]byte("PONG\r\n"))
 
@@ -974,6 +993,7 @@ func TestMaxPendingOut(t *testing.T) {
 	}
 
 	close(done)
+	checkErrChannel(t, errCh)
 }
 
 func TestErrInReadLoop(t *testing.T) {
@@ -990,11 +1010,12 @@ func TestErrInReadLoop(t *testing.T) {
 	done := make(chan bool)
 	cch := make(chan bool)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -1003,16 +1024,19 @@ func TestErrInReadLoop(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
 		}
 		conn.Write([]byte("PONG\r\n"))
 
 		// Read (and ignore) the SUB from the client
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected SUB from client, got: %s", err)
+			errCh <- fmt.Errorf("expected SUB from client, got: %s", err)
+			return
 		}
 
 		// Send something that should make the subscriber fail.
@@ -1052,6 +1076,7 @@ func TestErrInReadLoop(t *testing.T) {
 	}
 
 	close(done)
+	checkErrChannel(t, errCh)
 }
 
 func TestErrStaleConnection(t *testing.T) {
@@ -1073,12 +1098,13 @@ func TestErrStaleConnection(t *testing.T) {
 
 	firstDisconnect := true
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		for i := 0; i < 2; i++ {
 			conn, err := l.Accept()
 			if err != nil {
-				t.Fatalf("Error accepting client connection: %v\n", err)
+				errCh <- fmt.Errorf("error accepting client connection: %v", err)
+				return
 			}
 			defer conn.Close()
 			info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -1087,10 +1113,12 @@ func TestErrStaleConnection(t *testing.T) {
 			// Read connect and ping commands sent from the client
 			br := bufio.NewReaderSize(conn, 1024)
 			if _, err := br.ReadString('\n'); err != nil {
-				t.Fatalf("Expected CONNECT from client, got: %s", err)
+				errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+				return
 			}
 			if _, err := br.ReadString('\n'); err != nil {
-				t.Fatalf("Expected PING from client, got: %s", err)
+				errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+				return
 			}
 			conn.Write([]byte("PONG\r\n"))
 
@@ -1157,6 +1185,7 @@ func TestErrStaleConnection(t *testing.T) {
 	}
 
 	close(done)
+	checkErrChannel(t, errCh)
 }
 
 func TestServerErrorClosesConnection(t *testing.T) {
@@ -1177,11 +1206,12 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	serverSentError := "Any Error"
 	reconnected := int64(0)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
@@ -1190,10 +1220,12 @@ func TestServerErrorClosesConnection(t *testing.T) {
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 1024)
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected CONNECT from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
 		}
 		if _, err := br.ReadString('\n'); err != nil {
-			t.Fatalf("Expected PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
 		}
 		conn.Write([]byte("PONG\r\n"))
 
@@ -1249,6 +1281,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	}
 
 	close(done)
+	checkErrChannel(t, errCh)
 }
 
 func TestUseDefaultTimeout(t *testing.T) {
@@ -1880,12 +1913,11 @@ func TestReceiveInfoRightAfterFirstPong(t *testing.T) {
 }
 
 func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
-	ready := make(chan bool, 2)
+	ready := make(chan error, 2)
 	ch := make(chan bool, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
 	go func() {
 		defer wg.Done()
 
@@ -1893,12 +1925,13 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", ports[i]))
 			if err != nil {
-				t.Fatalf("Error on listen: %v", err)
+				ready <- fmt.Errorf("error on listen: %v", err)
+				return
 			}
 			tl := l.(*net.TCPListener)
 			defer tl.Close()
 
-			ready <- true
+			ready <- nil
 
 			c, err := tl.Accept()
 			if err != nil {
@@ -1944,8 +1977,9 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	}()
 
 	// Wait for listener to be up and running
-	if err := Wait(ready); err != nil {
-		t.Fatal("Listener not ready")
+	e := <-ready
+	if e != nil {
+		t.Fatal(e.Error())
 	}
 
 	rch := make(chan bool)
@@ -2169,12 +2203,13 @@ func TestGetClientID(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	//lint:ignore SA2002 t.Fatalf in go routine will happen only if test fails
+	errCh := make(chan error, 1)
 	go func() {
 		defer wg.Done()
 		conn, err := l.Accept()
 		if err != nil {
-			t.Fatalf("Error accepting client connection: %v\n", err)
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
 		}
 		defer conn.Close()
 		info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n", addr.IP, addr.Port)
@@ -2184,7 +2219,8 @@ func TestGetClientID(t *testing.T) {
 		line := make([]byte, 256)
 		_, err = conn.Read(line)
 		if err != nil {
-			t.Fatalf("Expected CONNECT and PING from client, got: %s", err)
+			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
+			return
 		}
 		conn.Write([]byte("PONG\r\n"))
 		// Now wait to be notified that we can finish
@@ -2204,6 +2240,7 @@ func TestGetClientID(t *testing.T) {
 	nc.Close()
 	ch <- true
 	wg.Wait()
+	checkErrChannel(t, errCh)
 }
 
 func TestTLSDontSkipVerify(t *testing.T) {
