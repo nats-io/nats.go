@@ -2264,3 +2264,47 @@ func TestRequestLeaksMapEntries(t *testing.T) {
 		t.Fatalf("Expected 0 entries in response map, got %d", num)
 	}
 }
+
+func TestRequestMultipleReplies(t *testing.T) {
+	o := natsserver.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *Msg) {
+		m.Respond(response)
+		m.Respond(response)
+	})
+	nc.Flush()
+
+	nc2, err := Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc2.Close()
+
+	errCh := make(chan error, 1)
+	// Send a request on bar and expect nothing
+	go func() {
+		if m, err := nc2.Request("bar", nil, 500*time.Millisecond); m != nil || err == nil {
+			errCh <- fmt.Errorf("Expected no reply, got m=%+v err=%v", m, err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	// Send a request on foo, we use only one of the 2 replies
+	if _, err := nc2.Request("foo", nil, time.Second); err != nil {
+		t.Fatalf("Received an error on Request test: %s", err)
+	}
+	if e := <-errCh; e != nil {
+		t.Fatal(e.Error())
+	}
+}
