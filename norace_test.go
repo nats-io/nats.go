@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-func TestParseStateReconnectFunctionality(t *testing.T) {
+func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
 	ts := RunServerOnPort(TEST_PORT)
 	ch := make(chan bool)
 
