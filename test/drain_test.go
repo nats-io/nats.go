@@ -179,7 +179,7 @@ func TestDrainUnSubs(t *testing.T) {
 	// Should happen quickly that we get to zero, so do not need to wait long.
 	waitFor(t, 2*time.Second, 10*time.Millisecond, func() error {
 		if numSubs := nc.NumSubscriptions(); numSubs != 0 {
-			return fmt.Errorf("Expected no subscriptions, got %d\n", numSubs)
+			return fmt.Errorf("Expected no subscriptions, got %d", numSubs)
 		}
 		return nil
 	})
@@ -442,4 +442,44 @@ func TestDrainConnLastError(t *testing.T) {
 
 	// Wait for subscription callback to return
 	wg.Wait()
+}
+
+func TestDrainConnDuringReconnect(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	done := make(chan bool, 1)
+	closedCb := func(nc *nats.Conn) {
+		done <- true
+	}
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.ClosedHandler(closedCb),
+		nats.DrainTimeout(20*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v", err)
+	}
+	defer nc.Close()
+
+	// Shutdown the server.
+	s.Shutdown()
+
+	waitFor(t, time.Second, 10*time.Millisecond, func() error {
+		if nc.IsReconnecting() {
+			return nil
+		}
+		return fmt.Errorf("Not reconnecting yet")
+	})
+
+	// This should work correctly.
+	if err := nc.Drain(); err != nats.ErrConnectionReconnecting {
+		t.Fatalf("Unexpected error on drain: %v", err)
+	}
+
+	// Closed should still fire.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timeout waiting for closed state for connection")
+	}
 }

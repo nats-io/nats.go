@@ -3750,6 +3750,19 @@ func (nc *Conn) IsConnected() bool {
 func (nc *Conn) drainConnection() {
 	// Snapshot subs list.
 	nc.mu.Lock()
+
+	// Check again here if we are in a state to not process.
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		return
+	}
+	if nc.isConnecting() || nc.isReconnecting() {
+		nc.mu.Unlock()
+		// Move to closed state.
+		nc.close(CLOSED, true, nil)
+		return
+	}
+
 	subs := make([]*Subscription, 0, len(nc.subs))
 	for _, s := range nc.subs {
 		subs = append(subs, s)
@@ -3796,7 +3809,7 @@ func (nc *Conn) drainConnection() {
 	nc.mu.Unlock()
 
 	// Do publish drain via Flush() call.
-	err := nc.Flush()
+	err := nc.FlushTimeout(5 * time.Second)
 	if err != nil {
 		pushErr(err)
 		nc.close(CLOSED, true, nil)
@@ -3814,20 +3827,23 @@ func (nc *Conn) drainConnection() {
 // option to know when the connection has moved from draining to closed.
 func (nc *Conn) Drain() error {
 	nc.mu.Lock()
-	defer nc.mu.Unlock()
-
 	if nc.isClosed() {
+		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
 	if nc.isConnecting() || nc.isReconnecting() {
+		nc.mu.Unlock()
+		nc.close(CLOSED, true, nil)
 		return ErrConnectionReconnecting
 	}
 	if nc.isDraining() {
+		nc.mu.Unlock()
 		return nil
 	}
-
 	nc.status = DRAINING_SUBS
 	go nc.drainConnection()
+	nc.mu.Unlock()
+
 	return nil
 }
 
