@@ -18,6 +18,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -28,7 +29,7 @@ import (
 // nats-sub -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Printf("Usage: nats-sub [-s server] [-creds file] [-t] <subject>\n")
+	log.Printf("Usage: nats-sub [-s server] [-creds file] [-t] [--ack] <subject>\n")
 	flag.PrintDefaults()
 }
 
@@ -46,6 +47,7 @@ func main() {
 	var userCreds = flag.String("creds", "", "User Credentials File")
 	var showTime = flag.Bool("t", false, "Display timestamps")
 	var showHelp = flag.Bool("h", false, "Show help message")
+	var jsAck = flag.Bool("ack", false, "Acknowledge messages received from JetStream")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -80,6 +82,11 @@ func main() {
 	nc.Subscribe(subj, func(msg *nats.Msg) {
 		i += 1
 		printMsg(msg, i)
+
+		if *jsAck && strings.HasPrefix(msg.Reply, "$JS.A") {
+			msg.Respond(nil)
+		}
+
 	})
 	nc.Flush()
 
