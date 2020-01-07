@@ -14,8 +14,6 @@
 package test
 
 import (
-	"fmt"
-	"runtime"
 	"testing"
 	"time"
 
@@ -251,7 +249,7 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	ec.Flush()
 
-	before := getStableNumGoroutine(t)
+	base := getStableNumGoroutine(t)
 
 	ch := make(chan int)
 
@@ -266,13 +264,7 @@ func TestRecvChanAsyncLeakGoRoutines(t *testing.T) {
 	ec.Publish("foo", 22)
 	ec.Flush()
 
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - before)
-		if delta > 0 {
-			return fmt.Errorf("Leaked Go routine(s) : %d, closing channel should have closed them", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "closing channel")
 }
 
 func TestRecvChanLeakGoRoutines(t *testing.T) {
@@ -285,7 +277,7 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	// Call this to make sure that we have everything setup connection wise
 	ec.Flush()
 
-	before := getStableNumGoroutine(t)
+	base := getStableNumGoroutine(t)
 
 	ch := make(chan int)
 
@@ -295,13 +287,7 @@ func TestRecvChanLeakGoRoutines(t *testing.T) {
 	}
 	sub.Unsubscribe()
 
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - before)
-		if delta > 0 {
-			return fmt.Errorf("Leaked Go routine(s) : %d, closing channel should have closed them", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "Unsubscribe()")
 }
 
 func TestRecvChanMultipleMessages(t *testing.T) {

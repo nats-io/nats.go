@@ -475,7 +475,7 @@ func TestMoreErrOnConnect(t *testing.T) {
 				// Stick around a bit
 				<-case3
 			case 4:
-				info := fmt.Sprintf("INFO {'x'}\r\n")
+				info := "INFO {'x'}\r\n"
 				// Send INFO with JSON marshall error
 				conn.Write([]byte(info))
 				// Stick around a bit
@@ -1965,7 +1965,7 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 			} else {
 				// Send no connect ULRs (as if this was an older server that could in some cases
 				// send an empty array)
-				c.Write([]byte(fmt.Sprintf("PONG\r\nINFO {\"server_id\":\"server2\"}\r\n")))
+				c.Write([]byte("PONG\r\nINFO {\"server_id\":\"server2\"}\r\n"))
 				// Wait for client to disconnect
 				for {
 					if _, err := c.Read(buf); err != nil {
@@ -2085,17 +2085,19 @@ func TestNilOpts(t *testing.T) {
 
 	// Test a single nil option
 	var o1, o2, o3 nats.Option
-	_, err := nats.Connect(nats.DefaultURL, o1)
+	nc, err := nats.Connect(nats.DefaultURL, o1)
 	if err != nil {
 		t.Fatalf("Unexpected error with one nil option: %v", err)
 	}
+	nc.Close()
 
 	// Test nil, opt, nil
 	o2 = nats.ReconnectBufSize(2222)
-	nc, err := nats.Connect(nats.DefaultURL, o1, o2, o3)
+	nc, err = nats.Connect(nats.DefaultURL, o1, o2, o3)
 	if err != nil {
 		t.Fatalf("Unexpected error with multiple nil options: %v", err)
 	}
+	defer nc.Close()
 	// check that the opt was set
 	if nc.Opts.ReconnectBufSize != 2222 {
 		t.Fatal("Unexpected error: option not set.")

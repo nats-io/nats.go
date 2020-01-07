@@ -159,7 +159,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	defer ts.Shutdown()
 
 	ch := make(chan bool)
-	dch := make(chan bool)
+	dch := make(chan bool, 2)
 
 	opts := reconnectOpts
 
@@ -222,11 +222,11 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	defer ts.Shutdown()
 
 	opts := reconnectOpts
-	dch := make(chan bool)
+	dch := make(chan bool, 2)
 	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		dch <- true
 	}
-	rch := make(chan bool)
+	rch := make(chan bool, 1)
 	opts.ReconnectedCB = func(_ *nats.Conn) {
 		rch <- true
 	}
@@ -428,8 +428,8 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
 
-	disconnectedch := make(chan bool)
-	reconnectch := make(chan bool)
+	disconnectedch := make(chan bool, 3)
+	reconnectch := make(chan bool, 2)
 	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://127.0.0.1:22222"
 	opts.AllowReconnect = true
@@ -497,7 +497,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
 
-	reconnectch := make(chan bool)
+	reconnectch := make(chan bool, 2)
 
 	opts := nats.GetDefaultOptions()
 	opts.Url = "nats://127.0.0.1:22222"
@@ -554,6 +554,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	if e := WaitTime(reconnectch, 5*time.Second); e != nil {
 		t.Fatalf("Reconnect callback wasn't triggered: %v", e)
 	}
+	close(stop)
 }
 
 func TestReconnectVerbose(t *testing.T) {
@@ -677,7 +678,7 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 	endpoint := fmt.Sprintf("%s:%d", optsA.Host, optsA.Port)
 	secureURL := fmt.Sprintf("tls://%s:%s@%s/", optsA.Username, optsA.Password, endpoint)
 
-	dch := make(chan bool)
+	dch := make(chan bool, 2)
 	dcb := func(_ *nats.Conn, _ error) { dch <- true }
 	rch := make(chan bool)
 	rcb := func(_ *nats.Conn) { rch <- true }

@@ -30,24 +30,37 @@ import (
 // This function returns the number of go routines ensuring
 // that runtime.NumGoroutine() returns the same value
 // several times in a row with little delay between captures.
-// This will check for at most 500ms for value to be stable.
+// This will check for at most 2s for value to be stable.
 func getStableNumGoroutine(t *testing.T) int {
 	t.Helper()
-	timeout := time.Now().Add(500 * time.Millisecond)
+	timeout := time.Now().Add(2 * time.Second)
 	var base, old, same int
 	for time.Now().Before(timeout) {
 		base = runtime.NumGoroutine()
 		if old == base {
 			same++
-			if same == 8 {
+			if same == 5 {
 				return base
 			}
+		} else {
+			same = 0
 		}
 		old = base
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("Unable to get stable number of go routines")
 	return 0
+}
+
+func checkNoGoroutineLeak(t *testing.T, base int, action string) {
+	t.Helper()
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - base)
+		if delta > 0 {
+			return fmt.Errorf("%d Go routines still exist after %s", delta, action)
+		}
+		return nil
+	})
 }
 
 // Check the error channel for an error and if one is present,
@@ -76,15 +89,7 @@ func TestCloseLeakingGoRoutines(t *testing.T) {
 	nc.Flush()
 	nc.Close()
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist post Close()", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "Close()")
 
 	// Make sure we can call Close() multiple times
 	nc.Close()
@@ -100,15 +105,7 @@ func TestLeakingGoRoutinesOnFailedConnect(t *testing.T) {
 		t.Fatalf("Expected failure to connect")
 	}
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist post Close()", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "failed connect")
 }
 
 func TestConnectedServer(t *testing.T) {
@@ -287,15 +284,7 @@ func TestAsyncSubscribeRoutineLeakOnUnsubscribe(t *testing.T) {
 	// Explicit unsubscribe
 	sub.Unsubscribe()
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist post Unsubscribe()", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "Unsubscribe()")
 }
 
 func TestAsyncSubscribeRoutineLeakOnClose(t *testing.T) {
@@ -330,15 +319,7 @@ func TestAsyncSubscribeRoutineLeakOnClose(t *testing.T) {
 	// Close connection without explicit unsubscribe
 	nc.Close()
 
-	// Give time for things to settle before capturing the number of
-	// go routines
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist post Close()", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "Close()")
 }
 
 func TestSyncSubscribe(t *testing.T) {
