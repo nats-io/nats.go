@@ -39,6 +39,7 @@ func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
 	var showHelp = flag.Bool("h", false, "Show help message")
+	var reply = flag.String("reply", "", "Sets a specific reply subject")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -67,9 +68,15 @@ func main() {
 		log.Fatal(err)
 	}
 	defer nc.Close()
+
 	subj, msg := args[0], []byte(args[1])
 
-	nc.Publish(subj, msg)
+	if reply != nil && *reply != "" {
+		nc.PublishRequest(subj, *reply, msg)
+	} else {
+		nc.Publish(subj, msg)
+	}
+
 	nc.Flush()
 
 	if err := nc.LastError(); err != nil {
