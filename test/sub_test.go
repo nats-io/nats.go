@@ -15,7 +15,6 @@ package test
 
 import (
 	"fmt"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -68,13 +67,7 @@ func TestServerAutoUnsub(t *testing.T) {
 	if err := sub.AutoUnsubscribe(10); err == nil {
 		t.Fatal("Calling AutoUnsubscribe() on closed subscription should fail")
 	}
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist post max subscriptions hit", delta)
-		}
-		return nil
-	})
+	checkNoGoroutineLeak(t, base, "AutoUnsubscribe() limit reached")
 }
 
 func TestClientSyncAutoUnsub(t *testing.T) {
@@ -474,9 +467,11 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 
 	bch := make(chan bool)
 
-	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
+	sub, _ := nc.Subscribe("foo", func(m *nats.Msg) {
 		// block to back us up..
 		<-bch
+		// Avoid repeated calls that would then block again
+		m.Sub.Unsubscribe()
 	})
 	// Make sure these are the defaults
 	pm, pb, _ := sub.PendingLimits()
@@ -521,7 +516,7 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 		t.Fatal("Expected LastError to indicate slow consumer")
 	}
 	// release the sub
-	bch <- true
+	close(bch)
 }
 
 func TestAsyncErrHandler(t *testing.T) {
@@ -1082,9 +1077,11 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	inCb := make(chan bool)
 	block := make(chan bool)
 
-	sub, _ := nc.Subscribe("foo", func(_ *nats.Msg) {
+	sub, _ := nc.Subscribe("foo", func(m *nats.Msg) {
 		inCb <- true
 		<-block
+		// Avoid repeated calls to this callback
+		m.Sub.Unsubscribe()
 	})
 	defer sub.Unsubscribe()
 
