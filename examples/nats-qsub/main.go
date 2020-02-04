@@ -87,7 +87,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Listening on [%s]", subj)
+	log.Printf("Listening on [%s], queue group [%s]", subj, queue)
 	if *showTime {
 		log.SetFlags(log.LstdFlags)
 	}
