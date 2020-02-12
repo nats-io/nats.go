@@ -2558,6 +2558,11 @@ func (nc *Conn) publish(subj, reply string, data []byte) error {
 		return ErrConnectionDraining
 	}
 
+	if nc.isReconnecting() {
+		nc.mu.Unlock()
+		return ErrConnectionReconnecting
+	}
+
 	// Proactively reject payloads over the threshold set by server.
 	msgSize := int64(len(data))
 	if msgSize > nc.info.MaxPayload {
