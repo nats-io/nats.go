@@ -162,7 +162,7 @@ type geo struct {
 // lookup our current region and country..
 func lookupGeo() string {
 	c := &http.Client{Timeout: 2 * time.Second}
-	resp, err := c.Get("https://ipinfo.io")
+	resp, err := c.Get("https://ipapi.co/json")
 	if err != nil || resp == nil {
 		log.Fatalf("Could not retrive geo location data: %v", err)
 	}
