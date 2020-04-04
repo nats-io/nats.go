@@ -1450,6 +1450,7 @@ func (nc *Conn) connect() error {
 	// For first connect we walk all servers in the pool and try
 	// to connect immediately.
 	nc.mu.Lock()
+	defer nc.mu.Unlock()
 	nc.initc = true
 	// The pool may change inside the loop iteration due to INFO protocol.
 	for i := 0; i < len(nc.srvPool); i++ {
@@ -1463,8 +1464,8 @@ func (nc *Conn) connect() error {
 			err = nc.processConnectInit()
 
 			if err == nil {
-				nc.srvPool[i].didConnect = true
-				nc.srvPool[i].reconnects = 0
+				nc.current.didConnect = true
+				nc.current.reconnects = 0
 				nc.current.lastErr = nil
 				returnedErr = nil
 				break
@@ -1487,7 +1488,7 @@ func (nc *Conn) connect() error {
 	if returnedErr == nil && nc.status != CONNECTED {
 		returnedErr = ErrNoServers
 	}
-	nc.mu.Unlock()
+	
 	return returnedErr
 }
 
