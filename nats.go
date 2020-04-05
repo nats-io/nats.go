@@ -1488,7 +1488,7 @@ func (nc *Conn) connect() error {
 	if returnedErr == nil && nc.status != CONNECTED {
 		returnedErr = ErrNoServers
 	}
-	
+
 	return returnedErr
 }
 
