@@ -2264,3 +2264,80 @@ func TestRequestInit(t *testing.T) {
 		t.Fatalf("Error on request: %v", err)
 	}
 }
+
+func TestNoPanicOnSrvPoolSizeChanging(t *testing.T) {
+	listeners := []net.Listener{}
+	ports := []int{}
+
+	for i := 0; i < 3; i++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Could not listen on an ephemeral port: %v", err)
+		}
+		defer l.Close()
+		tl := l.(*net.TCPListener)
+		ports = append(ports, tl.Addr().(*net.TCPAddr).Port)
+		listeners = append(listeners, l)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(listeners))
+
+	connect := int32(0)
+	srv := func(l net.Listener) {
+		defer wg.Done()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			var info string
+
+			reject := atomic.AddInt32(&connect, 1) <= 2
+			if reject {
+				// Sends a list of 3 servers, where the second does not actually run.
+				// This server is going to reject the connect (with auth error), so
+				// client will move to 2nd, fail, then go to third...
+				info = fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"connect_urls\":[\"127.0.0.1:%d\",\"127.0.0.1:%d\",\"127.0.0.1:%d\"]}\r\n",
+					ports[0], ports[1], ports[2])
+			} else {
+				// This third server will return the INFO with only the original server
+				// and the third one, which will make the srvPool size shrink down to 2.
+				info = fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"connect_urls\":[\"127.0.0.1:%d\",\"127.0.0.1:%d\"]}\r\n",
+					ports[0], ports[2])
+			}
+			conn.Write([]byte(info))
+
+			// Read connect and ping commands sent from the client
+			br := bufio.NewReaderSize(conn, 10*1024)
+			br.ReadLine()
+			br.ReadLine()
+
+			if reject {
+				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+				conn.Close()
+			} else {
+				conn.Write([]byte(pongProto))
+				br.ReadLine()
+			}
+		}
+	}
+
+	for _, l := range listeners {
+		go srv(l)
+	}
+
+	time.Sleep(250 * time.Millisecond)
+
+	nc, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", ports[0]))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	nc.Close()
+	for _, l := range listeners {
+		l.Close()
+	}
+	wg.Wait()
+}
