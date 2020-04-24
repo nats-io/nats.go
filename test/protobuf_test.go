@@ -1,4 +1,4 @@
-// Copyright 2015-2019 The NATS Authors
+// Copyright 2015-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -38,7 +39,6 @@ func TestEncProtoMarshalStruct(t *testing.T) {
 
 	ec := NewProtoEncodedConn(t)
 	defer ec.Close()
-	ch := make(chan bool)
 
 	me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
 	me.Children = make(map[string]*pb.Person)
@@ -46,16 +46,23 @@ func TestEncProtoMarshalStruct(t *testing.T) {
 	me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
 	me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
+	ch := make(chan error, 1)
 	ec.Subscribe("protobuf_test", func(p *pb.Person) {
-		if !reflect.DeepEqual(p, me) {
-			t.Fatal("Did not receive the correct protobuf response")
+		var err error
+		if !reflect.DeepEqual(p.ProtoReflect(), me.ProtoReflect()) {
+			err = errors.New("Did not receive the correct protobuf response")
 		}
-		ch <- true
+		ch <- err
 	})
 
 	ec.Publish("protobuf_test", me)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
+	select {
+	case e := <-ch:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Failed to receive message")
 	}
 }
 
@@ -83,7 +90,7 @@ func TestEncProtoNilRequest(t *testing.T) {
 		t.Error("Fail to send empty message via encoded proto connection")
 	}
 
-	if !reflect.DeepEqual(testPerson, resp) {
+	if !reflect.DeepEqual(testPerson.ProtoReflect(), resp.ProtoReflect()) {
 		t.Error("Fail to receive encoded response")
 	}
 }
