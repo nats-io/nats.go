@@ -257,6 +257,35 @@ func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 	}
 }
 
+func TestContextOldRequestClosed(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancelCB := context.WithTimeout(context.Background(), time.Second)
+	defer cancelCB() // should always be called, not discarded, to prevent context leak
+
+	errCh := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err = nc.RequestWithContext(ctx, "checkClose", []byte("should be kicked out on close"))
+		errCh <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	nc.Close()
+	if e := <-errCh; e != nats.ErrConnectionClosed {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if dur := time.Since(start); dur >= time.Second {
+		t.Fatalf("Request took too long to bail out: %v", dur)
+	}
+}
+
 func TestContextRequestWithCancel(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

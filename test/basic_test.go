@@ -572,7 +572,7 @@ func TestOldRequest(t *testing.T) {
 
 	response := []byte("I will help you")
 	nc.Subscribe("foo", func(m *nats.Msg) {
-		nc.Publish(m.Reply, response)
+		m.Respond(response)
 	})
 	msg, err := nc.Request("foo", []byte("help"), 500*time.Millisecond)
 	if err != nil {
@@ -580,6 +580,22 @@ func TestOldRequest(t *testing.T) {
 	}
 	if !bytes.Equal(msg.Data, response) {
 		t.Fatalf("Received invalid response")
+	}
+
+	// Check that Close() kicks out a Request()
+	errCh := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := nc.Request("checkClose", []byte("should be kicked out on close"), time.Second)
+		errCh <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	nc.Close()
+	if e := <-errCh; e != nats.ErrConnectionClosed {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if dur := time.Since(start); dur >= time.Second {
+		t.Fatalf("Request took too long to bail out: %v", dur)
 	}
 }
 

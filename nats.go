@@ -2749,7 +2749,7 @@ func (nc *Conn) oldRequest(subj string, data []byte, timeout time.Duration) (*Ms
 	inbox := NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, false)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true)
 	if err != nil {
 		return nil, err
 	}
