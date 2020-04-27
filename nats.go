@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -116,6 +116,8 @@ var (
 	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
 	ErrMsgNotBound            = errors.New("nats: message is not bound to subscription/connection")
 	ErrMsgNoReply             = errors.New("nats: message does not have a reply")
+	ErrClientIPNotSupported   = errors.New("nats: client IP not supported by this server")
+	ErrDisconnected           = errors.New("nats: server is disconnected")
 )
 
 func init() {
@@ -496,7 +498,7 @@ type srv struct {
 }
 
 type serverInfo struct {
-	Id           string   `json:"server_id"`
+	ID           string   `json:"server_id"`
 	Host         string   `json:"host"`
 	Port         uint     `json:"port"`
 	Version      string   `json:"version"`
@@ -506,6 +508,7 @@ type serverInfo struct {
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	Proto        int      `json:"proto,omitempty"`
 	CID          uint64   `json:"client_id,omitempty"`
+	ClientIP     string   `json:"client_ip,omitempty"`
 	Nonce        string   `json:"nonce,omitempty"`
 }
 
@@ -1384,7 +1387,7 @@ func (nc *Conn) ConnectedServerId() string {
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.info.Id
+	return nc.info.ID
 }
 
 // Low level setup for structs, etc
@@ -3542,6 +3545,21 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	return
 }
 
+// RTT calculates the round trip time between this client and the server.
+func (nc *Conn) RTT() (time.Duration, error) {
+	if nc.IsClosed() {
+		return 0, ErrConnectionClosed
+	}
+	if nc.IsReconnecting() {
+		return 0, ErrDisconnected
+	}
+	start := time.Now()
+	if err := nc.FlushTimeout(10 * time.Second); err != nil {
+		return 0, err
+	}
+	return time.Since(start), nil
+}
+
 // Flush will perform a round trip to the server and return when it
 // receives the internal reply.
 func (nc *Conn) Flush() error {
@@ -4006,10 +4024,25 @@ func (nc *Conn) Barrier(f func()) error {
 	return nil
 }
 
+// GetClientIP returns the client IP as known by the server.
+// Supported as of server version 2.1.6.
+func (nc *Conn) GetClientIP() (net.IP, error) {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	if nc.isClosed() {
+		return nil, ErrConnectionClosed
+	}
+	if nc.info.ClientIP == "" {
+		return nil, ErrClientIPNotSupported
+	}
+	ip := net.ParseIP(nc.info.ClientIP)
+	return ip, nil
+}
+
 // GetClientID returns the client ID assigned by the server to which
 // the client is currently connected to. Note that the value may change if
 // the client reconnects.
-// This function returns ErrNoClientIDReturned if the server is of a
+// This function returns ErrClientIDNotSupported if the server is of a
 // version prior to 1.2.0.
 func (nc *Conn) GetClientID() (uint64, error) {
 	nc.mu.RLock()

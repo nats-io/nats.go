@@ -1004,7 +1004,7 @@ func TestAsyncINFO(t *testing.T) {
 
 	// Partials requiring argBuf
 	expectedServer := serverInfo{
-		Id:           "test",
+		ID:           "test",
 		Host:         "localhost",
 		Port:         4222,
 		Version:      "1.2.3",
@@ -2262,6 +2262,54 @@ func TestRequestInit(t *testing.T) {
 
 	if _, err := nc.Request("foo", []byte("request"), 500*time.Millisecond); err != nil {
 		t.Fatalf("Error on request: %v", err)
+	}
+}
+
+func TestGetRTT(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL(), ReconnectWait(10*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	rtt, err := nc.RTT()
+	if err != nil {
+		t.Fatalf("Unexpected error getting RTT: %v", err)
+	}
+	if rtt > time.Second {
+		t.Fatalf("RTT value too large: %v", rtt)
+	}
+	// We should not get a value when in any disconnected state.
+	s.Shutdown()
+	time.Sleep(5 * time.Millisecond)
+	if _, err = nc.RTT(); err != ErrDisconnected {
+		t.Fatalf("Expected disconnected error getting RTT when disconnected, got %v", err)
+	}
+}
+
+func TestGetClientIP(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	ip, err := nc.GetClientIP()
+	if err != nil {
+		t.Fatalf("Got error looking up IP: %v", err)
+	}
+	if !ip.IsLoopback() {
+		t.Fatalf("Expected a loopback IP, got %v", ip)
+	}
+	nc.Close()
+	if _, err := nc.GetClientIP(); err != ErrConnectionClosed {
+		t.Fatalf("Expected a connection closed error, got %v", err)
 	}
 }
 
