@@ -3545,7 +3545,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 // Flush will perform a round trip to the server and return when it
 // receives the internal reply.
 func (nc *Conn) Flush() error {
-	return nc.FlushTimeout(60 * time.Second)
+	return nc.FlushTimeout(10 * time.Second)
 }
 
 // Buffered will return the number of bytes buffered to be sent to the server.
