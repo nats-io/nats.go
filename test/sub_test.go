@@ -144,6 +144,7 @@ func TestAutoUnsubAndReconnect(t *testing.T) {
 
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v", err)
@@ -201,6 +202,7 @@ func TestAutoUnsubWithParallelNextMsgCalls(t *testing.T) {
 
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v", err)

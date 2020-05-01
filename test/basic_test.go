@@ -822,6 +822,7 @@ func TestOptions(t *testing.T) {
 		nats.Name("myName"),
 		nats.MaxReconnects(2),
 		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.PingInterval(20*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)

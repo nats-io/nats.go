@@ -117,6 +117,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	copts.NoRandomize = true
 	copts.MaxReconnect = 10
 	copts.ReconnectWait = 100 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&copts)
 
 	copts.ReconnectedCB = func(_ *nats.Conn) {
 		reconnectch <- true
@@ -174,6 +175,7 @@ func TestTokenHandlerReconnect(t *testing.T) {
 	copts.NoRandomize = true
 	copts.MaxReconnect = 10
 	copts.ReconnectWait = 100 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&copts)
 
 	copts.TokenHandler = func() string {
 		return secret
