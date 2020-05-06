@@ -1126,7 +1126,7 @@ func (nc *Conn) setupServerPool() error {
 
 	// Randomize if allowed to
 	if !nc.Opts.NoRandomize {
-		nc.shufflePool()
+		nc.shufflePool(0)
 	}
 
 	// Normally, if this one is set, Options.Servers should not be,
@@ -1223,14 +1223,16 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 }
 
 // shufflePool swaps randomly elements in the server pool
-func (nc *Conn) shufflePool() {
-	if len(nc.srvPool) <= 1 {
+// The `offset` value indicates that the shuffling should start at
+// this offset and leave the elements from [0..offset) intact.
+func (nc *Conn) shufflePool(offset int) {
+	if len(nc.srvPool) <= offset+1 {
 		return
 	}
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
-	for i := range nc.srvPool {
-		j := r.Intn(i + 1)
+	for i := offset; i < len(nc.srvPool); i++ {
+		j := offset + r.Intn(i+1-offset)
 		nc.srvPool[i], nc.srvPool[j] = nc.srvPool[j], nc.srvPool[i]
 	}
 }
@@ -2431,8 +2433,14 @@ func (nc *Conn) processInfo(info string) error {
 		}
 		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
 	}
-	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
-		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
+	if hasNew {
+		// Randomize the pool if allowed but leave the first URL in place.
+		if !nc.Opts.NoRandomize {
+			nc.shufflePool(1)
+		}
+		if !nc.initc && nc.Opts.DiscoveredServersCB != nil {
+			nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
+		}
 	}
 
 	return nil
