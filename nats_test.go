@@ -1141,6 +1141,10 @@ func TestAsyncINFO(t *testing.T) {
 		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
 	checkNewURLsAddedRandomly()
+	// Check that we have not moved the first URL
+	if u := c.srvPool[0].url.Host; u != urlsAfterPoolSetup[0] {
+		t.Fatalf("Expected first URL to be %q, got %q", urlsAfterPoolSetup[0], u)
+	}
 }
 
 func TestConnServers(t *testing.T) {
