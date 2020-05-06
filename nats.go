@@ -2431,8 +2431,15 @@ func (nc *Conn) processInfo(info string) error {
 		}
 		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
 	}
-	if hasNew && !nc.initc && nc.Opts.DiscoveredServersCB != nil {
-		nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
+	if hasNew {
+		// If randomization is allowed, randomize the pool now that we have
+		// added all new URLs.
+		if !nc.Opts.NoRandomize {
+			nc.shufflePool()
+		}
+		if !nc.initc && nc.Opts.DiscoveredServersCB != nil {
+			nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
+		}
 	}
 
 	return nil

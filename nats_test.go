@@ -1118,29 +1118,29 @@ func TestAsyncINFO(t *testing.T) {
 	for _, srv := range c.srvPool {
 		urlsAfterPoolSetup = append(urlsAfterPoolSetup, srv.url.Host)
 	}
-	checkPoolOrderDidNotChange := func() {
+	checkNewURLsAddedRandomly := func() {
+		t.Helper()
+		var ok bool
 		for i := 0; i < len(urlsAfterPoolSetup); i++ {
 			if c.srvPool[i].url.Host != urlsAfterPoolSetup[i] {
-				stackFatalf(t, "Pool should have %q at index %q, has %q", urlsAfterPoolSetup[i], i, c.srvPool[i].url.Host)
+				ok = true
+				break
 			}
+		}
+		if !ok {
+			t.Fatalf("New URLs were not added randmonly: %q", c.Servers())
 		}
 	}
 	// Add new urls
-	newURLs := []string{
-		"localhost:6222",
-		"localhost:7222",
-		"localhost:8222\", \"localhost:9222",
-		"localhost:10222\", \"localhost:11222\", \"localhost:12222,",
+	newURLs := "\"impA:4222\", \"impB:4222\", \"impC:4222\", " +
+		"\"impD:4222\", \"impE:4222\", \"impF:4222\", \"impG:4222\", " +
+		"\"impH:4222\", \"impI:4222\", \"impJ:4222\""
+	info = []byte("INFO {\"connect_urls\":[" + newURLs + "]}\r\n")
+	err = c.parse(info)
+	if err != nil || c.ps.state != OP_START {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
 	}
-	for _, newURL := range newURLs {
-		info = []byte("INFO {\"connect_urls\":[\"" + newURL + "]}\r\n")
-		err = c.parse(info)
-		if err != nil || c.ps.state != OP_START {
-			t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
-		}
-		// Check that pool order does not change up to the new addition(s).
-		checkPoolOrderDidNotChange()
-	}
+	checkNewURLsAddedRandomly()
 }
 
 func TestConnServers(t *testing.T) {
