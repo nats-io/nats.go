@@ -517,13 +517,12 @@ type Statistics struct {
 
 // Tracks individual backend servers.
 type srv struct {
-	url         *url.URL
-	didConnect  bool
-	reconnects  int
-	lastAttempt time.Time
-	lastErr     error
-	isImplicit  bool
-	tlsName     string
+	url        *url.URL
+	didConnect bool
+	reconnects int
+	lastErr    error
+	isImplicit bool
+	tlsName    string
 }
 
 type serverInfo struct {
@@ -1299,8 +1298,6 @@ func (nc *Conn) createConn() (err error) {
 	}
 	if _, cur := nc.currentServer(); cur == nil {
 		return ErrNoServers
-	} else {
-		cur.lastAttempt = time.Now()
 	}
 
 	// We will auto-expand host names if they resolve to multiple IPs
