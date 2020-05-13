@@ -1506,6 +1506,7 @@ func TestExpiredUserCredentials(t *testing.T) {
 	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
 	nc, err := Connect(url,
 		ReconnectWait(25*time.Millisecond),
+		ReconnectJitter(0, 0),
 		MaxReconnects(-1),
 		ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
 			select {
@@ -1587,6 +1588,7 @@ func TestExpiredUserCredentialsRenewal(t *testing.T) {
 	nc, err := Connect(url,
 		UserCredentials(chainedFile),
 		ReconnectWait(25*time.Millisecond),
+		ReconnectJitter(0, 0),
 		MaxReconnects(2),
 		ReconnectHandler(func(nc *Conn) {
 			rch <- true
@@ -1821,7 +1823,7 @@ func TestNKeyOptionFromSeed(t *testing.T) {
 
 		// Read connect and ping commands sent from the client
 		br := bufio.NewReaderSize(conn, 10*1024)
-		line, _, _ := br.ReadLine()
+		line, _, err := br.ReadLine()
 		if err != nil {
 			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
 			return
@@ -2079,6 +2081,7 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 	urls := fmt.Sprintf("nats://%s:%d, nats://%s:%d", o1.Host, o1.Port, o2.Host, o2.Port)
 	nc, err := Connect(urls,
 		ReconnectWait(25*time.Millisecond),
+		ReconnectJitter(0, 0),
 		MaxReconnects(-1),
 		DontRandomize(),
 		DisconnectErrHandler(func(_ *Conn, e error) {
@@ -2273,7 +2276,7 @@ func TestGetRTT(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
 
-	nc, err := Connect(s.ClientURL(), ReconnectWait(10*time.Millisecond))
+	nc, err := Connect(s.ClientURL(), ReconnectWait(10*time.Millisecond), ReconnectJitter(0, 0))
 	if err != nil {
 		t.Fatalf("Expected to connect to server, got %v", err)
 	}
@@ -2392,4 +2395,123 @@ func TestNoPanicOnSrvPoolSizeChanging(t *testing.T) {
 		l.Close()
 	}
 	wg.Wait()
+}
+
+func TestReconnectWaitJitter(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	rch := make(chan time.Time, 1)
+	nc, err := Connect(s.ClientURL(),
+		ReconnectWait(100*time.Millisecond),
+		ReconnectJitter(500*time.Millisecond, 0),
+		ReconnectHandler(func(_ *Conn) {
+			rch <- time.Now()
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	s.Shutdown()
+	start := time.Now()
+	// Wait a bit so that the library tries a first time without waiting.
+	time.Sleep(50 * time.Millisecond)
+	s = RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+	select {
+	case end := <-rch:
+		dur := end.Sub(start)
+		// We should wait at least the reconnect wait + random up to 500ms.
+		// Account for a bit of variation since we rely on the reconnect
+		// handler which is not invoked in place.
+		if dur < 90*time.Millisecond || dur > 800*time.Millisecond {
+			t.Fatalf("Wrong wait: %v", dur)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Should have reconnected")
+	}
+	nc.Close()
+
+	// Use a long reconnect wait
+	nc, err = Connect(s.ClientURL(), ReconnectWait(10*time.Minute))
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Cause a disconnect
+	s.Shutdown()
+	// Wait a bit for the reconnect loop to go into wait mode.
+	time.Sleep(50 * time.Millisecond)
+	s = RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+	// Now close and expect the reconnect go routine to return..
+	nc.Close()
+	// Wait a bit to give a chance for the go routine to exit.
+	time.Sleep(50 * time.Millisecond)
+	buf := make([]byte, 100000)
+	n := runtime.Stack(buf, true)
+	if strings.Contains(string(buf[:n]), "doReconnect") {
+		t.Fatalf("doReconnect go routine still running:\n%s", buf[:n])
+	}
+}
+
+func TestCustomReconnectDelay(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	expectedAttempt := 1
+	errCh := make(chan error, 1)
+	cCh := make(chan bool, 1)
+	nc, err := Connect(s.ClientURL(),
+		CustomReconnectDelay(func(n int) time.Duration {
+			var err error
+			var delay time.Duration
+			if n != expectedAttempt {
+				err = fmt.Errorf("Expected attempt to be %v, got %v", expectedAttempt, n)
+			} else {
+				expectedAttempt++
+				if n <= 4 {
+					delay = 100 * time.Millisecond
+				}
+			}
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+			return delay
+		}),
+		MaxReconnects(4),
+		ClosedHandler(func(_ *Conn) {
+			cCh <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Cause disconnect
+	s.Shutdown()
+
+	// We should be trying to reconnect 4 times
+	start := time.Now()
+
+	// Wait on error or completion of test.
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	case <-cCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("No CB invoked")
+	}
+	if dur := time.Since(start); dur >= 500*time.Millisecond {
+		t.Fatalf("Waited too long on each reconnect: %v", dur)
+	}
 }

@@ -39,6 +39,16 @@ func TestReconnectTotalTime(t *testing.T) {
 	}
 }
 
+func TestDefaultReconnectJitter(t *testing.T) {
+	opts := nats.GetDefaultOptions()
+	if opts.ReconnectJitter != nats.DefaultReconnectJitter {
+		t.Fatalf("Expected default jitter for non TLS to be %v, got %v", nats.DefaultReconnectJitter, opts.ReconnectJitter)
+	}
+	if opts.ReconnectJitterTLS != nats.DefaultReconnectJitterTLS {
+		t.Fatalf("Expected default jitter for TLS to be %v, got %v", nats.DefaultReconnectJitterTLS, opts.ReconnectJitterTLS)
+	}
+}
+
 func TestReconnectDisallowedFlags(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
@@ -73,6 +83,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 2
 	opts.ReconnectWait = 1 * time.Second
+	nats.ReconnectJitter(0, 0)(&opts)
 
 	opts.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
@@ -435,6 +446,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&opts)
 
 	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
 		disconnectedch <- true
@@ -504,6 +516,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&opts)
 
 	opts.ReconnectedCB = func(_ *nats.Conn) {
 		reconnectch <- true

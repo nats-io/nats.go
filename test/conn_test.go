@@ -733,6 +733,7 @@ func TestCallbacksOrder(t *testing.T) {
 		nats.ClosedHandler(cch),
 		nats.ErrorHandler(ech),
 		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.DontRandomize())
 
 	if err != nil {
@@ -1158,6 +1159,7 @@ func TestErrStaleConnection(t *testing.T) {
 	opts.ReconnectedCB = func(_ *nats.Conn) { rch <- true }
 	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
 	opts.ReconnectWait = 20 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&opts)
 	opts.MaxReconnect = 100
 	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
@@ -1247,6 +1249,7 @@ func TestServerErrorClosesConnection(t *testing.T) {
 	opts.ReconnectedCB = func(_ *nats.Conn) { atomic.AddInt64(&reconnected, 1) }
 	opts.ClosedCB = func(_ *nats.Conn) { cch <- true }
 	opts.ReconnectWait = 20 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&opts)
 	opts.MaxReconnect = 100
 	opts.Servers = []string{natsURL}
 	nc, err := opts.Connect()
@@ -1321,7 +1324,8 @@ func TestNoRaceOnLastError(t *testing.T) {
 		nats.DisconnectHandler(dch),
 		nats.ClosedHandler(cch),
 		nats.MaxReconnects(-1),
-		nats.ReconnectWait(5*time.Millisecond))
+		nats.ReconnectWait(5*time.Millisecond),
+		nats.ReconnectJitter(0, 0))
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
@@ -1985,6 +1989,7 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	rch := make(chan bool)
 	nc, err := nats.Connect("nats://127.0.0.1:4222",
 		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			rch <- true
 		}))

@@ -271,6 +271,7 @@ func TestHotSpotReconnect(t *testing.T) {
 
 	opts := []nats.Option{
 		nats.ReconnectWait(50 * time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.ReconnectHandler(func(_ *nats.Conn) { wg.Done() }),
 	}
 
@@ -389,6 +390,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	}
 	opts.NoRandomize = true
 	opts.ReconnectWait = (25 * time.Millisecond)
+	nats.ReconnectJitter(0, 0)(&opts)
 
 	dch := make(chan bool)
 	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
@@ -456,6 +458,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 		opts.MaxReconnect = 5
 	}
 	opts.ReconnectWait = (25 * time.Millisecond)
+	nats.ReconnectJitter(0, 0)(&opts)
 
 	dch := make(chan bool)
 	opts.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
@@ -519,11 +522,13 @@ func TestTimeoutOnNoServers(t *testing.T) {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
 		opts.ReconnectWait = (100 * time.Millisecond)
+		nats.ReconnectJitter(0, 0)(&opts)
 	} else {
 		opts.Servers = testServers
 		// 1 second total time wait
 		opts.MaxReconnect = 10
 		opts.ReconnectWait = (100 * time.Millisecond)
+		nats.ReconnectJitter(0, 0)(&opts)
 	}
 	opts.NoRandomize = true
 
@@ -584,6 +589,7 @@ func TestPingReconnect(t *testing.T) {
 	opts.Servers = testServers
 	opts.NoRandomize = true
 	opts.ReconnectWait = 200 * time.Millisecond
+	nats.ReconnectJitter(0, 0)(&opts)
 	opts.PingInterval = 50 * time.Millisecond
 	opts.MaxPingsOut = -1
 
@@ -813,6 +819,7 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	nc, err = nats.Connect(s1Url,
 		nats.MaxReconnects(10),
 		nats.ReconnectWait(15*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
 		nats.SetCustomDialer(d),
 		nats.ReconnectHandler(connHandler),
 		nats.ClosedHandler(connHandler))
