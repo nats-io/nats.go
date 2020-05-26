@@ -2763,11 +2763,11 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 	if hdr != nil {
 		if len(hdr) > 0 {
 			for l := len(hdr); l > 0; l /= 10 {
-				i -= 1
+				i--
 				b[i] = digits[l%10]
 			}
 		} else {
-			i -= 1
+			i--
 			b[i] = digits[0]
 		}
 		mh = append(mh, b[i:]...)
@@ -2778,11 +2778,11 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 
 	if msgSize > 0 {
 		for l := msgSize; l > 0; l /= 10 {
-			i -= 1
+			i--
 			b[i] = digits[l%10]
 		}
 	} else {
-		i -= 1
+		i--
 		b[i] = digits[0]
 	}
 
