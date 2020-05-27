@@ -2528,3 +2528,97 @@ func TestHeaderParser(t *testing.T) {
 	shouldErr("NATS/1.0\r\nk1:v1")
 	shouldErr("NATS/1.0\r\nk1:v1\r\n")
 }
+
+func TestLameDuckMode(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen on an ephemeral port: %v", err)
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ldmInfos := []string{"INFO {\"ldm\":true}\r\n", "INFO {\"connect_urls\":[\"127.0.0.1:1234\"],\"ldm\":true}\r\n"}
+		for _, ldmInfo := range ldmInfos {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			info := "INFO {\"server_id\":\"foobar\"}\r\n"
+			conn.Write([]byte(info))
+
+			// Read connect and ping commands sent from the client
+			br := bufio.NewReaderSize(conn, 10*1024)
+			br.ReadLine()
+			br.ReadLine()
+			conn.Write([]byte(pongProto))
+
+			// Wait a bit and then send a INFO with LDM
+			time.Sleep(100 * time.Millisecond)
+			conn.Write([]byte(ldmInfo))
+			br.ReadLine()
+			conn.Close()
+		}
+	}()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
+	time.Sleep(100 * time.Millisecond)
+
+	for _, test := range []struct {
+		name  string
+		curls bool
+	}{
+		{"without connect urls", false},
+		{"with connect urls", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ch := make(chan bool, 1)
+			errCh := make(chan error, 1)
+			nc, err := Connect(url,
+				DiscoveredServersHandler(func(nc *Conn) {
+					ds := nc.DiscoveredServers()
+					if !reflect.DeepEqual(ds, []string{"nats://127.0.0.1:1234"}) {
+						errCh <- fmt.Errorf("wrong discovered servers: %q", ds)
+					} else {
+						errCh <- nil
+					}
+				}),
+				LameDuckModeHandler(func(_ *Conn) {
+					ch <- true
+				}),
+			)
+			if err != nil {
+				t.Fatalf("Expected to connect, got %v", err)
+			}
+			defer nc.Close()
+
+			select {
+			case <-ch:
+			case <-time.After(2 * time.Second):
+				t.Fatal("should have been notified of LDM")
+			}
+			select {
+			case e := <-errCh:
+				if !test.curls {
+					t.Fatal("should not have received connect urls")
+				} else if e != nil {
+					t.Fatal(e.Error())
+				}
+			default:
+				if test.curls {
+					t.Fatal("should have received notification about discovered servers")
+				}
+			}
+
+			nc.Close()
+		})
+	}
+	wg.Wait()
+}
