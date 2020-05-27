@@ -1172,17 +1172,19 @@ func TestAsyncSubscriptionPendingDrain(t *testing.T) {
 	nc.Flush()
 
 	// Wait for all delivered.
-	for d, _ := sub.Delivered(); d != int64(total); d, _ = sub.Delivered() {
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	m, b, _ := sub.Pending()
-	if m != 0 {
-		t.Fatalf("Expected msgs of 0, got %d", m)
-	}
-	if b != 0 {
-		t.Fatalf("Expected bytes of 0, got %d", b)
-	}
+	waitFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		if d, _ := sub.Delivered(); d != int64(total) {
+			return fmt.Errorf("Wrong delivered count: %v vs %v", d, total)
+		}
+		m, b, _ := sub.Pending()
+		if m != 0 {
+			return fmt.Errorf("Expected msgs of 0, got %d", m)
+		}
+		if b != 0 {
+			return fmt.Errorf("Expected bytes of 0, got %d", b)
+		}
+		return nil
+	})
 
 	sub.Unsubscribe()
 	if _, err := sub.Delivered(); err == nil {
