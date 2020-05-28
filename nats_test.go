@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -2514,4 +2514,17 @@ func TestCustomReconnectDelay(t *testing.T) {
 	if dur := time.Since(start); dur >= 500*time.Millisecond {
 		t.Fatalf("Waited too long on each reconnect: %v", dur)
 	}
+}
+
+func TestHeaderParser(t *testing.T) {
+	shouldErr := func(hdr string) {
+		t.Helper()
+		if _, err := decodeHeadersMsg([]byte(hdr)); err == nil {
+			t.Fatalf("Expected an error")
+		}
+	}
+	shouldErr("NATS/1.0")
+	shouldErr("NATS/1.0\r\n")
+	shouldErr("NATS/1.0\r\nk1:v1")
+	shouldErr("NATS/1.0\r\nk1:v1\r\n")
 }

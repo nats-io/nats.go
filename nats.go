@@ -2648,17 +2648,10 @@ const (
 
 // decodeHeadersMsg will decode and headers.
 func decodeHeadersMsg(data []byte) (http.Header, error) {
-	// FIXME(dlc) - brittle and slow probably.
-	br := bufio.NewReader(bytes.NewBuffer(data))
-	hl, err := br.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	// FIXME(dlc) - pull status and description?
-	if !strings.HasPrefix(hl, hdrLine[:hdrPreEnd]) {
+	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
+	if l, err := tp.ReadLine(); err != nil || l != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
-	tp := textproto.NewReader(br)
 	mh, err := tp.ReadMIMEHeader()
 	if err != nil {
 		return nil, ErrBadHeaderMsg
