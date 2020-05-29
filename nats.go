@@ -386,6 +386,12 @@ type Options struct {
 	// callbacks after Close() is called. Client won't receive notifications
 	// when Close is invoked by user code. Default is to invoke the callbacks.
 	NoCallbacksAfterClientClose bool
+
+	// LameDuckModeHandler sets the callback to invoke when the server notifies
+	// the connection that it entered lame duck mode, that is, going to
+	// gradually disconnect all its connections before shuting down. This is
+	// often used in deployments when upgrading NATS Servers.
+	LameDuckModeHandler ConnHandler
 }
 
 const (
@@ -545,6 +551,7 @@ type serverInfo struct {
 	CID          uint64   `json:"client_id,omitempty"`
 	ClientIP     string   `json:"client_ip,omitempty"`
 	Nonce        string   `json:"nonce,omitempty"`
+	LameDuckMode bool     `json:"ldm,omitempty"`
 }
 
 const (
@@ -951,6 +958,17 @@ func UseOldRequestStyle() Option {
 func NoCallbacksAfterClientClose() Option {
 	return func(o *Options) error {
 		o.NoCallbacksAfterClientClose = true
+		return nil
+	}
+}
+
+// LameDuckModeHandler sets the callback to invoke when the server notifies
+// the connection that it entered lame duck mode, that is, going to
+// gradually disconnect all its connections before shuting down. This is
+// often used in deployments when upgrading NATS Servers.
+func LameDuckModeHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.LameDuckModeHandler = cb
 		return nil
 	}
 }
@@ -2485,6 +2503,9 @@ func (nc *Conn) processInfo(info string) error {
 	// did not include themselves in the async INFO protocol.
 	// If empty, do not remove the implicit servers from the pool.
 	if len(ncInfo.ConnectURLs) == 0 {
+		if ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
+			nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
+		}
 		return nil
 	}
 	// Note about pool randomization: when the pool was first created,
@@ -2545,7 +2566,9 @@ func (nc *Conn) processInfo(info string) error {
 			nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
 		}
 	}
-
+	if ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
+		nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
+	}
 	return nil
 }
 
