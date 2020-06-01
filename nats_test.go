@@ -1436,13 +1436,6 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	nc.Close()
 }
 
-func createNewUserKeys() (string, []byte) {
-	kp, _ := nkeys.CreateUser()
-	pub, _ := kp.PublicKey()
-	priv, _ := kp.Seed()
-	return pub, priv
-}
-
 func TestExpiredUserCredentials(t *testing.T) {
 	// The goal of this test was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
