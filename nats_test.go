@@ -36,7 +36,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/jwt"
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nkeys"
@@ -1437,13 +1436,6 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	nc.Close()
 }
 
-func createNewUserKeys() (string, []byte) {
-	kp, _ := nkeys.CreateUser()
-	pub, _ := kp.PublicKey()
-	priv, _ := kp.Seed()
-	return pub, priv
-}
-
 func TestExpiredUserCredentials(t *testing.T) {
 	// The goal of this test was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
@@ -1557,80 +1549,6 @@ func TestExpiredUserCredentials(t *testing.T) {
 	// Close the listener and wait for go routine to end.
 	l.Close()
 	wg.Wait()
-}
-
-func TestExpiredUserCredentialsRenewal(t *testing.T) {
-	if server.VERSION[0] == '1' {
-		t.Skip()
-	}
-	ts := runTrustServer()
-	defer ts.Shutdown()
-
-	// Create user credentials that will expire in a short timeframe.
-	pub, priv := createNewUserKeys()
-	nuc := jwt.NewUserClaims(pub)
-	nuc.Expires = time.Now().Add(time.Second).Unix()
-	akp, _ := nkeys.FromSeed(aSeed)
-	ujwt, err := nuc.Encode(akp)
-	if err != nil {
-		t.Fatalf("Error encoding user jwt: %v", err)
-	}
-	creds, err := jwt.FormatUserConfig(ujwt, priv)
-	if err != nil {
-		t.Fatalf("Error encoding credentials: %v", err)
-	}
-	chainedFile := createTmpFile(t, creds)
-	defer os.Remove(chainedFile)
-
-	rch := make(chan bool)
-
-	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
-	nc, err := Connect(url,
-		UserCredentials(chainedFile),
-		ReconnectWait(25*time.Millisecond),
-		ReconnectJitter(0, 0),
-		MaxReconnects(2),
-		ReconnectHandler(func(nc *Conn) {
-			rch <- true
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Expected to connect, got %v", err)
-	}
-	defer nc.Close()
-
-	// Place new credentials underneath.
-	nuc.Expires = time.Now().Add(30 * time.Second).Unix()
-	ujwt, err = nuc.Encode(akp)
-	if err != nil {
-		t.Fatalf("Error encoding user jwt: %v", err)
-	}
-	creds, err = jwt.FormatUserConfig(ujwt, priv)
-	if err != nil {
-		t.Fatalf("Error encoding credentials: %v", err)
-	}
-	if err := ioutil.WriteFile(chainedFile, creds, 0666); err != nil {
-		t.Fatalf("Error writing conf file: %v", err)
-	}
-
-	// Make sure we get disconnected and reconnected first.
-	if err := WaitTime(rch, 2*time.Second); err != nil {
-		t.Fatal("Should have reconnected.")
-	}
-
-	// We should not have been closed.
-	if nc.IsClosed() {
-		t.Fatal("Got disconnected when we should have reconnected.")
-	}
-
-	// Check that we clear the lastErr that can cause the disconnect.
-	// Our reconnect CB will happen before the clear. So check after a bit.
-	time.Sleep(50 * time.Millisecond)
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	if nc.current.lastErr != nil {
-		t.Fatalf("Expected lastErr to be cleared, got %q", nc.current.lastErr)
-	}
 }
 
 // If we are using TLS and have multiple servers we try to match the IP
