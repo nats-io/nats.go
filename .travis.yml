@@ -4,6 +4,7 @@ go:
 - 1.14.x
 env:
 - GO111MODULE=off
+- GOFLAGS=-modfile=go_test.mod
 go_import_path: github.com/nats-io/nats.go
 install:
 - go get -t ./...
