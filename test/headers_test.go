@@ -19,6 +19,7 @@ import (
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
+
 	"github.com/nats-io/nats.go"
 )
 
@@ -57,6 +58,46 @@ func TestBasicHeaders(t *testing.T) {
 	}
 }
 
+func TestRequestMsg(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	subject := "headers.test"
+	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		if m.Header.Get("Hdr-Test") != "1" {
+			m.Respond([]byte("-ERR"))
+		}
+
+		r := nats.NewMsg(m.Reply)
+		r.Header = m.Header
+		r.Data = []byte("+OK")
+		m.RespondMsg(r)
+	})
+	if err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	msg := nats.NewMsg(subject)
+	msg.Header.Add("Hdr-Test", "1")
+	resp, err := nc.RequestMsg(msg, time.Second)
+	if err != nil {
+		t.Fatalf("Expected request to be published: %v", err)
+	}
+	if string(resp.Data) != "+OK" {
+		t.Fatalf("Headers were not published to the requestor")
+	}
+	if resp.Header.Get("Hdr-Test") != "1" {
+		t.Fatalf("Did not receive header in response")
+	}
+}
+
 func TestNoHeaderSupport(t *testing.T) {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
@@ -75,6 +116,10 @@ func TestNoHeaderSupport(t *testing.T) {
 	m.Data = []byte("Hello Headers!")
 
 	if err := nc.PublishMsg(m); err != nats.ErrHeadersNotSupported {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+
+	if _, err := nc.RequestMsg(m, time.Second); err != nats.ErrHeadersNotSupported {
 		t.Fatalf("Expected an error, got %v", err)
 	}
 }
