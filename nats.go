@@ -568,6 +568,7 @@ type serverInfo struct {
 	Version      string   `json:"version"`
 	AuthRequired bool     `json:"auth_required"`
 	TLSRequired  bool     `json:"tls_required"`
+	TLSAvailable bool     `json:"tls_available"`
 	Headers      bool     `json:"headers"`
 	MaxPayload   int64    `json:"max_payload"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
@@ -1601,7 +1602,7 @@ func (nc *Conn) checkForSecure() error {
 	o := nc.Opts
 
 	// Check for mismatch in setups
-	if o.Secure && !nc.info.TLSRequired {
+	if o.Secure && !nc.info.TLSRequired && !nc.info.TLSAvailable {
 		return ErrSecureConnWanted
 	} else if nc.info.TLSRequired && !o.Secure {
 		// Switch to Secure since server needs TLS.
