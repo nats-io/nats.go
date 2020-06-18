@@ -123,6 +123,7 @@ var (
 	ErrDisconnected           = errors.New("nats: server is disconnected")
 	ErrHeadersNotSupported    = errors.New("nats: headers not supported by this server")
 	ErrBadHeaderMsg           = errors.New("nats: message could not decode headers")
+	ErrNoResponders           = errors.New("nats: no responders available for request")
 )
 
 func init() {
@@ -589,21 +590,22 @@ const (
 )
 
 type connectInfo struct {
-	Verbose   bool   `json:"verbose"`
-	Pedantic  bool   `json:"pedantic"`
-	UserJWT   string `json:"jwt,omitempty"`
-	Nkey      string `json:"nkey,omitempty"`
-	Signature string `json:"sig,omitempty"`
-	User      string `json:"user,omitempty"`
-	Pass      string `json:"pass,omitempty"`
-	Token     string `json:"auth_token,omitempty"`
-	TLS       bool   `json:"tls_required"`
-	Name      string `json:"name"`
-	Lang      string `json:"lang"`
-	Version   string `json:"version"`
-	Protocol  int    `json:"protocol"`
-	Echo      bool   `json:"echo"`
-	Headers   bool   `json:"headers"`
+	Verbose      bool   `json:"verbose"`
+	Pedantic     bool   `json:"pedantic"`
+	UserJWT      string `json:"jwt,omitempty"`
+	Nkey         string `json:"nkey,omitempty"`
+	Signature    string `json:"sig,omitempty"`
+	User         string `json:"user,omitempty"`
+	Pass         string `json:"pass,omitempty"`
+	Token        string `json:"auth_token,omitempty"`
+	TLS          bool   `json:"tls_required"`
+	Name         string `json:"name"`
+	Lang         string `json:"lang"`
+	Version      string `json:"version"`
+	Protocol     int    `json:"protocol"`
+	Echo         bool   `json:"echo"`
+	Headers      bool   `json:"headers"`
+	NoResponders bool   `json:"no_responders"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -1711,8 +1713,10 @@ func (nc *Conn) connectProto() (string, error) {
 		token = nc.Opts.TokenHandler()
 	}
 
+	// If our server does not support headers then we can't do them or no responders.
+	hdrs := nc.info.Headers
 	cinfo := connectInfo{o.Verbose, o.Pedantic, ujwt, nkey, sig, user, pass, token,
-		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho, true}
+		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho, hdrs, hdrs}
 
 	b, err := json.Marshal(cinfo)
 	if err != nil {
@@ -2689,20 +2693,27 @@ func NewMsg(subject string) *Msg {
 }
 
 const (
-	hdrLine   = "NATS/1.0\r\n"
-	crlf      = "\r\n"
-	hdrPreEnd = len(hdrLine) - len(crlf)
+	hdrLine      = "NATS/1.0\r\n"
+	crlf         = "\r\n"
+	hdrPreEnd    = len(hdrLine) - len(crlf)
+	statusHdr    = "Status"
+	noResponders = "503"
 )
 
 // decodeHeadersMsg will decode and headers.
 func decodeHeadersMsg(data []byte) (http.Header, error) {
 	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
-	if l, err := tp.ReadLine(); err != nil || l != hdrLine[:hdrPreEnd] {
+	l, err := tp.ReadLine()
+	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
 	mh, err := tp.ReadMIMEHeader()
 	if err != nil {
 		return nil, ErrBadHeaderMsg
+	}
+	// Check if we have an inlined status.
+	if len(l) > hdrPreEnd {
+		mh.Add(statusHdr, strings.TrimLeft(l[hdrPreEnd:], " "))
 	}
 	return http.Header(mh), nil
 }
@@ -2904,6 +2915,7 @@ func (nc *Conn) respHandler(m *Msg) {
 
 // Helper to setup and send new request style requests. Return the chan to receive the response.
 func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Msg, string, error) {
+	nc.mu.Lock()
 	// Do setup for the new style if needed.
 	if nc.respMap == nil {
 		nc.initNewResp()
@@ -2944,7 +2956,6 @@ func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
 		if !nc.info.Headers {
 			return nil, ErrHeadersNotSupported
 		}
-
 		hdr, err = msg.headerBytes()
 		if err != nil {
 			return nil, err
@@ -2960,18 +2971,32 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 	return nc.request(subj, nil, data, timeout)
 }
 
+func (nc *Conn) useOldRequestStyle() bool {
+	nc.mu.RLock()
+	r := nc.Opts.UseOldRequestStyle
+	nc.mu.RUnlock()
+	return r
+}
+
 func (nc *Conn) request(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
 
-	nc.mu.Lock()
-	if nc.Opts.UseOldRequestStyle {
-		nc.mu.Unlock()
-		return nc.oldRequest(subj, hdr, data, timeout)
+	var m *Msg
+	var err error
+
+	if nc.useOldRequestStyle() {
+		m, err = nc.oldRequest(subj, hdr, data, timeout)
+	} else {
+		m, err = nc.newRequest(subj, hdr, data, timeout)
 	}
 
-	return nc.newRequest(subj, hdr, data, timeout)
+	// Check for no responder status.
+	if err == nil && len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
+		m, err = nil, ErrNoResponders
+	}
+	return m, err
 }
 
 func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
