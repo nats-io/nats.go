@@ -297,13 +297,15 @@ func TestContextOldRequestClosed(t *testing.T) {
 	errCh := make(chan error, 1)
 	start := time.Now()
 	go func() {
+		sub, _ := nc.SubscribeSync("checkClose")
+		defer sub.Unsubscribe()
 		_, err = nc.RequestWithContext(ctx, "checkClose", []byte("should be kicked out on close"))
 		errCh <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
 	nc.Close()
 	if e := <-errCh; e != nats.ErrConnectionClosed {
-		t.Fatalf("Unexpected error: %v", err)
+		t.Fatalf("Unexpected error: %v", e)
 	}
 	if dur := time.Since(start); dur >= time.Second {
 		t.Fatalf("Request took too long to bail out: %v", dur)

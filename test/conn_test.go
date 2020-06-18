@@ -2116,11 +2116,13 @@ func TestGetClientID(t *testing.T) {
 	optsA := test.DefaultTestOptions
 	optsA.Port = -1
 	optsA.Cluster.Port = -1
+	optsA.Cluster.Name = "test"
+
 	srvA := RunServerWithOptions(optsA)
 	defer srvA.Shutdown()
 
 	ch := make(chan bool, 1)
-	nc1, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvA.Addr().(*net.TCPAddr).Port),
+	nc1, err := nats.Connect(srvA.ClientURL(),
 		nats.DiscoveredServersHandler(func(_ *nats.Conn) {
 			ch <- true
 		}),
@@ -2144,13 +2146,15 @@ func TestGetClientID(t *testing.T) {
 	optsB := test.DefaultTestOptions
 	optsB.Port = -1
 	optsB.Cluster.Port = -1
+	optsB.Cluster.Name = "test"
+
 	optsB.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", srvA.ClusterAddr().Port))
 	srvB := RunServerWithOptions(optsB)
 	defer srvB.Shutdown()
 
 	// Wait for the discovered callback to fire
 	if err := Wait(ch); err != nil {
-		t.Fatal("Did not the discovered callback")
+		t.Fatal("Did not fire the discovered callback")
 	}
 	// Now check CID should be valid and same as before
 	newCID, err := nc1.GetClientID()
@@ -2162,7 +2166,7 @@ func TestGetClientID(t *testing.T) {
 	}
 
 	// Create a client to server B
-	nc2, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", srvB.Addr().(*net.TCPAddr).Port))
+	nc2, err := nats.Connect(srvB.ClientURL())
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}

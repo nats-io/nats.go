@@ -15,6 +15,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -555,8 +556,51 @@ func TestRequestTimeout(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	// We now need a responder by default otherwise we will get a no responders error.
+	nc.SubscribeSync("foo")
+
 	if _, err := nc.Request("foo", []byte("help"), 10*time.Millisecond); err != nats.ErrTimeout {
 		t.Fatalf("Expected to receive a timeout error")
+	}
+}
+
+func TestBasicNoRespondersSupport(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	// Normal new style
+	if m, err := nc.Request("foo", nil, time.Second); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
+	}
+	// New style with context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if m, err := nc.RequestWithContext(ctx, "foo", nil); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
+	}
+
+	// Now do old request style as well.
+	nc, err = nats.Connect(s.ClientURL(), nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	// Normal old request style
+	if m, err := nc.Request("foo", nil, time.Second); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
+	}
+	// Old request style with context
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if m, err := nc.RequestWithContext(ctx, "foo", nil); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
 	}
 }
 
@@ -586,13 +630,15 @@ func TestOldRequest(t *testing.T) {
 	errCh := make(chan error, 1)
 	start := time.Now()
 	go func() {
+		sub, _ := nc.SubscribeSync("checkClose")
+		defer sub.Unsubscribe()
 		_, err := nc.Request("checkClose", []byte("should be kicked out on close"), time.Second)
 		errCh <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
 	nc.Close()
 	if e := <-errCh; e != nats.ErrConnectionClosed {
-		t.Fatalf("Unexpected error: %v", err)
+		t.Fatalf("Unexpected error: %v", e)
 	}
 	if dur := time.Since(start); dur >= time.Second {
 		t.Fatalf("Request took too long to bail out: %v", dur)
@@ -677,6 +723,7 @@ func TestRequestClose(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		nc.Close()
 	}()
+	nc.SubscribeSync("foo")
 	if _, err := nc.Request("foo", []byte("help"), 2*time.Second); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
 		t.Fatalf("Expected connection error: got %v", err)
 	}
