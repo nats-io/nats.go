@@ -285,6 +285,21 @@ nc.QueueSubscribe("foo", "job_workers", func(_ *Msg) {
 
 ```go
 
+// Normally, the library will return an error when trying to connect and
+// there is no server running. The RetryOnFailedConnect option will set
+// the connection in reconnecting state if it failed to connect right away.
+nc, err := nats.Connect(nats.DefaultURL,
+    nats.RetryOnFailedConnect(true),
+    nats.MaxReconnects(10),
+    nats.ReconnectWait(time.Second),
+    nats.ReconnectHandler(func(_ *nats.Conn) {
+        // Note that this will be invoked for the first asynchronous connect.
+    }))
+if err != nil {
+    // Should not return an error even if it can't connect, but you still
+    // need to check in case there are some configuration errors.
+}
+
 // Flush connection to server, returns when all messages have been processed.
 nc.Flush()
 fmt.Println("All clear!")

@@ -392,6 +392,15 @@ type Options struct {
 	// gradually disconnect all its connections before shuting down. This is
 	// often used in deployments when upgrading NATS Servers.
 	LameDuckModeHandler ConnHandler
+
+	// RetryOnFailedConnect sets the connection in reconnecting state right
+	// away if it can't connect to a server in the initial set. The
+	// MaxReconnect and ReconnectWait options are used for this process,
+	// similarly to when an established connection is disconnected.
+	// If a ReconnectHandler is set, it will be invoked when the connection
+	// is established, and if a ClosedHandler is set, it will be invoked if
+	// it fails to connect (after exhausting the MaxReconnect attempts).
+	RetryOnFailedConnect bool
 }
 
 const (
@@ -1000,6 +1009,16 @@ func LameDuckModeHandler(cb ConnHandler) Option {
 	}
 }
 
+// RetryOnFailedConnect sets the connection in reconnecting state right away
+// if it can't connect to a server in the initial set.
+// See RetryOnFailedConnect option for more details.
+func RetryOnFailedConnect(retry bool) Option {
+	return func(o *Options) error {
+		o.RetryOnFailedConnect = retry
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -1588,9 +1607,23 @@ func (nc *Conn) connect() error {
 			}
 		}
 	}
-	nc.initc = false
+
 	if returnedErr == nil && nc.status != CONNECTED {
 		returnedErr = ErrNoServers
+	}
+
+	if returnedErr == nil {
+		nc.initc = false
+	} else if nc.Opts.RetryOnFailedConnect {
+		nc.setup()
+		nc.status = RECONNECTING
+		nc.pending = new(bytes.Buffer)
+		if nc.bw == nil {
+			nc.bw = nc.newBuffer()
+		}
+		nc.bw.Reset(nc.pending)
+		go nc.doReconnect(ErrNoServers)
+		returnedErr = nil
 	}
 
 	return returnedErr
@@ -1912,10 +1945,12 @@ func (nc *Conn) doReconnect(err error) {
 	nc.err = nil
 	// Perform appropriate callback if needed for a disconnect.
 	// DisconnectedErrCB has priority over deprecated DisconnectedCB
-	if nc.Opts.DisconnectedErrCB != nil {
-		nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
-	} else if nc.Opts.DisconnectedCB != nil {
-		nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+	if !nc.initc {
+		if nc.Opts.DisconnectedErrCB != nil {
+			nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
+		} else if nc.Opts.DisconnectedCB != nil {
+			nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+		}
 	}
 
 	// This is used to wait on go routines exit if we start them in the loop
@@ -2055,6 +2090,10 @@ func (nc *Conn) doReconnect(err error) {
 
 		// This is where we are truly connected.
 		nc.status = CONNECTED
+
+		// If we are here with a retry on failed connect, indicate that the
+		// initial connect is now complete.
+		nc.initc = false
 
 		// Queue up the reconnect callback.
 		if nc.Opts.ReconnectedCB != nil {
@@ -2532,7 +2571,7 @@ func (nc *Conn) processInfo(info string) error {
 	// did not include themselves in the async INFO protocol.
 	// If empty, do not remove the implicit servers from the pool.
 	if len(ncInfo.ConnectURLs) == 0 {
-		if ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
+		if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
 			nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
 		}
 		return nil
@@ -2595,7 +2634,7 @@ func (nc *Conn) processInfo(info string) error {
 			nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
 		}
 	}
-	if ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
+	if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
 		nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
 	}
 	return nil
@@ -2776,7 +2815,8 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 
 	// Proactively reject payloads over the threshold set by server.
 	msgSize := int64(len(data) + len(hdr))
-	if msgSize > nc.info.MaxPayload {
+	// Skip this check if we are not yet connected (RetryOnFailedConnect)
+	if !nc.initc && msgSize > nc.info.MaxPayload {
 		nc.mu.Unlock()
 		return ErrMaxPayload
 	}
