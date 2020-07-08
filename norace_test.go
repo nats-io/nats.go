@@ -33,6 +33,7 @@ func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
 	opts.DisconnectedCB = func(_ *Conn) {
 		dch <- true
 	}
+	opts.NoCallbacksAfterClientClose = true
 
 	nc, errc := opts.Connect()
 	if errc != nil {
@@ -94,4 +95,5 @@ func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
 			reconnectedCount, expectedReconnectCount)
 	}
+	nc.Close()
 }
