@@ -4303,6 +4303,13 @@ func (nc *Conn) MaxPayload() int64 {
 	return nc.info.MaxPayload
 }
 
+// HeadersSupported will return if the server supports headers
+func (nc *Conn) HeadersSupported() bool {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	return nc.info.Headers
+}
+
 // AuthRequired will return if the connected server requires authorization.
 func (nc *Conn) AuthRequired() bool {
 	nc.mu.RLock()
