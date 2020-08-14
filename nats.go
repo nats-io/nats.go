@@ -54,6 +54,7 @@ const (
 	DefaultReconnectJitter    = 100 * time.Millisecond
 	DefaultReconnectJitterTLS = time.Second
 	DefaultTimeout            = 2 * time.Second
+	DefaultJetStreamTimeout   = 2 * time.Second
 	DefaultPingInterval       = 2 * time.Minute
 	DefaultMaxPingOut         = 2
 	DefaultMaxChanLen         = 8192            // 8k
@@ -124,6 +125,11 @@ var (
 	ErrHeadersNotSupported    = errors.New("nats: headers not supported by this server")
 	ErrBadHeaderMsg           = errors.New("nats: message could not decode headers")
 	ErrNoResponders           = errors.New("nats: no responders available for request")
+	ErrNoContextOrTimeout     = errors.New("nats: no context or timeout given")
+	ErrNotJSMessage           = errors.New("nats: not a JetStream message")
+	ErrInvalidStreamName      = errors.New("nats: invalid stream name")
+	ErrInvalidJSAck           = errors.New("nats: invalid JetStream publish acknowledgement")
+	ErrMultiStreamUnsupported = errors.New("nats: multiple streams are not supported")
 )
 
 func init() {
@@ -139,6 +145,7 @@ func GetDefaultOptions() Options {
 		ReconnectJitter:    DefaultReconnectJitter,
 		ReconnectJitterTLS: DefaultReconnectJitterTLS,
 		Timeout:            DefaultTimeout,
+		JetStreamTimeout:   DefaultJetStreamTimeout,
 		PingInterval:       DefaultPingInterval,
 		MaxPingsOut:        DefaultMaxPingOut,
 		SubChanLen:         DefaultMaxChanLen,
@@ -292,6 +299,9 @@ type Options struct {
 
 	// Timeout sets the timeout for a Dial operation on a connection.
 	Timeout time.Duration
+
+	// JetStreamTimeout set the default timeout for the JetStream API
+	JetStreamTimeout time.Duration
 
 	// DrainTimeout sets the timeout for a Drain Operation to complete.
 	DrainTimeout time.Duration
@@ -518,6 +528,7 @@ type Msg struct {
 	Sub     *Subscription
 	next    *Msg
 	barrier *barrierInfo
+	jsMeta  *JetStreamMsgMetaData
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
@@ -798,6 +809,14 @@ func ReconnectBufSize(size int) Option {
 func Timeout(t time.Duration) Option {
 	return func(o *Options) error {
 		o.Timeout = t
+		return nil
+	}
+}
+
+// JetStreamTimeout is an Option to set the timeout for access to the JetStream API
+func JetStreamTimeout(t time.Duration) Option {
+	return func(o *Options) error {
+		o.JetStreamTimeout = t
 		return nil
 	}
 }
@@ -2723,7 +2742,11 @@ func (nc *Conn) kickFlusher() {
 // Publish publishes the data argument to the given subject. The data
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
-func (nc *Conn) Publish(subj string, data []byte) error {
+func (nc *Conn) Publish(subj string, data []byte, opts ...PublishOption) error {
+	if len(opts) > 0 {
+		return nc.jsPublish(subj, data, opts)
+	}
+
 	return nc.publish(subj, _EMPTY_, nil, data)
 }
 
