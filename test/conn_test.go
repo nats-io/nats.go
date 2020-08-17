@@ -2490,3 +2490,50 @@ func TestRetryOnFailedConnect(t *testing.T) {
 	default:
 	}
 }
+
+func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
+	opts := test.DefaultTestOptions
+	opts.Port = 4222
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+		CaFile:   "./configs/certs/ca.pem",
+	}
+	var err error
+	if opts.TLSConfig, err = server.GenTLSConfig(tc); err != nil {
+		t.Fatalf("Can't build TLCConfig: %v", err)
+	}
+	opts.TLSTimeout = 0.0001
+
+	s := RunServerWithOptions(opts)
+	defer s.Shutdown()
+
+	ch := make(chan bool, 1)
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.Secure(&tls.Config{InsecureSkipVerify: true}),
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(15*time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			ch <- true
+		}),
+		nats.NoCallbacksAfterClientClose())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// Wait for several failed attempts
+	time.Sleep(100 * time.Millisecond)
+	// Replace tls timeout to a reasonable value.
+	s.Shutdown()
+	opts.TLSTimeout = 2.0
+	s = RunServerWithOptions(opts)
+	defer s.Shutdown()
+
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("Should have connected")
+	}
+}

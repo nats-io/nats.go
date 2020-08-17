@@ -1597,7 +1597,9 @@ func (nc *Conn) connect() error {
 				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false, err)
 				nc.mu.Lock()
-				nc.current = nil
+				// Do not reset nc.current here since it would prevent
+				// RetryOnFailedConnect to work should this be the last server
+				// to try before starting doReconnect().
 			}
 		} else {
 			// Cancel out default connection refused, will trigger the
@@ -1624,6 +1626,8 @@ func (nc *Conn) connect() error {
 		nc.bw.Reset(nc.pending)
 		go nc.doReconnect(ErrNoServers)
 		returnedErr = nil
+	} else {
+		nc.current = nil
 	}
 
 	return returnedErr
