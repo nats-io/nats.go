@@ -1553,6 +1553,9 @@ func (nc *Conn) processConnectInit() error {
 		if nc.ptmr == nil {
 			nc.ptmr = time.AfterFunc(nc.Opts.PingInterval, nc.processPingTimer)
 		} else {
+			if !nc.ptmr.Stop() {
+				<-nc.ptmr.C
+			}
 			nc.ptmr.Reset(nc.Opts.PingInterval)
 		}
 	}
@@ -1923,7 +1926,9 @@ func (nc *Conn) flushReconnectPendingItems() {
 // Connection lock is held on entry.
 func (nc *Conn) stopPingTimer() {
 	if nc.ptmr != nil {
-		nc.ptmr.Stop()
+		if !nc.ptmr.Stop() {
+			<-nc.ptmr.C
+		}
 	}
 }
 
@@ -3841,6 +3846,9 @@ func (nc *Conn) processPingTimer() {
 	}
 
 	nc.sendPing(nil)
+	if !nc.ptmr.Stop() {
+		<-nc.ptmr.C
+	}
 	nc.ptmr.Reset(nc.Opts.PingInterval)
 	nc.mu.Unlock()
 }
