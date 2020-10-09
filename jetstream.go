@@ -104,21 +104,17 @@ func (m *Msg) parseJSMsgMetadata() (*JetStreamMsgMetaData, error) {
 
 const jsStreamUnspecified = "not.set"
 
-type jsAckOpts struct {
-	str string // stream to expect a ack from
-}
-
 type jsOpts struct {
 	timeout time.Duration
 	ctx     context.Context
 
-	ack        jsAckOpts
+	ackstr     string
 	consumer   *ConsumerConfig
 	streamName string
 }
 
 func newJsOpts() *jsOpts {
-	return &jsOpts{ack: jsAckOpts{str: jsStreamUnspecified}}
+	return &jsOpts{ackstr: jsStreamUnspecified}
 }
 
 func (j *jsOpts) context(dftl time.Duration) (context.Context, context.CancelFunc) {
@@ -139,13 +135,13 @@ type AckOption func(opts *jsOpts) error
 // PublishOption configures publishing messages
 type PublishOption func(opts *jsOpts) error
 
-// ConsumerOption configures JetStream consumer behavior
-type ConsumerOption func(opts *jsOpts) error
+// SubscribeOption configures JetStream consumer behavior
+type SubscribeOption func(opts *jsOpts) error
 
 // Consumer creates a JetStream Consumer on a Stream
-func Consumer(stream string, cfg *ConsumerConfig) ConsumerOption {
+func Consumer(stream string, cfg ConsumerConfig) SubscribeOption {
 	return func(jopts *jsOpts) error {
-		jopts.consumer = cfg
+		jopts.consumer = &cfg
 		jopts.streamName = stream
 		return nil
 	}
@@ -156,10 +152,10 @@ func PublishExpectsStream(stream ...string) PublishOption {
 	return func(opts *jsOpts) error {
 		switch len(stream) {
 		case 0:
-			opts.ack.str = ""
+			opts.ackstr = ""
 		case 1:
-			opts.ack.str = stream[0]
-			if !isValidJSName(opts.ack.str) {
+			opts.ackstr = stream[0]
+			if !isValidJSName(opts.ackstr) {
 				return ErrInvalidStreamName
 			}
 		default:
@@ -337,7 +333,7 @@ func (nc *Conn) jsPublish(subj string, data []byte, opts []PublishOption) error 
 		}
 	}
 
-	if aopts == nil || aopts.timeout == 0 && aopts.ctx == nil && aopts.ack.str == jsStreamUnspecified {
+	if aopts == nil || aopts.timeout == 0 && aopts.ctx == nil && aopts.ackstr == jsStreamUnspecified {
 		return nc.publish(subj, _EMPTY_, nil, data)
 	}
 
@@ -358,11 +354,11 @@ func (nc *Conn) jsPublish(subj string, data []byte, opts []PublishOption) error 
 		return ErrInvalidJSAck
 	}
 
-	if aopts.ack.str == jsStreamUnspecified || aopts.ack.str == "" {
+	if aopts.ackstr == jsStreamUnspecified || aopts.ackstr == "" {
 		return nil
 	}
 
-	if ack.Stream == aopts.ack.str {
+	if ack.Stream == aopts.ackstr {
 		return nil
 	}
 

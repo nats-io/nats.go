@@ -130,7 +130,6 @@ var (
 	ErrInvalidStreamName      = errors.New("nats: invalid stream name")
 	ErrInvalidJSAck           = errors.New("nats: invalid JetStream publish acknowledgement")
 	ErrMultiStreamUnsupported = errors.New("nats: multiple streams are not supported")
-	ErrNotPushConsumer        = errors.New("nats: can only subscribe to push consumers")
 	ErrStreamNameRequired     = errors.New("nats: Stream name is required")
 	ErrConsumerConfigRequired = errors.New("nats: Consumer configuration is required")
 )
@@ -3194,14 +3193,14 @@ func (nc *Conn) respToken(respInbox string) string {
 // Subscribe will express interest in the given subject. The subject
 // can have wildcards (partial:*, full:>). Messages will be delivered
 // to the associated MsgHandler.
-func (nc *Conn) Subscribe(subj string, cb MsgHandler, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) Subscribe(subj string, cb MsgHandler, opts ...SubscribeOption) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, cb, nil, false, opts...)
 }
 
 // ChanSubscribe will express interest in the given subject and place
 // all messages received on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
-func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, nil, ch, false, opts...)
 }
 
@@ -3211,13 +3210,13 @@ func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg, opts ...ConsumerOption)
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than QueueSubscribeSyncWithChan.
-func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
 	return nc.subscribe(subj, group, nil, ch, false, opts...)
 }
 
 // SubscribeSync will express interest on the given subject. Messages will
 // be received synchronously using Subscription.NextMsg().
-func (nc *Conn) SubscribeSync(subj string, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) SubscribeSync(subj string, opts ...SubscribeOption) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
@@ -3230,7 +3229,7 @@ func (nc *Conn) SubscribeSync(subj string, opts ...ConsumerOption) (*Subscriptio
 // All subscribers with the same queue name will form the queue group and
 // only one member of the group will be selected to receive any given
 // message asynchronously.
-func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubscribeOption) (*Subscription, error) {
 	return nc.subscribe(subj, queue, cb, nil, false, opts...)
 }
 
@@ -3238,7 +3237,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...Consum
 // subject. All subscribers with the same queue name will form the queue
 // group and only one member of the group will be selected to receive any
 // given message synchronously using Subscription.NextMsg().
-func (nc *Conn) QueueSubscribeSync(subj, queue string, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) QueueSubscribeSync(subj, queue string, opts ...SubscribeOption) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	s, e := nc.subscribe(subj, queue, nil, mch, true, opts...)
 	return s, e
@@ -3250,7 +3249,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string, opts ...ConsumerOption) (
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than ChanQueueSubscribe.
-func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
 	return nc.subscribe(subj, queue, nil, ch, false, opts...)
 }
 
@@ -3275,7 +3274,7 @@ func badQueue(qname string) bool {
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...SubscribeOption) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
@@ -3289,9 +3288,17 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSyn
 			}
 		}
 
-		// we cant do push yet
-		if aopts.consumer.DeliverSubject == "" {
-			return nil, ErrNotPushConsumer
+		// when no DeliverySubject is given, while we don't have any support for pull mode
+		// we force people to do push by overriding their intent rather than give them
+		// an error about trying to use a pull based configuration
+		if aopts.consumer.DeliverSubject == "" && subj == "" {
+			aopts.consumer.DeliverSubject = NewInbox()
+		}
+
+		// they could pass a subject and not set a DeliverySubject but JetStream would need
+		// to know that, so we're passing that in
+		if subj != "" && aopts.consumer.DeliverSubject == "" {
+			aopts.consumer.DeliverSubject = subj
 		}
 
 		// annoying to set both subject and DeliverySubject, so if subj is empty its taken from delivery
@@ -3321,7 +3328,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSyn
 	return s, nil
 }
 
-func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...ConsumerOption) (*Subscription, error) {
+func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...SubscribeOption) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}

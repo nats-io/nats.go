@@ -42,9 +42,9 @@ func (nc *Conn) createOrUpdateConsumer(opts *jsOpts) (*ConsumerInfo, error) {
 	var subj string
 	switch len(opts.consumer.Durable) {
 	case 0:
-		subj = fmt.Sprintf(JSApiConsumerCreateT, opts.streamName)
+		subj = fmt.Sprintf(jSApiConsumerCreateT, opts.streamName)
 	default:
-		subj = fmt.Sprintf(JSApiDurableCreateT, opts.streamName, opts.consumer.Durable)
+		subj = fmt.Sprintf(jSApiDurableCreateT, opts.streamName, opts.consumer.Durable)
 	}
 
 	resp, err := nc.RequestWithContext(ctx, subj, crj)
@@ -52,31 +52,31 @@ func (nc *Conn) createOrUpdateConsumer(opts *jsOpts) (*ConsumerInfo, error) {
 		return nil, err
 	}
 
-	cresp := &JSApiConsumerCreateResponse{}
+	cresp := &jSApiConsumerCreateResponse{}
 	err = json.Unmarshal(resp.Data, cresp)
 	if err != nil {
 		return nil, err
 	}
 
-	if cresp.IsError() {
-		return nil, cresp.ToError()
+	if cresp.Error != nil {
+		return nil, cresp.Error
 	}
 
 	return cresp.ConsumerInfo, nil
 }
 
 const (
-	JSApiConsumerCreateT = "$JS.API.CONSUMER.CREATE.%s"
-	JSApiDurableCreateT  = "$JS.API.CONSUMER.DURABLE.CREATE.%s.%s"
+	jSApiConsumerCreateT = "$JS.API.CONSUMER.CREATE.%s"
+	jSApiDurableCreateT  = "$JS.API.CONSUMER.DURABLE.CREATE.%s.%s"
 )
 
-type ApiError struct {
+type apiError struct {
 	Code        int    `json:"code"`
 	Description string `json:"description,omitempty"`
 }
 
 // Error implements error
-func (e ApiError) Error() string {
+func (e apiError) Error() string {
 	switch {
 	case e.Description == "" && e.Code == 0:
 		return "unknown JetStream Error"
@@ -87,35 +87,9 @@ func (e ApiError) Error() string {
 	}
 }
 
-// NotFoundError is true when the error is one about a resource not found
-func (e ApiError) NotFoundError() bool { return e.Code == 404 }
-
-// ServerError is true when the server returns a 5xx error code
-func (e ApiError) ServerError() bool { return e.Code >= 500 && e.Code < 600 }
-
-// UserError is true when the server returns a 4xx error code
-func (e ApiError) UserError() bool { return e.Code >= 400 && e.Code < 500 }
-
-// ErrorCode is the JetStream error code
-func (e ApiError) ErrorCode() int { return e.Code }
-
-type JSApiResponse struct {
+type jSApiResponse struct {
 	Type  string    `json:"type"`
-	Error *ApiError `json:"error,omitempty"`
-}
-
-// ToError extracts a standard error from a JetStream response
-func (r JSApiResponse) ToError() error {
-	if r.Error == nil {
-		return nil
-	}
-
-	return *r.Error
-}
-
-// IsError determines if a standard JetStream API response is a error
-func (r JSApiResponse) IsError() bool {
-	return r.Error != nil
+	Error *apiError `json:"error,omitempty"`
 }
 
 // io.nats.jetstream.api.v1.consumer_create_request
@@ -125,8 +99,8 @@ type JSApiConsumerCreateRequest struct {
 }
 
 // io.nats.jetstream.api.v1.consumer_create_response
-type JSApiConsumerCreateResponse struct {
-	JSApiResponse
+type jSApiConsumerCreateResponse struct {
+	jSApiResponse
 	*ConsumerInfo
 }
 
@@ -137,19 +111,6 @@ const (
 	AckAll
 	AckExplicit
 )
-
-func (p AckPolicy) String() string {
-	switch p {
-	case AckNone:
-		return "None"
-	case AckAll:
-		return "All"
-	case AckExplicit:
-		return "Explicit"
-	default:
-		return "Unknown Acknowledgement Policy"
-	}
-}
 
 func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
@@ -185,17 +146,6 @@ const (
 	ReplayInstant ReplayPolicy = iota
 	ReplayOriginal
 )
-
-func (p ReplayPolicy) String() string {
-	switch p {
-	case ReplayInstant:
-		return "Instant"
-	case ReplayOriginal:
-		return "Original"
-	default:
-		return "Unknown Replay Policy"
-	}
-}
 
 func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
@@ -238,23 +188,6 @@ const (
 	DeliverByStartSequence
 	DeliverByStartTime
 )
-
-func (p DeliverPolicy) String() string {
-	switch p {
-	case DeliverAll:
-		return "All"
-	case DeliverLast:
-		return "Last"
-	case DeliverNew:
-		return "New"
-	case DeliverByStartSequence:
-		return "By Start Sequence"
-	case DeliverByStartTime:
-		return "By Start Time"
-	default:
-		return "Unknown Deliver Policy"
-	}
-}
 
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
