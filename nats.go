@@ -3288,22 +3288,8 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSyn
 			}
 		}
 
-		// when no DeliverySubject is given, while we don't have any support for pull mode
-		// we force people to do push by overriding their intent rather than give them
-		// an error about trying to use a pull based configuration
-		if aopts.consumer.DeliverSubject == "" && subj == "" {
-			aopts.consumer.DeliverSubject = NewInbox()
-		}
-
-		// they could pass a subject and not set a DeliverySubject but JetStream would need
-		// to know that, so we're passing that in
-		if subj != "" && aopts.consumer.DeliverSubject == "" {
-			aopts.consumer.DeliverSubject = subj
-		}
-
-		// annoying to set both subject and DeliverySubject, so if subj is empty its taken from delivery
-		if aopts.consumer.DeliverSubject != subj {
-			subj = aopts.consumer.DeliverSubject
+		if subj == "" {
+			subj = NewInbox()
 		}
 	}
 
@@ -3316,7 +3302,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSyn
 
 	// here so that interest exist already when doing ephemerals
 	if aopts != nil {
-		nfo, err := nc.createOrUpdateConsumer(aopts)
+		nfo, err := nc.createOrUpdateConsumer(aopts, subj)
 		if err != nil {
 			s.Unsubscribe()
 			return nil, fmt.Errorf("nats: JetStream consumer creation failed: %s", err)

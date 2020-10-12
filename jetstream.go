@@ -114,7 +114,7 @@ type jsOpts struct {
 }
 
 func newJsOpts() *jsOpts {
-	return &jsOpts{ackstr: jsStreamUnspecified}
+	return &jsOpts{ackstr: jsStreamUnspecified, consumer: &ConsumerConfig{}}
 }
 
 func (j *jsOpts) context(dftl time.Duration) (context.Context, context.CancelFunc) {

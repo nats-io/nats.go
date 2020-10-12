@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-func (nc *Conn) createOrUpdateConsumer(opts *jsOpts) (*ConsumerInfo, error) {
+func (nc *Conn) createOrUpdateConsumer(opts *jsOpts, delivery string) (*ConsumerInfo, error) {
 	if opts.streamName == "" {
 		return nil, ErrStreamNameRequired
 	}
@@ -28,9 +28,9 @@ func (nc *Conn) createOrUpdateConsumer(opts *jsOpts) (*ConsumerInfo, error) {
 		return nil, ErrConsumerConfigRequired
 	}
 
-	crj, err := json.Marshal(&JSApiConsumerCreateRequest{
+	crj, err := json.Marshal(&jSApiConsumerCreateRequest{
 		Stream: opts.streamName,
-		Config: *opts.consumer,
+		Config: consumerConfig{DeliverSubject: delivery, ConsumerConfig: opts.consumer},
 	})
 	if err != nil {
 		return nil, err
@@ -93,9 +93,9 @@ type jSApiResponse struct {
 }
 
 // io.nats.jetstream.api.v1.consumer_create_request
-type JSApiConsumerCreateRequest struct {
+type jSApiConsumerCreateRequest struct {
 	Stream string         `json:"stream_name"`
-	Config ConsumerConfig `json:"config"`
+	Config consumerConfig `json:"config"`
 }
 
 // io.nats.jetstream.api.v1.consumer_create_response
@@ -224,11 +224,8 @@ func (p DeliverPolicy) MarshalJSON() ([]byte, error) {
 }
 
 // ConsumerConfig is the configuration for a JetStream consumes
-//
-// NATS Schema Type io.nats.jetstream.api.v1.consumer_configuration
 type ConsumerConfig struct {
 	Durable         string        `json:"durable_name,omitempty"`
-	DeliverSubject  string        `json:"deliver_subject,omitempty"`
 	DeliverPolicy   DeliverPolicy `json:"deliver_policy"`
 	OptStartSeq     uint64        `json:"opt_start_seq,omitempty"`
 	OptStartTime    *time.Time    `json:"opt_start_time,omitempty"`
@@ -239,6 +236,11 @@ type ConsumerConfig struct {
 	ReplayPolicy    ReplayPolicy  `json:"replay_policy"`
 	SampleFrequency string        `json:"sample_freq,omitempty"`
 	RateLimit       uint64        `json:"rate_limit_bps,omitempty"`
+}
+
+type consumerConfig struct {
+	DeliverSubject string `json:"deliver_subject,omitempty"`
+	*ConsumerConfig
 }
 
 type SequencePair struct {

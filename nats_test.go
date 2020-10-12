@@ -2587,19 +2587,6 @@ func TestJSSubscribe(t *testing.T) {
 	}
 
 	// accepts my own inbox
-	cfg.DeliverSubject = NewInbox()
-	sub, err = nc.Subscribe("", cb, Consumer("TEST", cfg))
-	if err != nil {
-		t.Fatalf("create failed: %s", err)
-	}
-	defer sub.Unsubscribe()
-
-	if sub.Subject != cfg.DeliverSubject {
-		t.Fatalf("subscriber not subscribed to the delivery subject")
-	}
-	sub.Unsubscribe()
-
-	cfg.DeliverSubject = ""
 	ib := NewInbox()
 	sub, err = nc.Subscribe(ib, cb, Consumer("TEST", cfg))
 	if err != nil {
@@ -2610,13 +2597,9 @@ func TestJSSubscribe(t *testing.T) {
 	if sub.Subject != ib {
 		t.Fatalf("subscriber not subscribed to the delivery subject")
 	}
-	if sub.ConsumerConfig.DeliverSubject != ib {
-		t.Fatalf("consumer not delivering to the inbox")
-	}
 
 	// should fail to update if existing subscribe is active (server error)
-	cfg.DeliverSubject = NewInbox()
-	_, err = nc.Subscribe("", cb, Consumer("TEST", cfg))
+	_, err = nc.Subscribe(NewInbox(), cb, Consumer("TEST", cfg))
 	if err == nil {
 		t.Fatal("create succeeded, expected error")
 	}
@@ -2629,14 +2612,15 @@ func TestJSSubscribe(t *testing.T) {
 	// should be able to create an ephemeral which requires interest to exist first
 	// before creating the ephemeral
 	cfg.Durable = ""
-	sub, err = nc.Subscribe("", cb, Consumer("TEST", cfg))
+	ib = NewInbox()
+	sub, err = nc.Subscribe(ib, cb, Consumer("TEST", cfg))
 	if err != nil {
 		t.Fatalf("creating ephemeral failed: %s", err)
 	}
 	if sub.ConsumerConfig.Durable != "" {
 		t.Fatalf("expected ephemeral consumer, got: %q", sub.ConsumerConfig.Durable)
 	}
-	if sub.Subject != cfg.DeliverSubject {
+	if sub.Subject != ib {
 		t.Fatalf("subscriber not subscribed to the delivery subject")
 	}
 }
