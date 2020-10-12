@@ -26,7 +26,7 @@ import (
 // nats-pub -s demo.nats.io:4443 <subject> <msg> (TLS version)
 
 func usage() {
-	log.Printf("Usage: nats-pub [-s server] [-creds file] <subject> <msg>\n")
+	log.Printf("Usage: nats-pub [-s server] [-creds file] [-nkey file] <subject> <msg>\n")
 	flag.PrintDefaults()
 }
 
@@ -38,8 +38,9 @@ func showUsageAndExit(exitcode int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
-	var showHelp = flag.Bool("h", false, "Show help message")
+	var nkeyFile = flag.String("nkey", "", "NKey Seed File")
 	var reply = flag.String("reply", "", "Sets a specific reply subject")
+	var showHelp = flag.Bool("h", false, "Show help message")
 
 	log.SetFlags(0)
 	flag.Usage = usage
@@ -57,9 +58,22 @@ func main() {
 	// Connect Options.
 	opts := []nats.Option{nats.Name("NATS Sample Publisher")}
 
+	if *userCreds != "" && *nkeyFile != "" {
+		log.Fatal("specify -seed or -creds")
+	}
+
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
+	}
+
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
 	}
 
 	// Connect to NATS
