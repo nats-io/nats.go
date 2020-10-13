@@ -1,3 +1,16 @@
+// Copyright 2020 The NATS Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package nats
 
 import (
@@ -6,16 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
-)
-
-var (
-	AckAck      = []byte("+ACK")
-	AckNak      = []byte("-NAK")
-	AckProgress = []byte("+WPI")
-	AckNext     = []byte("+NXT")
-	AckTerm     = []byte("+TERM")
 )
 
 // JetStreamMsgMetaData is metadata related to a JetStream originated message
@@ -100,19 +104,17 @@ func (m *Msg) parseJSMsgMetadata() (*JetStreamMsgMetaData, error) {
 
 const jsStreamUnspecified = "not.set"
 
-type jsAcKOpts struct {
-	str string // stream to expect a ack from
-}
-
 type jsOpts struct {
 	timeout time.Duration
 	ctx     context.Context
 
-	ack jsAcKOpts
+	ackstr     string
+	consumer   *ConsumerConfig
+	streamName string
 }
 
 func newJsOpts() *jsOpts {
-	return &jsOpts{ack: jsAcKOpts{str: jsStreamUnspecified}}
+	return &jsOpts{ackstr: jsStreamUnspecified, consumer: &ConsumerConfig{}}
 }
 
 func (j *jsOpts) context(dftl time.Duration) (context.Context, context.CancelFunc) {
@@ -133,15 +135,27 @@ type AckOption func(opts *jsOpts) error
 // PublishOption configures publishing messages
 type PublishOption func(opts *jsOpts) error
 
+// SubscribeOption configures JetStream consumer behavior
+type SubscribeOption func(opts *jsOpts) error
+
+// Consumer creates a JetStream Consumer on a Stream
+func Consumer(stream string, cfg ConsumerConfig) SubscribeOption {
+	return func(jopts *jsOpts) error {
+		jopts.consumer = &cfg
+		jopts.streamName = stream
+		return nil
+	}
+}
+
 // PublishExpectsStream waits for an ack after publishing and ensure it's from a specific stream, empty arguments waits for any valid acknowledgement
 func PublishExpectsStream(stream ...string) PublishOption {
 	return func(opts *jsOpts) error {
 		switch len(stream) {
 		case 0:
-			opts.ack.str = ""
+			opts.ackstr = ""
 		case 1:
-			opts.ack.str = stream[0]
-			if !isValidJSName(opts.ack.str) {
+			opts.ackstr = stream[0]
+			if !isValidJSName(opts.ackstr) {
 				return ErrInvalidStreamName
 			}
 		default:
@@ -306,10 +320,6 @@ func ParsePublishAck(m []byte) (*JetStreamPublishAck, error) {
 	return ack, err
 }
 
-func isValidJSName(n string) bool {
-	return !(n == "" || strings.ContainsAny(n, ">*. "))
-}
-
 func (nc *Conn) jsPublish(subj string, data []byte, opts []PublishOption) error {
 	var err error
 	var aopts *jsOpts
@@ -323,7 +333,7 @@ func (nc *Conn) jsPublish(subj string, data []byte, opts []PublishOption) error 
 		}
 	}
 
-	if aopts == nil || aopts.timeout == 0 && aopts.ctx == nil && aopts.ack.str == jsStreamUnspecified {
+	if aopts == nil || aopts.timeout == 0 && aopts.ctx == nil && aopts.ackstr == jsStreamUnspecified {
 		return nc.publish(subj, _EMPTY_, nil, data)
 	}
 
@@ -344,11 +354,11 @@ func (nc *Conn) jsPublish(subj string, data []byte, opts []PublishOption) error 
 		return ErrInvalidJSAck
 	}
 
-	if aopts.ack.str == jsStreamUnspecified || aopts.ack.str == "" {
+	if aopts.ackstr == jsStreamUnspecified || aopts.ackstr == "" {
 		return nil
 	}
 
-	if ack.Stream == aopts.ack.str {
+	if ack.Stream == aopts.ackstr {
 		return nil
 	}
 
