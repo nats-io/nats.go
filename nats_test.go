@@ -31,6 +31,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2446,6 +2447,27 @@ func TestHeaderParser(t *testing.T) {
 	shouldErr("NATS/1.0\r\n")
 	shouldErr("NATS/1.0\r\nk1:v1")
 	shouldErr("NATS/1.0\r\nk1:v1\r\n")
+
+	// Check that we can do inline status and descriptions
+	checkStatus := func(hdr string, status int, description string) {
+		t.Helper()
+		hdrs, err := decodeHeadersMsg([]byte(hdr + "\r\n\r\n"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if code, err := strconv.Atoi(hdrs.Get(statusHdr)); err != nil || code != status {
+			t.Fatalf("Expected status of %d, got %s", status, hdrs.Get(statusHdr))
+		}
+		if len(description) > 0 {
+			if descr := hdrs.Get(descrHdr); err != nil || descr != description {
+				t.Fatalf("Expected description of %q, got %q", description, descr)
+			}
+		}
+	}
+
+	checkStatus("NATS/1.0 503", 503, "")
+	checkStatus("NATS/1.0 503 No Responders", 503, "No Responders")
+	checkStatus("NATS/1.0  404   No Messages", 404, "No Messages")
 }
 
 func TestLameDuckMode(t *testing.T) {
