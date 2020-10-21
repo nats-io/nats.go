@@ -2458,6 +2458,11 @@ func TestHeaderParser(t *testing.T) {
 		if code, err := strconv.Atoi(hdrs.Get(statusHdr)); err != nil || code != status {
 			t.Fatalf("Expected status of %d, got %s", status, hdrs.Get(statusHdr))
 		}
+		if len(description) > 0 {
+			if descr := hdrs.Get(descrHdr); err != nil || descr != description {
+				t.Fatalf("Expected description of %q, got %q", description, descr)
+			}
+		}
 	}
 
 	checkStatus("NATS/1.0 503", 503, "")
