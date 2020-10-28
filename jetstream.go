@@ -30,6 +30,7 @@ type JetStreamMsgMetaData struct {
 	Delivered   int
 	StreamSeq   int
 	ConsumerSeq int
+	Pending     int
 	TimeStamp   time.Time
 }
 
@@ -67,8 +68,9 @@ func (m *Msg) parseJSMsgMetadata() (*JetStreamMsgMetaData, error) {
 		}
 	}
 	parts = append(parts, m.Reply[start:])
+	c := len(parts)
 
-	if len(parts) != 8 || parts[0] != "$JS" || parts[1] != "ACK" {
+	if (c != 8 && c != 9) || parts[0] != "$JS" || parts[1] != "ACK" {
 		return nil, ErrNotJSMessage
 	}
 
@@ -96,6 +98,14 @@ func (m *Msg) parseJSMsgMetadata() (*JetStreamMsgMetaData, error) {
 		return nil, ErrNotJSMessage
 	}
 	meta.TimeStamp = time.Unix(0, int64(tsi))
+
+	meta.Pending = -1
+	if c == 9 {
+		meta.Pending, err = strconv.Atoi(parts[8])
+		if err != nil {
+			return nil, ErrNotJSMessage
+		}
+	}
 
 	meta.Parsed = true
 
