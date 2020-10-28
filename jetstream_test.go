@@ -122,34 +122,48 @@ func TestJetStreamPublish(t *testing.T) {
 }
 
 func TestMsg_ParseJSMsgMetadata(t *testing.T) {
-	msg := &Msg{Reply: "$JS.ACK.ORDERS.NEW.1.2.3.1587466354254920000"}
-	meta, err := msg.JetStreamMetaData()
-	if err != nil {
-		t.Fatalf("could not get message metadata: %s", err)
+	cases := []struct {
+		meta    string
+		pending int
+	}{
+		{"$JS.ACK.ORDERS.NEW.1.2.3.1587466354254920000", -1},
+		{"$JS.ACK.ORDERS.NEW.1.2.3.1587466354254920000.10", 10},
 	}
 
-	if meta.Stream != "ORDERS" {
-		t.Fatalf("Expected ORDERS got %q", meta.Stream)
-	}
+	for _, tc := range cases {
+		msg := &Msg{Reply: tc.meta}
+		meta, err := msg.JetStreamMetaData()
+		if err != nil {
+			t.Fatalf("could not get message metadata: %s", err)
+		}
 
-	if meta.Consumer != "NEW" {
-		t.Fatalf("Expected NEW got %q", meta.Consumer)
-	}
+		if meta.Stream != "ORDERS" {
+			t.Fatalf("Expected ORDERS got %q", meta.Stream)
+		}
 
-	if meta.Delivered != 1 {
-		t.Fatalf("Expected 1 got %q", meta.Delivered)
-	}
+		if meta.Consumer != "NEW" {
+			t.Fatalf("Expected NEW got %q", meta.Consumer)
+		}
 
-	if meta.StreamSeq != 2 {
-		t.Fatalf("Expected 2 got %q", meta.StreamSeq)
-	}
+		if meta.Delivered != 1 {
+			t.Fatalf("Expected 1 got %q", meta.Delivered)
+		}
 
-	if meta.ConsumerSeq != 3 {
-		t.Fatalf("Expected 3 got %q", meta.ConsumerSeq)
-	}
+		if meta.StreamSeq != 2 {
+			t.Fatalf("Expected 2 got %q", meta.StreamSeq)
+		}
 
-	if meta.TimeStamp != time.Unix(0, int64(1587466354254920000)) {
-		t.Fatalf("Expected 2020-04-21T12:52:34.25492+02:00 got %q", meta.TimeStamp)
+		if meta.ConsumerSeq != 3 {
+			t.Fatalf("Expected 3 got %q", meta.ConsumerSeq)
+		}
+
+		if meta.TimeStamp != time.Unix(0, int64(1587466354254920000)) {
+			t.Fatalf("Expected 2020-04-21T12:52:34.25492+02:00 got %q", meta.TimeStamp)
+		}
+
+		if meta.Pending != tc.pending {
+			t.Fatalf("Expected %d got %d", tc.pending, meta.Pending)
+		}
 	}
 }
 
