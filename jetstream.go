@@ -263,18 +263,30 @@ type AckNextRequest struct {
 }
 
 // AckNextRequest performs an acknowledgement of a message and request the next messages based on req
-func (m *Msg) AckNextRequest(inbox string, req *AckNextRequest) error {
+func (m *Msg) AckNextRequest(req *AckNextRequest) error {
+	if req == nil {
+		return m.AckNext()
+	}
+
+	if m == nil || m.Sub == nil {
+		return ErrMsgNotBound
+	}
+
 	rj, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 
-	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: inbox, Data: append(AckNext, append([]byte{' '}, rj...)...)})
+	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: m.Sub.Subject, Data: append(AckNext, append([]byte{' '}, rj...)...)})
 }
 
-// AckNext performs an Ack() and request that the next message be sent to subject inbox, to request multiple messages use AckNextRequest()
-func (m *Msg) AckNext(inbox string) error {
-	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: inbox, Data: AckNext})
+// AckNext performs an Ack() and request the next message, to request multiple messages use AckNextRequest()
+func (m *Msg) AckNext() error {
+	if m == nil || m.Sub == nil {
+		return ErrMsgNotBound
+	}
+
+	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: m.Sub.Subject, Data: AckNext})
 }
 
 // AckAndFetch performs an AckNext() and returns the next message from the stream

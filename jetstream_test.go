@@ -347,7 +347,7 @@ func TestMsg_AckNext(t *testing.T) {
 		t.Fatalf("first message was already acked")
 	}
 
-	err = msg.AckNextRequest(sub.Subject, &AckNextRequest{Batch: 5})
+	err = msg.AckNextRequest(&AckNextRequest{Batch: 5})
 	if err != nil {
 		t.Fatalf("ack failed: %s", err)
 	}
