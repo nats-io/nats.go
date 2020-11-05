@@ -347,22 +347,24 @@ func TestMsg_AckNext(t *testing.T) {
 		t.Fatalf("first message was already acked")
 	}
 
-	err = msg.AckNext(sub.Subject)
+	err = msg.AckNextRequest(sub.Subject, &AckNextRequest{Batch: 5})
 	if err != nil {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	for i := 2; i < 7; i++ {
+		msg, err = sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("next failed: %s", err)
+		}
+
+		expect := fmt.Sprintf("msg %d", i)
+		if !bytes.Equal(msg.Data, []byte(expect)) {
+			t.Fatalf("expected %s got %#v", expect, msg)
+		}
+	}
 
 	if cons.Info().AckFloor.StreamSeq != 1 {
 		t.Fatalf("first message was not acked")
-	}
-
-	msg, err = sub.NextMsg(time.Second)
-	if err != nil {
-		t.Fatalf("next failed: %s", err)
-	}
-	if !bytes.Equal(msg.Data, []byte("msg 2")) {
-		t.Fatalf("received invalid 'msg 2': %q", msg.Data)
 	}
 }

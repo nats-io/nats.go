@@ -252,9 +252,29 @@ func (m *Msg) AckProgress(opts ...AckOption) error {
 	return m.jsAck(AckProgress, opts...)
 }
 
-// AckNext performs an Ack() and request that the next message be sent to subject ib
-func (m *Msg) AckNext(ib string) error {
-	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: ib, Data: AckNext})
+// AckNextRequest is parameters used to request the next message while Acknowledging a message
+type AckNextRequest struct {
+	// Expires is the time when the server will stop honoring this request
+	Expires time.Time `json:"expires,omitempty"`
+	// Batch is how many messages to request
+	Batch int `json:"batch,omitempty"`
+	// NoWait indicates that if the Consumer has consumed all messages an Msg with Status header set to 404
+	NoWait bool `json:"no_wait,omitempty"`
+}
+
+// AckNextRequest performs an acknowledgement of a message and request the next messages based on req
+func (m *Msg) AckNextRequest(inbox string, req *AckNextRequest) error {
+	rj, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: inbox, Data: append(AckNext, append([]byte{' '}, rj...)...)})
+}
+
+// AckNext performs an Ack() and request that the next message be sent to subject inbox, to request multiple messages use AckNextRequest()
+func (m *Msg) AckNext(inbox string) error {
+	return m.RespondMsg(&Msg{Subject: m.Reply, Reply: inbox, Data: AckNext})
 }
 
 // AckAndFetch performs an AckNext() and returns the next message from the stream
