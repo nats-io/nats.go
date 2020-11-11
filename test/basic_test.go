@@ -120,18 +120,35 @@ func TestConnectedServer(t *testing.T) {
 	if u == "" || u != nats.DefaultURL {
 		t.Fatalf("Unexpected connected URL of %s\n", u)
 	}
-	srv := nc.ConnectedServerId()
-	if srv == "" {
-		t.Fatal("Expected a connected server id")
+	id := nc.ConnectedServerId()
+	if id == "" {
+		t.Fatalf("Expected a connected server id, got %s", id)
 	}
+	name := nc.ConnectedServerName()
+	if name == "" {
+		t.Fatalf("Expected a connected server name, got %s", name)
+	}
+	cname := nc.ConnectedClusterName()
+	if cname == "" {
+		t.Fatalf("Expected a connected server cluster name, got %s", cname)
+	}
+
 	nc.Close()
 	u = nc.ConnectedUrl()
 	if u != "" {
 		t.Fatalf("Expected a nil connected URL, got %s\n", u)
 	}
-	srv = nc.ConnectedServerId()
-	if srv != "" {
-		t.Fatalf("Expected a nil connect server, got %s\n", srv)
+	id = nc.ConnectedServerId()
+	if id != "" {
+		t.Fatalf("Expected a nil connect server, got %s", id)
+	}
+	name = nc.ConnectedServerName()
+	if name != "" {
+		t.Fatalf("Expected a nil connect server name, got %s", name)
+	}
+	cname = nc.ConnectedClusterName()
+	if cname != "" {
+		t.Fatalf("Expected a nil connect server cluster, got %s", cname)
 	}
 }
 
