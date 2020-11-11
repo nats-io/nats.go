@@ -109,6 +109,7 @@ func RunDefaultServer() *server.Server {
 func RunServerOnPort(port int) *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = port
+	opts.Cluster.Name = "testing"
 	return RunServerWithOptions(opts)
 }
 

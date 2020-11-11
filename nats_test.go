@@ -1008,7 +1008,6 @@ func TestAsyncINFO(t *testing.T) {
 		ID:           "test",
 		Host:         "localhost",
 		Port:         4222,
-		Version:      "1.2.3",
 		AuthRequired: true,
 		TLSRequired:  true,
 		MaxPayload:   2 * 1024 * 1024,

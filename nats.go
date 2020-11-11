@@ -590,19 +590,20 @@ type srv struct {
 // The INFO block received from the server.
 type serverInfo struct {
 	ID           string   `json:"server_id"`
+	Name         string   `json:"server_name"`
+	Proto        int      `json:"proto"`
 	Host         string   `json:"host"`
-	Port         uint     `json:"port"`
-	Version      string   `json:"version"`
-	AuthRequired bool     `json:"auth_required"`
-	TLSRequired  bool     `json:"tls_required"`
-	TLSAvailable bool     `json:"tls_available"`
+	Port         int      `json:"port"`
 	Headers      bool     `json:"headers"`
+	AuthRequired bool     `json:"auth_required,omitempty"`
+	TLSRequired  bool     `json:"tls_required,omitempty"`
+	TLSAvailable bool     `json:"tls_available,omitempty"`
 	MaxPayload   int64    `json:"max_payload"`
-	ConnectURLs  []string `json:"connect_urls,omitempty"`
-	Proto        int      `json:"proto,omitempty"`
 	CID          uint64   `json:"client_id,omitempty"`
 	ClientIP     string   `json:"client_ip,omitempty"`
 	Nonce        string   `json:"nonce,omitempty"`
+	Cluster      string   `json:"cluster,omitempty"`
+	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	LameDuckMode bool     `json:"ldm,omitempty"`
 }
 
@@ -1489,7 +1490,7 @@ func (nc *Conn) waitForExits() {
 	nc.wg.Wait()
 }
 
-// Report the connected server's Url
+// ConnectedUrl reports the connected server's URL
 func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
 		return _EMPTY_
@@ -1519,7 +1520,7 @@ func (nc *Conn) ConnectedAddr() string {
 	return nc.conn.RemoteAddr().String()
 }
 
-// Report the connected server's Id
+// ConnectedServerId reports the connected server's Id
 func (nc *Conn) ConnectedServerId() string {
 	if nc == nil {
 		return _EMPTY_
@@ -1532,6 +1533,36 @@ func (nc *Conn) ConnectedServerId() string {
 		return _EMPTY_
 	}
 	return nc.info.ID
+}
+
+// ConnectedServerName reports the connected server's name
+func (nc *Conn) ConnectedServerName() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.Name
+}
+
+// ConnectedClusterName reports the connected server's cluster name if any
+func (nc *Conn) ConnectedClusterName() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.Cluster
 }
 
 // Low level setup for structs, etc
@@ -2599,7 +2630,7 @@ func (nc *Conn) processInfo(info string) error {
 	// if advertise is disabled on that server, or servers that
 	// did not include themselves in the async INFO protocol.
 	// If empty, do not remove the implicit servers from the pool.
-	if len(ncInfo.ConnectURLs) == 0 {
+	if len(nc.info.ConnectURLs) == 0 {
 		if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
 			nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
 		}
