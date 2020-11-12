@@ -1,4 +1,4 @@
-// Copyright 2018-2019 The NATS Authors
+// Copyright 2018-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,8 +34,14 @@ import (
 // nats-echo -s demo.nats.io <subject>
 // nats-echo -s demo.nats.io:4443 <subject> (TLS version)
 
+const (
+	DefaultGeolocationURL = "https://ipapi.co/json"
+	GEOLOC_ENV_VARNAME    = "GEOLOCATION_JSON_URL"
+	TimeoutGeolocation    = 10 * time.Second // only used at startup
+)
+
 func usage() {
-	log.Printf("Usage: nats-echo [-s server] [-creds file] [-t] <subject>\n")
+	log.Printf("Usage: nats-echo [-s server] [-creds file] [-t] [-geo] <subject>\n")
 	flag.PrintDefaults()
 }
 
@@ -157,12 +164,21 @@ type geo struct {
 	// There are others..
 	Region  string
 	Country string
+
+	// If things go Wrong
+	Error   bool   `json:"error"`
+	Reason  string `json:"string"`
+	Message string `json:"message"`
 }
 
 // lookup our current region and country..
 func lookupGeo() string {
-	c := &http.Client{Timeout: 2 * time.Second}
-	resp, err := c.Get("https://ipapi.co/json")
+	c := &http.Client{Timeout: TimeoutGeolocation}
+	url := os.Getenv(GEOLOC_ENV_VARNAME)
+	if url == "" {
+		url = DefaultGeolocationURL
+	}
+	resp, err := c.Get(url)
 	if err != nil || resp == nil {
 		log.Fatalf("Could not retrive geo location data: %v", err)
 	}
@@ -172,5 +188,18 @@ func lookupGeo() string {
 	if err := json.Unmarshal(body, &g); err != nil {
 		log.Fatalf("Error unmarshalling geo: %v", err)
 	}
-	return g.Region + ", " + g.Country
+	if g.Error {
+		log.Printf("IP Geo data retrieval failed, reason %q message %q", g.Reason, g.Message)
+		return ""
+	}
+	result := g.Region + ", " + g.Country
+
+	// If the env var is used, then there might be something like ?key=... in the URL.
+	// Censor that.
+	logURL := url
+	if offset := strings.IndexByte(logURL, '?'); offset >= 0 {
+		logURL = logURL[:offset]
+	}
+	log.Printf("Derived Geography from %q: %q", logURL, result)
+	return result
 }
