@@ -36,7 +36,7 @@ import (
 
 const (
 	DefaultGeolocationURL = "https://ipapi.co/json"
-	GEOLOC_ENV_VARNAME    = "GEOLOCATION_JSON_URL"
+	GeolocationEnv        = "GEOLOCATION_JSON_URL"
 	TimeoutGeolocation    = 10 * time.Second // only used at startup
 )
 
@@ -174,7 +174,7 @@ type geo struct {
 // lookup our current region and country..
 func lookupGeo() string {
 	c := &http.Client{Timeout: TimeoutGeolocation}
-	url := os.Getenv(GEOLOC_ENV_VARNAME)
+	url := os.Getenv(GeolocationEnv)
 	if url == "" {
 		url = DefaultGeolocationURL
 	}
@@ -198,7 +198,7 @@ func lookupGeo() string {
 	// Censor that.
 	logURL := url
 	if offset := strings.IndexByte(logURL, '?'); offset >= 0 {
-		logURL = logURL[:offset]
+		logURL = logURL[:offset] + "?[...]"
 	}
 	log.Printf("Derived Geography from %q: %q", logURL, result)
 	return result
