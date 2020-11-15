@@ -57,7 +57,7 @@ const (
 	DefaultJetStreamTimeout   = 2 * time.Second
 	DefaultPingInterval       = 2 * time.Minute
 	DefaultMaxPingOut         = 2
-	DefaultMaxChanLen         = 8192            // 8k
+	DefaultMaxChanLen         = 8 * 1024        // 8k
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
@@ -1164,6 +1164,11 @@ func (o Options) Connect() (*Conn, error) {
 	nc.ach = &asyncCallbacksHandler{}
 	nc.ach.cond = sync.NewCond(&nc.ach.mu)
 
+	// Set a default error handler that will print to stderr.
+	if nc.Opts.AsyncErrorCB == nil {
+		nc.Opts.AsyncErrorCB = defaultErrHandler
+	}
+
 	if err := nc.connect(); err != nil {
 		return nil, err
 	}
@@ -1172,6 +1177,22 @@ func (o Options) Connect() (*Conn, error) {
 	go nc.ach.asyncCBDispatcher()
 
 	return nc, nil
+}
+
+func defaultErrHandler(nc *Conn, sub *Subscription, err error) {
+	var cid uint64
+	if nc != nil {
+		nc.mu.RLock()
+		cid = nc.info.CID
+		defer nc.mu.RUnlock()
+	}
+	var errStr string
+	if sub != nil {
+		errStr = fmt.Sprintf("%s on connection [%d] for subscription on %q\n", err.Error(), cid, sub.Subject)
+	} else {
+		errStr = fmt.Sprintf("%s on connection [%d]\n", err.Error(), cid)
+	}
+	os.Stderr.WriteString(errStr)
 }
 
 const (
@@ -2393,18 +2414,18 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 // or the pending queue is over the pending limits, the connection is
 // considered a slow consumer.
 func (nc *Conn) processMsg(data []byte) {
-	// Don't lock the connection to avoid server cutting us off if the
-	// flusher is holding the connection lock, trying to send to the server
-	// that is itself trying to send data to us.
-	nc.subsMu.RLock()
-
 	// Stats
 	atomic.AddUint64(&nc.InMsgs, 1)
 	atomic.AddUint64(&nc.InBytes, uint64(len(data)))
 
+	// Don't lock the connection to avoid server cutting us off if the
+	// flusher is holding the connection lock, trying to send to the server
+	// that is itself trying to send data to us.
+	nc.subsMu.RLock()
 	sub := nc.subs[nc.ps.ma.sid]
+	nc.subsMu.RUnlock()
+
 	if sub == nil {
-		nc.subsMu.RUnlock()
 		return
 	}
 
@@ -2485,7 +2506,6 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.sc = false
 
 	sub.mu.Unlock()
-	nc.subsMu.RUnlock()
 	return
 
 slowConsumer:
@@ -2498,7 +2518,6 @@ slowConsumer:
 		sub.pBytes -= len(m.Data)
 	}
 	sub.mu.Unlock()
-	nc.subsMu.RUnlock()
 	if sc {
 		// Now we need connection's lock and we may end-up in the situation
 		// that we were trying to avoid, except that in this case, the client
@@ -3793,8 +3812,10 @@ func (s *Subscription) ClearMaxPending() error {
 
 // Pending Limits
 const (
-	DefaultSubPendingMsgsLimit  = 65536
-	DefaultSubPendingBytesLimit = 65536 * 1024
+	// DefaultSubPendingMsgsLimit will be 512k msgs.
+	DefaultSubPendingMsgsLimit = 512 * 1024
+	// DefaultSubPendingBytesLimit is 64MB
+	DefaultSubPendingBytesLimit = 64 * 1024 * 1024
 )
 
 // PendingLimits returns the current limits for this subscription.

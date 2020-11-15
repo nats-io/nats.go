@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -45,6 +45,10 @@ func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 	opts := options
 	nc, _ := opts.Connect()
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *Conn, _ *Subscription, _ error) {})
+
 	c, _ := NewEncodedConn(nc, JSON_ENCODER)
 
 	//Test message type

@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -129,6 +129,9 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	// Stop the server
 	ts.Shutdown()

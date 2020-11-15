@@ -1,4 +1,4 @@
-// Copyright 2013-2019 The NATS Authors
+// Copyright 2013-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -417,6 +417,9 @@ func TestSlowSubscriber(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
+
 	sub, _ := nc.SubscribeSync("foo")
 	sub.SetPendingLimits(100, 1024)
 
@@ -444,6 +447,9 @@ func TestSlowChanSubscriber(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
+
 	ch := make(chan *nats.Msg, 64)
 	sub, _ := nc.ChanSubscribe("foo", ch)
 	sub.SetPendingLimits(100, 1024)
@@ -466,6 +472,9 @@ func TestSlowAsyncSubscriber(t *testing.T) {
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	bch := make(chan bool)
 
@@ -895,7 +904,8 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 	// There was a defect that prevented to receive more than
 	// the default pending message limit. Trying to send more
 	// than this limit.
-	total := nats.DefaultSubPendingMsgsLimit + 100
+	pending := 1000
+	total := pending + 100
 
 	for typeSubs := 0; typeSubs < 3; typeSubs++ {
 
@@ -908,10 +918,19 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 			switch typeSubs {
 			case 0:
 				sub, err = nc.ChanSubscribe("foo", ch)
+				if err := sub.SetPendingLimits(pending, -1); err == nil {
+					t.Fatalf("Unexpected error setting pending limits: %v", err)
+				}
 			case 1:
 				sub, err = nc.ChanQueueSubscribe("foo", "bar", ch)
+				if err := sub.SetPendingLimits(pending, -1); err == nil {
+					t.Fatalf("Unexpected error setting pending limits: %v", err)
+				}
 			case 2:
 				sub, err = nc.QueueSubscribeSyncWithChan("foo", "bar", ch)
+				if err := sub.SetPendingLimits(pending, -1); err == nil {
+					t.Fatalf("Unexpected error setting pending limits: %v", err)
+				}
 			}
 			if err != nil {
 				t.Fatalf("Unexpected error on subscribe: %v", err)
@@ -1284,6 +1303,9 @@ func TestSetPendingLimits(t *testing.T) {
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	payload := []byte("hello")
 	payloadLen := len(payload)

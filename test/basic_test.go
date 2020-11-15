@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -212,6 +212,9 @@ func TestPublishDoesNotFailOnSlowConsumer(t *testing.T) {
 	defer s.Shutdown()
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	sub, err := nc.SubscribeSync("foo")
 	if err != nil {
