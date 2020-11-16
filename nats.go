@@ -1184,7 +1184,7 @@ func defaultErrHandler(nc *Conn, sub *Subscription, err error) {
 	if nc != nil {
 		nc.mu.RLock()
 		cid = nc.info.CID
-		defer nc.mu.RUnlock()
+		nc.mu.RUnlock()
 	}
 	var errStr string
 	if sub != nil {
@@ -2464,6 +2464,12 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
+	// Check if closed.
+	if sub.closed {
+		sub.mu.Unlock()
+		return
+	}
+
 	// Subscription internal stats (applicable only for non ChanSubscription's)
 	if sub.typ != ChanSubscription {
 		sub.pMsgs++
@@ -2495,7 +2501,9 @@ func (nc *Conn) processMsg(data []byte) {
 		if sub.pHead == nil {
 			sub.pHead = m
 			sub.pTail = m
-			sub.pCond.Signal()
+			if sub.pCond != nil {
+				sub.pCond.Signal()
+			}
 		} else {
 			sub.pTail.next = m
 			sub.pTail = m

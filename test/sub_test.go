@@ -919,17 +919,17 @@ func TestChanSubscriberPendingLimits(t *testing.T) {
 			case 0:
 				sub, err = nc.ChanSubscribe("foo", ch)
 				if err := sub.SetPendingLimits(pending, -1); err == nil {
-					t.Fatalf("Unexpected error setting pending limits: %v", err)
+					t.Fatalf("Expected an error setting pending limits")
 				}
 			case 1:
 				sub, err = nc.ChanQueueSubscribe("foo", "bar", ch)
 				if err := sub.SetPendingLimits(pending, -1); err == nil {
-					t.Fatalf("Unexpected error setting pending limits: %v", err)
+					t.Fatalf("Expected an error setting pending limits")
 				}
 			case 2:
 				sub, err = nc.QueueSubscribeSyncWithChan("foo", "bar", ch)
 				if err := sub.SetPendingLimits(pending, -1); err == nil {
-					t.Fatalf("Unexpected error setting pending limits: %v", err)
+					t.Fatalf("Expected an error setting pending limits")
 				}
 			}
 			if err != nil {
@@ -1038,6 +1038,9 @@ func TestUnsubscribeChanOnSubscriber(t *testing.T) {
 
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	// Create our own channel.
 	ch := make(chan *nats.Msg, 8)
