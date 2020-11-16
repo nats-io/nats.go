@@ -2003,6 +2003,7 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 		ReconnectJitter(0, 0),
 		MaxReconnects(-1),
 		DontRandomize(),
+		ErrorHandler(func(_ *Conn, _ *Subscription, _ error) {}),
 		DisconnectErrHandler(func(_ *Conn, e error) {
 			dch <- true
 		}),

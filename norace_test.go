@@ -1,4 +1,4 @@
-// Copyright 2019 The NATS Authors
+// Copyright 2019-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,8 +16,11 @@
 package nats
 
 import (
+	"os"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats-server/v2/server"
 )
 
 func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
@@ -96,4 +99,78 @@ func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
 			reconnectedCount, expectedReconnectCount)
 	}
 	nc.Close()
+}
+
+func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	if err := s.EnableJetStream(nil); err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	defer os.RemoveAll(s.JetStreamConfig().StoreDir)
+
+	str, err := s.GlobalAccount().AddStream(&server.StreamConfig{
+		Name:     "PENDING_TEST",
+		Subjects: []string{"js.p"},
+		Storage:  server.MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("stream create failed: %v", err)
+	}
+
+	nc, _ := Connect(s.ClientURL())
+	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *Conn, _ *Subscription, _ error) {})
+
+	// Queue up 1M small messages.
+	toSend := uint64(1_000_000)
+	for i := uint64(0); i < toSend; i++ {
+		nc.Publish("js.p", []byte("ok"))
+	}
+	nc.Flush()
+
+	if nm := str.State().Msgs; nm != toSend {
+		t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
+	}
+
+	var received uint64
+	done := make(chan bool, 1)
+
+	nc.Subscribe("d", func(m *Msg) {
+		// TODO(dlc) - If I put an ack in here this will fail again
+		// so need to look harder at this issues.
+		// m.Respond(nil) // Ack
+
+		received++
+		if received >= toSend {
+			done <- true
+		}
+		meta, err := m.JetStreamMetaData()
+		if err != nil {
+			t.Fatalf("could not get message metadata: %s", err)
+		}
+		if meta.StreamSeq != int(received) {
+			t.Errorf("Missed a sequence, was expecting %d but got %d, last error: '%v'", received, meta.StreamSeq, nc.LastError())
+			nc.Close()
+		}
+	})
+
+	o, err := str.AddConsumer(&server.ConsumerConfig{
+		Durable:        "d",
+		DeliverSubject: "d",
+		AckPolicy:      server.AckNone,
+	})
+	if err != nil {
+		t.Fatalf("Error creating consumer: %v", err)
+	}
+	defer o.Stop()
+
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Failed to get all %d messages, only got %d", toSend, received)
+	case <-done:
+	}
 }
