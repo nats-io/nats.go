@@ -3888,6 +3888,7 @@ func (m *Msg) RespondMsg(msg *Msg) error {
 	if m.Reply == "" {
 		return ErrMsgNoReply
 	}
+	msg.Subject = m.Reply
 	m.Sub.mu.Lock()
 	nc := m.Sub.conn
 	m.Sub.mu.Unlock()

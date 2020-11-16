@@ -2645,3 +2645,40 @@ func TestJSSubscribe(t *testing.T) {
 		t.Fatalf("subscriber not subscribed to the delivery subject")
 	}
 }
+
+func TestMsg_RespondMsg(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync(NewInbox())
+	if err != nil {
+		t.Fatalf("subscribe failed: %s", err)
+	}
+
+	nc.PublishMsg(&Msg{Reply: sub.Subject, Subject: sub.Subject, Data: []byte("request")})
+	req, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("NextMsg failed: %s", err)
+	}
+
+	// verifies that RespondMsg sets the reply subject on msg based on req
+	err = req.RespondMsg(&Msg{Data: []byte("response")})
+	if err != nil {
+		t.Fatalf("RespondMsg failed: %s", err)
+	}
+
+	resp, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("NextMsg failed: %s", err)
+	}
+
+	if !bytes.Equal(resp.Data, []byte("response")) {
+		t.Fatalf("did not get correct response: %q", resp.Data)
+	}
+}
