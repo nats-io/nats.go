@@ -236,6 +236,7 @@ type ConsumerConfig struct {
 	ReplayPolicy    ReplayPolicy  `json:"replay_policy"`
 	SampleFrequency string        `json:"sample_freq,omitempty"`
 	RateLimit       uint64        `json:"rate_limit_bps,omitempty"`
+	MaxAckPending   int           `json:"max_ack_pending,omitempty"`
 }
 
 type consumerConfig struct {

@@ -150,7 +150,7 @@ func TestMsg_ParseJSMsgMetadata(t *testing.T) {
 		}
 
 		if meta.StreamSeq != 2 {
-			t.Fatalf("Expected 2 got %q", meta.StreamSeq)
+			t.Fatalf("Expected 2 got %q", meta.Stream)
 		}
 
 		if meta.ConsumerSeq != 3 {
@@ -181,7 +181,7 @@ func TestMsg_Ack(t *testing.T) {
 		t.Fatalf("received invalid 'msg 1': %q", msg.Data)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was already acked")
 	}
 
@@ -190,7 +190,7 @@ func TestMsg_Ack(t *testing.T) {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 1 {
+	if cons.Info().AckFloor.Stream != 1 {
 		t.Fatalf("first message was not acked")
 	}
 }
@@ -209,7 +209,7 @@ func TestMsg_Nak(t *testing.T) {
 		t.Fatalf("received invalid 'msg 1': %q", msg.Data)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was already acked")
 	}
 
@@ -218,7 +218,7 @@ func TestMsg_Nak(t *testing.T) {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was acked")
 	}
 }
@@ -237,7 +237,7 @@ func TestMsg_AckTerm(t *testing.T) {
 		t.Fatalf("received invalid 'msg 1': %q", msg.Data)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was already acked")
 	}
 
@@ -246,7 +246,7 @@ func TestMsg_AckTerm(t *testing.T) {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 1 {
+	if cons.Info().AckFloor.Stream != 1 {
 		t.Fatalf("first message was not acked")
 	}
 }
@@ -265,7 +265,7 @@ func TestMsg_AckProgress(t *testing.T) {
 		t.Fatalf("received invalid 'msg 1': %q", msg.Data)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was already acked")
 	}
 
@@ -274,7 +274,7 @@ func TestMsg_AckProgress(t *testing.T) {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was acked")
 	}
 
@@ -283,7 +283,7 @@ func TestMsg_AckProgress(t *testing.T) {
 		t.Fatalf("ack failed: %s", err)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 1 {
+	if cons.Info().AckFloor.Stream != 1 {
 		t.Fatalf("first message was not acked")
 	}
 }
@@ -303,14 +303,14 @@ func TestMsg_AckAndFetch(t *testing.T) {
 	}
 
 	for i := 1; i < 20; i++ {
-		if cons.Info().AckFloor.StreamSeq == uint64(i) {
+		if cons.Info().AckFloor.Stream == uint64(i) {
 			t.Fatalf("message %d was already acked", i)
 		}
 		msg, err = msg.AckAndFetch()
 		if err != nil {
 			t.Fatalf("ack failed: %s", err)
 		}
-		if cons.Info().AckFloor.StreamSeq != uint64(i) {
+		if cons.Info().AckFloor.Stream != uint64(i) {
 			t.Fatalf("message %d was not acked", i)
 		}
 		if !bytes.Equal(msg.Data, []byte(fmt.Sprintf("msg %d", i+1))) {
@@ -343,7 +343,7 @@ func TestMsg_AckNext(t *testing.T) {
 		t.Fatalf("received invalid 'msg 1': %q", msg.Data)
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 0 {
+	if cons.Info().AckFloor.Stream != 0 {
 		t.Fatalf("first message was already acked")
 	}
 
@@ -364,7 +364,7 @@ func TestMsg_AckNext(t *testing.T) {
 		}
 	}
 
-	if cons.Info().AckFloor.StreamSeq != 1 {
+	if cons.Info().AckFloor.Stream != 1 {
 		t.Fatalf("first message was not acked")
 	}
 }
