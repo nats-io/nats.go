@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/golang/protobuf v1.4.2
-	github.com/nats-io/nats-server/v2 v2.1.8-0.20201103213111-0965a20b516d
+	github.com/nats-io/nats-server/v2 v2.1.8-0.20201115145023-f61fa8529a0f
 	github.com/nats-io/nkeys v0.2.0
 	github.com/nats-io/nuid v1.0.1
 	google.golang.org/protobuf v1.23.0
