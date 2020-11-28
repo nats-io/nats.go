@@ -20,7 +20,6 @@ package nats
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2562,89 +2561,6 @@ func TestLameDuckMode(t *testing.T) {
 		})
 	}
 	wg.Wait()
-}
-
-func TestJSSubscribe(t *testing.T) {
-	srv, _, _, nc := startJetStream(t)
-	defer os.RemoveAll(srv.JetStreamConfig().StoreDir)
-	defer srv.Shutdown()
-	defer nc.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
-	defer cancel()
-
-	seen := 0
-	cb := func(m *Msg) {
-		m.Ack()
-		seen++
-		if seen == 20 {
-			cancel()
-		}
-	}
-
-	cfg := ConsumerConfig{
-		Durable:       "nats",
-		DeliverPolicy: DeliverAll,
-		AckPolicy:     AckExplicit,
-		AckWait:       5 * time.Second,
-		ReplayPolicy:  ReplayInstant,
-	}
-
-	// works without a delivery subject set or subscribe subject, makes
-	// its own inbox
-	sub, err := nc.Subscribe("", cb, Consumer("TEST", cfg))
-	if err != nil {
-		t.Fatalf("create failed: %s", err)
-	}
-	defer sub.Unsubscribe()
-	if sub.ConsumerConfig.Durable != "nats" {
-		t.Fatalf("got wrong durable: %q", sub.ConsumerConfig.Durable)
-	}
-
-	<-ctx.Done()
-
-	sub.Unsubscribe()
-	if seen != 20 {
-		t.Fatalf("Expected 20 messages got %d", seen)
-	}
-
-	// accepts my own inbox
-	ib := NewInbox()
-	sub, err = nc.Subscribe(ib, cb, Consumer("TEST", cfg))
-	if err != nil {
-		t.Fatalf("create failed: %s", err)
-	}
-	defer sub.Unsubscribe()
-
-	if sub.Subject != ib {
-		t.Fatalf("subscriber not subscribed to the delivery subject")
-	}
-
-	// should fail to update if existing subscribe is active (server error)
-	_, err = nc.Subscribe(NewInbox(), cb, Consumer("TEST", cfg))
-	if err == nil {
-		t.Fatal("create succeeded, expected error")
-	}
-	if err.Error() != "nats: JetStream consumer creation failed: consumer already exists" {
-		t.Fatalf("expected already exist error got %q", err.Error())
-	}
-
-	sub.Unsubscribe()
-
-	// should be able to create an ephemeral which requires interest to exist first
-	// before creating the ephemeral
-	cfg.Durable = ""
-	ib = NewInbox()
-	sub, err = nc.Subscribe(ib, cb, Consumer("TEST", cfg))
-	if err != nil {
-		t.Fatalf("creating ephemeral failed: %s", err)
-	}
-	if sub.ConsumerConfig.Durable != "" {
-		t.Fatalf("expected ephemeral consumer, got: %q", sub.ConsumerConfig.Durable)
-	}
-	if sub.Subject != ib {
-		t.Fatalf("subscriber not subscribed to the delivery subject")
-	}
 }
 
 func TestMsg_RespondMsg(t *testing.T) {
