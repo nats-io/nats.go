@@ -57,7 +57,7 @@ const (
 	DefaultJetStreamTimeout   = 2 * time.Second
 	DefaultPingInterval       = 2 * time.Minute
 	DefaultMaxPingOut         = 2
-	DefaultMaxChanLen         = 8 * 1024        // 8k
+	DefaultMaxChanLen         = 64 * 1024       // 64k
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
@@ -126,12 +126,20 @@ var (
 	ErrBadHeaderMsg           = errors.New("nats: message could not decode headers")
 	ErrNoResponders           = errors.New("nats: no responders available for request")
 	ErrNoContextOrTimeout     = errors.New("nats: no context or timeout given")
-	ErrNotJSMessage           = errors.New("nats: not a JetStream message")
+	ErrDirectModeRequired     = errors.New("nats: direct access requires direct pull or push")
+	ErrPullModeNotAllowed     = errors.New("nats: pull based not supported")
+	ErrJetStreamNotEnabled    = errors.New("nats: jetstream not enabled")
+	ErrJetStreamBadPre        = errors.New("nats: jetstream api prefix not valid")
+	ErrNoStreamResponse       = errors.New("nats: no response from stream")
+	ErrNotJSMessage           = errors.New("nats: not a jetstream message")
 	ErrInvalidStreamName      = errors.New("nats: invalid stream name")
-	ErrInvalidJSAck           = errors.New("nats: invalid JetStream publish acknowledgement")
+	ErrNoMatchingStream       = errors.New("nats: no stream matches subject")
+	ErrSubjectMismatch        = errors.New("nats: subject does not match consumer")
+	ErrContextAndTimeout      = errors.New("nats: context and timeout can not both be set")
+	ErrInvalidJSAck           = errors.New("nats: invalid jetstream publish response")
 	ErrMultiStreamUnsupported = errors.New("nats: multiple streams are not supported")
-	ErrStreamNameRequired     = errors.New("nats: Stream name is required")
-	ErrConsumerConfigRequired = errors.New("nats: Consumer configuration is required")
+	ErrStreamNameRequired     = errors.New("nats: stream name is required")
+	ErrConsumerConfigRequired = errors.New("nats: consumer configuration is required")
 )
 
 func init() {
@@ -494,9 +502,8 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	// ConsumerConfig is the configuration for the JetStream consumer if one was created
-	// or updated using the subscription options
-	ConsumerConfig *ConsumerConfig
+	// For holding information about a JetStream consumer.
+	jsi *jsSub
 
 	delivered  uint64
 	max        uint64
@@ -525,6 +532,15 @@ type Subscription struct {
 	dropped     int
 }
 
+// For JetStream subscription info.
+type jsSub struct {
+	js       *js
+	consumer string
+	stream   string
+	deliver  string
+	pull     int
+}
+
 // Msg is a structure used by Subscribers and PublishMsg().
 type Msg struct {
 	Subject string
@@ -534,7 +550,6 @@ type Msg struct {
 	Sub     *Subscription
 	next    *Msg
 	barrier *barrierInfo
-	jsMeta  *JetStreamMsgMetaData
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
@@ -2806,11 +2821,7 @@ func (nc *Conn) kickFlusher() {
 // Publish publishes the data argument to the given subject. The data
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
-func (nc *Conn) Publish(subj string, data []byte, opts ...PublishOption) error {
-	if len(opts) > 0 {
-		return nc.jsPublish(subj, data, opts)
-	}
-
+func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, nil, data)
 }
 
@@ -3262,15 +3273,15 @@ func (nc *Conn) respToken(respInbox string) string {
 // Subscribe will express interest in the given subject. The subject
 // can have wildcards (partial:*, full:>). Messages will be delivered
 // to the associated MsgHandler.
-func (nc *Conn) Subscribe(subj string, cb MsgHandler, opts ...SubscribeOption) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb, nil, false, opts...)
+func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, cb, nil, false)
 }
 
 // ChanSubscribe will express interest in the given subject and place
 // all messages received on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
-func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, ch, false, opts...)
+func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, nil, ch, false)
 }
 
 // ChanQueueSubscribe will express interest in the given subject.
@@ -3279,18 +3290,18 @@ func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg, opts ...SubscribeOption
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than QueueSubscribeSyncWithChan.
-func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
-	return nc.subscribe(subj, group, nil, ch, false, opts...)
+func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, group, nil, ch, false)
 }
 
 // SubscribeSync will express interest on the given subject. Messages will
 // be received synchronously using Subscription.NextMsg().
-func (nc *Conn) SubscribeSync(subj string, opts ...SubscribeOption) (*Subscription, error) {
+func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, _EMPTY_, nil, mch, true, opts...)
+	s, e := nc.subscribe(subj, _EMPTY_, nil, mch, true)
 	return s, e
 }
 
@@ -3298,17 +3309,17 @@ func (nc *Conn) SubscribeSync(subj string, opts ...SubscribeOption) (*Subscripti
 // All subscribers with the same queue name will form the queue group and
 // only one member of the group will be selected to receive any given
 // message asynchronously.
-func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubscribeOption) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb, nil, false, opts...)
+func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, queue, cb, nil, false)
 }
 
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
 // subject. All subscribers with the same queue name will form the queue
 // group and only one member of the group will be selected to receive any
 // given message synchronously using Subscription.NextMsg().
-func (nc *Conn) QueueSubscribeSync(subj, queue string, opts ...SubscribeOption) (*Subscription, error) {
+func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, queue, nil, mch, true, opts...)
+	s, e := nc.subscribe(subj, queue, nil, mch, true)
 	return s, e
 }
 
@@ -3318,8 +3329,8 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string, opts ...SubscribeOption) 
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than ChanQueueSubscribe.
-func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg, opts ...SubscribeOption) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil, ch, false, opts...)
+func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
+	return nc.subscribe(subj, queue, nil, ch, false)
 }
 
 // badSubject will do quick test on whether a subject is acceptable.
@@ -3343,47 +3354,16 @@ func badQueue(qname string) bool {
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...SubscribeOption) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
-
-	var aopts *jsOpts
-	if len(opts) > 0 {
-		aopts = newJsOpts()
-		for _, f := range opts {
-			if err := f(aopts); err != nil {
-				return nil, err
-			}
-		}
-
-		if subj == "" {
-			subj = NewInbox()
-		}
-	}
-
 	nc.mu.Lock()
-	s, err := nc.subscribeLocked(subj, queue, cb, ch, isSync, opts...)
-	nc.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-
-	// here so that interest exist already when doing ephemerals
-	if aopts != nil {
-		nfo, err := nc.createOrUpdateConsumer(aopts, subj)
-		if err != nil {
-			s.Unsubscribe()
-			return nil, fmt.Errorf("nats: JetStream consumer creation failed: %s", err)
-		}
-
-		s.ConsumerConfig = &nfo.Config
-	}
-
-	return s, nil
+	defer nc.mu.Unlock()
+	return nc.subscribeLocked(subj, queue, cb, ch, isSync)
 }
 
-func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts ...SubscribeOption) (*Subscription, error) {
+func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
@@ -3408,7 +3388,11 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 
 	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
 	// Set pending limits.
-	sub.pMsgsLimit = DefaultSubPendingMsgsLimit
+	if ch != nil {
+		sub.pMsgsLimit = cap(ch)
+	} else {
+		sub.pMsgsLimit = DefaultSubPendingMsgsLimit
+	}
 	sub.pBytesLimit = DefaultSubPendingBytesLimit
 
 	// If we have an async callback, start up a sub specific
