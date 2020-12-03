@@ -589,7 +589,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 					# For the push based consumer delivery and ack.
 					{ stream: "p.d" }
 					# For the acks. Service in case we want an ack to our ack.
-					{ service: "$JS.ACK.TEST.*.>" }
+					{ service: "$JS.ACK.ORDERS.*.>" }
 				]
 			},
 			U: {
@@ -597,7 +597,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 				imports [
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
-					{ stream: { subject: "p.d", account: JS } }
+					{ stream:  { subject: "p.d", account: JS } }
+					{ service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
 				]
 			},
 		}
@@ -681,6 +682,20 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	waitForPending(toSend)
 
+	// Ack the messages from the push consumer.
+	for i := 0; i < toSend; i++ {
+		m, err := sub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Test that can expect an ack of the ack.
+		err = m.AckSync()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
 	// Now pull based consumer.
 	batch := 10
 	sub, err = js.SubscribeSync("ORDERS", nats.PullDirect("ORDERS", "d1", batch))
@@ -696,7 +711,10 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		// Tests that acks flow since we need these to do AckNext for this to work.
-		m.Ack()
+		err = m.Ack()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
 	}
 }
 
