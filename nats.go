@@ -538,6 +538,7 @@ type jsSub struct {
 	consumer string
 	stream   string
 	deliver  string
+	subject  string
 	pull     int
 }
 

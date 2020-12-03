@@ -398,7 +398,7 @@ func (js *js) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) 
 	return js.subscribe(subj, queue, cb, nil, opts)
 }
 
-// Subscribe will create a subscription to the appropriate stream and consumer.
+// ChanSubscribe will create a subscription to the appropriate stream and consumer using the given channel.
 func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error) {
 	return js.subscribe(subj, _EMPTY_, nil, ch, opts)
 }
@@ -443,16 +443,20 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	// If we are attaching to an existing consumer.
 	shouldAttach := o.stream != _EMPTY_ && o.consumer != _EMPTY_ || o.cfg.DeliverSubject != _EMPTY_
 	shouldCreate := !shouldAttach
+	hasApiAccess := !js.direct
 
-	if js.direct && shouldCreate {
-		return nil, ErrDirectModeRequired
-	}
-
-	if js.direct {
+	if !hasApiAccess {
 		if o.cfg.DeliverSubject != _EMPTY_ {
 			deliver = o.cfg.DeliverSubject
-		} else {
+		} else if isPullMode {
 			deliver = NewInbox()
+		} else {
+			// For push consumers without api access can just use the subject,
+			// for example given an import like:
+			//
+			// imports: [ { stream: { subject: "p.d", account: JS } } ]
+			//
+			deliver = subj
 		}
 	} else if shouldAttach {
 		info, err := js.getConsumerInfo(o.stream, o.consumer)
@@ -498,7 +502,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	sub.jsi = &jsSub{js: js}
 
 	// If we are creating or updating let's process that request.
-	if shouldCreate {
+	if hasApiAccess && shouldCreate {
 		// If not set default to ack explicit.
 		if cfg.AckPolicy == ackPolicyNotSet {
 			cfg.AckPolicy = AckExplicit
@@ -552,14 +556,21 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		sub.jsi.stream = info.Stream
 		sub.jsi.consumer = info.Name
 		sub.jsi.deliver = info.Config.DeliverSubject
+	} else if !hasApiAccess {
+		sub.jsi.stream = o.stream
+		sub.jsi.consumer = o.consumer
+		if isPullMode {
+			// This to support pull consumers with an import that has a transformed subject
+			// into something simpler such as:
+			//
+			// imports: [ { service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.dur", account: JS }, to: "next.order" } ]
+			//
+			sub.jsi.subject = subj
+		}
 	} else {
 		sub.jsi.stream = o.stream
 		sub.jsi.consumer = o.consumer
-		if js.direct {
-			sub.jsi.deliver = o.cfg.DeliverSubject
-		} else {
-			sub.jsi.deliver = ccfg.DeliverSubject
-		}
+		sub.jsi.deliver = ccfg.DeliverSubject
 	}
 
 	// If we are pull based go ahead and fire off the first request to populate.
@@ -631,25 +642,6 @@ func Pull(batchSize int) SubOpt {
 	}
 }
 
-func PullDirect(stream, consumer string, batchSize int) SubOpt {
-	return func(opts *subOpts) error {
-		if batchSize == 0 {
-			return errors.New("nats: batch size of 0 not valid")
-		}
-		opts.stream = stream
-		opts.consumer = consumer
-		opts.pull = batchSize
-		return nil
-	}
-}
-
-func PushDirect(deliverSubject string) SubOpt {
-	return func(opts *subOpts) error {
-		opts.cfg.DeliverSubject = deliverSubject
-		return nil
-	}
-}
-
 func ManualAck() SubOpt {
 	return func(opts *subOpts) error {
 		opts.mack = true
@@ -682,10 +674,23 @@ func (sub *Subscription) Poll() error {
 	nc, reply := sub.conn, sub.Subject
 	stream, consumer := sub.jsi.stream, sub.jsi.consumer
 	js := sub.jsi.js
+	jsi := sub.jsi
+	hasApiAccess := !js.direct
+	subject := jsi.subject
+	attached := stream != _EMPTY_ && consumer != _EMPTY_
 	sub.mu.Unlock()
 
-	req, _ := json.Marshal(&NextRequest{Batch: batch})
-	reqNext := js.apiSubj(fmt.Sprintf(JSApiRequestNextT, stream, consumer))
+	req, err := json.Marshal(&NextRequest{Batch: batch})
+	if err != nil {
+		return err
+	}
+
+	var reqNext string
+	if attached {
+		reqNext = js.apiSubj(fmt.Sprintf(JSApiRequestNextT, stream, consumer))
+	} else if !hasApiAccess && !attached {
+		reqNext = subject
+	}
 	return nc.PublishRequest(reqNext, reply, req)
 }
 

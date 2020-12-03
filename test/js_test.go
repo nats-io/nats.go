@@ -586,8 +586,10 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 					{ service: "ORDERS" }
 					# For the pull based consumer. Response type needed for batchsize > 1
 					{ service: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", response: stream }
+					{ service: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.dA1", response: stream }
 					# For the push based consumer delivery and ack.
 					{ stream: "p.d" }
+					{ stream: "p.da2" }
 					# For the acks. Service in case we want an ack to our ack.
 					{ service: "$JS.ACK.ORDERS.*.>" }
 				]
@@ -597,7 +599,9 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 				imports [
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
+					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.dA1", account: JS }, to: "next.order" }
 					{ stream:  { subject: "p.d", account: JS } }
+					{ stream:  { subject: "p.da2", account: JS } }
 					{ service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
 				]
 			},
@@ -620,19 +624,30 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer mset.Delete()
 
-	// Create a pull based consumer.
+	// Create pull based consumers.
 	o1, err := mset.AddConsumer(&server.ConsumerConfig{Durable: "d1", AckPolicy: server.AckExplicit})
 	if err != nil {
 		t.Fatalf("pull consumer create failed: %v", err)
 	}
 	defer o1.Delete()
 
-	// Create a push based consumer.
+	oA1, err := mset.AddConsumer(&server.ConsumerConfig{Durable: "dA1", AckPolicy: server.AckExplicit})
+	if err != nil {
+		t.Fatalf("pull consumer create failed: %v", err)
+	}
+	defer oA1.Delete()
+
+	// Create push based consumers.
 	o2, err := mset.AddConsumer(&server.ConsumerConfig{Durable: "d2", AckPolicy: server.AckExplicit, DeliverSubject: "p.d"})
 	if err != nil {
 		t.Fatalf("push consumer create failed: %v", err)
 	}
 	defer o2.Delete()
+	oA2, err := mset.AddConsumer(&server.ConsumerConfig{Durable: "dA2", AckPolicy: server.AckExplicit, DeliverSubject: "p.da2"})
+	if err != nil {
+		t.Fatalf("push consumer create failed: %v", err)
+	}
+	defer oA2.Delete()
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -656,14 +671,10 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("Expected %d messages, got %d", toSend, state.Msgs)
 	}
 
-	// Check for correct errors.
-	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrDirectModeRequired {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrDirectModeRequired, err)
-	}
-
 	var sub *nats.Subscription
 
-	waitForPending := func(n int) {
+	waitForPending := func(t *testing.T, n int) {
+		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
 			if msgs, _, _ := sub.Pending(); msgs == n {
@@ -675,12 +686,55 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("Expected to receive %d messages, but got %d", n, msgs)
 	}
 
-	// Do push based direct consumer.
-	sub, err = js.SubscribeSync("ORDERS", nats.PushDirect("p.d"))
+	// Do pull based consumer.
+	batch := 10
+	sub, err = js.SubscribeSync("ORDERS", nats.Attach("ORDERS", "d1"), nats.Pull(batch))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	waitForPending(toSend)
+
+	waitForPending(t, batch)
+
+	for i := 0; i < toSend; i++ {
+		m, err := sub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Tests that acks flow since we need these to do AckNext for this to work.
+		err = m.Ack()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	// Pull using the same subject from the import, context already constrained
+	// to only use direct mode / no api access, does not require knowledge
+	// of the durable nor the stream.
+	sub, err = js.SubscribeSync("next.order", nats.Pull(batch))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	waitForPending(t, batch)
+
+	for i := 0; i < toSend; i++ {
+		m, err := sub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Tests that acks flow since we need these to do AckNext for this to work.
+		err = m.Ack()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	// Push directly to imported subject 'p.d'.
+	sub, err = js.SubscribeSync("p.d")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	waitForPending(t, toSend)
 
 	// Ack the messages from the push consumer.
 	for i := 0; i < toSend; i++ {
@@ -696,25 +750,29 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		}
 	}
 
-	// Now pull based consumer.
-	batch := 10
-	sub, err = js.SubscribeSync("ORDERS", nats.PullDirect("ORDERS", "d1", batch))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	waitForPending(batch)
-
-	for i := 0; i < toSend; i++ {
-		m, err := sub.NextMsg(100 * time.Millisecond)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		// Tests that acks flow since we need these to do AckNext for this to work.
-		err = m.Ack()
+	// Push directly asynchronously to imported subject 'p.da2'.
+	seen := 0
+	expected := toSend
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = js.Subscribe("p.da2", func(m *nats.Msg) {
+		seen++
+		err = m.AckSync()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
+		if seen == expected {
+			cancel()
+		}
+
+	}, nats.ManualAck())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	<-ctx.Done()
+
+	if seen != expected {
+		t.Errorf("Expected %d, got %d", expected, seen)
 	}
 }
 
