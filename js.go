@@ -491,11 +491,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		cb = func(m *Msg) { ocb(m); m.Ack() }
 	}
 
-	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil)
+	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js})
 	if err != nil {
 		return nil, err
 	}
-	sub.jsi = &jsSub{js: js}
 
 	// If we are creating or updating let's process that request.
 	if shouldCreate {
