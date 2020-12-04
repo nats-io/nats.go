@@ -28,7 +28,7 @@ import (
 // nats-sub -s demo.nats.io:4443 <subject> (TLS version)
 
 func usage() {
-	log.Printf("Usage: nats-sub [-s server] [-creds file] [-t] <subject>\n")
+	log.Printf("Usage: nats-sub [-s server] [-creds file] [-tlscert file] [-tlskey file] [-tlsrootca file] [-t] <subject>\n")
 	flag.PrintDefaults()
 }
 
@@ -44,6 +44,9 @@ func printMsg(m *nats.Msg, i int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var tlsClientCert = flag.String("tlscert", "", "TLS client certificate file")
+	var tlsClientKey = flag.String("tlskey", "", "Private key file for client certificate")
+	var tlsRootCA = flag.String("tlsrootca", "", "Root CA file for server verification")
 	var showTime = flag.Bool("t", false, "Display timestamps")
 	var showHelp = flag.Bool("h", false, "Show help message")
 
@@ -67,6 +70,16 @@ func main() {
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
+	}
+
+	// Use TLS client authentication
+	if *tlsClientCert != "" && *tlsClientKey != "" {
+		opts = append(opts, nats.ClientCert(*tlsClientCert, *tlsClientKey))
+	}
+
+	// Use specific root certificate
+	if *tlsRootCA != "" {
+		opts = append(opts, nats.RootCAs(*tlsRootCA))
 	}
 
 	// Connect to NATS
