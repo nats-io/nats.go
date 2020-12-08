@@ -726,9 +726,6 @@ func (m *Msg) checkReply() (*js, bool, error) {
 	isPullMode := sub.jsi.pull > 0
 	sub.mu.Unlock()
 
-	if js == nil {
-		return nil, false, ErrNotJSMessage
-	}
 	return js, isPullMode, nil
 }
 
