@@ -718,6 +718,10 @@ func (m *Msg) checkReply() (*js, bool, error) {
 	}
 	sub := m.Sub
 	sub.mu.Lock()
+	if sub.jsi == nil {
+		sub.mu.Unlock()
+		return nil, false, ErrNotJSMessage
+	}
 	js := sub.jsi.js
 	isPullMode := sub.jsi.pull > 0
 	sub.mu.Unlock()

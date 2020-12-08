@@ -472,6 +472,27 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
+func TestAckForNonJetStream(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	sub, _ := nc.SubscribeSync("foo")
+	nc.PublishRequest("foo", "_INBOX_", []byte("OK"))
+	m, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := m.Ack(); err != nats.ErrNotJSMessage {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrNotJSMessage, err)
+	}
+}
+
 // TODO(dlc) - fill out with more stuff.
 func TestJetStreamManagement(t *testing.T) {
 	s := RunBasicJetStreamServer()
