@@ -521,6 +521,16 @@ func TestJetStreamManagement(t *testing.T) {
 	if si == nil || si.Config.Name != "foo" {
 		t.Fatalf("StreamInfo is not correct %+v", si)
 	}
+
+	// Check info calls.
+	si, err = js.StreamInfo("foo")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si == nil || si.Config.Name != "foo" {
+		t.Fatalf("StreamInfo is not correct %+v", si)
+	}
+
 	// Create a consumer using our client API.
 	ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicit})
 	if err != nil {
