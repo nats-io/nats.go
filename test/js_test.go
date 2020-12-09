@@ -537,7 +537,7 @@ func TestJetStreamManagement(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if ci == nil || ci.Name != "dlc" || ci.Stream != "foo" {
-		t.Fatalf("ConsumerInfo is not correct %+v", si)
+		t.Fatalf("ConsumerInfo is not correct %+v", ci)
 	}
 }
 
