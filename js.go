@@ -40,9 +40,14 @@ type JetStream interface {
 	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
 
 	// Management
-	// TODO(dlc) - add more
+	// Create a stream.
 	AddStream(cfg *StreamConfig) (*StreamInfo, error)
+	// Create a consumer.
 	AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, error)
+	// Stream information.
+	StreamInfo(stream string) (*StreamInfo, error)
+
+	// TODO(dlc) - add more
 }
 
 // ApiError is included in all API responses if there was an error.
@@ -104,8 +109,10 @@ const (
 	JSApiConsumerInfoT = "CONSUMER.INFO.%s.%s"
 	// JSApiRequestNextT is the prefix for the request next message(s) for a consumer in worker/pull mode.
 	JSApiRequestNextT = "CONSUMER.MSG.NEXT.%s.%s"
-	// JSApiStreamCreate is the endpoint to create new streams.
+	// JSApiStreamCreateT is the endpoint to create new streams.
 	JSApiStreamCreateT = "STREAM.CREATE.%s"
+	// JSApiStreamInfoT is the endpoint to get information on a stream.
+	JSApiStreamInfoT = "STREAM.INFO.%s"
 )
 
 // JetStream returns a JetStream context for pub/sub interactions.
@@ -1065,6 +1072,24 @@ func (js *js) AddStream(cfg *StreamConfig) (*StreamInfo, error) {
 		return nil, err
 	}
 	var resp JSApiStreamCreateResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, errors.New(resp.Error.Description)
+	}
+	return resp.StreamInfo, nil
+}
+
+type JSApiStreamInfoResponse = JSApiStreamCreateResponse
+
+func (js *js) StreamInfo(stream string) (*StreamInfo, error) {
+	csSubj := js.apiSubj(fmt.Sprintf(JSApiStreamInfoT, stream))
+	r, err := js.nc.Request(csSubj, nil, js.wait)
+	if err != nil {
+		return nil, err
+	}
+	var resp JSApiStreamInfoResponse
 	if err := json.Unmarshal(r.Data, &resp); err != nil {
 		return nil, err
 	}
