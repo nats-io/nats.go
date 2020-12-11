@@ -50,20 +50,20 @@ type JetStream interface {
 	// TODO(dlc) - add more
 }
 
-// ApiError is included in all API responses if there was an error.
-type ApiError struct {
+// APIError is included in all API responses if there was an error.
+type APIError struct {
 	Code        int    `json:"code"`
 	Description string `json:"description,omitempty"`
 }
 
-// ApiResponse is a standard response from the JetStream JSON API
-type ApiResponse struct {
+// APIResponse is a standard response from the JetStream JSON API
+type APIResponse struct {
 	Type  string    `json:"type"`
-	Error *ApiError `json:"error,omitempty"`
+	Error *APIError `json:"error,omitempty"`
 }
 
 type AccountInfoResponse struct {
-	ApiResponse
+	APIResponse
 	*AccountStats
 }
 
@@ -96,7 +96,7 @@ type js struct {
 
 // Request API subjects for JetStream.
 const (
-	JSDefaultApiPrefix = "$JS.API."
+	JSDefaultAPIPrefix = "$JS.API."
 	// JSApiAccountInfo is for obtaining general information about JetStream.
 	JSApiAccountInfo = "INFO"
 	// JSApiStreams can lookup a stream by subject.
@@ -119,7 +119,7 @@ const (
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStream, error) {
 	const defaultRequestWait = 5 * time.Second
 
-	js := &js{nc: nc, pre: JSDefaultApiPrefix, wait: defaultRequestWait}
+	js := &js{nc: nc, pre: JSDefaultAPIPrefix, wait: defaultRequestWait}
 
 	for _, f := range opts {
 		if err := f(js); err != nil {
@@ -151,7 +151,7 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStream, error) {
 // JSOpt configures options for the jetstream context.
 type JSOpt func(opts *js) error
 
-func ApiPrefix(pre string) JSOpt {
+func APIPrefix(pre string) JSOpt {
 	return func(js *js) error {
 		js.pre = pre
 		if !strings.HasSuffix(js.pre, ".") {
@@ -161,7 +161,7 @@ func ApiPrefix(pre string) JSOpt {
 	}
 }
 
-func ApiRequestWait(wait time.Duration) JSOpt {
+func APIRequestWait(wait time.Duration) JSOpt {
 	return func(js *js) error {
 		js.wait = wait
 		return nil
@@ -198,7 +198,7 @@ type pubOpts struct {
 }
 
 type PubAckResponse struct {
-	ApiResponse
+	APIResponse
 	*PubAck
 }
 
@@ -357,7 +357,7 @@ type ConsumerConfig struct {
 }
 
 type JSApiConsumerResponse struct {
-	ApiResponse
+	APIResponse
 	*ConsumerInfo
 }
 
@@ -410,8 +410,8 @@ func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscri
 	return js.subscribe(subj, _EMPTY_, nil, ch, opts)
 }
 
-// ApiPaged includes variables used to create paged responses from the JSON API
-type ApiPaged struct {
+// APIPaged includes variables used to create paged responses from the JSON API
+type APIPaged struct {
 	Total  int `json:"total"`
 	Offset int `json:"offset"`
 	Limit  int `json:"limit"`
@@ -422,8 +422,8 @@ type streamRequest struct {
 }
 
 type JSApiStreamNamesResponse struct {
-	ApiResponse
-	ApiPaged
+	APIResponse
+	APIPaged
 	Streams []string `json:"streams"`
 }
 
@@ -1052,7 +1052,7 @@ type StreamConfig struct {
 
 // JSApiStreamCreateResponse stream creation.
 type JSApiStreamCreateResponse struct {
-	ApiResponse
+	APIResponse
 	*StreamInfo
 }
 

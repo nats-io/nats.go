@@ -588,7 +588,7 @@ func TestJetStreamImport(t *testing.T) {
 	defer nc.Close()
 
 	// Since we import with a prefix from above we can use that when creating our JS context.
-	js, err := nc.JetStream(nats.ApiPrefix("dlc"))
+	js, err := nc.JetStream(nats.APIPrefix("dlc"))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
