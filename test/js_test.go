@@ -97,13 +97,18 @@ func TestJetStreamPublish(t *testing.T) {
 	}
 
 	// Create the stream using our client API.
-	_, err = js.AddStream(&nats.StreamConfig{
+	si, err := js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
 		Subjects: []string{"test", "foo", "bar"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	// Double check that file-based storage is default.
+	if si.Config.Storage != nats.FileStorage {
+		t.Fatalf("Expected FileStorage as default, got %v", si.Config.Storage)
+	}
+
 	// Lookup the stream for testing.
 	mset, err := s.GlobalAccount().LookupStream("TEST")
 	if err != nil {
