@@ -1225,10 +1225,10 @@ func (dp *DiscardPolicy) UnmarshalJSON(data []byte) error {
 type StorageType int
 
 const (
+	// FileStorage specifies on disk storage. It's the default.
+	FileStorage StorageType = iota
 	// MemoryStorage specifies in memory only.
-	MemoryStorage StorageType = iota
-	// FileStorage specifies on disk, designated by the JetStream config StoreDir.
-	FileStorage
+	MemoryStorage
 )
 
 const (
