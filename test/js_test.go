@@ -834,6 +834,53 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 	}
 }
 
+func TestJetStreamInterfaces(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	var js nats.JetStream
+	var jsm nats.JetStreamManager
+	var jsctx nats.JetStreamContext
+
+	// JetStream that can publish/subscribe but cannot manage streams.
+	js, err = nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	js.Publish("foo", []byte("hello"))
+
+	// JetStream context that can manage streams/consumers but cannot produce messages.
+	jsm, err = nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	jsm.AddStream(&nats.StreamConfig{Name: "FOO"})
+
+	// JetStream context that can both manage streams/consumers
+	// as well as publish/subscribe.
+	jsctx, err = nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	jsctx.AddStream(&nats.StreamConfig{Name: "BAR"})
+	jsctx.Publish("bar", []byte("hello world"))
+
+	publishMsg := func(js nats.JetStream, payload []byte) {
+		js.Publish("foo", payload)
+	}
+	publishMsg(js, []byte("hello world"))
+}
+
 // WIP(dlc) - This is in support of stall based tests and processing.
 func TestJetStreamPullBasedStall(t *testing.T) {
 	t.SkipNow()

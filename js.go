@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-// JetStream is the public interface for the JetStream context.
+// JetStream is the public interface for JetStream.
 type JetStream interface {
 	// Publishing messages to JetStream.
 	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
@@ -38,16 +38,22 @@ type JetStream interface {
 	ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
 	// QueueSubscribe.
 	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
+}
 
-	// Management
+// JetStreamManager is the public interface for managing JetStream streams & consumers.
+type JetStreamManager interface {
 	// Create a stream.
 	AddStream(cfg *StreamConfig) (*StreamInfo, error)
 	// Create a consumer.
 	AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, error)
 	// Stream information.
 	StreamInfo(stream string) (*StreamInfo, error)
+}
 
-	// TODO(dlc) - add more
+// JetStream is the public interface for the JetStream context.
+type JetStreamContext interface {
+	JetStream
+	JetStreamManager
 }
 
 // APIError is included in all API responses if there was an error.
@@ -116,7 +122,7 @@ const (
 )
 
 // JetStream returns a JetStream context for pub/sub interactions.
-func (nc *Conn) JetStream(opts ...JSOpt) (JetStream, error) {
+func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	const defaultRequestWait = 5 * time.Second
 
 	js := &js{nc: nc, pre: JSDefaultAPIPrefix, wait: defaultRequestWait}
