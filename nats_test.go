@@ -2599,3 +2599,61 @@ func TestMsg_RespondMsg(t *testing.T) {
 		t.Fatalf("did not get correct response: %q", resp.Data)
 	}
 }
+
+func TestJetStreamAPIPrefix(t *testing.T) {
+	cases := []struct {
+		prefix     string
+		wantPrefix string
+		wantErr    bool
+	}{
+		{
+			prefix:     "foo",
+			wantPrefix: "foo.",
+		},
+		{
+			prefix:     "foo.",
+			wantPrefix: "foo.",
+		},
+		{
+			prefix:     "foo.>",
+			wantPrefix: "foo.>",
+		},
+		{
+			prefix:     "foo.b*r.baz",
+			wantPrefix: "foo.b*r.baz.",
+		},
+		{
+			prefix:  "foo.*",
+			wantErr: true,
+		},
+		{
+			prefix:  "foo.*.bar",
+			wantErr: true,
+		},
+		{
+			prefix:  "foo.>.bar",
+			wantErr: true,
+		},
+		{
+			prefix:  ">",
+			wantErr: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.prefix, func(t *testing.T) {
+			jsOpt := APIPrefix(c.prefix)
+
+			js := new(js)
+			if err := jsOpt.configureJSContext(js); err != nil && !c.wantErr {
+				t.Fatal(err)
+			} else if err == nil && c.wantErr {
+				t.Fatal("unexpected success")
+			}
+
+			if js.pre != c.wantPrefix {
+				t.Error("unexpected api prefix")
+				t.Fatalf("got=%s; want=%s", js.pre, c.wantPrefix)
+			}
+		})
+	}
+}

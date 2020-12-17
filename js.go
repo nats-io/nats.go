@@ -183,6 +183,22 @@ func APIPrefix(pre string) JSOpt {
 		if !strings.HasSuffix(js.pre, ".") {
 			js.pre = js.pre + "."
 		}
+
+		toks := strings.Split(pre, ".")
+		for i, tok := range toks {
+			if tok == "" || tok == "*" {
+				return ErrJetStreamBadPre
+			}
+
+			if tok == ">" && i < len(toks)-1 {
+				return ErrBadSubject
+			} else if tok == ">" && i == len(toks)-1 {
+				js.pre = pre
+				return nil
+			}
+		}
+
+		js.pre = fmt.Sprintf("%s.", pre)
 		return nil
 	})
 }
