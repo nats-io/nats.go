@@ -960,3 +960,89 @@ func TestJetStreamPullBasedStall(t *testing.T) {
 		}
 	}
 }
+
+func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	var publishTime time.Time
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		if i == 5 {
+			publishTime = time.Now()
+		}
+		js.Publish("foo", []byte(payload))
+	}
+
+	for _, test := range []struct {
+		name     string
+		subopt   nats.SubOpt
+		expected int
+	}{
+		{
+			"deliver.all", nats.DeliverAll(), 10,
+		},
+		{
+			"deliver.last", nats.DeliverLast(), 1,
+		},
+		{
+			"deliver.new", nats.DeliverNew(), 0,
+		},
+		{
+			"deliver.starttime", nats.StartTime(publishTime), 5,
+		},
+		{
+			"deliver.startseq", nats.StartSequence(6), 5,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			got := 0
+			sub, err := js.Subscribe("foo", func(m *nats.Msg) {
+				got++
+				if got == test.expected {
+					cancel()
+				}
+			}, test.subopt)
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			<-ctx.Done()
+			sub.Drain()
+
+			if got != test.expected {
+				t.Fatalf("Expected %d, got %d", test.expected, got)
+			}
+		})
+	}
+}
