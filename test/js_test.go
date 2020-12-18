@@ -332,7 +332,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	// If we are here we have received all of the messages.
 	// We hang the ConsumerInfo option off of the subscription, so we use that to check status.
 	info, _ := sub.ConsumerInfo()
-	if info.Config.AckPolicy != nats.AckExplicit {
+	if info.Config.AckPolicy != nats.AckExplicitPolicy {
 		t.Fatalf("Expected ack explicit policy, got %q", info.Config.AckPolicy)
 	}
 	if info.Delivered.Consumer != uint64(toSend) {
@@ -556,13 +556,7 @@ func TestJetStreamManagement(t *testing.T) {
 	}
 
 	// Create a consumer using our client API.
-	if _, err := js.AddConsumer("", nil); err == nil {
-		t.Fatalf("Unexpected success")
-	}
-	ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
-		Durable:   "dlc",
-		AckPolicy: nats.AckExplicit,
-	})
+	ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1258,6 +1252,90 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 
 			if got != test.expected {
 				t.Fatalf("Expected %d, got %d", test.expected, got)
+			}
+		})
+	}
+}
+
+func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		js.Publish("foo", []byte(payload))
+	}
+
+	for _, test := range []struct {
+		name     string
+		subopt   nats.SubOpt
+		expected nats.AckPolicy
+	}{
+		{
+			"ack-none", nats.AckNone(), nats.AckNonePolicy,
+		},
+		{
+			"ack-all", nats.AckAll(), nats.AckAllPolicy,
+		},
+		{
+			"ack-explicit", nats.AckExplicit(), nats.AckExplicitPolicy,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			got := 0
+			totalMsgs := 10
+			sub, err := js.Subscribe("foo", func(m *nats.Msg) {
+				got++
+				if got == totalMsgs {
+					cancel()
+				}
+			}, test.subopt, nats.Durable(test.name))
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			<-ctx.Done()
+			sub.Drain()
+
+			if got != totalMsgs {
+				t.Fatalf("Expected %d, got %d", totalMsgs, got)
+			}
+
+			ci, err := js.ConsumerInfo("TEST", test.name)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if ci.Config.AckPolicy != test.expected {
+				t.Fatalf("Expected %v, got %v", test.expected, ci.Config.AckPolicy)
 			}
 		})
 	}
