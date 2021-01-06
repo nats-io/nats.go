@@ -579,16 +579,6 @@ func TestJetStreamManagement(t *testing.T) {
 		t.Fatalf("ConsumerInfo is not correct %+v", si)
 	}
 
-	// Create a snapshot using our client API.
-	inboxSubj := nats.NewInbox()
-	snapshot, err := js.SnapshotStream("foo", 5*time.Second, &nats.StreamSnapshotConfig{
-		DeliverSubject: inboxSubj,
-		ChunkSize:      1024,
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
 	sl := js.NewStreamLister()
 	if !sl.Next() {
 		if err := sl.Err(); err != nil {
@@ -633,6 +623,16 @@ func TestJetStreamManagement(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
+	// Purge a stream using our client API.
+	if err := js.PurgeStream("foo"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si, err := js.StreamInfo("foo"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	} else if si.State.Msgs != 0 {
+		t.Fatalf("StreamInfo.Msgs is not correct")
+	}
+
 	// Delete a stream using our client API.
 	if err := js.DeleteStream(""); err == nil {
 		t.Fatal("Unexpected success")
@@ -642,26 +642,6 @@ func TestJetStreamManagement(t *testing.T) {
 	}
 	if _, err := js.StreamInfo("foo"); err == nil {
 		t.Fatalf("Unexpected success")
-	}
-
-	// Restore a stream using our client API.
-	if err := js.RestoreStream("foo", snapshot); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if si, err := js.StreamInfo("foo"); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	} else if si.Config.Name != "foo" && si.State.Msgs != 25 {
-		t.Fatalf("StreamInfo is not correct %+v", si)
-	}
-
-	// Purge a stream using our client API.
-	if err := js.PurgeStream("foo"); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if si, err := js.StreamInfo("foo"); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	} else if si.State.Msgs != 0 {
-		t.Fatalf("StreamInfo.Msgs is not correct")
 	}
 }
 

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,10 +51,6 @@ type JetStreamManager interface {
 	DeleteStream(name string) error
 	// Stream information.
 	StreamInfo(stream string) (*StreamInfo, error)
-	// Snapshot stream.
-	SnapshotStream(name string, timeout time.Duration, cfg *StreamSnapshotConfig) (io.Reader, error)
-	// Restore stream.
-	RestoreStream(name string, snapshot io.Reader) error
 	// Purge stream messages.
 	PurgeStream(name string) error
 	// NewStreamLister is used to return pages of StreamInfo objects.
@@ -1418,119 +1413,6 @@ func (js *js) DeleteStream(name string) error {
 	if resp.Error != nil {
 		return errors.New(resp.Error.Description)
 	}
-	return nil
-}
-
-// StreamSnapshotConfig contains options for snapshotting a Stream.
-type StreamSnapshotConfig struct {
-	// Subject to deliver the chunks to for the snapshot.
-	DeliverSubject string `json:"deliver_subject"`
-	// Do not include consumers in the snapshot.
-	NoConsumers bool `json:"no_consumers,omitempty"`
-	// Optional chunk size preference.
-	// Best to just let server select.
-	ChunkSize int `json:"chunk_size,omitempty"`
-	// Check all message's checksums prior to snapshot.
-	CheckMsgs bool `json:"jsck,omitempty"`
-}
-
-// JSAPIStreamSnapshotResponse is the response for a snapshot request.
-type JSAPIStreamSnapshotResponse struct {
-	APIResponse
-	// Estimate of number of blocks for the messages.
-	NumBlks int `json:"num_blks"`
-	// Block size limit as specified by the stream.
-	BlkSize int `json:"blk_size"`
-}
-
-// SnapshotStream creates a snapshot of a Stream. It returns a copy of the
-// snapshot data.
-func (js *js) SnapshotStream(name string, timeout time.Duration, cfg *StreamSnapshotConfig) (io.Reader, error) {
-	if cfg == nil {
-		return nil, ErrStreamSnapshotConfigRequired
-	}
-	if cfg.DeliverSubject == "" {
-		return nil, ErrDeliverSubjectRequired
-	}
-
-	req, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	ssSubj := js.apiSubj(fmt.Sprintf(JSApiStreamSnapshotT, name))
-	r, err := js.nc.Request(ssSubj, req, js.wait)
-	if err != nil {
-		return nil, err
-	}
-	var resp JSAPIStreamSnapshotResponse
-	if err := json.Unmarshal(r.Data, &resp); err != nil {
-		return nil, err
-	}
-	if resp.Error != nil {
-		return nil, errors.New(resp.Error.Description)
-	}
-
-	// Setup to process snapshot chunks.
-	var snapshot []byte
-	done := make(chan struct{}, 1)
-	sub, err := js.nc.Subscribe(cfg.DeliverSubject, func(m *Msg) {
-		// EOF
-		if len(m.Data) == 0 {
-			done <- struct{}{}
-			return
-		}
-		// Could be writing to a file here too.
-		snapshot = append(snapshot, m.Data...)
-		// Flow ack
-		m.Respond(nil)
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer sub.Unsubscribe()
-	// Wait to receive the snapshot.
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		return nil, errors.New("nats: snapshot timeout exceeded")
-	}
-
-	return bytes.NewReader(snapshot), nil
-}
-
-// JSAPIStreamRestoreResponse is the direct response to the restore request.
-type JSAPIStreamRestoreResponse struct {
-	APIResponse
-	// Subject to deliver the chunks to for the snapshot restore.
-	DeliverSubject string `json:"deliver_subject"`
-}
-
-// RestoreStream restores a Stream from a snapshot.
-func (js *js) RestoreStream(name string, snapshot io.Reader) error {
-	rsSubj := js.apiSubj(fmt.Sprintf(JSApiStreamRestoreT, name))
-	r, err := js.nc.Request(rsSubj, nil, js.wait)
-	if err != nil {
-		return err
-	}
-	var resp JSAPIStreamRestoreResponse
-	if err := json.Unmarshal(r.Data, &resp); err != nil {
-		return err
-	}
-	if resp.Error != nil {
-		return errors.New(resp.Error.Description)
-	}
-
-	// Can be any size message.
-	var chunk [512]byte
-	for r := snapshot; ; {
-		n, err := r.Read(chunk[:])
-		if err != nil {
-			break
-		}
-		js.nc.Request(resp.DeliverSubject, chunk[:n], js.wait)
-	}
-	js.nc.Request(resp.DeliverSubject, nil, js.wait)
 	return nil
 }
 
