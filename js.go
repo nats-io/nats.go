@@ -55,6 +55,8 @@ type JetStreamManager interface {
 	PurgeStream(name string) error
 	// NewStreamLister is used to return pages of StreamInfo objects.
 	NewStreamLister() *StreamLister
+	// DeleteMsg erases a message from a Stream.
+	DeleteMsg(name string, seq uint64) error
 
 	// Create a consumer.
 	AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, error)
@@ -118,10 +120,10 @@ type js struct {
 
 // Request API subjects for JetStream.
 const (
+	// JSDefaultAPIPrefix is the default prefix for the JetStream API.
 	JSDefaultAPIPrefix = "$JS.API."
 	// JSApiAccountInfo is for obtaining general information about JetStream.
 	JSApiAccountInfo = "INFO"
-
 	// JSApiConsumerCreateT is used to create consumers.
 	JSApiConsumerCreateT = "CONSUMER.CREATE.%s"
 	// JSApiDurableCreateT is used to create durable consumers.
@@ -134,7 +136,6 @@ const (
 	JSApiConsumerDeleteT = "CONSUMER.DELETE.%s.%s"
 	// JSApiConsumerListT is used to return all detailed consumer information
 	JSApiConsumerListT = "CONSUMER.LIST.%s"
-
 	// JSApiStreams can lookup a stream by subject.
 	JSApiStreams = "STREAM.NAMES"
 	// JSApiStreamCreateT is the endpoint to create new streams.
@@ -153,6 +154,8 @@ const (
 	JSApiStreamPurgeT = "STREAM.PURGE.%s"
 	// JSApiStreamListT is the endpoint that will return all detailed stream information
 	JSApiStreamList = "STREAM.LIST"
+	// JSApiMsgDeleteT is the endpoint to remove a message.
+	JSApiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 )
 
 // JetStream returns a JetStream context for pub/sub interactions.
@@ -1407,6 +1410,42 @@ func (js *js) DeleteStream(name string) error {
 		return err
 	}
 	var resp JSAPIStreamDeleteResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return errors.New(resp.Error.Description)
+	}
+	return nil
+}
+
+type JSAPIMsgDeleteRequest struct {
+	Seq uint64 `json:"seq"`
+}
+
+// JSAPIMsgDeleteResponse is the response for a Stream delete request.
+type JSAPIMsgDeleteResponse struct {
+	APIResponse
+	Success bool `json:"success,omitempty"`
+}
+
+// DeleteMsg deletes a message from a stream.
+func (js *js) DeleteMsg(name string, seq uint64) error {
+	if name == _EMPTY_ {
+		return ErrStreamNameRequired
+	}
+
+	req, err := json.Marshal(&JSAPIMsgDeleteRequest{Seq: seq})
+	if err != nil {
+		return err
+	}
+
+	dsSubj := js.apiSubj(fmt.Sprintf(JSApiMsgDeleteT, name))
+	r, err := js.nc.Request(dsSubj, req, js.wait)
+	if err != nil {
+		return err
+	}
+	var resp JSAPIMsgDeleteResponse
 	if err := json.Unmarshal(r.Data, &resp); err != nil {
 		return err
 	}

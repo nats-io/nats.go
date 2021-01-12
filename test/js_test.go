@@ -645,6 +645,123 @@ func TestJetStreamManagement(t *testing.T) {
 	}
 }
 
+func TestJetStreamManagement_DeleteMsg(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "foo",
+		Subjects: []string{"foo.A", "foo.B", "foo.C"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		js.Publish("foo.A", []byte("A"))
+		js.Publish("foo.B", []byte("B"))
+		js.Publish("foo.C", []byte("C"))
+	}
+
+	si, err := js.StreamInfo("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total uint64 = 15
+	if si.State.Msgs != total {
+		t.Errorf("Expected %d msgs, got: %d", total, si.State.Msgs)
+	}
+
+	expected := 5
+	msgs := make([]*nats.Msg, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	sub, err := js.Subscribe("foo.C", func(msg *nats.Msg) {
+		msgs = append(msgs, msg)
+		if len(msgs) == expected {
+			cancel()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ctx.Done()
+	sub.Unsubscribe()
+
+	got := len(msgs)
+	if got != expected {
+		t.Fatalf("Expected %d, got %d", expected, got)
+	}
+
+	msg := msgs[0]
+	meta, err := msg.MetaData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSeq := meta.Stream
+
+	err = js.DeleteMsg("foo", originalSeq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	si, err = js.StreamInfo("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total = 14
+	if si.State.Msgs != total {
+		t.Errorf("Expected %d msgs, got: %d", total, si.State.Msgs)
+	}
+
+	// There should be only 4 messages since one deleted.
+	expected = 4
+	msgs = make([]*nats.Msg, 0)
+	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	sub, err = js.Subscribe("foo.C", func(msg *nats.Msg) {
+		msgs = append(msgs, msg)
+
+		if len(msgs) == expected {
+			cancel()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-ctx.Done()
+	sub.Unsubscribe()
+
+	msg = msgs[0]
+	meta, err = msg.MetaData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSeq := meta.Stream
+
+	// First message removed
+	if newSeq <= originalSeq {
+		t.Errorf("Expected %d to be higher sequence than %d", newSeq, originalSeq)
+	}
+}
+
 func TestJetStreamImport(t *testing.T) {
 	conf := createConfFile(t, []byte(`
 		listen: 127.0.0.1:-1
