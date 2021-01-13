@@ -498,7 +498,6 @@ func TestAckForNonJetStream(t *testing.T) {
 	}
 }
 
-// TODO(dlc) - fill out with more stuff.
 func TestJetStreamManagement(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
@@ -519,12 +518,19 @@ func TestJetStreamManagement(t *testing.T) {
 	}
 
 	// Create the stream using our client API.
+	if _, err := js.AddStream(nil); err == nil {
+		t.Fatalf("Unexpected success")
+	}
 	si, err := js.AddStream(&nats.StreamConfig{Name: "foo"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if si == nil || si.Config.Name != "foo" {
 		t.Fatalf("StreamInfo is not correct %+v", si)
+	}
+
+	for i := 0; i < 25; i++ {
+		js.Publish("foo", []byte("hi"))
 	}
 
 	// Check info calls.
@@ -536,13 +542,106 @@ func TestJetStreamManagement(t *testing.T) {
 		t.Fatalf("StreamInfo is not correct %+v", si)
 	}
 
+	// Update the stream using our client API.
+	if _, err := js.UpdateStream(nil); err == nil {
+		t.Fatal("Unexpected success")
+	}
+	prevMaxMsgs := si.Config.MaxMsgs
+	si, err = js.UpdateStream(&nats.StreamConfig{Name: "foo", MaxMsgs: prevMaxMsgs + 100})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si == nil || si.Config.Name != "foo" || si.Config.MaxMsgs == prevMaxMsgs {
+		t.Fatalf("StreamInfo is not correct %+v", si)
+	}
+
 	// Create a consumer using our client API.
-	ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicit})
+	if _, err := js.AddConsumer("", nil); err == nil {
+		t.Fatalf("Unexpected success")
+	}
+	ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+		Durable:   "dlc",
+		AckPolicy: nats.AckExplicit,
+	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if ci == nil || ci.Name != "dlc" || ci.Stream != "foo" {
 		t.Fatalf("ConsumerInfo is not correct %+v", ci)
+	}
+
+	// Check info calls.
+	ci, err = js.ConsumerInfo("foo", "dlc")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ci == nil || ci.Config.Durable != "dlc" {
+		t.Fatalf("ConsumerInfo is not correct %+v", si)
+	}
+
+	sl := js.NewStreamLister()
+	if !sl.Next() {
+		if err := sl.Err(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		t.Fatalf("Unexpected stream lister next")
+	}
+	if p := sl.Page(); len(p) != 1 || p[0].Config.Name != "foo" {
+		t.Fatalf("StreamInfo is not correct %+v", p)
+	}
+	if err := sl.Err(); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	if cl := js.NewConsumerLister(""); cl.Next() {
+		t.Fatalf("Unexpected next ok")
+	} else if err := cl.Err(); err == nil {
+		if cl.Next() {
+			t.Fatalf("Unexpected next ok")
+		}
+		t.Fatalf("Unexpected nil error")
+	}
+	cl := js.NewConsumerLister("foo")
+	if !cl.Next() {
+		if err := cl.Err(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		t.Fatalf("Unexpected consumer lister next")
+	}
+	if p := cl.Page(); len(p) != 1 || p[0].Stream != "foo" || p[0].Config.Durable != "dlc" {
+		t.Fatalf("ConsumerInfo is not correct %+v", p)
+	}
+	if err := cl.Err(); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// Delete a consumer using our client API.
+	if err := js.DeleteConsumer("", ""); err == nil {
+		t.Fatalf("Unexpected success")
+	}
+	if err := js.DeleteConsumer("foo", "dlc"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Purge a stream using our client API.
+	if err := js.PurgeStream("foo"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si, err := js.StreamInfo("foo"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	} else if si.State.Msgs != 0 {
+		t.Fatalf("StreamInfo.Msgs is not correct")
+	}
+
+	// Delete a stream using our client API.
+	if err := js.DeleteStream(""); err == nil {
+		t.Fatal("Unexpected success")
+	}
+	if err := js.DeleteStream("foo"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := js.StreamInfo("foo"); err == nil {
+		t.Fatalf("Unexpected success")
 	}
 }
 
