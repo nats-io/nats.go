@@ -582,12 +582,12 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	if shouldCreate {
 		// If not set default to ack explicit.
 		if cfg.AckPolicy == ackPolicyNotSet {
-			cfg.AckPolicy = AckExplicit
+			cfg.AckPolicy = AckExplicitPolicy
 		}
 		// If we have acks at all and the MaxAckPending is not set go ahead
 		// and set to the internal max.
 		// TODO(dlc) - We should be able to update this if client updates PendingLimits.
-		if cfg.MaxAckPending == 0 && cfg.AckPolicy != AckNone {
+		if cfg.MaxAckPending == 0 && cfg.AckPolicy != AckNonePolicy {
 			maxMsgs, _, _ := sub.PendingLimits()
 			cfg.MaxAckPending = maxMsgs
 		}
@@ -785,6 +785,27 @@ func StartTime(startTime time.Time) SubOpt {
 	})
 }
 
+func AckNone() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.AckPolicy = AckNonePolicy
+		return nil
+	})
+}
+
+func AckAll() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.AckPolicy = AckAllPolicy
+		return nil
+	})
+}
+
+func AckExplicit() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.AckPolicy = AckExplicitPolicy
+		return nil
+	})
+}
+
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
@@ -971,14 +992,18 @@ func parseNum(d string) (n int64) {
 	return n
 }
 
-// Additional jetstream structures.
-
+// AckPolicy determines how the consumer should acknowledge delivered messages.
 type AckPolicy int
 
 const (
-	AckNone AckPolicy = iota
-	AckAll
-	AckExplicit
+	// AckNonePolicy requires no acks for delivered messages.
+	AckNonePolicy AckPolicy = iota
+
+	// AckAllPolicy when acking a sequence number, this implicitly acks all sequences below this one as well.
+	AckAllPolicy
+
+	// AckExplicit requires ack or nack for all messages.
+	AckExplicitPolicy
 
 	// For setting
 	ackPolicyNotSet = 99
@@ -991,11 +1016,11 @@ func jsonString(s string) string {
 func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
 	case jsonString("none"):
-		*p = AckNone
+		*p = AckNonePolicy
 	case jsonString("all"):
-		*p = AckAll
+		*p = AckAllPolicy
 	case jsonString("explicit"):
-		*p = AckExplicit
+		*p = AckExplicitPolicy
 	default:
 		return fmt.Errorf("can not unmarshal %q", data)
 	}
@@ -1005,11 +1030,11 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 
 func (p AckPolicy) MarshalJSON() ([]byte, error) {
 	switch p {
-	case AckNone:
+	case AckNonePolicy:
 		return json.Marshal("none")
-	case AckAll:
+	case AckAllPolicy:
 		return json.Marshal("all")
-	case AckExplicit:
+	case AckExplicitPolicy:
 		return json.Marshal("explicit")
 	default:
 		return nil, fmt.Errorf("unknown acknowlegement policy %v", p)
@@ -1018,11 +1043,11 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 
 func (p AckPolicy) String() string {
 	switch p {
-	case AckNone:
+	case AckNonePolicy:
 		return "AckNone"
-	case AckAll:
+	case AckAllPolicy:
 		return "AckAll"
-	case AckExplicit:
+	case AckExplicitPolicy:
 		return "AckExplicit"
 	case ackPolicyNotSet:
 		return "Not Initialized"
@@ -1572,7 +1597,7 @@ const (
 	WorkQueuePolicy
 )
 
-// Discard Policy determines how we proceed when limits of messages or bytes are hit. The default, DicscardOld will
+// DiscardPolicy determines how we proceed when limits of messages or bytes are hit. The default, DiscardOld will
 // remove older messages. DiscardNew will fail to store the new message.
 type DiscardPolicy int
 
