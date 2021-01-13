@@ -689,6 +689,10 @@ type subOpts struct {
 
 func Durable(name string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
+		if strings.Contains(name, ".") {
+			return ErrInvalidDurableName
+		}
+
 		opts.cfg.Durable = name
 		return nil
 	})
@@ -1162,6 +1166,9 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, er
 
 	var ccSubj string
 	if cfg != nil && cfg.Durable != _EMPTY_ {
+		if strings.Contains(cfg.Durable, ".") {
+			return nil, ErrInvalidDurableName
+		}
 		ccSubj = fmt.Sprintf(JSApiDurableCreateT, stream, cfg.Durable)
 	} else {
 		ccSubj = fmt.Sprintf(JSApiConsumerCreateT, stream)
