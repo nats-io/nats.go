@@ -568,12 +568,17 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	var sub *Subscription
 
 	// Check if we are manual ack.
+	var autoAck bool
 	if cb != nil && !o.mack {
+		autoAck = true
 		ocb := cb
-		cb = func(m *Msg) { ocb(m); m.Ack() }
+		cb = func(m *Msg) {
+			ocb(m)
+			m.autoAck()
+		}
 	}
 
-	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js})
+	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js, mack: !autoAck})
 	if err != nil {
 		return nil, err
 	}
@@ -863,31 +868,36 @@ func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	return info.ConsumerInfo, nil
 }
 
-func (m *Msg) checkReply() (*js, bool, error) {
+func (m *Msg) checkReply() (*js, bool, bool, error) {
 	if m.Reply == "" {
-		return nil, false, ErrMsgNoReply
+		return nil, false, false, ErrMsgNoReply
 	}
 	if m == nil || m.Sub == nil {
-		return nil, false, ErrMsgNotBound
+		return nil, false, false, ErrMsgNotBound
 	}
 	sub := m.Sub
 	sub.mu.Lock()
 	if sub.jsi == nil {
 		sub.mu.Unlock()
-		return nil, false, ErrNotJSMessage
+		return nil, false, false, ErrNotJSMessage
 	}
 	js := sub.jsi.js
 	isPullMode := sub.jsi.pull > 0
+	manualAck := sub.jsi.mack
 	sub.mu.Unlock()
 
-	return js, isPullMode, nil
+	return js, isPullMode, manualAck, nil
 }
 
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
-func (m *Msg) ackReply(ackType []byte, sync bool) error {
-	js, isPullMode, err := m.checkReply()
+func (m *Msg) ackReply(ackType []byte, sync bool, isAutoAck bool) error {
+	js, isPullMode, manualAckEnabled, err := m.checkReply()
 	if err != nil {
 		return err
+	}
+	// Prevent using manual acks if they were not enabled.
+	if !manualAckEnabled && !isAutoAck {
+		return ErrInvalidJSAck
 	}
 	if isPullMode {
 		if bytes.Equal(ackType, AckAck) {
@@ -910,30 +920,36 @@ func (m *Msg) ackReply(ackType []byte, sync bool) error {
 
 // Ack a message, this will do the right thing with pull based consumers.
 func (m *Msg) Ack() error {
-	return m.ackReply(AckAck, false)
+	return m.ackReply(AckAck, false, false)
+}
+
+// autoAck sends an ack response automatically if manual ack is not enabled in async subscriptions.
+func (m *Msg) autoAck() error {
+	return m.ackReply(AckAck, false, true)
 }
 
 // Ack a message and wait for a response from the server.
 func (m *Msg) AckSync() error {
-	return m.ackReply(AckAck, true)
+	return m.ackReply(AckAck, true, false)
 }
 
 // Nak this message, indicating we can not process.
 func (m *Msg) Nak() error {
-	return m.ackReply(AckNak, false)
+	return m.ackReply(AckNak, false, false)
 }
 
 // Term this message from ever being delivered regardless of MaxDeliverCount.
 func (m *Msg) Term() error {
-	return m.ackReply(AckTerm, false)
+	return m.ackReply(AckTerm, false, false)
 }
 
-// Indicate that this message is being worked on and reset redelkivery timer in the server.
+// InProgress indicates that this message is being worked on
+// and reset the redelivery timer in the server.
 func (m *Msg) InProgress() error {
-	return m.ackReply(AckProgress, false)
+	return m.ackReply(AckProgress, false, false)
 }
 
-// JetStream metadata associated with received messages.
+// MsgMetaData is metadata associated with received messages.
 type MsgMetaData struct {
 	Consumer  uint64
 	Stream    uint64
@@ -942,8 +958,9 @@ type MsgMetaData struct {
 	Timestamp time.Time
 }
 
+// MetaData returns the metadata from a JetStream message.
 func (m *Msg) MetaData() (*MsgMetaData, error) {
-	if _, _, err := m.checkReply(); err != nil {
+	if _, _, _, err := m.checkReply(); err != nil {
 		return nil, err
 	}
 

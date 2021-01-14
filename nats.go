@@ -542,6 +542,7 @@ type jsSub struct {
 	stream   string
 	deliver  string
 	pull     int
+	mack     bool
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
