@@ -133,6 +133,7 @@ var (
 	ErrNoStreamResponse             = errors.New("nats: no response from stream")
 	ErrNotJSMessage                 = errors.New("nats: not a jetstream message")
 	ErrInvalidStreamName            = errors.New("nats: invalid stream name")
+	ErrInvalidDurableName           = errors.New("nats: invalid durable name")
 	ErrNoMatchingStream             = errors.New("nats: no stream matches subject")
 	ErrSubjectMismatch              = errors.New("nats: subject does not match consumer")
 	ErrContextAndTimeout            = errors.New("nats: context and timeout can not both be set")

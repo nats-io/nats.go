@@ -475,6 +475,11 @@ func TestJetStreamSubscribe(t *testing.T) {
 			t.Fatalf("Timeout waiting for messages")
 		}
 	}
+
+	// Prevent invalid durable names
+	if _, err := js.SubscribeSync("baz", nats.Durable("test.durable")); err != nats.ErrInvalidDurableName {
+		t.Fatalf("Expected invalid durable name error")
+	}
 }
 
 func TestAckForNonJetStream(t *testing.T) {
@@ -562,6 +567,10 @@ func TestJetStreamManagement(t *testing.T) {
 	}
 	if ci == nil || ci.Name != "dlc" || ci.Stream != "foo" {
 		t.Fatalf("ConsumerInfo is not correct %+v", ci)
+	}
+
+	if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidDurableName {
+		t.Fatalf("Expected invalid durable name error")
 	}
 
 	// Check info calls.
