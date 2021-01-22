@@ -1349,3 +1349,142 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestJetStreamSubscribe_AckDup(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js.Publish("foo", []byte("hello"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	pings := make(chan struct{}, 6)
+	nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+		pings <- struct{}{}
+	})
+	nc.Flush()
+
+	ch := make(chan error, 6)
+	_, err = js.Subscribe("foo", func(m *nats.Msg) {
+		// Only first ack will be sent, auto ack that will occur after
+		// this won't be sent either.
+		ch <- m.Ack()
+
+		// Any following acks should fail.
+		ch <- m.Ack()
+		ch <- m.Nak()
+		ch <- m.AckSync()
+		ch <- m.Term()
+		ch <- m.InProgress()
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	<-ctx.Done()
+	ackErr1 := <-ch
+	if ackErr1 != nil {
+		t.Errorf("Unexpected error: %v", ackErr1)
+	}
+
+	for i := 0; i < 5; i++ {
+		e := <-ch
+		if e != nats.ErrInvalidJSAck {
+			t.Errorf("Expected error: %v", e)
+		}
+	}
+	if len(pings) != 1 {
+		t.Logf("Expected to receive a single ack, got: %v", len(pings))
+	}
+}
+
+func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js.Publish("foo", []byte("hello"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	pings := make(chan struct{}, 3)
+	nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+		pings <- struct{}{}
+	})
+	nc.Flush()
+
+	ch := make(chan error, 3)
+	_, err = js.Subscribe("foo", func(m *nats.Msg) {
+		// InProgress ACK can be sent any number of times.
+		ch <- m.InProgress()
+		ch <- m.InProgress()
+		ch <- m.Ack()
+	}, nats.Durable("WQ"), nats.ManualAck())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	<-ctx.Done()
+	ackErr1 := <-ch
+	ackErr2 := <-ch
+	ackErr3 := <-ch
+	if ackErr1 != nil {
+		t.Errorf("Unexpected error: %v", ackErr1)
+	}
+	if ackErr2 != nil {
+		t.Errorf("Unexpected error: %v", ackErr2)
+	}
+	if ackErr3 != nil {
+		t.Errorf("Unexpected error: %v", ackErr3)
+	}
+	if len(pings) != 3 {
+		t.Logf("Expected to receive multiple acks, got: %v", len(pings))
+	}
+}
