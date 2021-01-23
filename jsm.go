@@ -56,6 +56,9 @@ type JetStreamManager interface {
 	// NewConsumerLister is used to return pages of ConsumerInfo objects.
 	NewConsumerLister(stream string) *ConsumerLister
 
+	// NewConsumerNamesLister is used to return pages of Consumer names from a stream.
+	NewConsumerNamesLister(stream string) *ConsumerNamesLister
+
 	// AccountInfo retrieves info about the JetStream usage from an account.
 	AccountInfo() (*AccountInfo, error)
 }
@@ -302,6 +305,73 @@ func (c *ConsumerLister) Err() error {
 // NewConsumerLister is used to return pages of ConsumerInfo objects.
 func (js *js) NewConsumerLister(stream string) *ConsumerLister {
 	return &ConsumerLister{stream: stream, js: js}
+}
+
+type ConsumerNamesLister struct {
+	stream string
+	js     *js
+
+	err      error
+	offset   int
+	page     []string
+	pageInfo *apiPaged
+}
+
+// consumerNamesListResponse is the response for a Consumers Names List request.
+type consumerNamesListResponse struct {
+	apiResponse
+	apiPaged
+	Consumers []string `json:"consumers"`
+}
+
+// Next fetches the next ConsumerInfo page.
+func (c *ConsumerNamesLister) Next() bool {
+	if c.err != nil {
+		return false
+	}
+	if c.stream == _EMPTY_ {
+		c.err = ErrStreamNameRequired
+		return false
+	}
+	if c.pageInfo != nil && c.offset >= c.pageInfo.Total {
+		return false
+	}
+
+	clSubj := c.js.apiSubj(fmt.Sprintf(apiConsumerNamesT, c.stream))
+	r, err := c.js.nc.Request(clSubj, nil, c.js.wait)
+	if err != nil {
+		c.err = err
+		return false
+	}
+	var resp consumerNamesListResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		c.err = err
+		return false
+	}
+	if resp.Error != nil {
+		c.err = errors.New(resp.Error.Description)
+		return false
+	}
+
+	c.pageInfo = &resp.apiPaged
+	c.page = resp.Consumers
+	c.offset += len(c.page)
+	return true
+}
+
+// Page returns the current ConsumerInfo page.
+func (c *ConsumerNamesLister) Page() []string {
+	return c.page
+}
+
+// Err returns any errors found while fetching pages.
+func (c *ConsumerNamesLister) Err() error {
+	return c.err
+}
+
+// NewConsumerNamesLister is used to return pages of Consumer names.
+func (js *js) NewConsumerNamesLister(stream string) *ConsumerNamesLister {
+	return &ConsumerNamesLister{stream: stream, js: js}
 }
 
 // streamCreateResponse stream creation.
