@@ -646,6 +646,25 @@ func TestJetStreamManagement(t *testing.T) {
 	if _, err := js.StreamInfo("foo"); err == nil {
 		t.Fatalf("Unexpected success")
 	}
+
+	t.Run("fetch account info", func(t *testing.T) {
+		info, err := js.AccountInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Limits.MaxMemory < 1 {
+			t.Errorf("Expected to have memory limits, got: %v", info.Limits.MaxMemory)
+		}
+		if info.Limits.MaxStore < 1 {
+			t.Errorf("Expected to have disk limits, got: %v", info.Limits.MaxMemory)
+		}
+		if info.Limits.MaxStreams != -1 {
+			t.Errorf("Expected to not have stream limits, got: %v", info.Limits.MaxStreams)
+		}
+		if info.Limits.MaxConsumers != -1 {
+			t.Errorf("Expected to not have consumer limits, got: %v", info.Limits.MaxConsumers)
+		}
+	})
 }
 
 func TestJetStreamManagement_DeleteMsg(t *testing.T) {
