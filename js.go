@@ -503,7 +503,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		cb = func(m *Msg) { ocb(m); m.Ack() }
 	}
 
-	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js})
+	sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js, attached: o.attached})
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +533,8 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		}
 
 		var ccSubj string
-		if cfg.Durable != _EMPTY_ {
+		isDurable := cfg.Durable != _EMPTY_
+		if isDurable {
 			ccSubj = fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable)
 		} else {
 			ccSubj = fmt.Sprintf(apiConsumerCreateT, stream)
@@ -563,6 +564,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		sub.jsi.stream = info.Stream
 		sub.jsi.consumer = info.Name
 		sub.jsi.deliver = info.Config.DeliverSubject
+		sub.jsi.durable = isDurable
 	} else {
 		sub.jsi.stream = o.stream
 		sub.jsi.consumer = o.consumer
@@ -624,6 +626,8 @@ type subOpts struct {
 	mack bool
 	// For creating or updating.
 	cfg *ConsumerConfig
+	// attached marks that a subscription was created using attach.
+	attached bool
 }
 
 func Durable(name string) SubOpt {
@@ -641,6 +645,7 @@ func Attach(stream, consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.stream = stream
 		opts.consumer = consumer
+		opts.attached = true
 		return nil
 	})
 }

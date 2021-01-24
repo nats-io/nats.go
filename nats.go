@@ -542,6 +542,30 @@ type jsSub struct {
 	stream   string
 	deliver  string
 	pull     int
+	attached bool
+	durable  bool
+}
+
+// unsubscribe deletes an ephemeral consumer from a JetStream subscription
+// unless it is attached/direct only.
+func (jsi *jsSub) unsubscribe() {
+	if jsi.attached || jsi.durable {
+		return
+	}
+
+	// Skip if in direct mode as well.
+	js := jsi.js
+	if js.direct {
+		return
+	}
+
+	err := js.DeleteConsumer(jsi.stream, jsi.consumer)
+	if err != nil {
+		nc := js.nc
+		nc.mu.Lock()
+		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+		nc.mu.Unlock()
+	}
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -3515,6 +3539,7 @@ func (s *Subscription) Unsubscribe() error {
 	s.mu.Lock()
 	conn := s.conn
 	closed := s.closed
+	jsi := s.jsi
 	s.mu.Unlock()
 	if conn == nil || conn.IsClosed() {
 		return ErrConnectionClosed
@@ -3525,6 +3550,11 @@ func (s *Subscription) Unsubscribe() error {
 	if conn.IsDraining() {
 		return ErrConnectionDraining
 	}
+
+	if jsi != nil {
+		jsi.unsubscribe()
+	}
+
 	return conn.unsubscribe(s, 0, false)
 }
 
