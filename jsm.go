@@ -136,8 +136,14 @@ func (js *js) AccountInfo() (*AccountInfo, error) {
 	if err := json.Unmarshal(resp.Data, &info); err != nil {
 		return nil, err
 	}
-	if info.Error != nil && info.Error.Code == 503 {
-		return nil, ErrJetStreamNotEnabled
+	if info.Error != nil {
+		var err error
+		if strings.Contains(info.Error.Description, "not enabled for") {
+			err = ErrJetStreamNotEnabled
+		} else {
+			err = errors.New(info.Error.Description)
+		}
+		return nil, err
 	}
 
 	return &info.AccountInfo, nil
