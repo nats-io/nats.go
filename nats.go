@@ -1,4 +1,4 @@
-// Copyright 2012-2020 The NATS Authors
+// Copyright 2012-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -54,7 +54,6 @@ const (
 	DefaultReconnectJitter    = 100 * time.Millisecond
 	DefaultReconnectJitterTLS = time.Second
 	DefaultTimeout            = 2 * time.Second
-	DefaultJetStreamTimeout   = 2 * time.Second
 	DefaultPingInterval       = 2 * time.Minute
 	DefaultMaxPingOut         = 2
 	DefaultMaxChanLen         = 64 * 1024       // 64k
@@ -158,7 +157,6 @@ func GetDefaultOptions() Options {
 		ReconnectJitter:    DefaultReconnectJitter,
 		ReconnectJitterTLS: DefaultReconnectJitterTLS,
 		Timeout:            DefaultTimeout,
-		JetStreamTimeout:   DefaultJetStreamTimeout,
 		PingInterval:       DefaultPingInterval,
 		MaxPingsOut:        DefaultMaxPingOut,
 		SubChanLen:         DefaultMaxChanLen,
@@ -312,9 +310,6 @@ type Options struct {
 
 	// Timeout sets the timeout for a Dial operation on a connection.
 	Timeout time.Duration
-
-	// JetStreamTimeout set the default timeout for the JetStream API
-	JetStreamTimeout time.Duration
 
 	// DrainTimeout sets the timeout for a Drain Operation to complete.
 	DrainTimeout time.Duration
@@ -835,14 +830,6 @@ func ReconnectBufSize(size int) Option {
 func Timeout(t time.Duration) Option {
 	return func(o *Options) error {
 		o.Timeout = t
-		return nil
-	}
-}
-
-// JetStreamTimeout is an Option to set the timeout for access to the JetStream API
-func JetStreamTimeout(t time.Duration) Option {
-	return func(o *Options) error {
-		o.JetStreamTimeout = t
 		return nil
 	}
 }
