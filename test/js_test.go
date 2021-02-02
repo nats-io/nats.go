@@ -944,6 +944,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	var sub *nats.Subscription
 
 	waitForPending := func(n int) {
+		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
 			if msgs, _, _ := sub.Pending(); msgs == n {
