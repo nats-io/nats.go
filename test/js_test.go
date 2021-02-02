@@ -498,8 +498,8 @@ func TestAckForNonJetStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := m.Ack(); err != nats.ErrNotJSMessage {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrNotJSMessage, err)
+	if err := m.Ack(); err != nil {
+		t.Fatalf("Expected no errors, got '%v'", err)
 	}
 }
 
@@ -862,6 +862,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 					{ service: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", response: stream }
 					# For the push based consumer delivery and ack.
 					{ stream: "p.d" }
+					{ stream: "p.d3" }
 					# For the acks. Service in case we want an ack to our ack.
 					{ service: "$JS.ACK.ORDERS.*.>" }
 				]
@@ -872,6 +873,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
 					{ stream:  { subject: "p.d", account: JS } }
+					{ stream:  { subject: "p.d3", account: JS } }
 					{ service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
 				]
 			},
@@ -901,12 +903,26 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer o1.Delete()
 
-	// Create a push based consumer.
-	o2, err := mset.AddConsumer(&server.ConsumerConfig{Durable: "d2", AckPolicy: server.AckExplicit, DeliverSubject: "p.d"})
+	// Create a push based consumers.
+	o2, err := mset.AddConsumer(&server.ConsumerConfig{
+		Durable:        "d2",
+		AckPolicy:      server.AckExplicit,
+		DeliverSubject: "p.d",
+	})
 	if err != nil {
 		t.Fatalf("push consumer create failed: %v", err)
 	}
 	defer o2.Delete()
+
+	o3, err := mset.AddConsumer(&server.ConsumerConfig{
+		Durable:        "d3",
+		AckPolicy:      server.AckExplicit,
+		DeliverSubject: "p.d3",
+	})
+	if err != nil {
+		t.Fatalf("push consumer create failed: %v", err)
+	}
+	defer o3.Delete()
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -957,6 +973,27 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	waitForPending(toSend)
 
 	// Ack the messages from the push consumer.
+	for i := 0; i < toSend; i++ {
+		m, err := sub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Test that can expect an ack of the ack.
+		err = m.AckSync()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	// Do push based consumer using a regular NATS subscription on the import subject.
+	sub, err = nc.SubscribeSync("p.d3")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	waitForPending(toSend)
+
+	// Can also ack from the regular NATS subscription via the imported subject.
 	for i := 0; i < toSend; i++ {
 		m, err := sub.NextMsg(100 * time.Millisecond)
 		if err != nil {
@@ -1367,6 +1404,177 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			}
 		})
 	}
+
+	checkAcks := func(t *testing.T, sub *nats.Subscription) {
+		t.Helper()
+
+		// Normal Ack
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		meta, err := msg.MetaData()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if meta.Consumer != 1 || meta.Stream != 1 || meta.Delivered != 1 {
+			t.Errorf("Unexpected metadata: %v", meta)
+		}
+
+		got := string(msg.Data)
+		expected := "i:0"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.Ack()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// AckSync
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:1"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.AckSync(nats.MaxWait(1 * time.Nanosecond))
+		if err != nats.ErrTimeout {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// Give an already canceled context.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err = msg.AckSync(nats.Context(ctx))
+		if err != context.Canceled {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// Context that not yet canceled.
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err = msg.AckSync(nats.Context(ctx))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// AckSync default
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:2"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.AckSync()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// Nak
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:3"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		// Skip the message.
+		err = msg.Nak()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:4"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.Nak()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:5"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.Term()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		msg, err = sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		got = string(msg.Data)
+		expected = "i:6"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.InProgress()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		err = msg.InProgress()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		err = msg.Ack()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	t.Run("js sub ack", func(t *testing.T) {
+		sub, err := js.SubscribeSync("foo", nats.Durable("wq2"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		checkAcks(t, sub)
+	})
+
+	t.Run("non js sub ack", func(t *testing.T) {
+		inbox := nats.NewInbox()
+		_, err = js.AddConsumer("TEST", &nats.ConsumerConfig{
+			Durable:        "wq",
+			AckPolicy:      nats.AckExplicitPolicy,
+			DeliverPolicy:  nats.DeliverAllPolicy,
+			DeliverSubject: inbox,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		sub, err := nc.SubscribeSync(inbox)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		checkAcks(t, sub)
+	})
 }
 
 func TestJetStreamSubscribe_AckDup(t *testing.T) {
