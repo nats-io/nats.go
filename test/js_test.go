@@ -240,6 +240,26 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
+	expectConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
+		t.Helper()
+		cl := js.NewConsumerLister("TEST")
+		if !cl.Next() {
+			if err := cl.Err(); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			t.Fatalf("Unexpected consumer lister next")
+		}
+		p := cl.Page()
+		if len(p) != expected {
+			t.Fatalf("Expected %d consumers, got: %d", expected, len(p))
+		}
+		if err := cl.Err(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		return p
+	}
+
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -343,6 +363,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected to have ack'd all %d messages, got ack floor of %d", toSend, info.AckFloor.Consumer)
 	}
 	sub.Unsubscribe()
+	expectConsumers(t, 3)
 
 	// Now create a sync subscriber that is durable.
 	dname := "derek"
@@ -351,13 +372,32 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+	expectConsumers(t, 4)
 
 	// Make sure we registered as a durable.
 	if info, _ := sub.ConsumerInfo(); info.Config.Durable != dname {
 		t.Fatalf("Expected durable name to be set to %q, got %q", dname, info.Config.Durable)
 	}
 	deliver := sub.Subject
-	sub.Unsubscribe()
+
+	// Remove subscription, but do not delete consumer.
+	sub.Drain()
+	nc.Flush()
+	expectConsumers(t, 4)
+
+	// Reattach using the same consumer.
+	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if deliver != sub.Subject {
+		t.Fatal("Expected delivery subject to be the same after reattach")
+	}
+	expectConsumers(t, 4)
+
+	// Cleanup the consumer to be able to create again with a different delivery subject.
+	js.DeleteConsumer("TEST", dname)
+	expectConsumers(t, 3)
 
 	// Create again and make sure that works and that we attach to the same durable with different delivery.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
@@ -365,6 +405,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+	expectConsumers(t, 4)
 
 	if deliver == sub.Subject {
 		t.Fatalf("Expected delivery subject to be different then %q", deliver)
@@ -372,7 +413,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	deliver = sub.Subject
 
 	// Now test that we can attach to an existing durable.
-	sub, err = js.SubscribeSync("foo", nats.Attach(mset.Name(), dname))
+	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -425,7 +466,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Test that if we are attaching that the subjects will match up. rip from
 	// above was created with a filtered subject of bar, so this should fail.
-	_, err = js.SubscribeSync("baz", nats.Attach(mset.Name(), "rip"), nats.Pull(batch))
+	_, err = js.SubscribeSync("baz", nats.Durable("rip"), nats.Pull(batch))
 	if err != nats.ErrSubjectMismatch {
 		t.Fatalf("Expected a %q error but got %q", nats.ErrSubjectMismatch, err)
 	}
@@ -435,7 +476,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		js.Publish("bar", msg)
 	}
 
-	sub, err = js.SubscribeSync("bar", nats.Attach(mset.Name(), "rip"), nats.Pull(batch))
+	sub, err = js.SubscribeSync("bar", nats.Durable("rip"), nats.Pull(batch))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -943,7 +984,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 
 	var sub *nats.Subscription
 
-	waitForPending := func(n int) {
+	waitForPending := func(t *testing.T, n int) {
 		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
@@ -961,7 +1002,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	waitForPending(toSend)
+	waitForPending(t, toSend)
 
 	// Ack the messages from the push consumer.
 	for i := 0; i < toSend; i++ {
@@ -983,8 +1024,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-
-	waitForPending(batch)
+	waitForPending(t, batch)
 
 	for i := 0; i < toSend; i++ {
 		m, err := sub.NextMsg(100 * time.Millisecond)
