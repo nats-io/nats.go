@@ -107,10 +107,18 @@ type apiPagedRequest struct {
 
 // AccountInfo contains info about the JetStream usage from the current account.
 type AccountInfo struct {
-	Memory  uint64        `json:"memory"`
-	Store   uint64        `json:"storage"`
-	Streams int           `json:"streams"`
-	Limits  AccountLimits `json:"limits"`
+	Memory    uint64        `json:"memory"`
+	Store     uint64        `json:"storage"`
+	Streams   int           `json:"streams"`
+	Consumers int           `json:"consumers"`
+	API       APIStats      `json:"api"`
+	Limits    AccountLimits `json:"limits"`
+}
+
+// APIStats reports on API calls to JetStream for this account.
+type APIStats struct {
+	Total  uint64 `json:"total"`
+	Errors uint64 `json:"errors"`
 }
 
 // AccountLimits includes the JetStream limits of the current account.

@@ -664,6 +664,12 @@ func TestJetStreamManagement(t *testing.T) {
 		if info.Limits.MaxConsumers != -1 {
 			t.Errorf("Expected to not have consumer limits, got: %v", info.Limits.MaxConsumers)
 		}
+		if info.API.Total != 13 {
+			t.Errorf("Expected 13 API calls, got: %v", info.API.Total)
+		}
+		if info.API.Errors != 1 {
+			t.Errorf("Expected 11 API error, got: %v", info.API.Errors)
+		}
 	})
 }
 
@@ -938,6 +944,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	var sub *nats.Subscription
 
 	waitForPending := func(n int) {
+		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
 			if msgs, _, _ := sub.Pending(); msgs == n {
