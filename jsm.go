@@ -212,12 +212,12 @@ type consumerDeleteResponse struct {
 }
 
 // DeleteConsumer deletes a Consumer.
-func (js *js) DeleteConsumer(stream, durable string) error {
+func (js *js) DeleteConsumer(stream, consumer string) error {
 	if stream == _EMPTY_ {
 		return ErrStreamNameRequired
 	}
 
-	dcSubj := js.apiSubj(fmt.Sprintf(apiConsumerDeleteT, stream, durable))
+	dcSubj := js.apiSubj(fmt.Sprintf(apiConsumerDeleteT, stream, consumer))
 	r, err := js.nc.Request(dcSubj, nil, js.wait)
 	if err != nil {
 		return err
@@ -233,8 +233,8 @@ func (js *js) DeleteConsumer(stream, durable string) error {
 }
 
 // ConsumerInfo returns information about a Consumer.
-func (js *js) ConsumerInfo(stream, durable string) (*ConsumerInfo, error) {
-	return js.getConsumerInfo(stream, durable)
+func (js *js) ConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
+	return js.getConsumerInfo(stream, consumer)
 }
 
 // ConsumerLister fetches pages of ConsumerInfo objects. This object is not
