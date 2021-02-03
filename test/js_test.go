@@ -341,6 +341,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	expectConsumers(t, 3)
 	defer sub.Unsubscribe()
 
 	select {
@@ -363,7 +364,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected to have ack'd all %d messages, got ack floor of %d", toSend, info.AckFloor.Consumer)
 	}
 	sub.Unsubscribe()
-	expectConsumers(t, 3)
+	expectConsumers(t, 2)
 
 	// Now create a sync subscriber that is durable.
 	dname := "derek"
@@ -372,7 +373,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
-	expectConsumers(t, 4)
+	expectConsumers(t, 3)
 
 	// Make sure we registered as a durable.
 	if info, _ := sub.ConsumerInfo(); info.Config.Durable != dname {
@@ -383,7 +384,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	// Remove subscription, but do not delete consumer.
 	sub.Drain()
 	nc.Flush()
-	expectConsumers(t, 4)
+	expectConsumers(t, 3)
 
 	// Reattach using the same consumer.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
@@ -393,11 +394,12 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if deliver != sub.Subject {
 		t.Fatal("Expected delivery subject to be the same after reattach")
 	}
-	expectConsumers(t, 4)
+	expectConsumers(t, 3)
 
 	// Cleanup the consumer to be able to create again with a different delivery subject.
+	// this should be the same as `sub.Unsubscribe()'.
 	js.DeleteConsumer("TEST", dname)
-	expectConsumers(t, 3)
+	expectConsumers(t, 2)
 
 	// Create again and make sure that works and that we attach to the same durable with different delivery.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
@@ -405,7 +407,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
-	expectConsumers(t, 4)
+	expectConsumers(t, 3)
 
 	if deliver == sub.Subject {
 		t.Fatalf("Expected delivery subject to be different then %q", deliver)
@@ -435,7 +437,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer sub.Unsubscribe()
 
 	// The first batch if available should be delivered and queued up.
 	waitForPending(batch)
@@ -460,7 +461,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	waitForPending(0)
 	sub.Poll()
 	waitForPending(batch)
-	sub.Unsubscribe()
+	sub.Drain()
 
 	// Now test attaching to a pull based durable.
 
@@ -484,7 +485,11 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	waitForPending(batch)
 
-	if info, _ := sub.ConsumerInfo(); info.NumAckPending != batch*2 || info.NumPending != uint64(toSend-batch) {
+	info, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if info.NumAckPending != batch*2 || info.NumPending != uint64(toSend-batch) {
 		t.Fatalf("Expected ack pending of %d and pending to be %d, got %d %d", batch*2, toSend-batch, info.NumAckPending, info.NumPending)
 	}
 
@@ -553,10 +558,9 @@ func TestJetStream_Drain(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	msg := []byte("Draining Test...")
 	total := 500
 	for i := 0; i < total; i++ {
-		_, err := js.Publish("drain", msg)
+		_, err := js.Publish("drain", []byte(fmt.Sprintf("i:%d", i)))
 		if err != nil {
 			t.Error(err)
 		}
@@ -564,31 +568,31 @@ func TestJetStream_Drain(t *testing.T) {
 
 	// Create some consumers and ensure that there are no timeouts.
 	errCh := make(chan error, 2048)
-	createSub := func() (*nats.Subscription, error) {
+	createSub := func(name string) (*nats.Subscription, error) {
 		return js.Subscribe("drain", func(m *nats.Msg) {
 			err := m.AckSync()
 			if err != nil {
 				errCh <- err
 			}
-		}, nats.ManualAck())
+		}, nats.Durable(name), nats.ManualAck())
 	}
 
-	subA, err := createSub()
+	subA, err := createSub("A")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	subB, err := createSub()
+	subB, err := createSub("B")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	subC, err := createSub()
+	subC, err := createSub("C")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	subD, err := createSub()
+	subD, err := createSub("D")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1854,5 +1858,409 @@ func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 	}
 	if len(pings) != 3 {
 		t.Logf("Expected to receive multiple acks, got: %v", len(pings))
+	}
+}
+
+func TestJetStream_Unsubscribe(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "foo",
+		Subjects: []string{"foo.A", "foo.B", "foo.C"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	fetchConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
+		t.Helper()
+		cl := js.NewConsumerLister("foo")
+		if !cl.Next() {
+			if err := cl.Err(); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			t.Fatalf("Unexpected consumer lister next")
+		}
+		p := cl.Page()
+		if len(p) != expected {
+			t.Fatalf("Expected %d consumers, got: %d", expected, len(p))
+		}
+		if err := cl.Err(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		return p
+	}
+
+	js.Publish("foo.A", []byte("A"))
+	js.Publish("foo.B", []byte("B"))
+	js.Publish("foo.C", []byte("C"))
+
+	t.Run("consumers deleted on unsubscribe", func(t *testing.T) {
+		subA, err := js.SubscribeSync("foo.A")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = subA.Unsubscribe()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = subB.Unsubscribe()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		fetchConsumers(t, 0)
+	})
+
+	t.Run("attached pull consumer deleted on unsubscribe", func(t *testing.T) {
+		// Created by JetStreamManagement
+		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+			Durable:   "wq",
+			AckPolicy: nats.AckExplicitPolicy,
+			// Need to specify filter subject here otherwise
+			// would get messages from foo.A as well.
+			FilterSubject: "foo.C",
+		}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		subC, err := js.SubscribeSync("foo.C", nats.Durable("wq"), nats.Pull(1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		fetchConsumers(t, 1)
+
+		msg, err := subC.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Errorf("Unexpected error getting message: %v", err)
+		}
+		got := string(msg.Data)
+		expected := "C"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		subC.Unsubscribe()
+		fetchConsumers(t, 0)
+	})
+
+	t.Run("ephemeral consumers deleted on drain", func(t *testing.T) {
+		subA, err := js.SubscribeSync("foo.A")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = subA.Drain()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		fetchConsumers(t, 0)
+	})
+
+	t.Run("durable consumers not deleted on drain", func(t *testing.T) {
+		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = subB.Drain()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		fetchConsumers(t, 1)
+	})
+
+	t.Run("reattached durable consumers not deleted on drain", func(t *testing.T) {
+		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = subB.Drain()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		fetchConsumers(t, 1)
+	})
+}
+
+func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	serverURL := s.ClientURL()
+	mc, err := nats.Connect(serverURL)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	jsm, err := mc.JetStream()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	_, err = jsm.AddStream(&nats.StreamConfig{
+		Name:     "foo",
+		Subjects: []string{"foo.A", "foo.B", "foo.C"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	fetchConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
+		t.Helper()
+		cl := jsm.NewConsumerLister("foo")
+		if !cl.Next() {
+			if err := cl.Err(); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			t.Fatalf("Unexpected consumer lister next")
+		}
+		p := cl.Page()
+		if len(p) != expected {
+			t.Fatalf("Expected %d consumers, got: %d", expected, len(p))
+		}
+		if err := cl.Err(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		return p
+	}
+
+	t.Run("conn drain deletes ephemeral consumers", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		nc, err := nats.Connect(serverURL, nats.ClosedHandler(func(_ *nats.Conn) {
+			cancel()
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = js.SubscribeSync("foo.C")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// sub.Drain() or nc.Drain() does not delete the durable consumers,
+		// just makes client go away.  Ephemerals will get deleted though.
+		nc.Drain()
+		<-ctx.Done()
+		fetchConsumers(t, 0)
+	})
+
+	jsm.Publish("foo.A", []byte("A.1"))
+	jsm.Publish("foo.B", []byte("B.1"))
+	jsm.Publish("foo.C", []byte("C.1"))
+
+	t.Run("conn close does not delete any consumer", func(t *testing.T) {
+		nc, err := nats.Connect(serverURL)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		_, err = js.SubscribeSync("foo.A")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		resp, err := subB.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		got := string(resp.Data)
+		expected := "B.1"
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+		fetchConsumers(t, 2)
+
+		// There will be still all consumers since nc.Close
+		// does not delete ephemeral consumers.
+		nc.Close()
+		fetchConsumers(t, 2)
+	})
+
+	jsm.Publish("foo.A", []byte("A.2"))
+	jsm.Publish("foo.B", []byte("B.2"))
+	jsm.Publish("foo.C", []byte("C.2"))
+
+	t.Run("reattached durables consumers can be deleted with unsubscribe", func(t *testing.T) {
+		nc, err := nats.Connect(serverURL)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		fetchConsumers(t, 2)
+
+		// The durable interest remains so have to attach now,
+		// otherwise would get a stream already used error.
+		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// No new consumers created since reattached to the same one.
+		fetchConsumers(t, 2)
+
+		resp, err := subB.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		got := string(resp.Data)
+		expected := "B.2"
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		jsm.Publish("foo.B", []byte("B.3"))
+
+		// Attach again to the same subject with the durable.
+		dupSub, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// The same durable is already used, so this dup durable
+		// subscription won't receive the message.
+		_, err = dupSub.NextMsg(1 * time.Second)
+		if err == nil {
+			t.Fatalf("Expected error: %v", err)
+		}
+
+		// Original sub can still receive the same message.
+		resp, err = subB.NextMsg(1 * time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		got = string(resp.Data)
+		expected = "B.3"
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+		// Delete durable consumer.
+		err = subB.Unsubscribe()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		err = dupSub.Unsubscribe()
+		if err == nil {
+			t.Fatalf("Unexpected success")
+		}
+		if err.Error() != `consumer not found` {
+			t.Errorf("Expected consumer not found error, got: %v", err)
+		}
+
+		// Remains an ephemeral consumer that did not get deleted
+		// when Close() was called.
+		fetchConsumers(t, 1)
+	})
+}
+
+func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: {max_mem_store: 64GB, max_file_store: 10TB}
+		no_auth_user: guest
+		accounts: {
+			JS: {   # User should not be able to delete consumer.
+				jetstream: enabled
+				users: [ {user: guest, password: "", permissions: {
+					publish: { deny: "$JS.API.CONSUMER.DELETE.>" }
+				}}]
+			}
+		}
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	errCh := make(chan error, 2)
+	nc, err := nats.Connect(s.ClientURL(), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		errCh <- err
+	}))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	js.AddStream(&nats.StreamConfig{
+		Name: "foo",
+	})
+	js.Publish("foo", []byte("test"))
+
+	sub, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should fail due to lack of permissions.
+	err = sub.Unsubscribe()
+	if err == nil {
+		t.Errorf("Unexpected success attempting to delete consumer without permissions")
+	}
+
+	select {
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for permissions error")
+	case err = <-errCh:
+		if !strings.Contains(err.Error(), `Permissions Violation for Publish to "$JS.API.CONSUMER.DELETE`) {
+			t.Error("Expected permissionns violation error")
+		}
 	}
 }

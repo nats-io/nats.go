@@ -530,15 +530,6 @@ type Subscription struct {
 	dropped     int
 }
 
-// For JetStream subscription info.
-type jsSub struct {
-	js       *js
-	consumer string
-	stream   string
-	deliver  string
-	pull     int
-}
-
 // Msg is a structure used by Subscribers and PublishMsg().
 type Msg struct {
 	Subject string
@@ -3573,6 +3564,17 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
+	// Check whether it is a JetStream sub and should clean up consumers.
+	sub.mu.Lock()
+	jsi := sub.jsi
+	sub.mu.Unlock()
+	if jsi != nil {
+		err := jsi.unsubscribe(drainMode)
+		if err != nil {
+			return err
+		}
+	}
+
 	nc.mu.Lock()
 	// ok here, but defer is expensive
 	defer nc.mu.Unlock()
