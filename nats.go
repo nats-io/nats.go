@@ -4229,10 +4229,16 @@ func (nc *Conn) drainConnection() {
 
 	subs := make([]*Subscription, 0, len(nc.subs))
 	for _, s := range nc.subs {
+		if s == nc.respMux {
+			// Skip since might be in use while messages
+			// are being processed (can miss responses).
+			continue
+		}
 		subs = append(subs, s)
 	}
 	errCB := nc.Opts.AsyncErrorCB
 	drainWait := nc.Opts.DrainTimeout
+	respMux := nc.respMux
 	nc.mu.Unlock()
 
 	// for pushing errors with context.
@@ -4245,7 +4251,7 @@ func (nc *Conn) drainConnection() {
 		nc.mu.Unlock()
 	}
 
-	// Do subs first
+	// Do subs first, skip request handler if present.
 	for _, s := range subs {
 		if err := s.Drain(); err != nil {
 			// We will notify about these but continue.
@@ -4255,11 +4261,32 @@ func (nc *Conn) drainConnection() {
 
 	// Wait for the subscriptions to drop to zero.
 	timeout := time.Now().Add(drainWait)
+	var min int
+	if respMux != nil {
+		min = 1
+	} else {
+		min = 0
+	}
 	for time.Now().Before(timeout) {
-		if nc.NumSubscriptions() == 0 {
+		if nc.NumSubscriptions() == min {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// In case there was a request/response handler
+	// then need to call drain at the end.
+	if respMux != nil {
+		if err := respMux.Drain(); err != nil {
+			// We will notify about these but continue.
+			pushErr(err)
+		}
+		for time.Now().Before(timeout) {
+			if nc.NumSubscriptions() == 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 
 	// Check if we timed out.

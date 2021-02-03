@@ -523,6 +523,100 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
+func TestJetStream_Drain(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+
+	nc, err := nats.Connect(s.ClientURL(), nats.ClosedHandler(func(_ *nats.Conn) {
+		done()
+	}))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"drain"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msg := []byte("Draining Test...")
+	total := 500
+	for i := 0; i < total; i++ {
+		_, err := js.Publish("drain", msg)
+		if err != nil {
+			t.Error(err)
+		}
+	}
+
+	// Create some consumers and ensure that there are no timeouts.
+	errCh := make(chan error, 2048)
+	createSub := func() (*nats.Subscription, error) {
+		return js.Subscribe("drain", func(m *nats.Msg) {
+			err := m.AckSync()
+			if err != nil {
+				errCh <- err
+			}
+		}, nats.ManualAck())
+	}
+
+	subA, err := createSub()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	subB, err := createSub()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	subC, err := createSub()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	subD, err := createSub()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	waitForDelivered := func(t *testing.T, sub *nats.Subscription) {
+		t.Helper()
+		timeout := time.Now().Add(2 * time.Second)
+		for time.Now().Before(timeout) {
+			if msgs, _ := sub.Delivered(); msgs != 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitForDelivered(t, subA)
+	waitForDelivered(t, subB)
+	waitForDelivered(t, subC)
+	waitForDelivered(t, subD)
+	nc.Drain()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("Error during drain: %+v", err)
+	case <-ctx.Done():
+		// OK!
+	}
+}
+
 func TestAckForNonJetStream(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
@@ -1039,7 +1133,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	waitForPending(toSend)
+	waitForPending(t, toSend)
 
 	// Can also ack from the regular NATS subscription via the imported subject.
 	for i := 0; i < toSend; i++ {
