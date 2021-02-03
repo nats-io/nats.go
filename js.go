@@ -674,6 +674,7 @@ type subOpts struct {
 	cfg *ConsumerConfig
 }
 
+// Durable defines the consumer name for JetStream durable subscribers.
 func Durable(name string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		if strings.Contains(name, ".") {
@@ -685,6 +686,8 @@ func Durable(name string) SubOpt {
 	})
 }
 
+// Pull defines the batch size of messages that will be received
+// when using pull based JetStream consumers.
 func Pull(batchSize int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		if batchSize == 0 {
@@ -707,13 +710,7 @@ func PullDirect(stream, consumer string, batchSize int) SubOpt {
 	})
 }
 
-func PushDirect(deliverSubject string) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.DeliverSubject = deliverSubject
-		return nil
-	})
-}
-
+// ManualAck disables auto ack functionality for async subscriptions.
 func ManualAck() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.mack = true

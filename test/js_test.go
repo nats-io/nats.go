@@ -1111,27 +1111,6 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("Expected to receive %d messages, but got %d", n, msgs)
 	}
 
-	// Do push based direct consumer.
-	sub, err = js.SubscribeSync("ORDERS", nats.PushDirect("p.d"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	waitForPending(t, toSend)
-
-	// Ack the messages from the push consumer.
-	for i := 0; i < toSend; i++ {
-		m, err := sub.NextMsg(100 * time.Millisecond)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		// Test that can expect an ack of the ack.
-		err = m.AckSync()
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-	}
-
 	// Do push based consumer using a regular NATS subscription on the import subject.
 	sub, err = nc.SubscribeSync("p.d3")
 	if err != nil {
