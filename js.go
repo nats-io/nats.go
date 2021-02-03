@@ -115,10 +115,10 @@ type js struct {
 	direct bool
 }
 
+const defaultRequestWait = 5 * time.Second
+
 // JetStream returns a JetStream context for pub/sub interactions.
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
-	const defaultRequestWait = 5 * time.Second
-
 	js := &js{nc: nc, pre: defaultAPIPrefix, wait: defaultRequestWait}
 
 	for _, opt := range opts {
@@ -812,7 +812,9 @@ func (m *Msg) checkReply() (*js, bool, error) {
 	sub.mu.Lock()
 	if sub.jsi == nil {
 		sub.mu.Unlock()
-		return nil, false, ErrNotJSMessage
+
+		// Not using a JS context.
+		return nil, false, nil
 	}
 	js := sub.jsi.js
 	isPullMode := sub.jsi.pull > 0
@@ -824,27 +826,56 @@ func (m *Msg) checkReply() (*js, bool, error) {
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
 // It ensures that an ack is only sent a single time, regardless of
 // how many times it is being called to avoid duplicated acks.
-func (m *Msg) ackReply(ackType []byte, sync bool) error {
+func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
+	var o pubOpts
+	for _, opt := range opts {
+		if err := opt.configurePublish(&o); err != nil {
+			return err
+		}
+	}
 	js, isPullMode, err := m.checkReply()
 	if err != nil {
 		return err
 	}
+
+	// Skip if already acked.
 	if atomic.LoadUint32(&m.ackd) == 1 {
 		return ErrInvalidJSAck
 	}
+
+	m.Sub.mu.Lock()
+	nc := m.Sub.conn
+	m.Sub.mu.Unlock()
+
+	ctx := o.ctx
+	wait := defaultRequestWait
+	if o.ttl > 0 {
+		wait = o.ttl
+	} else if js != nil {
+		wait = js.wait
+	}
+
 	if isPullMode {
 		if bytes.Equal(ackType, AckAck) {
-			err = js.nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
+			err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
 		} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
-			err = js.nc.PublishRequest(m.Reply, m.Sub.Subject, []byte("+NXT {\"batch\":1}"))
+			err = nc.PublishRequest(m.Reply, m.Sub.Subject, []byte("+NXT {\"batch\":1}"))
 		}
 		if sync && err == nil {
-			_, err = js.nc.Request(m.Reply, nil, js.wait)
+			if ctx != nil {
+				_, err = nc.RequestWithContext(ctx, m.Reply, nil)
+			} else {
+				_, err = nc.Request(m.Reply, nil, wait)
+			}
 		}
 	} else if sync {
-		_, err = js.nc.Request(m.Reply, ackType, js.wait)
+		if ctx != nil {
+			_, err = nc.RequestWithContext(ctx, m.Reply, ackType)
+		} else {
+			_, err = nc.Request(m.Reply, ackType, wait)
+		}
 	} else {
-		err = js.nc.Publish(m.Reply, ackType)
+		err = nc.Publish(m.Reply, ackType)
 	}
 
 	// Mark that the message has been acked unless it is AckProgress
@@ -864,8 +895,8 @@ func (m *Msg) Ack() error {
 }
 
 // Ack a message and wait for a response from the server.
-func (m *Msg) AckSync() error {
-	return m.ackReply(AckAck, true)
+func (m *Msg) AckSync(opts ...PubOpt) error {
+	return m.ackReply(AckAck, true, opts...)
 }
 
 // Nak this message, indicating we can not process.
@@ -884,7 +915,7 @@ func (m *Msg) InProgress() error {
 	return m.ackReply(AckProgress, false)
 }
 
-// JetStream metadata associated with received messages.
+// MsgMetadata is the JetStream metadata associated with received messages.
 type MsgMetaData struct {
 	Consumer  uint64
 	Stream    uint64
@@ -893,6 +924,7 @@ type MsgMetaData struct {
 	Timestamp time.Time
 }
 
+// MetaData retrieves the metadata from a JetStream message.
 func (m *Msg) MetaData() (*MsgMetaData, error) {
 	if _, _, err := m.checkReply(); err != nil {
 		return nil, err
