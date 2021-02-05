@@ -2287,7 +2287,10 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 		o := natsserver.DefaultTestOptions
 		o.JetStream = true
 		o.ServerName = fmt.Sprintf("NODE_%d", i)
-		tdir, _ := ioutil.TempDir(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
+		tdir, err := ioutil.TempDir(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
+		if err != nil {
+			t.Fatal(err)
+		}
 		o.StoreDir = tdir
 		o.Cluster.Name = clusterName
 		_, host1, port1 := getAddr()
@@ -2297,6 +2300,7 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 		addr2, host2, port2 := getAddr()
 		o.Cluster.Host = host2
 		o.Cluster.Port = port2
+		o.Tags = []string{o.ServerName}
 		routes = append(routes, fmt.Sprintf("nats://%s", addr2))
 		opts = append(opts, &o)
 	}
@@ -2377,6 +2381,99 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
 }
 
+func TestJetStream_ClusterPlacement(t *testing.T) {
+	size := 3
+
+	t.Run("default cluster", func(t *testing.T) {
+		cluster := "PLC1"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Tags: []string{"NODE_0"},
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err != nil {
+				t.Errorf("Unexpected error placing stream: %v", err)
+			}
+		})
+	})
+
+	t.Run("known cluster", func(t *testing.T) {
+		cluster := "PLC2"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Cluster: cluster,
+					Tags:    []string{"NODE_0"},
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err != nil {
+				t.Errorf("Unexpected error placing stream: %v", err)
+			}
+		})
+	})
+
+	t.Run("unknown cluster", func(t *testing.T) {
+		cluster := "PLC3"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Cluster: "UNKNOWN",
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err == nil {
+				t.Error("Unexpected success creating stream in unknown cluster")
+			}
+			expected := `insufficient resources`
+			if err != nil && err.Error() != expected {
+				t.Errorf("Expected %q error, got: %v", expected, err)
+			}
+		})
+	})
+}
+
 func TestJetStream_ClusterReconnect(t *testing.T) {
 	n := 3
 	replicas := []int{1, 3}
@@ -2429,7 +2526,6 @@ func testJetStream_ClusterReconnectPullSubscriber(t *testing.T, subject string, 
 	)
 	nc, err := nats.Connect(srvA.ClientURL(),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			// t.Logf("Reconnected!")
 			reconnected <- struct{}{}
 
 			// Bring back the server after the reconnect event.
@@ -2665,7 +2761,7 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 		t.Logf("WARN: Expected %v, got: %v", totalMsgs, got)
 	}
 	if got != totalMsgs-failedPubs {
-		t.Errorf("WARN: Expected %v, got: %v", totalMsgs-failedPubs, got)
+		t.Errorf("Expected %v, got: %v", totalMsgs-failedPubs, got)
 	}
 }
 
