@@ -16,12 +16,16 @@ package test
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
+	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 )
 
@@ -2239,7 +2243,637 @@ func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
 		t.Error("Timeout waiting for permissions error")
 	case err = <-errCh:
 		if !strings.Contains(err.Error(), `Permissions Violation for Publish to "$JS.API.CONSUMER.DELETE`) {
-			t.Error("Expected permissionns violation error")
+			t.Error("Expected permissions violation error")
 		}
+	}
+}
+
+type jsServer struct {
+	*server.Server
+	myopts  *server.Options
+	restart sync.Mutex
+}
+
+// Restart can be used to start again a server
+// using the same listen address as before.
+func (srv *jsServer) Restart() {
+	srv.restart.Lock()
+	defer srv.restart.Unlock()
+	srv.Server = natsserver.RunServer(srv.myopts)
+}
+
+func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsServer {
+	t.Helper()
+	nodes := make([]*jsServer, size)
+	opts := make([]*server.Options, 0)
+
+	getAddr := func() (string, string, int) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic(err)
+		}
+		defer l.Close()
+
+		addr := l.Addr()
+		host := addr.(*net.TCPAddr).IP.String()
+		port := addr.(*net.TCPAddr).Port
+		l.Close()
+		time.Sleep(100 * time.Millisecond)
+		return addr.String(), host, port
+	}
+
+	routes := []string{}
+	for i := 0; i < size; i++ {
+		o := natsserver.DefaultTestOptions
+		o.JetStream = true
+		o.ServerName = fmt.Sprintf("NODE_%d", i)
+		tdir, err := ioutil.TempDir(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		o.StoreDir = tdir
+		o.Cluster.Name = clusterName
+		_, host1, port1 := getAddr()
+		o.Host = host1
+		o.Port = port1
+
+		addr2, host2, port2 := getAddr()
+		o.Cluster.Host = host2
+		o.Cluster.Port = port2
+		o.Tags = []string{o.ServerName}
+		routes = append(routes, fmt.Sprintf("nats://%s", addr2))
+		opts = append(opts, &o)
+	}
+
+	routesStr := server.RoutesFromStr(strings.Join(routes, ","))
+
+	for i, o := range opts {
+		o.Routes = routesStr
+		nodes[i] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
+	}
+
+	// Wait until JS is ready.
+	srvA := nodes[0]
+	nc, err := nats.Connect(srvA.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	waitForJSReady(t, nc)
+
+	return nodes
+}
+
+func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testing.T, srvs ...*jsServer)) {
+	t.Helper()
+
+	nodes := setupJSClusterWithSize(t, clusterName, size)
+	defer func() {
+		// Ensure that they get shutdown and remove their state.
+		for _, node := range nodes {
+			node.restart.Lock()
+			if config := node.JetStreamConfig(); config != nil {
+				os.RemoveAll(config.StoreDir)
+			}
+			node.restart.Unlock()
+			node.Shutdown()
+		}
+	}()
+	tfn(t, nodes...)
+}
+
+func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream *nats.StreamConfig, tfn func(t *testing.T, subject string, srvs ...*jsServer)) {
+	t.Helper()
+
+	withJSCluster(t, clusterName, size, func(t *testing.T, nodes ...*jsServer) {
+		srvA := nodes[0]
+		nc, err := nats.Connect(srvA.ClientURL())
+		if err != nil {
+			t.Error(err)
+		}
+
+		var jsm nats.JetStreamManager
+		jsm, err = nc.JetStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = jsm.AddStream(stream)
+		if err != nil {
+			t.Error(err)
+		}
+
+		tfn(t, stream.Name, nodes...)
+	})
+}
+
+func waitForJSReady(t *testing.T, nc *nats.Conn) {
+	var err error
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		_, err = nc.JetStream()
+		if err != nil {
+			// Backoff for a bit until cluster ready.
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		return
+	}
+	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
+}
+
+func TestJetStream_ClusterPlacement(t *testing.T) {
+	size := 3
+
+	t.Run("default cluster", func(t *testing.T) {
+		cluster := "PLC1"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Tags: []string{"NODE_0"},
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err != nil {
+				t.Errorf("Unexpected error placing stream: %v", err)
+			}
+		})
+	})
+
+	t.Run("known cluster", func(t *testing.T) {
+		cluster := "PLC2"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Cluster: cluster,
+					Tags:    []string{"NODE_0"},
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err != nil {
+				t.Errorf("Unexpected error placing stream: %v", err)
+			}
+		})
+	})
+
+	t.Run("unknown cluster", func(t *testing.T) {
+		cluster := "PLC3"
+		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
+			srvA := nodes[0]
+			nc, err := nats.Connect(srvA.ClientURL())
+			if err != nil {
+				t.Error(err)
+			}
+
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stream := &nats.StreamConfig{
+				Name: "TEST",
+				Placement: &nats.Placement{
+					Cluster: "UNKNOWN",
+				},
+			}
+
+			_, err = js.AddStream(stream)
+			if err == nil {
+				t.Error("Unexpected success creating stream in unknown cluster")
+			}
+			expected := `insufficient resources`
+			if err != nil && err.Error() != expected {
+				t.Errorf("Expected %q error, got: %v", expected, err)
+			}
+		})
+	})
+}
+
+func TestJetStream_ClusterReconnect(t *testing.T) {
+	n := 3
+	replicas := []int{1, 3}
+
+	t.Run("pull sub", func(t *testing.T) {
+		for _, r := range replicas {
+			t.Run(fmt.Sprintf("n=%d r=%d", n, r), func(t *testing.T) {
+				stream := &nats.StreamConfig{
+					Name:     fmt.Sprintf("foo-r%d", r),
+					Replicas: r,
+				}
+				withJSClusterAndStream(t, fmt.Sprintf("PULLR%d", r), n, stream, testJetStream_ClusterReconnectPullSubscriber)
+			})
+		}
+	})
+
+	t.Run("qsub durable", func(t *testing.T) {
+		for _, r := range replicas {
+			t.Run(fmt.Sprintf("n=%d r=%d", n, r), func(t *testing.T) {
+				stream := &nats.StreamConfig{
+					Name:     fmt.Sprintf("bar-r%d", r),
+					Replicas: r,
+				}
+				withJSClusterAndStream(t, fmt.Sprintf("QSUBR%d", r), n, stream, testJetStream_ClusterReconnectDurableQueueSubscriber)
+			})
+		}
+	})
+
+	t.Run("sub durable", func(t *testing.T) {
+		for _, r := range replicas {
+			t.Run(fmt.Sprintf("n=%d r=%d", n, r), func(t *testing.T) {
+				stream := &nats.StreamConfig{
+					Name:     fmt.Sprintf("quux-r%d", r),
+					Replicas: r,
+				}
+				withJSClusterAndStream(t, fmt.Sprintf("SUBR%d", r), n, stream, testJetStream_ClusterReconnectDurablePushSubscriber)
+			})
+		}
+	})
+}
+
+func testJetStream_ClusterReconnectPullSubscriber(t *testing.T, subject string, srvs ...*jsServer) {
+	var (
+		recvd         int
+		srvA          = srvs[0]
+		totalMsgs     = 20
+		durable       = nats.Durable("d1")
+		reconnected   = make(chan struct{}, 2)
+		reconnectDone bool
+	)
+	nc, err := nats.Connect(srvA.ClientURL(),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			reconnected <- struct{}{}
+
+			// Bring back the server after the reconnect event.
+			if !reconnectDone {
+				reconnectDone = true
+				srvA.Restart()
+			}
+		}),
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Error(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish(subject, []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	sub, err := js.SubscribeSync(subject, durable, nats.Pull(1))
+	if err != nil {
+		t.Error(err)
+	}
+
+	for i := 10; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish(subject, []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+	defer done()
+
+NextMsg:
+	for recvd != totalMsgs {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timeout waiting for messages, expected: %d, got: %d", totalMsgs, recvd)
+		default:
+		}
+
+		pending, _, _ := sub.Pending()
+		if pending == 0 {
+			err = sub.Poll()
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		}
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			continue NextMsg
+		}
+
+		// Server will shutdown after a couple of messages which will result
+		// in empty messages with an status unavailable error.
+		if len(msg.Data) == 0 && msg.Header.Get("Status") == "503" {
+			continue
+		}
+
+		got := string(msg.Data)
+		expected := fmt.Sprintf("i:%d", recvd)
+		if got != expected {
+			// Missed a message, but continue checking for the rest.
+			recvd++
+			t.Logf("WARN: Expected %v, got: %v", expected, got)
+		}
+
+		err = msg.AckSync()
+		if err != nil {
+			// During the reconnection, both of these errors can occur.
+			if err == nats.ErrNoResponders || err == nats.ErrTimeout {
+				// Wait for reconnection event to occur to continue.
+				select {
+				case <-reconnected:
+					continue NextMsg
+				case <-time.After(1 * time.Second):
+					continue NextMsg
+				case <-ctx.Done():
+					t.Fatal("Timed out waiting for reconnect")
+				}
+			}
+
+			t.Errorf("Unexpected error: %v", err)
+			continue NextMsg
+		}
+
+		recvd++
+
+		// Shutdown the server after a couple of messages.
+		if recvd == 2 {
+			srvA.Shutdown()
+		}
+	}
+}
+
+func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject string, srvs ...*jsServer) {
+	var (
+		srvA          = srvs[0]
+		srvB          = srvs[1]
+		srvC          = srvs[2]
+		totalMsgs     = 20
+		reconnected   = make(chan struct{})
+		reconnectDone bool
+	)
+	nc, err := nats.Connect(srvA.ClientURL(),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			reconnected <- struct{}{}
+
+			// Bring back the server after the reconnect event.
+			if !reconnectDone {
+				reconnectDone = true
+				srvA.Restart()
+			}
+		}),
+	)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Drain to allow AckSync response to be received.
+	defer nc.Drain()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Error(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		js.Publish(subject, []byte(payload))
+	}
+
+	ctx, done := context.WithTimeout(context.Background(), 15*time.Second)
+	defer done()
+
+	msgs := make(chan *nats.Msg, totalMsgs)
+
+	// Create some queue subscribers.
+	srvAClientURL := srvA.ClientURL()
+	srvBClientURL := srvB.ClientURL()
+	srvCClientURL := srvC.ClientURL()
+	for i := 0; i < 5; i++ {
+		expected := totalMsgs
+		dname := "dur"
+		_, err = js.QueueSubscribe(subject, "wg", func(m *nats.Msg) {
+			msgs <- m
+
+			count := len(msgs)
+			switch {
+			case count == 2:
+				// Do not ack and wait for redelivery on reconnect.
+				srvA.Shutdown()
+				return
+			case count == 11:
+				// Do another Shutdown of the server we are connected with.
+				switch nc.ConnectedUrl() {
+				case srvAClientURL:
+					srvA.Shutdown()
+				case srvBClientURL:
+					srvB.Shutdown()
+				case srvCClientURL:
+					srvC.Shutdown()
+				default:
+				}
+				return
+			case count == expected:
+				done()
+			}
+
+			err := m.AckSync()
+			if err != nil {
+				// During the reconnection, both of these errors can occur.
+				if err == nats.ErrNoResponders || err == nats.ErrTimeout {
+					// Wait for reconnection event to occur to continue.
+					select {
+					case <-reconnected:
+						return
+					case <-time.After(1 * time.Second):
+						return
+					case <-ctx.Done():
+						return
+					}
+				}
+				t.Errorf("Unexpected error: %v", err)
+			}
+		}, nats.Durable(dname), nats.ManualAck())
+
+		if err != nil && err != nats.ErrTimeout {
+			t.Error(err)
+		}
+	}
+
+	var failedPubs int
+	for i := 10; i < totalMsgs; i++ {
+		var published bool
+		payload := fmt.Sprintf("i:%d", i)
+		timeout := time.Now().Add(10 * time.Second)
+
+	Retry:
+		for time.Now().Before(timeout) {
+			_, err = js.Publish(subject, []byte(payload))
+
+			// Skip temporary errors.
+			if err == nats.ErrNoStreamResponse || err == nats.ErrTimeout {
+				time.Sleep(100 * time.Millisecond)
+				continue Retry
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			published = true
+			break Retry
+		}
+
+		if !published {
+			failedPubs++
+		}
+	}
+
+	<-ctx.Done()
+
+	got := len(msgs)
+	if got != totalMsgs {
+		t.Logf("WARN: Expected %v, got: %v", totalMsgs, got)
+	}
+	if got != totalMsgs-failedPubs {
+		t.Errorf("Expected %v, got: %v", totalMsgs-failedPubs, got)
+	}
+}
+
+func testJetStream_ClusterReconnectDurablePushSubscriber(t *testing.T, subject string, srvs ...*jsServer) {
+	var (
+		srvA          = srvs[0]
+		srvB          = srvs[1]
+		srvC          = srvs[2]
+		totalMsgs     = 20
+		reconnected   = make(chan struct{})
+		reconnectDone bool
+	)
+	nc, err := nats.Connect(srvA.ClientURL(),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			reconnected <- struct{}{}
+
+			// Bring back the server after the reconnect event.
+			if !reconnectDone {
+				reconnectDone = true
+				srvA.Restart()
+			}
+		}),
+	)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Drain to allow Ack responses to be published.
+	defer nc.Drain()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Initial burst of messages.
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		js.Publish(subject, []byte(payload))
+	}
+
+	// For now just confirm that do receive all messages across restarts.
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+	defer done()
+
+	recvd := make(chan *nats.Msg, totalMsgs)
+	expected := totalMsgs
+	_, err = js.Subscribe(subject, func(m *nats.Msg) {
+		recvd <- m
+
+		if len(recvd) == expected {
+			done()
+		}
+	}, nats.Durable("sd1"))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	timeout := time.Now().Add(3 * time.Second)
+	for time.Now().Before(timeout) {
+		if len(recvd) >= 2 {
+			// Restart the first server.
+			srvA.Shutdown()
+			break
+		}
+	}
+
+	// Wait for reconnect or timeout.
+	select {
+	case <-reconnected:
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for reconnect")
+	}
+
+	for i := 10; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		timeout := time.Now().Add(5 * time.Second)
+	Retry:
+		for time.Now().Before(timeout) {
+			_, err = js.Publish(subject, []byte(payload))
+			if err == nats.ErrNoStreamResponse || err == nats.ErrTimeout {
+				// Temporary error.
+				time.Sleep(100 * time.Millisecond)
+				continue Retry
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			break Retry
+		}
+	}
+
+	srvBClientURL := srvB.ClientURL()
+	srvCClientURL := srvC.ClientURL()
+	timeout = time.Now().Add(3 * time.Second)
+	for time.Now().Before(timeout) {
+		if len(recvd) >= 5 {
+			// Do another Shutdown of the server we are connected with.
+			switch nc.ConnectedUrl() {
+			case srvBClientURL:
+				srvB.Shutdown()
+			case srvCClientURL:
+				srvC.Shutdown()
+			default:
+			}
+
+			break
+		}
+	}
+	<-ctx.Done()
+
+	got := len(recvd)
+	if got != totalMsgs {
+		t.Logf("WARN: Expected %v, got: %v", totalMsgs, got)
 	}
 }
