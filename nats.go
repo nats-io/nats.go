@@ -486,7 +486,7 @@ type Conn struct {
 	respRand  *rand.Rand           // Used for generating suffix
 }
 
-// A Subscription represents interest in a given subject.
+// Subscription represents interest in a given subject.
 type Subscription struct {
 	mu  sync.Mutex
 	sid int64
@@ -530,7 +530,8 @@ type Subscription struct {
 	dropped     int
 }
 
-// Msg is a structure used by Subscribers and PublishMsg().
+// Msg represents a message delivered by NATS. This structure is used
+// by Subscribers and PublishMsg().
 type Msg struct {
 	Subject string
 	Reply   string
@@ -2807,7 +2808,7 @@ func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, nil, data)
 }
 
-// Used to create a new message for publishing that will use headers.
+// NewMsg creates a message for publishing that will use headers.
 func NewMsg(subject string) *Msg {
 	return &Msg{
 		Subject: subject,
