@@ -24,16 +24,16 @@ import (
 
 // JetStreamManager is the public interface for managing JetStream streams & consumers.
 type JetStreamManager interface {
-	// Create a stream.
+	// AddStream creates a stream.
 	AddStream(cfg *StreamConfig) (*StreamInfo, error)
 
-	// Update a stream.
+	// UpdateStream updates a stream.
 	UpdateStream(cfg *StreamConfig) (*StreamInfo, error)
 
-	// Delete a stream.
+	// DeleteStream deletes a stream.
 	DeleteStream(name string) error
 
-	// Stream information.
+	// StreamInfo retrieves information from a stream.
 	StreamInfo(stream string) (*StreamInfo, error)
 
 	// Purge stream messages.
@@ -45,16 +45,16 @@ type JetStreamManager interface {
 	// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
 	GetMsg(name string, seq uint64) (*RawStreamMsg, error)
 
-	// DeleteMsg erases a message from a Stream.
+	// DeleteMsg erases a message from a stream.
 	DeleteMsg(name string, seq uint64) error
 
-	// Create a consumer.
+	// AddConsumer adds a consumer to a stream.
 	AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, error)
 
-	// Delete a consumer.
+	// DeleteConsumer deletes a consumer.
 	DeleteConsumer(stream, consumer string) error
 
-	// Consumer information.
+	// ConsumerInfo retrieves consumer information.
 	ConsumerInfo(stream, name string) (*ConsumerInfo, error)
 
 	// NewConsumerLister is used to return pages of ConsumerInfo objects.
@@ -386,7 +386,7 @@ type StreamInfo struct {
 	Cluster *ClusterInfo `json:"cluster,omitempty"`
 }
 
-// StreamStats is information about the given stream.
+// StreamState is information about the given stream.
 type StreamState struct {
 	Msgs      uint64    `json:"messages"`
 	Bytes     uint64    `json:"bytes"`
