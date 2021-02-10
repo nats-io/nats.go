@@ -73,6 +73,9 @@ const (
 	// apiStreamListT is the endpoint that will return all detailed stream information
 	apiStreamList = "STREAM.LIST"
 
+	// apiMsgGetT is the endpoint to get a message.
+	apiMsgGetT = "STREAM.MSG.GET.%s"
+
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 )

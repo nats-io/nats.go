@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -812,6 +814,160 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 		if info.API.Errors != 1 {
 			t.Errorf("Expected 11 API error, got: %v", info.API.Errors)
+		}
+	})
+}
+
+func TestJetStreamManagement_GetMsg(t *testing.T) {
+	t.Run("1-node", func(t *testing.T) {
+		withJSServer(t, testJetStreamManagement_GetMsg)
+	})
+	t.Run("3-node", func(t *testing.T) {
+		withJSCluster(t, "GET", 3, testJetStreamManagement_GetMsg)
+	})
+}
+
+func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
+	s := srvs[0]
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "foo",
+		Subjects: []string{"foo.A", "foo.B", "foo.C"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		msg := nats.NewMsg("foo.A")
+		data := fmt.Sprintf("A:%d", i)
+		msg.Data = []byte(data)
+		msg.Header.Add("X-Nats-Test-Data", data)
+		js.PublishMsg(msg)
+		js.Publish("foo.B", []byte(fmt.Sprintf("B:%d", i)))
+		js.Publish("foo.C", []byte(fmt.Sprintf("C:%d", i)))
+	}
+
+	var originalSeq uint64
+	t.Run("get message", func(t *testing.T) {
+		expected := 5
+		msgs := make([]*nats.Msg, 0)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		sub, err := js.Subscribe("foo.C", func(msg *nats.Msg) {
+			msgs = append(msgs, msg)
+			if len(msgs) == expected {
+				cancel()
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-ctx.Done()
+		sub.Unsubscribe()
+
+		got := len(msgs)
+		if got != expected {
+			t.Fatalf("Expected: %d, got: %d", expected, got)
+		}
+
+		msg := msgs[3]
+		meta, err := msg.MetaData()
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalSeq = meta.Stream
+
+		// Get the same message using JSM.
+		fetchedMsg, err := js.GetMsg("foo", originalSeq)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		expectedData := "C:3"
+		if string(fetchedMsg.Data) != expectedData {
+			t.Errorf("Expected: %v, got: %v", expectedData, string(fetchedMsg.Data))
+		}
+	})
+
+	t.Run("get deleted message", func(t *testing.T) {
+		err := js.DeleteMsg("foo", originalSeq)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		si, err := js.StreamInfo("foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := 14
+		if int(si.State.Msgs) != expected {
+			t.Errorf("Expected %d msgs, got: %d", expected, si.State.Msgs)
+		}
+
+		// There should be only 4 messages since one deleted.
+		expected = 4
+		msgs := make([]*nats.Msg, 0)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		sub, err := js.Subscribe("foo.C", func(msg *nats.Msg) {
+			msgs = append(msgs, msg)
+
+			if len(msgs) == expected {
+				cancel()
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-ctx.Done()
+		sub.Unsubscribe()
+
+		msg := msgs[3]
+		meta, err := msg.MetaData()
+		if err != nil {
+			t.Fatal(err)
+		}
+		newSeq := meta.Stream
+
+		// First message removed
+		if newSeq <= originalSeq {
+			t.Errorf("Expected %d to be higher sequence than %d",
+				newSeq, originalSeq)
+		}
+
+		// Try to fetch the same message which should be gone.
+		_, err = js.GetMsg("foo", originalSeq)
+		if err == nil || err.Error() != `deleted message` {
+			t.Errorf("Expected deleted message error, got: %v", err)
+		}
+	})
+
+	t.Run("get message with headers", func(t *testing.T) {
+		streamMsg, err := js.GetMsg("foo", 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if streamMsg.Sequence != 4 {
+			t.Errorf("Expected %v, got: %v", 4, streamMsg.Sequence)
+		}
+		expectedMap := map[string][]string{
+			"X-Nats-Test-Data": []string{"A:1"},
+		}
+		if !reflect.DeepEqual(streamMsg.Header, http.Header(expectedMap)) {
+			t.Errorf("Expected %v, got: %v", expectedMap, streamMsg.Header)
 		}
 	})
 }
@@ -2321,6 +2477,23 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 	waitForJSReady(t, nc)
 
 	return nodes
+}
+
+func withJSServer(t *testing.T, tfn func(t *testing.T, srvs ...*jsServer)) {
+	t.Helper()
+
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	s := &jsServer{Server: RunServerWithOptions(opts), myopts: &opts}
+
+	defer func() {
+		if config := s.JetStreamConfig(); config != nil {
+			os.RemoveAll(config.StoreDir)
+		}
+		s.Shutdown()
+	}()
+	tfn(t, s)
 }
 
 func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testing.T, srvs ...*jsServer)) {

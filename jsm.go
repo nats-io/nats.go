@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -40,6 +41,9 @@ type JetStreamManager interface {
 
 	// NewStreamLister is used to return pages of StreamInfo objects.
 	NewStreamLister() *StreamLister
+
+	// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
+	GetMsg(name string, seq uint64) (*RawStreamMsg, error)
 
 	// DeleteMsg erases a message from a Stream.
 	DeleteMsg(name string, seq uint64) error
@@ -462,6 +466,79 @@ func (js *js) DeleteStream(name string) error {
 		return errors.New(resp.Error.Description)
 	}
 	return nil
+}
+
+type apiMsgGetRequest struct {
+	Seq uint64 `json:"seq"`
+}
+
+// RawStreamMsg is a raw message stored in JetStream.
+type RawStreamMsg struct {
+	Subject  string
+	Sequence uint64
+	Header   http.Header
+	Data     []byte
+	Time     time.Time
+}
+
+// storedMsg is a raw message stored in JetStream.
+type storedMsg struct {
+	Subject  string    `json:"subject"`
+	Sequence uint64    `json:"seq"`
+	Header   []byte    `json:"hdrs,omitempty"`
+	Data     []byte    `json:"data,omitempty"`
+	Time     time.Time `json:"time"`
+}
+
+// apiMsgGetResponse is the response for a Stream get request.
+type apiMsgGetResponse struct {
+	apiResponse
+	Message *storedMsg `json:"message,omitempty"`
+	Success bool       `json:"success,omitempty"`
+}
+
+// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
+func (js *js) GetMsg(name string, seq uint64) (*RawStreamMsg, error) {
+	if name == _EMPTY_ {
+		return nil, ErrStreamNameRequired
+	}
+
+	req, err := json.Marshal(&apiMsgGetRequest{Seq: seq})
+	if err != nil {
+		return nil, err
+	}
+
+	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgGetT, name))
+	r, err := js.nc.Request(dsSubj, req, js.wait)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp apiMsgGetResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, errors.New(resp.Error.Description)
+	}
+
+	msg := resp.Message
+
+	var hdr http.Header
+	if msg.Header != nil {
+		hdr, err = decodeHeadersMsg(msg.Header)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &RawStreamMsg{
+		Subject:  msg.Subject,
+		Sequence: msg.Sequence,
+		Header:   hdr,
+		Data:     msg.Data,
+		Time:     msg.Time,
+	}, nil
 }
 
 type msgDeleteRequest struct {
