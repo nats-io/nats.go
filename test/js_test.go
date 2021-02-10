@@ -2757,15 +2757,21 @@ NextMsg:
 				t.Errorf("Unexpected error: %v", err)
 			}
 		}
-		msg, err := sub.NextMsg(2 * time.Second)
-		if err != nil {
-			continue NextMsg
-		}
 
 		// Server will shutdown after a couple of messages which will result
 		// in empty messages with an status unavailable error.
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err == nats.ErrNoResponders || err == nats.ErrTimeout {
+			// Backoff before asking for more messages.
+			time.Sleep(100 * time.Millisecond)
+			continue NextMsg
+		} else if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+			continue NextMsg
+		}
+
 		if len(msg.Data) == 0 && msg.Header.Get("Status") == "503" {
-			continue
+			t.Fatal("Got 503 JetStream API message!")
 		}
 
 		got := string(msg.Data)
