@@ -395,8 +395,8 @@ type SequencePair struct {
 	Stream   uint64 `json:"stream_seq"`
 }
 
-// NextRequest is for getting next messages for pull based consumers from JetStream.
-type NextRequest struct {
+// nextRequest is for getting next messages for pull based consumers from JetStream.
+type nextRequest struct {
 	Expires *time.Time `json:"expires,omitempty"`
 	Batch   int        `json:"batch,omitempty"`
 	NoWait  bool       `json:"no_wait,omitempty"`
@@ -822,7 +822,7 @@ func (sub *Subscription) Poll() error {
 	js := sub.jsi.js
 	sub.mu.Unlock()
 
-	req, _ := json.Marshal(&NextRequest{Batch: batch})
+	req, _ := json.Marshal(&nextRequest{Batch: batch})
 	reqNext := js.apiSubj(fmt.Sprintf(apiRequestNextT, stream, consumer))
 	return nc.PublishRequest(reqNext, reply, req)
 }

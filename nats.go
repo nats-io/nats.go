@@ -3715,6 +3715,7 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	s.mu.Lock()
 	nc := s.conn
 	max := s.max
+	jsi := s.jsi
 
 	// Update some stats.
 	s.delivered++
@@ -3735,6 +3736,12 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 			nc.removeSub(s)
 			nc.mu.Unlock()
 		}
+	}
+
+	// In case this is a JetStream message and in pull mode
+	// then check whether it is an JS API error.
+	if jsi != nil && jsi.pull > 0 && len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
+		return ErrNoResponders
 	}
 
 	return nil
