@@ -99,6 +99,9 @@ type JetStream interface {
 
 	// QueueSubscribe creates a Subscription with a queue group.
 	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
+
+	// QueueSubscribeSync creates a Subscription with a queue group that can be used to process messages synchronously.
+	QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error)
 }
 
 // JetStreamContext is the public interface for JetStream.
@@ -455,6 +458,12 @@ func (js *js) SubscribeSync(subj string, opts ...SubOpt) (*Subscription, error) 
 // QueueSubscribe will create a subscription to the appropriate stream and consumer with queue semantics.
 func (js *js) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error) {
 	return js.subscribe(subj, queue, cb, nil, opts)
+}
+
+// QueueSubscribeSync will create a sync subscription to the appropriate stream and consumer with queue semantics.
+func (js *js) QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error) {
+	mch := make(chan *Msg, js.nc.Opts.SubChanLen)
+	return js.subscribe(subj, queue, nil, mch, opts)
 }
 
 // Subscribe will create a subscription to the appropriate stream and consumer.

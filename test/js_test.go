@@ -312,7 +312,8 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 	defer sub.Unsubscribe()
 
-	waitForPending := func(n int) {
+	waitForPending := func(t *testing.T, n int) {
+		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
 			if msgs, _, _ := sub.Pending(); msgs == n {
@@ -324,7 +325,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected to receive %d messages, but got %d", n, msgs)
 	}
 
-	waitForPending(1)
+	waitForPending(t, 1)
 
 	// Make sure we are set to explicit ack for callback based subscriptions and that the messages go down etc.
 	mset.Purge()
@@ -431,6 +432,34 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected delivery subject to be the same when attaching, got different")
 	}
 
+	// New QueueSubscribeSync with the same durable name will not
+	// create new consumers.
+	sub, err = js.QueueSubscribeSync("foo", "v0", nats.Durable(dname))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	waitForPending(t, 0)
+	expectConsumers(t, 3)
+
+	// QueueSubscribeSync with a wrong subject from the previous consumer
+	// is an error.
+	_, err = js.QueueSubscribeSync("bar", "v0", nats.Durable(dname))
+	if err == nil {
+		t.Fatalf("Unexpected success")
+	}
+
+	// QueueSubscribeSync with a different durable name will receive
+	// the messages.
+	qsubDurable := nats.Durable(dname + "-qsub")
+	sub, err = js.QueueSubscribeSync("bar", "v0", qsubDurable)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	waitForPending(t, 10)
+	expectConsumers(t, 4)
+
 	// Now try pull based subscribers.
 
 	// Check some error conditions first.
@@ -445,7 +474,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// The first batch if available should be delivered and queued up.
-	waitForPending(batch)
+	waitForPending(t, batch)
 
 	if info, _ := sub.ConsumerInfo(); info.NumAckPending != batch || info.NumPending != uint64(batch) {
 		t.Fatalf("Expected %d pending ack, and %d still waiting to be delivered, got %d and %d", batch, batch, info.NumAckPending, info.NumPending)
@@ -464,9 +493,9 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// Now we are stuck so to speak. So we can unstick the sub by calling poll.
-	waitForPending(0)
+	waitForPending(t, 0)
 	sub.Poll()
-	waitForPending(batch)
+	waitForPending(t, batch)
 	sub.Drain()
 
 	// Now test attaching to a pull based durable.
@@ -489,7 +518,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 	defer sub.Unsubscribe()
 
-	waitForPending(batch)
+	waitForPending(t, batch)
 
 	info, err = sub.ConsumerInfo()
 	if err != nil {
@@ -508,14 +537,14 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// Since this sub is on 'baz' no messages are waiting for us to start.
-	waitForPending(0)
+	waitForPending(t, 0)
 
 	// Now send in 10 messages to baz.
 	for i := 0; i < toSend; i++ {
 		js.Publish("baz", msg)
 	}
 	// We should get 1 queued up.
-	waitForPending(batch)
+	waitForPending(t, batch)
 
 	for received := 0; received < toSend; {
 		select {
@@ -2532,7 +2561,7 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream *
 
 		_, err = jsm.AddStream(stream)
 		if err != nil {
-			t.Error(err)
+			t.Fatal(err)
 		}
 
 		tfn(t, stream.Name, nodes...)
@@ -2659,6 +2688,18 @@ func TestJetStream_ClusterReconnect(t *testing.T) {
 					Replicas: r,
 				}
 				withJSClusterAndStream(t, fmt.Sprintf("PULLR%d", r), n, stream, testJetStream_ClusterReconnectPullSubscriber)
+			})
+		}
+	})
+
+	t.Run("pull qsub", func(t *testing.T) {
+		for _, r := range replicas {
+			t.Run(fmt.Sprintf("n=%d r=%d", n, r), func(t *testing.T) {
+				stream := &nats.StreamConfig{
+					Name:     fmt.Sprintf("foo-qr%d", r),
+					Replicas: r,
+				}
+				withJSClusterAndStream(t, fmt.Sprintf("QPULLR%d", r), n, stream, testJetStream_ClusterReconnectPullQueueSubscriber)
 			})
 		}
 	})
@@ -3054,5 +3095,146 @@ func testJetStream_ClusterReconnectDurablePushSubscriber(t *testing.T, subject s
 	got := len(recvd)
 	if got != totalMsgs {
 		t.Logf("WARN: Expected %v, got: %v", totalMsgs, got)
+	}
+}
+
+func testJetStream_ClusterReconnectPullQueueSubscriber(t *testing.T, subject string, srvs ...*jsServer) {
+	var (
+		recvd         = make(map[string]int)
+		recvdQ        = make(map[int][]*nats.Msg)
+		srvA          = srvs[0]
+		totalMsgs     = 20
+		durable       = nats.Durable("d1")
+		reconnected   = make(chan struct{}, 2)
+		reconnectDone bool
+	)
+	nc, err := nats.Connect(srvA.ClientURL(),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			reconnected <- struct{}{}
+
+			// Bring back the server after the reconnect event.
+			if !reconnectDone {
+				reconnectDone = true
+				srvA.Restart()
+			}
+		}),
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Error(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish(subject, []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	subs := make([]*nats.Subscription, 0)
+
+	for i := 0; i < 5; i++ {
+		sub, err := js.QueueSubscribeSync(subject, "wq", durable, nats.Pull(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		subs = append(subs, sub)
+	}
+
+	for i := 10; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish(subject, []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+	defer done()
+
+NextMsg:
+	for len(recvd) < totalMsgs {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timeout waiting for messages, expected: %d, got: %d", totalMsgs, len(recvd))
+		default:
+		}
+
+		for qsub, sub := range subs {
+			if pending, _, _ := sub.Pending(); pending == 0 {
+				err = sub.Poll()
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+
+			// Server will shutdown after a couple of messages which will result
+			// in empty messages with an status unavailable error.
+			msg, err := sub.NextMsg(2 * time.Second)
+			if err == nats.ErrNoResponders || err == nats.ErrTimeout {
+				// Backoff before asking for more messages.
+				time.Sleep(100 * time.Millisecond)
+				continue NextMsg
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				continue NextMsg
+			}
+			recvd[string(msg.Data)]++
+			recvdQ[qsub] = append(recvdQ[qsub], msg)
+
+			// Add a few retries since there can be errors during the reconnect.
+			timeout := time.Now().Add(5 * time.Second)
+		RetryAck:
+			for time.Now().Before(timeout) {
+				err = msg.AckSync()
+				if err != nil {
+					// During the reconnection, both of these errors can occur.
+					if err == nats.ErrNoResponders || err == nats.ErrTimeout {
+						// Wait for reconnection event to occur to continue.
+						select {
+						case <-reconnected:
+							continue RetryAck
+						case <-time.After(100 * time.Millisecond):
+							continue RetryAck
+						case <-ctx.Done():
+							t.Fatal("Timed out waiting for reconnect")
+						}
+					}
+
+					t.Errorf("Unexpected error: %v", err)
+					continue RetryAck
+				}
+				break RetryAck
+			}
+
+			// Shutdown the server after a couple of messages.
+			if len(recvd) == 2 {
+				srvA.Shutdown()
+			}
+		}
+	}
+
+	// Confirm the number of messages.
+	for i := 0; i < totalMsgs; i++ {
+		msg := fmt.Sprintf("i:%d", i)
+		count, ok := recvd[msg]
+		if !ok {
+			t.Errorf("Missing message %v", msg)
+		} else if count != 1 {
+			t.Logf("WARN: Expected to receive a single message, got: %v", count)
+		}
+	}
+
+	// Expect all qsubs to receive at least a message.
+	for _, msgs := range recvdQ {
+		if len(msgs) < 1 {
+			t.Errorf("Expected queue sub to receive at least one message")
+		}
 	}
 }
