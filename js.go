@@ -896,7 +896,7 @@ func (m *Msg) checkReply() (*js, bool, bool, error) {
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
 // It ensures that an ack is only sent a single time, regardless of
 // how many times it is being called to avoid duplicated acks.
-func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
+func (m *Msg) ackReply(ackType []byte, sync, ackNext bool, opts ...PubOpt) error {
 	var o pubOpts
 	for _, opt := range opts {
 		if err := opt.configurePublish(&o); err != nil {
@@ -926,7 +926,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 	}
 
 	if isPullMode {
-		if doAutoNext {
+		if doAutoNext || ackNext {
 			if bytes.Equal(ackType, AckAck) {
 				err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
 			} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
@@ -964,28 +964,34 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 
 // Ack a message, this will do the right thing with pull based consumers.
 func (m *Msg) Ack() error {
-	return m.ackReply(AckAck, false)
+	return m.ackReply(AckAck, false, false)
+}
+
+// AckNext is like Ack but also for signals for next message to be delivered
+// in case of a pull consumer.
+func (m *Msg) AckNext() error {
+	return m.ackReply(AckAck, false, true)
 }
 
 // Ack a message and wait for a response from the server.
 func (m *Msg) AckSync(opts ...PubOpt) error {
-	return m.ackReply(AckAck, true, opts...)
+	return m.ackReply(AckAck, true, false, opts...)
 }
 
 // Nak this message, indicating we can not process.
 func (m *Msg) Nak() error {
-	return m.ackReply(AckNak, false)
+	return m.ackReply(AckNak, false, false)
 }
 
 // Term this message from ever being delivered regardless of MaxDeliverCount.
 func (m *Msg) Term() error {
-	return m.ackReply(AckTerm, false)
+	return m.ackReply(AckTerm, false, false)
 }
 
 // InProgress indicates that this message is being worked on
 // and reset the redelivery timer in the server.
 func (m *Msg) InProgress() error {
-	return m.ackReply(AckProgress, false)
+	return m.ackReply(AckProgress, false, false)
 }
 
 // MsgMetadata is the JetStream metadata associated with received messages.

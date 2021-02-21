@@ -3239,13 +3239,16 @@ NextMsg:
 	}
 }
 
-func TestJetStreamNoAutoPull(t *testing.T) {
-	t.Run("3-node", func(t *testing.T) {
-		withJSCluster(t, "NPULL3", 3, testJetStreamNoAutoPull)
+func TestJetStreamNoAutoNext(t *testing.T) {
+	t.Run("no auto next", func(t *testing.T) {
+		withJSCluster(t, "NPULL", 3, testJetStreamNoAutoNext)
+	})
+	t.Run("manual ack next", func(t *testing.T) {
+		withJSCluster(t, "ACKNEXT", 3, testJetStreamManualAckNext)
 	})
 }
 
-func testJetStreamNoAutoPull(t *testing.T, srvs ...*jsServer) {
+func testJetStreamNoAutoNext(t *testing.T, srvs ...*jsServer) {
 	var (
 		srvA      = srvs[0]
 		totalMsgs = 10
@@ -3262,7 +3265,7 @@ func testJetStreamNoAutoPull(t *testing.T, srvs ...*jsServer) {
 	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "NPULL",
+		Name:     "TASKS",
 		Replicas: 1,
 		Subjects: []string{"tasks"},
 	})
@@ -3342,7 +3345,115 @@ Loop:
 		t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
 	}
 
-	// Poll a few times .
+	// Poll a few times, there should only be timeouts.
+	for i := 0; i < 5; i++ {
+		sub.Poll()
+		nc.FlushTimeout(1 * time.Second)
+		resp, err = sub.NextMsg(250 * time.Millisecond)
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected error fetching next message, got: %+v (msg=%+v)", err, resp)
+		}
+	}
+}
+
+func testJetStreamManualAckNext(t *testing.T, srvs ...*jsServer) {
+	var (
+		srvA      = srvs[0]
+		totalMsgs = 10
+	)
+	nc, err := nats.Connect(srvA.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TASKS",
+		Replicas: 1,
+		Subjects: []string{"tasks"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish("tasks", []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"), nats.NoAutoNext())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.Flush()
+	pending, _, _ := sub.Pending()
+	if pending != 0 {
+		t.Errorf("Expected no pending messages, got: %d", pending)
+	}
+
+	// Do the first poll to fetch messages.
+	err = sub.Poll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.Flush()
+
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	recvd := make([]*nats.Msg, 0)
+
+Loop:
+	for range time.NewTicker(100 * time.Millisecond).C {
+		select {
+		case <-ctx.Done():
+			break Loop
+		default:
+		}
+
+		pending, _, _ = sub.Pending()
+		if pending != 1 {
+			t.Fatalf("Expected no pending messages, got: %d", pending)
+		}
+
+		msg, err := sub.NextMsg(250 * time.Millisecond)
+		if err != nil {
+			continue
+		}
+		recvd = append(recvd, msg)
+
+		// Ack and get next one.
+		err = msg.AckNext()
+		if err != nil {
+			t.Error(err)
+		}
+		nc.Flush()
+
+		if len(recvd) == totalMsgs {
+			done()
+			break
+		}
+	}
+
+	got := len(recvd)
+	if got != totalMsgs {
+		t.Fatalf("Got %v messages, expected at least: %v", got, totalMsgs)
+	}
+
+	// Next message will timeout since there are no more.
+	resp, err := sub.NextMsg(1 * time.Second)
+	if err != nats.ErrTimeout {
+		t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
+	}
+
+	// Poll a few times, there should only be timeouts.
 	for i := 0; i < 5; i++ {
 		sub.Poll()
 		nc.FlushTimeout(1 * time.Second)
