@@ -3238,3 +3238,117 @@ NextMsg:
 		}
 	}
 }
+
+func TestJetStreamNoAutoPull(t *testing.T) {
+	t.Run("3-node", func(t *testing.T) {
+		withJSCluster(t, "NPULL3", 3, testJetStreamNoAutoPull)
+	})
+}
+
+func testJetStreamNoAutoPull(t *testing.T, srvs ...*jsServer) {
+	var (
+		srvA      = srvs[0]
+		totalMsgs = 10
+	)
+	nc, err := nats.Connect(srvA.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "NPULL",
+		Replicas: 1,
+		Subjects: []string{"tasks"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish("tasks", []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"), nats.NoAutoNext())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.Flush()
+	pending, _, _ := sub.Pending()
+	if pending != 0 {
+		t.Errorf("Expected no pending messages, got: %d", pending)
+	}
+
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+	recvd := make([]*nats.Msg, 0)
+
+Loop:
+	for range time.NewTicker(100 * time.Millisecond).C {
+		select {
+		case <-ctx.Done():
+			break Loop
+		default:
+		}
+
+		// No auto next so have to pull explicitly each time.
+		pending, _, _ = sub.Pending()
+		if pending == 0 {
+			err = sub.Poll()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		msg, err := sub.NextMsg(250 * time.Millisecond)
+		if err != nil {
+			continue
+		}
+		recvd = append(recvd, msg)
+
+		err = msg.AckSync()
+		if err != nil {
+			t.Error(err)
+		}
+
+		pending, _, _ = sub.Pending()
+		if pending != 0 {
+			t.Fatalf("Expected no pending messages, got: %d", pending)
+		}
+
+		if len(recvd) == totalMsgs {
+			done()
+			break
+		}
+	}
+
+	got := len(recvd)
+	if got != totalMsgs {
+		t.Fatalf("Got %v messages, expected at least: %v", got, totalMsgs)
+	}
+
+	// Next message will timeout since there are no more.
+	resp, err := sub.NextMsg(1 * time.Second)
+	if err != nats.ErrTimeout {
+		t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
+	}
+
+	// Poll a few times .
+	for i := 0; i < 5; i++ {
+		sub.Poll()
+		nc.FlushTimeout(1 * time.Second)
+		resp, err = sub.NextMsg(250 * time.Millisecond)
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected error fetching next message, got: %+v (msg=%+v)", err, resp)
+		}
+	}
+}

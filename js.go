@@ -1,4 +1,4 @@
-// Copyright 2020 The NATS Authors
+// Copyright 2020-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -407,13 +407,14 @@ type nextRequest struct {
 
 // jsSub includes JetStream subscription info.
 type jsSub struct {
-	js       *js
-	consumer string
-	stream   string
-	deliver  string
-	pull     int
-	durable  bool
-	attached bool
+	js         *js
+	consumer   string
+	stream     string
+	deliver    string
+	pull       int
+	durable    bool
+	attached   bool
+	noAutoNext bool
 }
 
 func (jsi *jsSub) unsubscribe(drainMode bool) error {
@@ -636,7 +637,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	// If we are pull based go ahead and fire off the first request to populate.
 	if isPullMode {
 		sub.jsi.pull = o.pull
-		sub.Poll()
+		sub.jsi.noAutoNext = o.noAutoNext
+
+		if !o.noAutoNext {
+			sub.Poll()
+		}
 	}
 
 	return sub, nil
@@ -684,6 +689,8 @@ type subOpts struct {
 	mack bool
 	// For creating or updating.
 	cfg *ConsumerConfig
+	// For pull based consumers, disables sending +NXT on each Ack.
+	noAutoNext bool
 }
 
 // Durable defines the consumer name for JetStream durable subscribers.
@@ -706,6 +713,13 @@ func Pull(batchSize int) SubOpt {
 			return errors.New("nats: batch size of 0 not valid")
 		}
 		opts.pull = batchSize
+		return nil
+	})
+}
+
+func NoAutoNext() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.noAutoNext = true
 		return nil
 	})
 }
@@ -856,12 +870,12 @@ func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	return info.ConsumerInfo, nil
 }
 
-func (m *Msg) checkReply() (*js, bool, error) {
+func (m *Msg) checkReply() (*js, bool, bool, error) {
 	if m.Reply == "" {
-		return nil, false, ErrMsgNoReply
+		return nil, false, false, ErrMsgNoReply
 	}
 	if m == nil || m.Sub == nil {
-		return nil, false, ErrMsgNotBound
+		return nil, false, false, ErrMsgNotBound
 	}
 	sub := m.Sub
 	sub.mu.Lock()
@@ -869,13 +883,14 @@ func (m *Msg) checkReply() (*js, bool, error) {
 		sub.mu.Unlock()
 
 		// Not using a JS context.
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	js := sub.jsi.js
 	isPullMode := sub.jsi.pull > 0
+	doAutoNext := !sub.jsi.noAutoNext
 	sub.mu.Unlock()
 
-	return js, isPullMode, nil
+	return js, isPullMode, doAutoNext, nil
 }
 
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
@@ -888,7 +903,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 			return err
 		}
 	}
-	js, isPullMode, err := m.checkReply()
+	js, isPullMode, doAutoNext, err := m.checkReply()
 	if err != nil {
 		return err
 	}
@@ -911,11 +926,14 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 	}
 
 	if isPullMode {
-		if bytes.Equal(ackType, AckAck) {
-			err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
-		} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
-			err = nc.PublishRequest(m.Reply, m.Sub.Subject, []byte("+NXT {\"batch\":1}"))
+		if doAutoNext {
+			if bytes.Equal(ackType, AckAck) {
+				err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
+			} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
+				err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNextOne)
+			}
 		}
+
 		if sync && err == nil {
 			if ctx != nil {
 				_, err = nc.RequestWithContext(ctx, m.Reply, nil)
@@ -981,7 +999,7 @@ type MsgMetaData struct {
 
 // MetaData retrieves the metadata from a JetStream message.
 func (m *Msg) MetaData() (*MsgMetaData, error) {
-	if _, _, err := m.checkReply(); err != nil {
+	if _, _, _, err := m.checkReply(); err != nil {
 		return nil, err
 	}
 
@@ -1134,6 +1152,7 @@ var (
 	AckNak      = []byte("-NAK")
 	AckProgress = []byte("+WPI")
 	AckNext     = []byte("+NXT")
+	AckNextOne  = []byte("+NXT {\"batch\":1}")
 	AckTerm     = []byte("+TERM")
 )
 
