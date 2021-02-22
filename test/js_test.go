@@ -2689,6 +2689,195 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 	})
 }
 
+func TestJetStreamStreamMirror(t *testing.T) {
+	withJSCluster(t, "MIRROR", 3, testJetStreamMirror_Source)
+}
+
+func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
+	srvA := nodes[0]
+	nc, err := nats.Connect(srvA.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name: "origin",
+		Placement: &nats.Placement{
+			Tags: []string{"NODE_0"},
+		},
+		Storage:  nats.MemoryStorage,
+		Replicas: 1,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error creating stream: %v", err)
+	}
+
+	totalMsgs := 10
+	for i := 0; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		js.Publish("origin", []byte(payload))
+	}
+
+	t.Run("create mirrors", func(t *testing.T) {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "m1",
+			Mirror:   &nats.StreamSource{Name: "origin"},
+			Storage:  nats.FileStorage,
+			Replicas: 1,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "m2",
+			Mirror:   &nats.StreamSource{Name: "origin"},
+			Storage:  nats.MemoryStorage,
+			Replicas: 1,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+		msgs := make([]*nats.RawStreamMsg, 0)
+
+		// Stored message sequences start at 1
+		startSequence := 1
+
+	GetNextMsg:
+		for i := startSequence; i < totalMsgs+1; i++ {
+			var (
+				err       error
+				seq       = uint64(i)
+				msgA      *nats.RawStreamMsg
+				msgB      *nats.RawStreamMsg
+				sourceMsg *nats.RawStreamMsg
+				timeout   = time.Now().Add(2 * time.Second)
+			)
+
+			for time.Now().Before(timeout) {
+				sourceMsg, err = js.GetMsg("origin", seq)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				msgA, err = js.GetMsg("m1", seq)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				if !reflect.DeepEqual(sourceMsg, msgA) {
+					t.Errorf("Expected %+v, got: %+v", sourceMsg, msgA)
+				}
+
+				msgB, err = js.GetMsg("m2", seq)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				if !reflect.DeepEqual(sourceMsg, msgB) {
+					t.Errorf("Expected %+v, got: %+v", sourceMsg, msgB)
+				}
+
+				msgs = append(msgs, msgA)
+				continue GetNextMsg
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		got := len(msgs)
+		if got < totalMsgs {
+			t.Errorf("Expected %v, got: %v", totalMsgs, got)
+		}
+	})
+
+	t.Run("get mirror info", func(t *testing.T) {
+		m1, err := js.StreamInfo("m1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		got := m1.Mirror.Name
+		expected := "origin"
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		m2, err := js.StreamInfo("m2")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		got = m2.Mirror.Name
+		expected = "origin"
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+	})
+
+	t.Run("create stream from sources", func(t *testing.T) {
+		sources := make([]*nats.StreamSource, 0)
+		sources = append(sources, &nats.StreamSource{Name: "m1"})
+		sources = append(sources, &nats.StreamSource{Name: "m2"})
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "s1",
+			Sources:  sources,
+			Storage:  nats.FileStorage,
+			Replicas: 1,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		msgs := make([]*nats.RawStreamMsg, 0)
+
+		// Stored message sequences start at 1
+		startSequence := 1
+		expectedTotal := totalMsgs * 2
+
+	GetNextMsg:
+		for i := startSequence; i < expectedTotal+1; i++ {
+			var (
+				err     error
+				seq     = uint64(i)
+				msg     *nats.RawStreamMsg
+				timeout = time.Now().Add(2 * time.Second)
+			)
+
+			for time.Now().Before(timeout) {
+				msg, err = js.GetMsg("s1", seq)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				msgs = append(msgs, msg)
+				continue GetNextMsg
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		got := len(msgs)
+		if got < expectedTotal {
+			t.Errorf("Expected %v, got: %v", expectedTotal, got)
+		}
+
+		si, err := js.StreamInfo("s1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		got = int(si.State.Msgs)
+		if got != expectedTotal {
+			t.Errorf("Expected %v, got: %v", expectedTotal, got)
+		}
+	})
+}
+
 func TestJetStream_ClusterReconnect(t *testing.T) {
 	n := 3
 	replicas := []int{1, 3}

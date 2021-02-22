@@ -83,12 +83,22 @@ type StreamConfig struct {
 	Template     string          `json:"template_owner,omitempty"`
 	Duplicates   time.Duration   `json:"duplicate_window,omitempty"`
 	Placement    *Placement      `json:"placement,omitempty"`
+	Mirror       *StreamSource   `json:"mirror,omitempty"`
+	Sources      []*StreamSource `json:"sources,omitempty"`
 }
 
 // Placement is used to guide placement of streams in clustered JetStream.
 type Placement struct {
 	Cluster string   `json:"cluster"`
 	Tags    []string `json:"tags,omitempty"`
+}
+
+// StreamSource dictates how streams can source from other streams.
+type StreamSource struct {
+	Name          string     `json:"name"`
+	OptStartSeq   uint64     `json:"opt_start_seq,omitempty"`
+	OptStartTime  *time.Time `json:"opt_start_time,omitempty"`
+	FilterSubject string     `json:"filter_subject,omitempty"`
 }
 
 // apiError is included in all API responses if there was an error.
@@ -380,10 +390,19 @@ func (js *js) StreamInfo(stream string) (*StreamInfo, error) {
 
 // StreamInfo shows config and current state for this stream.
 type StreamInfo struct {
-	Config  StreamConfig `json:"config"`
-	Created time.Time    `json:"created"`
-	State   StreamState  `json:"state"`
-	Cluster *ClusterInfo `json:"cluster,omitempty"`
+	Config  StreamConfig        `json:"config"`
+	Created time.Time           `json:"created"`
+	State   StreamState         `json:"state"`
+	Cluster *ClusterInfo        `json:"cluster,omitempty"`
+	Mirror  *StreamSourceInfo   `json:"mirror,omitempty"`
+	Sources []*StreamSourceInfo `json:"sources,omitempty"`
+}
+
+// StreamSourceInfo shows information about an upstream stream source.
+type StreamSourceInfo struct {
+	Name   string        `json:"name"`
+	Lag    uint64        `json:"lag"`
+	Active time.Duration `json:"active"`
 }
 
 // StreamState is information about the given stream.
