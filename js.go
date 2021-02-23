@@ -1,4 +1,4 @@
-// Copyright 2020 The NATS Authors
+// Copyright 2020-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -337,6 +337,11 @@ func (ttl MaxWait) configureJSContext(js *js) error {
 	return nil
 }
 
+func (ttl MaxWait) configurePull(opts *pullOpts) error {
+	opts.ttl = time.Duration(ttl)
+	return nil
+}
+
 // AckWait sets the maximum amount of time we will wait for an ack.
 type AckWait time.Duration
 
@@ -356,6 +361,11 @@ type ContextOpt struct {
 }
 
 func (ctx ContextOpt) configurePublish(opts *pubOpts) error {
+	opts.ctx = ctx
+	return nil
+}
+
+func (ctx ContextOpt) configurePull(opts *pullOpts) error {
 	opts.ctx = ctx
 	return nil
 }
@@ -408,9 +418,9 @@ type SequencePair struct {
 
 // nextRequest is for getting next messages for pull based consumers from JetStream.
 type nextRequest struct {
-	Expires *time.Time `json:"expires,omitempty"`
-	Batch   int        `json:"batch,omitempty"`
-	NoWait  bool       `json:"no_wait,omitempty"`
+	Expires time.Duration `json:"expires,omitempty"`
+	Batch   int           `json:"batch,omitempty"`
+	NoWait  bool          `json:"no_wait,omitempty"`
 }
 
 // jsSub includes JetStream subscription info.
@@ -419,7 +429,7 @@ type jsSub struct {
 	consumer string
 	stream   string
 	deliver  string
-	pull     int
+	pull     bool
 	durable  bool
 	attached bool
 }
@@ -490,7 +500,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		}
 	}
 
-	isPullMode := o.pull > 0
+	isPullMode := o.pull
 	if cb != nil && isPullMode {
 		return nil, ErrPullModeNotAllowed
 	}
@@ -649,7 +659,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	// If we are pull based go ahead and fire off the first request to populate.
 	if isPullMode {
 		sub.jsi.pull = o.pull
-		sub.Poll()
 	}
 
 	return sub, nil
@@ -691,44 +700,12 @@ func (js *js) lookupStreamBySubject(subj string) (string, error) {
 type subOpts struct {
 	// For attaching.
 	stream, consumer string
-	// For pull based consumers, batch size for pull
-	pull int
+	// For pull based consumers.
+	pull bool
 	// For manual ack
 	mack bool
 	// For creating or updating.
 	cfg *ConsumerConfig
-}
-
-// Pull defines the batch size of messages that will be received
-// when using pull based JetStream consumers.
-func Pull(batchSize int) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		if batchSize == 0 {
-			return errors.New("nats: batch size of 0 not valid")
-		}
-		opts.pull = batchSize
-		return nil
-	})
-}
-
-func PullDirect(stream, consumer string, batchSize int) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		if batchSize == 0 {
-			return errors.New("nats: batch size of 0 not valid")
-		}
-		opts.stream = stream
-		opts.consumer = consumer
-		opts.pull = batchSize
-		return nil
-	})
-}
-
-// ManualAck disables auto ack functionality for async subscriptions.
-func ManualAck() SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.mack = true
-		return nil
-	})
 }
 
 // Durable defines the consumer name for JetStream durable subscribers.
@@ -739,6 +716,22 @@ func Durable(name string) SubOpt {
 		}
 
 		opts.cfg.Durable = name
+		return nil
+	})
+}
+
+// Pull marks a subscription as pull subscriber.
+func Pull() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.pull = true
+		return nil
+	})
+}
+
+// ManualAck disables auto ack functionality for async subscriptions.
+func ManualAck() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.mack = true
 		return nil
 	})
 }
@@ -846,21 +839,195 @@ func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	return js.getConsumerInfo(stream, consumer)
 }
 
-func (sub *Subscription) Poll() error {
-	sub.mu.Lock()
-	if sub.jsi == nil || sub.jsi.deliver != _EMPTY_ || sub.jsi.pull == 0 {
-		sub.mu.Unlock()
-		return ErrTypeSubscription
+type pullOpts struct {
+	noWait  bool
+	ttl     time.Duration
+	ctx     context.Context
+	expires time.Duration
+}
+
+type PullOpt interface {
+	configurePull(opts *pullOpts) error
+}
+
+// pullOptFn is a function option used to configure pull consumers.
+type pullOptFn func(opts *pullOpts) error
+
+func (opt pullOptFn) configurePull(opts *pullOpts) error {
+	return opt(opts)
+}
+
+// PullNoWait enables receiving a no messages error from the server
+// in case there are no new messages when making a pull request.
+func PullNoWait() PullOpt {
+	return pullOptFn(func(opts *pullOpts) error {
+		opts.noWait = true
+		return nil
+	})
+}
+
+// PullExpiresIn defines when to let the server expire an inflight pull request.
+func PullExpiresIn(duration time.Duration) PullOpt {
+	return pullOptFn(func(opts *pullOpts) error {
+		opts.expires = duration
+		return nil
+	})
+}
+
+// PullMaxWaiting defines the max inflight pull requests to be delivered more messages.
+func PullMaxWaiting(n int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxWaiting = n
+		return nil
+	})
+}
+
+// Fetch pulls a batch of messages from a stream for a pull consumer.
+func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
+	if sub == nil {
+		return nil, ErrBadSubscription
 	}
-	batch := sub.jsi.pull
-	nc, reply := sub.conn, sub.Subject
+
+	var o pullOpts
+	for _, opt := range opts {
+		if err := opt.configurePull(&o); err != nil {
+			return nil, err
+		}
+	}
+
+	// Default is no wait, so async.
+	if o.ctx != nil && o.ttl != 0 {
+		return nil, ErrContextAndTimeout
+	}
+
+	sub.mu.Lock()
+	if sub.jsi == nil || !sub.jsi.pull {
+		sub.mu.Unlock()
+		return nil, ErrTypeSubscription
+	}
+
+	// FIXME: We don't need the original inbox from the subscriber anymore,
+	// maybe each consumer should have its own mux for responses?
+	nc, _ := sub.conn, sub.Subject
 	stream, consumer := sub.jsi.stream, sub.jsi.consumer
 	js := sub.jsi.js
+
+	ttl := o.ttl
+	if ttl == 0 {
+		ttl = js.wait
+	}
 	sub.mu.Unlock()
 
-	req, _ := json.Marshal(&nextRequest{Batch: batch})
+	// PullNoWait when enabled returns:
+	// - 404 right away if there are no more messages,
+	// - 409 in case it reached MaxAckPending.
+	//
+	// PullExpiresIn will give a duration to the server to expire our pull request
+	// to this inbox only and will serve the newest one.
+	//
+	// Default is to let the pull requests linger until there are 512 waiting requests,
+	// this limit can be modified by using PullMaxWaiting when creating the consumer.
+	//
+	nr := &nextRequest{Batch: batch, NoWait: o.noWait, Expires: o.expires}
+	req, _ := json.Marshal(nr)
 	reqNext := js.apiSubj(fmt.Sprintf(apiRequestNextT, stream, consumer))
-	return nc.PublishRequest(reqNext, reply, req)
+
+	// Make an old style request, we will wait for first response
+	// in case of errors, then dispatch the rest of the replies
+	// to the channel.
+	inbox := NewInbox()
+
+	mch := make(chan *Msg, batch)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, mch, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.AutoUnsubscribe(batch)
+
+	err = nc.publish(reqNext, inbox, nil, req)
+	if err != nil {
+		return nil, err
+	}
+
+	t := globalTimerPool.Get(ttl)
+	defer globalTimerPool.Put(t)
+
+	// Check for empty payload message and process synchronously
+	// any status messages.
+	checkMsg := func(msg *Msg) error {
+		if len(msg.Data) == 0 {
+			switch msg.Header.Get(statusHdr) {
+			case noResponders:
+				return ErrNoResponders
+			case "400", "404", "408", "409":
+				return errors.New(msg.Header.Get(descrHdr))
+			}
+		}
+		return nil
+	}
+
+	msgs := make([]*Msg, 0)
+	select {
+	case msg, ok := <-mch:
+		if !ok {
+			err = s.getNextMsgErr()
+		} else {
+			err = s.processNextMsgDelivered(msg)
+			if err == nil {
+				err = checkMsg(msg)
+			}
+		}
+		msgs = append(msgs, msg)
+	case <-t.C:
+		err = ErrTimeout
+	}
+
+	// We should be getting the response from the server,
+	// in case we got a poll error then stop and cleanup.
+	if err != nil {
+		// Remove interest in the subscription so that the
+		// this inbox does not get delivered the results
+		// intended for another request.
+		s.Unsubscribe()
+		return nil, err
+	}
+
+	// If only one message expected from batch then already done.
+	if batch == 1 {
+		return msgs, nil
+	}
+	defer s.Unsubscribe()
+
+	recvd := 1
+	for {
+		select {
+		case msg, ok := <-mch:
+			if !ok {
+				err = s.getNextMsgErr()
+			} else {
+				err = s.processNextMsgDelivered(msg)
+				if err == nil {
+					err = checkMsg(msg)
+				}
+				recvd++
+				msgs = append(msgs, msg)
+			}
+		case <-t.C:
+			// If the timeout expires, then it is not
+			// an error at this point.
+			return msgs, nil
+		}
+		if err != nil {
+			break
+		}
+
+		// Check if enough messages already.
+		if recvd == batch {
+			break
+		}
+	}
+
+	return msgs, err
 }
 
 func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
@@ -899,7 +1066,7 @@ func (m *Msg) checkReply() (*js, bool, error) {
 		return nil, false, nil
 	}
 	js := sub.jsi.js
-	isPullMode := sub.jsi.pull > 0
+	isPullMode := sub.jsi.pull
 	sub.mu.Unlock()
 
 	return js, isPullMode, nil
@@ -915,7 +1082,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 			return err
 		}
 	}
-	js, isPullMode, err := m.checkReply()
+	js, _, err := m.checkReply()
 	if err != nil {
 		return err
 	}
@@ -937,24 +1104,11 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 		wait = js.wait
 	}
 
-	if isPullMode {
-		if bytes.Equal(ackType, AckAck) {
-			err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
-		} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
-			err = nc.PublishRequest(m.Reply, m.Sub.Subject, []byte("+NXT {\"batch\":1}"))
-		}
-		if sync && err == nil {
-			if ctx != nil {
-				_, err = nc.RequestWithContext(ctx, m.Reply, nil)
-			} else {
-				_, err = nc.Request(m.Reply, nil, wait)
-			}
-		}
-	} else if sync {
+	if sync {
 		if ctx != nil {
-			_, err = nc.RequestWithContext(ctx, m.Reply, ackType)
+			_, err = nc.RequestWithContext(ctx, m.Reply, nil)
 		} else {
-			_, err = nc.Request(m.Reply, ackType, wait)
+			_, err = nc.Request(m.Reply, nil, wait)
 		}
 	} else {
 		err = nc.Publish(m.Reply, ackType)
