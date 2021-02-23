@@ -3284,8 +3284,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 		return nil, ErrInvalidConnection
 	}
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, _EMPTY_, nil, mch, true, nil)
-	return s, e
+	return nc.subscribe(subj, _EMPTY_, nil, mch, true, nil)
 }
 
 // QueueSubscribe creates an asynchronous queue subscriber on the given subject.
@@ -3302,8 +3301,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // given message synchronously using Subscription.NextMsg().
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
-	s, e := nc.subscribe(subj, queue, nil, mch, true, nil)
-	return s, e
+	return nc.subscribe(subj, queue, nil, mch, true, nil)
 }
 
 // QueueSubscribeSyncWithChan will express interest in the given subject.
@@ -3447,6 +3445,7 @@ const (
 	SyncSubscription
 	ChanSubscription
 	NilSubscription
+	PullSubscription
 )
 
 // Type returns the type of Subscription.
@@ -3740,8 +3739,13 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 
 	// In case this is a JetStream message and in pull mode
 	// then check whether it is an JS API error.
-	if jsi != nil && jsi.pull > 0 && len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
-		return ErrNoResponders
+	if jsi != nil && jsi.pull && len(msg.Data) == 0 {
+		switch msg.Header.Get(statusHdr) {
+		case noResponders:
+			return ErrNoResponders
+		case "400", "404", "408", "409":
+			return errors.New(msg.Header.Get(descrHdr))
+		}
 	}
 
 	return nil
