@@ -3740,8 +3740,13 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 
 	// In case this is a JetStream message and in pull mode
 	// then check whether it is an JS API error.
-	if jsi != nil && jsi.pull > 0 && len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
-		return ErrNoResponders
+	if jsi != nil && jsi.pull > 0 && len(msg.Data) == 0 {
+		switch msg.Header.Get(statusHdr) {
+		case noResponders:
+			return ErrNoResponders
+		case "400", "404", "408", "409":
+			return errors.New(msg.Header.Get(descrHdr))
+		}
 	}
 
 	return nil

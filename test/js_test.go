@@ -495,7 +495,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Now we are stuck so to speak. So we can unstick the sub by calling poll.
 	waitForPending(t, 0)
-	sub.Poll()
+	sub.Pull()
 	waitForPending(t, batch)
 	sub.Drain()
 
@@ -2994,7 +2994,7 @@ NextMsg:
 
 		pending, _, _ := sub.Pending()
 		if pending == 0 {
-			err = sub.Poll()
+			err = sub.Pull()
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -3392,7 +3392,7 @@ NextMsg:
 
 		for qsub, sub := range subs {
 			if pending, _, _ := sub.Pending(); pending == 0 {
-				err = sub.Poll()
+				err = sub.Pull()
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -3461,4 +3461,213 @@ NextMsg:
 			t.Errorf("Expected queue sub to receive at least one message")
 		}
 	}
+}
+
+func TestJetStreamPullOptions(t *testing.T) {
+	withJSCluster(t, "POPTS", 3, testJetStreamPullOptions)
+}
+
+func testJetStreamPullOptions(t *testing.T, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	totalMsgs := 10
+	subject := "WQ1"
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     subject,
+		Replicas: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < totalMsgs; i++ {
+		payload := fmt.Sprintf("i:%d", i)
+		_, err := js.Publish(subject, []byte(payload))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	checkForPending := func(t *testing.T, sub *nats.Subscription, expected int, deadline time.Duration) {
+		t.Helper()
+		var pending int
+		timeout := time.Now().Add(deadline)
+		for time.Now().Before(timeout) {
+			pending, _, _ = sub.Pending()
+			if pending == expected {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if pending != expected {
+			t.Errorf("Expected: %v, got: %v", expected, pending)
+		}
+	}
+
+	t.Run("batch size", func(t *testing.T) {
+		sub, err := js.SubscribeSync(subject, nats.Durable("pd1"), nats.Pull(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		// Extra pull to buffer more messages:
+		//
+		// 1 from Initial Pull + 9 extra from the batch request.
+		//
+		err = sub.Pull(nats.BatchSize(9))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nc.Flush()
+
+		checkForPending(t, sub, 10, 2*time.Second)
+
+		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		recvd := make([]*nats.Msg, 0)
+
+	Loop:
+		for range time.NewTicker(100 * time.Millisecond).C {
+			select {
+			case <-ctx.Done():
+				break Loop
+			default:
+			}
+
+			msg, err := sub.NextMsg(250 * time.Millisecond)
+			if err != nil {
+				t.Logf("WARN: %v", err)
+				continue
+			}
+			recvd = append(recvd, msg)
+
+			err = msg.AckSync()
+			if err != nil {
+				t.Error(err)
+			}
+
+			if len(recvd) == totalMsgs {
+				done()
+				break
+			}
+		}
+
+		got := len(recvd)
+		if got != totalMsgs {
+			t.Fatalf("Got %v messages, expected at least: %v", got, totalMsgs)
+		}
+
+		// Next message will timeout since there are no more.
+		resp, err := sub.NextMsg(250 * time.Millisecond)
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
+		}
+
+		// Poll more than the default max of waiting/inflight pull requests.
+		for i := 0; i < 512; i++ {
+			sub.Pull(nats.BatchSize(1))
+		}
+		nc.FlushTimeout(1 * time.Second)
+
+		// We will get only 408 timeout errors.
+		checkForPending(t, sub, 10, 2*time.Second)
+
+		for i := 0; i < 10; i++ {
+			_, err = sub.NextMsg(50 * time.Millisecond)
+			if err.Error() != `Request Timeout` {
+				t.Errorf("Expected request timeout fetching next message, got: %+v", err)
+			}
+		}
+	})
+
+	t.Run("no wait", func(t *testing.T) {
+		sub, err := js.SubscribeSync(subject, nats.Durable("pd2"), nats.Pull(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		// Extra pull to buffer more messages
+		//
+		err = sub.Pull(nats.BatchSize(10), nats.PullNoWait())
+		if err != nil {
+			t.Fatal(err)
+		}
+		nc.Flush()
+
+		// 1 from Initial Pull + 9 extra from the batch request + 1 error 404 msg.
+		checkForPending(t, sub, 11, 2*time.Second)
+
+		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		recvd := make([]*nats.Msg, 0)
+
+	Loop:
+		for range time.NewTicker(100 * time.Millisecond).C {
+			select {
+			case <-ctx.Done():
+				break Loop
+			default:
+			}
+
+			msg, err := sub.NextMsg(250 * time.Millisecond)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			recvd = append(recvd, msg)
+
+			err = msg.AckSync()
+			if err != nil {
+				t.Error(err)
+			}
+
+			if len(recvd) == totalMsgs {
+				done()
+				break
+			}
+		}
+
+		got := len(recvd)
+		if got != totalMsgs {
+			t.Fatalf("Got %v messages, expected at least: %v", got, totalMsgs)
+		}
+
+		resp, err := sub.NextMsg(250 * time.Millisecond)
+		if err.Error() != `No Messages` {
+			t.Errorf("Expected error fetching next message, got: %+v (msg=%+v)", err, resp)
+		}
+
+		// Next message will timeout since there are no more.
+		resp, err = sub.NextMsg(250 * time.Millisecond)
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
+		}
+
+		// There should only be 404 errors since no more messages.
+		totalPolls := 512
+		for i := 0; i < totalPolls; i++ {
+			sub.Pull(nats.BatchSize(1), nats.PullNoWait())
+		}
+		nc.FlushTimeout(1 * time.Second)
+		checkForPending(t, sub, totalPolls, 2*time.Second)
+
+		for i := 0; i < totalPolls; i++ {
+			_, err = sub.NextMsg(50 * time.Millisecond)
+			if err.Error() != `No Messages` {
+				t.Errorf("Expected request timeout fetching next message, got: %+v", err)
+			}
+		}
+	})
 }
