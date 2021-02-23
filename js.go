@@ -484,8 +484,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	}
 
 	isPullMode := o.pull > 0
-	if cb != nil && isPullMode {
-		return nil, ErrPullModeNotAllowed
+	if isPullMode {
+		if cb != nil {
+			return nil, ErrPullModeNotAllowed
+		}
+		o.noAutoNext = true
 	}
 
 	var (
@@ -634,14 +637,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	}
 	sub.jsi.attached = attached
 
-	// If we are pull based go ahead and fire off the first request to populate.
 	if isPullMode {
+		// Disable auto next for now.
 		sub.jsi.pull = o.pull
 		sub.jsi.noAutoNext = o.noAutoNext
-
-		if !o.noAutoNext {
-			sub.Poll()
-		}
 	}
 
 	return sub, nil
@@ -713,13 +712,6 @@ func Pull(batchSize int) SubOpt {
 			return errors.New("nats: batch size of 0 not valid")
 		}
 		opts.pull = batchSize
-		return nil
-	})
-}
-
-func NoAutoNext() SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.noAutoNext = true
 		return nil
 	})
 }
@@ -833,7 +825,7 @@ func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	return js.getConsumerInfo(stream, consumer)
 }
 
-func (sub *Subscription) Poll() error {
+func (sub *Subscription) Pull() error {
 	sub.mu.Lock()
 	if sub.jsi == nil || sub.jsi.deliver != _EMPTY_ || sub.jsi.pull == 0 {
 		sub.mu.Unlock()
@@ -903,7 +895,7 @@ func (m *Msg) ackReply(ackType []byte, sync, ackNext bool, opts ...PubOpt) error
 			return err
 		}
 	}
-	js, isPullMode, doAutoNext, err := m.checkReply()
+	js, isPullMode, _, err := m.checkReply()
 	if err != nil {
 		return err
 	}
@@ -925,29 +917,18 @@ func (m *Msg) ackReply(ackType []byte, sync, ackNext bool, opts ...PubOpt) error
 		wait = js.wait
 	}
 
-	if isPullMode {
-		if doAutoNext || ackNext {
-			if bytes.Equal(ackType, AckAck) {
-				err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
-			} else if bytes.Equal(ackType, AckNak) || bytes.Equal(ackType, AckTerm) {
-				err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNextOne)
-			}
+	switch {
+	case isPullMode && ackNext:
+		if bytes.Equal(ackType, AckAck) {
+			err = nc.PublishRequest(m.Reply, m.Sub.Subject, AckNext)
 		}
-
-		if sync && err == nil {
-			if ctx != nil {
-				_, err = nc.RequestWithContext(ctx, m.Reply, nil)
-			} else {
-				_, err = nc.Request(m.Reply, nil, wait)
-			}
-		}
-	} else if sync {
+	case sync:
 		if ctx != nil {
-			_, err = nc.RequestWithContext(ctx, m.Reply, ackType)
+			_, err = nc.RequestWithContext(ctx, m.Reply, nil)
 		} else {
-			_, err = nc.Request(m.Reply, ackType, wait)
+			_, err = nc.Request(m.Reply, nil, wait)
 		}
-	} else {
+	default:
 		err = nc.Publish(m.Reply, ackType)
 	}
 

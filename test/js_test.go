@@ -472,6 +472,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	sub.Pull()
 
 	// The first batch if available should be delivered and queued up.
 	waitForPending(t, batch)
@@ -494,7 +495,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Now we are stuck so to speak. So we can unstick the sub by calling poll.
 	waitForPending(t, 0)
-	sub.Poll()
+	sub.Pull()
 	waitForPending(t, batch)
 	sub.Drain()
 
@@ -517,6 +518,9 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+
+	// Request to be delivered new messages.
+	sub.Pull()
 
 	waitForPending(t, batch)
 
@@ -543,6 +547,8 @@ func TestJetStreamSubscribe(t *testing.T) {
 	for i := 0; i < toSend; i++ {
 		js.Publish("baz", msg)
 	}
+	sub.Pull()
+
 	// We should get 1 queued up.
 	waitForPending(t, batch)
 
@@ -550,8 +556,8 @@ func TestJetStreamSubscribe(t *testing.T) {
 		select {
 		case m := <-msgs:
 			received++
-			// This will do the AckNext version since it knows we are pull based.
-			m.Ack()
+			// Signal delivery of the next message to avoid extra pull.
+			m.AckNext()
 		case <-time.After(time.Second):
 			t.Fatalf("Timeout waiting for messages")
 		}
@@ -1327,6 +1333,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	sub.Pull()
 	waitForPending(t, batch)
 
 	for i := 0; i < toSend; i++ {
@@ -1335,7 +1342,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		// Tests that acks flow since we need these to do AckNext for this to work.
-		err = m.Ack()
+		err = m.AckNext()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -2116,11 +2123,12 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		subC.Pull()
 		fetchConsumers(t, 1)
 
 		msg, err := subC.NextMsg(2 * time.Second)
 		if err != nil {
-			t.Errorf("Unexpected error getting message: %v", err)
+			t.Fatalf("Unexpected error getting message: %v", err)
 		}
 		got := string(msg.Data)
 		expected := "C"
@@ -2793,7 +2801,7 @@ NextMsg:
 
 		pending, _, _ := sub.Pending()
 		if pending == 0 {
-			err = sub.Poll()
+			err = sub.Pull()
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -3168,7 +3176,7 @@ NextMsg:
 
 		for qsub, sub := range subs {
 			if pending, _, _ := sub.Pending(); pending == 0 {
-				err = sub.Poll()
+				err = sub.Pull()
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
@@ -3281,7 +3289,7 @@ func testJetStreamNoAutoNext(t *testing.T, srvs ...*jsServer) {
 		}
 	}
 
-	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"), nats.NoAutoNext())
+	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3306,7 +3314,7 @@ Loop:
 		// No auto next so have to pull explicitly each time.
 		pending, _, _ = sub.Pending()
 		if pending == 0 {
-			err = sub.Poll()
+			err = sub.Pull()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -3345,9 +3353,9 @@ Loop:
 		t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
 	}
 
-	// Poll a few times, there should only be timeouts.
+	// Pull a few times, there should only be timeouts.
 	for i := 0; i < 5; i++ {
-		sub.Poll()
+		sub.Pull()
 		nc.FlushTimeout(1 * time.Second)
 		resp, err = sub.NextMsg(250 * time.Millisecond)
 		if err != nats.ErrTimeout {
@@ -3389,7 +3397,7 @@ func testJetStreamManualAckNext(t *testing.T, srvs ...*jsServer) {
 		}
 	}
 
-	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"), nats.NoAutoNext())
+	sub, err := js.SubscribeSync("tasks", nats.Pull(1), nats.Durable("pd1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3400,7 +3408,7 @@ func testJetStreamManualAckNext(t *testing.T, srvs ...*jsServer) {
 	}
 
 	// Do the first poll to fetch messages.
-	err = sub.Poll()
+	err = sub.Pull()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3453,9 +3461,9 @@ Loop:
 		t.Errorf("Expected timeout fetching next message, got: %v (msg=%+v)", err, resp)
 	}
 
-	// Poll a few times, there should only be timeouts.
+	// Pull a few times, there should only be timeouts.
 	for i := 0; i < 5; i++ {
-		sub.Poll()
+		sub.Pull()
 		nc.FlushTimeout(1 * time.Second)
 		resp, err = sub.NextMsg(250 * time.Millisecond)
 		if err != nats.ErrTimeout {
