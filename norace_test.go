@@ -19,8 +19,6 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/nats-io/nats-server/v2/server"
 )
 
 func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
@@ -113,17 +111,25 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	}
 	defer os.RemoveAll(s.JetStreamConfig().StoreDir)
 
-	str, err := s.GlobalAccount().AddStream(&server.StreamConfig{
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{
 		Name:     "PENDING_TEST",
 		Subjects: []string{"js.p"},
-		Storage:  server.MemoryStorage,
+		Storage:  MemoryStorage,
 	})
 	if err != nil {
 		t.Fatalf("stream create failed: %v", err)
 	}
-
-	nc, _ := Connect(s.ClientURL())
-	defer nc.Close()
 
 	// Override default handler for test.
 	nc.SetErrorHandler(func(_ *Conn, _ *Subscription, _ error) {})
@@ -135,13 +141,13 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	}
 	nc.Flush()
 
-	if nm := str.State().Msgs; nm != toSend {
-		t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
+	str, err := js.StreamInfo("PENDING_TEST")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	if nm := str.State.Msgs; nm != toSend {
+		t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
 	}
 
 	var received uint64
