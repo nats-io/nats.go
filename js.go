@@ -495,6 +495,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		return nil, ErrPullModeNotAllowed
 	}
 
+	badPullAck := o.cfg.AckPolicy == AckNonePolicy || o.cfg.AckPolicy == AckAllPolicy
+	if isPullMode && badPullAck {
+		return nil, fmt.Errorf("invalid ack mode for pull consumers: %s", o.cfg.AckPolicy)
+	}
+
 	var (
 		err          error
 		shouldCreate bool
@@ -809,41 +814,6 @@ func AckExplicit() SubOpt {
 func MaxDeliver(n int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxDeliver = n
-		return nil
-	})
-}
-
-func PlaybackInstant() SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.ReplayPolicy = ReplayInstant
-		return nil
-	})
-}
-
-func PlaybackOriginal() SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.ReplayPolicy = ReplayOriginal
-		return nil
-	})
-}
-
-func RateLimit(n uint64) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.RateLimit = n
-		return nil
-	})
-}
-
-func SampleFrequency(s string) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.SampleFrequency = s
-		return nil
-	})
-}
-
-func PullMaxWaiting(n int) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.MaxWaiting = n
 		return nil
 	})
 }
