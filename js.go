@@ -332,13 +332,21 @@ func ExpectLastMsgId(id string) PubOpt {
 // MaxWait sets the maximum amount of time we will wait for a response.
 type MaxWait time.Duration
 
-func (ttl MaxWait) configurePublish(opts *pubOpts) error {
+func (ttl MaxWait) configureJSContext(js *js) error {
+	js.wait = time.Duration(ttl)
+	return nil
+}
+
+// AckWait sets the maximum amount of time we will wait for an ack.
+type AckWait time.Duration
+
+func (ttl AckWait) configurePublish(opts *pubOpts) error {
 	opts.ttl = time.Duration(ttl)
 	return nil
 }
 
-func (ttl MaxWait) configureJSContext(js *js) error {
-	js.wait = time.Duration(ttl)
+func (ttl AckWait) configureSubscribe(opts *subOpts) error {
+	opts.cfg.AckWait = time.Duration(ttl)
 	return nil
 }
 
@@ -794,13 +802,6 @@ func AckAll() SubOpt {
 func AckExplicit() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.AckPolicy = AckExplicitPolicy
-		return nil
-	})
-}
-
-func AckWait(d time.Duration) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.cfg.AckWait = d
 		return nil
 	})
 }

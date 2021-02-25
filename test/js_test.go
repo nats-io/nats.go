@@ -211,7 +211,7 @@ func TestJetStreamPublish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	_, err = js.Publish("foo", msg, nats.MaxWait(time.Second), nats.Context(ctx))
+	_, err = js.Publish("foo", msg, nats.AckWait(time.Second), nats.Context(ctx))
 	if err != nats.ErrContextAndTimeout {
 		t.Fatalf("Expected %q, got %q", nats.ErrContextAndTimeout, err)
 	}
@@ -220,7 +220,7 @@ func TestJetStreamPublish(t *testing.T) {
 	sub, _ := nc.SubscribeSync("baz")
 	defer sub.Unsubscribe()
 
-	_, err = js.Publish("baz", msg, nats.MaxWait(time.Nanosecond))
+	_, err = js.Publish("baz", msg, nats.AckWait(time.Nanosecond))
 	if err != nats.ErrTimeout {
 		t.Fatalf("Expected %q, got %q", nats.ErrTimeout, err)
 	}
@@ -1776,7 +1776,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
-		err = msg.AckSync(nats.MaxWait(2 * time.Second))
+		err = msg.AckSync(nats.AckWait(2 * time.Second))
 		if err != nats.ErrInvalidJSAck {
 			t.Errorf("Unexpected error: %v", err)
 		}
