@@ -686,18 +686,6 @@ type subOpts struct {
 	cfg *ConsumerConfig
 }
 
-// Durable defines the consumer name for JetStream durable subscribers.
-func Durable(name string) SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		if strings.Contains(name, ".") {
-			return ErrInvalidDurableName
-		}
-
-		opts.cfg.Durable = name
-		return nil
-	})
-}
-
 // Pull defines the batch size of messages that will be received
 // when using pull based JetStream consumers.
 func Pull(batchSize int) SubOpt {
@@ -726,6 +714,18 @@ func PullDirect(stream, consumer string, batchSize int) SubOpt {
 func ManualAck() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.mack = true
+		return nil
+	})
+}
+
+// Durable defines the consumer name for JetStream durable subscribers.
+func Durable(name string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		if strings.Contains(name, ".") {
+			return ErrInvalidDurableName
+		}
+
+		opts.cfg.Durable = name
 		return nil
 	})
 }
@@ -794,6 +794,69 @@ func AckAll() SubOpt {
 func AckExplicit() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.AckPolicy = AckExplicitPolicy
+		return nil
+	})
+}
+
+func AckWait(d time.Duration) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.AckWait = d
+		return nil
+	})
+}
+
+func MaxDeliver(n int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxDeliver = n
+		return nil
+	})
+}
+
+func FilterSubject(s string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.FilterSubject = s
+		return nil
+	})
+}
+
+func PlaybackInstant() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.ReplayPolicy = ReplayInstant
+		return nil
+	})
+}
+
+func PlaybackOriginal() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.ReplayPolicy = ReplayOriginal
+		return nil
+	})
+}
+
+func RateLimit(n uint64) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.RateLimit = n
+		return nil
+	})
+}
+
+func SampleFrequency(s string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.SampleFrequency = s
+		return nil
+	})
+}
+
+func MaxWaiting(n int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxWaiting = n
+		return nil
+	})
+}
+
+func MaxAckPending(n int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxAckPending = n
 		return nil
 	})
 }
