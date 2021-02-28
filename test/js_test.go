@@ -2845,20 +2845,21 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 				err     error
 				seq     = uint64(i)
 				msg     *nats.RawStreamMsg
-				timeout = time.Now().Add(2 * time.Second)
+				timeout = time.Now().Add(5 * time.Second)
 			)
 
+		Retry:
 			for time.Now().Before(timeout) {
 				msg, err = js.GetMsg("s1", seq)
 				if err != nil {
 					time.Sleep(100 * time.Millisecond)
-					continue
+					continue Retry
 				}
 				msgs = append(msgs, msg)
 				continue GetNextMsg
 			}
 			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
+				t.Fatalf("Unexpected error fetching seq=%v: %v", seq, err)
 			}
 		}
 
@@ -2874,6 +2875,53 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		got = int(si.State.Msgs)
 		if got != expectedTotal {
 			t.Errorf("Expected %v, got: %v", expectedTotal, got)
+		}
+
+		got = len(si.Sources)
+		expected := 2
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+	})
+
+	t.Run("update stream with sources", func(t *testing.T) {
+		si, err := js.StreamInfo("s1")
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+		got := len(si.Config.Sources)
+		expected := 2
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		got = len(si.Sources)
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		// Make an update
+		config := si.Config
+		config.MaxMsgs = 128
+		updated, err := js.UpdateStream(&config)
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		got = len(updated.Config.Sources)
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		got = len(updated.Sources)
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		got = int(updated.Config.MaxMsgs)
+		expected = int(config.MaxMsgs)
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
 		}
 	})
 }
