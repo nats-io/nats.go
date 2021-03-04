@@ -14,6 +14,7 @@
 package nats
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +43,9 @@ type JetStreamManager interface {
 	// NewStreamLister is used to return pages of StreamInfo objects.
 	NewStreamLister() *StreamLister
 
+	// StreamNames is used to retrieve a list of Stream names.
+	StreamNames(ctx context.Context) <-chan string
+
 	// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
 	GetMsg(name string, seq uint64) (*RawStreamMsg, error)
 
@@ -59,6 +63,9 @@ type JetStreamManager interface {
 
 	// NewConsumerLister is used to return pages of ConsumerInfo objects.
 	NewConsumerLister(stream string) *ConsumerLister
+
+	// ConsumerNames is used to retrieve a list of Consumer names.
+	ConsumerNames(ctx context.Context, stream string) <-chan string
 
 	// AccountInfo retrieves info about the JetStream usage from an account.
 	AccountInfo() (*AccountInfo, error)
@@ -345,6 +352,98 @@ func (c *ConsumerLister) Err() error {
 // NewConsumerLister is used to return pages of ConsumerInfo objects.
 func (js *js) NewConsumerLister(stream string) *ConsumerLister {
 	return &ConsumerLister{stream: stream, js: js}
+}
+
+type consumerNamesLister struct {
+	stream string
+	js     *js
+
+	err      error
+	offset   int
+	page     []string
+	pageInfo *apiPaged
+}
+
+// consumerNamesListResponse is the response for a Consumers Names List request.
+type consumerNamesListResponse struct {
+	apiResponse
+	apiPaged
+	Consumers []string `json:"consumers"`
+}
+
+// Next fetches the next ConsumerInfo page.
+func (c *consumerNamesLister) Next() bool {
+	if c.err != nil {
+		return false
+	}
+	if c.stream == _EMPTY_ {
+		c.err = ErrStreamNameRequired
+		return false
+	}
+	if c.pageInfo != nil && c.offset >= c.pageInfo.Total {
+		return false
+	}
+
+	clSubj := c.js.apiSubj(fmt.Sprintf(apiConsumerNamesT, c.stream))
+	r, err := c.js.nc.Request(clSubj, nil, c.js.wait)
+	if err != nil {
+		c.err = err
+		return false
+	}
+	var resp consumerNamesListResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		c.err = err
+		return false
+	}
+	if resp.Error != nil {
+		c.err = errors.New(resp.Error.Description)
+		return false
+	}
+
+	c.pageInfo = &resp.apiPaged
+	c.page = resp.Consumers
+	c.offset += len(c.page)
+	return true
+}
+
+// Page returns the current ConsumerInfo page.
+func (c *consumerNamesLister) Page() []string {
+	return c.page
+}
+
+// Err returns any errors found while fetching pages.
+func (c *consumerNamesLister) Err() error {
+	return c.err
+}
+
+// ConsumerNames is used to retrieve a list of Consumer names.
+func (js *js) ConsumerNames(ctx context.Context, stream string) <-chan string {
+	var cancel context.CancelFunc
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	}
+
+	ch := make(chan string)
+	l := &consumerNamesLister{stream: stream, js: js}
+	go func() {
+		defer func() {
+			if cancel != nil {
+				cancel()
+			}
+		}()
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				select {
+				case ch <- info:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
 }
 
 // streamCreateResponse stream creation.
@@ -705,4 +804,83 @@ func (s *StreamLister) Err() error {
 // NewStreamLister is used to return pages of StreamInfo objects.
 func (js *js) NewStreamLister() *StreamLister {
 	return &StreamLister{js: js}
+}
+
+type streamNamesLister struct {
+	js *js
+
+	err      error
+	offset   int
+	page     []string
+	pageInfo *apiPaged
+}
+
+// Next fetches the next ConsumerInfo page.
+func (l *streamNamesLister) Next() bool {
+	if l.err != nil {
+		return false
+	}
+	if l.pageInfo != nil && l.offset >= l.pageInfo.Total {
+		return false
+	}
+
+	r, err := l.js.nc.Request(l.js.apiSubj(apiStreams), nil, l.js.wait)
+	if err != nil {
+		l.err = err
+		return false
+	}
+	var resp streamNamesResponse
+	if err := json.Unmarshal(r.Data, &resp); err != nil {
+		l.err = err
+		return false
+	}
+	if resp.Error != nil {
+		l.err = errors.New(resp.Error.Description)
+		return false
+	}
+
+	l.pageInfo = &resp.apiPaged
+	l.page = resp.Streams
+	l.offset += len(l.page)
+	return true
+}
+
+// Page returns the current ConsumerInfo page.
+func (l *streamNamesLister) Page() []string {
+	return l.page
+}
+
+// Err returns any errors found while fetching pages.
+func (l *streamNamesLister) Err() error {
+	return l.err
+}
+
+// StreamNames is used to retrieve a list of Stream names.
+func (js *js) StreamNames(ctx context.Context) <-chan string {
+	var cancel context.CancelFunc
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	}
+
+	ch := make(chan string)
+	l := &streamNamesLister{js: js}
+	go func() {
+		defer func() {
+			if cancel != nil {
+				cancel()
+			}
+		}()
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				select {
+				case ch <- info:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
 }

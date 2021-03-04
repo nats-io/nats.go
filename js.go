@@ -52,6 +52,9 @@ const (
 	// apiConsumerListT is used to return all detailed consumer information
 	apiConsumerListT = "CONSUMER.LIST.%s"
 
+	// apiConsumerNamesT is used to return a list with all consumer names for the stream.
+	apiConsumerNamesT = "CONSUMER.NAMES.%s"
+
 	// apiStreams can lookup a stream by subject.
 	apiStreams = "STREAM.NAMES"
 
