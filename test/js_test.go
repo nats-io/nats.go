@@ -219,7 +219,10 @@ func TestJetStreamPublish(t *testing.T) {
 	}
 
 	// Create dummy listener for timeout and context tests.
-	sub, _ := nc.SubscribeSync("baz")
+	sub, err := nc.SubscribeSync("baz")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer sub.Unsubscribe()
 
 	_, err = js.Publish("baz", msg, nats.AckWait(time.Nanosecond))
@@ -911,6 +914,460 @@ func TestJetStreamAckPending_Push(t *testing.T) {
 	if err != nats.ErrTimeout {
 		t.Errorf("Expected timeout, got: %v", err)
 	}
+}
+
+func TestJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+		t.Logf("WARN: %s", err)
+	})
+
+	nc, err := nats.Connect(s.ClientURL(), errHandler)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Burst and try to hit the flow control limit of the server.
+	const totalMsgs = 16536
+	payload := strings.Repeat("A", 1024)
+	for i := 0; i < totalMsgs; i++ {
+		if _, err := js.Publish("foo", []byte(fmt.Sprintf("i:%d/", i)+payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hbTimer := 500 * time.Millisecond
+	sub, err := js.SubscribeSync("foo",
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(1),
+		nats.EnableFlowControl(),
+		nats.IdleHeartbeat(hbTimer),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Config.FlowControl {
+		t.Fatal("Expected Flow Control to be enabled")
+	}
+	if info.Config.Heartbeat != hbTimer {
+		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
+	}
+
+	m, err := sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatalf("Error getting next message: %v", err)
+	}
+	meta, err := m.MetaData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Pending > totalMsgs {
+		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.Pending)
+	}
+	err = m.Ack()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recvd := 1
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		m, err := sub.NextMsg(1 * time.Second)
+		if err != nil {
+			t.Fatalf("Error getting next message: %v", err)
+		}
+		if len(m.Data) == 0 {
+			t.Fatalf("Unexpected empty message: %+v", m)
+		}
+
+		if err := m.Ack(); err != nil {
+			t.Fatalf("Error on ack message: %v", err)
+		}
+		recvd++
+
+		if recvd == totalMsgs {
+			break
+		}
+	}
+
+	t.Run("idle heartbeats", func(t *testing.T) {
+		// Delay to get a few heartbeats.
+		time.Sleep(2 * time.Second)
+
+		timeout = time.Now().Add(5 * time.Second)
+		for time.Now().Before(timeout) {
+			msg, err := sub.NextMsg(200 * time.Millisecond)
+			if err != nil {
+				if err == nats.ErrTimeout {
+					// If timeout, ok to stop checking for the test.
+					break
+				}
+				t.Fatal(err)
+			}
+			if len(msg.Data) == 0 {
+				t.Fatalf("Unexpected empty message: %+v", m)
+			}
+
+			recvd++
+			meta, err := msg.MetaData()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Pending == 0 {
+				break
+			}
+		}
+		if recvd > totalMsgs {
+			t.Logf("WARN: Received more messages than expected (%v), got: %v", totalMsgs, recvd)
+		}
+	})
+
+	t.Run("with context", func(t *testing.T) {
+		sub, err := js.SubscribeSync("foo",
+			nats.AckWait(100*time.Millisecond),
+			nats.Durable("bar"),
+			nats.EnableFlowControl(),
+			nats.IdleHeartbeat(hbTimer),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		info, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Config.FlowControl {
+			t.Fatal("Expected Flow Control to be enabled")
+		}
+
+		recvd = 0
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			default:
+			}
+
+			m, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Error getting next message: %v", err)
+			}
+			if len(m.Data) == 0 {
+				t.Fatalf("Unexpected empty message: %+v", m)
+			}
+
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Error on ack message: %v", err)
+			}
+			recvd++
+
+			if recvd >= totalMsgs {
+				break
+			}
+		}
+
+		// Delay to get a few heartbeats.
+		time.Sleep(2 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				if ctx.Err() == context.DeadlineExceeded {
+					return
+				}
+			default:
+			}
+
+			msg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				if err == context.DeadlineExceeded {
+					break
+				}
+				t.Fatal(err)
+			}
+			if len(msg.Data) == 0 {
+				t.Fatalf("Unexpected empty message: %+v", m)
+			}
+
+			meta, err := msg.MetaData()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Pending == 0 {
+				break
+			}
+		}
+	})
+}
+
+func TestJetStreamPushFlowControlHeartbeats_SubscribeAsync(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Burst and try to hit the flow control limit of the server.
+	const totalMsgs = 16536
+	payload := strings.Repeat("A", 1024)
+	for i := 0; i < totalMsgs; i++ {
+		if _, err := js.Publish("foo", []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recvd := make(chan *nats.Msg, totalMsgs)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	errCh := make(chan error)
+	hbTimer := 200 * time.Millisecond
+	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
+		if len(msg.Data) == 0 {
+			errCh <- fmt.Errorf("Unexpected empty message: %+v", msg)
+		}
+		recvd <- msg
+
+		if len(recvd) == totalMsgs {
+			cancel()
+		}
+	}, nats.EnableFlowControl(), nats.IdleHeartbeat(hbTimer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Config.FlowControl {
+		t.Fatal("Expected Flow Control to be enabled")
+	}
+	if info.Config.Heartbeat != hbTimer {
+		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
+	}
+
+	<-ctx.Done()
+
+	got := len(recvd)
+	expected := totalMsgs
+	if got != expected {
+		t.Errorf("Expected %v, got: %v", expected, got)
+	}
+
+	// Wait for a couple of heartbeats to arrive and confirm there is no error.
+	select {
+	case <-time.After(1 * time.Second):
+	case err := <-errCh:
+		t.Fatal(err)
+	}
+}
+
+func TestJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+		t.Logf("WARN: %s : %+v", err, sub)
+	})
+
+	nc, err := nats.Connect(s.ClientURL(), errHandler)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Burst and try to hit the flow control limit of the server.
+	const totalMsgs = 16536
+	payload := strings.Repeat("A", 1024)
+	for i := 0; i < totalMsgs; i++ {
+		if _, err := js.Publish("foo", []byte(fmt.Sprintf("i:%d/", i)+payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hbTimer := 500 * time.Millisecond
+	mch := make(chan *nats.Msg, 16536)
+	sub, err := js.ChanSubscribe("foo", mch,
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(1),
+		nats.EnableFlowControl(),
+		nats.IdleHeartbeat(hbTimer),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Config.FlowControl {
+		t.Fatal("Expected Flow Control to be enabled")
+	}
+	if info.Config.Heartbeat != hbTimer {
+		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
+	}
+
+	getNextMsg := func(mch chan *nats.Msg, timeout time.Duration) (*nats.Msg, error) {
+		t.Helper()
+		select {
+		case m := <-mch:
+			return m, nil
+		case <-time.After(timeout):
+			return nil, nats.ErrTimeout
+		}
+	}
+
+	m, err := getNextMsg(mch, 1*time.Second)
+	if err != nil {
+		t.Fatalf("Error getting next message: %v", err)
+	}
+	meta, err := m.MetaData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Pending > totalMsgs {
+		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.Pending)
+	}
+	err = m.Ack()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recvd := 1
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+	defer done()
+
+Loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break Loop
+		case m := <-mch:
+			if err != nil {
+				t.Fatalf("Error getting next message: %v", err)
+			}
+			if len(m.Data) == 0 {
+				t.Fatalf("Unexpected empty message: %+v", m)
+			}
+
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Error on ack message: %v", err)
+			}
+			recvd++
+
+			if recvd == totalMsgs {
+				done()
+			}
+		}
+	}
+
+	t.Run("idle heartbeats", func(t *testing.T) {
+		// Delay to get a few heartbeats.
+		time.Sleep(2 * time.Second)
+
+		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+	Loop:
+		for {
+			select {
+			case <-ctx.Done():
+				break Loop
+			case msg := <-mch:
+				if err != nil {
+					if err == nats.ErrTimeout {
+						// If timeout, ok to stop checking for the test.
+						break
+					}
+					t.Fatal(err)
+				}
+				if len(msg.Data) == 0 {
+					t.Fatalf("Unexpected empty message: %+v", m)
+				}
+
+				recvd++
+				meta, err := msg.MetaData()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if meta.Pending == 0 {
+					break Loop
+				}
+			}
+		}
+		if recvd > totalMsgs {
+			t.Logf("WARN: Received more messages than expected (%v), got: %v", totalMsgs, recvd)
+		}
+	})
 }
 
 func TestJetStream_Drain(t *testing.T) {
@@ -1990,10 +2447,7 @@ func TestJetStreamInterfaces(t *testing.T) {
 	publishMsg(js, []byte("hello world"))
 }
 
-// WIP(dlc) - This is in support of stall based tests and processing.
-func TestJetStreamPullBasedStall(t *testing.T) {
-	t.SkipNow()
-
+func TestJetStreamChanSubscribeStall(t *testing.T) {
 	conf := createConfFile(t, []byte(`
 		listen: 127.0.0.1:-1
 		jetstream: enabled
@@ -2035,13 +2489,39 @@ func TestJetStreamPullBasedStall(t *testing.T) {
 		t.Fatalf("stream lookup failed: %v", err)
 	}
 
-	msg := []byte("Hello JS!")
+	msg := []byte(strings.Repeat("A", 512))
 	toSend := 100_000
 	for i := 0; i < toSend; i++ {
 		// Use plain NATS here for speed.
 		nc.Publish("STALL", msg)
 	}
 	nc.Flush()
+
+	batch := 100
+	msgs := make(chan *nats.Msg, batch-2)
+	sub, err := js.ChanSubscribe("STALL", msgs,
+		nats.Durable("dlc"),
+		nats.EnableFlowControl(),
+		nats.MaxAckPending(batch-2),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	for received := 0; received < toSend; {
+		select {
+		case m := <-msgs:
+			received++
+			meta, _ := m.MetaData()
+			if meta.Consumer != uint64(received) {
+				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Consumer)
+			}
+			m.Ack()
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout waiting for messages, last received was %d", received)
+		}
+	}
 }
 
 func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
@@ -4073,6 +4553,14 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 				srvA.Restart()
 			}
 		}),
+		nats.ErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
+			t.Logf("WARN: Got error %v", err)
+			if info, ok := err.(*nats.ErrConsumerSequenceMismatch); ok {
+				t.Logf("WARN: %+v", info)
+			}
+			// Take out this QueueSubscriber from the group.
+			sub.Drain()
+		}),
 	)
 	if err != nil {
 		t.Error(err)
@@ -4128,7 +4616,7 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 					}
 				}
 			}
-		}, nats.Durable(dname), nats.AckWait(5*time.Second), nats.ManualAck())
+		}, nats.Durable(dname), nats.AckWait(5*time.Second), nats.ManualAck(), nats.IdleHeartbeat(100*time.Millisecond))
 
 		if err != nil && (err != nats.ErrTimeout && err != context.DeadlineExceeded) {
 			t.Error(err)
@@ -4180,12 +4668,15 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 
 	<-ctx.Done()
 
+	// Wait a bit to get heartbeats.
+	time.Sleep(2 * time.Second)
+
 	// Drain to allow AckSync response to be received.
 	nc.Drain()
 
 	got := len(msgs)
 	if got != totalMsgs {
-		t.Logf("WARN: Expected %v, got: %v", totalMsgs, got)
+		t.Logf("WARN: Expected %v, got: %v (failed publishes: %v)", totalMsgs, got, failedPubs)
 	}
 	if got < totalMsgs-failedPubs {
 		t.Errorf("Expected %v, got: %v", totalMsgs-failedPubs, got)
