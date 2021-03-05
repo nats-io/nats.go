@@ -133,6 +133,7 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 
 	// snapshot
 	mch := s.mch
+	jsi := s.jsi
 	s.mu.Unlock()
 
 	var ok bool
@@ -147,9 +148,36 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
 		} else {
+			// JetStream Push consumers may get extra status messages
+			// that the client will process automatically.
+			if jsi != nil {
+				if isControlMessage(msg) {
+					if err := jsi.handleControlMessage(s, msg); err != nil {
+						return nil, err
+					}
+					// Skip and wait for next message.
+					break
+				} else if jsi.hbs {
+					jsi.trackSequences(msg)
+				}
+				return msg, nil
+			}
 			return msg, nil
 		}
 	default:
+	}
+
+	if jsi != nil {
+		// Skip any control messages that may have been delivered
+		// until there is a valid message or a timeout error.
+		msg, err = s.processControlFlow(mch, jsi, nil, ctx.Done())
+		if err != nil {
+			if err == ErrTimeout {
+				err = ctx.Err()
+			}
+			return nil, err
+		}
+		return msg, nil
 	}
 
 	select {

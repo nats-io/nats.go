@@ -415,6 +415,8 @@ type ConsumerConfig struct {
 	SampleFrequency string        `json:"sample_freq,omitempty"`
 	MaxWaiting      int           `json:"max_waiting,omitempty"`
 	MaxAckPending   int           `json:"max_ack_pending,omitempty"`
+	FlowControl     bool          `json:"flow_control,omitempty"`
+	Heartbeat       time.Duration `json:"idle_heartbeat,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -454,6 +456,19 @@ type jsSub struct {
 	pull     bool
 	durable  bool
 	attached bool
+
+	// Heartbeats handling from push consumers.
+	hbs bool
+
+	// cmeta is holds metadata from a push consumer
+	// for when heartbeats are enabled.
+	cmeta atomic.Value
+}
+
+// controlMetadata is metadata used to be able to detect sequence mismatch
+// errors in push based consumers that have heartbeats enabled.
+type controlMetadata struct {
+	meta string
 }
 
 func (jsi *jsSub) unsubscribe(drainMode bool) error {
@@ -535,6 +550,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 
 	isPullMode := ch == nil && cb == nil
 	badPullAck := o.cfg.AckPolicy == AckNonePolicy || o.cfg.AckPolicy == AckAllPolicy
+	hasHeartbeats := o.cfg.Heartbeat > 0
 	if isPullMode && badPullAck {
 		return nil, fmt.Errorf("invalid ack mode for pull consumers: %s", o.cfg.AckPolicy)
 	}
@@ -618,9 +634,9 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	}
 
 	if isPullMode {
-		sub = &Subscription{Subject: subj, conn: js.nc, typ: PullSubscription, jsi: &jsSub{js: js, pull: true}}
+		sub = &Subscription{Subject: subj, conn: js.nc, typ: PullSubscription, jsi: &jsSub{js: js, pull: isPullMode}}
 	} else {
-		sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js})
+		sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js, hbs: hasHeartbeats})
 		if err != nil {
 			return nil, err
 		}
@@ -868,6 +884,22 @@ func RateLimit(n uint64) SubOpt {
 func BindStream(name string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.stream = name
+		return nil
+	})
+}
+
+// EnableFlowControl enables flow control for a push based consumer.
+func EnableFlowControl() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.FlowControl = true
+		return nil
+	})
+}
+
+// IdleHeartbeat enables push based consumers to have idle heartbeats delivered.
+func IdleHeartbeat(duration time.Duration) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.Heartbeat = duration
 		return nil
 	})
 }
@@ -1322,18 +1354,12 @@ type MsgMetaData struct {
 	StreamName string
 }
 
-// MetaData retrieves the metadata from a JetStream message.
-func (m *Msg) MetaData() (*MsgMetaData, error) {
-	if _, _, err := m.checkReply(); err != nil {
-		return nil, err
-	}
-
+func getMetadataFields(subject string) ([]string, error) {
 	const expectedTokens = 9
 	const btsep = '.'
 
 	tsa := [expectedTokens]string{}
 	start, tokens := 0, tsa[:0]
-	subject := m.Reply
 	for i := 0; i < len(subject); i++ {
 		if subject[i] == btsep {
 			tokens = append(tokens, subject[start:i])
@@ -1343,6 +1369,19 @@ func (m *Msg) MetaData() (*MsgMetaData, error) {
 	tokens = append(tokens, subject[start:])
 	if len(tokens) != expectedTokens || tokens[0] != "$JS" || tokens[1] != "ACK" {
 		return nil, ErrNotJSMessage
+	}
+	return tokens, nil
+}
+
+// MetaData retrieves the metadata from a JetStream message.
+func (m *Msg) MetaData() (*MsgMetaData, error) {
+	if _, _, err := m.checkReply(); err != nil {
+		return nil, err
+	}
+
+	tokens, err := getMetadataFields(m.Reply)
+	if err != nil {
+		return nil, err
 	}
 
 	meta := &MsgMetaData{
