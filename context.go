@@ -133,6 +133,7 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 
 	// snapshot
 	mch := s.mch
+	jsi := s.jsi
 	s.mu.Unlock()
 
 	var ok bool
@@ -147,6 +148,16 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
 		} else {
+			if jsi != nil {
+				nextMsg, err := s.processControlFlow(mch, msg)
+				if err != nil {
+					return nil, err
+				}
+				if nextMsg != nil {
+					return nextMsg, nil
+				}
+				return s.NextMsgWithContext(ctx)
+			}
 			return msg, nil
 		}
 	default:
@@ -162,6 +173,16 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 		}
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	if jsi != nil {
+		nextMsg, err := s.processControlFlow(mch, msg)
+		if err != nil {
+			return nil, err
+		}
+		if nextMsg != nil {
+			return nextMsg, nil
+		}
+		return s.NextMsgWithContext(ctx)
 	}
 
 	return msg, nil

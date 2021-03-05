@@ -908,6 +908,204 @@ func TestJetStreamAckPending_Push(t *testing.T) {
 	}
 }
 
+func TestJetStreamPushFlowControl_SubscribeSync(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Burst and try to hit the flow control limit of the server.
+	const totalMsgs = 16536
+	payload := strings.Repeat("A", 1024)
+	for i := 0; i < totalMsgs; i++ {
+		if _, err := js.Publish("foo", []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sub, err := js.SubscribeSync("foo",
+		nats.AckWait(100*time.Millisecond),
+		nats.EnableFlowControl(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Config.FlowControl {
+		t.Fatal("Expected Flow Control to be enabled")
+	}
+
+	recvd := 0
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		m, err := sub.NextMsg(1 * time.Second)
+		if err != nil {
+			t.Fatalf("Error getting next message: %v", err)
+		}
+		if len(m.Data) == 0 {
+			t.Fatalf("Unexpected empty message: %+v", m)
+		}
+
+		if err := m.Ack(); err != nil {
+			t.Fatalf("Error on ack message: %v", err)
+		}
+		recvd++
+
+		if recvd >= totalMsgs {
+			break
+		}
+	}
+
+	t.Run("with context", func(t *testing.T) {
+		sub, err = js.SubscribeSync("foo",
+			nats.AckWait(100*time.Millisecond),
+			nats.Durable("bar"),
+			nats.EnableFlowControl(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		info, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Config.FlowControl {
+			t.Fatal("Expected Flow Control to be enabled")
+		}
+
+		recvd = 0
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			default:
+			}
+
+			m, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Error getting next message: %v", err)
+			}
+			if len(m.Data) == 0 {
+				t.Fatalf("Unexpected empty message: %+v", m)
+			}
+
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Error on ack message: %v", err)
+			}
+			recvd++
+
+			if recvd >= totalMsgs {
+				break
+			}
+		}
+	})
+}
+
+func TestJetStreamPushFlowControl_SubscribeAsync(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Burst and try to hit the flow control limit of the server.
+	const totalMsgs = 16536
+	payload := strings.Repeat("A", 1024)
+	for i := 0; i < totalMsgs; i++ {
+		if _, err := js.Publish("foo", []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recvd := make(chan *nats.Msg, totalMsgs)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
+		if len(recvd) == totalMsgs {
+			cancel()
+		}
+		if len(msg.Data) == 0 {
+			t.Fatalf("Unexpected empty message: %+v", msg)
+		}
+		recvd <- msg
+
+		if len(recvd) == totalMsgs {
+			cancel()
+		}
+	}, nats.EnableFlowControl())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Config.FlowControl {
+		t.Fatal("Expected Flow Control to be enabled")
+	}
+
+	<-ctx.Done()
+
+	got := len(recvd)
+	expected := totalMsgs
+	if got != expected {
+		t.Errorf("Expected %v, got: %v", expected, got)
+	}
+}
+
 func TestJetStream_Drain(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
