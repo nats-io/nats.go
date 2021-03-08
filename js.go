@@ -150,6 +150,16 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	return js, nil
 }
 
+// JSMOpt configures a JetStream manager.
+type JSMOpt interface {
+	configureJSManager(opts *jsmOpts) error
+}
+
+type jsmOpts struct {
+	ctx context.Context
+	ttl time.Duration
+}
+
 // JSOpt configures a JetStream context.
 type JSOpt interface {
 	configureJSContext(opts *js) error
@@ -340,6 +350,11 @@ func (ttl MaxWait) configureJSContext(js *js) error {
 	return nil
 }
 
+func (ttl MaxWait) configureJSManager(opt *jsmOpts) error {
+	opt.ttl = time.Duration(ttl)
+	return nil
+}
+
 // AckWait sets the maximum amount of time we will wait for an ack.
 type AckWait time.Duration
 
@@ -359,6 +374,11 @@ type ContextOpt struct {
 }
 
 func (ctx ContextOpt) configurePublish(opts *pubOpts) error {
+	opts.ctx = ctx
+	return nil
+}
+
+func (ctx ContextOpt) configureJSManager(opts *jsmOpts) error {
 	opts.ctx = ctx
 	return nil
 }

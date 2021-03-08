@@ -41,10 +41,10 @@ type JetStreamManager interface {
 	PurgeStream(name string) error
 
 	// StreamsInfo can be used to retrieve a list of StreamInfo objects.
-	StreamsInfo(ctx context.Context) <-chan *StreamInfo
+	StreamsInfo(opts ...JSMOpt) <-chan *StreamInfo
 
 	// StreamNames is used to retrieve a list of Stream names.
-	StreamNames(ctx context.Context) <-chan string
+	StreamNames(opts ...JSMOpt) <-chan string
 
 	// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
 	GetMsg(name string, seq uint64) (*RawStreamMsg, error)
@@ -62,10 +62,10 @@ type JetStreamManager interface {
 	ConsumerInfo(stream, name string) (*ConsumerInfo, error)
 
 	// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
-	ConsumersInfo(ctx context.Context, stream string) <-chan *ConsumerInfo
+	ConsumersInfo(stream string, opts ...JSMOpt) <-chan *ConsumerInfo
 
 	// ConsumerNames is used to retrieve a list of Consumer names.
-	ConsumerNames(ctx context.Context, stream string) <-chan string
+	ConsumerNames(stream string, opts ...JSMOpt) <-chan string
 
 	// AccountInfo retrieves info about the JetStream usage from an account.
 	AccountInfo() (*AccountInfo, error)
@@ -286,10 +286,25 @@ type consumerLister struct {
 }
 
 // ConsumersInfo returns a receive only channel to iterate on the consumers info.
-func (js *js) ConsumersInfo(ctx context.Context, stream string) <-chan *ConsumerInfo {
+func (js *js) ConsumersInfo(stream string, opts ...JSMOpt) <-chan *ConsumerInfo {
+	var o jsmOpts
+	if len(opts) > 0 {
+		for _, opt := range opts {
+			if err := opt.configureJSManager(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	// Check for option collisions. Right now just timeout and context.
+	if o.ctx != nil && o.ttl != 0 {
+		return nil
+	}
+	if o.ttl == 0 && o.ctx == nil {
+		o.ttl = js.wait
+	}
 	var cancel context.CancelFunc
-	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	if o.ctx == nil && o.ttl > 0 {
+		o.ctx, cancel = context.WithTimeout(context.Background(), o.ttl)
 	}
 
 	ach := make(chan *ConsumerInfo)
@@ -305,7 +320,7 @@ func (js *js) ConsumersInfo(ctx context.Context, stream string) <-chan *Consumer
 			for _, info := range cl.Page() {
 				select {
 				case ach <- info:
-				case <-ctx.Done():
+				case <-o.ctx.Done():
 					return
 				}
 			}
@@ -442,10 +457,25 @@ func (c *consumerNamesLister) Err() error {
 }
 
 // ConsumerNames is used to retrieve a list of Consumer names.
-func (js *js) ConsumerNames(ctx context.Context, stream string) <-chan string {
+func (js *js) ConsumerNames(stream string, opts ...JSMOpt) <-chan string {
+	var o jsmOpts
+	if len(opts) > 0 {
+		for _, opt := range opts {
+			if err := opt.configureJSManager(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	// Check for option collisions. Right now just timeout and context.
+	if o.ctx != nil && o.ttl != 0 {
+		return nil
+	}
+	if o.ttl == 0 && o.ctx == nil {
+		o.ttl = js.wait
+	}
 	var cancel context.CancelFunc
-	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	if o.ctx == nil && o.ttl > 0 {
+		o.ctx, cancel = context.WithTimeout(context.Background(), o.ttl)
 	}
 
 	ch := make(chan string)
@@ -457,11 +487,12 @@ func (js *js) ConsumerNames(ctx context.Context, stream string) <-chan string {
 			}
 		}()
 		defer close(ch)
+
 		for l.Next() {
 			for _, info := range l.Page() {
 				select {
 				case ch <- info:
-				case <-ctx.Done():
+				case <-o.ctx.Done():
 					return
 				}
 			}
@@ -763,10 +794,25 @@ type streamLister struct {
 }
 
 // StreamsInfo returns a receive only channel to iterate on the streams.
-func (js *js) StreamsInfo(ctx context.Context) <-chan *StreamInfo {
+func (js *js) StreamsInfo(opts ...JSMOpt) <-chan *StreamInfo {
+	var o jsmOpts
+	if len(opts) > 0 {
+		for _, opt := range opts {
+			if err := opt.configureJSManager(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	// Check for option collisions. Right now just timeout and context.
+	if o.ctx != nil && o.ttl != 0 {
+		return nil
+	}
+	if o.ttl == 0 && o.ctx == nil {
+		o.ttl = js.wait
+	}
 	var cancel context.CancelFunc
-	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	if o.ctx == nil && o.ttl > 0 {
+		o.ctx, cancel = context.WithTimeout(context.Background(), o.ttl)
 	}
 
 	ach := make(chan *StreamInfo)
@@ -782,7 +828,7 @@ func (js *js) StreamsInfo(ctx context.Context) <-chan *StreamInfo {
 			for _, info := range sl.Page() {
 				select {
 				case ach <- info:
-				case <-ctx.Done():
+				case <-o.ctx.Done():
 					return
 				}
 			}
@@ -906,10 +952,25 @@ func (l *streamNamesLister) Err() error {
 }
 
 // StreamNames is used to retrieve a list of Stream names.
-func (js *js) StreamNames(ctx context.Context) <-chan string {
+func (js *js) StreamNames(opts ...JSMOpt) <-chan string {
+	var o jsmOpts
+	if len(opts) > 0 {
+		for _, opt := range opts {
+			if err := opt.configureJSManager(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	// Check for option collisions. Right now just timeout and context.
+	if o.ctx != nil && o.ttl != 0 {
+		return nil
+	}
+	if o.ttl == 0 && o.ctx == nil {
+		o.ttl = js.wait
+	}
 	var cancel context.CancelFunc
-	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+	if o.ctx == nil && o.ttl > 0 {
+		o.ctx, cancel = context.WithTimeout(context.Background(), o.ttl)
 	}
 
 	ch := make(chan string)
@@ -925,7 +986,7 @@ func (js *js) StreamNames(ctx context.Context) <-chan string {
 			for _, info := range l.Page() {
 				select {
 				case ch <- info:
-				case <-ctx.Done():
+				case <-o.ctx.Done():
 					return
 				}
 			}

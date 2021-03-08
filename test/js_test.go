@@ -254,9 +254,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	expectConsumers := func(t *testing.T, expected int) {
 		t.Helper()
 		var count int
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		for range js.ConsumersInfo(ctx, "TEST") {
+		for range js.ConsumersInfo("TEST") {
 			count++
 		}
 		if count != expected {
@@ -1100,9 +1098,7 @@ func TestJetStreamManagement(t *testing.T) {
 
 	t.Run("list consumer names", func(t *testing.T) {
 		var names []string
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		for name := range js.ConsumerNames(ctx, "foo") {
+		for name := range js.ConsumerNames("foo") {
 			names = append(names, name)
 		}
 		if got, want := len(names), 1; got != want {
@@ -1113,8 +1109,7 @@ func TestJetStreamManagement(t *testing.T) {
 	t.Run("streams info", func(t *testing.T) {
 		var i int
 		expected := "foo"
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		for stream := range js.StreamsInfo(ctx) {
+		for stream := range js.StreamsInfo(nats.MaxWait(3 * time.Second)) {
 			i++
 
 			got := stream.Config.Name
@@ -1122,7 +1117,6 @@ func TestJetStreamManagement(t *testing.T) {
 				t.Fatalf("Expected stream to be %v, got: %v", expected, got)
 			}
 		}
-		cancel()
 		if i != 1 {
 			t.Errorf("Expected single stream: %v", err)
 		}
@@ -1130,22 +1124,18 @@ func TestJetStreamManagement(t *testing.T) {
 
 	t.Run("consumers info", func(t *testing.T) {
 		var called bool
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		for range js.ConsumersInfo(ctx, "") {
+		for range js.ConsumersInfo("") {
 			called = true
 		}
-		cancel()
 		if called {
 			t.Error("Expected not not receive entries")
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-		for ci := range js.ConsumersInfo(ctx, "foo") {
+		for ci := range js.ConsumersInfo("foo") {
 			if ci.Stream != "foo" || ci.Config.Durable != "dlc" {
 				t.Fatalf("ConsumerInfo is not correct %+v", ci)
 			}
 		}
-		cancel()
 	})
 
 	t.Run("delete consumers", func(t *testing.T) {
@@ -1170,9 +1160,7 @@ func TestJetStreamManagement(t *testing.T) {
 
 	t.Run("list stream names", func(t *testing.T) {
 		var names []string
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		for name := range js.StreamNames(ctx) {
+		for name := range js.StreamNames() {
 			names = append(names, name)
 		}
 		if got, want := len(names), 1; got != want {
@@ -2562,9 +2550,7 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		t.Helper()
 
 		var i int
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		for range js.ConsumersInfo(ctx, "foo") {
+		for range js.ConsumersInfo("foo") {
 			i++
 		}
 		if i != expected {
@@ -2693,10 +2679,10 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	fetchConsumers := func(t *testing.T, expected int) {
 		t.Helper()
 
-		var i int
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		for range jsm.ConsumersInfo(ctx, "foo") {
+		var i int
+		for range jsm.ConsumersInfo("foo", nats.Context(ctx)) {
 			i++
 		}
 		if i != expected {
