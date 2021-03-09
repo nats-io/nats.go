@@ -115,7 +115,8 @@ type JetStreamContext interface {
 
 // js is an internal struct from a JetStreamContext.
 type js struct {
-	nc *Conn
+	ctx context.Context
+	nc  *Conn
 	// For importing JetStream from other accounts.
 	pre string
 	// Amount of time to wait for API requests.
@@ -359,6 +360,11 @@ type ContextOpt struct {
 }
 
 func (ctx ContextOpt) configurePublish(opts *pubOpts) error {
+	opts.ctx = ctx
+	return nil
+}
+
+func (ctx ContextOpt) configureJSContext(opts *js) error {
 	opts.ctx = ctx
 	return nil
 }
