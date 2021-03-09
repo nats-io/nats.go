@@ -828,6 +828,22 @@ func MaxAckPending(n int) SubOpt {
 	})
 }
 
+// ReplayOriginal replays the messages at the original speed.
+func ReplayOriginal() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.ReplayPolicy = ReplayOriginalPolicy
+		return nil
+	})
+}
+
+// RateLimit is the Bits per sec rate limit applied to a push consumer.
+func RateLimit(n uint64) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.RateLimit = n
+		return nil
+	})
+}
+
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
@@ -1128,19 +1144,23 @@ func (p AckPolicy) String() string {
 	}
 }
 
+// ReplayPolicy determines how the consumer should replay messages it already has queued in the stream.
 type ReplayPolicy int
 
 const (
-	ReplayInstant ReplayPolicy = iota
-	ReplayOriginal
+	// ReplayInstant will replay messages as fast as possible.
+	ReplayInstantPolicy ReplayPolicy = iota
+
+	// ReplayOriginalPolicy will maintain the same timing as the messages were received.
+	ReplayOriginalPolicy
 )
 
 func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
 	case jsonString("instant"):
-		*p = ReplayInstant
+		*p = ReplayInstantPolicy
 	case jsonString("original"):
-		*p = ReplayOriginal
+		*p = ReplayOriginalPolicy
 	default:
 		return fmt.Errorf("can not unmarshal %q", data)
 	}
@@ -1150,9 +1170,9 @@ func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
 
 func (p ReplayPolicy) MarshalJSON() ([]byte, error) {
 	switch p {
-	case ReplayOriginal:
+	case ReplayOriginalPolicy:
 		return json.Marshal("original")
-	case ReplayInstant:
+	case ReplayInstantPolicy:
 		return json.Marshal("instant")
 	default:
 		return nil, fmt.Errorf("unknown replay policy %v", p)
