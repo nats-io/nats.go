@@ -37,11 +37,11 @@ type JetStreamManager interface {
 	// StreamInfo retrieves information from a stream.
 	StreamInfo(stream string) (*StreamInfo, error)
 
-	// Purge stream messages.
+	// PurgeStream purges a stream messages.
 	PurgeStream(name string) error
 
-	// NewStreamLister is used to return pages of StreamInfo objects.
-	NewStreamLister() *StreamLister
+	// StreamsInfo can be used to retrieve a list of StreamInfo objects.
+	StreamsInfo(opts ...JSOpt) <-chan *StreamInfo
 
 	// StreamNames is used to retrieve a list of Stream names.
 	StreamNames(ctx context.Context) <-chan string
@@ -58,11 +58,11 @@ type JetStreamManager interface {
 	// DeleteConsumer deletes a consumer.
 	DeleteConsumer(stream, consumer string) error
 
-	// ConsumerInfo retrieves consumer information.
+	// ConsumerInfo retrieves information of a consumer from a stream.
 	ConsumerInfo(stream, name string) (*ConsumerInfo, error)
 
-	// NewConsumerLister is used to return pages of ConsumerInfo objects.
-	NewConsumerLister(stream string) *ConsumerLister
+	// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
+	ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo
 
 	// ConsumerNames is used to retrieve a list of Consumer names.
 	ConsumerNames(ctx context.Context, stream string) <-chan string
@@ -273,9 +273,9 @@ func (js *js) ConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	return js.getConsumerInfo(stream, consumer)
 }
 
-// ConsumerLister fetches pages of ConsumerInfo objects. This object is not
+// consumerLister fetches pages of ConsumerInfo objects. This object is not
 // safe to use for multiple threads.
-type ConsumerLister struct {
+type consumerLister struct {
 	stream string
 	js     *js
 
@@ -298,7 +298,7 @@ type consumerListResponse struct {
 }
 
 // Next fetches the next ConsumerInfo page.
-func (c *ConsumerLister) Next() bool {
+func (c *consumerLister) Next() bool {
 	if c.err != nil {
 		return false
 	}
@@ -340,18 +340,43 @@ func (c *ConsumerLister) Next() bool {
 }
 
 // Page returns the current ConsumerInfo page.
-func (c *ConsumerLister) Page() []*ConsumerInfo {
+func (c *consumerLister) Page() []*ConsumerInfo {
 	return c.page
 }
 
 // Err returns any errors found while fetching pages.
-func (c *ConsumerLister) Err() error {
+func (c *consumerLister) Err() error {
 	return c.err
 }
 
-// NewConsumerLister is used to return pages of ConsumerInfo objects.
-func (js *js) NewConsumerLister(stream string) *ConsumerLister {
-	return &ConsumerLister{stream: stream, js: js}
+// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
+func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
+	o, cancel, err := getJSContextOpts(jsc, opts...)
+	if err != nil {
+		return nil
+	}
+
+	ch := make(chan *ConsumerInfo)
+	l := &consumerLister{js: o, stream: stream}
+	go func() {
+		defer func() {
+			if cancel != nil {
+				cancel()
+			}
+		}()
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				select {
+				case ch <- info:
+				case <-o.ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
 }
 
 type consumerNamesLister struct {
@@ -726,9 +751,9 @@ func (js *js) PurgeStream(name string) error {
 	return nil
 }
 
-// StreamLister fetches pages of StreamInfo objects. This object is not safe
+// streamLister fetches pages of StreamInfo objects. This object is not safe
 // to use for multiple threads.
-type StreamLister struct {
+type streamLister struct {
 	js   *js
 	page []*StreamInfo
 	err  error
@@ -753,7 +778,7 @@ type streamNamesRequest struct {
 }
 
 // Next fetches the next StreamInfo page.
-func (s *StreamLister) Next() bool {
+func (s *streamLister) Next() bool {
 	if s.err != nil {
 		return false
 	}
@@ -792,18 +817,43 @@ func (s *StreamLister) Next() bool {
 }
 
 // Page returns the current StreamInfo page.
-func (s *StreamLister) Page() []*StreamInfo {
+func (s *streamLister) Page() []*StreamInfo {
 	return s.page
 }
 
 // Err returns any errors found while fetching pages.
-func (s *StreamLister) Err() error {
+func (s *streamLister) Err() error {
 	return s.err
 }
 
-// NewStreamLister is used to return pages of StreamInfo objects.
-func (js *js) NewStreamLister() *StreamLister {
-	return &StreamLister{js: js}
+// StreamsInfo can be used to retrieve a list of StreamInfo objects.
+func (jsc *js) StreamsInfo(opts ...JSOpt) <-chan *StreamInfo {
+	o, cancel, err := getJSContextOpts(jsc, opts...)
+	if err != nil {
+		return nil
+	}
+
+	ch := make(chan *StreamInfo)
+	l := &streamLister{js: o}
+	go func() {
+		defer func() {
+			if cancel != nil {
+				cancel()
+			}
+		}()
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				select {
+				case ch <- info:
+				case <-o.ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
 }
 
 type streamNamesLister struct {
@@ -883,4 +933,31 @@ func (js *js) StreamNames(ctx context.Context) <-chan string {
 	}()
 
 	return ch
+}
+
+func getJSContextOpts(defs *js, opts ...JSOpt) (*js, context.CancelFunc, error) {
+	var o js
+	for _, opt := range opts {
+		if err := opt.configureJSContext(&o); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Check for option collisions. Right now just timeout and context.
+	if o.ctx != nil && o.wait != 0 {
+		return nil, nil, ErrContextAndTimeout
+	}
+	if o.wait == 0 && o.ctx == nil {
+		o.wait = defs.wait
+	}
+	var cancel context.CancelFunc
+	if o.ctx == nil && o.wait > 0 {
+		o.ctx, cancel = context.WithTimeout(context.Background(), o.wait)
+	}
+	if o.pre == "" {
+		o.pre = defs.pre
+	}
+	o.nc = defs.nc
+
+	return &o, cancel, nil
 }
