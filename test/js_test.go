@@ -1130,7 +1130,7 @@ func TestJetStreamManagement(t *testing.T) {
 		var names []string
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		for name := range js.ConsumerNames(ctx, "foo") {
+		for name := range js.ConsumerNames("foo", nats.Context(ctx)) {
 			names = append(names, name)
 		}
 		if got, want := len(names), 1; got != want {
@@ -1162,7 +1162,7 @@ func TestJetStreamManagement(t *testing.T) {
 		var names []string
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		for name := range js.StreamNames(ctx) {
+		for name := range js.StreamNames(nats.Context(ctx)) {
 			names = append(names, name)
 		}
 		if got, want := len(names), 1; got != want {
