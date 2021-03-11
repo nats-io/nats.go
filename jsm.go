@@ -172,7 +172,7 @@ type accountInfoResponse struct {
 
 // AccountInfo retrieves info about the JetStream usage from the current account.
 func (js *js) AccountInfo() (*AccountInfo, error) {
-	resp, err := js.nc.Request(js.apiSubj(apiAccountInfo), nil, js.wait)
+	resp, err := js.nc.Request(js.apiSubj(apiAccountInfo), nil, js.opts.wait)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig) (*ConsumerInfo, er
 		ccSubj = fmt.Sprintf(apiConsumerCreateT, stream)
 	}
 
-	resp, err := js.nc.Request(js.apiSubj(ccSubj), req, js.wait)
+	resp, err := js.nc.Request(js.apiSubj(ccSubj), req, js.opts.wait)
 	if err != nil {
 		if err == ErrNoResponders {
 			err = ErrJetStreamNotEnabled
@@ -254,7 +254,7 @@ func (js *js) DeleteConsumer(stream, consumer string) error {
 	}
 
 	dcSubj := js.apiSubj(fmt.Sprintf(apiConsumerDeleteT, stream, consumer))
-	r, err := js.nc.Request(dcSubj, nil, js.wait)
+	r, err := js.nc.Request(dcSubj, nil, js.opts.wait)
 	if err != nil {
 		return err
 	}
@@ -317,8 +317,16 @@ func (c *consumerLister) Next() bool {
 		c.err = err
 		return false
 	}
+
+	var cancel context.CancelFunc
+	ctx := c.js.opts.ctx
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), c.js.opts.wait)
+		defer cancel()
+	}
+
 	clSubj := c.js.apiSubj(fmt.Sprintf(apiConsumerListT, c.stream))
-	r, err := c.js.nc.Request(clSubj, req, c.js.wait)
+	r, err := c.js.nc.RequestWithContext(ctx, clSubj, req)
 	if err != nil {
 		c.err = err
 		return false
@@ -351,13 +359,13 @@ func (c *consumerLister) Err() error {
 
 // ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
 func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
-	o, cancel, err := getJSContextOpts(jsc, opts...)
+	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
 	}
 
 	ch := make(chan *ConsumerInfo)
-	l := &consumerLister{js: o, stream: stream}
+	l := &consumerLister{js: &js{nc: jsc.nc, opts: o}, stream: stream}
 	go func() {
 		defer func() {
 			if cancel != nil {
@@ -409,8 +417,15 @@ func (c *consumerNamesLister) Next() bool {
 		return false
 	}
 
+	var cancel context.CancelFunc
+	ctx := c.js.opts.ctx
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), c.js.opts.wait)
+		defer cancel()
+	}
+
 	clSubj := c.js.apiSubj(fmt.Sprintf(apiConsumerNamesT, c.stream))
-	r, err := c.js.nc.Request(clSubj, nil, c.js.wait)
+	r, err := c.js.nc.RequestWithContext(ctx, clSubj, nil)
 	if err != nil {
 		c.err = err
 		return false
@@ -445,7 +460,7 @@ func (c *consumerNamesLister) Err() error {
 func (js *js) ConsumerNames(ctx context.Context, stream string) <-chan string {
 	var cancel context.CancelFunc
 	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+		ctx, cancel = context.WithTimeout(context.Background(), js.opts.wait)
 	}
 
 	ch := make(chan string)
@@ -488,7 +503,7 @@ func (js *js) AddStream(cfg *StreamConfig) (*StreamInfo, error) {
 	}
 
 	csSubj := js.apiSubj(fmt.Sprintf(apiStreamCreateT, cfg.Name))
-	r, err := js.nc.Request(csSubj, req, js.wait)
+	r, err := js.nc.Request(csSubj, req, js.opts.wait)
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +521,7 @@ type streamInfoResponse = streamCreateResponse
 
 func (js *js) StreamInfo(stream string) (*StreamInfo, error) {
 	csSubj := js.apiSubj(fmt.Sprintf(apiStreamInfoT, stream))
-	r, err := js.nc.Request(csSubj, nil, js.wait)
+	r, err := js.nc.Request(csSubj, nil, js.opts.wait)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +593,7 @@ func (js *js) UpdateStream(cfg *StreamConfig) (*StreamInfo, error) {
 	}
 
 	usSubj := js.apiSubj(fmt.Sprintf(apiStreamUpdateT, cfg.Name))
-	r, err := js.nc.Request(usSubj, req, js.wait)
+	r, err := js.nc.Request(usSubj, req, js.opts.wait)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +620,7 @@ func (js *js) DeleteStream(name string) error {
 	}
 
 	dsSubj := js.apiSubj(fmt.Sprintf(apiStreamDeleteT, name))
-	r, err := js.nc.Request(dsSubj, nil, js.wait)
+	r, err := js.nc.Request(dsSubj, nil, js.opts.wait)
 	if err != nil {
 		return err
 	}
@@ -660,7 +675,7 @@ func (js *js) GetMsg(name string, seq uint64) (*RawStreamMsg, error) {
 	}
 
 	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgGetT, name))
-	r, err := js.nc.Request(dsSubj, req, js.wait)
+	r, err := js.nc.Request(dsSubj, req, js.opts.wait)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +729,7 @@ func (js *js) DeleteMsg(name string, seq uint64) error {
 	}
 
 	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgDeleteT, name))
-	r, err := js.nc.Request(dsSubj, req, js.wait)
+	r, err := js.nc.Request(dsSubj, req, js.opts.wait)
 	if err != nil {
 		return err
 	}
@@ -737,7 +752,7 @@ type streamPurgeResponse struct {
 // PurgeStream purges messages on a Stream.
 func (js *js) PurgeStream(name string) error {
 	psSubj := js.apiSubj(fmt.Sprintf(apiStreamPurgeT, name))
-	r, err := js.nc.Request(psSubj, nil, js.wait)
+	r, err := js.nc.Request(psSubj, nil, js.opts.wait)
 	if err != nil {
 		return err
 	}
@@ -794,8 +809,15 @@ func (s *streamLister) Next() bool {
 		return false
 	}
 
+	var cancel context.CancelFunc
+	ctx := s.js.opts.ctx
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), s.js.opts.wait)
+		defer cancel()
+	}
+
 	slSubj := s.js.apiSubj(apiStreamList)
-	r, err := s.js.nc.Request(slSubj, req, s.js.wait)
+	r, err := s.js.nc.RequestWithContext(ctx, slSubj, req)
 	if err != nil {
 		s.err = err
 		return false
@@ -828,13 +850,13 @@ func (s *streamLister) Err() error {
 
 // StreamsInfo can be used to retrieve a list of StreamInfo objects.
 func (jsc *js) StreamsInfo(opts ...JSOpt) <-chan *StreamInfo {
-	o, cancel, err := getJSContextOpts(jsc, opts...)
+	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
 	}
 
 	ch := make(chan *StreamInfo)
-	l := &streamLister{js: o}
+	l := &streamLister{js: &js{nc: jsc.nc, opts: o}}
 	go func() {
 		defer func() {
 			if cancel != nil {
@@ -874,7 +896,14 @@ func (l *streamNamesLister) Next() bool {
 		return false
 	}
 
-	r, err := l.js.nc.Request(l.js.apiSubj(apiStreams), nil, l.js.wait)
+	var cancel context.CancelFunc
+	ctx := l.js.opts.ctx
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), l.js.opts.wait)
+		defer cancel()
+	}
+
+	r, err := l.js.nc.RequestWithContext(ctx, l.js.apiSubj(apiStreams), nil)
 	if err != nil {
 		l.err = err
 		return false
@@ -909,7 +938,7 @@ func (l *streamNamesLister) Err() error {
 func (js *js) StreamNames(ctx context.Context) <-chan string {
 	var cancel context.CancelFunc
 	if ctx == nil {
-		ctx, cancel = context.WithTimeout(context.Background(), js.wait)
+		ctx, cancel = context.WithTimeout(context.Background(), js.opts.wait)
 	}
 
 	ch := make(chan string)
@@ -935,8 +964,8 @@ func (js *js) StreamNames(ctx context.Context) <-chan string {
 	return ch
 }
 
-func getJSContextOpts(defs *js, opts ...JSOpt) (*js, context.CancelFunc, error) {
-	var o js
+func getJSContextOpts(defs *jsOpts, opts ...JSOpt) (*jsOpts, context.CancelFunc, error) {
+	var o jsOpts
 	for _, opt := range opts {
 		if err := opt.configureJSContext(&o); err != nil {
 			return nil, nil, err
@@ -957,7 +986,6 @@ func getJSContextOpts(defs *js, opts ...JSOpt) (*js, context.CancelFunc, error) 
 	if o.pre == "" {
 		o.pre = defs.pre
 	}
-	o.nc = defs.nc
 
 	return &o, cancel, nil
 }
