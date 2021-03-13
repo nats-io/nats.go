@@ -899,8 +899,14 @@ func (sub *Subscription) Poll() error {
 }
 
 func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), js.opts.wait)
+	defer cancel()
+	return js.getConsumerInfoContext(ctx, stream, consumer)
+}
+
+func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string) (*ConsumerInfo, error) {
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
-	resp, err := js.nc.Request(js.apiSubj(ccInfoSubj), nil, js.opts.wait)
+	resp, err := js.nc.RequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
 	if err != nil {
 		if err == ErrNoResponders {
 			err = ErrJetStreamNotEnabled
