@@ -124,6 +124,7 @@ var (
 	ErrHeadersNotSupported          = errors.New("nats: headers not supported by this server")
 	ErrBadHeaderMsg                 = errors.New("nats: message could not decode headers")
 	ErrNoResponders                 = errors.New("nats: no responders available for request")
+	ErrNoMessages                   = errors.New("nats: no more messages")
 	ErrNoContextOrTimeout           = errors.New("nats: no context or timeout given")
 	ErrDirectModeRequired           = errors.New("nats: direct access requires direct pull or push")
 	ErrPullModeNotAllowed           = errors.New("nats: pull based not supported")
@@ -3714,7 +3715,6 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	s.mu.Lock()
 	nc := s.conn
 	max := s.max
-	jsi := s.jsi
 
 	// Update some stats.
 	s.delivered++
@@ -3734,17 +3734,6 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 			nc.mu.Lock()
 			nc.removeSub(s)
 			nc.mu.Unlock()
-		}
-	}
-
-	// In case this is a JetStream message and in pull mode
-	// then check whether it is an JS API error.
-	if jsi != nil && jsi.pull && len(msg.Data) == 0 {
-		switch msg.Header.Get(statusHdr) {
-		case noResponders:
-			return ErrNoResponders
-		case "400", "404", "408", "409":
-			return errors.New(msg.Header.Get(descrHdr))
 		}
 	}
 
