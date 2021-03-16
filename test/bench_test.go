@@ -116,6 +116,18 @@ func BenchmarkInboxCreation(b *testing.B) {
 	}
 }
 
+func BenchmarkConnInboxCreation(b *testing.B) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		nc.NewInbox()
+	}
+}
+
 func BenchmarkNewInboxCreation(b *testing.B) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

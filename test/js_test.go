@@ -2362,7 +2362,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 	})
 
 	t.Run("non js sub ack", func(t *testing.T) {
-		inbox := nats.NewInbox()
+		inbox := nc.NewInbox()
 		_, err = js.AddConsumer("TEST", &nats.ConsumerConfig{
 			Durable:        "wq",
 			AckPolicy:      nats.AckExplicitPolicy,

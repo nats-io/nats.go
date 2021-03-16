@@ -538,7 +538,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		if o.cfg.DeliverSubject != _EMPTY_ {
 			deliver = o.cfg.DeliverSubject
 		} else {
-			deliver = NewInbox()
+			deliver = js.nc.NewInbox()
 		}
 	} else {
 		// Find the stream mapped to the subject.
@@ -572,11 +572,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 			if ccfg.DeliverSubject != _EMPTY_ {
 				deliver = ccfg.DeliverSubject
 			} else {
-				deliver = NewInbox()
+				deliver = js.nc.NewInbox()
 			}
 		} else {
 			shouldCreate = true
-			deliver = NewInbox()
+			deliver = js.nc.NewInbox()
 			if !isPullMode {
 				cfg.DeliverSubject = deliver
 			}

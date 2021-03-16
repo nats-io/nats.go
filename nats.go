@@ -142,6 +142,7 @@ var (
 	ErrConsumerConfigRequired       = errors.New("nats: consumer configuration is required")
 	ErrStreamSnapshotConfigRequired = errors.New("nats: stream snapshot configuration is required")
 	ErrDeliverSubjectRequired       = errors.New("nats: deliver subject is required")
+	ErrBadInboxPrefix               = errors.New("nats: inbox prefix is not a valid subject")
 )
 
 func init() {
@@ -162,6 +163,7 @@ func GetDefaultOptions() Options {
 		SubChanLen:         DefaultMaxChanLen,
 		ReconnectBufSize:   DefaultReconnectBufSize,
 		DrainTimeout:       DefaultDrainTimeout,
+		InboxPrefix:        DefaultInboxPrefix,
 	}
 }
 
@@ -419,6 +421,9 @@ type Options struct {
 	// is established, and if a ClosedHandler is set, it will be invoked if
 	// it fails to connect (after exhausting the MaxReconnect attempts).
 	RetryOnFailedConnect bool
+
+	// Set the connection's inbox prefix. All inboxes will start with this string.
+	InboxPrefix string
 }
 
 const (
@@ -484,6 +489,8 @@ type Conn struct {
 	respMux   *Subscription        // A single response subscription
 	respMap   map[string]chan *Msg // Request map for the response msg channels
 	respRand  *rand.Rand           // Used for generating suffix
+
+	inboxPrefix string // identical to Opts.InboxPrefix, saving an extra indirection
 }
 
 // Subscription represents interest in a given subject.
@@ -668,6 +675,16 @@ func Connect(url string, options ...Option) (*Conn, error) {
 func Name(name string) Option {
 	return func(o *Options) error {
 		o.Name = name
+		return nil
+	}
+}
+
+// InboxPrefixOption is an Option to set the inbox prefix.
+func InboxPrefixOption(inboxPrefix string) Option {
+	// Note that we cannot name the function InboxPrefix, there is already a
+	// public constant with the same name.
+	return func(o *Options) error {
+		o.InboxPrefix = inboxPrefix
 		return nil
 	}
 }
@@ -1153,6 +1170,17 @@ func (o Options) Connect() (*Conn, error) {
 			Timeout: nc.Opts.Timeout,
 		}
 	}
+
+	if nc.Opts.InboxPrefix == "" {
+		nc.Opts.InboxPrefix = DefaultInboxPrefix
+	}
+	if !strings.HasSuffix(nc.Opts.InboxPrefix, ".") {
+		nc.Opts.InboxPrefix += "."
+	}
+	if badSubject(nc.Opts.InboxPrefix[0 : len(nc.Opts.InboxPrefix)-1]) {
+		return nil, ErrBadInboxPrefix
+	}
+	nc.inboxPrefix = nc.Opts.InboxPrefix
 
 	if err := nc.setupServerPool(); err != nil {
 		return nil, err
@@ -3059,7 +3087,7 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
-	token := respInbox[respInboxPrefixLen:]
+	token := respInbox[len(nc.respSub):]
 	nc.respMap[token] = mch
 	if nc.respMux == nil {
 		// Create the response subscription we will use for all new style responses.
@@ -3166,7 +3194,7 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := NewInbox()
+	inbox := nc.NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
@@ -3186,30 +3214,40 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 
 // InboxPrefix is the prefix for all inbox subjects.
 const (
-	InboxPrefix        = "_INBOX."
-	inboxPrefixLen     = len(InboxPrefix)
-	respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
-	replySuffixLen     = 8 // Gives us 62^8
-	rdigits            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	base               = 62
+	DefaultInboxPrefix    = "_INBOX."
+	InboxPrefix           = DefaultInboxPrefix
+	defaultInboxPrefixLen = len(DefaultInboxPrefix)
+	replySuffixLen        = 8 // Gives us 62^8
+	rdigits               = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base                  = 62
 )
+
+// DEPRECATED: Use Conn.NewInbox() instead.
+func NewInbox() string {
+	var b [defaultInboxPrefixLen + nuidSize]byte
+	pres := b[:defaultInboxPrefixLen]
+	copy(pres, InboxPrefix)
+	ns := b[defaultInboxPrefixLen:]
+	copy(ns, nuid.Next())
+	return string(b[:])
+}
 
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
-func NewInbox() string {
-	var b [inboxPrefixLen + nuidSize]byte
-	pres := b[:inboxPrefixLen]
-	copy(pres, InboxPrefix)
-	ns := b[inboxPrefixLen:]
-	copy(ns, nuid.Next())
-	return string(b[:])
+func (nc *Conn) NewInbox() string {
+	prefixLen := len(nc.inboxPrefix)
+	var b strings.Builder
+	b.Grow(prefixLen + nuidSize)
+	b.WriteString(nc.inboxPrefix)
+	b.WriteString(nuid.Next())
+	return b.String()
 }
 
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
 	// _INBOX wildcard
-	nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+	nc.respSub = fmt.Sprintf("%s.*", nc.NewInbox())
 	nc.respMap = make(map[string]chan *Msg)
 	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
@@ -3221,15 +3259,16 @@ func (nc *Conn) newRespInbox() string {
 	if nc.respMap == nil {
 		nc.initNewResp()
 	}
-	var b [respInboxPrefixLen + replySuffixLen]byte
-	pres := b[:respInboxPrefixLen]
-	copy(pres, nc.respSub)
+	respInboxPrefixLen := len(nc.respSub)
+	var b strings.Builder
+	b.Grow(respInboxPrefixLen + replySuffixLen)
+	b.WriteString(nc.respSub)
 	rn := nc.respRand.Int63()
-	for i, l := respInboxPrefixLen, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
+	for i, l := 0, rn; i < replySuffixLen; i++ {
+		b.WriteByte(rdigits[l%base])
 		l /= base
 	}
-	return string(b[:])
+	return b.String()
 }
 
 // NewRespInbox is the new format used for _INBOX.

@@ -2573,7 +2573,7 @@ func TestMsg_RespondMsg(t *testing.T) {
 	}
 	defer nc.Close()
 
-	sub, err := nc.SubscribeSync(NewInbox())
+	sub, err := nc.SubscribeSync(nc.NewInbox())
 	if err != nil {
 		t.Fatalf("subscribe failed: %s", err)
 	}

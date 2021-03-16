@@ -690,7 +690,7 @@ func TestAsyncSubscriberStarvation(t *testing.T) {
 	// Kickoff
 	nc.Subscribe("start", func(m *nats.Msg) {
 		// Helper Response
-		response := nats.NewInbox()
+		response := nc.NewInbox()
 		nc.Subscribe(response, func(_ *nats.Msg) {
 			ch <- true
 		})
@@ -1559,7 +1559,7 @@ func TestAutoUnsubOnSyncSubCanStillRespond(t *testing.T) {
 		t.Fatalf("Error autounsub: %v", err)
 	}
 
-	inbox := nats.NewInbox()
+	inbox := nc.NewInbox()
 	if err = nc.PublishRequest(subj, inbox, nil); err != nil {
 		t.Fatalf("Error making request: %v", err)
 	}
