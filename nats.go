@@ -3087,7 +3087,7 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
-	token := respInbox[len(nc.respSub):]
+	token := respInbox[len(nc.respSub)-1:]
 	nc.respMap[token] = mch
 	if nc.respMux == nil {
 		// Create the response subscription we will use for all new style responses.
@@ -3259,10 +3259,10 @@ func (nc *Conn) newRespInbox() string {
 	if nc.respMap == nil {
 		nc.initNewResp()
 	}
-	respInboxPrefixLen := len(nc.respSub)
+	respInboxPrefixLen := len(nc.respSub) - 1
 	var b strings.Builder
 	b.Grow(respInboxPrefixLen + replySuffixLen)
-	b.WriteString(nc.respSub)
+	b.WriteString(nc.respSub[:respInboxPrefixLen])
 	rn := nc.respRand.Int63()
 	for i, l := 0, rn; i < replySuffixLen; i++ {
 		b.WriteByte(rdigits[l%base])
