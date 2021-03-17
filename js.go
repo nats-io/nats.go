@@ -561,10 +561,14 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 			deliver = NewInbox()
 		}
 	} else {
-		// Find the stream mapped to the subject.
-		stream, err = js.lookupStreamBySubject(subj)
-		if err != nil {
-			return nil, err
+		// Find the stream mapped to the subject if not bound to a stream already.
+		if o.stream == _EMPTY_ {
+			stream, err = js.lookupStreamBySubject(subj)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			stream = o.stream
 		}
 
 		// With an explicit durable name, then can lookup
@@ -856,6 +860,14 @@ func ReplayOriginal() SubOpt {
 func RateLimit(n uint64) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.RateLimit = n
+		return nil
+	})
+}
+
+// BindStream binds a consumer to a stream explicitly based on a name.
+func BindStream(name string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.stream = name
 		return nil
 	})
 }
@@ -1302,11 +1314,12 @@ func (m *Msg) InProgress() error {
 
 // MsgMetadata is the JetStream metadata associated with received messages.
 type MsgMetaData struct {
-	Consumer  uint64
-	Stream    uint64
-	Delivered uint64
-	Pending   uint64
-	Timestamp time.Time
+	Consumer   uint64
+	Stream     uint64
+	Delivered  uint64
+	Pending    uint64
+	Timestamp  time.Time
+	StreamName string
 }
 
 // MetaData retrieves the metadata from a JetStream message.
@@ -1333,11 +1346,12 @@ func (m *Msg) MetaData() (*MsgMetaData, error) {
 	}
 
 	meta := &MsgMetaData{
-		Delivered: uint64(parseNum(tokens[4])),
-		Stream:    uint64(parseNum(tokens[5])),
-		Consumer:  uint64(parseNum(tokens[6])),
-		Timestamp: time.Unix(0, parseNum(tokens[7])),
-		Pending:   uint64(parseNum(tokens[8])),
+		Delivered:  uint64(parseNum(tokens[4])),
+		Stream:     uint64(parseNum(tokens[5])),
+		Consumer:   uint64(parseNum(tokens[6])),
+		Timestamp:  time.Unix(0, parseNum(tokens[7])),
+		Pending:    uint64(parseNum(tokens[8])),
+		StreamName: tokens[2],
 	}
 
 	return meta, nil
