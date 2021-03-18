@@ -1756,9 +1756,15 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	toSend := 100
+	const (
+		toSend      = 100
+		publishSubj = "TEST"
+		sourceName  = "MY_SOURCE_TEST"
+		mirrorName  = "MY_MIRROR_TEST"
+	)
 	for i := 0; i < toSend; i++ {
-		if _, err := js1.Publish("TEST", []byte("OK")); err != nil {
+		data := []byte(fmt.Sprintf("OK %d", i))
+		if _, err := js1.Publish(publishSubj, data); err != nil {
 			t.Fatalf("Unexpected publish error: %v", err)
 		}
 	}
@@ -1786,12 +1792,36 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 			return nil
 		})
 	}
+	checkConsume := func(t *testing.T, js nats.JetStream, subject, stream string, want int) {
+		t.Helper()
+		sub, err := js.SubscribeSync(subject, nats.BindStream(stream))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		checkSubsPending(t, sub, want)
+
+		for i := 0; i < want; i++ {
+			msg, err := sub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta, err := msg.MetaData()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := meta.StreamName, stream; got != want {
+				t.Fatalf("unexpected stream name, got=%q, want=%q", got, want)
+			}
+		}
+	}
 
 	_, err = js2.AddStream(&nats.StreamConfig{
-		Name:    "MY_MIRROR_TEST",
+		Name:    mirrorName,
 		Storage: nats.FileStorage,
 		Mirror: &nats.StreamSource{
-			Name: "TEST",
+			Name: publishSubj,
 			External: &nats.ExternalStream{
 				APIPrefix:     "RI.JS.API",
 				DeliverPrefix: "RI.DELIVER.SYNC.MIRRORS",
@@ -1801,14 +1831,15 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkMsgCount(t, "MY_MIRROR_TEST")
+	checkMsgCount(t, mirrorName)
+	checkConsume(t, js2, publishSubj, mirrorName, toSend)
 
 	_, err = js2.AddStream(&nats.StreamConfig{
-		Name:    "MY_SOURCE_TEST",
+		Name:    sourceName,
 		Storage: nats.FileStorage,
 		Sources: []*nats.StreamSource{
 			&nats.StreamSource{
-				Name: "TEST",
+				Name: publishSubj,
 				External: &nats.ExternalStream{
 					APIPrefix:     "RI.JS.API",
 					DeliverPrefix: "RI.DELIVER.SYNC.SOURCES",
@@ -1819,7 +1850,8 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkMsgCount(t, "MY_SOURCE_TEST")
+	checkMsgCount(t, sourceName)
+	checkConsume(t, js2, publishSubj, sourceName, toSend)
 }
 
 func TestJetStreamAutoMaxAckPending(t *testing.T) {
@@ -3194,6 +3226,32 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
 }
 
+func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	timeout := time.Now().Add(totalWait)
+	var err error
+	for time.Now().Before(timeout) {
+		err = f()
+		if err == nil {
+			return
+		}
+		time.Sleep(sleepDur)
+	}
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+}
+
+func checkSubsPending(t *testing.T, sub *nats.Subscription, numExpected int) {
+	t.Helper()
+	checkFor(t, 4*time.Second, 20*time.Millisecond, func() error {
+		if nmsgs, _, err := sub.Pending(); err != nil || nmsgs != numExpected {
+			return fmt.Errorf("Did not receive correct number of messages: %d vs %d", nmsgs, numExpected)
+		}
+		return nil
+	})
+}
+
 func TestJetStream_ClusterPlacement(t *testing.T) {
 	size := 3
 
@@ -3288,7 +3346,7 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 }
 
 func TestJetStreamStreamMirror(t *testing.T) {
-	withJSCluster(t, "MIRROR", 3, testJetStreamMirror_Source)
+	withJSServer(t, testJetStreamMirror_Source)
 }
 
 func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
@@ -3393,6 +3451,90 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if got < totalMsgs {
 			t.Errorf("Expected %v, got: %v", totalMsgs, got)
 		}
+
+		t.Run("consume from mirror", func(t *testing.T) {
+			sub, err := js.SubscribeSync("origin", nats.BindStream("m1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			mmsgs := make([]*nats.Msg, 0)
+			for i := 0; i < totalMsgs; i++ {
+				msg, err := sub.NextMsg(2 * time.Second)
+				if err != nil {
+					t.Error(err)
+				}
+				meta, err := msg.MetaData()
+				if err != nil {
+					t.Error(err)
+				}
+				if meta.StreamName != "m1" {
+					t.Errorf("Expected m1, got: %v", meta.StreamName)
+				}
+				mmsgs = append(mmsgs, msg)
+			}
+			if len(mmsgs) != totalMsgs {
+				t.Errorf("Expected to consume %v msgs, got: %v", totalMsgs, len(mmsgs))
+			}
+		})
+	})
+
+	t.Run("consume from original source", func(t *testing.T) {
+		sub, err := js.SubscribeSync("origin")
+		defer sub.Unsubscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Error(err)
+		}
+		meta, err := msg.MetaData()
+		if err != nil {
+			t.Error(err)
+		}
+		if meta.StreamName != "origin" {
+			t.Errorf("Expected m1, got: %v", meta.StreamName)
+		}
+	})
+
+	t.Run("bind to non existing stream fails", func(t *testing.T) {
+		_, err := js.SubscribeSync("origin", nats.BindStream("foo"))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err.Error() != `stream not found` {
+			t.Fatal("Expected stream not found error")
+		}
+	})
+
+	t.Run("bind to stream with wrong subject fails", func(t *testing.T) {
+		_, err := js.SubscribeSync("secret", nats.BindStream("origin"))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err.Error() != `consumer filter subject is not a valid subset of the interest subjects` {
+			t.Fatal("Expected stream not found error")
+		}
+	})
+
+	t.Run("bind to origin stream", func(t *testing.T) {
+		// This would only avoid the stream names lookup.
+		sub, err := js.SubscribeSync("origin", nats.BindStream("origin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Error(err)
+		}
+		meta, err := msg.MetaData()
+		if err != nil {
+			t.Error(err)
+		}
+		if meta.StreamName != "origin" {
+			t.Errorf("Expected m1, got: %v", meta.StreamName)
+		}
 	})
 
 	t.Run("get mirror info", func(t *testing.T) {
@@ -3480,6 +3622,19 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if got != expected {
 			t.Errorf("Expected %v, got: %v", expected, got)
 		}
+
+		t.Run("consume from sourced stream", func(t *testing.T) {
+			// Cannot lookup subjects of a stream that is itself sourced.
+			t.SkipNow()
+			sub, err := js.SubscribeSync("origin", nats.BindStream("s1"))
+			if err != nil {
+				t.Error(err)
+			}
+			_, err = sub.NextMsg(2 * time.Second)
+			if err != nil {
+				t.Error(err)
+			}
+		})
 	})
 
 	t.Run("update stream with sources", func(t *testing.T) {
@@ -3511,16 +3666,103 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 			t.Errorf("Expected %v, got: %v", expected, got)
 		}
 
-		got = len(updated.Sources)
-		if got != expected {
-			t.Errorf("Expected %v, got: %v", expected, got)
-		}
-
 		got = int(updated.Config.MaxMsgs)
 		expected = int(config.MaxMsgs)
 		if got != expected {
 			t.Errorf("Expected %v, got: %v", expected, got)
 		}
+	})
+
+	t.Run("create sourced stream from origin", func(t *testing.T) {
+		sources := make([]*nats.StreamSource, 0)
+		sources = append(sources, &nats.StreamSource{Name: "origin"})
+		sources = append(sources, &nats.StreamSource{Name: "m1"})
+		streamName := "s2"
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     streamName,
+			Sources:  sources,
+			Storage:  nats.FileStorage,
+			Replicas: 1,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		msgs := make([]*nats.RawStreamMsg, 0)
+
+		// Stored message sequences start at 1
+		startSequence := 1
+		expectedTotal := totalMsgs * 2
+
+	GetNextMsg:
+		for i := startSequence; i < expectedTotal+1; i++ {
+			var (
+				err     error
+				seq     = uint64(i)
+				msg     *nats.RawStreamMsg
+				timeout = time.Now().Add(5 * time.Second)
+			)
+
+		Retry:
+			for time.Now().Before(timeout) {
+				msg, err = js.GetMsg(streamName, seq)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue Retry
+				}
+				msgs = append(msgs, msg)
+				continue GetNextMsg
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error fetching seq=%v: %v", seq, err)
+			}
+		}
+
+		got := len(msgs)
+		if got < expectedTotal {
+			t.Errorf("Expected %v, got: %v", expectedTotal, got)
+		}
+
+		si, err := js.StreamInfo(streamName)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		got = int(si.State.Msgs)
+		if got != expectedTotal {
+			t.Errorf("Expected %v, got: %v", expectedTotal, got)
+		}
+
+		got = len(si.Sources)
+		expected := 2
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
+
+		t.Run("consume from sourced stream", func(t *testing.T) {
+			sub, err := js.SubscribeSync("origin", nats.BindStream(streamName))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			mmsgs := make([]*nats.Msg, 0)
+			for i := 0; i < totalMsgs; i++ {
+				msg, err := sub.NextMsg(2 * time.Second)
+				if err != nil {
+					t.Error(err)
+				}
+				meta, err := msg.MetaData()
+				if err != nil {
+					t.Error(err)
+				}
+				if meta.StreamName != streamName {
+					t.Errorf("Expected m1, got: %v", meta.StreamName)
+				}
+				mmsgs = append(mmsgs, msg)
+			}
+			if len(mmsgs) != totalMsgs {
+				t.Errorf("Expected to consume %v msgs, got: %v", totalMsgs, len(mmsgs))
+			}
+		})
 	})
 }
 
@@ -3966,22 +4208,6 @@ NextMsg:
 		if len(msgs) < 1 {
 			t.Errorf("Expected queue sub to receive at least one message")
 		}
-	}
-}
-
-func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
-	t.Helper()
-	timeout := time.Now().Add(totalWait)
-	var err error
-	for time.Now().Before(timeout) {
-		err = f()
-		if err == nil {
-			return
-		}
-		time.Sleep(sleepDur)
-	}
-	if err != nil {
-		t.Fatal(err.Error())
 	}
 }
 
