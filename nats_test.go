@@ -20,6 +20,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2610,5 +2611,92 @@ func TestMsg_RespondMsg(t *testing.T) {
 
 	if !bytes.Equal(resp.Data, []byte("response")) {
 		t.Fatalf("did not get correct response: %q", resp.Data)
+	}
+}
+
+func TestCustomInboxRequest(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	prefix := "_my_inbox"
+	prefixLen := len(prefix)
+	customInbox := CustomInboxPrefix(prefix)
+	nc, err := Connect(s.ClientURL(), customInbox)
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	// Old style request should work as well.
+	nc2, err := Connect(s.ClientURL(), customInbox, UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc2.Close()
+
+	nc.Subscribe("foo", func(msg *Msg) {
+		msg.Respond([]byte("OK"))
+	})
+
+	sendRequests := func(fn func() (*Msg, error)) {
+		t.Helper()
+
+		expected := 2
+		msgs := make([]*Msg, 0)
+		for i := 0; i < expected; i++ {
+			resp, err := fn()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := resp.Subject[:prefixLen]
+			if got != prefix {
+				t.Fatalf("Expected %v, got: %v", prefix, got)
+			}
+			msgs = append(msgs, resp)
+		}
+		if len(msgs) != expected {
+			t.Fatalf("Expected all messages, got: %v", len(msgs))
+		}
+	}
+
+	subject := nc.NewRespInbox()
+	got := subject[:prefixLen]
+	if got != prefix {
+		t.Fatalf("Expected %v, got: %v", prefix, got)
+	}
+
+	sendRequests(func() (*Msg, error) {
+		return nc.Request("foo", []byte("bar"), 2*time.Second)
+	})
+	sendRequests(func() (*Msg, error) {
+		return nc.Request("foo", []byte("bar"), 2*time.Second)
+	})
+
+	// With context as well.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sendRequests(func() (*Msg, error) {
+		return nc2.RequestWithContext(ctx, "foo", []byte("bar"))
+	})
+	sendRequests(func() (*Msg, error) {
+		return nc2.RequestWithContext(ctx, "foo", []byte("bar"))
+	})
+
+	for _, test := range []struct {
+		name    string
+		subject string
+		allowed bool
+	}{
+		{"wildcard", "inbox.*", false},
+		{"full wildcard", ">", false},
+		{"extra dots", "_._", true},
+		{"extra dots", "_..", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Connect(s.ClientURL(), CustomInboxPrefix(test.subject))
+			if !test.allowed && err == nil {
+				t.Errorf("Unexpected success with custom inbox prefix: %q", test.subject)
+			}
+		})
 	}
 }

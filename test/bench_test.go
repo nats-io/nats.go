@@ -128,6 +128,21 @@ func BenchmarkNewInboxCreation(b *testing.B) {
 	}
 }
 
+func BenchmarkNewInboxCreationCustomPrefix(b *testing.B) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc, err := nats.Connect("localhost", nats.CustomInboxPrefix("_"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer nc.Close()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		nc.NewRespInbox()
+	}
+}
+
 func BenchmarkRequest(b *testing.B) {
 	b.StopTimer()
 	s := RunDefaultServer()

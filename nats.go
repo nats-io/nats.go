@@ -426,6 +426,9 @@ type Options struct {
 	// is established, and if a ClosedHandler is set, it will be invoked if
 	// it fails to connect (after exhausting the MaxReconnect attempts).
 	RetryOnFailedConnect bool
+
+	// CustomInboxPrefix swaps the custom inbox prefix for requests.
+	CustomInboxPrefix string
 }
 
 const (
@@ -3090,6 +3093,29 @@ func (nc *Conn) respHandler(m *Msg) {
 	}
 }
 
+// CustomInboxPrefix is an Option to set the inbox prefix.
+func CustomInboxPrefix(inboxPrefix string) Option {
+	return func(o *Options) error {
+		// Include the separator as part of the prefix.
+		if !strings.HasSuffix(inboxPrefix, ".") {
+			inboxPrefix += "."
+		}
+
+		prefix := inboxPrefix[:len(inboxPrefix)-1]
+		if badSubject(prefix) {
+			return fmt.Errorf("nats: invalid subject prefix for inbox: %q", inboxPrefix)
+		}
+
+		// Do not allow either type of wildcards as part of the prefix.
+		if strings.Contains(prefix, ">") || strings.Contains(prefix, "*") {
+			return fmt.Errorf("nats: invalid subject prefix for inbox: %q", inboxPrefix)
+		}
+
+		o.CustomInboxPrefix = inboxPrefix
+		return nil
+	}
+}
+
 // Helper to setup and send new request style requests. Return the chan to receive the response.
 func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Msg, string, error) {
 	nc.mu.Lock()
@@ -3100,22 +3126,32 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
+	customInbox := nc.Opts.CustomInboxPrefix != ""
 	token := respInbox[respInboxPrefixLen:]
 	nc.respMap[token] = mch
 	if nc.respMux == nil {
 		// Create the response subscription we will use for all new style responses.
 		// This will be on an _INBOX with an additional terminal token. The subscription
 		// will be on a wildcard.
-		s, err := nc.subscribeLocked(nc.respSub, _EMPTY_, nc.respHandler, nil, false, nil)
+		var respSub string
+		if customInbox {
+			respSub = strings.Replace(nc.respSub, InboxPrefix, nc.Opts.CustomInboxPrefix, 1)
+		} else {
+			respSub = nc.respSub
+		}
+		s, err := nc.subscribeLocked(respSub, _EMPTY_, nc.respHandler, nil, false, nil)
 		if err != nil {
 			nc.mu.Unlock()
 			return nil, token, err
 		}
-		nc.respScanf = strings.Replace(nc.respSub, "*", "%s", -1)
+		nc.respScanf = strings.Replace(respSub, "*", "%s", -1)
 		nc.respMux = s
 	}
 	nc.mu.Unlock()
 
+	if customInbox {
+		respInbox = nc.buildCustomInbox(respInbox)
+	}
 	if err := nc.publish(subj, respInbox, hdr, data); err != nil {
 		return nil, token, err
 	}
@@ -3207,7 +3243,7 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := NewInbox()
+	inbox := nc.buildCustomInbox(NewInbox())
 	ch := make(chan *Msg, RequestChanLen)
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
@@ -3273,12 +3309,33 @@ func (nc *Conn) newRespInbox() string {
 	return string(b[:])
 }
 
+// buildCustomInbox generates an inbox with a custom prefix if configured with one.
+func (nc *Conn) buildCustomInbox(inbox string) string {
+	nc.mu.RLock()
+	cinbox := nc.Opts.CustomInboxPrefix
+	nc.mu.RUnlock()
+	if cinbox == "" {
+		return inbox
+	}
+
+	var b strings.Builder
+	b.Grow(len(cinbox) + nuidSize)
+	b.WriteString(cinbox)
+	b.WriteString(inbox[inboxPrefixLen:])
+	return b.String()
+}
+
 // NewRespInbox is the new format used for _INBOX.
 func (nc *Conn) NewRespInbox() string {
 	nc.mu.Lock()
-	s := nc.newRespInbox()
+	respInbox := nc.newRespInbox()
+	customInbox := nc.Opts.CustomInboxPrefix != ""
 	nc.mu.Unlock()
-	return s
+
+	if customInbox {
+		respInbox = nc.buildCustomInbox(respInbox)
+	}
+	return respInbox
 }
 
 // respToken will return the last token of a literal response inbox
