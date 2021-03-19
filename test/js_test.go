@@ -4211,11 +4211,16 @@ NextMsg:
 	}
 }
 
-func TestJetStreamPullSubscribeOptions(t *testing.T) {
-	withJSCluster(t, "FOPTS", 3, testJetStreamFetchOptions)
+func TestJetStreamPullSubscribe(t *testing.T) {
+	t.Run("fetch", func(t *testing.T) {
+		withJSCluster(t, "FETCH", 3, testJetStreamFetch)
+	})
+	t.Run("batch", func(t *testing.T) {
+		withJSCluster(t, "BATCH", 3, testJetStreamPullBatch)
+	})
 }
 
-func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
+func testJetStreamFetch(t *testing.T, srvs ...*jsServer) {
 	srv := srvs[0]
 	nc, err := nats.Connect(srv.ClientURL())
 	if err != nil {
@@ -4500,6 +4505,422 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		}
 		if err != nats.ErrTimeout {
 			t.Fatalf("Expected timeout error, got: %v", err)
+		}
+	})
+}
+
+func testJetStreamPullBatch(t *testing.T, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subject := "QW"
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     subject,
+		Replicas: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sendMsgs := func(t *testing.T, totalMsgs int) {
+		t.Helper()
+		for i := 0; i < totalMsgs; i++ {
+			payload := fmt.Sprintf("i:%d", i)
+			_, err := js.Publish(subject, []byte(payload))
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		}
+	}
+
+	t.Run("fetch msg", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("batch"), nats.PullMaxWaiting(10))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		// Gets a single message and done.
+		bm, err := sub.PullBatch(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msgs := bm.Messages()
+		if len(msgs) != 1 {
+			t.Errorf("Expected one message, got: %v", len(msgs))
+		}
+
+		msg := msgs[0]
+		err = msg.AckSync()
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("batch size", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("batch-size"), nats.PullMaxWaiting(10))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		bm, err := sub.PullBatch(expected, nats.MaxWait(5*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msgs := bm.Messages()
+
+		got := len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		// Next fetch will timeout since there are no more messages.
+		bm, err = sub.PullBatch(1, nats.MaxWait(250*time.Millisecond))
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected timeout fetching next message, got: %v", err)
+		}
+		if bm != nil {
+			t.Errorf("Expected no results, got: %v", bm)
+		}
+
+		expected = 5
+		sendMsgs(t, expected)
+		bm, err = sub.PullBatch(expected, nats.MaxWait(2*time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs = bm.Messages()
+
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		got = len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected: %v", got, expected)
+		}
+
+		for _, msg := range msgs {
+			msg.Ack()
+		}
+	})
+
+	t.Run("sub drain is no op", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("batch-ctx-drain"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		bm, err := sub.PullBatch(expected, nats.MaxWait(2*time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs := bm.Messages()
+
+		got := len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+		err = sub.Drain()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("pull with context", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("batch-ctx"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		// Should fail with expired context.
+		_, err = sub.PullBatch(expected, nats.Context(ctx))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != context.Canceled {
+			t.Errorf("Expected context deadline exceeded error, got: %v", err)
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		bm, err := sub.PullBatch(expected, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs := bm.Messages()
+
+		got := len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		// Next fetch will timeout since no more messages.
+		_, err = sub.PullBatch(1, nats.MaxWait(250*time.Millisecond))
+		if err != nats.ErrTimeout {
+			t.Errorf("Expected timeout fetching next message, got: %v", err)
+		}
+
+		expected = 5
+		sendMsgs(t, expected)
+		bm, err = sub.PullBatch(expected, nats.MaxWait(1*time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs = bm.Messages()
+
+		got = len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+
+		for _, msg := range msgs {
+			msg.Ack()
+		}
+	})
+
+	t.Run("fetch after unsubscribe", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("fetch-unsub"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = sub.Unsubscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = sub.PullBatch(1, nats.MaxWait(1*time.Second))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != nil && (err != context.DeadlineExceeded && err != nats.ErrTimeout && err != nats.ErrNoResponders) {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("max waiting timeout", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+
+		sub, err := js.PullSubscribe(subject, nats.Durable("max-waiting"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		// Poll more than the default max of waiting/inflight pull requests,
+		// so that We will get only 408 timeout errors.
+		errCh := make(chan error, 1024)
+
+		// Only get 10 msgs, the rest should be errors.
+		recvd := make(chan *nats.Msg, 10)
+
+		defer close(errCh)
+		var wg sync.WaitGroup
+		for i := 0; i < 1024; i++ {
+			wg.Add(1)
+
+			go func() {
+				batch, err := sub.PullBatch(1, nats.MaxWait(500*time.Millisecond))
+				defer wg.Done()
+				if err != nil {
+					errCh <- err
+				}
+
+				// A batch could have at most a message.
+				if batch != nil {
+					for msg := range batch.C {
+						recvd <- msg
+					}
+				}
+			}()
+		}
+		wg.Wait()
+
+		select {
+		case <-time.After(2 * time.Second):
+			t.Fatal("Expected RequestTimeout (408) error due to many inflight pulls")
+		case err := <-errCh:
+			if err != nil && (err.Error() != `Request Timeout` && err != nats.ErrTimeout) {
+				t.Errorf("Expected request timeout fetching next message, got: %+v", err)
+			}
+		}
+		if len(recvd) != expected {
+			t.Errorf("Expected %v messages, got: %v", expected, len(recvd))
+		}
+	})
+
+	t.Run("pull batch func", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("pull-batch-func"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		ctx, done := context.WithTimeout(context.Background(), 4*time.Second)
+		defer done()
+		recvd := make([]*nats.Msg, 0)
+
+	Loop:
+		for range time.Tick(100 * time.Millisecond) {
+			select {
+			case <-ctx.Done():
+				break Loop
+			default:
+			}
+
+			batch, err := sub.PullBatch(1, nats.MaxWait(2*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// Waits for all messages to be delivered under
+			// the original wait timeout.
+			msgs := batch.Messages()
+			recvd = append(recvd, msgs...)
+			for _, msg := range msgs {
+				err = msg.AckSync()
+				if err != nil {
+					t.Error(err)
+				}
+			}
+
+			if len(recvd) == expected {
+				done()
+				break
+			}
+		}
+
+		got := len(recvd)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+
+		// There should only be timeout errors since no more messages.
+		bm, err := sub.PullBatch(expected, nats.MaxWait(100*time.Millisecond))
+		if err == nil {
+			t.Fatalf("Unexpected success")
+		}
+		time.Sleep(500 * time.Millisecond)
+		if bm != nil && bm.Err() == nil {
+			t.Fatal("Unexpected success")
+		}
+	})
+
+	t.Run("pull batch ch", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		expected := 10
+		sendMsgs(t, expected)
+		sub, err := js.PullSubscribe(subject, nats.Durable("pull-batch-ch"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+		defer done()
+		recvd := make([]*nats.Msg, 0)
+
+	Loop:
+		for range time.Tick(100 * time.Millisecond) {
+			select {
+			case <-ctx.Done():
+				break Loop
+			default:
+			}
+
+			batch, err := sub.PullBatch(1, nats.MaxWait(2*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			var msg *nats.Msg
+			select {
+			case msg = <-batch.C:
+			case <-ctx.Done():
+				break Loop
+			}
+			recvd = append(recvd, msg)
+
+			if msg == nil {
+				t.Fatalf("Unexpected empty message")
+			}
+			err = msg.AckSync()
+			if err != nil {
+				t.Error(err)
+			}
+
+			if len(recvd) == expected {
+				done()
+				break
+			}
+		}
+
+		got := len(recvd)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+
+		// There should only be timeout errors since no more messages.
+		bm, err := sub.PullBatch(expected, nats.MaxWait(100*time.Millisecond))
+		if err == nil {
+			t.Fatalf("Unexpected success")
+		}
+		time.Sleep(500 * time.Millisecond)
+		if bm != nil && bm.Err() == nil {
+			t.Fatal("Unexpected success")
 		}
 	})
 }
