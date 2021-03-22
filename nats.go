@@ -129,7 +129,6 @@ var (
 	ErrBadHeaderMsg                 = errors.New("nats: message could not decode headers")
 	ErrNoResponders                 = errors.New("nats: no responders available for request")
 	ErrNoContextOrTimeout           = errors.New("nats: no context or timeout given")
-	ErrDirectModeRequired           = errors.New("nats: direct access requires direct pull or push")
 	ErrPullModeNotAllowed           = errors.New("nats: pull based not supported")
 	ErrJetStreamNotEnabled          = errors.New("nats: jetstream not enabled")
 	ErrJetStreamBadPre              = errors.New("nats: jetstream api prefix not valid")

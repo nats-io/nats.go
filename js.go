@@ -128,8 +128,6 @@ type jsOpts struct {
 	pre string
 	// Amount of time to wait for API requests.
 	wait time.Duration
-	// Signals only direct access and no API access.
-	direct bool
 }
 
 const defaultRequestWait = 5 * time.Second
@@ -148,10 +146,6 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 		if err := opt.configureJSContext(js.opts); err != nil {
 			return nil, err
 		}
-	}
-
-	if js.opts.direct {
-		return js, nil
 	}
 
 	if _, err := js.AccountInfo(); err != nil {
@@ -183,14 +177,6 @@ func APIPrefix(pre string) JSOpt {
 		if !strings.HasSuffix(js.pre, ".") {
 			js.pre = js.pre + "."
 		}
-		return nil
-	})
-}
-
-// DirectOnly makes a JetStream context avoid using the JetStream API altogether.
-func DirectOnly() JSOpt {
-	return jsOptFn(func(js *jsOpts) error {
-		js.direct = true
 		return nil
 	})
 }
@@ -462,13 +448,7 @@ func (jsi *jsSub) unsubscribe(drainMode bool) error {
 		// consumers when using drain mode.
 		return nil
 	}
-
-	// Skip if in direct mode as well.
 	js := jsi.js
-	if js.opts.direct {
-		return nil
-	}
-
 	return js.DeleteConsumer(jsi.stream, jsi.consumer)
 }
 
@@ -547,66 +527,53 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		attached     bool
 		stream       = o.stream
 		consumer     = o.consumer
-		requiresAPI  = (stream == _EMPTY_ && consumer == _EMPTY_) && o.cfg.DeliverSubject == _EMPTY_
 	)
 
-	if js.opts.direct && requiresAPI {
-		return nil, ErrDirectModeRequired
+	// Find the stream mapped to the subject if not bound to a stream already.
+	if o.stream == _EMPTY_ {
+		stream, err = js.lookupStreamBySubject(subj)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		stream = o.stream
 	}
 
-	if js.opts.direct {
-		if o.cfg.DeliverSubject != _EMPTY_ {
-			deliver = o.cfg.DeliverSubject
+	// With an explicit durable name, then can lookup
+	// the consumer to which it should be attaching to.
+	var info *ConsumerInfo
+	consumer = o.cfg.Durable
+	if consumer != _EMPTY_ {
+		// Only create in case there is no consumer already.
+		info, err = js.ConsumerInfo(stream, consumer)
+		if err != nil && err.Error() != `consumer not found` {
+			return nil, err
+		}
+	}
+
+	if info != nil {
+		// Attach using the found consumer config.
+		ccfg = &info.Config
+		attached = true
+
+		// Make sure this new subject matches or is a subset.
+		if ccfg.FilterSubject != _EMPTY_ && subj != ccfg.FilterSubject {
+			return nil, ErrSubjectMismatch
+		}
+
+		if ccfg.DeliverSubject != _EMPTY_ {
+			deliver = ccfg.DeliverSubject
 		} else {
 			deliver = NewInbox()
 		}
 	} else {
-		// Find the stream mapped to the subject if not bound to a stream already.
-		if o.stream == _EMPTY_ {
-			stream, err = js.lookupStreamBySubject(subj)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			stream = o.stream
+		shouldCreate = true
+		deliver = NewInbox()
+		if !isPullMode {
+			cfg.DeliverSubject = deliver
 		}
-
-		// With an explicit durable name, then can lookup
-		// the consumer to which it should be attaching to.
-		var info *ConsumerInfo
-		consumer = o.cfg.Durable
-		if consumer != _EMPTY_ {
-			// Only create in case there is no consumer already.
-			info, err = js.ConsumerInfo(stream, consumer)
-			if err != nil && err.Error() != `consumer not found` {
-				return nil, err
-			}
-		}
-
-		if info != nil {
-			// Attach using the found consumer config.
-			ccfg = &info.Config
-			attached = true
-
-			// Make sure this new subject matches or is a subset.
-			if ccfg.FilterSubject != _EMPTY_ && subj != ccfg.FilterSubject {
-				return nil, ErrSubjectMismatch
-			}
-
-			if ccfg.DeliverSubject != _EMPTY_ {
-				deliver = ccfg.DeliverSubject
-			} else {
-				deliver = NewInbox()
-			}
-		} else {
-			shouldCreate = true
-			deliver = NewInbox()
-			if !isPullMode {
-				cfg.DeliverSubject = deliver
-			}
-			// Do filtering always, server will clear as needed.
-			cfg.FilterSubject = subj
-		}
+		// Do filtering always, server will clear as needed.
+		cfg.FilterSubject = subj
 	}
 
 	var sub *Subscription
@@ -686,11 +653,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	} else {
 		sub.jsi.stream = stream
 		sub.jsi.consumer = consumer
-		if js.opts.direct {
-			sub.jsi.deliver = o.cfg.DeliverSubject
-		} else {
-			sub.jsi.deliver = ccfg.DeliverSubject
-		}
+		sub.jsi.deliver = ccfg.DeliverSubject
 	}
 	sub.jsi.attached = attached
 
@@ -882,11 +845,6 @@ func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 
 	// Consumer info lookup should fail if in direct mode.
 	js := sub.jsi.js
-	if js.opts.direct {
-		sub.mu.Unlock()
-		return nil, ErrDirectModeRequired
-	}
-
 	stream, consumer := sub.jsi.stream, sub.jsi.consumer
 	sub.mu.Unlock()
 
