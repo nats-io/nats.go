@@ -3624,8 +3624,6 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		}
 
 		t.Run("consume from sourced stream", func(t *testing.T) {
-			// Cannot lookup subjects of a stream that is itself sourced.
-			t.SkipNow()
 			sub, err := js.SubscribeSync("origin", nats.BindStream("s1"))
 			if err != nil {
 				t.Error(err)
