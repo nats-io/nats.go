@@ -20,6 +20,7 @@ import (
 	"math"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -180,7 +181,7 @@ func TestBadOptionTimeoutConnect(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error")
 	}
-	if err != nats.ErrNoServers {
+	if !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("Expected a ErrNoServers error: Got %v\n", err)
 	}
 }
@@ -721,7 +722,7 @@ func TestSimultaneousRequests(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			if _, err := nc.Request("foo", nil, 2*time.Second); err != nil {
-				errCh <- fmt.Errorf("expected to receive a timeout error")
+				errCh <- fmt.Errorf("Error on request: %v", err)
 			}
 		}()
 	}

@@ -466,8 +466,8 @@ type Conn struct {
 	current *srv
 	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
 	conn    net.Conn
-	bw      *bufio.Writer
-	pending *bytes.Buffer
+	bw      *natsWriter
+	br      *natsReader
 	fch     chan struct{}
 	info    serverInfo
 	ssid    int64
@@ -494,6 +494,21 @@ type Conn struct {
 
 	// JetStream Contexts last account check.
 	jsLastCheck time.Time
+}
+
+type natsReader struct {
+	r   io.Reader
+	buf []byte
+	off int
+	n   int
+}
+
+type natsWriter struct {
+	w       io.Writer
+	bufs    []byte
+	limit   int
+	pending *bytes.Buffer
+	plimit  int
 }
 
 // Subscription represents interest in a given subject.
@@ -1194,6 +1209,9 @@ func (o Options) Connect() (*Conn, error) {
 		nc.Opts.AsyncErrorCB = defaultErrHandler
 	}
 
+	// Create reader/writer
+	nc.newReaderWriter()
+
 	if err := nc.connect(); err != nil {
 		return nil, err
 	}
@@ -1227,6 +1245,8 @@ const (
 	_PUB_P_  = "PUB "
 	_HPUB_P_ = "HPUB "
 )
+
+var _CRLF_BYTES_ = []byte(_CRLF_)
 
 const (
 	_OK_OP_   = "+OK"
@@ -1428,12 +1448,142 @@ func (nc *Conn) shufflePool(offset int) {
 	}
 }
 
-func (nc *Conn) newBuffer() *bufio.Writer {
+func (nc *Conn) newReaderWriter() {
+	nc.br = &natsReader{
+		buf: make([]byte, defaultBufSize),
+		off: -1,
+	}
+	nc.bw = &natsWriter{
+		limit:  defaultBufSize,
+		plimit: nc.Opts.ReconnectBufSize,
+	}
+}
+
+func (nc *Conn) bindToNewConn() {
+	bw := nc.bw
+	bw.w, bw.bufs = nc.newWriter(), nil
+	br := nc.br
+	br.r, br.n, br.off = nc.conn, 0, -1
+}
+
+func (nc *Conn) newWriter() io.Writer {
 	var w io.Writer = nc.conn
 	if nc.Opts.FlusherTimeout > 0 {
 		w = &timeoutWriter{conn: nc.conn, timeout: nc.Opts.FlusherTimeout}
 	}
-	return bufio.NewWriterSize(w, defaultBufSize)
+	return w
+}
+
+func (w *natsWriter) appendString(str string) error {
+	return w.appendBufs([]byte(str))
+}
+
+func (w *natsWriter) appendBufs(bufs ...[]byte) error {
+	for _, buf := range bufs {
+		if len(buf) == 0 {
+			continue
+		}
+		if w.pending != nil {
+			w.pending.Write(buf)
+		} else {
+			w.bufs = append(w.bufs, buf...)
+		}
+	}
+	if w.pending == nil && len(w.bufs) >= w.limit {
+		return w.flush()
+	}
+	return nil
+}
+
+func (w *natsWriter) writeDirect(strs ...string) error {
+	for _, str := range strs {
+		if _, err := w.w.Write([]byte(str)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *natsWriter) flush() error {
+	// If a pending buffer is set, we don't flush. Code that needs to
+	// write directly to the socket, by-passing buffers during (re)connect
+	// use the writeDirect() API.
+	if w.pending != nil || len(w.bufs) == 0 {
+		return nil
+	}
+	_, err := w.w.Write(w.bufs)
+	w.bufs = w.bufs[:0]
+	return err
+}
+
+func (w *natsWriter) buffered() int {
+	if w.pending != nil {
+		return w.pending.Len()
+	}
+	return len(w.bufs)
+}
+
+func (w *natsWriter) switchToPending() {
+	w.pending = new(bytes.Buffer)
+}
+
+func (w *natsWriter) flushPendingBuffer() error {
+	if w.pending == nil || w.pending.Len() == 0 {
+		return nil
+	}
+	_, err := w.w.Write(w.pending.Bytes())
+	// Reset the pending buffer at this point because we don't want
+	// to take the risk of sending duplicates or partials.
+	w.pending.Reset()
+	return err
+}
+
+func (w *natsWriter) atLimitIfUsingPending() bool {
+	if w.pending == nil {
+		return false
+	}
+	return w.pending.Len() >= w.plimit
+}
+
+func (w *natsWriter) doneWithPending() {
+	w.pending = nil
+}
+
+func (r *natsReader) Read() ([]byte, error) {
+	if r.off >= 0 {
+		off := r.off
+		r.off = -1
+		return r.buf[off:r.n], nil
+	}
+	var err error
+	r.n, err = r.r.Read(r.buf)
+	return r.buf[:r.n], err
+}
+
+func (r *natsReader) ReadString(delim byte) (string, error) {
+	var s string
+build_string:
+	// First look if we have something in the buffer
+	if r.off >= 0 {
+		i := bytes.IndexByte(r.buf[r.off:r.n], delim)
+		if i >= 0 {
+			end := r.off + i + 1
+			s += string(r.buf[r.off:end])
+			r.off = end
+			if r.off >= r.n {
+				r.off = -1
+			}
+			return s, nil
+		}
+		// We did not find the delim, so will have to read more.
+		s += string(r.buf[r.off:r.n])
+		r.off = -1
+	}
+	if _, err := r.Read(); err != nil {
+		return s, err
+	}
+	r.off = 0
+	goto build_string
 }
 
 // createConn will connect to the server and wrap the appropriate
@@ -1488,11 +1638,8 @@ func (nc *Conn) createConn() (err error) {
 		return err
 	}
 
-	if nc.pending != nil && nc.bw != nil {
-		// Move to pending buffer.
-		nc.bw.Flush()
-	}
-	nc.bw = nc.newBuffer()
+	// Reset reader/writer to this new TCP connection
+	nc.bindToNewConn()
 	return nil
 }
 
@@ -1519,7 +1666,7 @@ func (nc *Conn) makeTLSConn() error {
 	if err := conn.Handshake(); err != nil {
 		return err
 	}
-	nc.bw = nc.newBuffer()
+	nc.bindToNewConn()
 	return nil
 }
 
@@ -1669,7 +1816,7 @@ func (nc *Conn) processConnectInit() error {
 
 // Main connect function. Will connect to the nats-server
 func (nc *Conn) connect() error {
-	var returnedErr error
+	var err error
 
 	// Create actual socket connection
 	// For first connect we walk all servers in the pool and try
@@ -1681,7 +1828,7 @@ func (nc *Conn) connect() error {
 	for i := 0; i < len(nc.srvPool); i++ {
 		nc.current = nc.srvPool[i]
 
-		if err := nc.createConn(); err == nil {
+		if err = nc.createConn(); err == nil {
 			// This was moved out of processConnectInit() because
 			// that function is now invoked from doReconnect() too.
 			nc.setup()
@@ -1692,10 +1839,8 @@ func (nc *Conn) connect() error {
 				nc.current.didConnect = true
 				nc.current.reconnects = 0
 				nc.current.lastErr = nil
-				returnedErr = nil
 				break
 			} else {
-				returnedErr = err
 				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false, err)
 				nc.mu.Lock()
@@ -1707,32 +1852,28 @@ func (nc *Conn) connect() error {
 			// Cancel out default connection refused, will trigger the
 			// No servers error conditional
 			if strings.Contains(err.Error(), "connection refused") {
-				returnedErr = nil
+				err = nil
 			}
 		}
 	}
 
-	if returnedErr == nil && nc.status != CONNECTED {
-		returnedErr = ErrNoServers
+	if err == nil && nc.status != CONNECTED {
+		err = ErrNoServers
 	}
 
-	if returnedErr == nil {
+	if err == nil {
 		nc.initc = false
 	} else if nc.Opts.RetryOnFailedConnect {
 		nc.setup()
 		nc.status = RECONNECTING
-		nc.pending = new(bytes.Buffer)
-		if nc.bw == nil {
-			nc.bw = nc.newBuffer()
-		}
-		nc.bw.Reset(nc.pending)
+		nc.bw.switchToPending()
 		go nc.doReconnect(ErrNoServers)
-		returnedErr = nil
+		err = nil
 	} else {
 		nc.current = nil
 	}
 
-	return returnedErr
+	return err
 }
 
 // This will check to see if the connection should be
@@ -1792,7 +1933,7 @@ func (nc *Conn) processExpectedInfo() error {
 // and kicking the flush Go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.mu.Lock()
-	nc.bw.WriteString(proto)
+	nc.bw.appendString(proto)
 	nc.kickFlusher()
 	nc.mu.Unlock()
 }
@@ -1887,21 +2028,8 @@ func (nc *Conn) sendConnect() error {
 		return err
 	}
 
-	// Write the protocol into the buffer
-	_, err = nc.bw.WriteString(cProto)
-	if err != nil {
-		return err
-	}
-
-	// Add to the buffer the PING protocol
-	_, err = nc.bw.WriteString(pingProto)
-	if err != nil {
-		return err
-	}
-
-	// Flush the buffer
-	err = nc.bw.Flush()
-	if err != nil {
+	// Write the protocol and PING directly to the underlying writer.
+	if err := nc.bw.writeDirect(cProto, pingProto); err != nil {
 		return err
 	}
 
@@ -1958,27 +2086,9 @@ func (nc *Conn) sendConnect() error {
 	return nil
 }
 
-// reads a protocol one byte at a time.
+// reads a protocol line.
 func (nc *Conn) readProto() (string, error) {
-	var (
-		_buf     = [10]byte{}
-		buf      = _buf[:0]
-		b        = [1]byte{}
-		protoEnd = byte('\n')
-	)
-	for {
-		if _, err := nc.conn.Read(b[:1]); err != nil {
-			// Do not report EOF error
-			if err == io.EOF {
-				return string(buf), nil
-			}
-			return "", err
-		}
-		buf = append(buf, b[0])
-		if b[0] == protoEnd {
-			return string(buf), nil
-		}
-	}
+	return nc.br.ReadString('\n')
 }
 
 // A control protocol line.
@@ -1988,8 +2098,7 @@ type control struct {
 
 // Read a control line and process the intended op.
 func (nc *Conn) readOp(c *control) error {
-	br := bufio.NewReaderSize(nc.conn, defaultBufSize)
-	line, err := br.ReadString('\n')
+	line, err := nc.readProto()
 	if err != nil {
 		return err
 	}
@@ -2012,13 +2121,8 @@ func parseControl(line string, c *control) {
 
 // flushReconnectPending will push the pending items that were
 // gathered while we were in a RECONNECTING state to the socket.
-func (nc *Conn) flushReconnectPendingItems() {
-	if nc.pending == nil {
-		return
-	}
-	if nc.pending.Len() > 0 {
-		nc.bw.Write(nc.pending.Bytes())
-	}
+func (nc *Conn) flushReconnectPendingItems() error {
+	return nc.bw.flushPendingBuffer()
 }
 
 // Stops the ping timer if set.
@@ -2043,9 +2147,6 @@ func (nc *Conn) doReconnect(err error) {
 	// Hold the lock manually and release where needed below,
 	// can't do defer here.
 	nc.mu.Lock()
-
-	// Clear any queued pongs, e.g. pending flush calls.
-	nc.clearPendingFlushCalls()
 
 	// Clear any errors.
 	nc.err = nil
@@ -2156,9 +2257,6 @@ func (nc *Conn) doReconnect(err error) {
 				break
 			}
 			nc.status = RECONNECTING
-			// Reset the buffered writer to the pending buffer
-			// (was set to a buffered writer on nc.conn in createConn)
-			nc.bw.Reset(nc.pending)
 			continue
 		}
 
@@ -2174,14 +2272,9 @@ func (nc *Conn) doReconnect(err error) {
 		nc.resendSubscriptions()
 
 		// Now send off and clear pending buffer
-		nc.flushReconnectPendingItems()
-
-		// Flush the buffer
-		nc.err = nc.bw.Flush()
+		nc.err = nc.flushReconnectPendingItems()
 		if nc.err != nil {
 			nc.status = RECONNECTING
-			// Reset the buffered writer to the pending buffer (bytes.Buffer).
-			nc.bw.Reset(nc.pending)
 			// Stop the ping timer (if set)
 			nc.stopPingTimer()
 			// Since processConnectInit() returned without error, the
@@ -2192,7 +2285,7 @@ func (nc *Conn) doReconnect(err error) {
 		}
 
 		// Done with the pending buffer
-		nc.pending = nil
+		nc.bw.doneWithPending()
 
 		// This is where we are truly connected.
 		nc.status = CONNECTED
@@ -2238,14 +2331,15 @@ func (nc *Conn) processOpErr(err error) {
 		// Stop ping timer if set
 		nc.stopPingTimer()
 		if nc.conn != nil {
-			nc.bw.Flush()
 			nc.conn.Close()
 			nc.conn = nil
 		}
 
 		// Create pending buffer before reconnecting.
-		nc.pending = new(bytes.Buffer)
-		nc.bw.Reset(nc.pending)
+		nc.bw.switchToPending()
+
+		// Clear any queued pongs, e.g. pending flush calls.
+		nc.clearPendingFlushCalls()
 
 		go nc.doReconnect(err)
 		nc.mu.Unlock()
@@ -2332,20 +2426,19 @@ func (nc *Conn) readLoop() {
 		nc.ps = &parseState{}
 	}
 	conn := nc.conn
+	br := nc.br
 	nc.mu.Unlock()
 
 	if conn == nil {
 		return
 	}
 
-	// Stack based buffer.
-	b := make([]byte, defaultBufSize)
-
 	for {
-		if n, err := conn.Read(b); err != nil {
-			nc.processOpErr(err)
-			break
-		} else if err = nc.parse(b[:n]); err != nil {
+		buf, err := br.Read()
+		if err == nil {
+			err = nc.parse(buf)
+		}
+		if err != nil {
 			nc.processOpErr(err)
 			break
 		}
@@ -2642,12 +2735,12 @@ func (nc *Conn) flusher() {
 		nc.mu.Lock()
 
 		// Check to see if we should bail out.
-		if !nc.isConnected() || nc.isConnecting() || bw != nc.bw || conn != nc.conn {
+		if !nc.isConnected() || nc.isConnecting() || conn != nc.conn {
 			nc.mu.Unlock()
 			return
 		}
-		if bw.Buffered() > 0 {
-			if err := bw.Flush(); err != nil {
+		if bw.buffered() > 0 {
+			if err := bw.flush(); err != nil {
 				if nc.err == nil {
 					nc.err = err
 				}
@@ -3026,14 +3119,9 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 
 	// Check if we are reconnecting, and if so check if
 	// we have exceeded our reconnect outbound buffer limits.
-	if nc.isReconnecting() {
-		// Flush to underlying buffer.
-		nc.bw.Flush()
-		// Check if we are over
-		if nc.pending.Len() >= nc.Opts.ReconnectBufSize {
-			nc.mu.Unlock()
-			return ErrReconnectBufExceeded
-		}
+	if nc.bw.atLimitIfUsingPending() {
+		nc.mu.Unlock()
+		return ErrReconnectBufExceeded
 	}
 
 	var mh []byte
@@ -3087,19 +3175,7 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 	mh = append(mh, b[i:]...)
 	mh = append(mh, _CRLF_...)
 
-	_, err := nc.bw.Write(mh)
-	if err == nil {
-		if hdr != nil {
-			_, err = nc.bw.Write(hdr)
-		}
-		if err == nil {
-			_, err = nc.bw.Write(data)
-		}
-	}
-	if err == nil {
-		_, err = nc.bw.WriteString(_CRLF_)
-	}
-	if err != nil {
+	if err := nc.bw.appendBufs(mh, hdr, data, _CRLF_BYTES_); err != nil {
 		nc.mu.Unlock()
 		return err
 	}
@@ -3506,11 +3582,8 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here if reconnecting.
 	if !nc.isReconnecting() {
-		fmt.Fprintf(nc.bw, subProto, subj, queue, sub.sid)
-		// Kick flusher if needed.
-		if len(nc.fch) == 0 {
-			nc.kickFlusher()
-		}
+		nc.bw.appendString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+		nc.kickFlusher()
 	}
 
 	return sub, nil
@@ -3715,7 +3788,8 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		fmt.Fprintf(nc.bw, unsubProto, s.sid, maxStr)
+		nc.bw.appendString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		nc.kickFlusher()
 	}
 	return nil
 }
@@ -4081,9 +4155,9 @@ func (nc *Conn) removeFlushEntry(ch chan struct{}) bool {
 // The lock must be held entering this function.
 func (nc *Conn) sendPing(ch chan struct{}) {
 	nc.pongs = append(nc.pongs, ch)
-	nc.bw.WriteString(pingProto)
+	nc.bw.appendString(pingProto)
 	// Flush in place.
-	nc.bw.Flush()
+	nc.bw.flush()
 }
 
 // This will fire periodically and send a client origin
@@ -4180,7 +4254,7 @@ func (nc *Conn) Buffered() (int, error) {
 	if nc.isClosed() || nc.bw == nil {
 		return -1, ErrConnectionClosed
 	}
-	return nc.bw.Buffered(), nil
+	return nc.bw.buffered(), nil
 }
 
 // resendSubscriptions will send our subscription state back to the
@@ -4206,16 +4280,16 @@ func (nc *Conn) resendSubscriptions() {
 			// reached the max, if so unsubscribe.
 			if adjustedMax == 0 {
 				s.mu.Unlock()
-				fmt.Fprintf(nc.bw, unsubProto, s.sid, _EMPTY_)
+				nc.bw.writeDirect(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
 				continue
 			}
 		}
 		s.mu.Unlock()
 
-		fmt.Fprintf(nc.bw, subProto, s.Subject, s.Queue, s.sid)
+		nc.bw.writeDirect(fmt.Sprintf(subProto, s.Subject, s.Queue, s.sid))
 		if adjustedMax > 0 {
 			maxStr := strconv.Itoa(int(adjustedMax))
-			fmt.Fprintf(nc.bw, unsubProto, s.sid, maxStr)
+			nc.bw.writeDirect(fmt.Sprintf(unsubProto, s.sid, maxStr))
 		}
 	}
 }
@@ -4287,7 +4361,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		nc.conn = nil
 	} else if nc.conn != nil {
 		// Go ahead and make sure we have flushed the outbound
-		nc.bw.Flush()
+		nc.bw.flush()
 		defer nc.conn.Close()
 	}
 
