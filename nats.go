@@ -75,6 +75,9 @@ const (
 
 	// AUTHENTICATION_EXPIRED_ERR is for when nats server user authorization has expired.
 	AUTHENTICATION_EXPIRED_ERR = "user authentication expired"
+
+	// AUTHENTICATION_REVOKED_ERR is for when user authorization has been revoked.
+	AUTHENTICATION_REVOKED_ERR = "user authentication revoked"
 )
 
 // Errors
@@ -94,6 +97,7 @@ var (
 	ErrBadTimeout                   = errors.New("nats: timeout invalid")
 	ErrAuthorization                = errors.New("nats: authorization violation")
 	ErrAuthExpired                  = errors.New("nats: authentication expired")
+	ErrAuthRevoked                  = errors.New("nats: authentication revoked")
 	ErrNoServers                    = errors.New("nats: no servers available for connection")
 	ErrJsonParse                    = errors.New("nats: connect message, json parse error")
 	ErrChanArg                      = errors.New("nats: argument needs to be a channel type")
@@ -2756,6 +2760,9 @@ func checkAuthError(e string) error {
 	}
 	if strings.HasPrefix(e, AUTHENTICATION_EXPIRED_ERR) {
 		return ErrAuthExpired
+	}
+	if strings.HasPrefix(e, AUTHENTICATION_REVOKED_ERR) {
+		return ErrAuthRevoked
 	}
 	return nil
 }

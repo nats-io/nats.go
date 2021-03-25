@@ -1551,6 +1551,106 @@ func TestExpiredUserCredentials(t *testing.T) {
 	wg.Wait()
 }
 
+func TestRevokedUserCredentials(t *testing.T) {
+	// Mock that the client connects and then is revoked.
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		connect := 0
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
+			conn.Write([]byte(info))
+
+			// Read connect and ping commands sent from the client
+			br := bufio.NewReaderSize(conn, 10*1024)
+			br.ReadLine()
+			br.ReadLine()
+
+			if connect++; connect == 1 {
+				conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
+				time.Sleep(300 * time.Millisecond)
+				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHENTICATION_REVOKED_ERR)))
+			} else {
+				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+			}
+			conn.Close()
+		}
+	}()
+
+	ch := make(chan bool)
+	errCh := make(chan error, 10)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
+	nc, err := Connect(url,
+		ReconnectWait(25*time.Millisecond),
+		ReconnectJitter(0, 0),
+		MaxReconnects(-1),
+		ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
+			select {
+			case errCh <- e:
+			default:
+			}
+		}),
+		ClosedHandler(func(nc *Conn) {
+			ch <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	defer nc.Close()
+
+	// We should give up since we get the same error on both tries.
+	if err := WaitTime(ch, 2*time.Second); err != nil {
+		t.Fatal("Should have closed after multiple failed attempts.")
+	}
+	if stats := nc.Stats(); stats.Reconnects > 2 {
+		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case e := <-errCh:
+			if i == 0 && e != ErrAuthRevoked {
+				t.Fatalf("Expected error %q, got %q", ErrAuthRevoked, e)
+			} else if i > 0 && e != ErrAuthorization {
+				t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
+			}
+		default:
+			if i == 0 {
+				t.Fatalf("Missing %q error", ErrAuthRevoked)
+			} else {
+				t.Fatalf("Missing %q error", ErrAuthorization)
+			}
+		}
+	}
+	// We should not have any more error
+	select {
+	case e := <-errCh:
+		t.Fatalf("Extra error: %v", e)
+	default:
+	}
+	// Close the listener and wait for go routine to end.
+	l.Close()
+	wg.Wait()
+}
+
 // If we are using TLS and have multiple servers we try to match the IP
 // from a discovered server with the expected hostname for certs without IP
 // designations. In certain cases where there is a not authorized error and
