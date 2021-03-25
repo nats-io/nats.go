@@ -1004,7 +1004,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 
 	// In case of only one message, then can already handle with built-in request functions.
 	if batch == 1 {
-		resp, err := nc.RequestWithContext(ctx, reqNext, req)
+		resp, err := nc.oldRequestWithContext(ctx, reqNext, nil, req)
 		if err != nil {
 			return nil, checkCtxErr(err)
 		}
