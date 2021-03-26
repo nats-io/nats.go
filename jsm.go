@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// JetStreamManager is the public interface for managing JetStream streams & consumers.
+// JetStreamManager manages JetStream Streams and Consumers.
 type JetStreamManager interface {
 	// AddStream creates a stream.
 	AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error)
