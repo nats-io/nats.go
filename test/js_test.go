@@ -468,7 +468,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Unexpected success")
 	}
-	if err != nil && err.Error() != `consumer in pull mode requires a durable name` {
+	if err != nil && err.Error() != `nats: consumer in pull mode requires a durable name` {
 		t.Errorf("Expected consumer in pull mode error, got %v", err)
 	}
 
@@ -3721,7 +3721,7 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		if err.Error() != `stream not found` {
+		if err.Error() != `nats: stream not found` {
 			t.Fatal("Expected stream not found error")
 		}
 	})
@@ -3731,7 +3731,7 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		if err.Error() != `consumer filter subject is not a valid subset of the interest subjects` {
+		if err.Error() != `nats: consumer filter subject is not a valid subset of the interest subjects` {
 			t.Fatal("Expected stream not found error")
 		}
 	})
@@ -4656,7 +4656,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		case <-time.After(1 * time.Second):
 			t.Fatal("Expected RequestTimeout (408) error due to many inflight pulls")
 		case err := <-errCh:
-			if err != nil && (err.Error() != `Request Timeout` && err != nats.ErrTimeout) {
+			if err != nil && (err.Error() != `nats: Request Timeout` && err != nats.ErrTimeout) {
 				t.Errorf("Expected request timeout fetching next message, got: %+v", err)
 			}
 		}

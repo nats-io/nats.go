@@ -919,7 +919,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		if consumer != _EMPTY_ {
 			// Only create in case there is no consumer already.
 			info, err = js.ConsumerInfo(stream, consumer)
-			if err != nil && err.Error() != `consumer not found` {
+			if err != nil && err.Error() != "nats: consumer not found" {
 				return nil, err
 			}
 		}
