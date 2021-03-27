@@ -16,14 +16,18 @@ package nats
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/nats-io/nuid"
 )
 
 // Request API subjects for JetStream.
@@ -88,8 +92,20 @@ type JetStream interface {
 	// Publish publishes a message to JetStream.
 	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
 
-	// Publish publishes a Msg to JetStream.
+	// PublishMsg publishes a Msg to JetStream.
 	PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error)
+
+	// PublishAsync publishes a message to JetStream and returns a PubAckFuture
+	PublishAsync(subj string, data []byte, opts ...PubOpt) (*PubAckFuture, error)
+
+	// PublishMsgAsync publishes a Msg to JetStream and returms a PubAckFuture.
+	PublishMsgAsync(m *Msg, opts ...PubOpt) (*PubAckFuture, error)
+
+	// PublishAsyncPending returns the number of async publishes outstanding for this context.
+	PublishAsyncPending() int
+
+	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
+	PublishAsyncComplete() <-chan struct{}
 
 	// Subscribe creates an async Subscription for JetStream.
 	Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
@@ -120,6 +136,14 @@ type JetStreamContext interface {
 type js struct {
 	nc   *Conn
 	opts *jsOpts
+
+	// For async publish context.
+	mu   sync.RWMutex
+	rpre string
+	rsub *Subscription
+	pafs map[string]*PubAckFuture
+	stc  chan struct{}
+	dch  chan struct{}
 }
 
 type jsOpts struct {
@@ -130,9 +154,16 @@ type jsOpts struct {
 	wait time.Duration
 	// Signals only direct access and no API access.
 	direct bool
+	// For async publish error handling.
+	aecb MsgErrHandler
+	// Maximum in flight.
+	maxap int
 }
 
-const defaultRequestWait = 5 * time.Second
+const (
+	defaultRequestWait  = 5 * time.Second
+	defaultAccountCheck = 20 * time.Second
+)
 
 // JetStream returns a JetStream context for pub/sub interactions.
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
@@ -154,11 +185,23 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 		return js, nil
 	}
 
-	if _, err := js.AccountInfo(); err != nil {
-		if err == ErrNoResponders {
-			err = ErrJetStreamNotEnabled
+	// If we have check recently we can avoid another account lookup here.
+	// We want these to be lighweight and created at will.
+	nc.mu.Lock()
+	now := time.Now()
+	checkAccount := now.Sub(nc.jsLastCheck) > defaultAccountCheck
+	if checkAccount {
+		nc.jsLastCheck = now
+	}
+	nc.mu.Unlock()
+
+	if checkAccount {
+		if _, err := js.AccountInfo(); err != nil {
+			if err == ErrNoResponders {
+				err = ErrJetStreamNotEnabled
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	return js, nil
@@ -226,7 +269,7 @@ type pubOpts struct {
 	seq uint64 // Expected last sequence
 }
 
-// pubAckResponse is the ack response from the JetStream API when of publishing a message.
+// pubAckResponse is the ack response from the JetStream API when publishing a message.
 type pubAckResponse struct {
 	apiResponse
 	*PubAck
@@ -301,7 +344,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 		return nil, ErrInvalidJSAck
 	}
 	if pa.Error != nil {
-		return nil, errors.New(pa.Error.Description)
+		return nil, fmt.Errorf("nats: %s", pa.Error.Description)
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == _EMPTY_ {
 		return nil, ErrInvalidJSAck
@@ -312,6 +355,304 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 // Publish publishes a message to a stream from JetStream.
 func (js *js) Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error) {
 	return js.PublishMsg(&Msg{Subject: subj, Data: data}, opts...)
+}
+
+// PubAckFuture is a future for a PubAck.
+type PubAckFuture struct {
+	js     *js
+	msg    *Msg
+	pa     *PubAck
+	st     time.Time
+	err    error
+	errCh  chan error
+	doneCh chan *PubAck
+}
+
+func (paf *PubAckFuture) Done() <-chan *PubAck {
+	paf.js.mu.Lock()
+	defer paf.js.mu.Unlock()
+
+	if paf.doneCh == nil {
+		paf.doneCh = make(chan *PubAck, 1)
+	}
+	if paf.pa != nil {
+		paf.doneCh <- paf.pa
+	}
+	return paf.doneCh
+}
+
+func (paf *PubAckFuture) Err() <-chan error {
+	paf.js.mu.Lock()
+	defer paf.js.mu.Unlock()
+
+	if paf.errCh == nil {
+		paf.errCh = make(chan error, 1)
+	}
+	if paf.err != nil {
+		paf.errCh <- paf.err
+	}
+	return paf.errCh
+}
+
+func (paf *PubAckFuture) Msg() *Msg {
+	paf.js.mu.RLock()
+	defer paf.js.mu.RUnlock()
+	return paf.msg
+}
+
+// For quick token lookup etc.
+const aReplyPreLen = 12
+const aReplyTokensize = 6
+
+func (js *js) newAsyncReply() string {
+	js.mu.Lock()
+	if js.rsub == nil {
+		// Create our wildcard reply subject.
+		sha := sha256.New()
+		sha.Write([]byte(nuid.Next()))
+		b := sha.Sum(nil)
+		for i := 0; i < aReplyTokensize; i++ {
+			b[i] = rdigits[int(b[i]%base)]
+		}
+		js.rpre = fmt.Sprintf("_APR.%s.", b[:aReplyTokensize])
+		sub, err := js.nc.Subscribe(fmt.Sprintf("%s*", js.rpre), js.handleAsyncReply)
+		if err != nil {
+			js.mu.Unlock()
+			return _EMPTY_
+		}
+		js.rsub = sub
+	}
+	var sb strings.Builder
+	sb.WriteString(js.rpre)
+	rn := js.nc.respRand.Int63()
+	var b [aReplyTokensize]byte
+	for i, l := 0, rn; i < len(b); i++ {
+		b[i] = rdigits[l%base]
+		l /= base
+	}
+	sb.Write(b[:])
+	js.mu.Unlock()
+	return sb.String()
+}
+
+// registerPAF will register for a PubAckFuture.
+func (js *js) registerPAF(id string, paf *PubAckFuture) (int, int) {
+	js.mu.Lock()
+	if js.pafs == nil {
+		js.pafs = make(map[string]*PubAckFuture)
+	}
+	paf.js = js
+	js.pafs[id] = paf
+	np := len(js.pafs)
+	maxap := js.opts.maxap
+	js.mu.Unlock()
+	return np, maxap
+}
+
+// Lock should be held.
+func (js *js) getPAF(id string) *PubAckFuture {
+	if js.pafs == nil {
+		return nil
+	}
+	return js.pafs[id]
+}
+
+// clearPAF will remove a PubAckFuture that was registered.
+func (js *js) clearPAF(id string) {
+	js.mu.Lock()
+	delete(js.pafs, id)
+	js.mu.Unlock()
+}
+
+// PublishAsyncPending returns how many PubAckFutures are pending.
+func (js *js) PublishAsyncPending() int {
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	return len(js.pafs)
+}
+
+func (js *js) asyncStall() <-chan struct{} {
+	js.mu.Lock()
+	if js.stc == nil {
+		js.stc = make(chan struct{})
+	}
+	stc := js.stc
+	js.mu.Unlock()
+	return stc
+}
+
+// Handle an async reply from PublishAsync.
+func (js *js) handleAsyncReply(m *Msg) {
+	if len(m.Subject) <= aReplyPreLen {
+		return
+	}
+	id := m.Subject[aReplyPreLen:]
+
+	js.mu.Lock()
+	paf := js.getPAF(id)
+	if paf == nil {
+		js.mu.Unlock()
+		return
+	}
+	// Remove
+	delete(js.pafs, id)
+
+	// Check on anyone stalled and waiting.
+	if js.stc != nil && len(js.pafs) < js.opts.maxap {
+		close(js.stc)
+		js.stc = nil
+	}
+	// Check on anyone one waiting on done status.
+	if js.dch != nil && len(js.pafs) == 0 {
+		dch := js.dch
+		js.dch = nil
+		// Defer here so error is processed and can be checked.
+		defer close(dch)
+	}
+
+	doErr := func(err error) {
+		paf.err = err
+		if paf.errCh != nil {
+			paf.errCh <- paf.err
+		}
+		cb := js.opts.aecb
+		js.mu.Unlock()
+		if cb != nil {
+			cb(paf.msg, err)
+		}
+	}
+
+	// Process no responders etc.
+	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
+		doErr(ErrNoResponders)
+		return
+	}
+
+	var pa pubAckResponse
+	if err := json.Unmarshal(m.Data, &pa); err != nil {
+		doErr(ErrInvalidJSAck)
+		return
+	}
+	if pa.Error != nil {
+		doErr(fmt.Errorf("nats: %s", pa.Error.Description))
+		return
+	}
+	if pa.PubAck == nil || pa.PubAck.Stream == _EMPTY_ {
+		doErr(ErrInvalidJSAck)
+		return
+	}
+
+	// So here we have received a proper puback.
+	paf.pa = pa.PubAck
+	if paf.doneCh != nil {
+		paf.doneCh <- paf.pa
+	}
+	js.mu.Unlock()
+}
+
+// MsgErrHandler is used to process asynchronous errors from
+// JetStream PublishAsync and PublishAsynMsg. It will return the original
+// message sent to the server for possible retransmitting and the error encountered.
+type MsgErrHandler func(*Msg, error)
+
+// PublishAsyncErrHandler sets the error handler for async publishes in JetStream.
+func PublishAsyncErrHandler(cb MsgErrHandler) JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.aecb = cb
+		return nil
+	})
+}
+
+// PublishAsyncMaxPending sets the maximum outstanding async publishes that can be inflight at one time.
+func PublishAsyncMaxPending(max int) JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		if max < 1 {
+			return errors.New("nats: max ack pending should be >= 1")
+		}
+		js.maxap = max
+		return nil
+	})
+}
+
+// PublishAsync publishes a message to JetStream and returns a PubAckFuture
+func (js *js) PublishAsync(subj string, data []byte, opts ...PubOpt) (*PubAckFuture, error) {
+	return js.PublishMsgAsync(&Msg{Subject: subj, Data: data}, opts...)
+}
+
+func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (*PubAckFuture, error) {
+	var o pubOpts
+	if len(opts) > 0 {
+		if m.Header == nil {
+			m.Header = http.Header{}
+		}
+		for _, opt := range opts {
+			if err := opt.configurePublish(&o); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Timeouts and contexts do not make sense for these.
+	if o.ttl != 0 || o.ctx != nil {
+		return nil, ErrContextAndTimeout
+	}
+
+	// FIXME(dlc) - Make common.
+	if o.id != _EMPTY_ {
+		m.Header.Set(MsgIdHdr, o.id)
+	}
+	if o.lid != _EMPTY_ {
+		m.Header.Set(ExpectedLastMsgIdHdr, o.lid)
+	}
+	if o.str != _EMPTY_ {
+		m.Header.Set(ExpectedStreamHdr, o.str)
+	}
+	if o.seq > 0 {
+		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(o.seq, 10))
+	}
+
+	// Reply
+	if m.Reply != _EMPTY_ {
+		return nil, errors.New("nats: reply subject should be empty")
+	}
+	m.Reply = js.newAsyncReply()
+	if m.Reply == _EMPTY_ {
+		return nil, errors.New("nats: error creating async reply handler")
+	}
+	id := m.Reply[aReplyPreLen:]
+	paf := &PubAckFuture{msg: m, st: time.Now()}
+	numPending, maxPending := js.registerPAF(id, paf)
+
+	if maxPending > 0 && numPending >= maxPending {
+		select {
+		case <-js.asyncStall():
+		case <-time.After(200 * time.Millisecond):
+			js.clearPAF(id)
+			return nil, errors.New("nats: stalled with too many outstanding async published messages")
+		}
+	}
+
+	if err := js.nc.PublishMsg(m); err != nil {
+		js.clearPAF(id)
+		return nil, err
+	}
+
+	return paf, nil
+}
+
+// PublishAsyncComplete returns a channel that will be closed when all outstanding messages have been ack'd.
+func (js *js) PublishAsyncComplete() <-chan struct{} {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	if js.dch == nil {
+		js.dch = make(chan struct{})
+	}
+	dch := js.dch
+	if len(js.pafs) == 0 {
+		close(js.dch)
+		js.dch = nil
+	}
+	return dch
 }
 
 // MsgId sets the message ID used for de-duplication.
@@ -536,7 +877,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	isPullMode := ch == nil && cb == nil
 	badPullAck := o.cfg.AckPolicy == AckNonePolicy || o.cfg.AckPolicy == AckAllPolicy
 	if isPullMode && badPullAck {
-		return nil, fmt.Errorf("invalid ack mode for pull consumers: %s", o.cfg.AckPolicy)
+		return nil, fmt.Errorf("nats: invalid ack mode for pull consumers: %s", o.cfg.AckPolicy)
 	}
 
 	var (
@@ -675,7 +1016,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		}
 		if info.Error != nil {
 			sub.Unsubscribe()
-			return nil, errors.New(info.Error.Description)
+			return nil, fmt.Errorf("nats: %s", info.Error.Description)
 		}
 
 		// Hold onto these for later.
@@ -980,7 +1321,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			case noMessages:
 				return errNoMessages
 			case "400", "408", "409":
-				return errors.New(msg.Header.Get(descrHdr))
+				return fmt.Errorf("nats: %s", msg.Header.Get(descrHdr))
 			}
 		}
 		return nil
@@ -1206,7 +1547,7 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		return nil, err
 	}
 	if info.Error != nil {
-		return nil, errors.New(info.Error.Description)
+		return nil, fmt.Errorf("nats: %s", info.Error.Description)
 	}
 	return info.ConsumerInfo, nil
 }
@@ -1408,7 +1749,7 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("explicit"):
 		*p = AckExplicitPolicy
 	default:
-		return fmt.Errorf("can not unmarshal %q", data)
+		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 
 	return nil
@@ -1423,7 +1764,7 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 	case AckExplicitPolicy:
 		return json.Marshal("explicit")
 	default:
-		return nil, fmt.Errorf("unknown acknowlegement policy %v", p)
+		return nil, fmt.Errorf("nats: unknown acknowlegement policy %v", p)
 	}
 }
 
@@ -1460,7 +1801,7 @@ func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("original"):
 		*p = ReplayOriginalPolicy
 	default:
-		return fmt.Errorf("can not unmarshal %q", data)
+		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 
 	return nil
@@ -1473,7 +1814,7 @@ func (p ReplayPolicy) MarshalJSON() ([]byte, error) {
 	case ReplayInstantPolicy:
 		return json.Marshal("instant")
 	default:
-		return nil, fmt.Errorf("unknown replay policy %v", p)
+		return nil, fmt.Errorf("nats: unknown replay policy %v", p)
 	}
 }
 
@@ -1536,7 +1877,7 @@ func (p DeliverPolicy) MarshalJSON() ([]byte, error) {
 	case DeliverByStartTimePolicy:
 		return json.Marshal("by_start_time")
 	default:
-		return nil, fmt.Errorf("unknown deliver policy %v", p)
+		return nil, fmt.Errorf("nats: unknown deliver policy %v", p)
 	}
 }
 
@@ -1592,7 +1933,7 @@ func (rp RetentionPolicy) MarshalJSON() ([]byte, error) {
 	case WorkQueuePolicy:
 		return json.Marshal(workQueuePolicyString)
 	default:
-		return nil, fmt.Errorf("can not marshal %v", rp)
+		return nil, fmt.Errorf("nats: can not marshal %v", rp)
 	}
 }
 
@@ -1605,7 +1946,7 @@ func (rp *RetentionPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString(workQueuePolicyString):
 		*rp = WorkQueuePolicy
 	default:
-		return fmt.Errorf("can not unmarshal %q", data)
+		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 	return nil
 }
@@ -1628,7 +1969,7 @@ func (dp DiscardPolicy) MarshalJSON() ([]byte, error) {
 	case DiscardNew:
 		return json.Marshal("new")
 	default:
-		return nil, fmt.Errorf("can not marshal %v", dp)
+		return nil, fmt.Errorf("nats: can not marshal %v", dp)
 	}
 }
 
@@ -1639,7 +1980,7 @@ func (dp *DiscardPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("new"):
 		*dp = DiscardNew
 	default:
-		return fmt.Errorf("can not unmarshal %q", data)
+		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 	return nil
 }
@@ -1677,7 +2018,7 @@ func (st StorageType) MarshalJSON() ([]byte, error) {
 	case FileStorage:
 		return json.Marshal(fileStorageString)
 	default:
-		return nil, fmt.Errorf("can not marshal %v", st)
+		return nil, fmt.Errorf("nats: can not marshal %v", st)
 	}
 }
 
@@ -1688,7 +2029,7 @@ func (st *StorageType) UnmarshalJSON(data []byte) error {
 	case jsonString(fileStorageString):
 		*st = FileStorage
 	default:
-		return fmt.Errorf("can not unmarshal %q", data)
+		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 	return nil
 }
