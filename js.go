@@ -154,8 +154,6 @@ type jsOpts struct {
 	pre string
 	// Amount of time to wait for API requests.
 	wait time.Duration
-	// Signals only direct access and no API access.
-	direct bool
 	// For async publish error handling.
 	aecb MsgErrHandler
 	// Maximum in flight.
