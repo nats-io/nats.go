@@ -95,10 +95,12 @@ type JetStream interface {
 	// PublishMsg publishes a Msg to JetStream.
 	PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error)
 
-	// PublishAsync publishes a message to JetStream and returns a PubAckFuture
+	// PublishAsync publishes a message to JetStream and returns a PubAckFuture.
+	// The data should not be changed until the PubAckFuture has been processed.
 	PublishAsync(subj string, data []byte, opts ...PubOpt) (*PubAckFuture, error)
 
 	// PublishMsgAsync publishes a Msg to JetStream and returms a PubAckFuture.
+	// The message should not be changed until the PubAckFuture has been processed.
 	PublishMsgAsync(m *Msg, opts ...PubOpt) (*PubAckFuture, error)
 
 	// PublishAsyncPending returns the number of async publishes outstanding for this context.
@@ -368,7 +370,7 @@ type PubAckFuture struct {
 	doneCh chan *PubAck
 }
 
-func (paf *PubAckFuture) Done() <-chan *PubAck {
+func (paf *PubAckFuture) Ok() <-chan *PubAck {
 	paf.js.mu.Lock()
 	defer paf.js.mu.Unlock()
 
@@ -401,7 +403,7 @@ func (paf *PubAckFuture) Msg() *Msg {
 }
 
 // For quick token lookup etc.
-const aReplyPreLen = 12
+const aReplyPreLen = 14
 const aReplyTokensize = 6
 
 func (js *js) newAsyncReply() string {
@@ -414,7 +416,7 @@ func (js *js) newAsyncReply() string {
 		for i := 0; i < aReplyTokensize; i++ {
 			b[i] = rdigits[int(b[i]%base)]
 		}
-		js.rpre = fmt.Sprintf("_APR.%s.", b[:aReplyTokensize])
+		js.rpre = fmt.Sprintf("%s%s.", InboxPrefix, b[:aReplyTokensize])
 		sub, err := js.nc.Subscribe(fmt.Sprintf("%s*", js.rpre), js.handleAsyncReply)
 		if err != nil {
 			js.mu.Unlock()
@@ -518,7 +520,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 		cb := js.opts.aecb
 		js.mu.Unlock()
 		if cb != nil {
-			cb(paf.msg, err)
+			cb(paf.js, paf.msg, err)
 		}
 	}
 
@@ -553,7 +555,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 // MsgErrHandler is used to process asynchronous errors from
 // JetStream PublishAsync and PublishAsynMsg. It will return the original
 // message sent to the server for possible retransmitting and the error encountered.
-type MsgErrHandler func(*Msg, error)
+type MsgErrHandler func(JetStream, *Msg, error)
 
 // PublishAsyncErrHandler sets the error handler for async publishes in JetStream.
 func PublishAsyncErrHandler(cb MsgErrHandler) JSOpt {

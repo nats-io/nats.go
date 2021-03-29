@@ -4746,7 +4746,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	select {
-	case <-paf.Done():
+	case <-paf.Ok():
 		t.Fatalf("Did not expect to get PubAck")
 	case err := <-paf.Err():
 		if err != nats.ErrNoResponders {
@@ -4764,7 +4764,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 		t.Fatalf("Did not receive an error in time")
 	}
 
-	// Now create a stream and expect a PubAck from <-Done().
+	// Now create a stream and expect a PubAck from <-OK().
 	if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST"}); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -4775,7 +4775,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	select {
-	case pa := <-paf.Done():
+	case pa := <-paf.Ok():
 		if pa.Stream != "TEST" || pa.Sequence != 1 {
 			t.Fatalf("Bad PubAck: %+v", pa)
 		}
@@ -4788,7 +4788,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	// Make sure we can register an async err handler for these.
-	errHandler := func(originalMsg *nats.Msg, err error) {
+	errHandler := func(js nats.JetStream, originalMsg *nats.Msg, err error) {
 		if originalMsg == nil {
 			t.Fatalf("Expected non-nil original message")
 		}
@@ -4870,7 +4870,7 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 
 	// Setup error handler.
 	var errors uint32
-	errHandler := func(originalMsg *nats.Msg, err error) {
+	errHandler := func(js nats.JetStream, originalMsg *nats.Msg, err error) {
 		t.Logf("Got an async err: %v", err)
 		atomic.AddUint32(&errors, 1)
 	}
@@ -4887,7 +4887,7 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	toSend := 500000
+	toSend := 1000000
 	start := time.Now()
 	for i := 0; i < toSend; i++ {
 		if _, err = js.PublishAsync("B", msg); err != nil {
