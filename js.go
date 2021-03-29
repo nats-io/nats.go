@@ -884,16 +884,15 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 		stream = o.stream
 	}
 
-		// With an explicit durable name, then can lookup
-		// the consumer to which it should be attaching to.
-		var info *ConsumerInfo
-		consumer = o.cfg.Durable
-		if consumer != _EMPTY_ {
-			// Only create in case there is no consumer already.
-			info, err = js.ConsumerInfo(stream, consumer)
-			if err != nil && err.Error() != "nats: consumer not found" {
-				return nil, err
-			}
+	// With an explicit durable name, then can lookup
+	// the consumer to which it should be attaching to.
+	var info *ConsumerInfo
+	consumer = o.cfg.Durable
+	if consumer != _EMPTY_ {
+		// Only create in case there is no consumer already.
+		info, err = js.ConsumerInfo(stream, consumer)
+		if err != nil && err.Error() != "nats: consumer not found" {
+			return nil, err
 		}
 	}
 
