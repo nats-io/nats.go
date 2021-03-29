@@ -87,7 +87,7 @@ const (
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 )
 
-// JetStream is the public interface for JetStream.
+// JetStream allows persistent messaging through JetStream.
 type JetStream interface {
 	// Publish publishes a message to JetStream.
 	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
@@ -128,7 +128,7 @@ type JetStream interface {
 	PullSubscribe(subj string, opts ...SubOpt) (*Subscription, error)
 }
 
-// JetStreamContext is the public interface for JetStream.
+// JetStreamContext allows JetStream messaging and stream management.
 type JetStreamContext interface {
 	JetStream
 	JetStreamManager
@@ -165,7 +165,7 @@ const (
 	defaultAccountCheck = 20 * time.Second
 )
 
-// JetStream returns a JetStream context for pub/sub interactions.
+// JetStream returns a JetStreamContext for messaging and stream management.
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	js := &js{
 		nc: nc,
@@ -203,12 +203,12 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	return js, nil
 }
 
-// JSOpt configures a JetStream context.
+// JSOpt configures a JetStreamContext.
 type JSOpt interface {
 	configureJSContext(opts *jsOpts) error
 }
 
-// jsOptFn configures an option for the JetStream context.
+// jsOptFn configures an option for the JetStreamContext.
 type jsOptFn func(opts *jsOpts) error
 
 func (opt jsOptFn) configureJSContext(opts *jsOpts) error {
@@ -1121,6 +1121,7 @@ func StartTime(startTime time.Time) SubOpt {
 	})
 }
 
+// AckNone requires no acks for delivered messages.
 func AckNone() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.AckPolicy = AckNonePolicy
@@ -1128,6 +1129,8 @@ func AckNone() SubOpt {
 	})
 }
 
+// AckAll when acking a sequence number, this implicitly acks all sequences
+// below this one as well.
 func AckAll() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.AckPolicy = AckAllPolicy
@@ -1135,6 +1138,7 @@ func AckAll() SubOpt {
 	})
 }
 
+// AckExplicit requires ack or nack for all messages.
 func AckExplicit() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.AckPolicy = AckExplicitPolicy
@@ -1142,6 +1146,7 @@ func AckExplicit() SubOpt {
 	})
 }
 
+// MaxDeliver sets the number of redeliveries for a message.
 func MaxDeliver(n int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxDeliver = n
@@ -1149,6 +1154,8 @@ func MaxDeliver(n int) SubOpt {
 	})
 }
 
+// MaxAckPending sets the number of outstanding acks that are allowed before
+// message delivery is halted.
 func MaxAckPending(n int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxAckPending = n
@@ -1580,39 +1587,42 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...PubOpt) error {
 
 	// Mark that the message has been acked unless it is AckProgress
 	// which can be sent many times.
-	if err == nil && !bytes.Equal(ackType, AckProgress) {
+	if err == nil && !bytes.Equal(ackType, ackProgress) {
 		atomic.StoreUint32(&m.ackd, 1)
 	}
 
 	return err
 }
 
-// Acks for messages
-
-// Ack a message, this will do the right thing with pull based consumers.
+// Ack acknowledges a message. This tells the server that the message was
+// successfully processed and it can move on to the next message.
 func (m *Msg) Ack() error {
-	return m.ackReply(AckAck, false)
+	return m.ackReply(ackAck, false)
 }
 
-// Ack a message and wait for a response from the server.
+// Ack is the synchronous version of Ack. This indicates successful message
+// processing.
 func (m *Msg) AckSync(opts ...PubOpt) error {
-	return m.ackReply(AckAck, true, opts...)
+	return m.ackReply(ackAck, true, opts...)
 }
 
-// Nak this message, indicating we can not process.
+// Nak negatively acknowledges a message. This tells the server to redeliver
+// the message. You can configure the number of redeliveries by passing
+// nats.MaxDeliver when you Subscribe. The default is infinite redeliveries.
 func (m *Msg) Nak() error {
-	return m.ackReply(AckNak, false)
+	return m.ackReply(ackNak, false)
 }
 
-// Term this message from ever being delivered regardless of MaxDeliverCount.
+// Term tells the server to not redeliver this message, regardless of the value
+// of nats.MaxDeliver.
 func (m *Msg) Term() error {
-	return m.ackReply(AckTerm, false)
+	return m.ackReply(ackTerm, false)
 }
 
-// InProgress indicates that this message is being worked on
-// and reset the redelivery timer in the server.
+// InProgress tells the server that this message is being worked on. It resets
+// the redelivery timer on the server.
 func (m *Msg) InProgress() error {
-	return m.ackReply(AckProgress, false)
+	return m.ackReply(ackProgress, false)
 }
 
 // MsgMetadata is the JetStream metadata associated with received messages.
@@ -1625,7 +1635,8 @@ type MsgMetaData struct {
 	StreamName string
 }
 
-// MetaData retrieves the metadata from a JetStream message.
+// MetaData retrieves the metadata from a JetStream message. This method will
+// return an error for non-JetStream Msgs.
 func (m *Msg) MetaData() (*MsgMetaData, error) {
 	if _, _, err := m.checkReply(); err != nil {
 		return nil, err
@@ -1688,10 +1699,11 @@ const (
 	// AckNonePolicy requires no acks for delivered messages.
 	AckNonePolicy AckPolicy = iota
 
-	// AckAllPolicy when acking a sequence number, this implicitly acks all sequences below this one as well.
+	// AckAllPolicy when acking a sequence number, this implicitly acks all
+	// sequences below this one as well.
 	AckAllPolicy
 
-	// AckExplicit requires ack or nack for all messages.
+	// AckExplicitPolicy requires ack or nack for all messages.
 	AckExplicitPolicy
 
 	// For setting
@@ -1749,7 +1761,7 @@ func (p AckPolicy) String() string {
 type ReplayPolicy int
 
 const (
-	// ReplayInstant will replay messages as fast as possible.
+	// ReplayInstantPolicy will replay messages as fast as possible.
 	ReplayInstantPolicy ReplayPolicy = iota
 
 	// ReplayOriginalPolicy will maintain the same timing as the messages were received.
@@ -1781,31 +1793,34 @@ func (p ReplayPolicy) MarshalJSON() ([]byte, error) {
 }
 
 var (
-	AckAck      = []byte("+ACK")
-	AckNak      = []byte("-NAK")
-	AckProgress = []byte("+WPI")
-	AckNext     = []byte("+NXT")
-	AckTerm     = []byte("+TERM")
+	ackAck      = []byte("+ACK")
+	ackNak      = []byte("-NAK")
+	ackProgress = []byte("+WPI")
+	ackTerm     = []byte("+TERM")
 )
 
 // DeliverPolicy determines how the consumer should select the first message to deliver.
 type DeliverPolicy int
 
 const (
-	// DeliverAllPolicy will be the default so can be omitted from the request.
+	// DeliverAllPolicy starts delivering messages from the very beginning of a
+	// stream. This is the default.
 	DeliverAllPolicy DeliverPolicy = iota
 
-	// DeliverLastPolicy will start the consumer with the last sequence received.
+	// DeliverLastPolicy will start the consumer with the last sequence
+	// received.
 	DeliverLastPolicy
 
-	// DeliverNewPolicy will only deliver new messages that are sent
-	// after the consumer is created.
+	// DeliverNewPolicy will only deliver new messages that are sent after the
+	// consumer is created.
 	DeliverNewPolicy
 
-	// DeliverByStartSequencePolicy will look for a defined starting sequence to start.
+	// DeliverByStartTimePolicy will deliver messages starting from a given
+	// sequence.
 	DeliverByStartSequencePolicy
 
-	// StartTime will select the first messsage with a timestamp >= to StartTime.
+	// DeliverByStartTimePolicy will deliver messages starting from a given
+	// time.
 	DeliverByStartTimePolicy
 )
 
@@ -1856,14 +1871,15 @@ const (
 	WorkQueuePolicy
 )
 
-// DiscardPolicy determines how we proceed when limits of messages or bytes are hit. The default, DiscardOld will
-// remove older messages. DiscardNew will fail to store the new message.
+// DiscardPolicy determines how to proceed when limits of messages or bytes are
+// reached.
 type DiscardPolicy int
 
 const (
-	// DiscardOld will remove older messages to return to the limits.
-	DiscardOld = iota
-	//DiscardNew will error on a StoreMsg call
+	// DiscardOld will remove older messages to return to the limits. This is
+	// the default.
+	DiscardOld DiscardPolicy = iota
+	//DiscardNew will fail to store new messages.
 	DiscardNew
 )
 
