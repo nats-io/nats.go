@@ -1565,6 +1565,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 				jetstream: enabled
 				users: [ {user: dlc, password: foo} ]
 				exports [
+					# For now have to expose the API to enable JS context across account.
+					{ service: "$JS.API.INFO" }
 					# For the stream publish.
 					{ service: "ORDERS" }
 					# For the pull based consumer. Response type needed for batchsize > 1
@@ -1579,6 +1581,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 			U: {
 				users: [ {user: rip, password: bar} ]
 				imports [
+					{ service: { subject: "$JS.API.INFO", account: JS } }
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
 					{ stream:  { subject: "p.d", account: JS } }
@@ -1646,22 +1649,17 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := nc.JetStream(nats.DirectOnly())
+	js, err := nc.JetStream()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Now make sure we can send to the stream.
+	// Now make sure we can send to the stream from another account.
 	toSend := 100
 	for i := 0; i < toSend; i++ {
 		if _, err := js.Publish("orders", []byte(fmt.Sprintf("ORDER-%d", i+1))); err != nil {
 			t.Fatalf("Unexpected error publishing message %d: %v", i+1, err)
 		}
-	}
-
-	// Check for correct errors.
-	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrDirectModeRequired {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrDirectModeRequired, err)
 	}
 
 	var sub *nats.Subscription
@@ -1698,6 +1696,17 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
+	}
+
+	// Cannot subscribe with JS context from another account right now.
+	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	}
+	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	}
+	if _, err = js.PullSubscribe("ORDERS", nats.BindStream("ORDERS"), nats.Durable("d1")); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
 	}
 }
 
