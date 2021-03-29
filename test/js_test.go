@@ -583,9 +583,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 }
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
-	// TODO(jaime): Re-enable after API changes.
-	t.SkipNow()
-
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
 
@@ -1570,6 +1567,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 				jetstream: enabled
 				users: [ {user: dlc, password: foo} ]
 				exports [
+					# For now have to expose the API to enable JS context across account.
+					{ service: "$JS.API.INFO" }
 					# For the stream publish.
 					{ service: "ORDERS" }
 					# For the pull based consumer. Response type needed for batchsize > 1
@@ -1584,6 +1583,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 			U: {
 				users: [ {user: rip, password: bar} ]
 				imports [
+					{ service: { subject: "$JS.API.INFO", account: JS } }
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
 					{ stream:  { subject: "p.d", account: JS } }
@@ -1651,22 +1651,17 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := nc.JetStream(nats.DirectOnly())
+	js, err := nc.JetStream()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Now make sure we can send to the stream.
+	// Now make sure we can send to the stream from another account.
 	toSend := 100
 	for i := 0; i < toSend; i++ {
 		if _, err := js.Publish("orders", []byte(fmt.Sprintf("ORDER-%d", i+1))); err != nil {
 			t.Fatalf("Unexpected error publishing message %d: %v", i+1, err)
 		}
-	}
-
-	// Check for correct errors.
-	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrDirectModeRequired {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrDirectModeRequired, err)
 	}
 
 	var sub *nats.Subscription
@@ -1703,6 +1698,17 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
+	}
+
+	// Cannot subscribe with JS context from another account right now.
+	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	}
+	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	}
+	if _, err = js.PullSubscribe("ORDERS", nats.BindStream("ORDERS"), nats.Durable("d1")); err != nats.ErrJetStreamNotEnabled {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
 	}
 }
 
@@ -3365,6 +3371,8 @@ func withJSServer(t *testing.T, tfn func(t *testing.T, srvs ...*jsServer)) {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.JetStream = true
+	opts.LameDuckDuration = 3 * time.Second
+	opts.LameDuckGracePeriod = 2 * time.Second
 	s := &jsServer{Server: RunServerWithOptions(opts), myopts: &opts}
 
 	defer func() {
@@ -3372,6 +3380,7 @@ func withJSServer(t *testing.T, tfn func(t *testing.T, srvs ...*jsServer)) {
 			os.RemoveAll(config.StoreDir)
 		}
 		s.Shutdown()
+		s.WaitForShutdown()
 	}()
 	tfn(t, s)
 }
@@ -3389,6 +3398,7 @@ func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testi
 			}
 			node.restart.Unlock()
 			node.Shutdown()
+			node.WaitForShutdown()
 		}
 	}()
 	tfn(t, nodes...)
@@ -4026,8 +4036,6 @@ func TestJetStream_ClusterReconnect(t *testing.T) {
 func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject string, srvs ...*jsServer) {
 	var (
 		srvA          = srvs[0]
-		srvB          = srvs[1]
-		srvC          = srvs[2]
 		totalMsgs     = 20
 		reconnected   = make(chan struct{})
 		reconnectDone bool
@@ -4065,9 +4073,6 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 	msgs := make(chan *nats.Msg, totalMsgs)
 
 	// Create some queue subscribers.
-	srvAClientURL := srvA.ClientURL()
-	srvBClientURL := srvB.ClientURL()
-	srvCClientURL := srvC.ClientURL()
 	for i := 0; i < 5; i++ {
 		expected := totalMsgs
 		dname := "dur"
@@ -4079,18 +4084,7 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 			case count == 2:
 				// Do not ack and wait for redelivery on reconnect.
 				srvA.Shutdown()
-				return
-			case count == 11:
-				// Do another Shutdown of the server we are connected with.
-				switch nc.ConnectedUrl() {
-				case srvAClientURL:
-					srvA.Shutdown()
-				case srvBClientURL:
-					srvB.Shutdown()
-				case srvCClientURL:
-					srvC.Shutdown()
-				default:
-				}
+				srvA.WaitForShutdown()
 				return
 			case count == expected:
 				done()
@@ -4111,7 +4105,7 @@ func testJetStream_ClusterReconnectDurableQueueSubscriber(t *testing.T, subject 
 					}
 				}
 			}
-		}, nats.Durable(dname), nats.ManualAck())
+		}, nats.Durable(dname), nats.AckWait(5*time.Second), nats.ManualAck())
 
 		if err != nil && (err != nats.ErrTimeout && err != context.DeadlineExceeded) {
 			t.Error(err)
