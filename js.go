@@ -362,10 +362,11 @@ func (paf *PubAckFuture) Ok() <-chan *PubAck {
 
 	if paf.doneCh == nil {
 		paf.doneCh = make(chan *PubAck, 1)
+		if paf.pa != nil {
+			paf.doneCh <- paf.pa
+		}
 	}
-	if paf.pa != nil {
-		paf.doneCh <- paf.pa
-	}
+
 	return paf.doneCh
 }
 
@@ -375,10 +376,11 @@ func (paf *PubAckFuture) Err() <-chan error {
 
 	if paf.errCh == nil {
 		paf.errCh = make(chan error, 1)
+		if paf.err != nil {
+			paf.errCh <- paf.err
+		}
 	}
-	if paf.err != nil {
-		paf.errCh <- paf.err
-	}
+
 	return paf.errCh
 }
 
