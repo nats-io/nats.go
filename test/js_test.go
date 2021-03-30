@@ -2312,7 +2312,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
-		err = msg.Nak()
+		err = msg.Nak(nats.AckWait(2 * time.Second))
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -2331,7 +2331,12 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
-		msg, err = sub.NextMsg(2 * time.Second)
+		ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+		defer done()
+
+		// Convert context into nats option.
+		nctx := nats.Context(ctx)
+		msg, err = sub.NextMsgWithContext(nctx)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -2340,15 +2345,29 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
-		err = msg.InProgress()
+		err = msg.Term(nctx)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		err = msg.InProgress()
+
+		msg, err = sub.NextMsgWithContext(nctx)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		err = msg.Ack()
+		got = string(msg.Data)
+		expected = "i:7"
+		if got != expected {
+			t.Errorf("Expected %v, got %v", expected, got)
+		}
+		err = msg.InProgress(nctx)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		err = msg.InProgress(nctx)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		err = msg.Ack(nctx)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
