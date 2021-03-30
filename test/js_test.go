@@ -464,16 +464,23 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// Durable name is required for now.
-	sub, err = js.PullSubscribe("bar")
+	sub, err = js.PullSubscribe("bar", "")
 	if err == nil {
 		t.Fatalf("Unexpected success")
 	}
 	if err != nil && err.Error() != `nats: consumer in pull mode requires a durable name` {
 		t.Errorf("Expected consumer in pull mode error, got %v", err)
 	}
+	sub, err = js.PullSubscribe("bar", "foo", nats.Durable("bar"))
+	if err == nil {
+		t.Fatalf("Unexpected success")
+	}
+	if err != nil && err.Error() != `nats: option Durable set more than once` {
+		t.Errorf("Expected consumer in pull mode error, got %v", err)
+	}
 
 	batch := 5
-	sub, err = js.PullSubscribe("bar", nats.Durable("rip"))
+	sub, err = js.PullSubscribe("bar", "rip")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -522,7 +529,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Test that if we are attaching that the subjects will match up. rip from
 	// above was created with a filtered subject of bar, so this should fail.
-	_, err = js.PullSubscribe("baz", nats.Durable("rip"))
+	_, err = js.PullSubscribe("baz", "rip")
 	if err != nats.ErrSubjectMismatch {
 		t.Fatalf("Expected a %q error but got %q", nats.ErrSubjectMismatch, err)
 	}
@@ -532,7 +539,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		js.Publish("bar", msg)
 	}
 
-	sub, err = js.PullSubscribe("bar", nats.Durable("rip"))
+	sub, err = js.PullSubscribe("bar", "rip")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -618,8 +625,7 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 
 	ackPendingLimit := 3
 
-	sub, err := js.PullSubscribe("foo",
-		nats.Durable("dname-pull-ack-wait"),
+	sub, err := js.PullSubscribe("foo", "dname-pull-ack-wait",
 		nats.AckWait(100*time.Millisecond),
 		nats.MaxDeliver(5),
 		nats.MaxAckPending(ackPendingLimit),
@@ -1707,7 +1713,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
 	}
-	if _, err = js.PullSubscribe("ORDERS", nats.BindStream("ORDERS"), nats.Durable("d1")); err != nats.ErrJetStreamNotEnabled {
+	if _, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
 	}
 }
@@ -2413,8 +2419,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		js.Publish("foo", []byte(payload))
 	}
 
-	sub, err := js.PullSubscribe("foo",
-		nats.Durable("wq"),
+	sub, err := js.PullSubscribe("foo", "wq",
 		nats.AckWait(200*time.Millisecond),
 		nats.MaxAckPending(5),
 	)
@@ -2810,7 +2815,7 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		subC, err := js.PullSubscribe("foo.C", nats.Durable("wq"))
+		subC, err := js.PullSubscribe("foo.C", "wq")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -4288,7 +4293,6 @@ func testJetStream_ClusterReconnectPullQueueSubscriber(t *testing.T, subject str
 		recvdQ        = make(map[int][]*nats.Msg)
 		srvA          = srvs[0]
 		totalMsgs     = 20
-		durable       = nats.Durable("d1")
 		reconnected   = make(chan struct{}, 2)
 		reconnectDone bool
 	)
@@ -4324,7 +4328,7 @@ func testJetStream_ClusterReconnectPullQueueSubscriber(t *testing.T, subject str
 	subs := make([]*nats.Subscription, 0)
 
 	for i := 0; i < 5; i++ {
-		sub, err := js.PullSubscribe(subject, durable, nats.PullMaxWaiting(5))
+		sub, err := js.PullSubscribe(subject, "d1", nats.PullMaxWaiting(5))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4463,7 +4467,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 		expected := 10
 		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, nats.Durable("batch-size"))
+		sub, err := js.PullSubscribe(subject, "batch-size")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4510,7 +4514,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 		expected := 10
 		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, nats.Durable("batch-ctx"))
+		sub, err := js.PullSubscribe(subject, "batch-ctx")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4535,7 +4539,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 		expected := 10
 		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, nats.Durable("batch-ctx"))
+		sub, err := js.PullSubscribe(subject, "batch-ctx")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4597,7 +4601,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 		expected := 10
 		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, nats.Durable("fetch-unsub"))
+		sub, err := js.PullSubscribe(subject, "fetch-unsub")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4622,7 +4626,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		expected := 10
 		sendMsgs(t, expected)
 
-		sub, err := js.PullSubscribe(subject, nats.Durable("max-waiting"))
+		sub, err := js.PullSubscribe(subject, "max-waiting")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4661,7 +4665,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 		expected := 10
 		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, nats.Durable("no-wait"))
+		sub, err := js.PullSubscribe(subject, "no-wait")
 		if err != nil {
 			t.Fatal(err)
 		}

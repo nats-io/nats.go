@@ -125,7 +125,7 @@ type JetStream interface {
 	QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error)
 
 	// PullSubscribe creates a Subscription that can fetch messages.
-	PullSubscribe(subj string, opts ...SubOpt) (*Subscription, error)
+	PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error)
 }
 
 // JetStreamContext allows JetStream messaging and stream management.
@@ -843,8 +843,8 @@ func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscri
 }
 
 // PullSubscribe creates a pull subscriber.
-func (js *js) PullSubscribe(subj string, opts ...SubOpt) (*Subscription, error) {
-	return js.subscribe(subj, _EMPTY_, nil, nil, opts)
+func (js *js) PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error) {
+	return js.subscribe(subj, _EMPTY_, nil, nil, append(opts, Durable(durable)))
 }
 
 func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []SubOpt) (*Subscription, error) {
@@ -1065,6 +1065,9 @@ func ManualAck() SubOpt {
 // Durable defines the consumer name for JetStream durable subscribers.
 func Durable(name string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
+		if opts.cfg.Durable != "" {
+			return fmt.Errorf("nats: option Durable set more than once")
+		}
 		if strings.Contains(name, ".") {
 			return ErrInvalidDurableName
 		}
