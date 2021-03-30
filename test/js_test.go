@@ -1876,7 +1876,7 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 		defer os.RemoveAll(config.StoreDir)
 	}
 
-	nc, err := nats.Connect(s.ClientURL())
+	nc, err := nats.Connect(s.ClientURL(), nats.SyncQueueLen(500))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1902,8 +1902,7 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 	nc.Flush()
 
 	// Create a consumer.
-	msgs := make(chan *nats.Msg, 500)
-	sub, err := js.ChanSubscribe("foo", msgs)
+	sub, err := js.SubscribeSync("foo")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

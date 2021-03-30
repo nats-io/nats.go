@@ -814,13 +814,13 @@ func (js *js) Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscripti
 	if cb == nil {
 		return nil, ErrBadSubscription
 	}
-	return js.subscribe(subj, _EMPTY_, cb, nil, opts)
+	return js.subscribe(subj, _EMPTY_, cb, nil, false, opts)
 }
 
 // SubscribeSync will create a sync subscription to the appropriate stream and consumer.
 func (js *js) SubscribeSync(subj string, opts ...SubOpt) (*Subscription, error) {
 	mch := make(chan *Msg, js.nc.Opts.SubChanLen)
-	return js.subscribe(subj, _EMPTY_, nil, mch, opts)
+	return js.subscribe(subj, _EMPTY_, nil, mch, true, opts)
 }
 
 // QueueSubscribe will create a subscription to the appropriate stream and consumer with queue semantics.
@@ -828,26 +828,26 @@ func (js *js) QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) 
 	if cb == nil {
 		return nil, ErrBadSubscription
 	}
-	return js.subscribe(subj, queue, cb, nil, opts)
+	return js.subscribe(subj, queue, cb, nil, false, opts)
 }
 
 // QueueSubscribeSync will create a sync subscription to the appropriate stream and consumer with queue semantics.
 func (js *js) QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error) {
 	mch := make(chan *Msg, js.nc.Opts.SubChanLen)
-	return js.subscribe(subj, queue, nil, mch, opts)
+	return js.subscribe(subj, queue, nil, mch, true, opts)
 }
 
 // Subscribe will create a subscription to the appropriate stream and consumer.
 func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error) {
-	return js.subscribe(subj, _EMPTY_, nil, ch, opts)
+	return js.subscribe(subj, _EMPTY_, nil, ch, false, opts)
 }
 
 // PullSubscribe creates a pull subscriber.
 func (js *js) PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error) {
-	return js.subscribe(subj, _EMPTY_, nil, nil, append(opts, Durable(durable)))
+	return js.subscribe(subj, _EMPTY_, nil, nil, false, append(opts, Durable(durable)))
 }
 
-func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []SubOpt) (*Subscription, error) {
+func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, opts []SubOpt) (*Subscription, error) {
 	cfg := ConsumerConfig{AckPolicy: ackPolicyNotSet}
 	o := subOpts{cfg: &cfg}
 	if len(opts) > 0 {
@@ -932,7 +932,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, opts []
 	if isPullMode {
 		sub = &Subscription{Subject: subj, conn: js.nc, typ: PullSubscription, jsi: &jsSub{js: js, pull: true}}
 	} else {
-		sub, err = js.nc.subscribe(deliver, queue, cb, ch, cb == nil, &jsSub{js: js})
+		sub, err = js.nc.subscribe(deliver, queue, cb, ch, isSync, &jsSub{js: js})
 		if err != nil {
 			return nil, err
 		}
