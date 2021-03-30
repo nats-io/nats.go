@@ -1436,8 +1436,8 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	nc.Close()
 }
 
-func TestExpiredUserCredentials(t *testing.T) {
-	// The goal of this test was to check how a client with an expiring JWT
+func TestExpiredAuthentication(t *testing.T) {
+	// The goal of these tests was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
 	// has expired, which will trigger reconnects. There, the lib should
 	// received -ERR for auth violation in response to the CONNECT (instead
@@ -1451,204 +1451,117 @@ func TestExpiredUserCredentials(t *testing.T) {
 	// So for a deterministic test, we won't use an actual NATS Server.
 	// Instead, we will use a mock that simply returns appropriate -ERR and
 	// ensure the client behaves as expected.
-	l, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal("Could not listen on an ephemeral port")
-	}
-	tl := l.(*net.TCPListener)
-	defer tl.Close()
+	for _, test := range []struct {
+		name          string
+		expectedProto string
+		expectedErr   error
+	}{
+		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired},
+		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked},
+		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			l, e := net.Listen("tcp", "127.0.0.1:0")
+			if e != nil {
+				t.Fatal("Could not listen on an ephemeral port")
+			}
+			tl := l.(*net.TCPListener)
+			defer tl.Close()
 
-	addr := tl.Addr().(*net.TCPAddr)
+			addr := tl.Addr().(*net.TCPAddr)
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+			wg := sync.WaitGroup{}
+			wg.Add(1)
 
-	go func() {
-		defer wg.Done()
-		connect := 0
-		for {
-			conn, err := l.Accept()
+			go func() {
+				defer wg.Done()
+				connect := 0
+				for {
+					conn, err := l.Accept()
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+
+					info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
+					conn.Write([]byte(info))
+
+					// Read connect and ping commands sent from the client
+					br := bufio.NewReaderSize(conn, 10*1024)
+					br.ReadLine()
+					br.ReadLine()
+
+					if connect++; connect == 1 {
+						conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
+						time.Sleep(300 * time.Millisecond)
+						conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", test.expectedProto)))
+					} else {
+						conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+					}
+					conn.Close()
+				}
+			}()
+
+			ch := make(chan bool)
+			errCh := make(chan error, 10)
+
+			url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
+			nc, err := Connect(url,
+				ReconnectWait(25*time.Millisecond),
+				ReconnectJitter(0, 0),
+				MaxReconnects(-1),
+				ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
+					select {
+					case errCh <- e:
+					default:
+					}
+				}),
+				ClosedHandler(func(nc *Conn) {
+					ch <- true
+				}),
+			)
 			if err != nil {
-				return
+				t.Fatalf("Expected to connect, got %v", err)
 			}
-			defer conn.Close()
+			defer nc.Close()
 
-			info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
-			conn.Write([]byte(info))
-
-			// Read connect and ping commands sent from the client
-			br := bufio.NewReaderSize(conn, 10*1024)
-			br.ReadLine()
-			br.ReadLine()
-
-			if connect++; connect == 1 {
-				conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
-				time.Sleep(300 * time.Millisecond)
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHENTICATION_EXPIRED_ERR)))
-			} else {
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+			// We should give up since we get the same error on both tries.
+			if err := WaitTime(ch, 2*time.Second); err != nil {
+				t.Fatal("Should have closed after multiple failed attempts.")
 			}
-			conn.Close()
-		}
-	}()
+			if stats := nc.Stats(); stats.Reconnects > 2 {
+				t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
+			}
 
-	ch := make(chan bool)
-	errCh := make(chan error, 10)
-
-	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
-	nc, err := Connect(url,
-		ReconnectWait(25*time.Millisecond),
-		ReconnectJitter(0, 0),
-		MaxReconnects(-1),
-		ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
+			// We expect 3 errors, the expired auth/revoke error, then 2 AUTHORIZATION_ERR
+			// before the connection is closed.
+			for i := 0; i < 3; i++ {
+				select {
+				case e := <-errCh:
+					if i == 0 && e != test.expectedErr {
+						t.Fatalf("Expected error %q, got %q", test.expectedErr, e)
+					} else if i > 0 && e != ErrAuthorization {
+						t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
+					}
+				default:
+					if i == 0 {
+						t.Fatalf("Missing %q error", test.expectedErr)
+					} else {
+						t.Fatalf("Missing %q error", ErrAuthorization)
+					}
+				}
+			}
+			// We should not have any more error
 			select {
-			case errCh <- e:
+			case e := <-errCh:
+				t.Fatalf("Extra error: %v", e)
 			default:
 			}
-		}),
-		ClosedHandler(func(nc *Conn) {
-			ch <- true
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Expected to connect, got %v", err)
+			// Close the listener and wait for go routine to end.
+			l.Close()
+			wg.Wait()
+		})
 	}
-	defer nc.Close()
-
-	// We should give up since we get the same error on both tries.
-	if err := WaitTime(ch, 2*time.Second); err != nil {
-		t.Fatal("Should have closed after multiple failed attempts.")
-	}
-	if stats := nc.Stats(); stats.Reconnects > 2 {
-		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
-	}
-	// We expect 3 errors, an AUTHENTICATION_EXPIRED_ERR, then 2 AUTHORIZATION_ERR
-	// before the connection is closed.
-	for i := 0; i < 3; i++ {
-		select {
-		case e := <-errCh:
-			if i == 0 && e != ErrAuthExpired {
-				t.Fatalf("Expected error %q, got %q", ErrAuthExpired, e)
-			} else if i > 0 && e != ErrAuthorization {
-				t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
-			}
-		default:
-			if i == 0 {
-				t.Fatalf("Missing %q error", ErrAuthExpired)
-			} else {
-				t.Fatalf("Missing %q error", ErrAuthorization)
-			}
-		}
-	}
-	// We should not have any more error
-	select {
-	case e := <-errCh:
-		t.Fatalf("Extra error: %v", e)
-	default:
-	}
-	// Close the listener and wait for go routine to end.
-	l.Close()
-	wg.Wait()
-}
-
-func TestRevokedUserCredentials(t *testing.T) {
-	// Mock that the client connects and then is revoked.
-	l, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal("Could not listen on an ephemeral port")
-	}
-	tl := l.(*net.TCPListener)
-	defer tl.Close()
-
-	addr := tl.Addr().(*net.TCPAddr)
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		connect := 0
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-
-			info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
-			conn.Write([]byte(info))
-
-			// Read connect and ping commands sent from the client
-			br := bufio.NewReaderSize(conn, 10*1024)
-			br.ReadLine()
-			br.ReadLine()
-
-			if connect++; connect == 1 {
-				conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
-				time.Sleep(300 * time.Millisecond)
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHENTICATION_REVOKED_ERR)))
-			} else {
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
-			}
-			conn.Close()
-		}
-	}()
-
-	ch := make(chan bool)
-	errCh := make(chan error, 10)
-
-	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
-	nc, err := Connect(url,
-		ReconnectWait(25*time.Millisecond),
-		ReconnectJitter(0, 0),
-		MaxReconnects(-1),
-		ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
-			select {
-			case errCh <- e:
-			default:
-			}
-		}),
-		ClosedHandler(func(nc *Conn) {
-			ch <- true
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Expected to connect, got %v", err)
-	}
-	defer nc.Close()
-
-	// We should give up since we get the same error on both tries.
-	if err := WaitTime(ch, 2*time.Second); err != nil {
-		t.Fatal("Should have closed after multiple failed attempts.")
-	}
-	if stats := nc.Stats(); stats.Reconnects > 2 {
-		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
-	}
-	for i := 0; i < 3; i++ {
-		select {
-		case e := <-errCh:
-			if i == 0 && e != ErrAuthRevoked {
-				t.Fatalf("Expected error %q, got %q", ErrAuthRevoked, e)
-			} else if i > 0 && e != ErrAuthorization {
-				t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
-			}
-		default:
-			if i == 0 {
-				t.Fatalf("Missing %q error", ErrAuthRevoked)
-			} else {
-				t.Fatalf("Missing %q error", ErrAuthorization)
-			}
-		}
-	}
-	// We should not have any more error
-	select {
-	case e := <-errCh:
-		t.Fatalf("Extra error: %v", e)
-	default:
-	}
-	// Close the listener and wait for go routine to end.
-	l.Close()
-	wg.Wait()
 }
 
 // If we are using TLS and have multiple servers we try to match the IP
