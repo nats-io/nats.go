@@ -1715,13 +1715,12 @@ func (m *Msg) InProgress(opts ...AckOpt) error {
 }
 
 // MsgMetadata is the JetStream metadata associated with received messages.
-type MsgMetaData struct {
-	Consumer   uint64
-	Stream     uint64
-	Delivered  uint64
-	Pending    uint64
-	Timestamp  time.Time
-	StreamName string
+type MsgMetadata struct {
+	Sequence     SequencePair
+	NumDelivered uint64
+	NumPending   uint64
+	Timestamp    time.Time
+	Stream       string
 }
 
 func getMetadataFields(subject string) ([]string, error) {
@@ -1743,9 +1742,9 @@ func getMetadataFields(subject string) ([]string, error) {
 	return tokens, nil
 }
 
-// MetaData retrieves the metadata from a JetStream message. This method will
+// Metadata retrieves the metadata from a JetStream message. This method will
 // return an error for non-JetStream Msgs.
-func (m *Msg) MetaData() (*MsgMetaData, error) {
+func (m *Msg) Metadata() (*MsgMetadata, error) {
 	if _, _, err := m.checkReply(); err != nil {
 		return nil, err
 	}
@@ -1755,15 +1754,14 @@ func (m *Msg) MetaData() (*MsgMetaData, error) {
 		return nil, err
 	}
 
-	meta := &MsgMetaData{
-		Delivered:  uint64(parseNum(tokens[4])),
-		Stream:     uint64(parseNum(tokens[5])),
-		Consumer:   uint64(parseNum(tokens[6])),
-		Timestamp:  time.Unix(0, parseNum(tokens[7])),
-		Pending:    uint64(parseNum(tokens[8])),
-		StreamName: tokens[2],
+	meta := &MsgMetadata{
+		NumDelivered: uint64(parseNum(tokens[4])),
+		NumPending:   uint64(parseNum(tokens[8])),
+		Timestamp:    time.Unix(0, parseNum(tokens[7])),
+		Stream:       tokens[2],
 	}
-
+	meta.Sequence.Stream = uint64(parseNum(tokens[5]))
+	meta.Sequence.Consumer = uint64(parseNum(tokens[6]))
 	return meta, nil
 }
 
