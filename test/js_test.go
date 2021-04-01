@@ -302,7 +302,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	select {
 	case m := <-q:
-		if _, err := m.MetaData(); err != nil {
+		if _, err := m.Metadata(); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -722,17 +722,17 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 			t.Fatalf("Error on ack message: %v", err)
 		}
 
-		meta, err := m.MetaData()
+		meta, err := m.Metadata()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		acks[int(meta.Stream)]++
+		acks[int(meta.Sequence.Stream)]++
 
 		if ackPending != 0 {
 			ackPending--
 		}
-		if int(meta.Pending) != ackPending {
-			t.Errorf("Expected %v, got %v", ackPending, meta.Pending)
+		if int(meta.NumPending) != ackPending {
+			t.Errorf("Expected %v, got %v", ackPending, meta.NumPending)
 		}
 	}
 
@@ -883,17 +883,17 @@ func TestJetStreamAckPending_Push(t *testing.T) {
 			t.Fatalf("Error on ack message: %v", err)
 		}
 
-		meta, err := m.MetaData()
+		meta, err := m.Metadata()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		acks[int(meta.Stream)]++
+		acks[int(meta.Sequence.Stream)]++
 
 		if ackPending != 0 {
 			ackPending--
 		}
-		if int(meta.Pending) != ackPending {
-			t.Errorf("Expected %v, got %v", ackPending, meta.Pending)
+		if int(meta.NumPending) != ackPending {
+			t.Errorf("Expected %v, got %v", ackPending, meta.NumPending)
 		}
 	}
 
@@ -983,12 +983,12 @@ func TestJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error getting next message: %v", err)
 	}
-	meta, err := m.MetaData()
+	meta, err := m.Metadata()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Pending > totalMsgs {
-		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.Pending)
+	if meta.NumPending > totalMsgs {
+		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.NumPending)
 	}
 	err = m.Ack()
 	if err != nil {
@@ -1035,11 +1035,11 @@ func TestJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 			}
 
 			recvd++
-			meta, err := msg.MetaData()
+			meta, err := msg.Metadata()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if meta.Pending == 0 {
+			if meta.NumPending == 0 {
 				break
 			}
 		}
@@ -1118,11 +1118,11 @@ func TestJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 				t.Fatalf("Unexpected empty message: %+v", m)
 			}
 
-			meta, err := msg.MetaData()
+			meta, err := msg.Metadata()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if meta.Pending == 0 {
+			if meta.NumPending == 0 {
 				break
 			}
 		}
@@ -1291,12 +1291,12 @@ func TestJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error getting next message: %v", err)
 	}
-	meta, err := m.MetaData()
+	meta, err := m.Metadata()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Pending > totalMsgs {
-		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.Pending)
+	if meta.NumPending > totalMsgs {
+		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.NumPending)
 	}
 	err = m.Ack()
 	if err != nil {
@@ -1355,11 +1355,11 @@ Loop:
 				}
 
 				recvd++
-				meta, err := msg.MetaData()
+				meta, err := msg.Metadata()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if meta.Pending == 0 {
+				if meta.NumPending == 0 {
 					break Loop
 				}
 			}
@@ -1745,11 +1745,11 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		}
 
 		msg := msgs[3]
-		meta, err := msg.MetaData()
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Fatal(err)
 		}
-		originalSeq = meta.Stream
+		originalSeq = meta.Sequence.Stream
 
 		// Get the same message using JSM.
 		fetchedMsg, err := js.GetMsg("foo", originalSeq)
@@ -1798,11 +1798,11 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		sub.Unsubscribe()
 
 		msg := msgs[3]
-		meta, err := msg.MetaData()
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Fatal(err)
 		}
-		newSeq := meta.Stream
+		newSeq := meta.Sequence.Stream
 
 		// First message removed
 		if newSeq <= originalSeq {
@@ -1899,11 +1899,11 @@ func TestJetStreamManagement_DeleteMsg(t *testing.T) {
 	}
 
 	msg := msgs[0]
-	meta, err := msg.MetaData()
+	meta, err := msg.Metadata()
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalSeq := meta.Stream
+	originalSeq := meta.Sequence.Stream
 
 	err = js.DeleteMsg("foo", originalSeq)
 	if err != nil {
@@ -1939,11 +1939,11 @@ func TestJetStreamManagement_DeleteMsg(t *testing.T) {
 	sub.Unsubscribe()
 
 	msg = msgs[0]
-	meta, err = msg.MetaData()
+	meta, err = msg.Metadata()
 	if err != nil {
 		t.Fatal(err)
 	}
-	newSeq := meta.Stream
+	newSeq := meta.Sequence.Stream
 
 	// First message removed
 	if newSeq <= originalSeq {
@@ -2278,11 +2278,11 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			meta, err := msg.MetaData()
+			meta, err := msg.Metadata()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, want := meta.StreamName, stream; got != want {
+			if got, want := meta.Stream, stream; got != want {
 				t.Fatalf("unexpected stream name, got=%q, want=%q", got, want)
 			}
 		}
@@ -2513,9 +2513,9 @@ func TestJetStreamChanSubscribeStall(t *testing.T) {
 		select {
 		case m := <-msgs:
 			received++
-			meta, _ := m.MetaData()
-			if meta.Consumer != uint64(received) {
-				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Consumer)
+			meta, _ := m.Metadata()
+			if meta.Sequence.Consumer != uint64(received) {
+				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Sequence.Consumer)
 			}
 			m.Ack()
 		case <-time.After(time.Second):
@@ -2700,11 +2700,11 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		meta, err := msg.MetaData()
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		if meta.Consumer != 1 || meta.Stream != 1 || meta.Delivered != 1 {
+		if meta.Sequence.Consumer != 1 || meta.Sequence.Stream != 1 || meta.NumDelivered != 1 {
 			t.Errorf("Unexpected metadata: %v", meta)
 		}
 
@@ -2941,8 +2941,8 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		return info.NumAckPending, int(info.NumPending)
 	}
 
-	getMetaData := func(msg *nats.Msg) *nats.MsgMetaData {
-		meta, err := msg.MetaData()
+	getMetadata := func(msg *nats.Msg) *nats.MsgMetadata {
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -2969,8 +2969,9 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	expectedPending(0, 9)
-	meta := getMetaData(msg)
-	if meta.Consumer != 1 || meta.Stream != 1 || meta.Delivered != 1 {
+	meta := getMetadata(msg)
+
+	if meta.Sequence.Consumer != 1 || meta.Sequence.Stream != 1 || meta.NumDelivered != 1 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 
@@ -2981,8 +2982,8 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedPending(0, 8)
-	meta = getMetaData(msg)
-	if meta.Consumer != 2 || meta.Stream != 2 || meta.Delivered != 1 {
+	meta = getMetadata(msg)
+	if meta.Sequence.Consumer != 2 || meta.Sequence.Stream != 2 || meta.NumDelivered != 1 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 
@@ -2993,11 +2994,11 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedPending(1, 7)
-	meta = getMetaData(msg)
-	if meta.Consumer != 3 || meta.Stream != 3 || meta.Delivered != 1 {
+	meta = getMetadata(msg)
+	if meta.Sequence.Consumer != 3 || meta.Sequence.Stream != 3 || meta.NumDelivered != 1 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
-	prevSeq := meta.Stream
+	prevSeq := meta.Sequence.Stream
 	prevPayload := string(msg.Data)
 
 	// Nak same sequence again, sequence number should not change.
@@ -3007,14 +3008,14 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedPending(1, 7)
-	meta = getMetaData(msg)
-	if meta.Stream != prevSeq {
+	meta = getMetadata(msg)
+	if meta.Sequence.Stream != prevSeq {
 		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Stream)
 	}
 	if string(msg.Data) != prevPayload {
 		t.Errorf("Expected: %q, got: %q", string(prevPayload), string(msg.Data))
 	}
-	if meta.Consumer != 4 || meta.Delivered != 2 {
+	if meta.Sequence.Consumer != 4 || meta.NumDelivered != 2 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 
@@ -3025,14 +3026,14 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedPending(0, 7)
-	meta = getMetaData(msg)
-	if meta.Stream != prevSeq {
+	meta = getMetadata(msg)
+	if meta.Sequence.Stream != prevSeq {
 		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Stream)
 	}
 	if string(msg.Data) != prevPayload {
 		t.Errorf("Expected: %q, got: %q", string(prevPayload), string(msg.Data))
 	}
-	if meta.Consumer != 5 || meta.Stream != 3 || meta.Delivered != 3 {
+	if meta.Sequence.Consumer != 5 || meta.Sequence.Stream != 3 || meta.NumDelivered != 3 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 
@@ -3051,8 +3052,8 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedPending(1, 6)
-	meta = getMetaData(msg)
-	if meta.Consumer != 6 || meta.Stream != 4 || meta.Delivered != 1 {
+	meta = getMetadata(msg)
+	if meta.Sequence.Consumer != 6 || meta.Sequence.Stream != 4 || meta.NumDelivered != 1 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 
@@ -3066,19 +3067,19 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	// Fetch next message, but do not ack and wait for redelivery.
 	msg = nextMsg()
 	expectedPending(1, 5)
-	meta = getMetaData(msg)
-	if meta.Consumer != 7 || meta.Stream != 5 || meta.Delivered != 1 {
+	meta = getMetadata(msg)
+	if meta.Sequence.Consumer != 7 || meta.Sequence.Stream != 5 || meta.NumDelivered != 1 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
-	prevSeq = meta.Stream
+	prevSeq = meta.Sequence.Stream
 	time.Sleep(500 * time.Millisecond)
 	expectedPending(1, 5)
 
 	// Next message should be a redelivery.
 	msg = nextMsg()
 	expectedPending(1, 5)
-	meta = getMetaData(msg)
-	if meta.Consumer != 8 || meta.Stream != prevSeq || meta.Delivered != 2 {
+	meta = getMetadata(msg)
+	if meta.Sequence.Consumer != 8 || meta.Sequence.Stream != prevSeq || meta.NumDelivered != 2 {
 		t.Errorf("Unexpected metadata: %+v", meta)
 	}
 	err = msg.AckSync()
@@ -3092,7 +3093,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, msg := range msgs {
-		getMetaData(msg)
+		getMetadata(msg)
 		msg.Ack()
 	}
 	expectedPending(0, 0)
@@ -4195,12 +4196,12 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 				if err != nil {
 					t.Error(err)
 				}
-				meta, err := msg.MetaData()
+				meta, err := msg.Metadata()
 				if err != nil {
 					t.Error(err)
 				}
-				if meta.StreamName != "m1" {
-					t.Errorf("Expected m1, got: %v", meta.StreamName)
+				if meta.Stream != "m1" {
+					t.Errorf("Expected m1, got: %v", meta.Stream)
 				}
 				mmsgs = append(mmsgs, msg)
 			}
@@ -4220,12 +4221,12 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err != nil {
 			t.Error(err)
 		}
-		meta, err := msg.MetaData()
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Error(err)
 		}
-		if meta.StreamName != "origin" {
-			t.Errorf("Expected m1, got: %v", meta.StreamName)
+		if meta.Stream != "origin" {
+			t.Errorf("Expected m1, got: %v", meta.Stream)
 		}
 	})
 
@@ -4259,12 +4260,12 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err != nil {
 			t.Error(err)
 		}
-		meta, err := msg.MetaData()
+		meta, err := msg.Metadata()
 		if err != nil {
 			t.Error(err)
 		}
-		if meta.StreamName != "origin" {
-			t.Errorf("Expected m1, got: %v", meta.StreamName)
+		if meta.Stream != "origin" {
+			t.Errorf("Expected m1, got: %v", meta.Stream)
 		}
 	})
 
@@ -4479,12 +4480,12 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 				if err != nil {
 					t.Error(err)
 				}
-				meta, err := msg.MetaData()
+				meta, err := msg.Metadata()
 				if err != nil {
 					t.Error(err)
 				}
-				if meta.StreamName != streamName {
-					t.Errorf("Expected m1, got: %v", meta.StreamName)
+				if meta.Stream != streamName {
+					t.Errorf("Expected m1, got: %v", meta.Stream)
 				}
 				mmsgs = append(mmsgs, msg)
 			}
