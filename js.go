@@ -693,6 +693,7 @@ type ackOpts struct {
 	ctx context.Context
 }
 
+// AckOpt are the options that can be passed when acknowledge a message.
 type AckOpt interface {
 	configureAck(opts *ackOpts) error
 }
@@ -1304,11 +1305,12 @@ type pullOpts struct {
 	ctx context.Context
 }
 
+// PullOpt are the options that can be passed when pulling a batch of messages.
 type PullOpt interface {
 	configurePull(opts *pullOpts) error
 }
 
-// PullMaxWaiting defines the max inflight pull requests to be delivered more messages.
+// PullMaxWaiting defines the max inflight pull requests.
 func PullMaxWaiting(n int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxWaiting = n
