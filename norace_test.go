@@ -135,7 +135,7 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	nc.SetErrorHandler(func(_ *Conn, _ *Subscription, _ error) {})
 
 	// Queue up 1M small messages.
-	toSend := uint64(1_000_000)
+	toSend := uint64(1000000)
 	for i := uint64(0); i < toSend; i++ {
 		nc.Publish("js.p", []byte("ok"))
 	}

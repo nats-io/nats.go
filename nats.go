@@ -542,6 +542,23 @@ type Subscription struct {
 
 // Msg represents a message delivered by NATS. This structure is used
 // by Subscribers and PublishMsg().
+//
+// Types of Acknowledgements
+//
+// In case using JetStream, there are multiple ways to ack a Msg:
+//
+//   // Acknowledgement that a message has been processed.
+//   msg.Ack()
+//
+//   // Negatively acknowledges a message.
+//   msg.Nak()
+//
+//   // Terminate a message so that it is not redelivered further.
+//   msg.Term()
+//
+//   // Signal the server that the message is being worked on and reset redelivery timer.
+//   msg.InProgress()
+//
 type Msg struct {
 	Subject string
 	Reply   string
