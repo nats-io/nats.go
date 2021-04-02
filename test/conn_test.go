@@ -2537,3 +2537,199 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 		t.Fatal("Should have connected")
 	}
 }
+
+func TestLookupHostResultIsRandomized(t *testing.T) {
+	orgAddrs, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatalf("Error looking up host: %v", err)
+	}
+
+	// We actually want the IPv4 and IPv6 addresses, so lets make sure.
+	if !reflect.DeepEqual(orgAddrs, []string{"::1", "127.0.0.1"}) {
+		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
+	}
+
+	opts := natsserver.DefaultTestOptions
+	opts.Host = "127.0.0.1"
+	opts.Port = TEST_PORT
+	s1 := RunServerWithOptions(&opts)
+	defer s1.Shutdown()
+
+	opts.Host = "::1"
+	s2 := RunServerWithOptions(&opts)
+	defer s2.Shutdown()
+
+	for i := 0; i < 100; i++ {
+		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+	}
+
+	if ncls := s1.NumClients(); ncls < 35 || ncls > 65 {
+		t.Fatalf("Does not seem balanced between multiple servers: s1:%d, s2:%d", s1.NumClients(), s2.NumClients())
+	}
+}
+
+func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
+	orgAddrs, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatalf("Error looking up host: %v", err)
+	}
+
+	// We actually want the IPv4 and IPv6 addresses, so lets make sure.
+	if !reflect.DeepEqual(orgAddrs, []string{"::1", "127.0.0.1"}) {
+		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
+	}
+
+	opts := natsserver.DefaultTestOptions
+	opts.Host = orgAddrs[0]
+	opts.Port = TEST_PORT
+	s1 := RunServerWithOptions(&opts)
+	defer s1.Shutdown()
+
+	opts.Host = orgAddrs[1]
+	s2 := RunServerWithOptions(&opts)
+	defer s2.Shutdown()
+
+	for i := 0; i < 100; i++ {
+		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT), DontRandomize())
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+	}
+
+	if ncls := s1.NumClients(); ncls != 100 {
+		t.Fatalf("Expected all clients on first server, only got %d of 100", ncls)
+	}
+}
+
+func TestConnectedAddr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	var nc *Conn
+	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
+		t.Fatalf("Expected empty result for nil connection, got %q", addr)
+	}
+	nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	expected := s.Addr().String()
+	if addr := nc.ConnectedAddr(); addr != expected {
+		t.Fatalf("Expected address %q, got %q", expected, addr)
+	}
+	nc.Close()
+	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
+		t.Fatalf("Expected empty result for closed connection, got %q", addr)
+	}
+}
+
+func TestSubscribeSyncRace(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	go func() {
+		time.Sleep(time.Millisecond)
+		nc.Close()
+	}()
+
+	subj := "foo.sync.race"
+	for i := 0; i < 10000; i++ {
+		if _, err := nc.SubscribeSync(subj); err != nil {
+			break
+		}
+		if _, err := nc.QueueSubscribeSync(subj, "gc"); err != nil {
+			break
+		}
+	}
+}
+
+func TestBadSubjectsAndQueueNames(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	// Make sure we get errors on bad subjects (spaces, etc)
+	// We want the client to protect the user.
+	badSubs := []string{"foo bar", "foo..bar", ".foo", "bar.baz.", "baz\t.foo"}
+	for _, subj := range badSubs {
+		if _, err := nc.SubscribeSync(subj); err != ErrBadSubject {
+			t.Fatalf("Expected an error of ErrBadSubject for %q, got %v", subj, err)
+		}
+	}
+
+	badQueues := []string{"foo group", "group\t1", "g1\r\n2"}
+	for _, q := range badQueues {
+		if _, err := nc.QueueSubscribeSync("foo", q); err != ErrBadQueueName {
+			t.Fatalf("Expected an error of ErrBadQueueName for %q, got %v", q, err)
+		}
+	}
+}
+
+func BenchmarkNextMsgNoTimeout(b *testing.B) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ncp, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+	ncs, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT), SyncQueueLen(b.N))
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+
+	// Test processing speed so no long subject or payloads.
+	subj := "a"
+
+	sub, err := ncs.SubscribeSync(subj)
+	if err != nil {
+		b.Fatalf("Error subscribing: %v", err)
+	}
+	ncs.Flush()
+
+	// Set it up so we can internally queue all the messages.
+	sub.SetPendingLimits(b.N, b.N*1000)
+
+	for i := 0; i < b.N; i++ {
+		ncp.Publish(subj, nil)
+	}
+	ncp.Flush()
+
+	// Wait for them to all be queued up, testing NextMsg not server here.
+	// Only wait at most one second.
+	wait := time.Now().Add(time.Second)
+	for time.Now().Before(wait) {
+		nm, _, err := sub.Pending()
+		if err != nil {
+			b.Fatalf("Error on Pending() - %v", err)
+		}
+		if nm >= b.N {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := sub.NextMsg(10 * time.Millisecond); err != nil {
+			b.Fatalf("Error getting message[%d]: %v", i, err)
+		}
+	}
+}
+

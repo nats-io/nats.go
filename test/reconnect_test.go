@@ -783,3 +783,175 @@ func TestConnCloseNoCallback(t *testing.T) {
 		t.Fatalf("%s issued a callback and it shouldn't have", what)
 	}
 }
+
+// More reconnect tests
+
+const TEST_PORT_2 = 8368
+var reconnectOpts2 = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT_2),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
+}
+
+func TestReconnectServerStats(t *testing.T) {
+	ts := RunServerOnPort(TEST_PORT_2)
+
+	opts := reconnectOpts2
+	nc, _ := opts.Connect()
+	defer nc.Close()
+	nc.Flush()
+
+	ts.Shutdown()
+	// server is stopped here...
+
+	ts = RunServerOnPort(TEST_PORT_2)
+	defer ts.Shutdown()
+
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("Error on Flush: %v", err)
+	}
+
+	// Make sure the server who is reconnected has the reconnects stats reset.
+	// TODO:
+	// nc.mu.Lock()
+	// _, cur := nc.currentServer()
+	// nc.mu.Unlock()
+
+	// if cur.reconnects != 0 {
+	// 	t.Fatalf("Current Server's reconnects should be 0 vs %d\n", cur.reconnects)
+	// }
+}
+
+// func TestConnAsyncCBDeadlock(t *testing.T) {
+// 	s := RunServerOnPort(TEST_PORT_2)
+// 	defer s.Shutdown()
+
+// 	ch := make(chan bool)
+// 	o := nats.GetDefaultOptions()
+// 	o.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT_2)
+// 	o.ClosedCB = func(_ *nats.Conn) {
+// 		ch <- true
+// 	}
+// 	o.AsyncErrorCB = func(nc *nats.Conn, sub *nats.Subscription, err error) {
+// 		// do something with nc that requires locking behind the scenes
+// 		_ = nc.LastError()
+// 	}
+// 	nc, err := o.Connect()
+// 	if err != nil {
+// 		t.Fatalf("Should have connected ok: %v", err)
+// 	}
+
+// 	total := 300
+// 	wg := &sync.WaitGroup{}
+// 	wg.Add(total)
+// 	for i := 0; i < total; i++ {
+// 		go func() {
+// 			// overwhelm asyncCB with errors
+// 			nc.processErr(AUTHORIZATION_ERR)
+// 			wg.Done()
+// 		}()
+// 	}
+// 	wg.Wait()
+
+// 	nc.Close()
+// 	if e := Wait(ch); e != nil {
+// 		t.Fatal("Deadlock")
+// 	}
+// }
+
+func TestNoEcho(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+
+	nc, err := nats.Connect(url, nats.NoEcho())
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	r := int32(0)
+	_, err = nc.Subscribe("foo", func(m *nats.Msg) {
+		atomic.AddInt32(&r, 1)
+	})
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	err = nc.Publish("foo", []byte("Hello World"))
+	if err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	nc.Flush()
+	nc.Flush()
+
+	if nr := atomic.LoadInt32(&r); nr != 0 {
+		t.Fatalf("Expected no messages echoed back, received %d\n", nr)
+	}
+}
+
+func TestAuthErrorOnReconnect(t *testing.T) {
+	// This is a bit of an artificial test, but it is to demonstrate
+	// that if the client is disconnected from a server (not due to an auth error),
+	// it will still correctly stop the reconnection logic if it gets twice an
+	// auth error from the same server.
+
+	o1 := natsserver.DefaultTestOptions
+	o1.Port = -1
+	s1 := RunServerWithOptions(&o1)
+	defer s1.Shutdown()
+
+	o2 := natsserver.DefaultTestOptions
+	o2.Port = -1
+	o2.Username = "ivan"
+	o2.Password = "pwd"
+	s2 := RunServerWithOptions(&o2)
+	defer s2.Shutdown()
+
+	dch := make(chan bool)
+	cch := make(chan bool)
+
+	urls := fmt.Sprintf("nats://%s:%d, nats://%s:%d", o1.Host, o1.Port, o2.Host, o2.Port)
+	nc, err := Connect(urls,
+		ReconnectWait(25*time.Millisecond),
+		ReconnectJitter(0, 0),
+		MaxReconnects(-1),
+		DontRandomize(),
+		ErrorHandler(func(_ *Conn, _ *Subscription, _ error) {}),
+		DisconnectErrHandler(func(_ *Conn, e error) {
+			dch <- true
+		}),
+		ClosedHandler(func(_ *Conn) {
+			cch <- true
+		}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got err: %v\n", err)
+	}
+	defer nc.Close()
+
+	s1.Shutdown()
+
+	// wait for disconnect
+	if e := WaitTime(dch, 5*time.Second); e != nil {
+		t.Fatal("Did not receive a disconnect callback message")
+	}
+
+	// Wait for ClosedCB
+	if e := WaitTime(cch, 5*time.Second); e != nil {
+		reconnects := nc.Stats().Reconnects
+		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", reconnects)
+	}
+
+	// We should have stopped after 2 reconnects.
+	if reconnects := nc.Stats().Reconnects; reconnects != 2 {
+		t.Fatalf("Expected 2 reconnects, got %v", reconnects)
+	}
+
+	// Expect connection to be closed...
+	if !nc.IsClosed() {
+		t.Fatalf("Wrong status: %d\n", nc.Status())
+	}
+}
