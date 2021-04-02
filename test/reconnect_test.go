@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 )
 
@@ -787,6 +788,7 @@ func TestConnCloseNoCallback(t *testing.T) {
 // More reconnect tests
 
 const TEST_PORT_2 = 8368
+
 var reconnectOpts2 = nats.Options{
 	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT_2),
 	AllowReconnect: true,
@@ -901,30 +903,30 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 
 	o1 := natsserver.DefaultTestOptions
 	o1.Port = -1
-	s1 := RunServerWithOptions(&o1)
+	s1 := RunServerWithOptions(o1)
 	defer s1.Shutdown()
 
 	o2 := natsserver.DefaultTestOptions
 	o2.Port = -1
 	o2.Username = "ivan"
 	o2.Password = "pwd"
-	s2 := RunServerWithOptions(&o2)
+	s2 := RunServerWithOptions(o2)
 	defer s2.Shutdown()
 
 	dch := make(chan bool)
 	cch := make(chan bool)
 
 	urls := fmt.Sprintf("nats://%s:%d, nats://%s:%d", o1.Host, o1.Port, o2.Host, o2.Port)
-	nc, err := Connect(urls,
-		ReconnectWait(25*time.Millisecond),
-		ReconnectJitter(0, 0),
-		MaxReconnects(-1),
-		DontRandomize(),
-		ErrorHandler(func(_ *Conn, _ *Subscription, _ error) {}),
-		DisconnectErrHandler(func(_ *Conn, e error) {
+	nc, err := nats.Connect(urls,
+		nats.ReconnectWait(25*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+		nats.MaxReconnects(-1),
+		nats.DontRandomize(),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {}),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, e error) {
 			dch <- true
 		}),
-		ClosedHandler(func(_ *Conn) {
+		nats.ClosedHandler(func(_ *nats.Conn) {
 			cch <- true
 		}))
 	if err != nil {

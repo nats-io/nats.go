@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"reflect"
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
@@ -2549,18 +2550,18 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
 	}
 
-	opts := natsserver.DefaultTestOptions
+	opts := test.DefaultTestOptions
 	opts.Host = "127.0.0.1"
 	opts.Port = TEST_PORT
-	s1 := RunServerWithOptions(&opts)
+	s1 := RunServerWithOptions(opts)
 	defer s1.Shutdown()
 
 	opts.Host = "::1"
-	s2 := RunServerWithOptions(&opts)
+	s2 := RunServerWithOptions(opts)
 	defer s2.Shutdown()
 
 	for i := 0; i < 100; i++ {
-		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+		nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
 		if err != nil {
 			t.Fatalf("Error on connect: %v", err)
 		}
@@ -2583,18 +2584,18 @@ func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
 		t.Skip("Was looking for IPv4 and IPv6 addresses for localhost to perform test")
 	}
 
-	opts := natsserver.DefaultTestOptions
+	opts := test.DefaultTestOptions
 	opts.Host = orgAddrs[0]
 	opts.Port = TEST_PORT
-	s1 := RunServerWithOptions(&opts)
+	s1 := RunServerWithOptions(opts)
 	defer s1.Shutdown()
 
 	opts.Host = orgAddrs[1]
-	s2 := RunServerWithOptions(&opts)
+	s2 := RunServerWithOptions(opts)
 	defer s2.Shutdown()
 
 	for i := 0; i < 100; i++ {
-		nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT), DontRandomize())
+		nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT), nats.DontRandomize())
 		if err != nil {
 			t.Fatalf("Error on connect: %v", err)
 		}
@@ -2610,11 +2611,12 @@ func TestConnectedAddr(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	var nc *Conn
+	_EMPTY_ := ""
+	var nc *nats.Conn
 	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
 		t.Fatalf("Expected empty result for nil connection, got %q", addr)
 	}
-	nc, err := Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
 	if err != nil {
 		t.Fatalf("Error connecting: %v", err)
 	}
@@ -2632,7 +2634,7 @@ func TestSubscribeSyncRace(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	nc, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
@@ -2658,7 +2660,7 @@ func TestBadSubjectsAndQueueNames(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	nc, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	nc, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
 	if err != nil {
 		t.Fatalf("Error connecting: %v", err)
 	}
@@ -2668,14 +2670,14 @@ func TestBadSubjectsAndQueueNames(t *testing.T) {
 	// We want the client to protect the user.
 	badSubs := []string{"foo bar", "foo..bar", ".foo", "bar.baz.", "baz\t.foo"}
 	for _, subj := range badSubs {
-		if _, err := nc.SubscribeSync(subj); err != ErrBadSubject {
+		if _, err := nc.SubscribeSync(subj); err != nats.ErrBadSubject {
 			t.Fatalf("Expected an error of ErrBadSubject for %q, got %v", subj, err)
 		}
 	}
 
 	badQueues := []string{"foo group", "group\t1", "g1\r\n2"}
 	for _, q := range badQueues {
-		if _, err := nc.QueueSubscribeSync("foo", q); err != ErrBadQueueName {
+		if _, err := nc.QueueSubscribeSync("foo", q); err != nats.ErrBadQueueName {
 			t.Fatalf("Expected an error of ErrBadQueueName for %q, got %v", q, err)
 		}
 	}
@@ -2685,11 +2687,11 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
 
-	ncp, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	ncp, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
 	if err != nil {
 		b.Fatalf("Error connecting: %v", err)
 	}
-	ncs, err := Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT), SyncQueueLen(b.N))
+	ncs, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT), nats.SyncQueueLen(b.N))
 	if err != nil {
 		b.Fatalf("Error connecting: %v", err)
 	}
