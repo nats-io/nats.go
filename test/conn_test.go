@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -28,7 +29,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"reflect"
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
@@ -2735,3 +2735,353 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	}
 }
 
+func TestStatsRace(t *testing.T) {
+	o := test.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(o)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	ch := make(chan bool)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				return
+			default:
+				nc.Stats()
+			}
+		}
+	}()
+
+	nc.Subscribe("foo", func(_ *nats.Msg) {})
+	for i := 0; i < 1000; i++ {
+		nc.Publish("foo", []byte("hello"))
+	}
+
+	close(ch)
+	wg.Wait()
+}
+
+func TestRequestMultipleReplies(t *testing.T) {
+	o := test.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(o)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		m.Respond(response)
+		m.Respond(response)
+	})
+	nc.Flush()
+
+	nc2, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc2.Close()
+
+	errCh := make(chan error, 1)
+	// Send a request on bar and expect nothing
+	go func() {
+		if m, err := nc2.Request("bar", nil, 500*time.Millisecond); m != nil || err == nil {
+			errCh <- fmt.Errorf("Expected no reply, got m=%+v err=%v", m, err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	// Send a request on foo, we use only one of the 2 replies
+	if _, err := nc2.Request("foo", nil, time.Second); err != nil {
+		t.Fatalf("Received an error on Request test: %s", err)
+	}
+	if e := <-errCh; e != nil {
+		t.Fatal(e.Error())
+	}
+}
+
+func TestGetRTT(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.ReconnectWait(10*time.Millisecond), nats.ReconnectJitter(0, 0))
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	rtt, err := nc.RTT()
+	if err != nil {
+		t.Fatalf("Unexpected error getting RTT: %v", err)
+	}
+	if rtt > time.Second {
+		t.Fatalf("RTT value too large: %v", rtt)
+	}
+	// We should not get a value when in any disconnected state.
+	s.Shutdown()
+	time.Sleep(5 * time.Millisecond)
+	if _, err = nc.RTT(); err != nats.ErrDisconnected {
+		t.Fatalf("Expected disconnected error getting RTT when disconnected, got %v", err)
+	}
+}
+
+func TestGetClientIP(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	ip, err := nc.GetClientIP()
+	if err != nil {
+		t.Fatalf("Got error looking up IP: %v", err)
+	}
+	if !ip.IsLoopback() {
+		t.Fatalf("Expected a loopback IP, got %v", ip)
+	}
+	nc.Close()
+	if _, err := nc.GetClientIP(); err != nats.ErrConnectionClosed {
+		t.Fatalf("Expected a connection closed error, got %v", err)
+	}
+}
+
+func TestReconnectWaitJitter(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	rch := make(chan time.Time, 1)
+	nc, err := nats.Connect(s.ClientURL(),
+		nats.ReconnectWait(100*time.Millisecond),
+		nats.ReconnectJitter(500*time.Millisecond, 0),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			rch <- time.Now()
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	s.Shutdown()
+	start := time.Now()
+	// Wait a bit so that the library tries a first time without waiting.
+	time.Sleep(50 * time.Millisecond)
+	s = RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+	select {
+	case end := <-rch:
+		dur := end.Sub(start)
+		// We should wait at least the reconnect wait + random up to 500ms.
+		// Account for a bit of variation since we rely on the reconnect
+		// handler which is not invoked in place.
+		if dur < 90*time.Millisecond || dur > 800*time.Millisecond {
+			t.Fatalf("Wrong wait: %v", dur)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Should have reconnected")
+	}
+	nc.Close()
+
+	// Use a long reconnect wait
+	nc, err = nats.Connect(s.ClientURL(), nats.ReconnectWait(10*time.Minute))
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Cause a disconnect
+	s.Shutdown()
+	// Wait a bit for the reconnect loop to go into wait mode.
+	time.Sleep(50 * time.Millisecond)
+	s = RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+	// Now close and expect the reconnect go routine to return..
+	nc.Close()
+	// Wait a bit to give a chance for the go routine to exit.
+	time.Sleep(50 * time.Millisecond)
+	buf := make([]byte, 100000)
+	n := runtime.Stack(buf, true)
+	if strings.Contains(string(buf[:n]), "doReconnect") {
+		t.Fatalf("doReconnect go routine still running:\n%s", buf[:n])
+	}
+}
+
+func TestCustomReconnectDelay(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	expectedAttempt := 1
+	errCh := make(chan error, 1)
+	cCh := make(chan bool, 1)
+	nc, err := nats.Connect(s.ClientURL(),
+		nats.CustomReconnectDelay(func(n int) time.Duration {
+			var err error
+			var delay time.Duration
+			if n != expectedAttempt {
+				err = fmt.Errorf("Expected attempt to be %v, got %v", expectedAttempt, n)
+			} else {
+				expectedAttempt++
+				if n <= 4 {
+					delay = 100 * time.Millisecond
+				}
+			}
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+			return delay
+		}),
+		nats.MaxReconnects(4),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			cCh <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Error during connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Cause disconnect
+	s.Shutdown()
+
+	// We should be trying to reconnect 4 times
+	start := time.Now()
+
+	// Wait on error or completion of test.
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	case <-cCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("No CB invoked")
+	}
+	if dur := time.Since(start); dur >= 500*time.Millisecond {
+		t.Fatalf("Waited too long on each reconnect: %v", dur)
+	}
+}
+
+// TODO: Requires the server in main package
+// func TestRequestInit(t *testing.T) {
+// 	o := natsserver.DefaultTestOptions
+// 	o.Port = -1
+// 	s := RunServerWithOptions(&o)
+// 	defer s.Shutdown()
+
+// 	nc, err := Connect(s.ClientURL())
+// 	if err != nil {
+// 		t.Fatalf("Error on connect: %v", err)
+// 	}
+// 	defer nc.Close()
+
+// 	if _, err := nc.Subscribe("foo", func(m *Msg) {
+// 		m.Respond([]byte("reply"))
+// 	}); err != nil {
+// 		t.Fatalf("Error on subscribe: %v", err)
+// 	}
+
+// 	// Artificially change the status to something that would make the internal subscribe
+// 	// call fail. Don't use CLOSED because then there is a risk that the flusher() goes away
+// 	// and so the rest of the test would fail.
+// 	nc.mu.Lock()
+// 	orgStatus := nc.status
+// 	nc.status = DRAINING_SUBS
+// 	nc.mu.Unlock()
+
+// 	if _, err := nc.Request("foo", []byte("request"), 50*time.Millisecond); err == nil {
+// 		t.Fatal("Expected error, got none")
+// 	}
+
+// 	nc.mu.Lock()
+// 	nc.status = orgStatus
+// 	nc.mu.Unlock()
+
+// 	if _, err := nc.Request("foo", []byte("request"), 500*time.Millisecond); err != nil {
+// 		t.Fatalf("Error on request: %v", err)
+// 	}
+// }
+
+// TODO: Should use mock server
+// 
+// func TestPingTimerLeakedOnClose(t *testing.T) {
+// 	s := RunServerOnPort(TEST_PORT)
+// 	defer s.Shutdown()
+
+// 	nc, err := Connect(fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT))
+// 	if err != nil {
+// 		t.Fatalf("Error on connect: %v", err)
+// 	}
+// 	nc.Close()
+
+// 	// There was a bug (issue #338) that if connection
+// 	// was created and closed quickly, the pinger would
+// 	// be created from a go-routine and would cause the
+// 	// connection object to be retained until the ping
+// 	// timer fired.
+// 	// Wait a little bit and check if the timer is set.
+// 	// With the defect it would be.
+// 	time.Sleep(100 * time.Millisecond)
+// 	nc.mu.Lock()
+// 	pingTimerSet := nc.ptmr != nil
+// 	nc.mu.Unlock()
+// 	if pingTimerSet {
+// 		t.Fatal("Pinger timer should not be set")
+// 	}
+// }
+
+func TestRequestLeaksMapEntries(t *testing.T) {
+	o := test.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(o)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		nc.Publish(m.Reply, response)
+	})
+
+	for i := 0; i < 100; i++ {
+		msg, err := nc.Request("foo", nil, 500*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Received an error on Request test: %s", err)
+		}
+		if !bytes.Equal(msg.Data, response) {
+			t.Fatalf("Received invalid response")
+		}
+	}
+
+	// TODO: Need to test this some other way.
+	// nc.mu.Lock()
+	// num := len(nc.respMap)
+	// nc.mu.Unlock()
+	// if num != 0 {
+	// 	t.Fatalf("Expected 0 entries in response map, got %d", num)
+	// }
+}
