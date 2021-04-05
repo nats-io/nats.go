@@ -1812,8 +1812,8 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 
 		// Try to fetch the same message which should be gone.
 		_, err = js.GetMsg("foo", originalSeq)
-		if err == nil || err.Error() != `deleted message` {
-			t.Errorf("Expected deleted message error, got: %v", err)
+		if err == nil || err.Error() != `no message found` {
+			t.Errorf("Expected no message found error, got: %v", err)
 		}
 	})
 
