@@ -2891,10 +2891,12 @@ func decodeHeadersMsg(data []byte) (http.Header, error) {
 	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
-	mh, err := tp.ReadMIMEHeader()
+
+	mh, err := readMIMEHeader(tp)
 	if err != nil {
-		return nil, ErrBadHeaderMsg
+		return nil, err
 	}
+
 	// Check if we have an inlined status.
 	if len(l) > hdrPreEnd {
 		var description string
@@ -2909,6 +2911,53 @@ func decodeHeadersMsg(data []byte) (http.Header, error) {
 		}
 	}
 	return http.Header(mh), nil
+}
+
+// readMIMEHeader returns a MIMEHeader that preserves the
+// original case of the MIME header, based on the implementation
+// of textproto.ReadMIMEHeader.
+//
+// https://golang.org/pkg/net/textproto/#Reader.ReadMIMEHeader
+func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
+	var (
+		m    = make(textproto.MIMEHeader)
+		strs []string
+	)
+	for {
+		kv, err := tp.ReadLine()
+		if len(kv) == 0 {
+			return m, err
+		}
+
+		// Process key fetching original case.
+		i := bytes.IndexByte([]byte(kv), ':')
+		if i < 0 {
+			return nil, ErrBadHeaderMsg
+		}
+		key := kv[:i]
+		if key == "" {
+			// Skip empty keys.
+			continue
+		}
+		i++
+		for i < len(kv) && (kv[i] == ' ' || kv[i] == '\t') {
+			i++
+		}
+		value := string(kv[i:])
+		vv := m[key]
+		if vv == nil && len(strs) > 0 {
+			// Single value header.
+			vv, strs = strs[:1:1], strs[1:]
+			vv[0] = value
+			m[key] = vv
+		} else {
+			// Multi value header.
+			m[key] = append(vv, value)
+		}
+		if err != nil {
+			return m, err
+		}
+	}
 }
 
 // PublishMsg publishes the Msg structure, which includes the
