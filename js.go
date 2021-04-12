@@ -754,7 +754,8 @@ func (ctx ContextOpt) configureAck(opts *ackOpts) error {
 	return nil
 }
 
-// Context returns an option that can be used to configure a context.
+// Context returns an option that can be used to configure a context for APIs
+// that are context aware such as those part of the JetStream interface.
 func Context(ctx context.Context) ContextOpt {
 	return ContextOpt{ctx}
 }
