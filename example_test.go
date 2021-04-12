@@ -688,6 +688,8 @@ func ExampleMsg_Metadata() {
 		Subjects: []string{"foo"},
 	})
 
+	js.Publish("foo", []byte("hello"))
+
 	sub, _ := js.SubscribeSync("foo")
 	msg, _ := sub.NextMsg(2 * time.Second)
 
@@ -695,7 +697,7 @@ func ExampleMsg_Metadata() {
 	meta, _ := msg.Metadata()
 
 	// Stream and Consumer sequences.
-	fmt.Printf("Stream seq: %d, Consumer seq: %d\n", meta.Sequence.Stream, meta.Sequence.Consumer)
+	fmt.Printf("Stream seq: %s:%d, Consumer seq: %s:%d\n", meta.Stream, meta.Sequence.Stream, meta.Consumer, meta.Sequence.Consumer)
 	fmt.Printf("Pending: %d\n", meta.NumPending)
 	fmt.Printf("Pending: %d\n", meta.NumDelivered)
 }

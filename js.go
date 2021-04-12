@@ -1734,6 +1734,7 @@ type MsgMetadata struct {
 	NumPending   uint64
 	Timestamp    time.Time
 	Stream       string
+	Consumer     string
 }
 
 func getMetadataFields(subject string) ([]string, error) {
@@ -1772,6 +1773,7 @@ func (m *Msg) Metadata() (*MsgMetadata, error) {
 		NumPending:   uint64(parseNum(tokens[8])),
 		Timestamp:    time.Unix(0, parseNum(tokens[7])),
 		Stream:       tokens[2],
+		Consumer:     tokens[3],
 	}
 	meta.Sequence.Stream = uint64(parseNum(tokens[5]))
 	meta.Sequence.Consumer = uint64(parseNum(tokens[6]))
