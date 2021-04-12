@@ -610,6 +610,26 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if info.Config.AckWait != ackWait {
 		t.Errorf("Expected %v, got %v", ackWait, info.Config.AckWait)
 	}
+
+	// Add Stream and Consumer name to metadata.
+	sub, err = js.SubscribeSync("bar", nats.Durable("consumer-name"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	m, err := sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	meta, err := m.Metadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Stream != "TEST" {
+		t.Fatalf("Unexpected stream name, got: %v", meta.Stream)
+	}
+	if meta.Consumer != "consumer-name" {
+		t.Fatalf("Unexpected consumer name, got: %v", meta.Consumer)
+	}
 }
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
@@ -618,6 +638,7 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 
 	if config := s.JetStreamConfig(); config != nil {
 		defer os.RemoveAll(config.StoreDir)
+
 	}
 
 	nc, err := nats.Connect(s.ClientURL())
