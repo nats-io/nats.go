@@ -169,6 +169,16 @@ func TestJetStreamPublish(t *testing.T) {
 	// Messages should have been rejected.
 	expect(0, 1)
 
+	// Using PublishMsg API and accessing directly the Header map.
+	msg2 := nats.NewMsg("foo")
+	msg2.Header[nats.ExpectedLastSeqHdr] = []string{"10"}
+	pa, err = js.PublishMsg(msg2)
+	if err == nil || !strings.Contains(err.Error(), "wrong last sequence") {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+	// Messages should have been rejected.
+	expect(0, 1)
+
 	// Send in a stream with a msgId
 	pa, err = js.Publish("foo", msg, nats.MsgId("ZZZ"))
 	if err != nil {
@@ -207,6 +217,16 @@ func TestJetStreamPublish(t *testing.T) {
 		t.Fatalf("Unexpected publish error: %v", err)
 	}
 	expect(3, 3)
+
+	// JetStream Headers are case-sensitive right now,
+	// so this will not activate the check.
+	msg3 := nats.NewMsg("foo")
+	msg3.Header["nats-expected-last-sequence"] = []string{"4"}
+	pa, err = js.PublishMsg(msg3)
+	if err != nil {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+	expect(4, 4)
 
 	// Now test context and timeouts.
 	// Both set should fail.
@@ -1714,6 +1734,9 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		msg := nats.NewMsg("foo.A")
 		data := fmt.Sprintf("A:%d", i)
 		msg.Data = []byte(data)
+		msg.Header = http.Header{
+			"X-NATS-Key": []string{"123"},
+		}
 		msg.Header.Add("X-Nats-Test-Data", data)
 		js.PublishMsg(msg)
 		js.Publish("foo.B", []byte(fmt.Sprintf("B:%d", i)))
@@ -1827,9 +1850,22 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		}
 		expectedMap := map[string][]string{
 			"X-Nats-Test-Data": {"A:1"},
+			"X-NATS-Key":       {"123"},
 		}
 		if !reflect.DeepEqual(streamMsg.Header, http.Header(expectedMap)) {
 			t.Errorf("Expected %v, got: %v", expectedMap, streamMsg.Header)
+		}
+
+		sub, err := js.SubscribeSync("foo.A", nats.StartSequence(4))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := sub.NextMsg(2 * time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(msg.Header, http.Header(expectedMap)) {
+			t.Errorf("Expected %v, got: %v", expectedMap, msg.Header)
 		}
 	})
 }
