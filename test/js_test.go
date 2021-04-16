@@ -1,4 +1,4 @@
-// Copyright 2020 The NATS Authors
+// Copyright 2020-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -413,6 +413,17 @@ func TestJetStreamSubscribe(t *testing.T) {
 	expectConsumers(t, 3)
 
 	// Reattach using the same consumer.
+	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if deliver != sub.Subject {
+		t.Fatal("Expected delivery subject to be the same after reattach")
+	}
+	expectConsumers(t, 3)
+
+	// Subscribing again with same subject and durable name is not an error,
+	// but does not create a new consumer either.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -3895,24 +3906,32 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 			t.Fatal(err)
 		}
 		o.StoreDir = tdir
-		o.Cluster.Name = clusterName
-		_, host1, port1 := getAddr()
-		o.Host = host1
-		o.Port = port1
 
-		addr2, host2, port2 := getAddr()
-		o.Cluster.Host = host2
-		o.Cluster.Port = port2
-		o.Tags = []string{o.ServerName}
-		routes = append(routes, fmt.Sprintf("nats://%s", addr2))
+		if size > 1 {
+			o.Cluster.Name = clusterName
+			_, host1, port1 := getAddr()
+			o.Host = host1
+			o.Port = port1
+
+			addr2, host2, port2 := getAddr()
+			o.Cluster.Host = host2
+			o.Cluster.Port = port2
+			o.Tags = []string{o.ServerName}
+			routes = append(routes, fmt.Sprintf("nats://%s", addr2))
+		}
 		opts = append(opts, &o)
 	}
 
-	routesStr := server.RoutesFromStr(strings.Join(routes, ","))
+	if size > 1 {
+		routesStr := server.RoutesFromStr(strings.Join(routes, ","))
 
-	for i, o := range opts {
-		o.Routes = routesStr
-		nodes[i] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
+		for i, o := range opts {
+			o.Routes = routesStr
+			nodes[i] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
+		}
+	} else {
+		o := opts[0]
+		nodes[0] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
 	}
 
 	// Wait until JS is ready.
@@ -3975,18 +3994,18 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream *
 			t.Error(err)
 		}
 
-		var jsm nats.JetStreamManager
-		jsm, err = nc.JetStream()
-		if err != nil {
-			t.Fatal(err)
-		}
-
 		timeout := time.Now().Add(10 * time.Second)
 		for time.Now().Before(timeout) {
+			var jsm nats.JetStreamManager
+			jsm, err = nc.JetStream()
+			if err != nil {
+				// Backoff for a bit until cluster and resources are ready.
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+
 			_, err = jsm.AddStream(stream)
 			if err != nil {
-				t.Logf("WARN: Got error while trying to create stream: %v", err)
-				// Backoff for a bit until cluster and resources ready.
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
@@ -4551,6 +4570,229 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 			}
 		})
 	})
+}
+
+func TestJetStream_ClusterMultipleSubscribe(t *testing.T) {
+	nodes := []int{1}
+
+	for _, n := range nodes {
+		t.Run(fmt.Sprintf("sub n=%d", n), func(t *testing.T) {
+			name := fmt.Sprintf("SUB%d", n)
+			stream := &nats.StreamConfig{
+				Name:     name,
+				Replicas: n,
+			}
+			withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultipleSubscribe)
+		})
+
+		t.Run(fmt.Sprintf("qsub n=%d", n), func(t *testing.T) {
+			name := fmt.Sprintf("MSUB%d", n)
+			stream := &nats.StreamConfig{
+				Name:     name,
+				Replicas: n,
+			}
+			withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultipleQueueSubscribe)
+		})
+
+		t.Run(fmt.Sprintf("psub n=%d", n), func(t *testing.T) {
+			name := fmt.Sprintf("PSUB%d", n)
+			stream := &nats.StreamConfig{
+				Name:     name,
+				Replicas: n,
+			}
+			withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultiplePullSubscribe)
+		})
+	}
+}
+
+func testJetStream_ClusterMultipleSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+	defer done()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	size := 50
+	subs := make([]*nats.Subscription, size)
+	errCh := make(chan error, 1)
+	for i := 0; i < size; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			sub, err := js.SubscribeSync(subject, nats.Durable("shared"))
+			if err != nil {
+				errCh <- err
+			}
+			subs[n] = sub
+		}(i)
+	}
+
+	go func() {
+		// Unblock the main context when done.
+		wg.Wait()
+		done()
+	}()
+
+	for i := 0; i < size*2; i++ {
+		js.Publish(subject, []byte("test"))
+	}
+	wg.Wait()
+
+	delivered := 0
+	for _, sub := range subs {
+		_, err := sub.NextMsg(10 * time.Millisecond)
+		if err != nil {
+			continue
+		}
+		delivered++
+	}
+	if delivered < 2 {
+		t.Fatalf("Expected more than one subscriber to receive a message, got: %v", delivered)
+	}
+
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Unexpected error with multiple queue subscribers: %v", err)
+		}
+	}
+}
+
+func testJetStream_ClusterMultipleQueueSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+	defer done()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	size := 50
+	subs := make([]*nats.Subscription, size)
+	errCh := make(chan error, 1)
+	for i := 0; i < size; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			sub, err := js.QueueSubscribeSync(subject, "wq", nats.Durable("shared"))
+			if err != nil {
+				errCh <- err
+			}
+			subs[n] = sub
+		}(i)
+	}
+
+	go func() {
+		// Unblock the main context when done.
+		wg.Wait()
+		done()
+	}()
+
+	for i := 0; i < size*2; i++ {
+		js.Publish(subject, []byte("test"))
+	}
+	wg.Wait()
+
+	delivered := 0
+	for _, sub := range subs {
+		_, err := sub.NextMsg(10 * time.Millisecond)
+		if err != nil {
+			continue
+		}
+		delivered++
+	}
+	if delivered < 2 {
+		t.Fatalf("Expected more than one subscriber to receive a message, got: %v", delivered)
+	}
+
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Unexpected error with multiple queue subscribers: %v", err)
+		}
+	}
+}
+
+func testJetStream_ClusterMultiplePullSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+	defer done()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	size := 50
+	subs := make([]*nats.Subscription, size)
+	errCh := make(chan error, 1)
+	for i := 0; i < size; i++ {
+		wg.Add(1)
+		go func(n int) {
+			sub, err := js.PullSubscribe(subject, "shared")
+			if err != nil {
+				errCh <- err
+			}
+			subs[n] = sub
+			wg.Done()
+		}(i)
+	}
+
+	go func() {
+		// Unblock the main context when done.
+		wg.Wait()
+		done()
+	}()
+
+	for i := 0; i < size*2; i++ {
+		js.Publish(subject, []byte("test"))
+	}
+	wg.Wait()
+
+	delivered := 0
+	for _, sub := range subs {
+		_, err := sub.Fetch(1, nats.MaxWait(100*time.Millisecond))
+		if err != nil {
+			continue
+		}
+		delivered++
+	}
+
+	if delivered < 2 {
+		t.Fatalf("Expected more than one subscriber to receive a message, got: %v", delivered)
+	}
+
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Unexpected error with multiple queue subscribers: %v", err)
+		}
+	}
 }
 
 func TestJetStream_ClusterReconnect(t *testing.T) {
