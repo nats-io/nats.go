@@ -213,6 +213,10 @@ type consumerResponse struct {
 
 // AddConsumer will add a JetStream consumer.
 func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
+	if !isValidName(stream) {
+		return nil, ErrInvalidStreamName
+	}
+
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return nil, err
@@ -265,6 +269,10 @@ type consumerDeleteResponse struct {
 
 // DeleteConsumer deletes a Consumer.
 func (js *js) DeleteConsumer(stream, consumer string, opts ...JSOpt) error {
+	if !isValidName(stream) {
+		return ErrInvalidStreamName
+	}
+
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return err
@@ -294,6 +302,10 @@ func (js *js) DeleteConsumer(stream, consumer string, opts ...JSOpt) error {
 
 // ConsumerInfo returns information about a Consumer.
 func (js *js) ConsumerInfo(stream, consumer string, opts ...JSOpt) (*ConsumerInfo, error) {
+	if !isValidName(stream) {
+		return nil, ErrInvalidStreamName
+	}
+
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return nil, err
@@ -390,6 +402,10 @@ func (c *consumerLister) Err() error {
 
 // ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
 func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
+	if !isValidName(stream) {
+		return nil
+	}
+
 	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
@@ -487,6 +503,10 @@ func (c *consumerNamesLister) Err() error {
 
 // ConsumerNames is used to retrieve a list of Consumer names.
 func (jsc *js) ConsumerNames(stream string, opts ...JSOpt) <-chan string {
+	if !isValidName(stream) {
+		return nil
+	}
+
 	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
@@ -519,6 +539,13 @@ type streamCreateResponse struct {
 	*StreamInfo
 }
 
+func isValidName(name string) bool {
+	if name == "" {
+		return false
+	}
+	return !strings.ContainsAny(name, ".*>")
+}
+
 func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
@@ -531,8 +558,7 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 	if cfg == nil || cfg.Name == _EMPTY_ {
 		return nil, ErrStreamNameRequired
 	}
-
-	if strings.Contains(cfg.Name, ".") {
+	if !isValidName(cfg.Name) {
 		return nil, ErrInvalidStreamName
 	}
 
@@ -559,10 +585,9 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 type streamInfoResponse = streamCreateResponse
 
 func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
-	if strings.Contains(stream, ".") {
+	if !isValidName(stream) {
 		return nil, ErrInvalidStreamName
 	}
-
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return nil, err
@@ -645,6 +670,9 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 	if cfg == nil || cfg.Name == _EMPTY_ {
 		return nil, ErrStreamNameRequired
 	}
+	if !isValidName(cfg.Name) {
+		return nil, ErrInvalidStreamName
+	}
 
 	req, err := json.Marshal(cfg)
 	if err != nil {
@@ -684,6 +712,9 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 
 	if name == _EMPTY_ {
 		return ErrStreamNameRequired
+	}
+	if !isValidName(name) {
+		return ErrInvalidStreamName
 	}
 
 	dsSubj := js.apiSubj(fmt.Sprintf(apiStreamDeleteT, name))
@@ -742,6 +773,9 @@ func (js *js) GetMsg(name string, seq uint64, opts ...JSOpt) (*RawStreamMsg, err
 
 	if name == _EMPTY_ {
 		return nil, ErrStreamNameRequired
+	}
+	if !isValidName(name) {
+		return nil, ErrInvalidStreamName
 	}
 
 	req, err := json.Marshal(&apiMsgGetRequest{Seq: seq})
@@ -805,6 +839,9 @@ func (js *js) DeleteMsg(name string, seq uint64, opts ...JSOpt) error {
 	if name == _EMPTY_ {
 		return ErrStreamNameRequired
 	}
+	if !isValidName(name) {
+		return ErrInvalidStreamName
+	}
 
 	req, err := json.Marshal(&msgDeleteRequest{Seq: seq})
 	if err != nil {
@@ -834,6 +871,10 @@ type streamPurgeResponse struct {
 
 // PurgeStream purges messages on a Stream.
 func (js *js) PurgeStream(name string, opts ...JSOpt) error {
+	if !isValidName(name) {
+		return ErrInvalidStreamName
+	}
+
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return err
