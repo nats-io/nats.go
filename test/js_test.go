@@ -1584,6 +1584,20 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 	})
 
+	t.Run("create bad stream", func(t *testing.T) {
+		_, err := js.AddStream(&nats.StreamConfig{Name: "foo.invalid"})
+		if err != nats.ErrInvalidStreamName {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("bad stream info", func(t *testing.T) {
+		_, err := js.StreamInfo("foo.invalid")
+		if err != nats.ErrInvalidStreamName {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
 	t.Run("stream update", func(t *testing.T) {
 		if _, err := js.UpdateStream(nil); err == nil {
 			t.Fatal("Unexpected success")
