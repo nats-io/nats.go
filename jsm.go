@@ -532,6 +532,10 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, ErrStreamNameRequired
 	}
 
+	if strings.Contains(cfg.Name, ".") {
+		return nil, ErrInvalidStreamName
+	}
+
 	req, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -555,6 +559,10 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 type streamInfoResponse = streamCreateResponse
 
 func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
+	if strings.Contains(stream, ".") {
+		return nil, ErrInvalidStreamName
+	}
+
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return nil, err
