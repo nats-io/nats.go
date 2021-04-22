@@ -1020,31 +1020,30 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 
 		resp, err := js.nc.Request(js.apiSubj(ccSubj), j, js.opts.wait)
 		if err != nil {
+			sub.Drain()
 			if err == ErrNoResponders {
 				err = ErrJetStreamNotEnabled
 			}
-			sub.Unsubscribe()
 			return nil, err
 		}
-
 		var cinfo consumerResponse
 		err = json.Unmarshal(resp.Data, &cinfo)
 		if err != nil {
-			sub.Unsubscribe()
+			sub.Drain()
 			return nil, err
 		}
 		info = cinfo.ConsumerInfo
 		if cinfo.Error != nil {
 			// Remove interest from previous subscribe since it
 			// may have an incorrect delivery subject.
-			sub.Unsubscribe()
+			sub.Drain()
 
 			// Multiple subscribers could compete in creating the first consumer
 			// that will be shared using the same durable name. If this happens, then
 			// do a lookup of the consumer info and resubscribe using the latest info.
-			if consumer != _EMPTY_ && strings.Contains(cinfo.Error.Description, `consumer already exists`) {
+			if consumer != _EMPTY_ && (strings.Contains(cinfo.Error.Description, `consumer already exists`) || strings.Contains(cinfo.Error.Description, `consumer name already in use`)) {
 				info, err = js.ConsumerInfo(stream, consumer)
-				if err != nil && err.Error() != "nats: consumer not found" {
+				if err != nil {
 					return nil, err
 				}
 				ccfg = &info.Config
