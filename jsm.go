@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -709,7 +708,7 @@ type apiMsgGetRequest struct {
 type RawStreamMsg struct {
 	Subject  string
 	Sequence uint64
-	Header   http.Header
+	Header   Header
 	Data     []byte
 	Time     time.Time
 }
@@ -765,7 +764,7 @@ func (js *js) GetMsg(name string, seq uint64, opts ...JSOpt) (*RawStreamMsg, err
 
 	msg := resp.Message
 
-	var hdr http.Header
+	var hdr Header
 	if msg.Header != nil {
 		hdr, err = decodeHeadersMsg(msg.Header)
 		if err != nil {

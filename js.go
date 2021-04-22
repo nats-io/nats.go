@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -283,7 +282,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	var o pubOpts
 	if len(opts) > 0 {
 		if m.Header == nil {
-			m.Header = http.Header{}
+			m.Header = Header{}
 		}
 		for _, opt := range opts {
 			if err := opt.configurePublish(&o); err != nil {
@@ -584,7 +583,7 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	var o pubOpts
 	if len(opts) > 0 {
 		if m.Header == nil {
-			m.Header = http.Header{}
+			m.Header = Header{}
 		}
 		for _, opt := range opts {
 			if err := opt.configurePublish(&o); err != nil {
