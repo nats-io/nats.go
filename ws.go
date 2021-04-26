@@ -51,7 +51,7 @@ const (
 	wsMaskBit = 1 << 7
 
 	wsContinuationFrame     = 0
-	wsMaxFrameHeaderSize    = 14 // Since LeafNode may need to behave as a client
+	wsMaxFrameHeaderSize    = 14
 	wsMaxControlPayloadSize = 125
 
 	// From https://tools.ietf.org/html/rfc6455#section-11.7
@@ -225,6 +225,9 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 			return 0, fmt.Errorf("unknown opcode %v", frameType)
 		}
 
+		// If the encoded size is <= 125, then `rem` is simply the remainder size of the
+		// frame. If it is 126, then the actual size is encoded as a uint16. For larger
+		// frames, `rem` will initially be 127 and the actual size is encoded as a uint64.
 		switch rem {
 		case 126:
 			tmpBuf, pos, err = wsGet(r.r, buf, pos, 2)
