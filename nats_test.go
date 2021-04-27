@@ -456,8 +456,8 @@ func TestUrlArgument(t *testing.T) {
 
 func TestParserPing(t *testing.T) {
 	c := &Conn{}
-	fake := &bytes.Buffer{}
-	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+	c.newReaderWriter()
+	c.bw.switchToPending()
 
 	c.ps = &parseState{}
 
@@ -510,8 +510,8 @@ func TestParserPing(t *testing.T) {
 func TestParserErr(t *testing.T) {
 	c := &Conn{}
 	c.status = CLOSED
-	fake := &bytes.Buffer{}
-	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+	c.newReaderWriter()
+	c.bw.switchToPending()
 
 	c.ps = &parseState{}
 
