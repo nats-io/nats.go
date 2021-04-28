@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -1780,7 +1779,7 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		msg := nats.NewMsg("foo.A")
 		data := fmt.Sprintf("A:%d", i)
 		msg.Data = []byte(data)
-		msg.Header = http.Header{
+		msg.Header = nats.Header{
 			"X-NATS-Key": []string{"123"},
 		}
 		msg.Header.Add("X-Nats-Test-Data", data)
@@ -1898,7 +1897,7 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 			"X-Nats-Test-Data": {"A:1"},
 			"X-NATS-Key":       {"123"},
 		}
-		if !reflect.DeepEqual(streamMsg.Header, http.Header(expectedMap)) {
+		if !reflect.DeepEqual(streamMsg.Header, nats.Header(expectedMap)) {
 			t.Errorf("Expected %v, got: %v", expectedMap, streamMsg.Header)
 		}
 
@@ -1910,7 +1909,7 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(msg.Header, http.Header(expectedMap)) {
+		if !reflect.DeepEqual(msg.Header, nats.Header(expectedMap)) {
 			t.Errorf("Expected %v, got: %v", expectedMap, msg.Header)
 		}
 	})

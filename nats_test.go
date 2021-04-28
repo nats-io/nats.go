@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"reflect"
@@ -2480,6 +2481,52 @@ func TestHeaderParser(t *testing.T) {
 	checkStatus("NATS/1.0 503", 503, "")
 	checkStatus("NATS/1.0 503 No Responders", 503, "No Responders")
 	checkStatus("NATS/1.0  404   No Messages", 404, "No Messages")
+}
+
+func TestHeaderMultiLine(t *testing.T) {
+	m := NewMsg("foo")
+	m.Header = Header{
+		"CorrelationID": []string{"123"},
+		"Msg-ID":        []string{"456"},
+		"X-NATS-Keys":   []string{"A", "B", "C"},
+		"X-Test-Keys":   []string{"D", "E", "F"},
+	}
+	// Users can opt-in to canonicalize like http.Header does
+	// by using http.Header#Set or http.Header#Add.
+	http.Header(m.Header).Set("accept-encoding", "json")
+	http.Header(m.Header).Add("AUTHORIZATION", "s3cr3t")
+
+	// Multi Value Header becomes represented as multi-lines in the wire
+	// since internally using same Write from http stdlib.
+	m.Header.Set("X-Test", "First")
+	m.Header.Add("X-Test", "Second")
+	m.Header.Add("X-Test", "Third")
+
+	b, err := m.headerBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := string(b)
+
+	expectedHeader := `NATS/1.0
+Accept-Encoding: json
+Authorization: s3cr3t
+CorrelationID: 123
+Msg-ID: 456
+X-NATS-Keys: A
+X-NATS-Keys: B
+X-NATS-Keys: C
+X-Test: First
+X-Test: Second
+X-Test: Third
+X-Test-Keys: D
+X-Test-Keys: E
+X-Test-Keys: F
+
+`
+	if strings.Replace(expectedHeader, "\n", "\r\n", -1) != result {
+		t.Fatalf("Expected: %q, got: %q", expectedHeader, result)
+	}
 }
 
 func TestLameDuckMode(t *testing.T) {
