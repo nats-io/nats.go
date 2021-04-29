@@ -1054,6 +1054,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 
 				// Use the deliver subject from latest consumer config to attach.
 				if ccfg.DeliverSubject != _EMPTY_ {
+					// We can't reuse the channel, so if one was passed, we need to create a new one.
+					if ch != nil {
+						ch = make(chan *Msg, cap(ch))
+					}
 					sub, err = js.nc.subscribe(ccfg.DeliverSubject, queue, cb, ch, isSync,
 						&jsSub{js: js, hbs: hasHeartbeats, fc: hasFC})
 					if err != nil {
@@ -1069,11 +1073,13 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 		consumer = info.Name
 		deliver = info.Config.DeliverSubject
 	}
+	sub.mu.Lock()
 	sub.jsi.stream = stream
 	sub.jsi.consumer = consumer
 	sub.jsi.durable = isDurable
 	sub.jsi.attached = attached
 	sub.jsi.deliver = deliver
+	sub.mu.Unlock()
 
 	return sub, nil
 }
