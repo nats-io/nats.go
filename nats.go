@@ -2810,7 +2810,7 @@ func (nc *Conn) processPong() {
 	nc.mu.Lock()
 	if len(nc.pongs) > 0 {
 		ch = nc.pongs[0]
-		nc.pongs = nc.pongs[1:]
+		nc.pongs = append(nc.pongs[:0], nc.pongs[1:]...)
 	}
 	nc.pout = 0
 	nc.mu.Unlock()
