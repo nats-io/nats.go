@@ -623,6 +623,20 @@ func TestBasicNoRespondersSupport(t *testing.T) {
 	if m, err := nc.RequestWithContext(ctx, "foo", nil); err != nats.ErrNoResponders {
 		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
 	}
+
+	// SubscribeSync
+	inbox := nats.NewInbox()
+	sub, err := nc.SubscribeSync(inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = nc.PublishRequest("foo", inbox, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := sub.NextMsg(2 * time.Second); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
+	}
 }
 
 func TestOldRequest(t *testing.T) {

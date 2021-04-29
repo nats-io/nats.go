@@ -4053,6 +4053,9 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 			nc.mu.Unlock()
 		}
 	}
+	if len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
+		return ErrNoResponders
+	}
 
 	return nil
 }
