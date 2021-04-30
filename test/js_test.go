@@ -3465,6 +3465,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	defer mc.Close()
 	jsm, err := mc.JetStream()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -3844,7 +3845,9 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 	}
 
 	// Change rate limit.
-	recvd := make(chan *nats.Msg)
+	// Make the receive channel able to possibly hold ALL messages, but
+	// we expect it to hold less due to rate limiting.
+	recvd := make(chan *nats.Msg, totalMsgs)
 	duration := 2 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
@@ -3954,6 +3957,7 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 		t.Error(err)
 	}
 	waitForJSReady(t, nc)
+	nc.Close()
 
 	return nodes
 }
@@ -4006,6 +4010,7 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream *
 		if err != nil {
 			t.Error(err)
 		}
+		defer nc.Close()
 
 		timeout := time.Now().Add(10 * time.Second)
 		for time.Now().Before(timeout) {
@@ -4084,6 +4089,7 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
+			defer nc.Close()
 
 			js, err := nc.JetStream()
 			if err != nil {
@@ -4112,6 +4118,7 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
+			defer nc.Close()
 
 			js, err := nc.JetStream()
 			if err != nil {
@@ -4141,6 +4148,7 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
+			defer nc.Close()
 
 			js, err := nc.JetStream()
 			if err != nil {
@@ -4176,6 +4184,7 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 	if err != nil {
 		t.Error(err)
 	}
+	defer nc.Close()
 
 	js, err := nc.JetStream()
 	if err != nil {
@@ -4631,6 +4640,7 @@ func testJetStream_ClusterMultipleSubscribe(t *testing.T, subject string, srvs .
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer nc.Close()
 
 	var wg sync.WaitGroup
 	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
@@ -4711,6 +4721,7 @@ func testJetStream_ClusterMultipleQueueSubscribe(t *testing.T, subject string, s
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer nc.Close()
 
 	var wg sync.WaitGroup
 	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
@@ -4792,6 +4803,7 @@ func testJetStream_ClusterMultiplePullSubscribe(t *testing.T, subject string, sr
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer nc.Close()
 
 	var wg sync.WaitGroup
 	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)

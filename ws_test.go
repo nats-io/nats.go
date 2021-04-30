@@ -570,6 +570,7 @@ func TestWSControlFrames(t *testing.T) {
 	nc, err := Connect(url,
 		ReconnectWait(50*time.Millisecond),
 		DisconnectErrHandler(func(_ *Conn, err error) { dch <- err }),
+		ReconnectHandler(func(_ *Conn) { rch <- true }),
 	)
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -599,9 +600,18 @@ func TestWSControlFrames(t *testing.T) {
 	s = RunServerWithOptions(sopts)
 	defer s.Shutdown()
 
-	// Wait to reconnect
+	// Wait for both connections to reconnect
 	if err := Wait(rch); err != nil {
 		t.Fatalf("Should have reconnected: %v", err)
+	}
+	if err := Wait(rch); err != nil {
+		t.Fatalf("Should have reconnected: %v", err)
+	}
+	// Even if the first connection reconnects, there is no guarantee
+	// that the resend of SUB has yet been processed by the server.
+	// Doing a flush here will give us the guarantee.
+	if err := ncSub.Flush(); err != nil {
+		t.Fatalf("Error on flush: %v", err)
 	}
 
 	// Publish and close connection.
