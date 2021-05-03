@@ -796,7 +796,8 @@ func ExampleContext() {
 	}, nctx)
 
 	// Custom context with timeout
-	tctx, _ := context.WithTimeout(nctx, 2*time.Second)
+	tctx, tcancel := context.WithTimeout(nctx, 2*time.Second)
+	defer tcancel()
 
 	// Set a timeout for publishing using context.
 	deadlineCtx := nats.Context(tctx)
