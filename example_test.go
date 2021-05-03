@@ -774,3 +774,40 @@ func ExamplePullOpt() {
 		msg.Ack()
 	}
 }
+
+func ExampleContext() {
+	nc, err := nats.Connect("localhost")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	js, _ := nc.JetStream()
+
+	// Base context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// nats.Context option implements context.Context interface, so can be used
+	// to create a new context from top level one.
+	nctx := nats.Context(ctx)
+
+	// JetStreamManager functions all can use context.
+	js.AddStream(&nats.StreamConfig{
+		Name:     "FOO",
+		Subjects: []string{"foo"},
+	}, nctx)
+
+	// Custom context with timeout
+	tctx, tcancel := context.WithTimeout(nctx, 2*time.Second)
+	defer tcancel()
+
+	// Set a timeout for publishing using context.
+	deadlineCtx := nats.Context(tctx)
+
+	js.Publish("foo", []byte("Hello JS!"), deadlineCtx)
+	sub, _ := js.SubscribeSync("foo")
+	msg, _ := sub.NextMsgWithContext(deadlineCtx)
+
+	// Acks can also use a context to await for a response.
+	msg.Ack(deadlineCtx)
+}
