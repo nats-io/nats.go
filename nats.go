@@ -3648,10 +3648,11 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 
 	// If we have an async callback, start up a sub specific
 	// Go routine to deliver the messages.
+	var sr bool
 	if cb != nil {
 		sub.typ = AsyncSubscription
 		sub.pCond = sync.NewCond(&sub.mu)
-		go nc.waitForMsgs(sub)
+		sr = true
 	} else if !isSync {
 		sub.typ = ChanSubscription
 		sub.mch = ch
@@ -3665,6 +3666,11 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 	sub.sid = nc.ssid
 	nc.subs[sub.sid] = sub
 	nc.subsMu.Unlock()
+
+	// Let's start the go routine now that it is fully setup and registered.
+	if sr {
+		go nc.waitForMsgs(sub)
+	}
 
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here if reconnecting.
@@ -3862,7 +3868,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 
 	maxStr := _EMPTY_
 	if max > 0 {
+		s.mu.Lock()
 		s.max = uint64(max)
+		s.mu.Unlock()
 		maxStr = strconv.Itoa(max)
 	} else if !drainMode {
 		nc.removeSub(s)
