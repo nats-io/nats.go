@@ -3932,7 +3932,8 @@ func (jsi *jsSub) trackSequences(msg *Msg) {
 
 // NextMsg will return the next message available to a synchronous subscriber
 // or block until one is available. An error is returned if the subscription is invalid (ErrBadSubscription),
-// the connection is closed (ErrConnectionClosed), or the timeout is reached (ErrTimeout).
+// the connection is closed (ErrConnectionClosed), the timeout is reached (ErrTimeout),
+// or if there were no responders (ErrNoResponders) when used in the context of a request/reply.
 func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
