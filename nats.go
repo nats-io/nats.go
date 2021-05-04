@@ -2539,6 +2539,9 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 		if !s.closed {
 			s.delivered++
 			delivered = s.delivered
+			if s.jsi != nil && s.jsi.fc && len(s.jsi.fcs) > 0 {
+				s.checkForFlowControlResponse(delivered)
+			}
 		}
 		s.mu.Unlock()
 
@@ -2607,8 +2610,9 @@ func (nc *Conn) processMsg(data []byte) {
 	// Check if we have headers encoded here.
 	var h Header
 	var err error
-	var ctrl bool
+	var ctrlMsg bool
 	var hasFC bool
+	var hasHBs bool
 
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
@@ -2630,40 +2634,40 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Lock()
 
-	// Skip flow control messages in case of using a JetStream context.
-	jsi := sub.jsi
-	if jsi != nil {
-		ctrl = isControlMessage(m)
-		hasFC = jsi.fc
-	}
-
 	// Check if closed.
 	if sub.closed {
 		sub.mu.Unlock()
 		return
 	}
 
-	// Subscription internal stats (applicable only for non ChanSubscription's)
-	if sub.typ != ChanSubscription {
-		sub.pMsgs++
-		if sub.pMsgs > sub.pMsgsMax {
-			sub.pMsgsMax = sub.pMsgs
-		}
-		sub.pBytes += len(m.Data)
-		if sub.pBytes > sub.pBytesMax {
-			sub.pBytesMax = sub.pBytes
-		}
-
-		// Check for a Slow Consumer
-		if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
-			(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
-			goto slowConsumer
-		}
+	// Skip flow control messages in case of using a JetStream context.
+	jsi := sub.jsi
+	if jsi != nil {
+		ctrlMsg, hasHBs, hasFC = isControlMessage(m), jsi.hbs, jsi.fc
 	}
 
-	// We have two modes of delivery. One is the channel, used by channel
-	// subscribers and syncSubscribers, the other is a linked list for async.
-	if !ctrl {
+	// Skip processing if this is a control message.
+	if !ctrlMsg {
+		// Subscription internal stats (applicable only for non ChanSubscription's)
+		if sub.typ != ChanSubscription {
+			sub.pMsgs++
+			if sub.pMsgs > sub.pMsgsMax {
+				sub.pMsgsMax = sub.pMsgs
+			}
+			sub.pBytes += len(m.Data)
+			if sub.pBytes > sub.pBytesMax {
+				sub.pBytesMax = sub.pBytes
+			}
+
+			// Check for a Slow Consumer
+			if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
+				(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
+				goto slowConsumer
+			}
+		}
+
+		// We have two modes of delivery. One is the channel, used by channel
+		// subscribers and syncSubscribers, the other is a linked list for async.
 		if sub.mch != nil {
 			select {
 			case sub.mch <- m:
@@ -2683,8 +2687,19 @@ func (nc *Conn) processMsg(data []byte) {
 				sub.pTail = m
 			}
 		}
-		if hasFC {
-			jsi.trackSequences(m)
+		if jsi != nil && hasHBs {
+			// Store the ACK metadata from the message to
+			// compare later on with the received heartbeat.
+			jsi.trackSequences(m.Reply)
+		}
+	} else if hasFC && m.Reply != _EMPTY_ {
+		// This is a flow control message.
+		// If we have no pending, go ahead and send in place.
+		if sub.pMsgs == 0 {
+			nc.Publish(m.Reply, nil)
+		} else {
+			// Schedule a reply after the previous message is delivered.
+			jsi.scheduleFlowControlResponse(sub.delivered+uint64(sub.pMsgs), m.Reply)
 		}
 	}
 
@@ -2693,10 +2708,9 @@ func (nc *Conn) processMsg(data []byte) {
 
 	sub.mu.Unlock()
 
-	// Handle flow control and heartbeat messages automatically
-	// for JetStream Push consumers.
-	if ctrl {
-		nc.processControlFlow(m, sub, jsi)
+	// Handle control heartbeat messages.
+	if ctrlMsg && hasHBs && m.Reply == _EMPTY_ {
+		nc.processSequenceMismatch(m, sub, jsi)
 	}
 
 	return
@@ -3889,55 +3903,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	return nil
 }
 
-// ErrConsumerSequenceMismatch represents an error from a consumer
-// that received a Heartbeat including sequence different to the
-// one expected from the view of the client.
-type ErrConsumerSequenceMismatch struct {
-	// StreamResumeSequence is the stream sequence from where the consumer
-	// should resume consuming from the stream.
-	StreamResumeSequence uint64
-
-	// ConsumerSequence is the sequence of the consumer that is behind.
-	ConsumerSequence int64
-
-	// LastConsumerSequence is the sequence of the consumer when the heartbeat
-	// was received.
-	LastConsumerSequence int64
-}
-
-func (ecs *ErrConsumerSequenceMismatch) Error() string {
-	return fmt.Sprintf("nats: sequence mismatch for consumer at sequence %d (%d sequences behind), should restart consumer from stream sequence %d",
-		ecs.ConsumerSequence,
-		ecs.LastConsumerSequence-ecs.ConsumerSequence,
-		ecs.StreamResumeSequence,
-	)
-}
-
-// handleConsumerSequenceMismatch will send an async error that can be used to restart a push based consumer.
-func (nc *Conn) handleConsumerSequenceMismatch(sub *Subscription, err error) {
-	nc.mu.Lock()
-	errCB := nc.Opts.AsyncErrorCB
-	if errCB != nil {
-		nc.ach.push(func() { errCB(nc, sub, err) })
-	}
-	nc.mu.Unlock()
-}
-
-func isControlMessage(msg *Msg) bool {
-	return len(msg.Data) == 0 && msg.Header.Get(statusHdr) == controlMsg
-}
-
-func (jsi *jsSub) trackSequences(msg *Msg) {
-	var ctrl *controlMetadata
-	if cmeta := jsi.cmeta.Load(); cmeta == nil {
-		ctrl = &controlMetadata{}
-	} else {
-		ctrl = cmeta.(*controlMetadata)
-	}
-	ctrl.meta = msg.Reply
-	jsi.cmeta.Store(ctrl)
-}
-
 // NextMsg will return the next message available to a synchronous subscriber
 // or block until one is available. An error is returned if the subscription is invalid (ErrBadSubscription),
 // the connection is closed (ErrConnectionClosed), the timeout is reached (ErrTimeout),
@@ -4045,6 +4010,10 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	// Update some stats.
 	s.delivered++
 	delivered := s.delivered
+	if s.jsi != nil && s.jsi.fc && len(s.jsi.fcs) > 0 {
+		s.checkForFlowControlResponse(delivered)
+	}
+
 	if s.typ == SyncSubscription {
 		s.pMsgs--
 		s.pBytes -= len(msg.Data)
