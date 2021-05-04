@@ -1,4 +1,4 @@
-// Copyright 2019 The NATS Authors
+// Copyright 2019-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,6 +16,7 @@
 package nats
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -96,4 +97,81 @@ func TestNoRaceParseStateReconnectFunctionality(t *testing.T) {
 			reconnectedCount, expectedReconnectCount)
 	}
 	nc.Close()
+}
+
+func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
+	// This test fails many times, need to look harder at the imbalance.
+	t.SkipNow()
+
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	if err := s.EnableJetStream(nil); err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	defer os.RemoveAll(s.JetStreamConfig().StoreDir)
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "PENDING_TEST",
+		Subjects: []string{"js.p"},
+		Storage:  MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("stream create failed: %v", err)
+	}
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *Conn, _ *Subscription, _ error) {})
+
+	// Queue up 1M small messages.
+	toSend := uint64(1000000)
+	for i := uint64(0); i < toSend; i++ {
+		nc.Publish("js.p", []byte("ok"))
+	}
+	nc.Flush()
+
+	str, err := js.StreamInfo("PENDING_TEST")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if nm := str.State.Msgs; nm != toSend {
+		t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
+	}
+
+	var received uint64
+	done := make(chan bool, 1)
+
+	js.Subscribe("js.p", func(m *Msg) {
+		received++
+		if received >= toSend {
+			done <- true
+		}
+		meta, err := m.Metadata()
+		if err != nil {
+			t.Fatalf("could not get message metadata: %s", err)
+		}
+		if meta.Sequence.Stream != received {
+			t.Errorf("Missed a sequence, was expecting %d but got %d, last error: '%v'", received, meta.Sequence.Stream, nc.LastError())
+			nc.Close()
+		}
+		m.Ack()
+	})
+
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Failed to get all %d messages, only got %d", toSend, received)
+	case <-done:
+	}
 }

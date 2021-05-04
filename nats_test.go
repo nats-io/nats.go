@@ -25,11 +25,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"reflect"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -455,8 +457,8 @@ func TestUrlArgument(t *testing.T) {
 
 func TestParserPing(t *testing.T) {
 	c := &Conn{}
-	fake := &bytes.Buffer{}
-	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+	c.newReaderWriter()
+	c.bw.switchToPending()
 
 	c.ps = &parseState{}
 
@@ -509,8 +511,8 @@ func TestParserPing(t *testing.T) {
 func TestParserErr(t *testing.T) {
 	c := &Conn{}
 	c.status = CLOSED
-	fake := &bytes.Buffer{}
-	c.bw = bufio.NewWriterSize(fake, c.Opts.ReconnectBufSize)
+	c.newReaderWriter()
+	c.bw.switchToPending()
 
 	c.ps = &parseState{}
 
@@ -1006,7 +1008,6 @@ func TestAsyncINFO(t *testing.T) {
 		ID:           "test",
 		Host:         "localhost",
 		Port:         4222,
-		Version:      "1.2.3",
 		AuthRequired: true,
 		TLSRequired:  true,
 		MaxPayload:   2 * 1024 * 1024,
@@ -1436,8 +1437,8 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	nc.Close()
 }
 
-func TestExpiredUserCredentials(t *testing.T) {
-	// The goal of this test was to check how a client with an expiring JWT
+func TestExpiredAuthentication(t *testing.T) {
+	// The goal of these tests was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
 	// has expired, which will trigger reconnects. There, the lib should
 	// received -ERR for auth violation in response to the CONNECT (instead
@@ -1451,104 +1452,117 @@ func TestExpiredUserCredentials(t *testing.T) {
 	// So for a deterministic test, we won't use an actual NATS Server.
 	// Instead, we will use a mock that simply returns appropriate -ERR and
 	// ensure the client behaves as expected.
-	l, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal("Could not listen on an ephemeral port")
-	}
-	tl := l.(*net.TCPListener)
-	defer tl.Close()
+	for _, test := range []struct {
+		name          string
+		expectedProto string
+		expectedErr   error
+	}{
+		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired},
+		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked},
+		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			l, e := net.Listen("tcp", "127.0.0.1:0")
+			if e != nil {
+				t.Fatal("Could not listen on an ephemeral port")
+			}
+			tl := l.(*net.TCPListener)
+			defer tl.Close()
 
-	addr := tl.Addr().(*net.TCPAddr)
+			addr := tl.Addr().(*net.TCPAddr)
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+			wg := sync.WaitGroup{}
+			wg.Add(1)
 
-	go func() {
-		defer wg.Done()
-		connect := 0
-		for {
-			conn, err := l.Accept()
+			go func() {
+				defer wg.Done()
+				connect := 0
+				for {
+					conn, err := l.Accept()
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+
+					info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
+					conn.Write([]byte(info))
+
+					// Read connect and ping commands sent from the client
+					br := bufio.NewReaderSize(conn, 10*1024)
+					br.ReadLine()
+					br.ReadLine()
+
+					if connect++; connect == 1 {
+						conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
+						time.Sleep(300 * time.Millisecond)
+						conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", test.expectedProto)))
+					} else {
+						conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+					}
+					conn.Close()
+				}
+			}()
+
+			ch := make(chan bool)
+			errCh := make(chan error, 10)
+
+			url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
+			nc, err := Connect(url,
+				ReconnectWait(25*time.Millisecond),
+				ReconnectJitter(0, 0),
+				MaxReconnects(-1),
+				ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
+					select {
+					case errCh <- e:
+					default:
+					}
+				}),
+				ClosedHandler(func(nc *Conn) {
+					ch <- true
+				}),
+			)
 			if err != nil {
-				return
+				t.Fatalf("Expected to connect, got %v", err)
 			}
-			defer conn.Close()
+			defer nc.Close()
 
-			info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
-			conn.Write([]byte(info))
-
-			// Read connect and ping commands sent from the client
-			br := bufio.NewReaderSize(conn, 10*1024)
-			br.ReadLine()
-			br.ReadLine()
-
-			if connect++; connect == 1 {
-				conn.Write([]byte(fmt.Sprintf("%s%s", _PONG_OP_, _CRLF_)))
-				time.Sleep(300 * time.Millisecond)
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHENTICATION_EXPIRED_ERR)))
-			} else {
-				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", AUTHORIZATION_ERR)))
+			// We should give up since we get the same error on both tries.
+			if err := WaitTime(ch, 2*time.Second); err != nil {
+				t.Fatal("Should have closed after multiple failed attempts.")
 			}
-			conn.Close()
-		}
-	}()
+			if stats := nc.Stats(); stats.Reconnects > 2 {
+				t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
+			}
 
-	ch := make(chan bool)
-	errCh := make(chan error, 10)
-
-	url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
-	nc, err := Connect(url,
-		ReconnectWait(25*time.Millisecond),
-		ReconnectJitter(0, 0),
-		MaxReconnects(-1),
-		ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
+			// We expect 3 errors, the expired auth/revoke error, then 2 AUTHORIZATION_ERR
+			// before the connection is closed.
+			for i := 0; i < 3; i++ {
+				select {
+				case e := <-errCh:
+					if i == 0 && e != test.expectedErr {
+						t.Fatalf("Expected error %q, got %q", test.expectedErr, e)
+					} else if i > 0 && e != ErrAuthorization {
+						t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
+					}
+				default:
+					if i == 0 {
+						t.Fatalf("Missing %q error", test.expectedErr)
+					} else {
+						t.Fatalf("Missing %q error", ErrAuthorization)
+					}
+				}
+			}
+			// We should not have any more error
 			select {
-			case errCh <- e:
+			case e := <-errCh:
+				t.Fatalf("Extra error: %v", e)
 			default:
 			}
-		}),
-		ClosedHandler(func(nc *Conn) {
-			ch <- true
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Expected to connect, got %v", err)
+			// Close the listener and wait for go routine to end.
+			l.Close()
+			wg.Wait()
+		})
 	}
-	defer nc.Close()
-
-	// We should give up since we get the same error on both tries.
-	if err := WaitTime(ch, 2*time.Second); err != nil {
-		t.Fatal("Should have closed after multiple failed attempts.")
-	}
-	if stats := nc.Stats(); stats.Reconnects > 2 {
-		t.Fatalf("Expected at most 2 reconnects, got %d", stats.Reconnects)
-	}
-	// We expect 3 errors, an AUTHENTICATION_EXPIRED_ERR, then 2 AUTHORIZATION_ERR
-	// before the connection is closed.
-	for i := 0; i < 3; i++ {
-		select {
-		case e := <-errCh:
-			if i == 0 && e != ErrAuthExpired {
-				t.Fatalf("Expected error %q, got %q", ErrAuthExpired, e)
-			} else if i > 0 && e != ErrAuthorization {
-				t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
-			}
-		default:
-			if i == 0 {
-				t.Fatalf("Missing %q error", ErrAuthExpired)
-			} else {
-				t.Fatalf("Missing %q error", ErrAuthorization)
-			}
-		}
-	}
-	// We should not have any more error
-	select {
-	case e := <-errCh:
-		t.Fatalf("Extra error: %v", e)
-	default:
-	}
-	// Close the listener and wait for go routine to end.
-	l.Close()
-	wg.Wait()
 }
 
 // If we are using TLS and have multiple servers we try to match the IP
@@ -2002,6 +2016,7 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 		ReconnectJitter(0, 0),
 		MaxReconnects(-1),
 		DontRandomize(),
+		ErrorHandler(func(_ *Conn, _ *Subscription, _ error) {}),
 		DisconnectErrHandler(func(_ *Conn, e error) {
 			dch <- true
 		}),
@@ -2445,6 +2460,73 @@ func TestHeaderParser(t *testing.T) {
 	shouldErr("NATS/1.0\r\n")
 	shouldErr("NATS/1.0\r\nk1:v1")
 	shouldErr("NATS/1.0\r\nk1:v1\r\n")
+
+	// Check that we can do inline status and descriptions
+	checkStatus := func(hdr string, status int, description string) {
+		t.Helper()
+		hdrs, err := decodeHeadersMsg([]byte(hdr + "\r\n\r\n"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if code, err := strconv.Atoi(hdrs.Get(statusHdr)); err != nil || code != status {
+			t.Fatalf("Expected status of %d, got %s", status, hdrs.Get(statusHdr))
+		}
+		if len(description) > 0 {
+			if descr := hdrs.Get(descrHdr); err != nil || descr != description {
+				t.Fatalf("Expected description of %q, got %q", description, descr)
+			}
+		}
+	}
+
+	checkStatus("NATS/1.0 503", 503, "")
+	checkStatus("NATS/1.0 503 No Responders", 503, "No Responders")
+	checkStatus("NATS/1.0  404   No Messages", 404, "No Messages")
+}
+
+func TestHeaderMultiLine(t *testing.T) {
+	m := NewMsg("foo")
+	m.Header = Header{
+		"CorrelationID": []string{"123"},
+		"Msg-ID":        []string{"456"},
+		"X-NATS-Keys":   []string{"A", "B", "C"},
+		"X-Test-Keys":   []string{"D", "E", "F"},
+	}
+	// Users can opt-in to canonicalize like http.Header does
+	// by using http.Header#Set or http.Header#Add.
+	http.Header(m.Header).Set("accept-encoding", "json")
+	http.Header(m.Header).Add("AUTHORIZATION", "s3cr3t")
+
+	// Multi Value Header becomes represented as multi-lines in the wire
+	// since internally using same Write from http stdlib.
+	m.Header.Set("X-Test", "First")
+	m.Header.Add("X-Test", "Second")
+	m.Header.Add("X-Test", "Third")
+
+	b, err := m.headerBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := string(b)
+
+	expectedHeader := `NATS/1.0
+Accept-Encoding: json
+Authorization: s3cr3t
+CorrelationID: 123
+Msg-ID: 456
+X-NATS-Keys: A
+X-NATS-Keys: B
+X-NATS-Keys: C
+X-Test: First
+X-Test: Second
+X-Test: Third
+X-Test-Keys: D
+X-Test-Keys: E
+X-Test-Keys: F
+
+`
+	if strings.Replace(expectedHeader, "\n", "\r\n", -1) != result {
+		t.Fatalf("Expected: %q, got: %q", expectedHeader, result)
+	}
 }
 
 func TestLameDuckMode(t *testing.T) {
@@ -2539,4 +2621,41 @@ func TestLameDuckMode(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestMsg_RespondMsg(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync(NewInbox())
+	if err != nil {
+		t.Fatalf("subscribe failed: %s", err)
+	}
+
+	nc.PublishMsg(&Msg{Reply: sub.Subject, Subject: sub.Subject, Data: []byte("request")})
+	req, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("NextMsg failed: %s", err)
+	}
+
+	// verifies that RespondMsg sets the reply subject on msg based on req
+	err = req.RespondMsg(&Msg{Data: []byte("response")})
+	if err != nil {
+		t.Fatalf("RespondMsg failed: %s", err)
+	}
+
+	resp, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("NextMsg failed: %s", err)
+	}
+
+	if !bytes.Equal(resp.Data, []byte("response")) {
+		t.Fatalf("did not get correct response: %q", resp.Data)
+	}
 }

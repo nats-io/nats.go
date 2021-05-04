@@ -16,8 +16,11 @@ package test
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"runtime"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -109,6 +112,7 @@ func RunDefaultServer() *server.Server {
 func RunServerOnPort(port int) *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = port
+	opts.Cluster.Name = "testing"
 	return RunServerWithOptions(opts)
 }
 
@@ -120,4 +124,26 @@ func RunServerWithOptions(opts server.Options) *server.Server {
 // RunServerWithConfig will run a server with the given configuration file.
 func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
 	return natsserver.RunServerWithConfig(configFile)
+}
+
+func RunBasicJetStreamServer() *server.Server {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	return RunServerWithOptions(opts)
+}
+
+func createConfFile(t *testing.T, content []byte) string {
+	t.Helper()
+	conf, err := ioutil.TempFile("", "")
+	if err != nil {
+		t.Fatalf("Error creating conf file: %v", err)
+	}
+	fName := conf.Name()
+	conf.Close()
+	if err := ioutil.WriteFile(fName, content, 0666); err != nil {
+		os.Remove(fName)
+		t.Fatalf("Error writing conf file: %v", err)
+	}
+	return fName
 }

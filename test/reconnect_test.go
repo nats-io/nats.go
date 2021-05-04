@@ -575,6 +575,7 @@ func TestReconnectVerbose(t *testing.T) {
 	defer s.Shutdown()
 
 	o := nats.GetDefaultOptions()
+	o.ReconnectWait = 50 * time.Millisecond
 	o.Verbose = true
 	rch := make(chan bool)
 	o.ReconnectedCB = func(_ *nats.Conn) {

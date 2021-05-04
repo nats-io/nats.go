@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2020 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -20,6 +20,7 @@ import (
 	"math"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -120,18 +121,35 @@ func TestConnectedServer(t *testing.T) {
 	if u == "" || u != nats.DefaultURL {
 		t.Fatalf("Unexpected connected URL of %s\n", u)
 	}
-	srv := nc.ConnectedServerId()
-	if srv == "" {
-		t.Fatal("Expected a connected server id")
+	id := nc.ConnectedServerId()
+	if id == "" {
+		t.Fatalf("Expected a connected server id, got %s", id)
 	}
+	name := nc.ConnectedServerName()
+	if name == "" {
+		t.Fatalf("Expected a connected server name, got %s", name)
+	}
+	cname := nc.ConnectedClusterName()
+	if cname == "" {
+		t.Fatalf("Expected a connected server cluster name, got %s", cname)
+	}
+
 	nc.Close()
 	u = nc.ConnectedUrl()
 	if u != "" {
 		t.Fatalf("Expected a nil connected URL, got %s\n", u)
 	}
-	srv = nc.ConnectedServerId()
-	if srv != "" {
-		t.Fatalf("Expected a nil connect server, got %s\n", srv)
+	id = nc.ConnectedServerId()
+	if id != "" {
+		t.Fatalf("Expected a nil connect server, got %s", id)
+	}
+	name = nc.ConnectedServerName()
+	if name != "" {
+		t.Fatalf("Expected a nil connect server name, got %s", name)
+	}
+	cname = nc.ConnectedClusterName()
+	if cname != "" {
+		t.Fatalf("Expected a nil connect server cluster, got %s", cname)
 	}
 }
 
@@ -163,7 +181,7 @@ func TestBadOptionTimeoutConnect(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error")
 	}
-	if err != nats.ErrNoServers {
+	if !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("Expected a ErrNoServers error: Got %v\n", err)
 	}
 }
@@ -195,6 +213,9 @@ func TestPublishDoesNotFailOnSlowConsumer(t *testing.T) {
 	defer s.Shutdown()
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
+
+	// Override default handler for test.
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	sub, err := nc.SubscribeSync("foo")
 	if err != nil {
@@ -602,6 +623,20 @@ func TestBasicNoRespondersSupport(t *testing.T) {
 	if m, err := nc.RequestWithContext(ctx, "foo", nil); err != nats.ErrNoResponders {
 		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
 	}
+
+	// SubscribeSync
+	inbox := nats.NewInbox()
+	sub, err := nc.SubscribeSync(inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = nc.PublishRequest("foo", inbox, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := sub.NextMsg(2 * time.Second); err != nats.ErrNoResponders {
+		t.Fatalf("Expected a no responders error and nil msg, got m:%+v and err: %v", m, err)
+	}
 }
 
 func TestOldRequest(t *testing.T) {
@@ -701,7 +736,7 @@ func TestSimultaneousRequests(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			if _, err := nc.Request("foo", nil, 2*time.Second); err != nil {
-				errCh <- fmt.Errorf("expected to receive a timeout error")
+				errCh <- fmt.Errorf("Error on request: %v", err)
 			}
 		}()
 	}
