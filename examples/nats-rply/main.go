@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2021 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -28,7 +28,7 @@ import (
 // nats-rply -s demo.nats.io:4443 <subject> <response> (TLS version)
 
 func usage() {
-	log.Printf("Usage: nats-rply [-s server] [-creds file] [-t] [-q queue] <subject> <response>\n")
+	log.Printf("Usage: nats-rply [-s server] [-creds file] [-nkey file] [-t] [-q queue] <subject> <response>\n")
 	flag.PrintDefaults()
 }
 
@@ -44,6 +44,7 @@ func printMsg(m *nats.Msg, i int) {
 func main() {
 	var urls = flag.String("s", nats.DefaultURL, "The nats server URLs (separated by comma)")
 	var userCreds = flag.String("creds", "", "User Credentials File")
+	var nkeyFile = flag.String("nkey", "", "NKey Seed File")
 	var showTime = flag.Bool("t", false, "Display timestamps")
 	var queueName = flag.String("q", "NATS-RPLY-22", "Queue Group Name")
 	var showHelp = flag.Bool("h", false, "Show help message")
@@ -65,9 +66,22 @@ func main() {
 	opts := []nats.Option{nats.Name("NATS Sample Responder")}
 	opts = setupConnOptions(opts)
 
+	if *userCreds != "" && *nkeyFile != "" {
+		log.Fatal("specify -seed or -creds")
+	}
+
 	// Use UserCredentials
 	if *userCreds != "" {
 		opts = append(opts, nats.UserCredentials(*userCreds))
+	}
+
+	// Use Nkey authentication.
+	if *nkeyFile != "" {
+		opt, err := nats.NkeyOptionFromSeed(*nkeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, opt)
 	}
 
 	// Connect to NATS
