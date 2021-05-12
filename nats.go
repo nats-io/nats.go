@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/nats-io/nats.go/util"
 	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
+	"golang.org/x/crypto/ocsp"
 )
 
 // Default Constants
@@ -430,6 +432,11 @@ type Options struct {
 	// For websocket connections, indicates to the server that the connection
 	// supports compression. If the server does too, then data will be compressed.
 	Compression bool
+
+	// EnforceOCSP enables verifying OCSP responses in server certificates. The
+	// certificate needs to have OCSP enabled as well. If verification fails,
+	// then the TLS connection will be aborted.
+	EnforceOCSP bool
 }
 
 const (
@@ -734,6 +741,16 @@ func Secure(tls ...*tls.Config) Option {
 		if len(tls) == 1 {
 			o.TLSConfig = tls[0]
 		}
+		return nil
+	}
+}
+
+// EnforceOCSP enables verifying OCSP responses in server certificates. The
+// certificate needs to have OCSP enabled as well. If verification fails, then
+// the TLS connection will be aborted.
+func EnforceOCSP() Option {
+	return func(o *Options) error {
+		o.EnforceOCSP = true
 		return nil
 	}
 }
@@ -1683,6 +1700,70 @@ func (nc *Conn) createConn() (err error) {
 	return nil
 }
 
+// hasOCSPStatusRequest returns whether a certificate has the "status_request"
+// flag set.
+func hasOCSPStatusRequest(cert *x509.Certificate) bool {
+	tlsFeatures := asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 24}
+	const statusRequestExt = byte(5)
+	const tlsFeaturesLen = 5
+
+	// Example Value: [48 3 2 1 5]
+	// Documentation:
+	// https://tools.ietf.org/html/rfc6066
+
+	for _, ext := range cert.Extensions {
+		if !ext.Id.Equal(tlsFeatures) {
+			continue
+		}
+		if len(ext.Value) != tlsFeaturesLen {
+			continue
+		}
+		return ext.Value[tlsFeaturesLen-1] == statusRequestExt
+	}
+
+	return false
+}
+
+// verifyOCSP verifies that if a server certificate has "status_request" set,
+// then the certificate has a valid OCSP response.
+func (nc *Conn) verifyOCSP(s tls.ConnectionState) error {
+	if !nc.Opts.EnforceOCSP {
+		return nil
+	}
+
+	if len(s.VerifiedChains) == 0 {
+		return fmt.Errorf("missing TLS verified chains")
+	}
+	chain := s.VerifiedChains[0]
+
+	if got, want := len(chain), 2; got < want {
+		return fmt.Errorf("incomplete cert chain, got %d, want at least %d", got, want)
+	}
+	leaf, issuer := chain[0], chain[1]
+
+	if !hasOCSPStatusRequest(leaf) {
+		// "status_request" not set, no need to do anything.
+		return nil
+	}
+
+	resp, err := ocsp.ParseResponseForCert(s.OCSPResponse, leaf, issuer)
+	if err != nil {
+		return fmt.Errorf("failed to parse OCSP response: %w", err)
+	}
+	if err := resp.CheckSignatureFrom(issuer); err != nil {
+		return fmt.Errorf("invalid issuer signature: %w", err)
+	}
+	if n := resp.Status; n != ocsp.Good {
+		status := "unknown"
+		if n == ocsp.Revoked {
+			status = "revoked"
+		}
+		return fmt.Errorf("bad OCSP certificate status: %q", status)
+	}
+
+	return nil
+}
+
 // makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() error {
 	// Allow the user to configure their own tls.Config structure.
@@ -1692,6 +1773,7 @@ func (nc *Conn) makeTLSConn() error {
 	} else {
 		tlsCopy = &tls.Config{}
 	}
+	tlsCopy.VerifyConnection = nc.verifyOCSP
 	// If its blank we will override it with the current host
 	if tlsCopy.ServerName == _EMPTY_ {
 		if nc.current.tlsName != _EMPTY_ {
