@@ -2252,7 +2252,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer ncm.Close()
 
-	jsm, err := ncm.JetStream()
+	jsm, err := ncm.BindJetStream()
 	if err != nil {
 		t.Fatal(err)
 	}
