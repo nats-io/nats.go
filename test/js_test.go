@@ -2401,7 +2401,7 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 
 	_, err = js1.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
-		Replicas: 2,
+		Replicas: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
