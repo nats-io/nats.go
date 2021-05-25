@@ -2364,7 +2364,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	} else if len(m) != 1 {
 		t.Fatalf("expected one message, got %d", len(m))
-	} else if err = m[0].Ack(); err != nil {
+	} else if err = m[0].AckSync(); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
