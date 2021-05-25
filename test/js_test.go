@@ -2343,7 +2343,6 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		}
 	}
 
-	// Cannot subscribe with JS context from another account right now.
 	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrBoundJetStreamStream {
 		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrBoundJetStreamStream, err)
 	}
