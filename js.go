@@ -187,7 +187,8 @@ func (nc *Conn) jetStream(opts ...JSOpt) (*js, error) {
 }
 
 // BindJetStream returns a JetStreamContext for messaging and stream management that will NOT create
-// underlying objects like stream or durable. It assumes they exist already.
+// underlying objects like stream or durable on Subscribe. It assumes they exist already and that
+// the JetStream context is bound to another account via an import with limited permissions for example.
 // This will also disable the use of ephemeral consumer.
 func (nc *Conn) BindJetStream(opts ...JSOpt) (JetStreamContext, error) {
 	js, err := nc.jetStream(opts...)
