@@ -190,6 +190,7 @@ func (nc *Conn) jetStream(opts ...JSOpt) (*js, error) {
 
 // BindJetStream returns a JetStreamContext for messaging and stream management that will NOT create
 // underlying objects like stream or durable. It assumes they exist already.
+// This will also disable the use of ephemeral consumer.
 func (nc *Conn) BindJetStream(opts ...JSOpt) (JetStreamContext, error) {
 	js, err := nc.jetStream(opts...)
 	if err != nil {
@@ -1054,7 +1055,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 	// Find the stream mapped to the subject if not bound to a stream already.
 	if o.stream == _EMPTY_ {
 		if js.bound {
-			return nil, fmt.Errorf("nats: a bound JS requires a stream name")
+			return nil, ErrBoundJetStreamStream
 		}
 		stream, err = js.lookupStreamBySubject(subj)
 		if err != nil {
@@ -1068,7 +1069,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 	// the consumer to which it should be attaching to.
 	consumer = o.cfg.Durable
 	if consumer == _EMPTY_ && js.bound {
-		return nil, fmt.Errorf("nats: a bound JS requires a durable name")
+		return nil, ErrBoundJetStreamDurable
 	} else if consumer != _EMPTY_ && !js.bound {
 		// Only create in case there is no consumer already.
 		info, err = js.ConsumerInfo(stream, consumer)

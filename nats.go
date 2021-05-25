@@ -135,6 +135,8 @@ var (
 	ErrNoContextOrTimeout           = errors.New("nats: no context or timeout given")
 	ErrPullModeNotAllowed           = errors.New("nats: pull based not supported")
 	ErrJetStreamNotEnabled          = errors.New("nats: jetstream not enabled")
+	ErrBoundJetStreamStream         = errors.New("nats: a bound JS requires a stream name")
+	ErrBoundJetStreamDurable        = errors.New("nats: a bound JS requires a stream name")
 	ErrJetStreamBadPre              = errors.New("nats: jetstream api prefix not valid")
 	ErrNoStreamResponse             = errors.New("nats: no response from stream")
 	ErrNotJSMessage                 = errors.New("nats: not a jetstream message")

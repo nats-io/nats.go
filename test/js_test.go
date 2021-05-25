@@ -2294,7 +2294,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := nc.JetStream()
+	js, err := nc.BindJetStream()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2344,14 +2344,14 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 
 	// Cannot subscribe with JS context from another account right now.
-	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrBoundJetStreamStream {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrBoundJetStreamStream, err)
 	}
-	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrBoundJetStreamDurable {
+		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrBoundJetStreamDurable, err)
 	}
-	if _, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	if _, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nil {
+		t.Fatalf("Expected no error, got '%v'", err)
 	}
 }
 
