@@ -169,8 +169,6 @@ const (
 	defaultAccountCheck = 20 * time.Second
 )
 
-// BindJetStream returns a JetStreamContext for messaging and stream management that will NOT create
-// underlying objects like stream or durable. It assumes they exist already.
 func (nc *Conn) jetStream(opts ...JSOpt) (*js, error) {
 	js := &js{
 		nc: nc,
