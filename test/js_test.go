@@ -2288,6 +2288,14 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("push consumer create failed: %v", err)
 	}
 
+	_, err = jsm.AddConsumer("ORDERS", &nats.ConsumerConfig{
+		Durable:   "d4",
+		AckPolicy: nats.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("pull consumer create failed: %v", err)
+	}
+
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -2343,14 +2351,21 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		}
 	}
 
+	// Cannot subscribe with JS context from another account unless the stream is specified
 	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrBoundJetStreamStream {
 		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrBoundJetStreamStream, err)
 	}
 	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrBoundJetStreamDurable {
 		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrBoundJetStreamDurable, err)
 	}
-	if _, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nil {
+	if sub, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nil {
 		t.Fatalf("Expected no error, got '%v'", err)
+	} else if m, err := sub.Fetch(1); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	} else if len(m) != 1 {
+		t.Fatalf("expected one message, got %d", len(m))
+	} else if err = m[0].Ack(); err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }
 
