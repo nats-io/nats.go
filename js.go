@@ -1008,7 +1008,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 		}
 	}
 
-	isPullMode := ch == nil && cb == nil
+	isPullMode := ch == nil && cb == nil && !isSync
 	badPullAck := o.cfg.AckPolicy == AckNonePolicy || o.cfg.AckPolicy == AckAllPolicy
 	hasHeartbeats := o.cfg.Heartbeat > 0
 	hasFC := o.cfg.FlowControl
@@ -1017,16 +1017,25 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 	}
 
 	var (
-		err          error
-		shouldCreate bool
-		ccfg         *ConsumerConfig
-		info         *ConsumerInfo
-		deliver      string
-		attached     bool
-		stream       = o.stream
-		consumer     = o.consumer
-		isDurable    = o.cfg.Durable != _EMPTY_
+		err           error
+		shouldCreate  bool
+		ccfg          *ConsumerConfig
+		info          *ConsumerInfo
+		deliver       string
+		attached      bool
+		stream        = o.stream
+		consumer      = o.consumer
+		isDurable     = o.cfg.Durable != _EMPTY_
+		consumerBound = o.bound
+		notFoundErr   bool
+		lookupErr     bool
 	)
+
+	// In case a consumer has not been set explicitly, then the
+	// durable name will be used as the consumer name.
+	if consumer == _EMPTY_ {
+		consumer = o.cfg.Durable
+	}
 
 	// Find the stream mapped to the subject if not bound to a stream already.
 	if o.stream == _EMPTY_ {
@@ -1038,18 +1047,16 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 		stream = o.stream
 	}
 
-	// With an explicit durable name, then can lookup
-	// the consumer to which it should be attaching to.
-	consumer = o.cfg.Durable
+	// With an explicit durable name, then can lookup the consumer first
+	// to which it should be attaching to.
 	if consumer != _EMPTY_ {
-		// Only create in case there is no consumer already.
 		info, err = js.ConsumerInfo(stream, consumer)
-		if err != nil && err.Error() != "nats: consumer not found" {
-			return nil, err
-		}
+		notFoundErr = err != nil && strings.Contains(err.Error(), "consumer not found")
+		lookupErr = err == ErrJetStreamNotEnabled || err == ErrTimeout || err == context.DeadlineExceeded
 	}
 
-	if info != nil {
+	switch {
+	case info != nil:
 		// Attach using the found consumer config.
 		ccfg = &info.Config
 		attached = true
@@ -1059,12 +1066,25 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 			return nil, ErrSubjectMismatch
 		}
 
+		// Prevent binding a subscription against incompatible consumer types.
+		if isPullMode && ccfg.DeliverSubject != _EMPTY_ {
+			return nil, ErrPullSubscribeToPushConsumer
+		} else if !isPullMode && ccfg.DeliverSubject == _EMPTY_ {
+			return nil, ErrPullSubscribeRequired
+		}
+
 		if ccfg.DeliverSubject != _EMPTY_ {
 			deliver = ccfg.DeliverSubject
-		} else {
+		} else if !isPullMode {
 			deliver = NewInbox()
 		}
-	} else {
+	case (err != nil && !notFoundErr) || (notFoundErr && consumerBound):
+		// If the consumer is being bound got an error on pull subscribe then allow the error.
+		if !(isPullMode && lookupErr && consumerBound) {
+			return nil, err
+		}
+	default:
+		// Attempt to create consumer if not found nor using Bind.
 		shouldCreate = true
 		deliver = NewInbox()
 		if !isPullMode {
@@ -1351,6 +1371,8 @@ type subOpts struct {
 	mack bool
 	// For creating or updating.
 	cfg *ConsumerConfig
+	// For binding a subscription to a consumer without creating it.
+	bound bool
 }
 
 // ManualAck disables auto ack functionality for async subscriptions.
@@ -1362,16 +1384,19 @@ func ManualAck() SubOpt {
 }
 
 // Durable defines the consumer name for JetStream durable subscribers.
-func Durable(name string) SubOpt {
+func Durable(consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
-		if opts.cfg.Durable != "" {
+		if opts.cfg.Durable != _EMPTY_ {
 			return fmt.Errorf("nats: option Durable set more than once")
 		}
-		if strings.Contains(name, ".") {
+		if opts.consumer != _EMPTY_ && opts.consumer != consumer {
+			return fmt.Errorf("nats: duplicate consumer names (%s and %s)", opts.consumer, consumer)
+		}
+		if strings.Contains(consumer, ".") {
 			return ErrInvalidDurableName
 		}
 
-		opts.cfg.Durable = name
+		opts.cfg.Durable = consumer
 		return nil
 	})
 }
@@ -1482,9 +1507,39 @@ func RateLimit(n uint64) SubOpt {
 }
 
 // BindStream binds a consumer to a stream explicitly based on a name.
-func BindStream(name string) SubOpt {
+func BindStream(stream string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
-		opts.stream = name
+		if opts.stream != _EMPTY_ && opts.stream != stream {
+			return fmt.Errorf("nats: duplicate stream name (%s and %s)", opts.stream, stream)
+		}
+
+		opts.stream = stream
+		return nil
+	})
+}
+
+// Bind binds a subscription to an existing consumer from a stream without attempting to create.
+// The first argument is the stream name and the second argument will be the consumer name.
+func Bind(stream, consumer string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		if stream == _EMPTY_ {
+			return ErrStreamNameRequired
+		}
+		if consumer == _EMPTY_ {
+			return ErrConsumerNameRequired
+		}
+
+		// In case of pull subscribers, the durable name is a required parameter
+		// so check that they are not different.
+		if opts.cfg.Durable != _EMPTY_ && opts.cfg.Durable != consumer {
+			return fmt.Errorf("nats: duplicate consumer names (%s and %s)", opts.cfg.Durable, consumer)
+		}
+		if opts.stream != _EMPTY_ && opts.stream != stream {
+			return fmt.Errorf("nats: duplicate stream name (%s and %s)", opts.stream, stream)
+		}
+		opts.stream = stream
+		opts.consumer = consumer
+		opts.bound = true
 		return nil
 	})
 }

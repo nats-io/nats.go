@@ -2215,22 +2215,48 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 					# For the stream publish.
 					{ service: "ORDERS" }
 					# For the pull based consumer. Response type needed for batchsize > 1
+					{ service: "$JS.API.CONSUMER.INFO.ORDERS.d1", response: stream }
 					{ service: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", response: stream }
 					# For the push based consumer delivery and ack.
 					{ stream: "p.d" }
 					{ stream: "p.d3" }
 					# For the acks. Service in case we want an ack to our ack.
 					{ service: "$JS.ACK.ORDERS.*.>" }
+
+					# Allow lookup of stream to be able to bind from another account.
+					{ service: "$JS.API.CONSUMER.INFO.ORDERS.d4", response: stream }
+					{ stream: "p.d4" }
 				]
 			},
 			U: {
-				users: [ {user: rip, password: bar} ]
+				users: [ { user: rip, password: bar } ]
 				imports [
 					{ service: { subject: "$JS.API.INFO", account: JS } }
 					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
+					# { service: { subject: "$JS.API.CONSUMER.INFO.ORDERS.d1", account: JS } }
+					{ service: { subject: "$JS.API.CONSUMER.INFO.ORDERS.d4", account: JS } }
 					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
 					{ stream:  { subject: "p.d", account: JS } }
 					{ stream:  { subject: "p.d3", account: JS } }
+					{ stream:  { subject: "p.d4", account: JS } }
+					{ service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
+				]
+			},
+			V: {
+				users: [ {
+					user: v, 
+					password: quux, 
+					permissions: { publish: {deny: ["$JS.API.CONSUMER.INFO.ORDERS.d1"]} }
+				} ]
+				imports [
+					{ service: { subject: "$JS.API.INFO", account: JS } }
+					{ service: { subject: "ORDERS", account: JS } , to: "orders" }
+					{ service: { subject: "$JS.API.CONSUMER.INFO.ORDERS.d1", account: JS } }
+					{ service: { subject: "$JS.API.CONSUMER.INFO.ORDERS.d4", account: JS } }
+					{ service: { subject: "$JS.API.CONSUMER.MSG.NEXT.ORDERS.d1", account: JS } }
+					{ stream:  { subject: "p.d", account: JS } }
+					{ stream:  { subject: "p.d3", account: JS } }
+					{ stream:  { subject: "p.d4", account: JS } }
 					{ service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
 				]
 			},
@@ -2283,6 +2309,15 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		Durable:        "d3",
 		AckPolicy:      nats.AckExplicitPolicy,
 		DeliverSubject: "p.d3",
+	})
+	if err != nil {
+		t.Fatalf("push consumer create failed: %v", err)
+	}
+
+	_, err = jsm.AddConsumer("ORDERS", &nats.ConsumerConfig{
+		Durable:        "d4",
+		AckPolicy:      nats.AckExplicitPolicy,
+		DeliverSubject: "p.d4",
 	})
 	if err != nil {
 		t.Fatalf("push consumer create failed: %v", err)
@@ -2343,15 +2378,58 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		}
 	}
 
-	// Cannot subscribe with JS context from another account right now.
-	if _, err := js.SubscribeSync("ORDERS"); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	// Can attach to the consumer from another JS account if there is a durable name.
+	sub, err = js.SubscribeSync("ORDERS", nats.Durable("d4"), nats.BindStream("ORDERS"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
-	if _, err = js.SubscribeSync("ORDERS", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+	waitForPending(t, toSend)
+
+	// Bind has the same effect as above since it would not attempt to create and lookup will work.
+	sub, err = js.SubscribeSync("ORDERS", nats.Bind("ORDERS", "d4"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
-	if _, err = js.PullSubscribe("ORDERS", "d1", nats.BindStream("ORDERS")); err != nats.ErrJetStreamNotEnabled {
-		t.Fatalf("Expected an error of '%v', got '%v'", nats.ErrJetStreamNotEnabled, err)
+
+	// Even if there are no permissions or import to check that a consumer exists,
+	// it is still possible to bind subscription to it.
+	sub, err = js.PullSubscribe("ORDERS", "d1", nats.Bind("ORDERS", "d1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 10
+	msgs, err := sub.Fetch(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := len(msgs)
+	if got != expected {
+		t.Fatalf("Expected %d, got %d", expected, got)
+	}
+
+	// Account without permissions to lookup should be able to bind as well.
+	nc, err = nats.Connect(s.ClientURL(), nats.UserInfo("v", "quux"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err = nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err = js.PullSubscribe("ORDERS", "d1", nats.Bind("ORDERS", "d1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = 10
+	msgs, err = sub.Fetch(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = len(msgs)
+	if got != expected {
+		t.Fatalf("Expected %d, got %d", expected, got)
 	}
 }
 
@@ -5898,4 +5976,150 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	tt := time.Since(start)
 	fmt.Printf("Took %v to send %d msgs\n", tt, toSend)
 	fmt.Printf("%.0f msgs/sec\n\n", float64(toSend)/tt.Seconds())
+}
+
+func TestJetStreamBindConsumer(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := js.AddStream(nil); err == nil {
+		t.Fatalf("Unexpected success")
+	}
+	si, err := js.AddStream(&nats.StreamConfig{Name: "foo"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si == nil || si.Config.Name != "foo" {
+		t.Fatalf("StreamInfo is not correct %+v", si)
+	}
+
+	for i := 0; i < 25; i++ {
+		js.Publish("foo", []byte("hi"))
+	}
+
+	// Both stream and consumer names are required for bind only.
+	_, err = js.SubscribeSync("foo", nats.Bind("", ""))
+	if err != nats.ErrStreamNameRequired {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.SubscribeSync("foo", nats.Bind("foo", ""))
+	if err != nats.ErrConsumerNameRequired {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.SubscribeSync("foo", nats.Bind("foo", "push"))
+	if err == nil || err != nil && !strings.Contains(err.Error(), "consumer not found") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Pull consumer
+	_, err = js.PullSubscribe("foo", "pull", nats.Bind("foo", "pull"))
+	if err == nil || err != nil && !strings.Contains(err.Error(), "consumer not found") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Push consumer
+	_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+		Durable:        "push",
+		AckPolicy:      nats.AckExplicitPolicy,
+		DeliverSubject: nats.NewInbox(),
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Push Consumer Bind Only
+	_, err = js.SubscribeSync("foo", nats.Bind("foo", "push"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ambiguous declaration should not be allowed.
+	_, err = js.SubscribeSync("foo", nats.Durable("push2"), nats.Bind("foo", "push"))
+	if err == nil || !strings.Contains(err.Error(), `nats: duplicate consumer names (push2 and push)`) {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.SubscribeSync("foo", nats.BindStream("foo"), nats.Bind("foo2", "push"))
+	if err == nil || !strings.Contains(err.Error(), `nats: duplicate stream name (foo and foo2)`) {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Duplicate stream name is fine.
+	_, err = js.SubscribeSync("foo", nats.BindStream("foo"), nats.Bind("foo", "push"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Pull consumer
+	_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+		Durable:   "pull",
+		AckPolicy: nats.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Pull consumer can bind without create using only the stream name (since durable is required argument).
+	_, err = js.PullSubscribe("foo", "pull", nats.Bind("foo", "pull"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Prevent binding to durable that is from a wrong type.
+	_, err = js.PullSubscribe("foo", "push", nats.Bind("foo", "push"))
+	if err != nats.ErrPullSubscribeToPushConsumer {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.SubscribeSync("foo", nats.Bind("foo", "pull"))
+	if err != nats.ErrPullSubscribeRequired {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create ephemeral consumer
+	sub1, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cinfo, err := sub1.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bind to ephemeral consumer by setting the consumer.
+	sub2, err := js.SubscribeSync("foo", nats.Bind("foo", cinfo.Name))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub3, err := nc.SubscribeSync(cinfo.Config.DeliverSubject)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	js.Publish("foo", []byte("hi 1"))
+	js.Publish("foo", []byte("hi 2"))
+	js.Publish("foo", []byte("hi 3"))
+
+	_, err = sub1.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = sub2.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = sub3.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

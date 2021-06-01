@@ -146,9 +146,12 @@ var (
 	ErrInvalidJSAck                 = errors.New("nats: invalid jetstream publish response")
 	ErrMultiStreamUnsupported       = errors.New("nats: multiple streams are not supported")
 	ErrStreamNameRequired           = errors.New("nats: stream name is required")
+	ErrConsumerNameRequired         = errors.New("nats: consumer name is required")
 	ErrConsumerConfigRequired       = errors.New("nats: consumer configuration is required")
 	ErrStreamSnapshotConfigRequired = errors.New("nats: stream snapshot configuration is required")
 	ErrDeliverSubjectRequired       = errors.New("nats: deliver subject is required")
+	ErrPullSubscribeToPushConsumer  = errors.New("nats: cannot pull subscribe to push based consumer")
+	ErrPullSubscribeRequired        = errors.New("nats: must use pull subscribe to bind to pull based consumer")
 )
 
 func init() {
