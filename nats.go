@@ -496,9 +496,6 @@ type Conn struct {
 	respMux   *Subscription        // A single response subscription
 	respMap   map[string]chan *Msg // Request map for the response msg channels
 	respRand  *rand.Rand           // Used for generating suffix
-
-	// JetStream Contexts last account check.
-	jsLastCheck time.Time
 }
 
 type natsReader struct {

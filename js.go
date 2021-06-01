@@ -167,6 +167,7 @@ const (
 )
 
 // JetStream returns a JetStreamContext for messaging and stream management.
+// Errors are only returned if inconsistent options are provided.
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	js := &js{
 		nc: nc,
@@ -181,26 +182,6 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 			return nil, err
 		}
 	}
-
-	// If we have check recently we can avoid another account lookup here.
-	// We want these to be lighweight and created at will.
-	nc.mu.Lock()
-	now := time.Now()
-	checkAccount := now.Sub(nc.jsLastCheck) > defaultAccountCheck
-	if checkAccount {
-		nc.jsLastCheck = now
-	}
-	nc.mu.Unlock()
-
-	if checkAccount {
-		if _, err := js.AccountInfo(); err != nil {
-			if err == ErrNoResponders {
-				err = ErrJetStreamNotEnabled
-			}
-			return nil, err
-		}
-	}
-
 	return js, nil
 }
 

@@ -42,7 +42,11 @@ func TestJetStreamNotEnabled(t *testing.T) {
 	}
 	defer nc.Close()
 
-	if _, err := nc.JetStream(); err != nats.ErrJetStreamNotEnabled {
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Got error during initialization %v", err)
+	}
+	if _, err = js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
 }
@@ -73,7 +77,11 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	}
 	defer nc.Close()
 
-	if _, err := nc.JetStream(); err != nats.ErrJetStreamNotEnabled {
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Got error during initialization %v", err)
+	}
+	if _, err = js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
 }
@@ -1835,7 +1843,7 @@ func TestJetStreamManagement(t *testing.T) {
 		if info.Limits.MaxConsumers != -1 {
 			t.Errorf("Expected to not have consumer limits, got: %v", info.Limits.MaxConsumers)
 		}
-		if info.API.Total != 15 {
+		if info.API.Total != 14 {
 			t.Errorf("Expected 15 API calls, got: %v", info.API.Total)
 		}
 		if info.API.Errors != 1 {
@@ -1861,6 +1869,7 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 	}
 	defer nc.Close()
 
+	// constructor
 	js, err := nc.JetStream()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -2401,7 +2410,7 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 
 	_, err = js1.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
-		Replicas: 2,
+		Replicas: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -4113,12 +4122,14 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream *
 
 		timeout := time.Now().Add(10 * time.Second)
 		for time.Now().Before(timeout) {
-			var jsm nats.JetStreamManager
-			jsm, err = nc.JetStream()
+			jsm, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = jsm.AccountInfo()
 			if err != nil {
 				// Backoff for a bit until cluster and resources are ready.
 				time.Sleep(500 * time.Millisecond)
-				continue
 			}
 
 			_, err = jsm.AddStream(stream)
@@ -4140,7 +4151,11 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	var err error
 	timeout := time.Now().Add(10 * time.Second)
 	for time.Now().Before(timeout) {
-		_, err = nc.JetStream()
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = js.AccountInfo()
 		if err != nil {
 			// Backoff for a bit until cluster ready.
 			time.Sleep(250 * time.Millisecond)
