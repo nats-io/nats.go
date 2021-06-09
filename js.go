@@ -118,6 +118,9 @@ type JetStream interface {
 	// ChanSubscribe creates channel based Subscription.
 	ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
 
+	// ChanQueueSubscribe creates channel based Subscription with a queue group.
+	ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
+
 	// QueueSubscribe creates a Subscription with a queue group.
 	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
 
@@ -968,9 +971,14 @@ func (js *js) QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscript
 	return js.subscribe(subj, queue, nil, mch, true, opts)
 }
 
-// Subscribe will create a subscription to the appropriate stream and consumer.
+// ChanSubscribe will create a subscription to the appropriate stream and consumer using a channel.
 func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error) {
 	return js.subscribe(subj, _EMPTY_, nil, ch, false, opts)
+}
+
+// ChanQueueSubscribe will create a subscription to the appropriate stream and consumer using a channel.
+func (js *js) ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOpt) (*Subscription, error) {
+	return js.subscribe(subj, queue, nil, ch, false, opts)
 }
 
 // PullSubscribe creates a pull subscriber.

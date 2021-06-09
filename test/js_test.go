@@ -648,6 +648,56 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if meta.Consumer != "consumer-name" {
 		t.Fatalf("Unexpected consumer name, got: %v", meta.Consumer)
 	}
+
+	qsubDurable = nats.Durable(dname + "-qsub-chan")
+	mch := make(chan *nats.Msg, 16536)
+	sub, err = js.ChanQueueSubscribe("bar", "v1", mch, qsubDurable)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	var a, b *nats.MsgMetadata
+	select {
+	case msg := <-mch:
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Error(err)
+		}
+		a = meta
+	case <-time.After(2 * time.Second):
+		t.Errorf("Timeout waiting for message")
+	}
+
+	mch2 := make(chan *nats.Msg, 16536)
+	sub, err = js.ChanQueueSubscribe("bar", "v1", mch2, qsubDurable)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	// Publish more messages so that at least one is received by
+	// the channel queue subscriber.
+	for i := 0; i < toSend; i++ {
+		js.Publish("bar", msg)
+	}
+
+	select {
+	case msg := <-mch2:
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Error(err)
+		}
+		b = meta
+	case <-time.After(2 * time.Second):
+		t.Errorf("Timeout waiting for message")
+	}
+	if reflect.DeepEqual(a, b) {
+		t.Errorf("Expected to receive different messages in stream")
+	}
+
+	// Both ChanQueueSubscribers use the same consumer.
+	expectConsumers(t, 8)
 }
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
