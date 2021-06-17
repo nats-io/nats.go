@@ -1693,14 +1693,26 @@ func TestAckForNonJetStream(t *testing.T) {
 }
 
 func TestJetStreamManagement(t *testing.T) {
-	s := RunBasicJetStreamServer()
+	conf := createConfFile(t, []byte(`
+                listen: 127.0.0.1:-1
+                jetstream: enabled
+                accounts: {
+                  A {
+                    users: [{ user: "foo" }]
+                    jetstream: { max_mem: 64MB, max_file: 64MB }
+                  }
+                }
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
 	defer s.Shutdown()
 
 	if config := s.JetStreamConfig(); config != nil {
 		defer os.RemoveAll(config.StoreDir)
 	}
 
-	nc, err := nats.Connect(s.ClientURL())
+	nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("foo", ""))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1881,10 +1893,10 @@ func TestJetStreamManagement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Limits.MaxMemory < 1 {
+		if info.Limits.MaxMemory != 67108864 {
 			t.Errorf("Expected to have memory limits, got: %v", info.Limits.MaxMemory)
 		}
-		if info.Limits.MaxStore < 1 {
+		if info.Limits.MaxStore != 67108864 {
 			t.Errorf("Expected to have disk limits, got: %v", info.Limits.MaxMemory)
 		}
 		if info.Limits.MaxStreams != -1 {
@@ -6186,5 +6198,111 @@ func TestJetStreamBindConsumer(t *testing.T) {
 	_, err = sub3.NextMsg(1 * time.Second)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestJetStreamDomain(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: { domain: ABC }
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// JS with custom domain
+	jsd, err := nc.JetStream(nats.Domain("ABC"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	info, err := jsd.AccountInfo()
+	if err != nil {
+		t.Error(err)
+	}
+	got := info.Domain
+	expected := "ABC"
+	if got != expected {
+		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	if _, err = jsd.AddStream(&nats.StreamConfig{Name: "foo"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	jsd.Publish("foo", []byte("first"))
+
+	sub, err := jsd.SubscribeSync("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(msg.Data)
+	expected = "first"
+	if got != expected {
+		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	// JS without explicit bound domain should also work.
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	info, err = js.AccountInfo()
+	if err != nil {
+		t.Error(err)
+	}
+	got = info.Domain
+	expected = "ABC"
+	if got != expected {
+		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	js.Publish("foo", []byte("second"))
+
+	sub2, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err = sub2.NextMsg(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(msg.Data)
+	expected = "first"
+	if got != expected {
+		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	msg, err = sub2.NextMsg(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(msg.Data)
+	expected = "second"
+	if got != expected {
+		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	// Using different domain not configured is an error.
+	jsb, err := nc.JetStream(nats.Domain("XYZ"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = jsb.AccountInfo()
+	if err != nats.ErrJetStreamNotEnabled {
+		t.Errorf("Unexpected error: %v", err)
 	}
 }

@@ -146,6 +146,7 @@ type AccountInfo struct {
 	Store     uint64        `json:"storage"`
 	Streams   int           `json:"streams"`
 	Consumers int           `json:"consumers"`
+	Domain    string        `json:"domain"`
 	API       APIStats      `json:"api"`
 	Limits    AccountLimits `json:"limits"`
 }
