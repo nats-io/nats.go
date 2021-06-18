@@ -433,6 +433,9 @@ type Options struct {
 	// For websocket connections, indicates to the server that the connection
 	// supports compression. If the server does too, then data will be compressed.
 	Compression bool
+
+	// InboxPrefix allows the default _INBOX prefix to be customized
+	InboxPrefix string
 }
 
 const (
@@ -494,11 +497,13 @@ type Conn struct {
 	ws      bool // true if a websocket connection
 
 	// New style response handler
-	respSub   string               // The wildcard subject
-	respScanf string               // The scanf template to extract mux token
-	respMux   *Subscription        // A single response subscription
-	respMap   map[string]chan *Msg // Request map for the response msg channels
-	respRand  *rand.Rand           // Used for generating suffix
+	respSub       string               // The wildcard subject
+	respSubPrefix string               // the wildcard prefix including trailing .
+	respSubLen    int                  // the length of the wildcard prefix excluding trailing .
+	respScanf     string               // The scanf template to extract mux token
+	respMux       *Subscription        // A single response subscription
+	respMap       map[string]chan *Msg // Request map for the response msg channels
+	respRand      *rand.Rand           // Used for generating suffix
 }
 
 type natsReader struct {
@@ -1097,6 +1102,17 @@ func RetryOnFailedConnect(retry bool) Option {
 func Compression(enabled bool) Option {
 	return func(o *Options) error {
 		o.Compression = enabled
+		return nil
+	}
+}
+
+// CustomInboxPrefix configures the request + reply inbox prefix
+func CustomInboxPrefix(p string) Option {
+	return func(o *Options) error {
+		if p == "" || strings.HasSuffix(p, ">") || strings.HasSuffix(p, "*") || strings.HasSuffix(p, ".") || strings.HasPrefix(p, ">") || strings.HasPrefix(p, "*") {
+			return fmt.Errorf("nats: invald custom prefix")
+		}
+		o.InboxPrefix = p
 		return nil
 	}
 }
@@ -3343,7 +3359,8 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
-	token := respInbox[respInboxPrefixLen:]
+	token := respInbox[nc.respSubLen+1:]
+
 	nc.respMap[token] = mch
 	if nc.respMux == nil {
 		// Create the response subscription we will use for all new style responses.
@@ -3450,7 +3467,7 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := NewInbox()
+	inbox := nc.newInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
@@ -3490,10 +3507,23 @@ func NewInbox() string {
 	return string(b[:])
 }
 
+func (nc *Conn) newInbox() string {
+	if nc.Opts.InboxPrefix == _EMPTY_ {
+		return NewInbox()
+	}
+
+	var sb strings.Builder
+	sb.WriteString(nc.Opts.InboxPrefix)
+	sb.WriteByte('.')
+	sb.WriteString(nuid.Next())
+	return sb.String()
+}
+
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
-	// _INBOX wildcard
-	nc.respSub = fmt.Sprintf("%s.*", NewInbox())
+	nc.respSubPrefix = fmt.Sprintf("%s.", nc.newInbox())
+	nc.respSubLen = len(nc.respSubPrefix) - 1
+	nc.respSub = fmt.Sprintf("%s*", nc.respSubPrefix)
 	nc.respMap = make(map[string]chan *Msg)
 	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
@@ -3505,15 +3535,17 @@ func (nc *Conn) newRespInbox() string {
 	if nc.respMap == nil {
 		nc.initNewResp()
 	}
-	var b [respInboxPrefixLen + replySuffixLen]byte
-	pres := b[:respInboxPrefixLen]
-	copy(pres, nc.respSub)
+
+	var sb strings.Builder
+	sb.WriteString(nc.respSubPrefix)
+
 	rn := nc.respRand.Int63()
-	for i, l := respInboxPrefixLen, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
-		l /= base
+	for i := 0; i < nuidSize; i++ {
+		sb.WriteByte(rdigits[rn%base])
+		rn /= base
 	}
-	return string(b[:])
+
+	return sb.String()
 }
 
 // NewRespInbox is the new format used for _INBOX.
