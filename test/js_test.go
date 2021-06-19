@@ -535,6 +535,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected %d pending ack, and %d still waiting to be delivered, got %d and %d", 1, 1, info.NumAckPending, info.NumPending)
 	}
 
+	// do nat ack the message to not affect rest of the test by alias test
 	if err := nmsg.Nak(); err != nil {
 		t.Fatal(err)
 	}
