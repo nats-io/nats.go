@@ -35,6 +35,9 @@ const (
 	// defaultAPIPrefix is the default prefix for the JetStream API.
 	defaultAPIPrefix = "$JS.API."
 
+	// jsDomainT is used to create JetStream API prefix by specifying only Domain
+	jsDomainT = "$JS.%s.API."
+
 	// apiAccountInfo is for obtaining general information about JetStream.
 	apiAccountInfo = "INFO"
 
@@ -198,6 +201,11 @@ type jsOptFn func(opts *jsOpts) error
 
 func (opt jsOptFn) configureJSContext(opts *jsOpts) error {
 	return opt(opts)
+}
+
+// Domain changes the domain part of JetSteam API prefix.
+func Domain(domain string) JSOpt {
+	return APIPrefix(fmt.Sprintf(jsDomainT, domain))
 }
 
 // APIPrefix changes the default prefix used for the JetStream API.
