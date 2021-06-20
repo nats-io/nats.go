@@ -2482,6 +2482,13 @@ func (nc *Conn) readLoop() {
 	for {
 		buf, err := br.Read()
 		if err == nil {
+			// With websocket, it is possible that there is no error but
+			// also no buffer returned (either WS control message or read of a
+			// partial compressed message). We could call parse(buf) which
+			// would ignore an empty buffer, but simply go back to top of the loop.
+			if len(buf) == 0 {
+				continue
+			}
 			err = nc.parse(buf)
 		}
 		if err != nil {
