@@ -695,7 +695,7 @@ func ExpectLastSequence(seq uint64) PubOpt {
 	})
 }
 
-// ExpectLastSequence sets the expected sequence in the response from the publish.
+// ExpectLastMsgId sets the expected sequence in the response from the publish.
 func ExpectLastMsgId(id string) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.lid = id
@@ -2199,7 +2199,7 @@ const (
 	// consumer is created.
 	DeliverNewPolicy
 
-	// DeliverByStartTimePolicy will deliver messages starting from a given
+	// DeliverByStartSequencePolicy will deliver messages starting from a given
 	// sequence.
 	DeliverByStartSequencePolicy
 
