@@ -1977,7 +1977,7 @@ func (m *Msg) Ack(opts ...AckOpt) error {
 	return m.ackReply(ackAck, false, opts...)
 }
 
-// Ack is the synchronous version of Ack. This indicates successful message
+// AckSync is the synchronous version of Ack. This indicates successful message
 // processing.
 func (m *Msg) AckSync(opts ...AckOpt) error {
 	return m.ackReply(ackAck, true, opts...)
