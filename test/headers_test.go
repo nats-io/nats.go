@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -437,4 +438,87 @@ func TestMsgHeadersCasePreserving(t *testing.T) {
 			})
 		}
 	})
+}
+
+// WeirdStrings tests imported from https://github.com/google/go-cloud project.
+//
+// https://github.com/google/go-cloud/blob/5d2842a8d8968767a462f4197261f1310a6f6ab1/internal/escape/escape.go#L193
+//
+func makeASCIIString(start, end int) string {
+	var s []byte
+	for i := start; i < end; i++ {
+		if i >= 'a' && i <= 'z' {
+			continue
+		}
+		if i >= 'A' && i <= 'Z' {
+			continue
+		}
+		if i >= '0' && i <= '9' {
+			continue
+		}
+		s = append(s, byte(i))
+	}
+	return string(s)
+}
+
+var weirdStrings = map[string]string{
+	"fwdslashes":          "foo/bar/baz",
+	"repeatedfwdslashes":  "foo//bar///baz",
+	"dotdotslash":         "../foo/../bar/../../baz../",
+	"backslashes":         "foo\\bar\\baz",
+	"repeatedbackslashes": "..\\foo\\\\bar\\\\\\baz",
+	"dotdotbackslash":     "..\\foo\\..\\bar\\..\\..\\baz..\\",
+	"quote":               "foo\"bar\"baz",
+	"spaces":              "foo bar baz",
+	"startwithdigit":      "12345",
+	"unicode":             strings.Repeat("☺", 3),
+	// The ASCII characters 0-128, split up to avoid the possibly-escaped
+	// versions from getting too long.
+	"ascii-1": makeASCIIString(0, 16),
+	"ascii-2": makeASCIIString(16, 32),
+	"ascii-3": makeASCIIString(32, 48),
+	"ascii-4": makeASCIIString(48, 64),
+	"ascii-5": makeASCIIString(64, 80),
+	"ascii-6": makeASCIIString(80, 96),
+	"ascii-7": makeASCIIString(96, 112),
+	"ascii-8": makeASCIIString(112, 128),
+}
+
+func TestHeadersWeirdStrings(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	subject := "headers.test"
+	sub, err := nc.SubscribeSync(subject)
+	if err != nil {
+		t.Fatalf("Could not subscribe to %q: %v", subject, err)
+	}
+	defer sub.Unsubscribe()
+
+	for k, v := range weirdStrings {
+		t.Run(k, func(t *testing.T) {
+			m := nats.NewMsg(subject)
+			m.Header.Add(k, v)
+			m.Data = []byte("Hello Headers!")
+
+			err = nc.PublishMsg(m)
+			if err != nil {
+				t.Error(err)
+			}
+			msg, err := sub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatalf("Did not receive response: %v", err)
+			}
+			msg.Sub = nil
+			if !reflect.DeepEqual(m, msg) {
+				t.Fatalf("Messages did not match! \n%+v\n%+v\n", m, msg)
+			}
+		})
+	}
 }
