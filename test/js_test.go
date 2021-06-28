@@ -16,6 +16,7 @@ package test
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -1742,6 +1743,16 @@ func TestJetStreamManagement(t *testing.T) {
 		js.Publish("foo", []byte("hi"))
 	}
 
+	t.Run("stream not found", func(t *testing.T) {
+		si, err = js.StreamInfo("bar")
+		if !errors.Is(err, nats.ErrStreamNotFound) {
+			t.Fatalf("Expected error: %v, got: %v", nats.ErrStreamNotFound, err)
+		}
+		if si != nil {
+			t.Fatalf("StreamInfo should be nil %+v", si)
+		}
+	})
+
 	t.Run("stream info", func(t *testing.T) {
 		si, err = js.StreamInfo("foo")
 		if err != nil {
@@ -1801,6 +1812,16 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 		if ci == nil || ci.Config.Durable != "dlc" {
 			t.Fatalf("ConsumerInfo is not correct %+v", si)
+		}
+	})
+
+	t.Run("consumer not found", func(t *testing.T) {
+		ci, err := js.ConsumerInfo("foo", "cld")
+		if !errors.Is(err, nats.ErrConsumerNotFound) {
+			t.Fatalf("Expected error: %v, got: %v", nats.ErrConsumerNotFound, err)
+		}
+		if ci != nil {
+			t.Fatalf("ConsumerInfo should be nil %+v", ci)
 		}
 	})
 
@@ -1905,11 +1926,11 @@ func TestJetStreamManagement(t *testing.T) {
 		if info.Limits.MaxConsumers != -1 {
 			t.Errorf("Expected to not have consumer limits, got: %v", info.Limits.MaxConsumers)
 		}
-		if info.API.Total != 14 {
-			t.Errorf("Expected 15 API calls, got: %v", info.API.Total)
+		if info.API.Total != 16 {
+			t.Errorf("Expected 16 API calls, got: %v", info.API.Total)
 		}
-		if info.API.Errors != 1 {
-			t.Errorf("Expected 11 API error, got: %v", info.API.Errors)
+		if info.API.Errors != 3 {
+			t.Errorf("Expected 3 API error, got: %v", info.API.Errors)
 		}
 	})
 }
@@ -3881,7 +3902,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Unexpected success")
 		}
-		if err.Error() != `consumer not found` {
+		if !errors.Is(err, nats.ErrConsumerNotFound) {
 			t.Errorf("Expected consumer not found error, got: %v", err)
 		}
 
@@ -4587,8 +4608,8 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		if err.Error() != `nats: stream not found` {
-			t.Fatal("Expected stream not found error")
+		if !errors.Is(err, nats.ErrStreamNotFound) {
+			t.Fatal("Expected stream not found error", err.Error())
 		}
 	})
 
@@ -6099,13 +6120,13 @@ func TestJetStreamBindConsumer(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	_, err = js.SubscribeSync("foo", nats.Bind("foo", "push"))
-	if err == nil || err != nil && !strings.Contains(err.Error(), "consumer not found") {
+	if err == nil || !errors.Is(err, nats.ErrConsumerNotFound) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Pull consumer
 	_, err = js.PullSubscribe("foo", "pull", nats.Bind("foo", "pull"))
-	if err == nil || err != nil && !strings.Contains(err.Error(), "consumer not found") {
+	if err == nil || !errors.Is(err, nats.ErrConsumerNotFound) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 

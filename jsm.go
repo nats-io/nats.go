@@ -258,6 +258,9 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 		return nil, err
 	}
 	if info.Error != nil {
+		if info.Error.Code == 404 {
+			return nil, ErrConsumerNotFound
+		}
 		return nil, errors.New(info.Error.Description)
 	}
 	return info.ConsumerInfo, nil
@@ -292,7 +295,11 @@ func (js *js) DeleteConsumer(stream, consumer string, opts ...JSOpt) error {
 	if err := json.Unmarshal(r.Data, &resp); err != nil {
 		return err
 	}
+
 	if resp.Error != nil {
+		if resp.Error.Code == 404 {
+			return ErrConsumerNotFound
+		}
 		return errors.New(resp.Error.Description)
 	}
 	return nil
@@ -559,6 +566,7 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 	if resp.Error != nil {
 		return nil, errors.New(resp.Error.Description)
 	}
+
 	return resp.StreamInfo, nil
 }
 
@@ -587,8 +595,12 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
+		if resp.Error.Code == 404 {
+			return nil, ErrStreamNotFound
+		}
 		return nil, errors.New(resp.Error.Description)
 	}
+
 	return resp.StreamInfo, nil
 }
 
@@ -701,7 +713,11 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 	if err := json.Unmarshal(r.Data, &resp); err != nil {
 		return err
 	}
+
 	if resp.Error != nil {
+		if resp.Error.Code == 404 {
+			return ErrStreamNotFound
+		}
 		return errors.New(resp.Error.Description)
 	}
 	return nil
