@@ -1111,7 +1111,7 @@ func Compression(enabled bool) Option {
 // CustomInboxPrefix configures the request + reply inbox prefix
 func CustomInboxPrefix(p string) Option {
 	return func(o *Options) error {
-		if p == "" || strings.HasSuffix(p, ">") || strings.HasSuffix(p, "*") || strings.HasSuffix(p, ".") || strings.HasPrefix(p, ">") || strings.HasPrefix(p, "*") {
+		if p == "" || strings.Contains(p, ">") || strings.Contains(p, "*") || strings.HasSuffix(p, ".") {
 			return fmt.Errorf("nats: invald custom prefix")
 		}
 		o.InboxPrefix = p
@@ -3356,7 +3356,7 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
-	token := respInbox[nc.respSubLen+1:]
+	token := respInbox[nc.respSubLen:]
 
 	nc.respMap[token] = mch
 	if nc.respMux == nil {
@@ -3484,12 +3484,10 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 
 // InboxPrefix is the prefix for all inbox subjects.
 const (
-	InboxPrefix        = "_INBOX."
-	inboxPrefixLen     = len(InboxPrefix)
-	respInboxPrefixLen = inboxPrefixLen + nuidSize + 1
-	replySuffixLen     = 8 // Gives us 62^8
-	rdigits            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	base               = 62
+	InboxPrefix    = "_INBOX."
+	inboxPrefixLen = len(InboxPrefix)
+	rdigits        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base           = 62
 )
 
 // NewInbox will return an inbox string which can be used for directed replies from
@@ -3519,7 +3517,7 @@ func (nc *Conn) newInbox() string {
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
 	nc.respSubPrefix = fmt.Sprintf("%s.", nc.newInbox())
-	nc.respSubLen = len(nc.respSubPrefix) - 1
+	nc.respSubLen = len(nc.respSubPrefix)
 	nc.respSub = fmt.Sprintf("%s*", nc.respSubPrefix)
 	nc.respMap = make(map[string]chan *Msg)
 	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))

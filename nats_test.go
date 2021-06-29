@@ -2662,7 +2662,7 @@ func TestMsg_RespondMsg(t *testing.T) {
 
 func TestCustomInboxPrefix(t *testing.T) {
 	opts := &Options{}
-	for _, p := range []string{"$BOB.", "$BOB.*", "$BOB.>", ">", ".", ""} {
+	for _, p := range []string{"$BOB.", "$BOB.*", "$BOB.>", ">", ".", "", "BOB.*.X", "BOB.>.X"} {
 		err := CustomInboxPrefix(p)(opts)
 		if err == nil {
 			t.Fatalf("Expeted error for %q", p)
