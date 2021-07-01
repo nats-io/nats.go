@@ -2336,8 +2336,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 			},
 			V: {
 				users: [ {
-					user: v, 
-					password: quux, 
+					user: v,
+					password: quux,
 					permissions: { publish: {deny: ["$JS.API.CONSUMER.INFO.ORDERS.d1"]} }
 				} ]
 				imports [
@@ -6325,5 +6325,89 @@ func TestJetStreamDomain(t *testing.T) {
 	_, err = jsb.AccountInfo()
 	if err != nats.ErrJetStreamNotEnabled {
 		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+// Test that we properly enfore per subject msg limits.
+func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
+	const subjectMax = 5
+	msc := nats.StreamConfig{
+		Name:              "TEST",
+		Subjects:          []string{"foo", "bar", "baz.*"},
+		Storage:           nats.MemoryStorage,
+		MaxMsgsPerSubject: subjectMax,
+	}
+	fsc := msc
+	fsc.Storage = nats.FileStorage
+
+	cases := []struct {
+		name    string
+		mconfig *nats.StreamConfig
+	}{
+		{"MemoryStore", &msc},
+		{"FileStore", &fsc},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer s.Shutdown()
+
+			if config := s.JetStreamConfig(); config != nil {
+				defer os.RemoveAll(config.StoreDir)
+			}
+
+			// Client for API requests.
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatalf("Got error during initialization %v", err)
+			}
+
+			_, err = js.AddStream(c.mconfig)
+			if err != nil {
+				t.Fatalf("Unexpected error adding stream: %v", err)
+			}
+			defer js.DeleteStream(c.mconfig.Name)
+
+			pubAndCheck := func(subj string, num int, expectedNumMsgs uint64) {
+				t.Helper()
+				for i := 0; i < num; i++ {
+					if _, err = js.Publish(subj, []byte("TSLA")); err != nil {
+						t.Fatalf("Unexpected publish error: %v", err)
+					}
+				}
+				si, err := js.StreamInfo(c.mconfig.Name)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if si.State.Msgs != expectedNumMsgs {
+					t.Fatalf("Expected %d msgs, got %d", expectedNumMsgs, si.State.Msgs)
+				}
+			}
+
+			pubAndCheck("foo", 1, 1)
+			pubAndCheck("foo", 4, 5)
+			// Now make sure our per subject limits kick in..
+			pubAndCheck("foo", 2, 5)
+			pubAndCheck("baz.22", 5, 10)
+			pubAndCheck("baz.33", 5, 15)
+			// We are maxed so totals should be same no matter what we add here.
+			pubAndCheck("baz.22", 5, 15)
+			pubAndCheck("baz.33", 5, 15)
+
+			// Now purge and make sure all is still good.
+			if err := js.PurgeStream(c.mconfig.Name); err != nil {
+				t.Fatalf("Unexpected purge error: %v", err)
+			}
+			pubAndCheck("foo", 1, 1)
+			pubAndCheck("foo", 4, 5)
+			pubAndCheck("baz.22", 5, 10)
+			pubAndCheck("baz.33", 5, 15)
+		})
 	}
 }

@@ -74,23 +74,24 @@ type JetStreamManager interface {
 // There are sensible defaults for most. If no subjects are
 // given the name will be used as the only subject.
 type StreamConfig struct {
-	Name         string          `json:"name"`
-	Subjects     []string        `json:"subjects,omitempty"`
-	Retention    RetentionPolicy `json:"retention"`
-	MaxConsumers int             `json:"max_consumers"`
-	MaxMsgs      int64           `json:"max_msgs"`
-	MaxBytes     int64           `json:"max_bytes"`
-	Discard      DiscardPolicy   `json:"discard"`
-	MaxAge       time.Duration   `json:"max_age"`
-	MaxMsgSize   int32           `json:"max_msg_size,omitempty"`
-	Storage      StorageType     `json:"storage"`
-	Replicas     int             `json:"num_replicas"`
-	NoAck        bool            `json:"no_ack,omitempty"`
-	Template     string          `json:"template_owner,omitempty"`
-	Duplicates   time.Duration   `json:"duplicate_window,omitempty"`
-	Placement    *Placement      `json:"placement,omitempty"`
-	Mirror       *StreamSource   `json:"mirror,omitempty"`
-	Sources      []*StreamSource `json:"sources,omitempty"`
+	Name              string          `json:"name"`
+	Subjects          []string        `json:"subjects,omitempty"`
+	Retention         RetentionPolicy `json:"retention"`
+	MaxConsumers      int             `json:"max_consumers"`
+	MaxMsgs           int64           `json:"max_msgs"`
+	MaxBytes          int64           `json:"max_bytes"`
+	Discard           DiscardPolicy   `json:"discard"`
+	MaxAge            time.Duration   `json:"max_age"`
+	MaxMsgsPerSubject int64           `json:"max_msgs_per_subject"`
+	MaxMsgSize        int32           `json:"max_msg_size,omitempty"`
+	Storage           StorageType     `json:"storage"`
+	Replicas          int             `json:"num_replicas"`
+	NoAck             bool            `json:"no_ack,omitempty"`
+	Template          string          `json:"template_owner,omitempty"`
+	Duplicates        time.Duration   `json:"duplicate_window,omitempty"`
+	Placement         *Placement      `json:"placement,omitempty"`
+	Mirror            *StreamSource   `json:"mirror,omitempty"`
+	Sources           []*StreamSource `json:"sources,omitempty"`
 }
 
 // Placement is used to guide placement of streams in clustered JetStream.
