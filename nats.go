@@ -3908,7 +3908,14 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	if s == nil {
 		return nil, ErrBadSubscription
 	}
-
+	// In case of Pull Subscription, alias NextMsg to Fetch
+	if s.typ == PullSubscription {
+		msgs, err := s.Fetch(1, MaxWait(timeout))
+		if err != nil {
+			return nil, err
+		}
+		return msgs[0], nil
+	}
 	s.mu.Lock()
 	err := s.validateNextMsgState()
 	if err != nil {

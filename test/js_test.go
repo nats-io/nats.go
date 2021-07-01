@@ -527,6 +527,20 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
+	// Test the NextMsg Alias for Fetch
+	nmsg, err := sub.NextMsg(time.Second * 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := sub.ConsumerInfo(); info.NumAckPending != 1 || info.NumPending != uint64(toSend-1) {
+		t.Fatalf("Expected %d pending ack, and %d still waiting to be delivered, got %d and %d", 1, 1, info.NumAckPending, info.NumPending)
+	}
+
+	// do nat ack the message to not affect rest of the test by alias test
+	if err := nmsg.Nak(); err != nil {
+		t.Fatal(err)
+	}
+
 	// The first batch if available should be delivered and queued up.
 	bmsgs, err := sub.Fetch(batch)
 	if err != nil {
@@ -545,7 +559,9 @@ func TestJetStreamSubscribe(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if info, _ := sub.ConsumerInfo(); info.AckFloor.Consumer != uint64(batch) {
+
+	// we expect AckFloor to be equal batch size + 1 from NextMsg alias test
+	if info, _ := sub.ConsumerInfo(); info.AckFloor.Consumer != uint64(batch+1) {
 		t.Fatalf("Expected ack floor to be %d, got %d", batch, info.AckFloor.Consumer)
 	}
 	waitForPending(t, 0)
