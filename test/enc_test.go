@@ -15,6 +15,7 @@ package test
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 	"time"
 
@@ -466,5 +467,93 @@ func TestEncDrainSupported(t *testing.T) {
 	err := ec.Drain()
 	if err != nil {
 		t.Fatalf("Expected no error calling Drain(), got %v", err)
+	}
+}
+
+func TestEncSubscribeParallel(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewDefaultEConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool, 2)
+
+	oSubj := "parallel"
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	receivedA := false
+	receivedB := false
+
+	ec.SubscribeParallel(oSubj, func(s string) {
+		switch s {
+		case "messageA":
+			receivedA = true
+		case "messageB":
+			receivedB = true
+		}
+		wg.Done()
+		wg.Wait()
+		ch <- true
+	})
+	ec.Publish(oSubj, "messageA")
+	ec.Publish(oSubj, "messageB")
+	if e := Wait(ch); e != nil {
+		if ec.LastError() != nil {
+			e = ec.LastError()
+		}
+		t.Fatalf("Did not receive the message: %s", e)
+	}
+
+	if !receivedA {
+		t.Fatal("Didn't receive message with value 'messageA'")
+	}
+	if !receivedB {
+		t.Fatal("Didn't receive message with value 'messageB'")
+	}
+}
+
+func TestEncQueueSubscribeParallel(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	ec := NewDefaultEConn(t)
+	defer ec.Close()
+
+	ch := make(chan bool, 2)
+
+	oSubj := "parallel"
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	receivedA := false
+	receivedB := false
+
+	ec.QueueSubscribeParallel(oSubj, "parallel", func(s string) {
+		switch s {
+		case "messageA":
+			receivedA = true
+		case "messageB":
+			receivedB = true
+		}
+		wg.Done()
+		wg.Wait()
+		ch <- true
+	})
+	ec.Publish(oSubj, "messageA")
+	ec.Publish(oSubj, "messageB")
+	if e := Wait(ch); e != nil {
+		if ec.LastError() != nil {
+			e = ec.LastError()
+		}
+		t.Fatalf("Did not receive the message: %s", e)
+	}
+
+	if !receivedA {
+		t.Fatal("Didn't receive message with value 'messageA'")
+	}
+	if !receivedB {
+		t.Fatal("Didn't receive message with value 'messageB'")
 	}
 }
