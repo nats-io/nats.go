@@ -646,6 +646,7 @@ type srv struct {
 type serverInfo struct {
 	ID           string   `json:"server_id"`
 	Name         string   `json:"server_name"`
+	Version      string   `json:"version"`
 	Proto        int      `json:"proto"`
 	Host         string   `json:"host"`
 	Port         int      `json:"port"`
@@ -1783,6 +1784,21 @@ func (nc *Conn) ConnectedServerName() string {
 		return _EMPTY_
 	}
 	return nc.info.Name
+}
+
+// ConnectedServerVersion reports the connected server's version
+func (nc *Conn) ConnectedServerVersion() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.Version
 }
 
 // ConnectedClusterName reports the connected server's cluster name if any
