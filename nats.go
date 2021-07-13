@@ -256,6 +256,11 @@ type Options struct {
 	// then becomes the first server in the Servers array.
 	Url string
 
+	// Conn represents a pre-prepared connection to a NATS server.
+	// This will ordinarily be set to nil, but we'll use this to
+	// talk to the server instead of dialing if it is set.
+	Conn net.Conn
+
 	// Servers is a configured set of servers which this client
 	// will use when attempting to connect.
 	Servers []string
@@ -719,6 +724,16 @@ func Connect(url string, options ...Option) (*Conn, error) {
 func Name(name string) Option {
 	return func(o *Options) error {
 		o.Name = name
+		return nil
+	}
+}
+
+// Conn is an Option to pass a custom Conn rather than dialing.
+// This is useful if you have retrieved an in-process connection
+// from calling server.InProcessConn() or similar.
+func InProcessConn(conn net.Conn) Option {
+	return func(o *Options) error {
+		o.Conn = conn
 		return nil
 	}
 }
@@ -1632,6 +1647,13 @@ func (nc *Conn) createConn() (err error) {
 	}
 	if _, cur := nc.currentServer(); cur == nil {
 		return ErrNoServers
+	}
+
+	// If a custom conn has been provided then use that.
+	if nc.Opts.Conn != nil {
+		nc.conn = nc.Opts.Conn
+		nc.bindToNewConn()
+		return nil
 	}
 
 	// We will auto-expand host names if they resolve to multiple IPs
