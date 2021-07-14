@@ -695,7 +695,7 @@ func ExpectLastSequence(seq uint64) PubOpt {
 	})
 }
 
-// ExpectLastMsgId sets the expected sequence in the response from the publish.
+// ExpectLastMsgId sets the expected last msgId in the response from the publish.
 func ExpectLastMsgId(id string) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.lid = id
