@@ -952,7 +952,7 @@ func (opt subOptFn) configureSubscribe(opts *subOpts) error {
 }
 
 // Subscribe will create a subscription to the appropriate stream and consumer.
-// By default, it will automatically create an JetStream consumer in the server in case
+// By default, it will automatically create a JetStream consumer in the server in case
 // one cannot be found. Unless the `Durable` option is passed, the consumer will be
 // ephemeral and automatically cleaned up by the server if the client that created
 // the consumer goes away.
