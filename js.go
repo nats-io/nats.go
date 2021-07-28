@@ -952,6 +952,10 @@ func (opt subOptFn) configureSubscribe(opts *subOpts) error {
 }
 
 // Subscribe will create a subscription to the appropriate stream and consumer.
+// By default, it will automatically create an JetStream consumer in the server in case
+// one cannot be found. Unless the `Durable` option is passed, the consumer will be
+// ephemeral and automatically cleaned up by the server if the client that created
+// the consumer goes away.
 func (js *js) Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error) {
 	if cb == nil {
 		return nil, ErrBadSubscription
@@ -989,7 +993,8 @@ func (js *js) ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOp
 	return js.subscribe(subj, queue, nil, ch, false, opts)
 }
 
-// PullSubscribe creates a pull subscriber.
+// PullSubscribe creates a pull subscriber.  In case a consumer with the durable name
+// is not present, it will attempt to create one with the default configuration.
 func (js *js) PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error) {
 	return js.subscribe(subj, _EMPTY_, nil, nil, false, append(opts, Durable(durable)))
 }
