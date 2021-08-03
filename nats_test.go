@@ -2659,3 +2659,46 @@ func TestMsg_RespondMsg(t *testing.T) {
 		t.Fatalf("did not get correct response: %q", resp.Data)
 	}
 }
+
+func TestCustomInboxPrefix(t *testing.T) {
+	opts := &Options{}
+	for _, p := range []string{"$BOB.", "$BOB.*", "$BOB.>", ">", ".", "", "BOB.*.X", "BOB.>.X"} {
+		err := CustomInboxPrefix(p)(opts)
+		if err == nil {
+			t.Fatalf("Expeted error for %q", p)
+		}
+	}
+
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL(), CustomInboxPrefix("$BOB"))
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.Subscribe(NewInbox(), func(msg *Msg) {
+		if !strings.HasPrefix(msg.Reply, "$BOB.") {
+			t.Fatalf("invalid inbox subject %q received", msg.Reply)
+		}
+
+		if len(strings.Split(msg.Reply, ".")) != 3 {
+			t.Fatalf("invalid number tokens in %s", msg.Reply)
+		}
+
+		msg.Respond([]byte("ok"))
+	})
+	if err != nil {
+		t.Fatalf("subscribe failed: %s", err)
+	}
+
+	resp, err := nc.Request(sub.Subject, nil, time.Second)
+	if err != nil {
+		t.Fatalf("request failed: %s", err)
+	}
+
+	if !bytes.Equal(resp.Data, []byte("ok")) {
+		t.Fatalf("did not receive ok: %q", resp.Data)
+	}
+}
