@@ -29,8 +29,9 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
-	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
+
+	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
 func TestJetStreamNotEnabled(t *testing.T) {
@@ -410,10 +411,11 @@ func TestJetStreamSubscribe(t *testing.T) {
 	expectConsumers(t, 3)
 
 	// Make sure we registered as a durable.
-	if info, _ := sub.ConsumerInfo(); info.Config.Durable != dname {
+	info, _ = sub.ConsumerInfo()
+	if info.Config.Durable != dname {
 		t.Fatalf("Expected durable name to be set to %q, got %q", dname, info.Config.Durable)
 	}
-	deliver := sub.Subject
+	deliver := info.Config.DeliverSubject
 
 	// Remove subscription, but do not delete consumer.
 	sub.Drain()
@@ -425,7 +427,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if deliver != sub.Subject {
+	if info, err := sub.ConsumerInfo(); err != nil || info.Config.DeliverSubject != deliver {
 		t.Fatal("Expected delivery subject to be the same after reattach")
 	}
 	expectConsumers(t, 3)
@@ -436,7 +438,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if deliver != sub.Subject {
+	if info, err := sub.ConsumerInfo(); err != nil || info.Config.DeliverSubject != deliver {
 		t.Fatal("Expected delivery subject to be the same after reattach")
 	}
 	expectConsumers(t, 3)
@@ -1332,7 +1334,7 @@ func TestJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
 	}
 
 	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-		t.Logf("WARN: %s : %+v", err, sub)
+		t.Logf("WARN: %s : %v", err, sub.Subject)
 	})
 
 	nc, err := nats.Connect(s.ClientURL(), errHandler)
@@ -2500,7 +2502,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 
 	// Account without permissions to lookup should be able to bind as well.
-	nc, err = nats.Connect(s.ClientURL(), nats.UserInfo("v", "quux"))
+	eh := func(_ *nats.Conn, _ *nats.Subscription, err error) {}
+	nc, err = nats.Connect(s.ClientURL(), nats.UserInfo("v", "quux"), nats.ErrorHandler(eh))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -4929,7 +4932,15 @@ func testJetStream_ClusterMultipleSubscribe(t *testing.T, subject string, srvs .
 	size := 5
 	subs := make([]*nats.Subscription, size)
 	errCh := make(chan error, size)
-	for i := 0; i < size; i++ {
+
+	// We are testing auto-bind here so create one first and expect others to bind to it.
+	sub, err := js.SubscribeSync(subject, nats.Durable("shared"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	subs[0] = sub
+
+	for i := 1; i < size; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -4963,18 +4974,12 @@ func testJetStream_ClusterMultipleSubscribe(t *testing.T, subject string, srvs .
 	}
 
 	delivered := 0
-	for i, sub := range subs {
+	for _, sub := range subs {
 		if sub == nil {
 			continue
 		}
-		for attempt := 0; attempt < 4; attempt++ {
-			_, err = sub.NextMsg(250 * time.Millisecond)
-			if err != nil {
-				t.Logf("%v WARN: Timeout waiting for next message: %v", i, err)
-				continue
-			}
+		if nmsgs, _, _ := sub.Pending(); err != nil || nmsgs > 0 {
 			delivered++
-			break
 		}
 	}
 	if delivered < 2 {
@@ -5010,7 +5015,15 @@ func testJetStream_ClusterMultipleQueueSubscribe(t *testing.T, subject string, s
 	size := 5
 	subs := make([]*nats.Subscription, size)
 	errCh := make(chan error, size)
-	for i := 0; i < size; i++ {
+
+	// We are testing auto-bind here so create one first and expect others to bind to it.
+	sub, err := js.QueueSubscribeSync(subject, "wq", nats.Durable("shared"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	subs[0] = sub
+
+	for i := 1; i < size; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -5044,19 +5057,12 @@ func testJetStream_ClusterMultipleQueueSubscribe(t *testing.T, subject string, s
 	}
 
 	delivered := 0
-	for i, sub := range subs {
+	for _, sub := range subs {
 		if sub == nil {
 			continue
 		}
-
-		for attempt := 0; attempt < 4; attempt++ {
-			_, err = sub.NextMsg(250 * time.Millisecond)
-			if err != nil {
-				t.Logf("%v WARN: Timeout waiting for next message: %v", i, err)
-				continue
-			}
+		if nmsgs, _, _ := sub.Pending(); err != nil || nmsgs > 0 {
 			delivered++
-			break
 		}
 	}
 	if delivered < 2 {
