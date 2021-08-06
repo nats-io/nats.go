@@ -191,7 +191,7 @@ func (nc *Conn) parse(buf []byte) error {
 				}
 			} else if i-nc.ps.as >= nc.ps.ma.size {
 				nc.processMsg(buf[nc.ps.as:i])
-				nc.ps.argBuf, nc.ps.msgBuf, nc.ps.state = nil, nil, MSG_END
+				nc.ps.argBuf, nc.ps.msgBuf, nc.ps.msgCopied, nc.ps.state = nil, nil, false, MSG_END
 			}
 		case MSG_END:
 			switch b {
