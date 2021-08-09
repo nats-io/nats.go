@@ -2098,13 +2098,6 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		nr.Expires = expires
 		req, _ = json.Marshal(nr)
 
-		// Since first message was an error we UNSUB (batch+1)
-		// since we are counting it as the first message.
-		err = s.AutoUnsubscribe(batch + 1)
-		if err != nil {
-			return nil, err
-		}
-
 		// Make another request and wait for the messages...
 		err = nc.publish(reqNext, inbox, nil, req)
 		if err != nil {
@@ -2134,13 +2127,6 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		err = checkMsg(firstMsg)
 		if err != nil {
 			s.Unsubscribe()
-			return nil, err
-		}
-	} else {
-		// We are receiving messages at this point. Send UNSUB to let
-		// the server clear interest once enough replies are delivered.
-		err = s.AutoUnsubscribe(batch)
-		if err != nil {
 			return nil, err
 		}
 	}
