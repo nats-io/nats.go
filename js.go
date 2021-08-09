@@ -1388,14 +1388,35 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	jsi := sub.jsi
 	jsi.mu.Lock()
 	if dseq != jsi.dseq {
+		rseq := jsi.sseq + 1
 		jsi.mu.Unlock()
-		sub.resetOrderedConsumer(jsi.sseq + 1)
+		sub.resetOrderedConsumer(rseq)
 		return true
 	}
 	// Update our tracking here.
 	jsi.dseq, jsi.sseq = dseq+1, sseq
 	jsi.mu.Unlock()
 	return false
+}
+
+// Update and replace sid.
+// Lock should be held on entry but will be unlocked to prevent lock inversion.
+func (sub *Subscription) applyNewSID() (osid int64) {
+	nc := sub.conn
+	sub.mu.Unlock()
+
+	nc.subsMu.Lock()
+	osid = sub.sid
+	delete(nc.subs, osid)
+	// Place new one.
+	nc.ssid++
+	nsid := nc.ssid
+	nc.subs[nsid] = sub
+	nc.subsMu.Unlock()
+
+	sub.mu.Lock()
+	sub.sid = nsid
+	return osid
 }
 
 // We are here if we have detected a gap with an ordered consumer.
@@ -1409,14 +1430,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	}
 
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
-	nc.subsMu.Lock()
-	osid := sub.sid
-	delete(nc.subs, osid)
-	// Place new one.
-	nc.ssid++
-	sub.sid = nc.ssid
-	nc.subs[sub.sid] = sub
-	nc.subsMu.Unlock()
+	osid := sub.applyNewSID()
 
 	// Grab new inbox.
 	newDeliver := NewInbox()
