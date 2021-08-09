@@ -5790,7 +5790,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		if err != nil && (err != nats.ErrTimeout && err != nats.ErrNoResponders) {
+		if err != nats.ErrBadSubscription {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	})
