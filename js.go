@@ -1404,7 +1404,7 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	nc := sub.conn
 	closed := sub.closed
-	if sub.jsi == nil || nc == nil || closed || nc.IsClosed() {
+	if sub.jsi == nil || nc == nil || closed {
 		return
 	}
 
@@ -1422,20 +1422,21 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	newDeliver := NewInbox()
 	sub.Subject = newDeliver
 
-	// Unsubscribe and subscribe with new inbox and sid.
-	// Remap a new low level sub into this sub since its client accessible.
-	nc.mu.Lock()
-	nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
-	nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, sub.sid))
-	nc.kickFlusher()
-	nc.mu.Unlock()
-
 	// Snapshot jsi under sub lock here.
 	jsi := sub.jsi
 
 	// We are still in the low level readloop for the connection so we need
 	// to spin a go routine to try to create the new consumer.
 	go func() {
+		// Unsubscribe and subscribe with new inbox and sid.
+		// Remap a new low level sub into this sub since its client accessible.
+		// This is done here in this go routine to prevent lock inversion.
+		nc.mu.Lock()
+		nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
+		nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, sub.sid))
+		nc.kickFlusher()
+		nc.mu.Unlock()
+
 		pushErr := func(err error) {
 			nc.handleConsumerSequenceMismatch(sub, err)
 			nc.unsubscribe(sub, 0, true)
