@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -341,4 +342,70 @@ func TestJetStreamOrderedConsumerWithErrors(t *testing.T) {
 
 	createStream()
 	testSubError(deleteConsumer)
+}
+
+// We want to make sure we do the right thing with lots of concurrent durable consumer requests.
+// One should win and the others should share the delivery subject with the first one who wins.
+func TestJetStreamConcurrentDurablePushConsumers(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create stream.
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Now create 10 durables concurrently.
+	subs := make(chan *Subscription, 10)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sub, _ := js.SubscribeSync("foo", Durable("dlc"))
+			subs <- sub
+		}()
+	}
+	// Wait for all the consumers.
+	wg.Wait()
+	close(subs)
+
+	si, err := js.StreamInfo("TEST")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si.State.Consumers != 1 {
+		t.Fatalf("Expected exactly one consumer, got %d", si.State.Consumers)
+	}
+
+	// Now send one message and make sure all subs get it.
+	js.Publish("foo", []byte("Hello"))
+	time.Sleep(250 * time.Millisecond) // Allow time for delivery.
+
+	for sub := range subs {
+		pending, _, _ := sub.Pending()
+		if pending != 1 {
+			t.Fatalf("Expected each durable to receive 1 msg, this sub got %d", pending)
+		}
+	}
 }

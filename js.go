@@ -1151,10 +1151,18 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 		}
 	}
 
+	var sub *Subscription
+
+	// Check if we are manual ack.
+	if cb != nil && !o.mack {
+		ocb := cb
+		cb = func(m *Msg) { ocb(m); m.Ack() }
+	}
+
 	// In case we need to hold onto it for ordered consumers.
 	var ccreq *createConsumerRequest
 
-	// If we are creating or updating let's process that request.
+	// If we are creating or updating let's update cfg.
 	if shouldCreate {
 		if !isPullMode {
 			cfg.DeliverSubject = deliver
@@ -1178,14 +1186,63 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 				cfg.MaxAckPending = DefaultSubPendingMsgsLimit
 			}
 		}
-
+		// Create request here.
 		ccreq = &createConsumerRequest{
 			Stream: stream,
 			Config: &cfg,
 		}
+	}
 
+	jsi := &jsSub{
+		js:       js,
+		stream:   stream,
+		consumer: consumer,
+		durable:  isDurable,
+		attached: attached,
+		deliver:  deliver,
+		hbs:      hasHeartbeats,
+		hbi:      o.cfg.Heartbeat,
+		fc:       hasFC,
+		ordered:  o.ordered,
+		ccreq:    ccreq,
+		dseq:     1,
+	}
+
+	if isPullMode {
+		sub, err = js.pullSubscribe(subj, jsi)
+	} else {
+		sub, err = js.nc.subscribe(deliver, queue, cb, ch, isSync, jsi)
+		// Since JetStream sends on different subject, make sure this reflects the user's intentions.
+		sub.mu.Lock()
+		sub.Subject = subj
+		sub.mu.Unlock()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// With flow control enabled async subscriptions we will disable msgs
+	// limits, and set a larger pending bytes limit by default.
+	if !isPullMode && cb != nil && hasFC {
+		sub.SetPendingLimits(DefaultSubPendingMsgsLimit*16, DefaultSubPendingBytesLimit)
+	}
+
+	// If we fail and we had the sub we need to cleanup, but can't just do a straight Unsubscribe or Drain.
+	// We need to clear the jsi so we do not remove any durables etc.
+	cleanUpSub := func() {
+		if sub != nil {
+			sub.mu.Lock()
+			sub.jsi = nil
+			sub.mu.Unlock()
+			sub.Unsubscribe()
+		}
+	}
+
+	// If we are creating or updating let's process that request.
+	if shouldCreate {
 		j, err := json.Marshal(ccreq)
 		if err != nil {
+			cleanUpSub()
 			return nil, err
 		}
 
@@ -1198,6 +1255,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 
 		resp, err := js.nc.Request(js.apiSubj(ccSubj), j, js.opts.wait)
 		if err != nil {
+			cleanUpSub()
 			if err == ErrNoResponders {
 				err = ErrJetStreamNotEnabled
 			}
@@ -1206,10 +1264,16 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 		var cinfo consumerResponse
 		err = json.Unmarshal(resp.Data, &cinfo)
 		if err != nil {
+			cleanUpSub()
 			return nil, err
 		}
 		info = cinfo.ConsumerInfo
+
 		if cinfo.Error != nil {
+			// We will not be using this sub here if we were push based.
+			if !isPullMode {
+				cleanUpSub()
+			}
 			// Multiple subscribers could compete in creating the first consumer
 			// that will be shared using the same durable name. If this happens, then
 			// do a lookup of the consumer info and resubscribe using the latest info.
@@ -1228,71 +1292,41 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync 
 					return nil, ErrSubjectMismatch
 				}
 
+				// Update attached status.
+				jsi.attached = true
+
 				// Use the deliver subject from latest consumer config to attach.
-				if ccfg.DeliverSubject != _EMPTY_ {
+				if info.Config.DeliverSubject != _EMPTY_ {
 					// We can't reuse the channel, so if one was passed, we need to create a new one.
 					if ch != nil {
 						ch = make(chan *Msg, cap(ch))
 					}
+					jsi.deliver = info.Config.DeliverSubject
+					// Recreate the subscription here.
+					sub, err = js.nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
+					if err != nil {
+						return nil, err
+					}
+					// Since JetStream sends on different subject, make sure this reflects the user's intentions.
+					sub.mu.Lock()
+					sub.Subject = subj
+					sub.mu.Unlock()
 				}
-				attached = true
 			} else {
 				if cinfo.Error.Code == 404 {
 					return nil, ErrStreamNotFound
 				}
 				return nil, fmt.Errorf("nats: %s", cinfo.Error.Description)
 			}
+		} else if consumer == _EMPTY_ {
+			// Update our consumer name here which is filled in when we create the consumer.
+			sub.mu.Lock()
+			sub.jsi.consumer = info.Name
+			sub.mu.Unlock()
 		}
-		stream = info.Stream
-		consumer = info.Name
-		deliver = info.Config.DeliverSubject
 	}
 
-	// Recent servers are more tolerant for ephemerals not immediately being present so we can do sub here.
-	var sub *Subscription
-
-	// Check if we are manual ack.
-	if cb != nil && !o.mack {
-		ocb := cb
-		cb = func(m *Msg) { ocb(m); m.Ack() }
-	}
-
-	jsi := &jsSub{
-		js:       js,
-		stream:   stream,
-		consumer: consumer,
-		durable:  isDurable,
-		attached: attached,
-		deliver:  deliver,
-		hbs:      hasHeartbeats,
-		hbi:      o.cfg.Heartbeat,
-		fc:       hasFC,
-		ordered:  o.ordered,
-		dseq:     1,
-	}
-
-	if isPullMode {
-		sub, err = js.pullSubscribe(subj, jsi)
-	} else {
-		if o.ordered {
-			jsi.ccreq = ccreq
-		}
-		sub, err = js.nc.subscribe(deliver, queue, cb, ch, isSync, jsi)
-		// Since JetStream sends on different subject, make sure this reflects the user's intentions.
-		sub.mu.Lock()
-		sub.Subject = subj
-		sub.mu.Unlock()
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// With flow control enabled async subscriptions we will disable msgs
-	// limits, and set a larger pending bytes limit by default.
-	if !isPullMode && cb != nil && hasFC {
-		sub.SetPendingLimits(DefaultSubPendingMsgsLimit*16, DefaultSubPendingBytesLimit)
-	}
-
+	// Do heartbeats last if needed.
 	if hasHeartbeats {
 		sub.scheduleHeartbeatCheck()
 	}

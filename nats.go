@@ -3931,12 +3931,22 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
+	var maxStr string
+	if max > 0 {
+		sub.mu.Lock()
+		sub.max = uint64(max)
+		if sub.delivered < sub.max {
+			maxStr = strconv.Itoa(max)
+		}
+		sub.mu.Unlock()
+	}
+
 	// For JetStream consumers, need to clean up ephemeral consumers
 	// or delete durable ones if called with Unsubscribe.
 	sub.mu.Lock()
 	jsi := sub.jsi
 	sub.mu.Unlock()
-	if jsi != nil {
+	if jsi != nil && maxStr == _EMPTY_ {
 		err := jsi.unsubscribe(drainMode)
 		if err != nil {
 			return err
@@ -3959,13 +3969,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 		return nil
 	}
 
-	maxStr := _EMPTY_
-	if max > 0 {
-		s.mu.Lock()
-		s.max = uint64(max)
-		s.mu.Unlock()
-		maxStr = strconv.Itoa(max)
-	} else if !drainMode {
+	if maxStr == _EMPTY_ && !drainMode {
 		nc.removeSub(s)
 	}
 
