@@ -3154,7 +3154,8 @@ const (
 	lastConsumerSeqHdr = "Nats-Last-Consumer"
 	lastStreamSeqHdr   = "Nats-Last-Stream"
 	noResponders       = "503"
-	noMessages         = "404"
+	noMessagesSts      = "404"
+	reqTimeoutSts      = "408"
 	controlMsg         = "100"
 	statusLen          = 3 // e.g. 20x, 40x, 50x
 )
@@ -3825,6 +3826,12 @@ func (s *Subscription) Type() SubscriptionType {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Pull subscriptions are really a SyncSubscription and we want this
+	// type to be set internally for all delivered messages management, etc..
+	// So check when to return PullSubscription to the user.
+	if s.jsi != nil && s.jsi.pull {
+		return PullSubscription
+	}
 	return s.typ
 }
 
