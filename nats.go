@@ -2566,20 +2566,23 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 		mcb := s.mcb
 		max = s.max
 		closed = s.closed
+		var fcReply string
 		if !s.closed {
 			s.delivered++
 			delivered = s.delivered
 			if s.jsi != nil {
-				s.jsi.mu.Lock()
-				needCheck := s.jsi.fc && len(s.jsi.fcs) > 0
-				s.jsi.active = true
-				s.jsi.mu.Unlock()
-				if needCheck {
-					s.checkForFlowControlResponse(delivered)
+				if s.jsi.fc {
+					fcReply = s.checkForFlowControlResponse()
 				}
+				s.jsi.active = true
 			}
 		}
 		s.mu.Unlock()
+
+		// Respond to flow control if applicable
+		if fcReply != _EMPTY_ {
+			nc.Publish(fcReply, nil)
+		}
 
 		if closed {
 			break
@@ -2682,6 +2685,7 @@ func (nc *Conn) processMsg(data []byte) {
 	var ctrlMsg bool
 	var hasFC bool
 	var hasHBs bool
+	var fcReply string
 
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
@@ -2772,22 +2776,26 @@ func (nc *Conn) processMsg(data []byte) {
 		if jsi != nil && hasHBs {
 			// Store the ACK metadata from the message to
 			// compare later on with the received heartbeat.
-			jsi.trackSequences(m.Reply)
+			sub.trackSequences(m.Reply)
 		}
 	} else if hasFC && m.Reply != _EMPTY_ {
 		// This is a flow control message.
 		// If we have no pending, go ahead and send in place.
 		if sub.pMsgs <= 0 {
-			nc.Publish(m.Reply, nil)
+			fcReply = m.Reply
 		} else {
 			// Schedule a reply after the previous message is delivered.
-			jsi.scheduleFlowControlResponse(sub.delivered+uint64(sub.pMsgs), m.Reply)
+			sub.scheduleFlowControlResponse(sub.delivered+uint64(sub.pMsgs), m.Reply)
 		}
 	}
 
 	// Clear any SlowConsumer status.
 	sub.sc = false
 	sub.mu.Unlock()
+
+	if fcReply != _EMPTY_ {
+		nc.Publish(fcReply, nil)
+	}
 
 	// Handle control heartbeat messages.
 	if ctrlMsg && hasHBs && m.Reply == _EMPTY_ {
@@ -3951,13 +3959,12 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 		sub.mu.Unlock()
 	}
 
-	// For JetStream consumers, need to clean up ephemeral consumers
-	// or delete durable ones if called with Unsubscribe.
+	// For JetStream consumers, need to clean up ephemeral consumers.
 	sub.mu.Lock()
 	jsi := sub.jsi
 	sub.mu.Unlock()
 	if jsi != nil && maxStr == _EMPTY_ {
-		err := jsi.unsubscribe(drainMode)
+		err := sub.jsiUnsubscribe(jsi, drainMode)
 		if err != nil {
 			return err
 		}
@@ -4100,17 +4107,15 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	nc := s.conn
 	max := s.max
 
+	var fcReply string
 	// Update some stats.
 	s.delivered++
 	delivered := s.delivered
 	if s.jsi != nil {
-		s.jsi.mu.Lock()
-		needCheck := s.jsi.fc && len(s.jsi.fcs) > 0
-		s.jsi.active = true
-		s.jsi.mu.Unlock()
-		if needCheck {
-			s.checkForFlowControlResponse(delivered)
+		if s.jsi.fc {
+			fcReply = s.checkForFlowControlResponse()
 		}
+		s.jsi.active = true
 	}
 
 	if s.typ == SyncSubscription {
@@ -4118,6 +4123,10 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 		s.pBytes -= len(msg.Data)
 	}
 	s.mu.Unlock()
+
+	if fcReply != _EMPTY_ {
+		nc.Publish(fcReply, nil)
+	}
 
 	if max > 0 {
 		if delivered > max {

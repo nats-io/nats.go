@@ -3631,6 +3631,13 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		return infos
 	}
 
+	deleteAllConsumers := func(t *testing.T) {
+		t.Helper()
+		for cn := range js.ConsumerNames("foo") {
+			js.DeleteConsumer("foo", cn)
+		}
+	}
+
 	js.Publish("foo.A", []byte("A"))
 	js.Publish("foo.B", []byte("B"))
 	js.Publish("foo.C", []byte("C"))
@@ -3654,9 +3661,10 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 		fetchConsumers(t, 0)
+		deleteAllConsumers(t)
 	})
 
-	t.Run("attached pull consumer deleted on unsubscribe", func(t *testing.T) {
+	t.Run("attached pull consumer not deleted on unsubscribe", func(t *testing.T) {
 		// Created by JetStreamManagement
 		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{
 			Durable:   "wq",
@@ -3684,7 +3692,8 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
 		subC.Unsubscribe()
-		fetchConsumers(t, 0)
+		fetchConsumers(t, 1)
+		deleteAllConsumers(t)
 	})
 
 	t.Run("ephemeral consumers deleted on drain", func(t *testing.T) {
@@ -3697,6 +3706,7 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 		fetchConsumers(t, 0)
+		deleteAllConsumers(t)
 	})
 
 	t.Run("durable consumers not deleted on drain", func(t *testing.T) {
@@ -3721,6 +3731,7 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 		fetchConsumers(t, 1)
+		deleteAllConsumers(t)
 	})
 }
 
@@ -3895,23 +3906,23 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got: %v", expected, got)
 		}
-		// Delete durable consumer.
+		// We do not attempt to delete a JS consumer that the SubscribeX() call
+		// did not actually create, so that will still leave the JS consumer.
 		err = subB.Unsubscribe()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
-		err = dupSub.Unsubscribe()
-		if err == nil {
-			t.Fatalf("Unexpected success")
-		}
-		if !errors.Is(err, nats.ErrConsumerNotFound) {
-			t.Errorf("Expected consumer not found error, got: %v", err)
+		// Since dupSub did not create the JS consumer (already existed), it will
+		// not try to delete it, so the fact that it is already deleted when
+		// subB.Unsubscribe() is called, should not call a failure here.
+		if err := dupSub.Unsubscribe(); err != nil {
+			t.Fatalf("Error on unsubscribe: %v", err)
 		}
 
 		// Remains an ephemeral consumer that did not get deleted
 		// when Close() was called.
-		fetchConsumers(t, 1)
+		fetchConsumers(t, 2)
 	})
 }
 
@@ -3947,7 +3958,7 @@ func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := nc.JetStream()
+	js, err := nc.JetStream(nats.MaxWait(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
