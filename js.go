@@ -822,7 +822,7 @@ type jsSub struct {
 	deliver  string
 	pull     bool
 	durable  bool
-	delCons  bool
+	dc       bool // Delete JS consumer
 
 	// Ordered consumers
 	ordered bool
@@ -841,30 +841,20 @@ type jsSub struct {
 	fcd    uint64
 }
 
-func (sub *Subscription) jsiUnsubscribe(jsi *jsSub, drainMode bool) error {
+// Deletes the JS Consumer.
+// No connection nor subscription lock must be held on entry.
+func (sub *Subscription) deleteConsumer() error {
 	sub.mu.Lock()
-	durable, delCons := jsi.durable, jsi.delCons
+	jsi := sub.jsi
+	if jsi == nil {
+		sub.mu.Unlock()
+		return nil
+	}
 	stream, consumer := jsi.stream, jsi.consumer
 	js := jsi.js
-	if jsi.hbc != nil {
-		jsi.hbc.Stop()
-		jsi.hbc = nil
-	}
 	sub.mu.Unlock()
 
-	// Delete the JS consumer only if the library created the JS consumer,
-	// in which case delCons==true, but even then, in drain mode if this
-	// is a durable, do not delete.
-	if !delCons || (drainMode && durable) {
-		return nil
-	}
-	// We don't want to possibly fail a drain because we were not able to
-	// delete the consumer.
-	err := js.DeleteConsumer(stream, consumer)
-	if drainMode {
-		return nil
-	}
-	return err
+	return js.DeleteConsumer(stream, consumer)
 }
 
 // SubOpt configures options for subscribing to JetStream consumers.
@@ -1117,6 +1107,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		dseq:     1,
 		pull:     isPullMode,
 		nms:      nms,
+		dc:       o.dc,
 	}
 
 	sub, err = nc.subscribe(deliver, queue, cb, ch, isSync, jsi)
@@ -1222,15 +1213,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				}
 				return nil, fmt.Errorf("nats: %s", cinfo.Error.Description)
 			}
-		} else {
-			// Since we created the JS consumer internally, mark that we should
-			// delete it on Unsubscribe().
-			sub.mu.Lock()
-			sub.jsi.delCons = true
+		} else if consumer == _EMPTY_ {
 			// Update our consumer name here which is filled in when we create the consumer.
-			if consumer == _EMPTY_ {
-				sub.jsi.consumer = info.Name
-			}
+			sub.mu.Lock()
+			sub.jsi.consumer = info.Name
 			sub.mu.Unlock()
 		}
 	}
@@ -1451,8 +1437,7 @@ func (sub *Subscription) activityCheck() {
 
 	if !active && !closed {
 		nc.mu.Lock()
-		errCB := nc.Opts.AsyncErrorCB
-		if errCB != nil {
+		if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
 			nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
 		}
 		nc.mu.Unlock()
@@ -1578,6 +1563,8 @@ type subOpts struct {
 	mack bool
 	// For an ordered consumer.
 	ordered bool
+	// User wants the library to delete the JS consumer on sub.Unsubscribe()
+	dc bool
 }
 
 // OrderedConsumer will create a fifo direct/ephemeral consumer for in order delivery of messages.
@@ -1771,6 +1758,15 @@ func EnableFlowControl() SubOpt {
 func IdleHeartbeat(duration time.Duration) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.Heartbeat = duration
+		return nil
+	})
+}
+
+// DeleteConsumer instructs the library to delete the JetStream consumer
+// when calling Subscription.Unsubscribe().
+func DeleteConsumer() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.dc = true
 		return nil
 	})
 }

@@ -3808,6 +3808,12 @@ func (nc *Conn) removeSub(s *Subscription) {
 	}
 	s.mch = nil
 
+	// If JS subscription the stop HB timer.
+	if jsi := s.jsi; jsi != nil && jsi.hbc != nil {
+		jsi.hbc.Stop()
+		jsi.hbc = nil
+	}
+
 	// Mark as invalid
 	s.closed = true
 	if s.pCond != nil {
@@ -3878,6 +3884,7 @@ func (s *Subscription) Unsubscribe() error {
 	s.mu.Lock()
 	conn := s.conn
 	closed := s.closed
+	dc := s.jsi != nil && s.jsi.dc
 	s.mu.Unlock()
 	if conn == nil || conn.IsClosed() {
 		return ErrConnectionClosed
@@ -3888,7 +3895,13 @@ func (s *Subscription) Unsubscribe() error {
 	if conn.IsDraining() {
 		return ErrConnectionDraining
 	}
-	return conn.unsubscribe(s, 0, false)
+	if err := conn.unsubscribe(s, 0, false); err != nil {
+		return err
+	}
+	if dc {
+		return s.deleteConsumer()
+	}
+	return nil
 }
 
 // checkDrained will watch for a subscription to be fully drained
@@ -3901,6 +3914,12 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 	// This allows us to know that whatever we have in the client pending
 	// is correct and the server will not send additional information.
 	nc.Flush()
+
+	sub.mu.Lock()
+	// For JS subscriptions, check if we are going to delete the
+	// JS consumer when drain completes.
+	dc := sub.jsi != nil && sub.jsi.dc
+	sub.mu.Unlock()
 
 	// Once we are here we just wait for Pending to reach 0 or
 	// any other state to exit this go routine.
@@ -3921,6 +3940,15 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 			nc.mu.Lock()
 			nc.removeSub(sub)
 			nc.mu.Unlock()
+			if dc {
+				if err := sub.deleteConsumer(); err != nil {
+					nc.mu.Lock()
+					if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
+						nc.ach.push(func() { errCB(nc, sub, err) })
+					}
+					nc.mu.Unlock()
+				}
+			}
 			return
 		}
 
@@ -3957,17 +3985,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 			maxStr = strconv.Itoa(max)
 		}
 		sub.mu.Unlock()
-	}
-
-	// For JetStream consumers, need to clean up ephemeral consumers.
-	sub.mu.Lock()
-	jsi := sub.jsi
-	sub.mu.Unlock()
-	if jsi != nil && maxStr == _EMPTY_ {
-		err := sub.jsiUnsubscribe(jsi, drainMode)
-		if err != nil {
-			return err
-		}
 	}
 
 	nc.mu.Lock()
