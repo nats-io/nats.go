@@ -33,61 +33,62 @@ import (
 // Request API subjects for JetStream.
 const (
 	// defaultAPIPrefix is the default prefix for the JetStream API.
-	defaultAPIPrefix = "$JS.API."
+	// defaultAPIPrefix = "$JS.API."
+	defaultAPIPrefix = "$JS."
 
 	// jsDomainT is used to create JetStream API prefix by specifying only Domain
 	jsDomainT = "$JS.%s.API."
 
 	// apiAccountInfo is for obtaining general information about JetStream.
-	apiAccountInfo = "INFO"
+	apiAccountInfo = "API.INFO"
 
 	// apiConsumerCreateT is used to create consumers.
-	apiConsumerCreateT = "CONSUMER.CREATE.%s"
+	apiConsumerCreateT = "API.CONSUMER.CREATE.%s"
 
 	// apiDurableCreateT is used to create durable consumers.
-	apiDurableCreateT = "CONSUMER.DURABLE.CREATE.%s.%s"
+	apiDurableCreateT = "API.CONSUMER.DURABLE.CREATE.%s.%s"
 
 	// apiConsumerInfoT is used to create consumers.
-	apiConsumerInfoT = "CONSUMER.INFO.%s.%s"
+	apiConsumerInfoT = "API.CONSUMER.INFO.%s.%s"
 
 	// apiRequestNextT is the prefix for the request next message(s) for a consumer in worker/pull mode.
-	apiRequestNextT = "CONSUMER.MSG.NEXT.%s.%s"
+	apiRequestNextT = "API.CONSUMER.MSG.NEXT.%s.%s"
 
 	// apiDeleteConsumerT is used to delete consumers.
-	apiConsumerDeleteT = "CONSUMER.DELETE.%s.%s"
+	apiConsumerDeleteT = "API.CONSUMER.DELETE.%s.%s"
 
 	// apiConsumerListT is used to return all detailed consumer information
-	apiConsumerListT = "CONSUMER.LIST.%s"
+	apiConsumerListT = "API.CONSUMER.LIST.%s"
 
 	// apiConsumerNamesT is used to return a list with all consumer names for the stream.
-	apiConsumerNamesT = "CONSUMER.NAMES.%s"
+	apiConsumerNamesT = "API.CONSUMER.NAMES.%s"
 
 	// apiStreams can lookup a stream by subject.
-	apiStreams = "STREAM.NAMES"
+	apiStreams = "API.STREAM.NAMES"
 
 	// apiStreamCreateT is the endpoint to create new streams.
-	apiStreamCreateT = "STREAM.CREATE.%s"
+	apiStreamCreateT = "API.STREAM.CREATE.%s"
 
 	// apiStreamInfoT is the endpoint to get information on a stream.
-	apiStreamInfoT = "STREAM.INFO.%s"
+	apiStreamInfoT = "API.STREAM.INFO.%s"
 
 	// apiStreamUpdate is the endpoint to update existing streams.
-	apiStreamUpdateT = "STREAM.UPDATE.%s"
+	apiStreamUpdateT = "API.STREAM.UPDATE.%s"
 
 	// apiStreamDeleteT is the endpoint to delete streams.
-	apiStreamDeleteT = "STREAM.DELETE.%s"
+	apiStreamDeleteT = "API.STREAM.DELETE.%s"
 
 	// apiPurgeStreamT is the endpoint to purge streams.
-	apiStreamPurgeT = "STREAM.PURGE.%s"
+	apiStreamPurgeT = "API.STREAM.PURGE.%s"
 
 	// apiStreamListT is the endpoint that will return all detailed stream information
-	apiStreamList = "STREAM.LIST"
+	apiStreamList = "API.STREAM.LIST"
 
 	// apiMsgGetT is the endpoint to get a message.
-	apiMsgGetT = "STREAM.MSG.GET.%s"
+	apiMsgGetT = "API.STREAM.MSG.GET.%s"
 
 	// apiMsgDeleteT is the endpoint to remove a message.
-	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
+	apiMsgDeleteT = "API.STREAM.MSG.DELETE.%s"
 
 	// orderedHeartbeatsInterval is how fast we want HBs from the server during idle.
 	orderedHeartbeatsInterval = 5 * time.Second
@@ -2109,7 +2110,11 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 			_, err = nc.Request(m.Reply, ackType, wait)
 		}
 	} else {
-		err = nc.Publish(m.Reply, ackType)
+		// js.opts.pre would have the prefix info
+		// $JS.ACK.
+		reply := strings.Replace(m.Reply, "$JS.ACK.", js.opts.pre)
+		err = nc.Publish(reply, []byte("+ACK"))
+		// err = nc.Publish(m.Reply, ackType)
 	}
 
 	// Mark that the message has been acked unless it is AckProgress
@@ -2124,6 +2129,12 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 // Ack acknowledges a message. This tells the server that the message was
 // successfully processed and it can move on to the next message.
 func (m *Msg) Ack(opts ...AckOpt) error {
+	// The same as:
+	// 
+	// nc.Publish(m.Reply, ackType)
+	//
+	// m.Reply => $JS.ACK.<etc>....
+	// m.Reply => $JS.<domain>.ACK.<etc>...
 	return m.ackReply(ackAck, false, opts...)
 }
 

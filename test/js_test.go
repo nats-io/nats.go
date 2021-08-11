@@ -2239,7 +2239,9 @@ func TestJetStreamImport(t *testing.T) {
 			U: {
 				users: [ {user: rip, password: bar} ]
 				imports [
-					{ service: { subject: "$JS.API.>", account: JS } , to: "dlc.>" }
+					{ service: { subject: "$JS.API.>", account: JS }, to: "dlc.>" }
+					# Cannot be renamed right now
+					{ service: { subject: "$JS.ACK.>", account: JS }, to: "dlc.ack.>" }
 					{ service: { subject: "foo", account: JS } }
 				]
 			},
@@ -2283,15 +2285,39 @@ func TestJetStreamImport(t *testing.T) {
 
 	// Since we import with a prefix from above we can use that when creating our JS context.
 	js, err := nc.JetStream(nats.APIPrefix("dlc"))
+	// js, err := nc.JetStream()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	msg := []byte("Hello JS Import!")
 
+	sub, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Error(err)
+	}
+
 	if _, err = js.Publish("foo", msg); err != nil {
 		t.Fatalf("Unexpected publish error: %v", err)
 	}
+	if _, err = js.Publish("foo", msg); err != nil {
+		t.Fatalf("Unexpected publish error: %v", err)
+	}
+	// m.Reply
+	// $JS.ACK.ORDERS.d3.1.70.70.1628717860850413000.30
+	m, err := sub.NextMsg(1 *time.Second)
+	if err != nil {
+		t.Error(err)
+	}
+	// Ack it
+	// nc.Publish(m.Reply, []byte(""))
+
+	// When some custom prefix is used, then shadow
+	// the incoming reply with the prefix from the client?
+	// reply := strings.Replace(m.Reply, "$JS.ACK.", "dlc.ack.")
+	// nc.Publish(reply, []byte("+ACK"))
+
+	t.Logf("%+v", m)
 }
 
 func TestJetStreamImportDirectOnly(t *testing.T) {
@@ -2461,6 +2487,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	// Can also ack from the regular NATS subscription via the imported subject.
 	for i := 0; i < toSend; i++ {
 		m, err := sub.NextMsg(100 * time.Millisecond)
+		// t.Logf(">>>>>>> %+v", m.Reply)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
