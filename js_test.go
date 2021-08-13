@@ -409,3 +409,89 @@ func TestJetStreamConcurrentDurablePushConsumers(t *testing.T) {
 		}
 	}
 }
+
+func TestJetStreamSubscribeReconnect(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	rch := make(chan struct{}, 1)
+	nc, err := Connect(s.ClientURL(),
+		ReconnectWait(50*time.Millisecond),
+		ReconnectHandler(func(_ *Conn) {
+			select {
+			case rch <- struct{}{}:
+			default:
+			}
+		}))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream(MaxWait(250 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.SubscribeSync("foo", Durable("bar"))
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	sendAndReceive := func(msgContent string) {
+		t.Helper()
+		var ok bool
+		var err error
+		for i := 0; i < 5; i++ {
+			if _, err = js.Publish("foo", []byte(msgContent)); err != nil {
+				time.Sleep(250 * time.Millisecond)
+				continue
+			}
+			ok = true
+			break
+		}
+		if !ok {
+			t.Fatalf("Error on publish: %v", err)
+		}
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatal("Did not get message")
+		}
+		if string(msg.Data) != msgContent {
+			t.Fatalf("Unexpected content: %q", msg.Data)
+		}
+		if err := msg.AckSync(); err != nil {
+			t.Fatalf("Error on ack: %v", err)
+		}
+	}
+
+	sendAndReceive("msg1")
+
+	// Cause a disconnect...
+	nc.mu.Lock()
+	nc.conn.Close()
+	nc.mu.Unlock()
+
+	// Wait for reconnect
+	select {
+	case <-rch:
+	case <-time.After(time.Second):
+		t.Fatal("Did not reconnect")
+	}
+
+	// Make sure we can send and receive the msg
+	sendAndReceive("msg2")
+}
