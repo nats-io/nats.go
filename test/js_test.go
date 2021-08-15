@@ -285,17 +285,18 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	expectConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
+	expectConsumers := func(t *testing.T, expected int) {
 		t.Helper()
-		var infos []*nats.ConsumerInfo
-		for info := range js.ConsumersInfo("TEST") {
-			infos = append(infos, info)
-		}
-		if len(infos) != expected {
-			t.Fatalf("Expected %d consumers, got: %d", expected, len(infos))
-		}
-
-		return infos
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			var infos []*nats.ConsumerInfo
+			for info := range js.ConsumersInfo("TEST") {
+				infos = append(infos, info)
+			}
+			if len(infos) != expected {
+				return fmt.Errorf("Expected %d consumers, got: %d", expected, len(infos))
+			}
+			return nil
+		})
 	}
 
 	// Create the stream using our client API.
@@ -313,6 +314,16 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("stream lookup failed: %v", err)
 	}
 
+	// Check that Queue subscribe with HB or FC fails.
+	_, err = js.QueueSubscribeSync("foo", "wq", nats.IdleHeartbeat(time.Second))
+	if err == nil || !strings.Contains(err.Error(), "heartbeat") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.QueueSubscribeSync("foo", "wq", nats.EnableFlowControl())
+	if err == nil || !strings.Contains(err.Error(), "flow control") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
 	msg := []byte("Hello JS")
 
 	// Basic publish like NATS core.
@@ -320,32 +331,40 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	q := make(chan *nats.Msg, 4)
 
+	checkSub, err := nc.SubscribeSync("ivan")
+	if err != nil {
+		t.Fatalf("Error on sub: %v", err)
+	}
+
 	// Now create a simple ephemeral consumer.
-	sub, err := js.Subscribe("foo", func(m *nats.Msg) {
+	sub1, err := js.Subscribe("foo", func(m *nats.Msg) {
 		q <- m
-	})
+	}, nats.DeliverSubject("ivan"))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer sub.Unsubscribe()
+	defer sub1.Unsubscribe()
 
 	select {
 	case m := <-q:
 		if _, err := m.Metadata(); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		if _, err := checkSub.NextMsg(time.Second); err != nil {
+			t.Fatal("Wrong deliver subject")
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("Did not receive the messages in time")
 	}
 
 	// Now do same but sync.
-	sub, err = js.SubscribeSync("foo")
+	sub2, err := js.SubscribeSync("foo")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer sub.Unsubscribe()
+	defer sub2.Unsubscribe()
 
-	waitForPending := func(t *testing.T, n int) {
+	waitForPending := func(t *testing.T, sub *nats.Subscription, n int) {
 		t.Helper()
 		timeout := time.Now().Add(2 * time.Second)
 		for time.Now().Before(timeout) {
@@ -358,7 +377,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected to receive %d messages, but got %d", n, msgs)
 	}
 
-	waitForPending(t, 1)
+	waitForPending(t, sub2, 1)
 
 	toSend := 10
 	for i := 0; i < toSend; i++ {
@@ -367,7 +386,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	done := make(chan bool, 1)
 	var received int
-	sub, err = js.Subscribe("bar", func(m *nats.Msg) {
+	sub3, err := js.Subscribe("bar", func(m *nats.Msg) {
 		received++
 		if received == toSend {
 			done <- true
@@ -377,7 +396,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	expectConsumers(t, 3)
-	defer sub.Unsubscribe()
+	defer sub3.Unsubscribe()
 
 	select {
 	case <-done:
@@ -387,7 +406,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// If we are here we have received all of the messages.
 	// We hang the ConsumerInfo option off of the subscription, so we use that to check status.
-	info, _ := sub.ConsumerInfo()
+	info, _ := sub3.ConsumerInfo()
 	if info.Config.AckPolicy != nats.AckExplicitPolicy {
 		t.Fatalf("Expected ack explicit policy, got %q", info.Config.AckPolicy)
 	}
@@ -398,17 +417,19 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if info.AckFloor.Consumer != uint64(toSend) {
 		t.Fatalf("Expected to have ack'd all %d messages, got ack floor of %d", toSend, info.AckFloor.Consumer)
 	}
-	sub.Unsubscribe()
-	expectConsumers(t, 2)
+	sub3.Unsubscribe()
+	sub2.Unsubscribe()
+	sub1.Unsubscribe()
+	expectConsumers(t, 0)
 
 	// Now create a sync subscriber that is durable.
 	dname := "derek"
-	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
+	sub, err := js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
-	expectConsumers(t, 3)
+	expectConsumers(t, 1)
 
 	// Make sure we registered as a durable.
 	info, _ = sub.ConsumerInfo()
@@ -417,88 +438,87 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 	deliver := info.Config.DeliverSubject
 
-	// Remove subscription, but do not delete consumer.
+	// Drain subscription, this will delete the consumer.
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		for {
+			if _, err := sub.NextMsg(500 * time.Millisecond); err != nil {
+				return
+			}
+		}
+	}()
 	sub.Drain()
 	nc.Flush()
-	expectConsumers(t, 3)
+	expectConsumers(t, 0)
 
-	// Reattach using the same consumer.
+	// This will recreate a new instance.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if info, err := sub.ConsumerInfo(); err != nil || info.Config.DeliverSubject != deliver {
-		t.Fatal("Expected delivery subject to be the same after reattach")
+	if info, err := sub.ConsumerInfo(); err != nil || info.Config.DeliverSubject == deliver {
+		t.Fatal("Expected delivery subject to be different")
 	}
-	expectConsumers(t, 3)
+	expectConsumers(t, 1)
 
-	// Subscribing again with same subject and durable name is not an error,
-	// but does not create a new consumer either.
-	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	// Subscribing again with same subject and durable name is an error.
+	if _, err := js.SubscribeSync("foo", nats.Durable(dname)); err == nil {
+		t.Fatal("Unexpected success")
 	}
-	if info, err := sub.ConsumerInfo(); err != nil || info.Config.DeliverSubject != deliver {
-		t.Fatal("Expected delivery subject to be the same after reattach")
-	}
-	expectConsumers(t, 3)
+	expectConsumers(t, 1)
 
-	// Cleanup the consumer to be able to create again with a different delivery subject.
-	// this should be the same as `sub.Unsubscribe()'.
-	js.DeleteConsumer("TEST", dname)
-	expectConsumers(t, 2)
+	// Delete the durable.
+	sub.Unsubscribe()
+	expectConsumers(t, 0)
 
-	// Create again and make sure that works and that we attach to the same durable with different delivery.
+	// Create again and make sure that works.
 	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
-	expectConsumers(t, 3)
+	expectConsumers(t, 1)
 
 	if deliver == sub.Subject {
 		t.Fatalf("Expected delivery subject to be different then %q", deliver)
 	}
-	deliver = sub.Subject
+	sub.Unsubscribe()
+	expectConsumers(t, 0)
 
-	// Now test that we can attach to an existing durable.
-	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
+	// Create a queue group on "bar" with no explicit durable name, which
+	// means that the queue name will be used as the durable name.
+	sub1, err = js.QueueSubscribeSync("bar", "v0")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer sub.Unsubscribe()
+	defer sub1.Unsubscribe()
+	waitForPending(t, sub1, 10)
+	expectConsumers(t, 1)
 
-	if deliver != sub.Subject {
-		t.Fatalf("Expected delivery subject to be the same when attaching, got different")
+	// Since the above JS consumer is created on subject "bar", trying to
+	// add a member to the same group but on subject "baz" should fail.
+	if _, err = js.QueueSubscribeSync("baz", "v0"); err == nil {
+		t.Fatal("Unexpected success")
 	}
 
-	// New QueueSubscribeSync with the same durable name will not
-	// create new consumers.
-	sub, err = js.QueueSubscribeSync("foo", "v0", nats.Durable(dname))
+	// If the queue group is different, but we try to attach to the existing
+	// JS consumer that is created for group "v0", then this should fail.
+	if _, err = js.QueueSubscribeSync("bar", "v1", nats.Durable("v0")); err == nil {
+		t.Fatal("Unexpected success")
+	}
+	// However, if a durable name is specified, creating a queue sub with
+	// the same queue name is ok, but will feed from a different JS consumer.
+	sub2, err = js.QueueSubscribeSync("bar", "v0", nats.Durable("otherQueueDurable"))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer sub.Unsubscribe()
-	waitForPending(t, 0)
-	expectConsumers(t, 3)
+	defer sub2.Unsubscribe()
+	waitForPending(t, sub2, 10)
+	expectConsumers(t, 2)
 
-	// QueueSubscribeSync with a wrong subject from the previous consumer
-	// is an error.
-	_, err = js.QueueSubscribeSync("bar", "v0", nats.Durable(dname))
-	if err == nil {
-		t.Fatalf("Unexpected success")
-	}
-
-	// QueueSubscribeSync with a different durable name will receive
-	// the messages.
-	qsubDurable := nats.Durable(dname + "-qsub")
-	sub, err = js.QueueSubscribeSync("bar", "v0", qsubDurable)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer sub.Unsubscribe()
-	waitForPending(t, 10)
-	expectConsumers(t, 4)
+	sub1.Unsubscribe()
+	sub2.Unsubscribe()
+	expectConsumers(t, 0)
 
 	// Now try pull based subscribers.
 
@@ -508,19 +528,27 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// Durable name is required for now.
-	sub, err = js.PullSubscribe("bar", "")
-	if err == nil {
+	if _, err = js.PullSubscribe("bar", ""); err == nil {
 		t.Fatalf("Unexpected success")
 	}
-	if err != nil && err.Error() != `nats: consumer in pull mode requires a durable name` {
+	if err.Error() != `nats: consumer in pull mode requires a durable name` {
 		t.Errorf("Expected consumer in pull mode error, got %v", err)
 	}
-	sub, err = js.PullSubscribe("bar", "foo", nats.Durable("bar"))
-	if err == nil {
+	if _, err = js.PullSubscribe("bar", "foo", nats.Durable("bar")); err == nil {
 		t.Fatalf("Unexpected success")
 	}
-	if err != nil && err.Error() != `nats: option Durable set more than once` {
+	if err.Error() != `nats: option Durable set more than once` {
 		t.Errorf("Expected consumer in pull mode error, got %v", err)
+	}
+	// Can't specify DeliverSubject for pull subscribers
+	_, err = js.PullSubscribe("bar", "foo", nats.DeliverSubject("baz"))
+	if err != nats.ErrPullSubscribeToPushConsumer {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Can't specify BindDeliverSubject
+	_, err = js.PullSubscribe("bar", "foo", nats.BindDeliverSubject("baz"))
+	if err != nats.ErrPullSubscribeToPushConsumer {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	batch := 5
@@ -528,6 +556,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	expectConsumers(t, 1)
 
 	// The first batch if available should be delivered and queued up.
 	bmsgs, err := sub.Fetch(batch)
@@ -550,7 +579,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if info, _ := sub.ConsumerInfo(); info.AckFloor.Consumer != uint64(batch) {
 		t.Fatalf("Expected ack floor to be %d, got %d", batch, info.AckFloor.Consumer)
 	}
-	waitForPending(t, 0)
+	waitForPending(t, sub, 0)
 
 	// Make a request for 10 but should only receive a few.
 	bmsgs, err = sub.Fetch(10, nats.MaxWait(2*time.Second))
@@ -566,8 +595,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 	for _, msg := range bmsgs {
 		msg.Ack()
 	}
-
-	sub.Drain()
 
 	// Now test attaching to a pull based durable.
 
@@ -588,6 +615,8 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+	// No new JS consumer was created.
+	expectConsumers(t, 1)
 
 	// Fetch messages a couple of times.
 	expected = 5
@@ -609,6 +638,17 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Expected ack pending of %d and pending to be %d, got %d %d", batch, toSend-batch, info.NumAckPending, info.NumPending)
 	}
 
+	// Pull subscriptions can't use NextMsg variants.
+	if _, err := sub.NextMsg(time.Second); err != nats.ErrTypeSubscription {
+		t.Fatalf("Expected error %q, got %v", nats.ErrTypeSubscription, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := sub.NextMsgWithContext(ctx); err != nats.ErrTypeSubscription {
+		t.Fatalf("Expected error %q, got %v", nats.ErrTypeSubscription, err)
+	}
+	cancel()
+
 	// Prevent invalid durable names
 	if _, err := js.SubscribeSync("baz", nats.Durable("test.durable")); err != nats.ErrInvalidDurableName {
 		t.Fatalf("Expected invalid durable name error")
@@ -619,6 +659,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	expectConsumers(t, 2)
 
 	_, err = sub.NextMsg(1 * time.Second)
 	if err != nil {
@@ -637,6 +678,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	expectConsumers(t, 3)
 	m, err := sub.NextMsg(1 * time.Second)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -652,13 +694,14 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected consumer name, got: %v", meta.Consumer)
 	}
 
-	qsubDurable = nats.Durable(dname + "-qsub-chan")
+	qsubDurable := nats.Durable("qdur-chan")
 	mch := make(chan *nats.Msg, 16536)
 	sub, err = js.ChanQueueSubscribe("bar", "v1", mch, qsubDurable)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+	expectConsumers(t, 4)
 
 	var a, b *nats.MsgMetadata
 	select {
@@ -678,6 +721,8 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
+	// Not a new JS consumer
+	expectConsumers(t, 4)
 
 	// Publish more messages so that at least one is received by
 	// the channel queue subscriber.
@@ -700,7 +745,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	// Both ChanQueueSubscribers use the same consumer.
-	expectConsumers(t, 8)
+	expectConsumers(t, 4)
 }
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
@@ -1025,559 +1070,6 @@ func TestJetStreamAckPending_Push(t *testing.T) {
 	_, err = sub.NextMsg(100 * time.Millisecond)
 	if err != nats.ErrTimeout {
 		t.Errorf("Expected timeout, got: %v", err)
-	}
-}
-
-func TestJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-		t.Logf("WARN: %s", err)
-	})
-
-	nc, err := nats.Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Burst and try to hit the flow control limit of the server.
-	const totalMsgs = 16536
-	payload := strings.Repeat("A", 1024)
-	for i := 0; i < totalMsgs; i++ {
-		if _, err := js.Publish("foo", []byte(fmt.Sprintf("i:%d/", i)+payload)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	hbTimer := 500 * time.Millisecond
-	sub, err := js.SubscribeSync("foo",
-		nats.AckWait(30*time.Second),
-		nats.MaxDeliver(1),
-		nats.EnableFlowControl(),
-		nats.IdleHeartbeat(hbTimer),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Unsubscribe()
-
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Config.FlowControl {
-		t.Fatal("Expected Flow Control to be enabled")
-	}
-	if info.Config.Heartbeat != hbTimer {
-		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
-	}
-
-	m, err := sub.NextMsg(1 * time.Second)
-	if err != nil {
-		t.Fatalf("Error getting next message: %v", err)
-	}
-	meta, err := m.Metadata()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.NumPending > totalMsgs {
-		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.NumPending)
-	}
-	err = m.Ack()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	recvd := 1
-	timeout := time.Now().Add(10 * time.Second)
-	for time.Now().Before(timeout) {
-		m, err := sub.NextMsg(1 * time.Second)
-		if err != nil {
-			t.Fatalf("Error getting next message: %v", err)
-		}
-		if len(m.Data) == 0 {
-			t.Fatalf("Unexpected empty message: %+v", m)
-		}
-
-		if err := m.AckSync(); err != nil {
-			t.Fatalf("Error on ack message: %v", err)
-		}
-		recvd++
-
-		if recvd == totalMsgs {
-			break
-		}
-	}
-
-	t.Run("idle heartbeats", func(t *testing.T) {
-		// Delay to get a few heartbeats.
-		time.Sleep(2 * time.Second)
-
-		timeout = time.Now().Add(5 * time.Second)
-		for time.Now().Before(timeout) {
-			msg, err := sub.NextMsg(200 * time.Millisecond)
-			if err != nil {
-				if err == nats.ErrTimeout {
-					// If timeout, ok to stop checking for the test.
-					break
-				}
-				t.Fatal(err)
-			}
-			if len(msg.Data) == 0 {
-				t.Fatalf("Unexpected empty message: %+v", m)
-			}
-
-			recvd++
-			meta, err := msg.Metadata()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if meta.NumPending == 0 {
-				break
-			}
-		}
-		if recvd > totalMsgs {
-			t.Logf("WARN: Received more messages than expected (%v), got: %v", totalMsgs, recvd)
-		}
-	})
-
-	t.Run("with context", func(t *testing.T) {
-		sub, err := js.SubscribeSync("foo",
-			nats.AckWait(100*time.Millisecond),
-			nats.Durable("bar"),
-			nats.EnableFlowControl(),
-			nats.IdleHeartbeat(hbTimer),
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer sub.Unsubscribe()
-
-		info, err = sub.ConsumerInfo()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !info.Config.FlowControl {
-			t.Fatal("Expected Flow Control to be enabled")
-		}
-
-		recvd = 0
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			default:
-			}
-
-			m, err := sub.NextMsgWithContext(ctx)
-			if err != nil {
-				t.Fatalf("Error getting next message: %v", err)
-			}
-			if len(m.Data) == 0 {
-				t.Fatalf("Unexpected empty message: %+v", m)
-			}
-
-			if err := m.Ack(); err != nil {
-				t.Fatalf("Error on ack message: %v", err)
-			}
-			recvd++
-
-			if recvd >= totalMsgs {
-				break
-			}
-		}
-
-		// Delay to get a few heartbeats.
-		time.Sleep(2 * time.Second)
-		for {
-			select {
-			case <-ctx.Done():
-				if ctx.Err() == context.DeadlineExceeded {
-					return
-				}
-			default:
-			}
-
-			msg, err := sub.NextMsgWithContext(ctx)
-			if err != nil {
-				if err == context.DeadlineExceeded {
-					break
-				}
-				t.Fatal(err)
-			}
-			if len(msg.Data) == 0 {
-				t.Fatalf("Unexpected empty message: %+v", m)
-			}
-
-			meta, err := msg.Metadata()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if meta.NumPending == 0 {
-				break
-			}
-		}
-	})
-}
-
-func TestJetStreamPushFlowControlHeartbeats_SubscribeAsync(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Burst and try to hit the flow control limit of the server.
-	const totalMsgs = 16536
-	payload := strings.Repeat("A", 1024)
-	for i := 0; i < totalMsgs; i++ {
-		if _, err := js.Publish("foo", []byte(payload)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	recvd := make(chan *nats.Msg, totalMsgs)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	errCh := make(chan error)
-	hbTimer := 200 * time.Millisecond
-	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
-		if len(msg.Data) == 0 {
-			errCh <- fmt.Errorf("Unexpected empty message: %+v", msg)
-		}
-		recvd <- msg
-
-		if len(recvd) == totalMsgs {
-			cancel()
-		}
-	}, nats.EnableFlowControl(), nats.IdleHeartbeat(hbTimer))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Unsubscribe()
-
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Config.FlowControl {
-		t.Fatal("Expected Flow Control to be enabled")
-	}
-	if info.Config.Heartbeat != hbTimer {
-		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
-	}
-
-	<-ctx.Done()
-
-	got := len(recvd)
-	expected := totalMsgs
-	if got != expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
-	}
-
-	// Wait for a couple of heartbeats to arrive and confirm there is no error.
-	select {
-	case <-time.After(1 * time.Second):
-	case err := <-errCh:
-		t.Fatal(err)
-	}
-}
-
-func TestJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-		t.Logf("WARN: %s : %v", err, sub.Subject)
-	})
-
-	nc, err := nats.Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Burst and try to hit the flow control limit of the server.
-	const totalMsgs = 16536
-	payload := strings.Repeat("A", 1024)
-	for i := 0; i < totalMsgs; i++ {
-		if _, err := js.Publish("foo", []byte(fmt.Sprintf("i:%d/", i)+payload)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	hbTimer := 500 * time.Millisecond
-	mch := make(chan *nats.Msg, 16536)
-	sub, err := js.ChanSubscribe("foo", mch,
-		nats.AckWait(30*time.Second),
-		nats.MaxDeliver(1),
-		nats.EnableFlowControl(),
-		nats.IdleHeartbeat(hbTimer),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Unsubscribe()
-
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Config.FlowControl {
-		t.Fatal("Expected Flow Control to be enabled")
-	}
-	if info.Config.Heartbeat != hbTimer {
-		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
-	}
-
-	getNextMsg := func(mch chan *nats.Msg, timeout time.Duration) (*nats.Msg, error) {
-		t.Helper()
-		select {
-		case m := <-mch:
-			return m, nil
-		case <-time.After(timeout):
-			return nil, nats.ErrTimeout
-		}
-	}
-
-	m, err := getNextMsg(mch, 1*time.Second)
-	if err != nil {
-		t.Fatalf("Error getting next message: %v", err)
-	}
-	meta, err := m.Metadata()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.NumPending > totalMsgs {
-		t.Logf("WARN: More pending messages than expected (%v), got: %v", totalMsgs, meta.NumPending)
-	}
-	err = m.Ack()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	recvd := 1
-	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
-	defer done()
-
-Loop:
-	for {
-		select {
-		case <-ctx.Done():
-			break Loop
-		case m := <-mch:
-			if err != nil {
-				t.Fatalf("Error getting next message: %v", err)
-			}
-			if len(m.Data) == 0 {
-				t.Fatalf("Unexpected empty message: %+v", m)
-			}
-
-			if err := m.Ack(); err != nil {
-				t.Fatalf("Error on ack message: %v", err)
-			}
-			recvd++
-
-			if recvd == totalMsgs {
-				done()
-			}
-		}
-	}
-
-	t.Run("idle heartbeats", func(t *testing.T) {
-		// Delay to get a few heartbeats.
-		time.Sleep(2 * time.Second)
-
-		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
-		defer done()
-	Loop:
-		for {
-			select {
-			case <-ctx.Done():
-				break Loop
-			case msg := <-mch:
-				if err != nil {
-					if err == nats.ErrTimeout {
-						// If timeout, ok to stop checking for the test.
-						break
-					}
-					t.Fatal(err)
-				}
-				if len(msg.Data) == 0 {
-					t.Fatalf("Unexpected empty message: %+v", m)
-				}
-
-				recvd++
-				meta, err := msg.Metadata()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if meta.NumPending == 0 {
-					break Loop
-				}
-			}
-		}
-		if recvd > totalMsgs {
-			t.Logf("WARN: Received more messages than expected (%v), got: %v", totalMsgs, recvd)
-		}
-	})
-}
-
-func TestJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	errCh := make(chan error)
-	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-		errCh <- err
-	})
-	nc, err := nats.Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	const totalMsgs = 10_000
-
-	js, err := nc.JetStream(nats.PublishAsyncMaxPending(totalMsgs))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	go func() {
-		payload := strings.Repeat("O", 4096)
-		for i := 0; i < totalMsgs; i++ {
-			js.PublishAsync("foo", []byte(payload))
-		}
-	}()
-
-	// Small channel that blocks and then buffered channel that can deliver all
-	// messages without blocking.
-	recvd := make(chan *nats.Msg, 64)
-	delivered := make(chan *nats.Msg, totalMsgs)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	// Dispatch channel consumer
-	go func() {
-		for m := range recvd {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			delivered <- m
-			if len(delivered) == totalMsgs {
-				cancel()
-			}
-		}
-	}()
-
-	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
-		// Cause bottleneck by having channel block when full
-		// because of work taking long.
-		recvd <- msg
-	}, nats.EnableFlowControl())
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Unsubscribe()
-
-	// Set this lower then normal to make sure we do not exceed bytes pending with FC turned on.
-	sub.SetPendingLimits(totalMsgs, 1024*1024) // This matches server window for flowcontrol.
-
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Config.FlowControl {
-		t.Fatal("Expected Flow Control to be enabled")
-	}
-	<-ctx.Done()
-
-	got := len(delivered)
-	expected := totalMsgs
-	if got != expected {
-		t.Errorf("Expected %d messages, got: %d", expected, got)
-	}
-
-	// Wait for a couple of heartbeats to arrive and confirm there is no error.
-	select {
-	case <-time.After(1 * time.Second):
-	case err := <-errCh:
-		t.Errorf("error handler: %v", err)
 	}
 }
 
@@ -2479,10 +1971,15 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	waitForPending(t, toSend)
 
-	// Bind has the same effect as above since it would not attempt to create and lookup will work.
-	sub, err = js.SubscribeSync("ORDERS", nats.Bind("ORDERS", "d4"))
+	// It is also possible to create a subscription with a BindDeliverSubject() API
+	// that will not try to do lookup nor create a JS consumer object.
+	sub, err = js.SubscribeSync("ignored", nats.BindDeliverSubject("p.d4"))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
+	}
+	js.Publish("orders", []byte("msg"))
+	if _, err := sub.NextMsg(time.Second); err != nil {
+		t.Fatalf("Error getting message: %v", err)
 	}
 
 	// Even if there are no permissions or import to check that a consumer exists,
@@ -2509,7 +2006,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err = nc.JetStream()
+	// Since we know that the lookup will fail, we use a smaller timeout than the 5s default.
+	js, err = nc.JetStream(nats.MaxWait(500 * time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2798,83 +2296,6 @@ func TestJetStreamInterfaces(t *testing.T) {
 		js.Publish("foo", payload)
 	}
 	publishMsg(js, []byte("hello world"))
-}
-
-func TestJetStreamChanSubscribeStall(t *testing.T) {
-	conf := createConfFile(t, []byte(`
-		listen: 127.0.0.1:-1
-		jetstream: enabled
-		no_auth_user: pc
-		accounts: {
-			JS: {
-				jetstream: enabled
-				users: [ {user: pc, password: foo} ]
-			},
-		}
-	`))
-	defer os.Remove(conf)
-
-	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Create a stream.
-	if _, err = js.AddStream(&nats.StreamConfig{Name: "STALL"}); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.StreamInfo("STALL")
-	if err != nil {
-		t.Fatalf("stream lookup failed: %v", err)
-	}
-
-	msg := []byte(strings.Repeat("A", 512))
-	toSend := 100_000
-	for i := 0; i < toSend; i++ {
-		// Use plain NATS here for speed.
-		nc.Publish("STALL", msg)
-	}
-	nc.Flush()
-
-	batch := 100
-	msgs := make(chan *nats.Msg, batch-2)
-	sub, err := js.ChanSubscribe("STALL", msgs,
-		nats.Durable("dlc"),
-		nats.EnableFlowControl(),
-		nats.MaxAckPending(batch-2),
-	)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer sub.Unsubscribe()
-
-	for received := 0; received < toSend; {
-		select {
-		case m := <-msgs:
-			received++
-			meta, _ := m.Metadata()
-			if meta.Sequence.Consumer != uint64(received) {
-				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Sequence.Consumer)
-			}
-			m.Ack()
-		case <-time.After(time.Second):
-			t.Fatalf("Timeout waiting for messages, last received was %d", received)
-		}
-	}
 }
 
 func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
@@ -3618,17 +3039,25 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	fetchConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
+	fetchConsumers := func(t *testing.T, expected int) {
 		t.Helper()
-		var infos []*nats.ConsumerInfo
-		for info := range js.ConsumersInfo("foo") {
-			infos = append(infos, info)
-		}
-		if len(infos) != expected {
-			t.Fatalf("Expected %d consumers, got: %d", expected, len(infos))
-		}
+		checkFor(t, time.Second, 15*time.Millisecond, func() error {
+			var infos []*nats.ConsumerInfo
+			for info := range js.ConsumersInfo("foo") {
+				infos = append(infos, info)
+			}
+			if len(infos) != expected {
+				return fmt.Errorf("Expected %d consumers, got: %d", expected, len(infos))
+			}
+			return nil
+		})
+	}
 
-		return infos
+	deleteAllConsumers := func(t *testing.T) {
+		t.Helper()
+		for cn := range js.ConsumerNames("foo") {
+			js.DeleteConsumer("foo", cn)
+		}
 	}
 
 	js.Publish("foo.A", []byte("A"))
@@ -3636,27 +3065,41 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 	js.Publish("foo.C", []byte("C"))
 
 	t.Run("consumers deleted on unsubscribe", func(t *testing.T) {
-		subA, err := js.SubscribeSync("foo.A")
+		sub, err := js.SubscribeSync("foo.A")
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = subA.Unsubscribe()
-		if err != nil {
+		if err := sub.Unsubscribe(); err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
-		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+		sub, err = js.SubscribeSync("foo.B", nats.Durable("B"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = subB.Unsubscribe()
+		if err := sub.Unsubscribe(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		sub, err = js.Subscribe("foo.C", func(_ *nats.Msg) {})
 		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sub.Unsubscribe(); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		sub, err = js.Subscribe("foo.C", func(_ *nats.Msg) {}, nats.Durable("C"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sub.Unsubscribe(); err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 		fetchConsumers(t, 0)
 	})
 
-	t.Run("attached pull consumer deleted on unsubscribe", func(t *testing.T) {
+	t.Run("not deleted on unsubscribe if consumer created externally", func(t *testing.T) {
 		// Created by JetStreamManagement
 		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{
 			Durable:   "wq",
@@ -3684,43 +3127,35 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
 		subC.Unsubscribe()
-		fetchConsumers(t, 0)
+		fetchConsumers(t, 1)
+		deleteAllConsumers(t)
 	})
 
-	t.Run("ephemeral consumers deleted on drain", func(t *testing.T) {
-		subA, err := js.SubscribeSync("foo.A")
+	t.Run("consumers deleted on drain", func(t *testing.T) {
+		subA, err := js.Subscribe("foo.A", func(_ *nats.Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
+		fetchConsumers(t, 1)
 		err = subA.Drain()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 		fetchConsumers(t, 0)
+		deleteAllConsumers(t)
 	})
 
-	t.Run("durable consumers not deleted on drain", func(t *testing.T) {
-		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
+	t.Run("durable consumers deleted on drain", func(t *testing.T) {
+		subB, err := js.Subscribe("foo.B", func(_ *nats.Msg) {}, nats.Durable("B"))
 		if err != nil {
 			t.Fatal(err)
 		}
+		fetchConsumers(t, 1)
 		err = subB.Drain()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
-		fetchConsumers(t, 1)
-	})
-
-	t.Run("reattached durable consumers not deleted on drain", func(t *testing.T) {
-		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = subB.Drain()
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-		fetchConsumers(t, 1)
+		fetchConsumers(t, 0)
 	})
 }
 
@@ -3782,8 +3217,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// sub.Drain() or nc.Drain() does not delete the durable consumers,
-		// just makes client go away.  Ephemerals will get deleted though.
+		// sub.Drain() or nc.Drain() delete JS consumer, same than Unsubscribe()
 		nc.Drain()
 		<-ctx.Done()
 		fetchConsumers(t, 0)
@@ -3804,8 +3238,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = js.SubscribeSync("foo.A")
-		if err != nil {
+		if _, err := js.SubscribeSync("foo.A"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		subB, err := js.SubscribeSync("foo.B", nats.Durable("B"))
@@ -3834,7 +3267,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	jsm.Publish("foo.B", []byte("B.2"))
 	jsm.Publish("foo.C", []byte("C.2"))
 
-	t.Run("reattached durables consumers can be deleted with unsubscribe", func(t *testing.T) {
+	t.Run("reattached durables consumers cannot be deleted with unsubscribe", func(t *testing.T) {
 		nc, err := nats.Connect(serverURL)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -3871,20 +3304,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 
 		jsm.Publish("foo.B", []byte("B.3"))
 
-		// Attach again to the same subject with the durable.
-		dupSub, err := js.SubscribeSync("foo.B", nats.Durable("B"))
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// The same durable is already used, so this dup durable
-		// subscription won't receive the message.
-		_, err = dupSub.NextMsg(1 * time.Second)
-		if err == nil {
-			t.Fatalf("Expected error: %v", err)
-		}
-
-		// Original sub can still receive the same message.
+		// Sub can still receive the same message.
 		resp, err = subB.NextMsg(1 * time.Second)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -3901,17 +3321,8 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
-		err = dupSub.Unsubscribe()
-		if err == nil {
-			t.Fatalf("Unexpected success")
-		}
-		if !errors.Is(err, nats.ErrConsumerNotFound) {
-			t.Errorf("Expected consumer not found error, got: %v", err)
-		}
-
-		// Remains an ephemeral consumer that did not get deleted
-		// when Close() was called.
-		fetchConsumers(t, 1)
+		// Since library did not create, the JS consumers remain.
+		fetchConsumers(t, 2)
 	})
 }
 
@@ -3947,7 +3358,7 @@ func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := nc.JetStream()
+	js, err := nc.JetStream(nats.MaxWait(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4315,14 +3726,14 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	var err error
 	timeout := time.Now().Add(10 * time.Second)
 	for time.Now().Before(timeout) {
-		js, err := nc.JetStream()
+		// Use a smaller MaxWait here since if it fails, we don't want
+		// to wait for too long since we are going to try again.
+		js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = js.AccountInfo()
 		if err != nil {
-			// Backoff for a bit until cluster ready.
-			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 		return
@@ -4882,15 +4293,6 @@ func TestJetStream_ClusterMultipleSubscribe(t *testing.T) {
 				continue
 			}
 
-			t.Run(fmt.Sprintf("sub n=%d r=%d", n, r), func(t *testing.T) {
-				name := fmt.Sprintf("SUB%d%d", n, r)
-				stream := &nats.StreamConfig{
-					Name:     name,
-					Replicas: n,
-				}
-				withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultipleSubscribe)
-			})
-
 			t.Run(fmt.Sprintf("qsub n=%d r=%d", n, r), func(t *testing.T) {
 				name := fmt.Sprintf("MSUB%d%d", n, r)
 				stream := &nats.StreamConfig{
@@ -4908,89 +4310,6 @@ func TestJetStream_ClusterMultipleSubscribe(t *testing.T) {
 				}
 				withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultiplePullSubscribe)
 			})
-		}
-	}
-}
-
-func testJetStream_ClusterMultipleSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
-	srv := srvs[0]
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-
-	var wg sync.WaitGroup
-	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
-	defer done()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	size := 5
-	subs := make([]*nats.Subscription, size)
-	errCh := make(chan error, size)
-
-	// We are testing auto-bind here so create one first and expect others to bind to it.
-	sub, err := js.SubscribeSync(subject, nats.Durable("shared"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	subs[0] = sub
-
-	for i := 1; i < size; i++ {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			var sub *nats.Subscription
-			var err error
-			for attempt := 0; attempt < 5; attempt++ {
-				sub, err = js.SubscribeSync(subject, nats.Durable("shared"))
-				if err != nil {
-					time.Sleep(1 * time.Second)
-					continue
-				}
-				break
-			}
-			if err != nil {
-				errCh <- err
-			} else {
-				subs[n] = sub
-			}
-		}(i)
-	}
-
-	go func() {
-		// Unblock the main context when done.
-		wg.Wait()
-		done()
-	}()
-
-	wg.Wait()
-	for i := 0; i < size*2; i++ {
-		js.Publish(subject, []byte("test"))
-	}
-
-	delivered := 0
-	for _, sub := range subs {
-		if sub == nil {
-			continue
-		}
-		if nmsgs, _, _ := sub.Pending(); err != nil || nmsgs > 0 {
-			delivered++
-		}
-	}
-	if delivered < 2 {
-		t.Fatalf("Expected more than one subscriber to receive a message, got: %v", delivered)
-	}
-
-	select {
-	case <-ctx.Done():
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Unexpected error with multiple subscribers: %v", err)
 		}
 	}
 }
@@ -5161,7 +4480,7 @@ func testJetStream_ClusterMultiplePullSubscribe(t *testing.T, subject string, sr
 }
 
 func TestJetStream_ClusterReconnect(t *testing.T) {
-	t.Skip("This test need to be revisited, fails often even without those changes")
+	t.Skip("This test need to be revisited")
 	n := 3
 	replicas := []int{1, 3}
 
@@ -6147,7 +5466,7 @@ func TestJetStreamBindConsumer(t *testing.T) {
 	}
 
 	// Push Consumer Bind Only
-	_, err = js.SubscribeSync("foo", nats.Bind("foo", "push"))
+	sub, err := js.SubscribeSync("foo", nats.Bind("foo", "push"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6160,10 +5479,52 @@ func TestJetStreamBindConsumer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `nats: duplicate stream name (foo and foo2)`) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	sub.Unsubscribe()
+
+	checkConsInactive := func() {
+		t.Helper()
+		checkFor(t, time.Second, 15*time.Millisecond, func() error {
+			ci, _ := js.ConsumerInfo("foo", "push")
+			if ci != nil && !ci.PushBound {
+				return nil
+			}
+			return fmt.Errorf("Conusmer %q still active", "push")
+		})
+	}
+	checkConsInactive()
 
 	// Duplicate stream name is fine.
-	_, err = js.SubscribeSync("foo", nats.BindStream("foo"), nats.Bind("foo", "push"))
+	sub, err = js.SubscribeSync("foo", nats.BindStream("foo"), nats.Bind("foo", "push"))
 	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Cannot have 2 instances for same durable
+	_, err = js.SubscribeSync("foo", nats.Durable("push"))
+	if err == nil || !strings.Contains(err.Error(), "already bound") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Cannot start a queue sub since plain durable is active
+	_, err = js.QueueSubscribeSync("foo", "wq", nats.Durable("push"))
+	if err == nil || !strings.Contains(err.Error(), "without a deliver group") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub.Unsubscribe()
+	checkConsInactive()
+
+	// Create a queue sub
+	_, err = js.QueueSubscribeSync("foo", "wq1", nats.Durable("qpush"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Can't create a plain sub on that durable
+	_, err = js.SubscribeSync("foo", nats.Durable("qpush"))
+	if err == nil || !strings.Contains(err.Error(), "cannot create a subscription for a consumer with a deliver group") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Try to attach different queue group
+	_, err = js.QueueSubscribeSync("foo", "wq2", nats.Durable("qpush"))
+	if err == nil || !strings.Contains(err.Error(), "cannot create a queue subscription") {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
@@ -6201,30 +5562,36 @@ func TestJetStreamBindConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Bind to ephemeral consumer by setting the consumer.
-	sub2, err := js.SubscribeSync("foo", nats.Bind("foo", cinfo.Name))
-	if err != nil {
+	// Cannot bind to ephemeral consumer because it is active.
+	_, err = js.SubscribeSync("foo", nats.Bind("foo", cinfo.Name))
+	if err == nil || !strings.Contains(err.Error(), "already bound") {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	sub3, err := nc.SubscribeSync(cinfo.Config.DeliverSubject)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	js.Publish("foo", []byte("hi 1"))
-	js.Publish("foo", []byte("hi 2"))
-	js.Publish("foo", []byte("hi 3"))
 
-	_, err = sub1.NextMsg(1 * time.Second)
+	// However, one can create an ephemeral Queue subscription and bind several members to it.
+	sub2, err := js.QueueSubscribeSync("foo", "wq3")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = sub2.NextMsg(1 * time.Second)
-	if err != nil {
-		t.Fatal(err)
+	// Consumer all
+	for i := 0; i < 25; i++ {
+		msg, err := sub2.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on NextMsg: %v", err)
+		}
+		msg.AckSync()
 	}
-	_, err = sub3.NextMsg(1 * time.Second)
+	cinfo, _ = sub2.ConsumerInfo()
+	sub3, err := js.QueueSubscribeSync("foo", "wq3", nats.Bind("foo", cinfo.Name))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		js.Publish("foo", []byte("new"))
+	}
+	// We expect sub3 to at least get a message
+	if _, err := sub3.NextMsg(time.Second); err != nil {
+		t.Fatalf("Second member failed to get a message: %v", err)
 	}
 }
 
@@ -6415,5 +5782,69 @@ func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
 			pubAndCheck("baz.22", 5, 10)
 			pubAndCheck("baz.33", 5, 15)
 		})
+	}
+}
+
+func TestJetStreamDrainFailsToDeleteConsumer(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	errCh := make(chan error, 1)
+	nc, err := nats.Connect(s.ClientURL(), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		select {
+		case errCh <- err:
+		default:
+		}
+	}))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js.Publish("foo", []byte("hi"))
+
+	blockCh := make(chan struct{})
+	sub, err := js.Subscribe("foo", func(m *nats.Msg) {
+		<-blockCh
+	}, nats.Durable("dur"))
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+
+	// Initiate the drain... it won't complete because we have blocked the
+	// message callback.
+	sub.Drain()
+
+	// Now delete the JS consumer
+	if err := js.DeleteConsumer("TEST", "dur"); err != nil {
+		t.Fatalf("Error deleting consumer: %v", err)
+	}
+
+	// Now unblock and make sure we get the async error
+	close(blockCh)
+
+	select {
+	case err := <-errCh:
+		if !strings.Contains(err.Error(), "consumer not found") {
+			t.Fatalf("Unexpected async error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Did not get async error")
 	}
 }

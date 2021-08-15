@@ -323,7 +323,8 @@ func ExampleJetStream() {
 	}, nats.ManualAck())
 
 	// Async queue subscription where members load balance the
-	// received messages together.
+	// received messages together. Since no consumer name is specified,
+	// the queue name will be used as a durable name.
 	js.QueueSubscribe("foo", "group", func(msg *nats.Msg) {
 		msg.Ack()
 	}, nats.ManualAck())
@@ -333,7 +334,10 @@ func ExampleJetStream() {
 	msg, _ := sub.NextMsg(2 * time.Second)
 	msg.Ack()
 
-	// QueueSubscribe with group or load balancing.
+	// We can add a member to the group, with this member using
+	// the synchronous version of the QueueSubscribe.
+	// Since no consumer name is specified, the queue name will be
+	// used as a durable name.
 	sub, _ = js.QueueSubscribeSync("foo", "group")
 	msg, _ = sub.NextMsg(2 * time.Second)
 	msg.Ack()
