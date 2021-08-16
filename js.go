@@ -273,6 +273,7 @@ type PubAck struct {
 	Stream    string `json:"stream"`
 	Sequence  uint64 `json:"seq"`
 	Duplicate bool   `json:"duplicate,omitempty"`
+	Domain    string `json:"domain,omitempty"`
 }
 
 // Headers for published messages.

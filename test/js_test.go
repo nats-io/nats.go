@@ -5848,3 +5848,47 @@ func TestJetStreamDrainFailsToDeleteConsumer(t *testing.T) {
 		t.Fatal("Did not get async error")
 	}
 }
+
+func TestJetStreamDomainInPubAck(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: {domain: "HUB"}
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	config := s.JetStreamConfig()
+	if config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	// Client for API requests.
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Got error during initialization %v", err)
+	}
+
+	cfg := &nats.StreamConfig{
+		Name:     "TEST",
+		Storage:  nats.MemoryStorage,
+		Subjects: []string{"foo"},
+	}
+	if _, err := js.AddStream(cfg); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	pa, err := js.Publish("foo", []byte("msg"))
+	if err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	if pa.Domain != "HUB" {
+		t.Fatalf("Expected PubAck to have domain of %q, got %q", "HUB", pa.Domain)
+	}
+}
