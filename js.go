@@ -879,6 +879,12 @@ func (opt subOptFn) configureSubscribe(opts *subOpts) error {
 
 // Subscribe will create a subscription to the appropriate stream and consumer.
 //
+// The stream and consumer names can be provided with the nats.Bind() option.
+// For creating an ephemeral (where the consumer name is picked by the server),
+// you can provide the stream name with nats.BindStream().
+// If no stream name is specified, the library will attempt to figure out which
+// stream the subscription is for. See important notes below for more details.
+//
 // IMPORTANT NOTES:
 // * If Bind() and Durable() options are not specified, the library will
 // send a request to the server to create an ephemeral JetStream consumer,
@@ -1868,9 +1874,11 @@ func IdleHeartbeat(duration time.Duration) SubOpt {
 }
 
 // DeliverSubject specifies the JetStream consumer deliver subject.
-// This applies only in cases where the no consumer exists and it will be
-// created by the library by the subscribe API.
-// If a consumer exists, then the NATS subscription will be created to
+//
+// This option is used only in situations where the consumer does not exist
+// and a creation request is sent to the server. If not provided, an inbox
+// will be selected.
+// If a consumer exists, then the NATS subscription will be created on
 // the JetStream consumer's DeliverSubject, not necessarily this subject.
 func DeliverSubject(subject string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {

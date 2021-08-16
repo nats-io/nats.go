@@ -323,8 +323,17 @@ func ExampleJetStream() {
 	}, nats.ManualAck())
 
 	// Async queue subscription where members load balance the
-	// received messages together. Since no consumer name is specified,
-	// the queue name will be used as a durable name.
+	// received messages together.
+	// If no consumer name is specified, either with nats.Bind()
+	// or nats.Durable() options, the queue name is used as the
+	// durable name (that is, as if you were passing the
+	// nats.Durable(<queue group name>) option.
+	// It is recommended to use nats.Bind() or nats.Durable()
+	// and preferably create the JetStream consumer beforehand
+	// (using js.AddConsumer) so that the JS consumer is not
+	// deleted on an Unsubscribe() or Drain() when the member
+	// that created the consumer goes away first.
+	// Check Godoc for the QueueSubscribe() API for more details.
 	js.QueueSubscribe("foo", "group", func(msg *nats.Msg) {
 		msg.Ack()
 	}, nats.ManualAck())
@@ -336,8 +345,6 @@ func ExampleJetStream() {
 
 	// We can add a member to the group, with this member using
 	// the synchronous version of the QueueSubscribe.
-	// Since no consumer name is specified, the queue name will be
-	// used as a durable name.
 	sub, _ = js.QueueSubscribeSync("foo", "group")
 	msg, _ = sub.NextMsg(2 * time.Second)
 	msg.Ack()

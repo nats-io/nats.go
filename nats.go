@@ -3908,7 +3908,8 @@ func (s *Subscription) Drain() error {
 // error will be returned.
 // If you do not wish the JetStream consumer to be automatically deleted,
 // ensure that the consumer is not created by the library, which means
-// create the consumer with AddConsumer and bind to this consumer.
+// create the consumer with AddConsumer and bind to this consumer (using
+// the nats.Bind() option).
 func (s *Subscription) Unsubscribe() error {
 	if s == nil {
 		return ErrBadSubscription
