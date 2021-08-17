@@ -5915,3 +5915,49 @@ func TestJetStreamDomainInPubAck(t *testing.T) {
 		t.Fatalf("Expected PubAck to have domain of %q, got %q", "HUB", pa.Domain)
 	}
 }
+
+func TestJetStreamStreamAndConsumerDescription(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	streamDesc := "stream description"
+	si, err := js.AddStream(&nats.StreamConfig{
+		Name:        "TEST",
+		Description: streamDesc,
+		Subjects:    []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+	if si.Config.Description != streamDesc {
+		t.Fatalf("Invalid description: %q vs %q", streamDesc, si.Config.Description)
+	}
+
+	consDesc := "consumer description"
+	ci, err := js.AddConsumer("TEST", &nats.ConsumerConfig{
+		Description:    consDesc,
+		Durable:        "dur",
+		DeliverSubject: "bar",
+	})
+	if err != nil {
+		t.Fatalf("Error adding consumer: %v", err)
+	}
+	if ci.Config.Description != consDesc {
+		t.Fatalf("Invalid description: %q vs %q", consDesc, ci.Config.Description)
+	}
+}

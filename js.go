@@ -772,6 +772,7 @@ func Context(ctx context.Context) ContextOpt {
 // ConsumerConfig is the configuration of a JetStream consumer.
 type ConsumerConfig struct {
 	Durable         string        `json:"durable_name,omitempty"`
+	Description     string        `json:"description,omitempty"`
 	DeliverSubject  string        `json:"deliver_subject,omitempty"`
 	DeliverGroup    string        `json:"deliver_group,omitempty"`
 	DeliverPolicy   DeliverPolicy `json:"deliver_policy"`
