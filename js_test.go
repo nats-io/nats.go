@@ -20,8 +20,11 @@ package nats
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +40,25 @@ func RunBasicJetStreamServer() *server.Server {
 	opts.Port = -1
 	opts.JetStream = true
 	return natsserver.RunServer(&opts)
+}
+
+func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
+	return natsserver.RunServerWithConfig(configFile)
+}
+
+func createConfFile(t *testing.T, content []byte) string {
+	t.Helper()
+	conf, err := ioutil.TempFile("", "")
+	if err != nil {
+		t.Fatalf("Error creating conf file: %v", err)
+	}
+	fName := conf.Name()
+	conf.Close()
+	if err := ioutil.WriteFile(fName, content, 0666); err != nil {
+		os.Remove(fName)
+		t.Fatalf("Error writing conf file: %v", err)
+	}
+	return fName
 }
 
 // Need access to internals for loss testing.
@@ -344,9 +366,9 @@ func TestJetStreamOrderedConsumerWithErrors(t *testing.T) {
 	testSubError(deleteConsumer)
 }
 
-// We want to make sure we do the right thing with lots of concurrent durable consumer requests.
+// We want to make sure we do the right thing with lots of concurrent queue durable consumer requests.
 // One should win and the others should share the delivery subject with the first one who wins.
-func TestJetStreamConcurrentDurablePushConsumers(t *testing.T) {
+func TestJetStreamConcurrentQueueDurablePushConsumers(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
 
@@ -382,7 +404,7 @@ func TestJetStreamConcurrentDurablePushConsumers(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sub, _ := js.SubscribeSync("foo", Durable("dlc"))
+			sub, _ := js.QueueSubscribeSync("foo", "bar")
 			subs <- sub
 		}()
 	}
@@ -398,16 +420,30 @@ func TestJetStreamConcurrentDurablePushConsumers(t *testing.T) {
 		t.Fatalf("Expected exactly one consumer, got %d", si.State.Consumers)
 	}
 
-	// Now send one message and make sure all subs get it.
-	js.Publish("foo", []byte("Hello"))
-	time.Sleep(250 * time.Millisecond) // Allow time for delivery.
+	// Now send some messages and make sure they are distributed.
+	total := 1000
+	for i := 0; i < total; i++ {
+		js.Publish("foo", []byte("Hello"))
+	}
 
-	for sub := range subs {
-		pending, _, _ := sub.Pending()
-		if pending != 1 {
-			t.Fatalf("Expected each durable to receive 1 msg, this sub got %d", pending)
+	timeout := time.Now().Add(2 * time.Second)
+	got := 0
+	for time.Now().Before(timeout) {
+		got = 0
+		for sub := range subs {
+			pending, _, _ := sub.Pending()
+			// If a single sub has the total, then probably something is not right.
+			if pending == total {
+				t.Fatalf("A single member should not have gotten all messages")
+			}
+			got += pending
+		}
+		if got == total {
+			// We are done!
+			return
 		}
 	}
+	t.Fatalf("Expected %v messages, got only %v", total, got)
 }
 
 func TestJetStreamSubscribeReconnect(t *testing.T) {
@@ -494,4 +530,219 @@ func TestJetStreamSubscribeReconnect(t *testing.T) {
 
 	// Make sure we can send and receive the msg
 	sendAndReceive("msg2")
+}
+
+func TestJetStreamAckTokens(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	now := time.Now()
+	for _, test := range []struct {
+		name     string
+		expected *MsgMetadata
+		str      string
+		err      bool
+	}{
+		{
+			"valid token size but not js ack",
+			nil,
+			"one.two.stream.consumer.1.2.3.4.5",
+			true,
+		},
+		{
+			"valid token size but not js ack",
+			nil,
+			"one.two.hash.stream.consumer.1.2.3.4.5",
+			true,
+		},
+		{
+			"valid token size but not js ack",
+			nil,
+			"one.two.domain.hash.stream.consumer.1.2.3.4.5",
+			true,
+		},
+		{
+			"invalid token size",
+			nil,
+			"$JS.ACK.stream.consumer.1.2.3.4",
+			true,
+		},
+		{
+			"invalid token size",
+			nil,
+			"$JS.ACK.domain.hash.stream.consumer.1.2.3.4.5.6",
+			true,
+		},
+		{
+			"no domain no hash",
+			&MsgMetadata{
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"",
+			false,
+		},
+		{
+			"no domain with hash",
+			&MsgMetadata{
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"ACCHASH.",
+			false,
+		},
+		{
+			"with domain with hash",
+			&MsgMetadata{
+				Domain:       "HUB",
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"HUB.ACCHASH.",
+			false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			msg := NewMsg("foo")
+			msg.Sub = sub
+			if test.err {
+				msg.Reply = test.str
+			} else {
+				msg.Reply = fmt.Sprintf("$JS.ACK.%sTEST.cons.1.2.3.%v.4", test.str, now.UnixNano())
+			}
+
+			meta, err := msg.Metadata()
+			if test.err {
+				if err == nil || meta != nil {
+					t.Fatalf("Expected error for content: %q, got meta=%+v err=%v", test.str, meta, err)
+				}
+				// Expected error, we are done
+				return
+			}
+			if err != nil {
+				t.Fatalf("Expected: %+v with reply: %q, got error %v", test.expected, msg.Reply, err)
+			}
+			if meta.Timestamp.UnixNano() != now.UnixNano() {
+				t.Fatalf("Timestamp is bad: %v vs %v", now.UnixNano(), meta.Timestamp.UnixNano())
+			}
+			meta.Timestamp = time.Time{}
+			test.expected.Timestamp = time.Time{}
+			if !reflect.DeepEqual(test.expected, meta) {
+				t.Fatalf("Expected %+v, got %+v", test.expected, meta)
+			}
+		})
+	}
+}
+
+func TestJetStreamFlowControlStalled(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"a"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := js.SubscribeSync("a",
+		DeliverSubject("ds"),
+		Durable("dur"),
+		IdleHeartbeat(200*time.Millisecond),
+		EnableFlowControl()); err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	// Drop all incoming FC control messages.
+	fcLoss := func(m *Msg) *Msg {
+		if _, ctrlType := isJSControlMessage(m); ctrlType == jsCtrlFC {
+			return nil
+		}
+		return m
+	}
+	nc.addMsgFilter("ds", fcLoss)
+
+	// Have a subscription on the FC subject to make sure that the library
+	// respond to the requests for un-stall
+	checkSub, err := nc.SubscribeSync("$JS.FC.>")
+	if err != nil {
+		t.Fatalf("Error on sub: %v", err)
+	}
+
+	// Publish bunch of messages.
+	payload := make([]byte, 1024)
+	for i := 0; i < 250; i++ {
+		nc.Publish("a", payload)
+	}
+
+	// Now wait that we respond to a stalled FC
+	if _, err := checkSub.NextMsg(2 * time.Second); err != nil {
+		t.Fatal("Library did not send FC")
+	}
 }
