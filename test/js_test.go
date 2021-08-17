@@ -264,6 +264,20 @@ func TestJetStreamPublish(t *testing.T) {
 	if err != context.Canceled {
 		t.Fatalf("Expected %q, got %q", context.Canceled, err)
 	}
+
+	// Test ExpectLastSequencePerSubject. Just make sure that we set the header.
+	sub, err = nc.SubscribeSync("test")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	js.Publish("test", []byte("msg"), nats.ExpectLastSequencePerSubject(1))
+	m, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error on next msg: %v", err)
+	}
+	if m.Header.Get(nats.ExpectedLastSubjSeqHdr) != "1" {
+		t.Fatalf("Header ExpectLastSequencePerSubject not set: %+v", m.Header)
+	}
 }
 
 func TestJetStreamSubscribe(t *testing.T) {

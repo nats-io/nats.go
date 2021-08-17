@@ -260,6 +260,7 @@ type pubOpts struct {
 	lid string // Expected last msgId
 	str string // Expected stream name
 	seq uint64 // Expected last sequence
+	lss uint64 // Expected last sequence per subject
 }
 
 // pubAckResponse is the ack response from the JetStream API when publishing a message.
@@ -278,10 +279,11 @@ type PubAck struct {
 
 // Headers for published messages.
 const (
-	MsgIdHdr             = "Nats-Msg-Id"
-	ExpectedStreamHdr    = "Nats-Expected-Stream"
-	ExpectedLastSeqHdr   = "Nats-Expected-Last-Sequence"
-	ExpectedLastMsgIdHdr = "Nats-Expected-Last-Msg-Id"
+	MsgIdHdr               = "Nats-Msg-Id"
+	ExpectedStreamHdr      = "Nats-Expected-Stream"
+	ExpectedLastSeqHdr     = "Nats-Expected-Last-Sequence"
+	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
+	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
 )
 
 // PublishMsg publishes a Msg to a stream from JetStream.
@@ -316,6 +318,9 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 	if o.seq > 0 {
 		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(o.seq, 10))
+	}
+	if o.lss > 0 {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.lss, 10))
 	}
 
 	var resp *Msg
@@ -618,6 +623,9 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if o.seq > 0 {
 		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(o.seq, 10))
 	}
+	if o.lss > 0 {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.lss, 10))
+	}
 
 	// Reply
 	if m.Reply != _EMPTY_ {
@@ -683,6 +691,14 @@ func ExpectStream(stream string) PubOpt {
 func ExpectLastSequence(seq uint64) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.seq = seq
+		return nil
+	})
+}
+
+// ExpectLastSequencePerSubject sets the expected sequence per subject in the response from the publish.
+func ExpectLastSequencePerSubject(seq uint64) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.lss = seq
 		return nil
 	})
 }
