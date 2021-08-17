@@ -314,6 +314,17 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("stream lookup failed: %v", err)
 	}
 
+	// If stream name is not specified, then the subject is required.
+	if _, err := js.SubscribeSync(""); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// Check that if stream name is present, then technically the subject does not have to.
+	sub, err := js.SubscribeSync("", nats.BindStream("TEST"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub.Unsubscribe()
+
 	// Check that Queue subscribe with HB or FC fails.
 	_, err = js.QueueSubscribeSync("foo", "wq", nats.IdleHeartbeat(time.Second))
 	if err == nil || !strings.Contains(err.Error(), "heartbeat") {
@@ -424,7 +435,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Now create a sync subscriber that is durable.
 	dname := "derek"
-	sub, err := js.SubscribeSync("foo", nats.Durable(dname))
+	sub, err = js.SubscribeSync("foo", nats.Durable(dname))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -545,11 +556,22 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nats.ErrPullSubscribeToPushConsumer {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	// Can't specify BindDeliverSubject
-	_, err = js.PullSubscribe("bar", "foo", nats.BindDeliverSubject("baz"))
+	// Can't specify SubjectIsDelivery() for pull subscribers
+	_, err = js.PullSubscribe("bar", "foo", nats.SubjectIsDelivery())
 	if err != nats.ErrPullSubscribeToPushConsumer {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	// If stream name is not specified, need the subject.
+	_, err = js.PullSubscribe("", "rip")
+	if err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	// If stream provided, it should be ok.
+	sub, err = js.PullSubscribe("", "rip", nats.BindStream("TEST"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub.Unsubscribe()
 
 	batch := 5
 	sub, err = js.PullSubscribe("bar", "rip")
@@ -1971,9 +1993,10 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	}
 	waitForPending(t, toSend)
 
-	// It is also possible to create a subscription with a BindDeliverSubject() API
-	// that will not try to do lookup nor create a JS consumer object.
-	sub, err = js.SubscribeSync("ignored", nats.BindDeliverSubject("p.d4"))
+	// It is also possible to create a subscription with a SubjectIsDelivery()
+	// option that says that the given subject will be used to create the low
+	// level NATS subscription and no lookup/create attempt will be made.
+	sub, err = js.SubscribeSync("p.d4", nats.SubjectIsDelivery())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
