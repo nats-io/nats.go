@@ -2343,7 +2343,7 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
-		Subjects: []string{"foo"},
+		Subjects: []string{"foo", "bar"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -2404,6 +2404,21 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 				t.Fatalf("Expected %d, got %d", test.expected, got)
 			}
 		})
+	}
+
+	js.Publish("bar", []byte("bar msg 1"))
+	js.Publish("bar", []byte("bar msg 2"))
+
+	sub, err := js.SubscribeSync("bar", nats.BindStream("TEST"), nats.DeliverLastPerSubject())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error on next msg: %v", err)
+	}
+	if string(msg.Data) != "bar msg 2" {
+		t.Fatalf("Unexepcted last message: %q", msg.Data)
 	}
 }
 
