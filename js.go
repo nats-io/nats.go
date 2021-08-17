@@ -1748,6 +1748,15 @@ func DeliverLast() SubOpt {
 	})
 }
 
+// DeliverLastPerSubject configures a Consumer to receive messages
+// starting with the latest one for each filtered subject.
+func DeliverLastPerSubject() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.DeliverPolicy = DeliverLastPerSubjectPolicy
+		return nil
+	})
+}
+
 // DeliverNew configures a Consumer to receive messages
 // published after the subscription.
 func DeliverNew() SubOpt {
@@ -2539,6 +2548,10 @@ const (
 	// DeliverByStartTimePolicy will deliver messages starting from a given
 	// time.
 	DeliverByStartTimePolicy
+
+	// DeliverLastPerSubjectPolicy will start the consumer with the last message
+	// for all subjects received.
+	DeliverLastPerSubjectPolicy
 )
 
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
@@ -2553,6 +2566,8 @@ func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
 		*p = DeliverByStartSequencePolicy
 	case jsonString("by_start_time"):
 		*p = DeliverByStartTimePolicy
+	case jsonString("last_per_subject"):
+		*p = DeliverLastPerSubjectPolicy
 	}
 
 	return nil
@@ -2570,6 +2585,8 @@ func (p DeliverPolicy) MarshalJSON() ([]byte, error) {
 		return json.Marshal("by_start_sequence")
 	case DeliverByStartTimePolicy:
 		return json.Marshal("by_start_time")
+	case DeliverLastPerSubjectPolicy:
+		return json.Marshal("last_per_subject")
 	default:
 		return nil, fmt.Errorf("nats: unknown deliver policy %v", p)
 	}
