@@ -133,6 +133,11 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 		t.Fatalf("Expected an error, got %v", err)
 	}
 
+	_, err = js.SubscribeSync("a", OrderedConsumer(), DeliverSubject("some.subject"))
+	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+
 	si, err := js.StreamInfo("OBJECT")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -570,40 +575,39 @@ func TestJetStreamAckTokens(t *testing.T) {
 		name     string
 		expected *MsgMetadata
 		str      string
+		end      string
 		err      bool
 	}{
 		{
 			"valid token size but not js ack",
 			nil,
-			"one.two.stream.consumer.1.2.3.4.5",
+			"1.2.3.4.5.6.7.8.9",
+			"",
 			true,
 		},
 		{
 			"valid token size but not js ack",
 			nil,
-			"one.two.hash.stream.consumer.1.2.3.4.5",
-			true,
-		},
-		{
-			"valid token size but not js ack",
-			nil,
-			"one.two.domain.hash.stream.consumer.1.2.3.4.5",
+			"1.2.3.4.5.6.7.8.9.10.11.12",
+			"",
 			true,
 		},
 		{
 			"invalid token size",
 			nil,
-			"$JS.ACK.stream.consumer.1.2.3.4",
+			"$JS.ACK.3.4.5.6.7.8",
+			"",
 			true,
 		},
 		{
 			"invalid token size",
 			nil,
-			"$JS.ACK.domain.hash.stream.consumer.1.2.3.4.5.6",
+			"$JS.ACK.3.4.5.6.7.8.9.10.11",
+			"",
 			true,
 		},
 		{
-			"no domain no hash",
+			"v1 style",
 			&MsgMetadata{
 				Stream:       "TEST",
 				Consumer:     "cons",
@@ -616,10 +620,11 @@ func TestJetStreamAckTokens(t *testing.T) {
 				NumPending: 4,
 			},
 			"",
+			"",
 			false,
 		},
 		{
-			"no domain with hash",
+			"v2 style no domain with hash",
 			&MsgMetadata{
 				Stream:       "TEST",
 				Consumer:     "cons",
@@ -631,11 +636,12 @@ func TestJetStreamAckTokens(t *testing.T) {
 				Timestamp:  now,
 				NumPending: 4,
 			},
-			"ACCHASH.",
+			"_.ACCHASH.",
+			".abcde",
 			false,
 		},
 		{
-			"with domain with hash",
+			"v2 style with domain and hash",
 			&MsgMetadata{
 				Domain:       "HUB",
 				Stream:       "TEST",
@@ -649,6 +655,25 @@ func TestJetStreamAckTokens(t *testing.T) {
 				NumPending: 4,
 			},
 			"HUB.ACCHASH.",
+			".abcde",
+			false,
+		},
+		{
+			"more than 12 tokens",
+			&MsgMetadata{
+				Domain:       "HUB",
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"HUB.ACCHASH.",
+			".abcde.ghijk.lmnop",
 			false,
 		},
 	} {
@@ -658,7 +683,7 @@ func TestJetStreamAckTokens(t *testing.T) {
 			if test.err {
 				msg.Reply = test.str
 			} else {
-				msg.Reply = fmt.Sprintf("$JS.ACK.%sTEST.cons.1.2.3.%v.4", test.str, now.UnixNano())
+				msg.Reply = fmt.Sprintf("$JS.ACK.%sTEST.cons.1.2.3.%v.4%s", test.str, now.UnixNano(), test.end)
 			}
 
 			meta, err := msg.Metadata()
