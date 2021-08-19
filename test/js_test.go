@@ -570,11 +570,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nats.ErrPullSubscribeToPushConsumer {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	// Can't specify SubjectIsDelivery() for pull subscribers
-	_, err = js.PullSubscribe("bar", "foo", nats.SubjectIsDelivery())
-	if err != nats.ErrPullSubscribeToPushConsumer {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 	// If stream name is not specified, need the subject.
 	_, err = js.PullSubscribe("", "rip")
 	if err == nil || !strings.Contains(err.Error(), "required") {
@@ -2006,18 +2001,6 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	waitForPending(t, toSend)
-
-	// It is also possible to create a subscription with a SubjectIsDelivery()
-	// option that says that the given subject will be used to create the low
-	// level NATS subscription and no lookup/create attempt will be made.
-	sub, err = js.SubscribeSync("p.d4", nats.SubjectIsDelivery())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	js.Publish("orders", []byte("msg"))
-	if _, err := sub.NextMsg(time.Second); err != nil {
-		t.Fatalf("Error getting message: %v", err)
-	}
 
 	// Even if there are no permissions or import to check that a consumer exists,
 	// it is still possible to bind subscription to it.
