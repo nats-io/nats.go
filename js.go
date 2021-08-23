@@ -813,8 +813,8 @@ type ConsumerInfo struct {
 	Name           string         `json:"name"`
 	Created        time.Time      `json:"created"`
 	Config         ConsumerConfig `json:"config"`
-	Delivered      SequencePair   `json:"delivered"`
-	AckFloor       SequencePair   `json:"ack_floor"`
+	Delivered      SequenceInfo   `json:"delivered"`
+	AckFloor       SequenceInfo   `json:"ack_floor"`
 	NumAckPending  int            `json:"num_ack_pending"`
 	NumRedelivered int            `json:"num_redelivered"`
 	NumWaiting     int            `json:"num_waiting"`
@@ -823,11 +823,17 @@ type ConsumerInfo struct {
 	PushBound      bool           `json:"push_bound,omitempty"`
 }
 
-// SequencePair includes the consumer and stream sequence info from a JetStream consumer.
-type SequencePair struct {
+// SequenceInfo has both the consumer and the stream sequence and last activity.
+type SequenceInfo struct {
 	Consumer uint64     `json:"consumer_seq"`
 	Stream   uint64     `json:"stream_seq"`
 	Last     *time.Time `json:"last_active,omitempty"`
+}
+
+// SequencePair includes the consumer and stream sequence info from a JetStream consumer.
+type SequencePair struct {
+	Consumer uint64 `json:"consumer_seq"`
+	Stream   uint64 `json:"stream_seq"`
 }
 
 // nextRequest is for getting next messages for pull based consumers from JetStream.
