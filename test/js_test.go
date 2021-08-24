@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/nats-io/nuid"
 	"io/ioutil"
 	"net"
 	"os"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
@@ -3707,6 +3707,57 @@ func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
 			// If not explicitly asked by the user, we are ok
 			_, err = js.PullSubscribe("foo", durName)
 			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		opt  nats.SubOpt
+	}{
+		{"default deliver policy", nats.DeliverAll()},
+		{"default ack wait", nats.AckWait(30 * time.Second)},
+		{"default replay policy", nats.ReplayInstant()},
+		{"default max waiting", nats.PullMaxWaiting(512)},
+		{"default ack pending", nats.MaxAckPending(65536)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// If the option is the same as the server default, it is not an error either.
+			_, err = js.PullSubscribe("foo", durName, test.opt)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		opt  nats.SubOpt
+	}{
+		{"policy", nats.DeliverNew()},
+		{"ack wait", nats.AckWait(31 * time.Second)},
+		{"replay policy", nats.ReplayOriginal()},
+		{"max waiting", nats.PullMaxWaiting(513)},
+		{"ack pending", nats.MaxAckPending(2)},
+	} {
+		t.Run(test.name+" changed from default", func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// First time it was created with defaults and the
+			// second time a change is attempted, so it is an error.
+			_, err = js.PullSubscribe("foo", durName, test.opt)
+			if err == nil || !strings.Contains(err.Error(), test.name) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			sub.Unsubscribe()
