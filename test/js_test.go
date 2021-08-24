@@ -30,6 +30,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
@@ -2819,7 +2820,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	expectedPending(1, 7)
 	meta = getMetadata(msg)
 	if meta.Sequence.Stream != prevSeq {
-		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Stream)
+		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Sequence.Stream)
 	}
 	if string(msg.Data) != prevPayload {
 		t.Errorf("Expected: %q, got: %q", string(prevPayload), string(msg.Data))
@@ -2837,7 +2838,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	expectedPending(0, 7)
 	meta = getMetadata(msg)
 	if meta.Sequence.Stream != prevSeq {
-		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Stream)
+		t.Errorf("Expected to get message at seq=%v, got seq=%v", prevSeq, meta.Sequence.Stream)
 	}
 	if string(msg.Data) != prevPayload {
 		t.Errorf("Expected: %q, got: %q", string(prevPayload), string(msg.Data))
@@ -3593,6 +3594,185 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 
 	if len(recvd) >= int(rl) {
 		t.Errorf("Expected applied rate limit to push consumer, got %v msgs in %v", recvd, duration)
+	}
+}
+
+func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		first  nats.SubOpt
+		second nats.SubOpt
+	}{
+		{"description", nats.Description("a"), nats.Description("b")},
+		{"deliver policy", nats.DeliverAll(), nats.DeliverLast()},
+		{"optional start sequence", nats.StartSequence(1), nats.StartSequence(10)},
+		{"optional start time", nats.StartTime(time.Now()), nats.StartTime(time.Now().Add(-2 * time.Hour))},
+		{"ack wait", nats.AckWait(10 * time.Second), nats.AckWait(15 * time.Second)},
+		{"max deliver", nats.MaxDeliver(3), nats.MaxDeliver(5)},
+		{"replay policy", nats.ReplayOriginal(), nats.ReplayInstant()},
+		{"max waiting", nats.PullMaxWaiting(10), nats.PullMaxWaiting(20)},
+		{"max ack pending", nats.MaxAckPending(10), nats.MaxAckPending(20)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName, test.first)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// Once it is created, options can't be changed.
+			_, err = js.PullSubscribe("foo", durName, test.second)
+			if err == nil || !strings.Contains(err.Error(), test.name) {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		cc   *nats.ConsumerConfig
+		opt  nats.SubOpt
+	}{
+		{"ack policy", &nats.ConsumerConfig{AckPolicy: nats.AckAllPolicy}, nats.AckNone()},
+		{"rate limit", &nats.ConsumerConfig{RateLimit: 10}, nats.RateLimit(100)},
+		{"flow control", &nats.ConsumerConfig{FlowControl: false}, nats.EnableFlowControl()},
+		{"heartbeat", &nats.ConsumerConfig{Heartbeat: 10 * time.Second}, nats.IdleHeartbeat(20 * time.Second)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			durName := nuid.Next()
+
+			cc := test.cc
+			cc.Durable = durName
+			cc.DeliverSubject = nuid.Next()
+			if _, err := js.AddConsumer("TEST", cc); err != nil {
+				t.Fatalf("Error creating consumer: %v", err)
+			}
+
+			sub, err := js.SubscribeSync("foo", nats.Durable(durName), test.opt)
+			if err == nil || !strings.Contains(err.Error(), test.name) {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	// Verify that we don't fail if user did not set it.
+	for _, test := range []struct {
+		name string
+		opt  nats.SubOpt
+	}{
+		{"description", nats.Description("a")},
+		{"deliver policy", nats.DeliverAll()},
+		{"optional start sequence", nats.StartSequence(10)},
+		{"optional start time", nats.StartTime(time.Now())},
+		{"ack wait", nats.AckWait(10 * time.Second)},
+		{"max deliver", nats.MaxDeliver(3)},
+		{"replay policy", nats.ReplayOriginal()},
+		{"max waiting", nats.PullMaxWaiting(10)},
+		{"max ack pending", nats.MaxAckPending(10)},
+	} {
+		t.Run(test.name+" not set", func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName, test.opt)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// If not explicitly asked by the user, we are ok
+			_, err = js.PullSubscribe("foo", durName)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		opt  nats.SubOpt
+	}{
+		{"default deliver policy", nats.DeliverAll()},
+		{"default ack wait", nats.AckWait(30 * time.Second)},
+		{"default replay policy", nats.ReplayInstant()},
+		{"default max waiting", nats.PullMaxWaiting(512)},
+		{"default ack pending", nats.MaxAckPending(65536)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// If the option is the same as the server default, it is not an error either.
+			_, err = js.PullSubscribe("foo", durName, test.opt)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		opt  nats.SubOpt
+	}{
+		{"policy", nats.DeliverNew()},
+		{"ack wait", nats.AckWait(31 * time.Second)},
+		{"replay policy", nats.ReplayOriginal()},
+		{"max waiting", nats.PullMaxWaiting(513)},
+		{"ack pending", nats.MaxAckPending(2)},
+	} {
+		t.Run(test.name+" changed from default", func(t *testing.T) {
+			durName := nuid.Next()
+			sub, err := js.PullSubscribe("foo", durName)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			// First time it was created with defaults and the
+			// second time a change is attempted, so it is an error.
+			_, err = js.PullSubscribe("foo", durName, test.opt)
+			if err == nil || !strings.Contains(err.Error(), test.name) {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		})
+	}
+
+	// Check that binding to a durable (without specifying durable option) works
+	if _, err := js.AddConsumer("TEST", &nats.ConsumerConfig{
+		Durable:        "BindDurable",
+		DeliverSubject: "bar",
+	}); err != nil {
+		t.Fatalf("Failed to create consumer: %v", err)
+	}
+	if _, err := js.SubscribeSync("foo", nats.Bind("TEST", "BindDurable")); err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
 	}
 }
 
