@@ -2422,11 +2422,13 @@ func getMetadataFields(subject string) ([]string, error) {
 	// New subject would be:
 	// $JS.ACK.<domain>.<account hash>.<stream>.<consumer>.<delivered>.<sseq>.<cseq>.<tm>.<pending>.<a token with a random value>
 	//
-	// v1 has 9 tokens, v2 has 12.
+	// v1 has 9 tokens, v2 has 12, but we must not be strict on the 12th since
+	// it may be removed in the future. Also, the library has no use for it.
+	// The point is that a v2 ACK subject is valid if it has at least 11 tokens.
 	//
 	l := len(tokens)
-	// If lower than 9 or more than 9 but less than 12, report an error
-	if l < v1TokenCounts || (l > v1TokenCounts && l < v2TokenCounts) {
+	// If lower than 9 or more than 9 but less than 11, report an error
+	if l < v1TokenCounts || (l > v1TokenCounts && l < v2TokenCounts-1) {
 		return nil, ErrNotJSMessage
 	}
 	if tokens[0] != "$JS" || tokens[1] != "ACK" {
