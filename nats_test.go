@@ -2702,3 +2702,37 @@ func TestCustomInboxPrefix(t *testing.T) {
 		t.Fatalf("did not receive ok: %q", resp.Data)
 	}
 }
+
+func TestRespInbox(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	if _, err := nc.Subscribe("foo", func(msg *Msg) {
+		lastDot := strings.LastIndex(msg.Reply, ".")
+		if lastDot == -1 {
+			msg.Respond([]byte(fmt.Sprintf("Invalid reply subject: %q", msg.Reply)))
+			return
+		}
+		lastToken := msg.Reply[lastDot+1:]
+		if len(lastToken) != replySuffixLen {
+			msg.Respond([]byte(fmt.Sprintf("Invalid last token: %q", lastToken)))
+			return
+		}
+		msg.Respond(nil)
+	}); err != nil {
+		t.Fatalf("subscribe failed: %s", err)
+	}
+	resp, err := nc.Request("foo", []byte("check inbox"), time.Second)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	if len(resp.Data) > 0 {
+		t.Fatalf("Error: %s", resp.Data)
+	}
+}
