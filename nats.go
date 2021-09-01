@@ -3566,6 +3566,7 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 const (
 	InboxPrefix    = "_INBOX."
 	inboxPrefixLen = len(InboxPrefix)
+	replySuffixLen = 8 // Gives us 62^8
 	rdigits        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	base           = 62
 )
@@ -3615,7 +3616,7 @@ func (nc *Conn) newRespInbox() string {
 	sb.WriteString(nc.respSubPrefix)
 
 	rn := nc.respRand.Int63()
-	for i := 0; i < nuidSize; i++ {
+	for i := 0; i < replySuffixLen; i++ {
 		sb.WriteByte(rdigits[rn%base])
 		rn /= base
 	}
