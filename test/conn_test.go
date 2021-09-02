@@ -49,7 +49,7 @@ func TestConnectionStatus(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
-	if nc.Status() != nats.CONNECTED || fmt.Sprintf("%s", nc.Status()) != "CONNECTED" {
+	if nc.Status() != nats.CONNECTED || nc.Status().String() != "CONNECTED" {
 		t.Fatal("Should have status set to CONNECTED")
 	}
 
@@ -57,7 +57,7 @@ func TestConnectionStatus(t *testing.T) {
 		t.Fatal("Should have status set to CONNECTED")
 	}
 	nc.Close()
-	if nc.Status() != nats.CLOSED || fmt.Sprintf("%s", nc.Status()) != "CLOSED" {
+	if nc.Status() != nats.CLOSED || nc.Status().String() != "CLOSED" {
 		t.Fatal("Should have status set to CLOSED")
 	}
 	if !nc.IsClosed() {
