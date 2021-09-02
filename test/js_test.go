@@ -842,9 +842,9 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 	for time.Now().Before(timeout) {
 		ms, err := sub.Fetch(ackPendingLimit)
 		if err != nil || (ms != nil && len(ms) == 0) {
+			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-
 		msgs = append(msgs, ms...)
 		if len(msgs) >= expected {
 			break
@@ -852,7 +852,7 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if len(msgs) < expected {
-		t.Errorf("Expected %v, got %v", expected, pending)
+		t.Fatalf("Expected %v, got %v", expected, pending)
 	}
 
 	info, err := sub.ConsumerInfo()
@@ -863,37 +863,37 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 	got := info.NumRedelivered
 	expected = 3
 	if got < expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
+		t.Fatalf("Expected %v, got: %v", expected, got)
 	}
 
 	got = info.NumAckPending
 	expected = 3
 	if got < expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
+		t.Fatalf("Expected %v, got: %v", expected, got)
 	}
 
 	got = info.NumWaiting
 	expected = 0
 	if got != expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
+		t.Fatalf("Expected %v, got: %v", expected, got)
 	}
 
 	got = int(info.NumPending)
 	expected = 0
 	if got != expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
+		t.Fatalf("Expected %v, got: %v", expected, got)
 	}
 
 	got = info.Config.MaxAckPending
 	expected = 3
 	if got != expected {
-		t.Errorf("Expected %v, got %v", expected, pending)
+		t.Fatalf("Expected %v, got %v", expected, pending)
 	}
 
 	got = info.Config.MaxDeliver
 	expected = 5
 	if got != expected {
-		t.Errorf("Expected %v, got %v", expected, pending)
+		t.Fatalf("Expected %v, got %v", expected, pending)
 	}
 
 	acks := map[int]int{}
@@ -913,7 +913,7 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 
 		meta, err := m.Metadata()
 		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
 		acks[int(meta.Sequence.Stream)]++
 
@@ -921,26 +921,26 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 			ackPending--
 		}
 		if int(meta.NumPending) != ackPending {
-			t.Errorf("Expected %v, got %v", ackPending, meta.NumPending)
+			t.Fatalf("Expected %v, got %v", ackPending, meta.NumPending)
 		}
 	}
 
 	got = len(acks)
 	expected = 3
 	if got != expected {
-		t.Errorf("Expected %v, got %v", expected, got)
+		t.Fatalf("Expected %v, got %v", expected, got)
 	}
 
 	expected = 5
 	for _, got := range acks {
 		if got != expected {
-			t.Errorf("Expected %v, got %v", expected, got)
+			t.Fatalf("Expected %v, got %v", expected, got)
 		}
 	}
 
 	_, err = sub.Fetch(1, nats.MaxWait(100*time.Millisecond))
 	if err != nats.ErrTimeout {
-		t.Errorf("Expected timeout, got: %v", err)
+		t.Fatalf("Expected timeout, got: %v", err)
 	}
 }
 
