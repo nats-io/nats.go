@@ -771,3 +771,61 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 		t.Fatal("Library did not send FC")
 	}
 }
+
+func TestJetStreamExpiredPullRequests(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "bar", PullMaxWaiting(2))
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	// Make sure that we reject batch < 1
+	if _, err := sub.Fetch(0); err == nil {
+		t.Fatal("Expected error, did not get one")
+	}
+	if _, err := sub.Fetch(-1); err == nil {
+		t.Fatal("Expected error, did not get one")
+	}
+
+	// Send 2 fetch requests
+	for i := 0; i < 2; i++ {
+		if _, err = sub.Fetch(1, MaxWait(15*time.Millisecond)); err == nil {
+			t.Fatalf("Expected error, got none")
+		}
+	}
+	// Wait before the above expire
+	time.Sleep(50 * time.Millisecond)
+	batches := []int{1, 10}
+	for _, bsz := range batches {
+		start := time.Now()
+		_, err = sub.Fetch(bsz, MaxWait(250*time.Millisecond))
+		dur := time.Since(start)
+		if err == nil || dur < 50*time.Millisecond {
+			t.Fatalf("Expected error and wait for 250ms, got err=%v and dur=%v", err, dur)
+		}
+	}
+}
