@@ -196,6 +196,26 @@ const (
 	DRAINING_PUBS
 )
 
+func (s Status) String() string {
+	switch s {
+	case DISCONNECTED:
+		return "DISCONNECTED"
+	case CONNECTED:
+		return "CONNECTED"
+	case CLOSED:
+		return "CLOSED"
+	case RECONNECTING:
+		return "RECONNECTING"
+	case CONNECTING:
+		return "CONNECTING"
+	case DRAINING_SUBS:
+		return "DRAINING_SUBS"
+	case DRAINING_PUBS:
+		return "DRAINING_PUBS"
+	}
+	return "unknown status"
+}
+
 // ConnHandler is used for asynchronous events such as
 // disconnected and closed connections.
 type ConnHandler func(*Conn)
