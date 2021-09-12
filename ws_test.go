@@ -226,6 +226,29 @@ func TestWSParseControlFrames(t *testing.T) {
 	if err != io.EOF || n != 0 {
 		t.Fatalf("Error on read: n=%v err=%v", n, err)
 	}
+
+	// Write a CLOSE without payload
+	mr.buf.Write([]byte{136, 2, 3, 232})
+	n, err = r.Read(p)
+	if err != io.EOF || n != 0 {
+		t.Fatalf("Error on read: n=%v err=%v", n, err)
+	}
+
+	// Write a CLOSE with invalid status
+	mr.buf.Write([]byte{136, 1, 100})
+	n, err = r.Read(p)
+	if err != io.EOF || n != 0 {
+		t.Fatalf("Error on read: n=%v err=%v", n, err)
+	}
+
+	// Write CLOSE with valid status and payload but call with a read buffer
+	// that has capacity of 1.
+	mr.buf.Write([]byte{136, 6, 3, 232, 't', 'e', 's', 't'})
+	pl := []byte{136}
+	n, err = r.Read(pl[:])
+	if err != io.EOF || n != 0 {
+		t.Fatalf("Error on read: n=%v err=%v", n, err)
+	}
 }
 
 func TestWSParseInvalidFrames(t *testing.T) {
