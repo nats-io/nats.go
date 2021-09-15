@@ -577,6 +577,9 @@ type Subscription struct {
 	// Type of Subscription
 	typ SubscriptionType
 
+	// Whether subject in messages and Subject in subscription may differ
+	smd bool
+
 	// Async linked list
 	pHead *Msg
 	pTail *Msg
@@ -2692,7 +2695,10 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Copy them into string
-	subj := string(nc.ps.ma.subject)
+	subj := sub.Subject
+	if sub.smd {
+		subj = string(nc.ps.ma.subject)
+	}
 	reply := string(nc.ps.ma.reply)
 
 	// Doing message create outside of the sub's lock to reduce contention.
@@ -3746,6 +3752,11 @@ func badQueue(qname string) bool {
 	return strings.ContainsAny(qname, " \t\r\n")
 }
 
+// wildcard will check a subject name for wildcardness.
+func wildcard(subj string) bool {
+	return strings.ContainsAny(subj, "*>")
+}
+
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, js *jsSub) (*Subscription, error) {
 	if nc == nil {
@@ -3779,7 +3790,14 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 		return nil, ErrBadSubscription
 	}
 
-	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc, jsi: js}
+	sub := &Subscription{
+		Subject: subj,
+		Queue:   queue,
+		mcb:     cb,
+		conn:    nc,
+		jsi:     js,
+		smd:     wildcard(subj) || js != nil,
+	}
 	// Set pending limits.
 	if ch != nil {
 		sub.pMsgsLimit = cap(ch)
