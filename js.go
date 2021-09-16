@@ -2105,9 +2105,9 @@ func checkMsg(msg *Msg, checkSts bool) (usrMsg bool, err error) {
 	case reqTimeoutSts:
 		// Older servers may send a 408 when a request in the server was expired
 		// and interest is still found, which will be the case for our
-		// implementation. Regardless, ignore 408 errors, the caller will
-		// go back to wait for the next message.
-		err = nil
+		// implementation. Regardless, ignore 408 errors until receiving at least
+		// one message.
+		err = ErrTimeout
 	default:
 		err = fmt.Errorf("nats: %s", msg.Header.Get(descrHdr))
 	}
@@ -2252,6 +2252,10 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 					// wait this time.
 					noWait = false
 					err = sendReq()
+				} else if err == ErrTimeout && len(msgs) == 0 {
+					// If we get a 408, we will bail if we already collected some
+					// messages, otherwise ignore and go back calling nextMsg.
+					err = nil
 				}
 			}
 		}
