@@ -2692,7 +2692,11 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Copy them into string
-	subj := string(nc.ps.ma.subject)
+	subj := sub.Subject
+	if subj != string(nc.ps.ma.subject) {
+		// Copy in case subject name in subscription differs from subject name in message
+		subj = string(nc.ps.ma.subject)
+	}
 	reply := string(nc.ps.ma.reply)
 
 	// Doing message create outside of the sub's lock to reduce contention.
