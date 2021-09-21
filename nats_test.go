@@ -2007,16 +2007,16 @@ func BenchmarkSubjectInterning(b *testing.B) {
 		conn := &Conn{
 			ps: &parseState{
 				ma: msgArg{
-					sid: 1,
+					sid:     1,
 					subject: []byte("subject1"),
 				},
 				msgCopied: true, // to disable copying msg data
 			},
 			subs: map[int64]*Subscription{
 				1: {
-					pHead: &Msg{},
-					pTail: &Msg{},
-					typ: SyncSubscription,
+					pHead:   &Msg{},
+					pTail:   &Msg{},
+					typ:     SyncSubscription,
 					Subject: "subject1",
 				},
 			},
@@ -2031,16 +2031,16 @@ func BenchmarkSubjectInterning(b *testing.B) {
 		conn := &Conn{
 			ps: &parseState{
 				ma: msgArg{
-					sid: 1,
+					sid:     1,
 					subject: []byte("subject1.blabla"),
 				},
 				msgCopied: true, // to disable copying msg data
 			},
 			subs: map[int64]*Subscription{
 				1: {
-					pHead: &Msg{},
-					pTail: &Msg{},
-					typ: SyncSubscription,
+					pHead:   &Msg{},
+					pTail:   &Msg{},
+					typ:     SyncSubscription,
 					Subject: "subject.*",
 				},
 			},
