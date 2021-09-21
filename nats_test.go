@@ -1989,6 +1989,30 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	}
 }
 
+// only one allocation &Msg{}
+func BenchmarkSubjectInterning(b *testing.B) {
+	conn := &Conn{
+		ps: &parseState{
+			ma: msgArg{
+				sid: 1,
+				subject: []byte("subject1"),
+			},
+			msgCopied: true, // to disable copying msg data
+		},
+		subs: map[int64]*Subscription{
+			1: {
+				Subject: "subject1",
+			},
+		},
+	}
+	msg := []byte("some very informative message")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		conn.processMsg(msg)
+	}
+}
+
 func TestAuthErrorOnReconnect(t *testing.T) {
 	// This is a bit of an artificial test, but it is to demonstrate
 	// that if the client is disconnected from a server (not due to an auth error),
