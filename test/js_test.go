@@ -6434,3 +6434,56 @@ func TestJetStreamStreamAndConsumerDescription(t *testing.T) {
 		t.Fatalf("Invalid description: %q vs %q", consDesc, ci.Config.Description)
 	}
 }
+
+func TestJetStreamMsgSubjectRewrite(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	sub, err := nc.SubscribeSync(nats.NewInbox())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	if _, err := js.AddConsumer("TEST", &nats.ConsumerConfig{
+		DeliverSubject: sub.Subject,
+		DeliverPolicy:  nats.DeliverAllPolicy,
+	}); err != nil {
+		t.Fatalf("Error adding consumer: %v", err)
+	}
+
+	if _, err := js.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Did not get message: %v", err)
+	}
+	if msg.Subject != "foo" {
+		t.Fatalf("Subject should be %q, got %q", "foo", msg.Subject)
+	}
+	if string(msg.Data) != "msg" {
+		t.Fatalf("Unexepcted data: %q", msg.Data)
+	}
+}

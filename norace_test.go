@@ -793,6 +793,7 @@ func TestNoRaceJetStreamChanSubscribeStall(t *testing.T) {
 	sub, err := js.ChanSubscribe("STALL", msgs,
 		Durable("dlc"),
 		EnableFlowControl(),
+		IdleHeartbeat(5*time.Second),
 		MaxAckPending(batch-2),
 	)
 	if err != nil {
