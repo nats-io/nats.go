@@ -2002,29 +2002,55 @@ BenchmarkSubjectInterning/subject_differs
 BenchmarkSubjectInterning/subject_differs-4          	11121651	       104.5 ns/op	     112 B/op	       2 allocs/op
 */
 func BenchmarkSubjectInterning(b *testing.B) {
-	conn := &Conn{
-		ps: &parseState{
-			ma: msgArg{
-				sid: 1,
-				subject: []byte("subject1"),
-			},
-			msgCopied: true, // to disable copying msg data
-		},
-		subs: map[int64]*Subscription{
-			1: {
-				pHead: &Msg{},
-				pTail: &Msg{},
-				typ: SyncSubscription,
-				Subject: "subject1",
-			},
-		},
-	}
 	msg := []byte("some very informative message")
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		conn.processMsg(msg)
-	}
+	b.Run("subject the same", func(b *testing.B) {
+		conn := &Conn{
+			ps: &parseState{
+				ma: msgArg{
+					sid: 1,
+					subject: []byte("subject1"),
+				},
+				msgCopied: true, // to disable copying msg data
+			},
+			subs: map[int64]*Subscription{
+				1: {
+					pHead: &Msg{},
+					pTail: &Msg{},
+					typ: SyncSubscription,
+					Subject: "subject1",
+				},
+			},
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			conn.processMsg(msg)
+		}
+	})
+	b.Run("subject differs", func(b *testing.B) {
+		conn := &Conn{
+			ps: &parseState{
+				ma: msgArg{
+					sid: 1,
+					subject: []byte("subject1.blabla"),
+				},
+				msgCopied: true, // to disable copying msg data
+			},
+			subs: map[int64]*Subscription{
+				1: {
+					pHead: &Msg{},
+					pTail: &Msg{},
+					typ: SyncSubscription,
+					Subject: "subject.*",
+				},
+			},
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			conn.processMsg(msg)
+		}
+	})
 }
 
 func TestAuthErrorOnReconnect(t *testing.T) {
