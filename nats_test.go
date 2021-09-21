@@ -1989,7 +1989,18 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	}
 }
 
-// only one allocation &Msg{}
+/*
+with optimization
+BenchmarkSubjectInterning/subject_the_same
+BenchmarkSubjectInterning/subject_the_same-4         	11932192	        93.28 ns/op	      96 B/op	       1 allocs/op
+BenchmarkSubjectInterning/subject_differs
+BenchmarkSubjectInterning/subject_differs-4          	11396161	       105.0 ns/op	     112 B/op	       2 allocs/op
+without optimization
+BenchmarkSubjectInterning/subject_the_same
+BenchmarkSubjectInterning/subject_the_same-4         	10916758	       113.2 ns/op	     104 B/op	       2 allocs/op
+BenchmarkSubjectInterning/subject_differs
+BenchmarkSubjectInterning/subject_differs-4          	11121651	       104.5 ns/op	     112 B/op	       2 allocs/op
+*/
 func BenchmarkSubjectInterning(b *testing.B) {
 	conn := &Conn{
 		ps: &parseState{
@@ -2001,6 +2012,9 @@ func BenchmarkSubjectInterning(b *testing.B) {
 		},
 		subs: map[int64]*Subscription{
 			1: {
+				pHead: &Msg{},
+				pTail: &Msg{},
+				typ: SyncSubscription,
 				Subject: "subject1",
 			},
 		},
