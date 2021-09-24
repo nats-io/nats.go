@@ -30,6 +30,85 @@ import (
 	"github.com/nats-io/nuid"
 )
 
+// JetStream allows persistent messaging through JetStream.
+type JetStream interface {
+	// Publish publishes a message to JetStream.
+	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
+
+	// PublishMsg publishes a Msg to JetStream.
+	PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error)
+
+	// PublishAsync publishes a message to JetStream and returns a PubAckFuture.
+	// The data should not be changed until the PubAckFuture has been processed.
+	PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFuture, error)
+
+	// PublishMsgAsync publishes a Msg to JetStream and returms a PubAckFuture.
+	// The message should not be changed until the PubAckFuture has been processed.
+	PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error)
+
+	// PublishAsyncPending returns the number of async publishes outstanding for this context.
+	PublishAsyncPending() int
+
+	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
+	PublishAsyncComplete() <-chan struct{}
+
+	// Subscribe creates an async Subscription for JetStream.
+	// The stream and consumer names can be provided with the nats.Bind() option.
+	// For creating an ephemeral (where the consumer name is picked by the server),
+	// you can provide the stream name with nats.BindStream().
+	// If no stream name is specified, the library will attempt to figure out which
+	// stream the subscription is for. See important notes below for more details.
+	//
+	// IMPORTANT NOTES:
+	// * If none of the options Bind() nor Durable() are specified, the library will
+	// send a request to the server to create an ephemeral JetStream consumer,
+	// which will be deleted after an Unsubscribe() or Drain(), or automatically
+	// by the server after a short period of time after the NATS subscription is
+	// gone.
+	// * If Durable() option is specified, the library will attempt to lookup a JetStream
+	// consumer with this name, and if found, will bind to it and not attempt to
+	// delete it. However, if not found, the library will send a request to create
+	// such durable JetStream consumer. The library will delete the JetStream consumer
+	// after an Unsubscribe() or Drain().
+	// * If Bind() option is provided, the library will attempt to lookup the
+	// consumer with the given name, and if successful, bind to it. If the lookup fails,
+	// then the Subscribe() call will return an error.
+	Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
+
+	// SubscribeSync creates a Subscription that can be used to process messages synchronously.
+	// See important note in Subscribe()
+	SubscribeSync(subj string, opts ...SubOpt) (*Subscription, error)
+
+	// ChanSubscribe creates channel based Subscription.
+	// See important note in Subscribe()
+	ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
+
+	// ChanQueueSubscribe creates channel based Subscription with a queue group.
+	// See important note in QueueSubscribe()
+	ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
+
+	// QueueSubscribe creates a Subscription with a queue group.
+	// If no optional durable name nor binding options are specified, the queue name will be used as a durable name.
+	// See important note in Subscribe()
+	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
+
+	// QueueSubscribeSync creates a Subscription with a queue group that can be used to process messages synchronously.
+	// See important note in QueueSubscribe()
+	QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error)
+
+	// PullSubscribe creates a Subscription that can fetch messages.
+	// See important note in Subscribe()
+	PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error)
+}
+
+// JetStreamContext allows JetStream messaging and stream management.
+type JetStreamContext interface {
+	JetStream
+	JetStreamManager
+	KeyValueManager
+	ObjectStoreManager
+}
+
 // Request API subjects for JetStream.
 const (
 	// defaultAPIPrefix is the default prefix for the JetStream API.
@@ -109,84 +188,6 @@ const (
 	jsCtrlHB = 1
 	jsCtrlFC = 2
 )
-
-// JetStream allows persistent messaging through JetStream.
-type JetStream interface {
-	// Publish publishes a message to JetStream.
-	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
-
-	// PublishMsg publishes a Msg to JetStream.
-	PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error)
-
-	// PublishAsync publishes a message to JetStream and returns a PubAckFuture.
-	// The data should not be changed until the PubAckFuture has been processed.
-	PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFuture, error)
-
-	// PublishMsgAsync publishes a Msg to JetStream and returms a PubAckFuture.
-	// The message should not be changed until the PubAckFuture has been processed.
-	PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error)
-
-	// PublishAsyncPending returns the number of async publishes outstanding for this context.
-	PublishAsyncPending() int
-
-	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
-	PublishAsyncComplete() <-chan struct{}
-
-	// Subscribe creates an async Subscription for JetStream.
-	// The stream and consumer names can be provided with the nats.Bind() option.
-	// For creating an ephemeral (where the consumer name is picked by the server),
-	// you can provide the stream name with nats.BindStream().
-	// If no stream name is specified, the library will attempt to figure out which
-	// stream the subscription is for. See important notes below for more details.
-	//
-	// IMPORTANT NOTES:
-	// * If none of the options Bind() nor Durable() are specified, the library will
-	// send a request to the server to create an ephemeral JetStream consumer,
-	// which will be deleted after an Unsubscribe() or Drain(), or automatically
-	// by the server after a short period of time after the NATS subscription is
-	// gone.
-	// * If Durable() option is specified, the library will attempt to lookup a JetStream
-	// consumer with this name, and if found, will bind to it and not attempt to
-	// delete it. However, if not found, the library will send a request to create
-	// such durable JetStream consumer. The library will delete the JetStream consumer
-	// after an Unsubscribe() or Drain().
-	// * If Bind() option is provided, the library will attempt to lookup the
-	// consumer with the given name, and if successful, bind to it. If the lookup fails,
-	// then the Subscribe() call will return an error.
-	Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
-
-	// SubscribeSync creates a Subscription that can be used to process messages synchronously.
-	// See important note in Subscribe()
-	SubscribeSync(subj string, opts ...SubOpt) (*Subscription, error)
-
-	// ChanSubscribe creates channel based Subscription.
-	// See important note in Subscribe()
-	ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
-
-	// ChanQueueSubscribe creates channel based Subscription with a queue group.
-	// See important note in QueueSubscribe()
-	ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOpt) (*Subscription, error)
-
-	// QueueSubscribe creates a Subscription with a queue group.
-	// If no optional durable name nor binding options are specified, the queue name will be used as a durable name.
-	// In that case, the queue name cannot contain dots ".", same restriction that is applied to a durable name.
-	// See important note in Subscribe()
-	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
-
-	// QueueSubscribeSync creates a Subscription with a queue group that can be used to process messages synchronously.
-	// See important note in QueueSubscribe()
-	QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error)
-
-	// PullSubscribe creates a Subscription that can fetch messages.
-	// See important note in Subscribe()
-	PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error)
-}
-
-// JetStreamContext allows JetStream messaging and stream management.
-type JetStreamContext interface {
-	JetStream
-	JetStreamManager
-}
 
 // js is an internal struct from a JetStreamContext.
 type js struct {
@@ -320,6 +321,16 @@ const (
 	ExpectedLastSeqHdr     = "Nats-Expected-Last-Sequence"
 	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
 	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
+	MsgRollup              = "Nats-Rollup"
+)
+
+// MsgSize is a header that will be part of a consumer's delivered message if HeadersOnly requested.
+const MsgSize = "Nats-Msg-Size"
+
+// Rollups, can be subject only or all messages.
+const (
+	MsgRollupSubject = "sub"
+	MsgRollupAll     = "all"
 )
 
 // PublishMsg publishes a Msg to a stream from JetStream.
@@ -667,10 +678,14 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if m.Reply != _EMPTY_ {
 		return nil, errors.New("nats: reply subject should be empty")
 	}
+	reply := m.Reply
 	m.Reply = js.newAsyncReply()
+	defer func() { m.Reply = reply }()
+
 	if m.Reply == _EMPTY_ {
 		return nil, errors.New("nats: error creating async reply handler")
 	}
+
 	id := m.Reply[aReplyPreLen:]
 	paf := &pubAckFuture{msg: m, st: time.Now()}
 	numPending, maxPending := js.registerPAF(id, paf)
@@ -683,7 +698,6 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 			return nil, errors.New("nats: stalled with too many outstanding async published messages")
 		}
 	}
-
 	if err := js.nc.PublishMsg(m); err != nil {
 		js.clearPAF(id)
 		return nil, err
@@ -841,6 +855,7 @@ type ConsumerConfig struct {
 	MaxAckPending   int           `json:"max_ack_pending,omitempty"`
 	FlowControl     bool          `json:"flow_control,omitempty"`
 	Heartbeat       time.Duration `json:"idle_heartbeat,omitempty"`
+	HeadersOnly     bool          `json:"headers_only,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -2116,6 +2131,14 @@ func IdleHeartbeat(duration time.Duration) SubOpt {
 func DeliverSubject(subject string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.DeliverSubject = subject
+		return nil
+	})
+}
+
+// HeadersOnly() will instruct the consumer to only deleiver headers and no payloads.
+func HeadersOnly() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.HeadersOnly = true
 		return nil
 	})
 }

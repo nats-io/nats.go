@@ -705,7 +705,7 @@ func TestJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 		// Cause bottleneck by having channel block when full
 		// because of work taking long.
 		recvd <- msg
-	}, EnableFlowControl())
+	}, EnableFlowControl(), IdleHeartbeat(5*time.Second))
 
 	if err != nil {
 		t.Fatal(err)
