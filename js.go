@@ -94,6 +94,14 @@ const (
 
 	// Scale for threshold of missed HBs or lack of activity.
 	hbcThresh = 2
+
+	// For ChanSubscription, we can't update sub.delivered as we do for other
+	// type of subscriptions, since the channel is user provided.
+	// With flow control in play, we will check for flow control on incoming
+	// messages (as opposed to when they are delivered), but also from a go
+	// routine. Without this, the subscription would possibly stall until
+	// a new message or heartbeat/fc are received.
+	chanSubFCCheckInterval = 250 * time.Millisecond
 )
 
 // Types of control messages, so far heartbeat and flow control
@@ -897,6 +905,7 @@ type jsSub struct {
 	cmeta  string
 	fcr    string
 	fcd    uint64
+	fciseq uint64
 }
 
 // Deletes the JS Consumer.
@@ -1409,15 +1418,27 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				}
 				if !isPullMode {
 					// We can't reuse the channel, so if one was passed, we need to create a new one.
-					if ch != nil {
+					if isSync {
 						ch = make(chan *Msg, cap(ch))
+					} else if ch != nil {
+						// User provided (ChanSubscription), simply try to drain it.
+						for done := false; !done; {
+							select {
+							case <-ch:
+							default:
+								done = true
+							}
+						}
 					}
 					jsi.deliver = deliver
+					jsi.hbi = info.Config.Heartbeat
 					// Recreate the subscription here.
 					sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
 					if err != nil {
 						return nil, err
 					}
+					hasFC = info.Config.FlowControl
+					hasHeartbeats = info.Config.Heartbeat > 0
 				}
 			} else {
 				if cinfo.Error.Code == 404 {
@@ -1442,8 +1463,39 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if hasHeartbeats {
 		sub.scheduleHeartbeatCheck()
 	}
+	// For ChanSubscriptions, if we know that there is flow control, we will
+	// start a go routine that evaluates the number of delivered messages
+	// and process flow control.
+	if sub.Type() == ChanSubscription && hasFC {
+		go sub.chanSubcheckForFlowControlResponse()
+	}
 
 	return sub, nil
+}
+
+// This long-lived routine is used per ChanSubscription to check
+// on the number of delivered messages and check for flow control response.
+func (sub *Subscription) chanSubcheckForFlowControlResponse() {
+	sub.mu.Lock()
+	nc := sub.conn
+	sub.mu.Unlock()
+	if nc == nil {
+		return
+	}
+	t := time.NewTicker(chanSubFCCheckInterval)
+	for range t.C {
+		sub.mu.Lock()
+		if sub.closed {
+			sub.mu.Unlock()
+			t.Stop()
+			return
+		}
+		fcReply := sub.checkForFlowControlResponse()
+		sub.mu.Unlock()
+		if fcReply != _EMPTY_ {
+			nc.Publish(fcReply, nil)
+		}
+	}
 }
 
 // ErrConsumerSequenceMismatch represents an error from a consumer
@@ -1488,8 +1540,11 @@ func isJSControlMessage(msg *Msg) (bool, int) {
 
 // Keeps track of the incoming message's reply subject so that the consumer's
 // state (deliver sequence, etc..) can be checked against heartbeats.
+// We will also bump the incoming data message sequence that is used in FC cases.
 // Runs under the subscription lock
 func (sub *Subscription) trackSequences(reply string) {
+	// For flow control, keep track of incoming message sequence.
+	sub.jsi.fciseq++
 	sub.jsi.cmeta = reply
 }
 
@@ -1626,13 +1681,25 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	}()
 }
 
+// For jetstream subscriptions, returns the number of delivered messages.
+// For ChanSubscription, this value is computed based on the known number
+// of messages added to the channel minus the current size of that channel.
+// Lock held on entry
+func (sub *Subscription) getJSDelivered() uint64 {
+	if sub.typ == ChanSubscription {
+		return sub.jsi.fciseq - uint64(len(sub.mch))
+	}
+	return sub.delivered
+}
+
 // checkForFlowControlResponse will check to see if we should send a flow control response
 // based on the subscription current delivered index and the target.
 // Runs under subscription lock
 func (sub *Subscription) checkForFlowControlResponse() string {
 	// Caller has verified that there is a sub.jsi and fc
 	jsi := sub.jsi
-	if jsi.fcd == sub.delivered {
+	jsi.active = true
+	if sub.getJSDelivered() >= jsi.fcd {
 		fcr := jsi.fcr
 		jsi.fcr, jsi.fcd = _EMPTY_, 0
 		return fcr
@@ -1642,9 +1709,8 @@ func (sub *Subscription) checkForFlowControlResponse() string {
 
 // Record an inbound flow control message.
 // Runs under subscription lock
-func (sub *Subscription) scheduleFlowControlResponse(dfuture uint64, reply string) {
-	jsi := sub.jsi
-	jsi.fcr, jsi.fcd = reply, dfuture
+func (sub *Subscription) scheduleFlowControlResponse(reply string) {
+	sub.jsi.fcr, sub.jsi.fcd = reply, sub.jsi.fciseq
 }
 
 // Checks for activity from our consumer.

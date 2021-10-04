@@ -2600,7 +2600,6 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			delivered = s.delivered
 			if s.jsi != nil {
 				fcReply = s.checkForFlowControlResponse()
-				s.jsi.active = true
 			}
 		}
 		s.mu.Unlock()
@@ -2768,6 +2767,7 @@ func (nc *Conn) processMsg(data []byte) {
 
 	// Skip processing if this is a control message.
 	if !ctrlMsg {
+		var chanSubCheckFC bool
 		// Subscription internal stats (applicable only for non ChanSubscription's)
 		if sub.typ != ChanSubscription {
 			sub.pMsgs++
@@ -2784,6 +2784,8 @@ func (nc *Conn) processMsg(data []byte) {
 				(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
 				goto slowConsumer
 			}
+		} else if jsi != nil {
+			chanSubCheckFC = true
 		}
 
 		// We have two modes of delivery. One is the channel, used by channel
@@ -2811,15 +2813,26 @@ func (nc *Conn) processMsg(data []byte) {
 			// Store the ACK metadata from the message to
 			// compare later on with the received heartbeat.
 			sub.trackSequences(m.Reply)
+			if chanSubCheckFC {
+				// For ChanSubscription, since we can't call this when a message
+				// is "delivered" (since user is pull from their own channel),
+				// we have a go routine that does this check, however, we do it
+				// also here to make it much more responsive. The go routine is
+				// really to avoid stalling when there is no new messages coming.
+				fcReply = sub.checkForFlowControlResponse()
+			}
 		}
 	} else if ctrlType == jsCtrlFC && m.Reply != _EMPTY_ {
 		// This is a flow control message.
-		// If we have no pending, go ahead and send in place.
-		if sub.pMsgs <= 0 {
+		// We will schedule the send of the FC reply once we have delivered the
+		// DATA message that was received before this flow control message, which
+		// has sequence `jsi.fciseq`. However, it is possible that this message
+		// has already been delivered, in that case, we need to send the FC reply now.
+		if sub.getJSDelivered() >= jsi.fciseq {
 			fcReply = m.Reply
 		} else {
 			// Schedule a reply after the previous message is delivered.
-			sub.scheduleFlowControlResponse(sub.delivered+uint64(sub.pMsgs), m.Reply)
+			sub.scheduleFlowControlResponse(m.Reply)
 		}
 	}
 
@@ -4192,7 +4205,6 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	delivered := s.delivered
 	if s.jsi != nil {
 		fcReply = s.checkForFlowControlResponse()
-		s.jsi.active = true
 	}
 
 	if s.typ == SyncSubscription {
