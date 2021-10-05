@@ -906,6 +906,7 @@ type jsSub struct {
 	fcr    string
 	fcd    uint64
 	fciseq uint64
+	csfct  *time.Timer
 }
 
 // Deletes the JS Consumer.
@@ -1467,7 +1468,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// start a go routine that evaluates the number of delivered messages
 	// and process flow control.
 	if sub.Type() == ChanSubscription && hasFC {
-		go sub.chanSubcheckForFlowControlResponse()
+		sub.chanSubcheckForFlowControlResponse()
 	}
 
 	return sub, nil
@@ -1477,25 +1478,28 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 // on the number of delivered messages and check for flow control response.
 func (sub *Subscription) chanSubcheckForFlowControlResponse() {
 	sub.mu.Lock()
-	nc := sub.conn
-	sub.mu.Unlock()
-	if nc == nil {
+	// We don't use defer since if we need to send an RC reply, we need
+	// to do it outside the sub's lock. So doing explicit unlock...
+	if sub.closed {
+		sub.mu.Unlock()
 		return
 	}
-	t := time.NewTicker(chanSubFCCheckInterval)
-	for range t.C {
-		sub.mu.Lock()
-		if sub.closed {
-			sub.mu.Unlock()
-			t.Stop()
-			return
-		}
-		fcReply := sub.checkForFlowControlResponse()
-		sub.mu.Unlock()
-		if fcReply != _EMPTY_ {
-			nc.Publish(fcReply, nil)
-		}
+	var fcReply string
+	var nc *Conn
+
+	jsi := sub.jsi
+	if jsi.csfct == nil {
+		jsi.csfct = time.AfterFunc(chanSubFCCheckInterval, sub.chanSubcheckForFlowControlResponse)
+	} else {
+		fcReply = sub.checkForFlowControlResponse()
+		nc = sub.conn
+		// Do the reset here under the lock, it's ok...
+		jsi.csfct.Reset(chanSubFCCheckInterval)
 	}
+	sub.mu.Unlock()
+	// This call will return an error (which we don't care here)
+	// if nc is nil or fcReply is empty.
+	nc.Publish(fcReply, nil)
 }
 
 // ErrConsumerSequenceMismatch represents an error from a consumer
