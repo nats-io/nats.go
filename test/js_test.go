@@ -2552,6 +2552,12 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
+		// Prevent double context and ack wait options.
+		err = msg.AckSync(nats.Context(ctx), nats.AckWait(1*time.Second))
+		if err != nats.ErrContextAndTimeout {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
 		err = msg.AckSync(nats.Context(ctx))
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
@@ -2587,6 +2593,13 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
+
+		// Prevent double context and ack wait options.
+		err = msg.Nak(nats.Context(ctx), nats.AckWait(1*time.Second))
+		if err != nats.ErrContextAndTimeout {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
 		// Skip the message.
 		err = msg.Nak()
 		if err != nil {
@@ -2616,6 +2629,13 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
+
+		// Prevent double context and ack wait options.
+		err = msg.Term(nats.Context(ctx), nats.AckWait(1*time.Second))
+		if err != nats.ErrContextAndTimeout {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
 		err = msg.Term()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
@@ -2649,6 +2669,13 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if got != expected {
 			t.Errorf("Expected %v, got %v", expected, got)
 		}
+
+		// Prevent double context and ack wait options.
+		err = msg.InProgress(nats.Context(ctx), nats.AckWait(1*time.Second))
+		if err != nats.ErrContextAndTimeout {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
 		err = msg.InProgress(nctx)
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
@@ -5524,68 +5551,6 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		}
 	})
 
-	t.Run("pull with context", func(t *testing.T) {
-		defer js.PurgeStream(subject)
-
-		expected := 10
-		sendMsgs(t, expected)
-		sub, err := js.PullSubscribe(subject, "batch-ctx")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer sub.Unsubscribe()
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		// Should fail with expired context.
-		_, err = sub.Fetch(expected, nats.Context(ctx))
-		if err == nil {
-			t.Fatal("Unexpected success")
-		}
-		if err != context.Canceled {
-			t.Errorf("Expected context deadline exceeded error, got: %v", err)
-		}
-
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		msgs, err := sub.Fetch(expected, nats.Context(ctx))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		got := len(msgs)
-		if got != expected {
-			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
-		}
-
-		for _, msg := range msgs {
-			msg.AckSync()
-		}
-
-		// Next fetch will timeout since no more messages.
-		_, err = sub.Fetch(1, nats.MaxWait(250*time.Millisecond))
-		if err != nats.ErrTimeout {
-			t.Errorf("Expected timeout fetching next message, got: %v", err)
-		}
-
-		expected = 5
-		sendMsgs(t, expected)
-		msgs, err = sub.Fetch(expected, nats.MaxWait(1*time.Second))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		got = len(msgs)
-		if got != expected {
-			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
-		}
-
-		for _, msg := range msgs {
-			msg.Ack()
-		}
-	})
-
 	t.Run("fetch after unsubscribe", func(t *testing.T) {
 		defer js.PurgeStream(subject)
 
@@ -6486,4 +6451,269 @@ func TestJetStreamMsgSubjectRewrite(t *testing.T) {
 	if string(msg.Data) != "msg" {
 		t.Fatalf("Unexepcted data: %q", msg.Data)
 	}
+}
+
+func TestJetStreamPullSubscribeFetchContext(t *testing.T) {
+	withJSCluster(t, "PULLCTX", 3, testJetStreamFetchContext)
+}
+
+func testJetStreamFetchContext(t *testing.T, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subject := "WQ"
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     subject,
+		Replicas: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sendMsgs := func(t *testing.T, totalMsgs int) {
+		t.Helper()
+		for i := 0; i < totalMsgs; i++ {
+			payload := fmt.Sprintf("i:%d", i)
+			_, err := js.Publish(subject, []byte(payload))
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		}
+	}
+	expected := 10
+	sendMsgs(t, expected)
+
+	sub, err := js.PullSubscribe(subject, "batch-ctx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Unsubscribe()
+
+	t.Run("ctx background", func(t *testing.T) {
+		_, err = sub.Fetch(expected, nats.Context(context.Background()))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != nats.ErrNoDeadlineContext {
+			t.Errorf("Expected context deadline error, got: %v", err)
+		}
+	})
+
+	t.Run("ctx canceled", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cancel()
+
+		_, err = sub.Fetch(expected, nats.Context(ctx))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != context.Canceled {
+			t.Errorf("Expected context deadline error, got: %v", err)
+		}
+
+		ctx, cancel = context.WithCancel(context.Background())
+		cancel()
+
+		_, err = sub.Fetch(expected, nats.Context(ctx))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != context.Canceled {
+			t.Errorf("Expected context deadline error, got: %v", err)
+		}
+	})
+
+	t.Run("ctx timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		msgs, err := sub.Fetch(expected, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		got := len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+		info, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Error(err)
+		}
+		if info.NumAckPending != expected {
+			t.Errorf("Expected %d pending acks, got: %d", expected, info.NumAckPending)
+		}
+
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		info, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Error(err)
+		}
+		if info.NumAckPending > 0 {
+			t.Errorf("Expected no pending acks, got: %d", info.NumAckPending)
+		}
+
+		// No messages at this point.
+		ctx, cancel = context.WithTimeout(ctx, 250*time.Millisecond)
+		defer cancel()
+
+		_, err = sub.Fetch(1, nats.Context(ctx))
+		if err != context.DeadlineExceeded {
+			t.Errorf("Expected deadline exceeded fetching next message, got: %v", err)
+		}
+
+		// Send more messages then pull them with a new context
+		expected = 5
+		sendMsgs(t, expected)
+
+		ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		// Single message fetch.
+		msgs, err = sub.Fetch(1, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("Expected to receive a single message, got: %d", len(msgs))
+		}
+		for _, msg := range msgs {
+			msg.Ack()
+		}
+
+		// Fetch multiple messages.
+		expected = 4
+		msgs, err = sub.Fetch(expected, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		got = len(msgs)
+		if got != expected {
+			t.Fatalf("Got %v messages, expected at least: %v", got, expected)
+		}
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		info, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Error(err)
+		}
+		if info.NumAckPending > 0 {
+			t.Errorf("Expected no pending acks, got: %d", info.NumAckPending)
+		}
+	})
+
+	t.Run("ctx with cancel", func(t *testing.T) {
+		// New JS context with slightly shorter timeout than default.
+		js, err = nc.JetStream(nats.MaxWait(2 * time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sub, err := js.PullSubscribe(subject, "batch-cancel-ctx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		// Parent context
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Fetch all the messages as needed.
+		info, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := info.NumPending
+
+		// Child context with timeout with the same duration as JS context timeout
+		// will be created to fetch next message.
+		msgs, err := sub.Fetch(1, nats.Context(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("Expected a message, got: %d", len(msgs))
+		}
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		// Fetch the rest using same cancellation context.
+		expected := int(total - 1)
+		msgs, err = sub.Fetch(expected, nats.Context(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(msgs) != expected {
+			t.Fatalf("Expected %d messages, got: %d", expected, len(msgs))
+		}
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		// Fetch more messages and wait for timeout since there are none.
+		_, err = sub.Fetch(expected, nats.Context(ctx))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != context.DeadlineExceeded {
+			t.Fatalf("Expected deadline exceeded fetching next message, got: %v", err)
+		}
+
+		// Original cancellation context is not yet canceled, it should still work.
+		if ctx.Err() != nil {
+			t.Fatalf("Expected no errors in original cancellation context, got: %v", ctx.Err())
+		}
+
+		// Should be possible to use the same context again.
+		sendMsgs(t, 5)
+
+		// Get the next message to leave 4 pending.
+		var pending uint64 = 4
+		msgs, err = sub.Fetch(1, nats.Context(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("Expected a message, got: %d", len(msgs))
+		}
+		for _, msg := range msgs {
+			msg.AckSync()
+		}
+
+		// Cancel finally.
+		cancel()
+
+		_, err = sub.Fetch(1, nats.Context(ctx))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		if err != context.Canceled {
+			t.Fatalf("Expected deadline exceeded fetching next message, got: %v", err)
+		}
+
+		info, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		total = info.NumPending
+		if total != pending {
+			t.Errorf("Expected %d pending messages, got: %d", pending, total)
+		}
+	})
 }
