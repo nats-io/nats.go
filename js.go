@@ -169,6 +169,7 @@ type JetStream interface {
 
 	// QueueSubscribe creates a Subscription with a queue group.
 	// If no optional durable name nor binding options are specified, the queue name will be used as a durable name.
+	// In that case, the queue name cannot contain dots ".", same restriction that is applied to a durable name.
 	// See important note in Subscribe()
 	QueueSubscribe(subj, queue string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
 
@@ -1168,7 +1169,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 		// If this is a queue subscription and no consumer nor durable name was specified,
 		// then we will use the queue name as a durable name.
-		if queue != _EMPTY_ && o.consumer == _EMPTY_ && o.cfg.Durable == _EMPTY_ {
+		if o.consumer == _EMPTY_ && o.cfg.Durable == _EMPTY_ {
+			if err := checkDurName(queue); err != nil {
+				return nil, err
+			}
 			o.cfg.Durable = queue
 		}
 	}
@@ -1890,7 +1894,18 @@ func Description(description string) SubOpt {
 	})
 }
 
+// Check that the durable name is valid, that is, that it does not contain
+// any ".", and if it does return ErrInvalidDurableName, otherwise nil.
+func checkDurName(dur string) error {
+	if strings.Contains(dur, ".") {
+		return ErrInvalidDurableName
+	}
+	return nil
+}
+
 // Durable defines the consumer name for JetStream durable subscribers.
+// This function will return ErrInvalidDurableName in the name contains
+// any dot ".".
 func Durable(consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		if opts.cfg.Durable != _EMPTY_ {
@@ -1899,8 +1914,8 @@ func Durable(consumer string) SubOpt {
 		if opts.consumer != _EMPTY_ && opts.consumer != consumer {
 			return fmt.Errorf("nats: duplicate consumer names (%s and %s)", opts.consumer, consumer)
 		}
-		if strings.Contains(consumer, ".") {
-			return ErrInvalidDurableName
+		if err := checkDurName(consumer); err != nil {
+			return err
 		}
 
 		opts.cfg.Durable = consumer
