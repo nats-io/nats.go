@@ -350,6 +350,13 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
+	// Check that Queue subscribe without durable name requires queue name
+	// to not have "." in the name.
+	_, err = js.QueueSubscribeSync("foo", "bar.baz")
+	if err != nats.ErrInvalidDurableName {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
 	msg := []byte("Hello JS")
 
 	// Basic publish like NATS core.

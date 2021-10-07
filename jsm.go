@@ -239,8 +239,8 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 
 	var ccSubj string
 	if cfg != nil && cfg.Durable != _EMPTY_ {
-		if strings.Contains(cfg.Durable, ".") {
-			return nil, ErrInvalidDurableName
+		if err := checkDurName(cfg.Durable); err != nil {
+			return nil, err
 		}
 		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable)
 	} else {
