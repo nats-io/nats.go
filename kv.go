@@ -66,13 +66,35 @@ type KeyValue interface {
 	Bucket() string
 	// PurgeDeletes will remove all current delete markers.
 	PurgeDeletes(opts ...WatchOpt) error
+	// Status retrieves the status and configuration of a bucket
+	Status() (KeyValueStatus, error)
+}
+
+type KeyValueStatus interface {
+	// Bucket the name of the bucket
+	Bucket() string
+
+	// Values is how many messages are in the bucket, including historical values
+	Values() uint64
+
+	// History returns the configured history kept per key
+	History() int64
+
+	// TTL is how long the bucket keeps values for
+	TTL() time.Duration
+
+	// Replicas is how many storage replicas are kept
+	Replicas() int
+
+	// StreamName is the name of the stream used to store the data
+	StreamName() string
 }
 
 // KeyWatcher is what is returned when doing a watch.
 type KeyWatcher interface {
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
-	// Stop() will stop this watcher.
+	// Stop will stop this watcher.
 	Stop() error
 }
 
@@ -641,4 +663,37 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 // Bucket returns the current bucket name (JetStream stream).
 func (kv *kvs) Bucket() string {
 	return kv.name
+}
+
+type kvStatus struct {
+	nfo    *StreamInfo
+	bucket string
+}
+
+// Bucket the name of the bucket
+func (s *kvStatus) Bucket() string { return s.bucket }
+
+// Values is how many messages are in the bucket, including historical values
+func (s *kvStatus) Values() uint64 { return s.nfo.State.Msgs }
+
+// History returns the configured history kept per key
+func (s *kvStatus) History() int64 { return s.nfo.Config.MaxMsgsPerSubject }
+
+// TTL is how long the bucket keeps values for
+func (s *kvStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
+
+// Replicas is how many storage replicas are kept
+func (s *kvStatus) Replicas() int { return s.nfo.Config.Replicas }
+
+// StreamName is the name of the stream used to store the data
+func (s *kvStatus) StreamName() string { return s.nfo.Config.Name }
+
+// Status retrieves the status and configuration of a bucket
+func (kv *kvs) Status() (KeyValueStatus, error) {
+	nfo, err := kv.js.StreamInfo(kv.stream)
+	if err != nil {
+		return nil, err
+	}
+
+	return &kvStatus{nfo: nfo, bucket: kv.name}, nil
 }
