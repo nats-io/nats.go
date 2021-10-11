@@ -33,7 +33,7 @@ func TestKeyValueBasics(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour})
 	expectOk(t, err)
 
 	if kv.Bucket() != "TEST" {
@@ -78,6 +78,30 @@ func TestKeyValueBasics(t *testing.T) {
 	expectOk(t, err)
 	_, err = kv.Update("age", []byte("33"), r)
 	expectOk(t, err)
+
+	// Status
+	status, err := kv.Status()
+	expectOk(t, err)
+	if status.History() != 5 {
+		t.Fatalf("expected history of 5 got %d", status.History())
+	}
+	if status.Bucket() != "TEST" {
+		t.Fatalf("expected bucket TEST got %v", status.Bucket())
+	}
+	if status.TTL() != time.Hour {
+		t.Fatalf("expected 1 hour TTL got %v", status.TTL())
+	}
+	if status.Values() != 7 {
+		t.Fatalf("expected 7 values got %d", status.Values())
+	}
+	bs := status.BackingStore()
+	if bs.Kind() != "JetStream" {
+		t.Fatalf("invalid backing store kind %s", bs.Kind())
+	}
+	info := bs.Info()
+	if info["stream"] != "KV_TEST" {
+		t.Fatalf("invalid stream name %+v", info)
+	}
 }
 
 func TestKeyValueHistory(t *testing.T) {

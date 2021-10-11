@@ -214,6 +214,8 @@ type jsOpts struct {
 	aecb MsgErrHandler
 	// Maximum in flight.
 	maxap int
+	// the domain that produced the pre
+	domain string
 }
 
 const (
@@ -258,7 +260,13 @@ func Domain(domain string) JSOpt {
 		return APIPrefix(_EMPTY_)
 	}
 
-	return APIPrefix(fmt.Sprintf(jsDomainT, domain))
+	return jsOptFn(func(js *jsOpts) error {
+		js.domain = domain
+		js.pre = fmt.Sprintf(jsDomainT, domain)
+
+		return nil
+	})
+
 }
 
 // APIPrefix changes the default prefix used for the JetStream API.

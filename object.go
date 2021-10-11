@@ -31,6 +31,8 @@ import (
 	"github.com/nats-io/nuid"
 )
 
+// ObjectStoreManager creates, loads and deletes Object Stores
+//
 // Notice: Experimental Preview
 //
 // This functionality is EXPERIMENTAL and may be changed in later releases.
@@ -43,6 +45,9 @@ type ObjectStoreManager interface {
 	DeleteObjectStore(bucket string) error
 }
 
+// ObjectStore is a blob store capable of storing large objects efficiently in
+// JetStream streams
+//
 // Notice: Experimental Preview
 //
 // This functionality is EXPERIMENTAL and may be changed in later releases.
@@ -89,6 +94,9 @@ type ObjectStore interface {
 
 	// List will list all the objects in this store.
 	List(opts ...WatchOpt) ([]*ObjectInfo, error)
+
+	// Status retrieves run-time status about the backing store of the bucket.
+	Status() (ObjectStoreStatus, error)
 }
 
 type ObjectOpt interface {
@@ -109,7 +117,7 @@ func (ctx ContextOpt) configureObject(opts *objOpts) error {
 type ObjectWatcher interface {
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan *ObjectInfo
-	// Stop() will stop this watcher.
+	// Stop will stop this watcher.
 	Stop() error
 }
 
@@ -130,6 +138,31 @@ type ObjectStoreConfig struct {
 	TTL         time.Duration
 	Storage     StorageType
 	Replicas    int
+}
+
+// BackingStore describes the implementation and storage backend of KV or Object stores
+type BackingStore interface {
+	Kind() string
+	Info() map[string]string
+}
+
+type ObjectStoreStatus interface {
+	// Bucket is the name of the bucket
+	Bucket() string
+	// Description is the description supplied when creating the bucket
+	Description() string
+	// TTL indicates how long objects are kept in the bucket
+	TTL() time.Duration
+	// Storage indicates the underlying JetStream storage technology used to store data
+	Storage() StorageType
+	// Replicas indicates how many storage replicas are kept for the data in the bucket
+	Replicas() int
+	// Sealed indicates the stream is sealed and cannot be modified in any way
+	Sealed() bool
+	// Size is the combined size of all data in the bucket including metadata, in bytes
+	Size() uint64
+	// BackingStore provides details about the underlying storage
+	BackingStore() BackingStore
 }
 
 // ObjectMetaOptions
@@ -855,6 +888,55 @@ func (obs *obs) List(opts ...WatchOpt) ([]*ObjectInfo, error) {
 		return nil, ErrNoObjectsFound
 	}
 	return objs, nil
+}
+
+type objBackingStore struct {
+	info map[string]string
+}
+
+func (b *objBackingStore) Kind() string            { return "JetStream" }
+func (b *objBackingStore) Info() map[string]string { return b.info }
+
+type objStatus struct {
+	nfo    *StreamInfo
+	bucket string
+	bs     BackingStore
+}
+
+func (s *objStatus) Bucket() string             { return s.bucket }
+func (s *objStatus) Description() string        { return s.nfo.Config.Description }
+func (s *objStatus) TTL() time.Duration         { return s.nfo.Config.MaxAge }
+func (s *objStatus) Storage() StorageType       { return s.nfo.Config.Storage }
+func (s *objStatus) Replicas() int              { return s.nfo.Config.Replicas }
+func (s *objStatus) Sealed() bool               { return s.nfo.Config.Sealed }
+func (s *objStatus) Size() uint64               { return s.nfo.State.Bytes }
+func (s *objStatus) BackingStore() BackingStore { return s.bs }
+
+// Status retrieves run-time status about a bucket
+func (obs *obs) Status() (ObjectStoreStatus, error) {
+	nfo, err := obs.js.StreamInfo(obs.stream)
+	if err != nil {
+		return nil, err
+	}
+
+	bs := &objBackingStore{
+		info: map[string]string{
+			"stream": obs.stream,
+			"domain": obs.js.opts.domain,
+		},
+	}
+
+	if nfo.Cluster != nil {
+		bs.info["placement_cluster"] = nfo.Cluster.Name
+	}
+
+	status := &objStatus{
+		nfo:    nfo,
+		bucket: obs.name,
+		bs:     bs,
+	}
+
+	return status, nil
 }
 
 // Read impl.

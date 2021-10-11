@@ -66,13 +66,33 @@ type KeyValue interface {
 	Bucket() string
 	// PurgeDeletes will remove all current delete markers.
 	PurgeDeletes(opts ...WatchOpt) error
+	// Status retrieves the status and configuration of a bucket
+	Status() (KeyValueStatus, error)
+}
+
+// KeyValueStatus is run-time status about a Key-Value bucket
+type KeyValueStatus interface {
+	// Bucket the name of the bucket
+	Bucket() string
+
+	// Values is how many messages are in the bucket, including historical values
+	Values() uint64
+
+	// History returns the configured history kept per key
+	History() int64
+
+	// TTL is how long the bucket keeps values for
+	TTL() time.Duration
+
+	// BackingStore is information about the backend hosting the data
+	BackingStore() BackingStore
 }
 
 // KeyWatcher is what is returned when doing a watch.
 type KeyWatcher interface {
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
-	// Stop() will stop this watcher.
+	// Stop will stop this watcher.
 	Stop() error
 }
 
@@ -656,4 +676,51 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 // Bucket returns the current bucket name (JetStream stream).
 func (kv *kvs) Bucket() string {
 	return kv.name
+}
+
+type kvBackingStore struct {
+	info map[string]string
+}
+
+func (b *kvBackingStore) Kind() string            { return "JetStream" }
+func (b *kvBackingStore) Info() map[string]string { return b.info }
+
+type kvStatus struct {
+	nfo    *StreamInfo
+	bucket string
+	bs     *kvBackingStore
+}
+
+// Bucket the name of the bucket
+func (s *kvStatus) Bucket() string { return s.bucket }
+
+// Values is how many messages are in the bucket, including historical values
+func (s *kvStatus) Values() uint64 { return s.nfo.State.Msgs }
+
+// History returns the configured history kept per key
+func (s *kvStatus) History() int64 { return s.nfo.Config.MaxMsgsPerSubject }
+
+// TTL is how long the bucket keeps values for
+func (s *kvStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
+
+// BackingStore is information about the backend and storage used for the KV store
+func (s *kvStatus) BackingStore() BackingStore { return s.bs }
+
+// Status retrieves the status and configuration of a bucket
+func (kv *kvs) Status() (KeyValueStatus, error) {
+	nfo, err := kv.js.StreamInfo(kv.stream)
+	if err != nil {
+		return nil, err
+	}
+
+	bs := &kvBackingStore{info: map[string]string{
+		"stream": kv.stream,
+		"domain": kv.js.opts.domain,
+	}}
+
+	if nfo.Cluster != nil {
+		bs.info["placement_cluster"] = nfo.Cluster.Name
+	}
+
+	return &kvStatus{nfo: nfo, bucket: kv.name, bs: bs}, nil
 }
