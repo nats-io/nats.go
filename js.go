@@ -254,16 +254,25 @@ func (opt jsOptFn) configureJSContext(opts *jsOpts) error {
 
 // Domain changes the domain part of JetSteam API prefix.
 func Domain(domain string) JSOpt {
+	if domain == _EMPTY_ {
+		return APIPrefix(_EMPTY_)
+	}
+
 	return APIPrefix(fmt.Sprintf(jsDomainT, domain))
 }
 
 // APIPrefix changes the default prefix used for the JetStream API.
 func APIPrefix(pre string) JSOpt {
 	return jsOptFn(func(js *jsOpts) error {
+		if pre == _EMPTY_ {
+			return nil
+		}
+
 		js.pre = pre
 		if !strings.HasSuffix(js.pre, ".") {
 			js.pre = js.pre + "."
 		}
+
 		return nil
 	})
 }
@@ -2430,7 +2439,7 @@ func (m *Msg) checkReply() (*js, *jsSub, error) {
 	if m == nil || m.Sub == nil {
 		return nil, nil, ErrMsgNotBound
 	}
-	if m.Reply == "" {
+	if m.Reply == _EMPTY_ {
 		return nil, nil, ErrMsgNoReply
 	}
 	sub := m.Sub

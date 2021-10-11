@@ -333,6 +333,18 @@ func keyValid(key string) bool {
 
 // Get returns the latest value for the key.
 func (kv *kvs) Get(key string) (KeyValueEntry, error) {
+	e, err := kv.get(key)
+	if err == ErrKeyDeleted {
+		return nil, ErrKeyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return e, nil
+}
+
+func (kv *kvs) get(key string) (KeyValueEntry, error) {
 	if !keyValid(key) {
 		return nil, ErrInvalidKey
 	}
@@ -367,6 +379,7 @@ func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 			entry.op = KeyValuePurge
 			return entry, ErrKeyDeleted
 		}
+
 	}
 
 	return entry, nil
@@ -400,11 +413,13 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	if err == nil {
 		return v, nil
 	}
+
 	// TODO(dlc) - Since we have tombstones for DEL ops for watchers, this could be from that
 	// so we need to double check.
-	if e, err := kv.Get(key); err == ErrKeyDeleted {
+	if e, err := kv.get(key); err == ErrKeyDeleted {
 		return kv.Update(key, value, e.Revision())
 	}
+
 	return 0, err
 }
 

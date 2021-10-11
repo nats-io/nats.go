@@ -60,7 +60,7 @@ func TestKeyValueBasics(t *testing.T) {
 	err = kv.Delete("name")
 	expectOk(t, err)
 	_, err = kv.Get("name")
-	expectErr(t, err, nats.ErrKeyDeleted)
+	expectErr(t, err, nats.ErrKeyNotFound)
 	r, err = kv.Create("name", []byte("derek"))
 	expectOk(t, err)
 	if r != 3 {
@@ -284,10 +284,9 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 	expectOk(t, err)
 	// Check marker
 	e, err := kv.Get("name")
-	expectErr(t, err, nats.ErrKeyDeleted)
-	// Also make sure op is purge
-	if e.Operation() != nats.KeyValuePurge {
-		t.Fatalf("Expected a purge operation but got %v", e.Operation())
+	expectErr(t, err, nats.ErrKeyNotFound)
+	if e != nil {
+		t.Fatalf("Expected a nil entry but got %v", e)
 	}
 	entries, err = kv.History("name")
 	expectOk(t, err)
