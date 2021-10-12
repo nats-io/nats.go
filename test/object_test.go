@@ -34,7 +34,7 @@ func TestObjectBasics(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
 	expectOk(t, err)
 
 	// Create ~16MB object.
@@ -67,6 +67,21 @@ func TestObjectBasics(t *testing.T) {
 		t.Fatalf("Expected the object stream to be sealed, got %+v", si)
 	}
 
+	status, err := obs.Status()
+	expectOk(t, err)
+	if !status.Sealed() {
+		t.Fatalf("exected sealed status")
+	}
+	if status.Size() == 0 {
+		t.Fatalf("size is 0")
+	}
+	if status.Storage() != nats.FileStorage {
+		t.Fatalf("stauts reports %d storage", status.Storage())
+	}
+	if status.Description() != "testing" {
+		t.Fatalf("invalid description: '%s'", status.Description())
+	}
+
 	// Check simple errors.
 	_, err = obs.Get("FOO")
 	expectErr(t, err)
@@ -95,6 +110,33 @@ func TestObjectBasics(t *testing.T) {
 	expectOk(t, err)
 	_, err = obs.Get("BLOB")
 	expectErr(t, err, nats.ErrStreamNotFound)
+}
+
+func TestDefaultObjectStatus(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdown(s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
+	expectOk(t, err)
+
+	blob := make([]byte, 1024*1024+22)
+	rand.Read(blob)
+
+	_, err = obs.PutBytes("BLOB", blob)
+	expectOk(t, err)
+
+	status, err := obs.Status()
+	expectOk(t, err)
+	if status.BackingStore().Kind() != "JetStream" {
+		t.Fatalf("invalid backing store kind: %s", status.BackingStore().Kind())
+	}
+	info := status.BackingStore().Info()
+	if info["stream"] != "OBJ_OBJS" {
+		t.Fatalf("invalid stream name %+v", info)
+	}
 }
 
 func TestObjectFileBasics(t *testing.T) {

@@ -1132,7 +1132,7 @@ func getJSContextOpts(defs *jsOpts, opts ...JSOpt) (*jsOpts, context.CancelFunc,
 	if o.ctx == nil && o.wait > 0 {
 		o.ctx, cancel = context.WithTimeout(context.Background(), o.wait)
 	}
-	if o.pre == "" {
+	if o.pre == _EMPTY_ {
 		o.pre = defs.pre
 	}
 
