@@ -94,13 +94,14 @@ func TestKeyValueBasics(t *testing.T) {
 	if status.Values() != 7 {
 		t.Fatalf("expected 7 values got %d", status.Values())
 	}
-	bs := status.BackingStore()
-	if bs.Kind() != "JetStream" {
-		t.Fatalf("invalid backing store kind %s", bs.Kind())
+	if status.BackingStore() != "JetStream" {
+		t.Fatalf("invalid backing store kind %s", status.BackingStore())
 	}
-	info := bs.Info()
-	if info["stream"] != "KV_TEST" {
-		t.Fatalf("invalid stream name %+v", info)
+
+	kvs := status.(*nats.KeyValueBucketStatus)
+	si := kvs.StreamInfo()
+	if si == nil {
+		t.Fatalf("StreamInfo not received")
 	}
 }
 
