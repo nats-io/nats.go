@@ -130,11 +130,12 @@ func TestDefaultObjectStatus(t *testing.T) {
 
 	status, err := obs.Status()
 	expectOk(t, err)
-	if status.BackingStore().Kind() != "JetStream" {
-		t.Fatalf("invalid backing store kind: %s", status.BackingStore().Kind())
+	if status.BackingStore() != "JetStream" {
+		t.Fatalf("invalid backing store kind: %s", status.BackingStore())
 	}
-	info := status.BackingStore().Info()
-	if info["stream"] != "OBJ_OBJS" {
+	bs := status.(*nats.ObjectBucketStatus)
+	info := bs.StreamInfo()
+	if info.Config.Name != "OBJ_OBJS" {
 		t.Fatalf("invalid stream name %+v", info)
 	}
 }

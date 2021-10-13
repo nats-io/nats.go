@@ -140,12 +140,6 @@ type ObjectStoreConfig struct {
 	Replicas    int
 }
 
-// BackingStore describes the implementation and storage backend of KV or Object stores
-type BackingStore interface {
-	Kind() string
-	Info() map[string]string
-}
-
 type ObjectStoreStatus interface {
 	// Bucket is the name of the bucket
 	Bucket() string
@@ -162,7 +156,7 @@ type ObjectStoreStatus interface {
 	// Size is the combined size of all data in the bucket including metadata, in bytes
 	Size() uint64
 	// BackingStore provides details about the underlying storage
-	BackingStore() BackingStore
+	BackingStore() string
 }
 
 // ObjectMetaOptions
@@ -890,27 +884,38 @@ func (obs *obs) List(opts ...WatchOpt) ([]*ObjectInfo, error) {
 	return objs, nil
 }
 
-type objBackingStore struct {
-	info map[string]string
-}
-
-func (b *objBackingStore) Kind() string            { return "JetStream" }
-func (b *objBackingStore) Info() map[string]string { return b.info }
-
-type objStatus struct {
+// ObjectBucketStatus  represents status of a Bucket, implements ObjectStoreStatus
+type ObjectBucketStatus struct {
 	nfo    *StreamInfo
 	bucket string
-	bs     BackingStore
 }
 
-func (s *objStatus) Bucket() string             { return s.bucket }
-func (s *objStatus) Description() string        { return s.nfo.Config.Description }
-func (s *objStatus) TTL() time.Duration         { return s.nfo.Config.MaxAge }
-func (s *objStatus) Storage() StorageType       { return s.nfo.Config.Storage }
-func (s *objStatus) Replicas() int              { return s.nfo.Config.Replicas }
-func (s *objStatus) Sealed() bool               { return s.nfo.Config.Sealed }
-func (s *objStatus) Size() uint64               { return s.nfo.State.Bytes }
-func (s *objStatus) BackingStore() BackingStore { return s.bs }
+// Bucket is the name of the bucket
+func (s *ObjectBucketStatus) Bucket() string { return s.bucket }
+
+// Description is the description supplied when creating the bucket
+func (s *ObjectBucketStatus) Description() string { return s.nfo.Config.Description }
+
+// TTL indicates how long objects are kept in the bucket
+func (s *ObjectBucketStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
+
+// Storage indicates the underlying JetStream storage technology used to store data
+func (s *ObjectBucketStatus) Storage() StorageType { return s.nfo.Config.Storage }
+
+// Replicas indicates how many storage replicas are kept for the data in the bucket
+func (s *ObjectBucketStatus) Replicas() int { return s.nfo.Config.Replicas }
+
+// Sealed indicates the stream is sealed and cannot be modified in any way
+func (s *ObjectBucketStatus) Sealed() bool { return s.nfo.Config.Sealed }
+
+// Size is the combined size of all data in the bucket including metadata, in bytes
+func (s *ObjectBucketStatus) Size() uint64 { return s.nfo.State.Bytes }
+
+// BackingStore indicates what technology is used for storage of the bucket
+func (s *ObjectBucketStatus) BackingStore() string { return "JetStream" }
+
+// StreamInfo is the stream info retrieved to create the status
+func (s *ObjectBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
 
 // Status retrieves run-time status about a bucket
 func (obs *obs) Status() (ObjectStoreStatus, error) {
@@ -919,21 +924,9 @@ func (obs *obs) Status() (ObjectStoreStatus, error) {
 		return nil, err
 	}
 
-	bs := &objBackingStore{
-		info: map[string]string{
-			"stream": obs.stream,
-			"domain": obs.js.opts.domain,
-		},
-	}
-
-	if nfo.Cluster != nil {
-		bs.info["placement_cluster"] = nfo.Cluster.Name
-	}
-
-	status := &objStatus{
+	status := &ObjectBucketStatus{
 		nfo:    nfo,
 		bucket: obs.name,
-		bs:     bs,
 	}
 
 	return status, nil

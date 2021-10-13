@@ -84,8 +84,8 @@ type KeyValueStatus interface {
 	// TTL is how long the bucket keeps values for
 	TTL() time.Duration
 
-	// BackingStore is information about the backend hosting the data
-	BackingStore() BackingStore
+	// BackingStore indicates what technology is used for storage of the bucket
+	BackingStore() string
 }
 
 // KeyWatcher is what is returned when doing a watch.
@@ -678,33 +678,29 @@ func (kv *kvs) Bucket() string {
 	return kv.name
 }
 
-type kvBackingStore struct {
-	info map[string]string
-}
-
-func (b *kvBackingStore) Kind() string            { return "JetStream" }
-func (b *kvBackingStore) Info() map[string]string { return b.info }
-
-type kvStatus struct {
+// KeyValueBucketStatus represents status of a Bucket, implements KeyValueStatus
+type KeyValueBucketStatus struct {
 	nfo    *StreamInfo
 	bucket string
-	bs     *kvBackingStore
 }
 
 // Bucket the name of the bucket
-func (s *kvStatus) Bucket() string { return s.bucket }
+func (s *KeyValueBucketStatus) Bucket() string { return s.bucket }
 
 // Values is how many messages are in the bucket, including historical values
-func (s *kvStatus) Values() uint64 { return s.nfo.State.Msgs }
+func (s *KeyValueBucketStatus) Values() uint64 { return s.nfo.State.Msgs }
 
 // History returns the configured history kept per key
-func (s *kvStatus) History() int64 { return s.nfo.Config.MaxMsgsPerSubject }
+func (s *KeyValueBucketStatus) History() int64 { return s.nfo.Config.MaxMsgsPerSubject }
 
 // TTL is how long the bucket keeps values for
-func (s *kvStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
+func (s *KeyValueBucketStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
 
-// BackingStore is information about the backend and storage used for the KV store
-func (s *kvStatus) BackingStore() BackingStore { return s.bs }
+// BackingStore indicates what technology is used for storage of the bucket
+func (s *KeyValueBucketStatus) BackingStore() string { return "JetStream" }
+
+// StreamInfo is the stream info retrieved to create the status
+func (s *KeyValueBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
 
 // Status retrieves the status and configuration of a bucket
 func (kv *kvs) Status() (KeyValueStatus, error) {
@@ -713,14 +709,5 @@ func (kv *kvs) Status() (KeyValueStatus, error) {
 		return nil, err
 	}
 
-	bs := &kvBackingStore{info: map[string]string{
-		"stream": kv.stream,
-		"domain": kv.js.opts.domain,
-	}}
-
-	if nfo.Cluster != nil {
-		bs.info["placement_cluster"] = nfo.Cluster.Name
-	}
-
-	return &kvStatus{nfo: nfo, bucket: kv.name, bs: bs}, nil
+	return &KeyValueBucketStatus{nfo: nfo, bucket: kv.name}, nil
 }
