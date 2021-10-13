@@ -504,19 +504,30 @@ func (kv *kvs) PurgeDeletes(opts ...WatchOpt) error {
 	}
 	defer watcher.Stop()
 
+	var deleteMarkers []KeyValueEntry
 	for entry := range watcher.Updates() {
 		if entry == nil {
 			break
 		}
 		if op := entry.Operation(); op == KeyValueDelete || op == KeyValuePurge {
-			var b strings.Builder
-			b.WriteString(kv.pre)
-			b.WriteString(entry.Key())
-			err := kv.js.purgeStream(kv.stream, &streamPurgeRequest{Subject: b.String()})
-			if err != nil {
-				return err
-			}
+			deleteMarkers = append(deleteMarkers, entry)
 		}
+	}
+
+	var (
+		pr streamPurgeRequest
+		b  strings.Builder
+	)
+	// Do actual purges here.
+	for _, entry := range deleteMarkers {
+		b.WriteString(kv.pre)
+		b.WriteString(entry.Key())
+		pr.Subject = b.String()
+		err := kv.js.purgeStream(kv.stream, &pr)
+		if err != nil {
+			return err
+		}
+		b.Reset()
 	}
 	return nil
 }

@@ -349,6 +349,7 @@ func TestKeyValueDeleteTombstones(t *testing.T) {
 		err := kv.Delete(fmt.Sprintf("key-%d", i))
 		expectOk(t, err)
 	}
+
 	// Now cleanup.
 	err = kv.PurgeDeletes()
 	expectOk(t, err)
