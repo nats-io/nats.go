@@ -1644,6 +1644,26 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		return
 	}
 
+	var maxStr string
+	// If there was an AUTO_UNSUB done, we need to adjust the new value
+	// to send after the SUB for the new sid.
+	if sub.max > 0 {
+		if sub.jsi.fciseq < sub.max {
+			adjustedMax := sub.max - sub.jsi.fciseq
+			maxStr = strconv.Itoa(int(adjustedMax))
+		} else {
+			// We are already at the max, so we should just unsub the
+			// existing sub and be done
+			go func(sid int64) {
+				nc.mu.Lock()
+				nc.bw.appendString(fmt.Sprintf(unsubProto, sid, _EMPTY_))
+				nc.kickFlusher()
+				nc.mu.Unlock()
+			}(sub.sid)
+			return
+		}
+	}
+
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
 	osid := sub.applyNewSID()
 
@@ -1663,6 +1683,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		nc.mu.Lock()
 		nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
 		nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, nsid))
+		if maxStr != _EMPTY_ {
+			nc.bw.appendString(fmt.Sprintf(unsubProto, nsid, maxStr))
+		}
 		nc.kickFlusher()
 		nc.mu.Unlock()
 
