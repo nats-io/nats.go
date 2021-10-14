@@ -891,6 +891,43 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 	}
 }
 
+func TestJetStreamTracing(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	nc, err := Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctr := 0
+	js, err := nc.JetStream(TraceFunc(func(op TraceOperation, subj string, payload []byte, hdr Header) {
+		ctr++
+		if ctr == 1 {
+			if op != TraceSent || subj != "$JS.API.STREAM.CREATE.X" {
+				t.Fatalf("Exected sent trace to %s: got: %d %s", "$JS.API.STREAM.CREATE.X", op, subj)
+			}
+			return
+		}
+
+		if op != TraceReceived || subj != "$JS.API.STREAM.CREATE.X" {
+			t.Fatalf("Exected received trace to %s: got: %d %s", "$JS.API.STREAM.CREATE.X", op, subj)
+		}
+	}))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{Name: "X"})
+	if err != nil {
+		t.Fatalf("add stream failed: %s", err)
+	}
+	if ctr != 2 {
+		t.Fatalf("did not receive all trace events: %d", ctr)
+	}
+}
+
 func TestJetStreamExpiredPullRequests(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer s.Shutdown()
