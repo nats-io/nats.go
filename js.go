@@ -216,6 +216,9 @@ type jsOpts struct {
 	maxap int
 	// the domain that produced the pre
 	domain string
+	// enables protocol tracing
+	trace       TraceCB
+	shouldTrace bool
 }
 
 const (
@@ -252,6 +255,28 @@ type jsOptFn func(opts *jsOpts) error
 
 func (opt jsOptFn) configureJSContext(opts *jsOpts) error {
 	return opt(opts)
+}
+
+// TraceOperation indicates the direction of traffic flow to TraceCB
+type TraceOperation int
+
+const (
+	// TraceSent indicate the payload is being sent to subj
+	TraceSent TraceOperation = 0
+	// TraceReceived indicate the payload is being received on subj
+	TraceReceived TraceOperation = 1
+)
+
+// TraceCB is called to trace API interactions for the JetStream Context
+type TraceCB func(op TraceOperation, subj string, payload []byte, hdr Header)
+
+// TraceFunc enables tracing of JetStream API interactions
+func TraceFunc(cb TraceCB) JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.trace = cb
+		js.shouldTrace = true
+		return nil
+	})
 }
 
 // Domain changes the domain part of JetSteam API prefix.
@@ -1415,12 +1440,15 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 		var ccSubj string
 		if isDurable {
-			ccSubj = fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable)
+			ccSubj = js.apiSubj(fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable))
 		} else {
-			ccSubj = fmt.Sprintf(apiConsumerCreateT, stream)
+			ccSubj = js.apiSubj(fmt.Sprintf(apiConsumerCreateT, stream))
 		}
 
-		resp, err := nc.Request(js.apiSubj(ccSubj), j, js.opts.wait)
+		if js.opts.shouldTrace {
+			js.opts.trace(TraceSent, ccSubj, j, nil)
+		}
+		resp, err := nc.Request(ccSubj, j, js.opts.wait)
 		if err != nil {
 			cleanUpSub()
 			if err == ErrNoResponders {
@@ -1428,6 +1456,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			}
 			return nil, err
 		}
+		if js.opts.shouldTrace {
+			js.opts.trace(TraceReceived, ccSubj, resp.Data, resp.Header)
+		}
+
 		var cinfo consumerResponse
 		err = json.Unmarshal(resp.Data, &cinfo)
 		if err != nil {
@@ -2445,7 +2477,7 @@ func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 
 func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string) (*ConsumerInfo, error) {
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
-	resp, err := js.nc.RequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
+	resp, err := js.apiRequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
 	if err != nil {
 		if err == ErrNoResponders {
 			err = ErrJetStreamNotEnabled
@@ -2464,6 +2496,22 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		return nil, fmt.Errorf("nats: %s", info.Error.Description)
 	}
 	return info.ConsumerInfo, nil
+}
+
+// a RequestWithContext with tracing via TraceCB
+func (js *js) apiRequestWithContext(ctx context.Context, subj string, data []byte) (*Msg, error) {
+	if js.opts.shouldTrace {
+		js.opts.trace(TraceSent, subj, data, nil)
+	}
+	resp, err := js.nc.RequestWithContext(ctx, subj, data)
+	if err != nil {
+		return nil, err
+	}
+	if js.opts.shouldTrace {
+		js.opts.trace(TraceReceived, subj, resp.Data, resp.Header)
+	}
+
+	return resp, nil
 }
 
 func (m *Msg) checkReply() (*js, *jsSub, error) {
