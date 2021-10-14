@@ -580,23 +580,3 @@ func TestObjectList(t *testing.T) {
 		t.Fatalf("Expected %+v but got %+v", expected, omap)
 	}
 }
-
-func TestObjectDoublePut(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdown(s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
-	expectOk(t, err)
-
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 1_000_000))
-	expectOk(t, err)
-
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20_000_000))
-	expectOk(t, err)
-
-	_, err = obs.GetBytes("A")
-	expectOk(t, err)
-}
