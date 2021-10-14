@@ -16,6 +16,7 @@
 package test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"io"
@@ -78,4 +79,24 @@ func (sr *slow) Read(p []byte) (n int, err error) {
 	time.Sleep(10 * time.Millisecond)
 	p[0] = 'A'
 	return 1, nil
+}
+
+func TestNoRaceObjectDoublePut(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdown(s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
+	expectOk(t, err)
+
+	_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 1_000_000))
+	expectOk(t, err)
+
+	_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20_000_000))
+	expectOk(t, err)
+
+	_, err = obs.GetBytes("A")
+	expectOk(t, err)
 }
