@@ -64,7 +64,7 @@ func TestNoRaceObjectContextOpt(t *testing.T) {
 	start = time.Now()
 	_, err = obs.GetBytes("BLOB", nats.Context(ctx))
 	expectErr(t, err)
-	if delta := time.Since(start); delta > time.Second {
+	if delta := time.Since(start); delta > 2500*time.Millisecond {
 		t.Fatalf("Cancel took too long: %v", delta)
 	}
 }
