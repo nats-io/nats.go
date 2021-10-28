@@ -122,7 +122,7 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 	return opt(opts)
 }
 
-// IncludeHistory instructs the watcher to include historical values as well.
+// IncludeHistory instructs the key watcher to include historical values as well.
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.includeHistory = true
