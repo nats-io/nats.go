@@ -2571,7 +2571,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		}
 
 		err = msg.AckSync(nats.AckWait(2 * time.Second))
-		if err != nats.ErrInvalidJSAck {
+		if err != nats.ErrMsgAlreadyAckd {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
@@ -3006,7 +3006,7 @@ func TestJetStreamSubscribe_AckDup(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		e := <-ch
-		if e != nats.ErrInvalidJSAck {
+		if e != nats.ErrMsgAlreadyAckd {
 			t.Errorf("Expected error: %v", e)
 		}
 	}
