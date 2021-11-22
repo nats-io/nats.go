@@ -2552,7 +2552,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 
 	// Skip if already acked.
 	if atomic.LoadUint32(&m.ackd) == 1 {
-		return ErrInvalidJSAck
+		return ErrMsgAlreadyAckd
 	}
 
 	m.Sub.mu.Lock()
