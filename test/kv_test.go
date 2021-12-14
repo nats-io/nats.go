@@ -14,6 +14,7 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -226,6 +227,36 @@ func TestKeyValueWatch(t *testing.T) {
 	expectUpdate("t.name", "ik", 8)
 	expectUpdate("t.age", "44", 10)
 	expectInitDone()
+}
+
+func TestKeyValueWatchContext(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdown(s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
+	expectOk(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	watcher, err := kv.WatchAll(nats.Context(ctx))
+	expectOk(t, err)
+	defer watcher.Stop()
+
+	// Trigger unsubscribe internally.
+	cancel()
+
+	// Wait for a bit for unsubscribe to be done.
+	time.Sleep(500 * time.Millisecond)
+
+	// Stopping watch that is already stopped via cancellation propagation is an error.
+	err = watcher.Stop()
+	if err == nil || err != nats.ErrBadSubscription {
+		t.Errorf("Expected invalid subscription, got: %v", err)
+	}
 }
 
 func TestKeyValueBindStore(t *testing.T) {
