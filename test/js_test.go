@@ -5956,7 +5956,7 @@ func TestJetStreamBindConsumer(t *testing.T) {
 			if ci != nil && !ci.PushBound {
 				return nil
 			}
-			return fmt.Errorf("Conusmer %q still active", "push")
+			return fmt.Errorf("Consumer %q still active", "push")
 		})
 	}
 	checkConsInactive()
@@ -6722,5 +6722,102 @@ func testJetStreamFetchContext(t *testing.T, srvs ...*jsServer) {
 		if total != pending {
 			t.Errorf("Expected %d pending messages, got: %d", pending, total)
 		}
+	})
+}
+
+func TestJetStreamSubscribeContextCancel(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	if config := s.JetStreamConfig(); config != nil {
+		defer os.RemoveAll(config.StoreDir)
+	}
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo", "bar", "baz", "foo.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	toSend := 100
+	for i := 0; i < toSend; i++ {
+		js.Publish("bar", []byte("foo"))
+	}
+
+	t.Run("cancel unsubscribes and deletes ephemeral", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		ch := make(chan *nats.Msg, 100)
+		sub, err := js.Subscribe("bar", func(msg *nats.Msg) {
+			ch <- msg
+
+			// Cancel will unsubscribe and remove the subscription
+			// of the consumer.
+			if len(ch) >= 50 {
+				cancel()
+			}
+		}, nats.Context(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(3 * time.Second):
+			t.Fatal("Timed out waiting for context to be canceled")
+		}
+
+		// Consumer should not be present since unsubscribe already called.
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			info, err := sub.ConsumerInfo()
+			if err != nil && err == nats.ErrConsumerNotFound {
+				return nil
+			}
+			return fmt.Errorf("Consumer still active, got: %v (info=%+v)", err, info)
+		})
+
+		got := len(ch)
+		expected := 50
+		if got < expected {
+			t.Errorf("Expected to receive at least %d messages, got: %d", expected, got)
+		}
+	})
+
+	t.Run("unsubscribe cancels child context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		sub, err := js.Subscribe("bar", func(msg *nats.Msg) {}, nats.Context(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = sub.Unsubscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Consumer should not be present since unsubscribe already called.
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			info, err := sub.ConsumerInfo()
+			if err != nil && err == nats.ErrConsumerNotFound {
+				return nil
+			}
+			return fmt.Errorf("Consumer still active, got: %v (info=%+v)", err, info)
+		})
 	})
 }
