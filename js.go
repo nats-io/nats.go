@@ -1838,7 +1838,7 @@ func (sub *Subscription) scheduleFlowControlResponse(reply string) {
 func (sub *Subscription) activityCheck() {
 	sub.mu.Lock()
 	jsi := sub.jsi
-	if jsi == nil {
+	if jsi == nil || sub.closed {
 		sub.mu.Unlock()
 		return
 	}
@@ -1847,10 +1847,9 @@ func (sub *Subscription) activityCheck() {
 	jsi.hbc.Reset(jsi.hbi)
 	jsi.active = false
 	nc := sub.conn
-	closed := sub.closed
 	sub.mu.Unlock()
 
-	if !active && !closed {
+	if !active {
 		nc.mu.Lock()
 		if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
 			nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
