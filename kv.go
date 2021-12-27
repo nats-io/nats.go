@@ -26,9 +26,9 @@ import (
 // KeyValueManager creates, deletes or binds to Key-Value stores
 type KeyValueManager interface {
 	// KeyValue will lookup and bind to an existing KeyValue store.
-	KeyValue(bucket string) (KeyValue, error)
+	KeyValue(bucket string, opts ...KeyValueOption) (KeyValue, error)
 	// CreateKeyValue will create a KeyValue store with the following configuration.
-	CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error)
+	CreateKeyValue(cfg *KeyValueConfig, opts ...KeyValueOption) (KeyValue, error)
 	// DeleteKeyValue will delete this KeyValue store (JetStream stream).
 	DeleteKeyValue(bucket string) error
 }
@@ -95,21 +95,40 @@ type KeyWatcher interface {
 	Stop() error
 }
 
+// KeyValueOption configures the Key-Value store instance
+type KeyValueOption func(*kvs) error
+
+// BucketSubjectPrefix sets a custom prefix to use for write operations like Put() to the bucket.
+// Usually keys are accessed as $KV.BUCKET.KEY, this would replace the $KV.BUCKET. part of
+// that subject.
+//
+// This facilitates cross account access to buckets, the APIPrefix() option should be used when
+// creating the JetStream context to configure access to the imported JetStream API
+func BucketSubjectPrefix(p string) KeyValueOption {
+	return func(kv *kvs) error {
+		if p == _EMPTY_ {
+			return nil
+		}
+
+		kv.writePre = p
+		if !strings.HasSuffix(kv.writePre, ".") {
+			kv.writePre = kv.writePre + "."
+		}
+
+		return nil
+	}
+}
+
+// CancelOpt are options to facilitate interruption of potentially blocking calls
 type CancelOpt interface {
 	configureCancel(opts *cancelOpts) error
 }
 
-type WatchOpt interface {
-	configureWatcher(opts *watchOpts) error
-}
-
-// For nats.Context() support.
 func (ctx ContextOpt) configureWatcher(opts *watchOpts) error {
 	opts.ctx = ctx
 	return nil
 }
 
-// For nats.Context() support.
 func (ctx ContextOpt) configureCancel(opts *cancelOpts) error {
 	opts.ctx = ctx
 	return nil
@@ -117,6 +136,24 @@ func (ctx ContextOpt) configureCancel(opts *cancelOpts) error {
 
 type cancelOpts struct {
 	ctx context.Context
+}
+
+func newCancelOpts(opts ...CancelOpt) (*cancelOpts, error) {
+	var o cancelOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureCancel(&o); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return &o, nil
+}
+
+// WatchOpt configures watchers
+type WatchOpt interface {
+	configureWatcher(opts *watchOpts) error
 }
 
 type watchOpts struct {
@@ -246,7 +283,7 @@ var (
 )
 
 // KeyValue will lookup and bind to an existing KeyValue store.
-func (js *js) KeyValue(bucket string) (KeyValue, error) {
+func (js *js) KeyValue(bucket string, opts ...KeyValueOption) (KeyValue, error) {
 	if !js.nc.serverMinVersion(2, 6, 2) {
 		return nil, errors.New("nats: key-value requires at least server version 2.6.2")
 	}
@@ -273,11 +310,30 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
 		js:     js,
 	}
+
+	err = kv.configure(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	return kv, nil
 }
 
+func (kv *kvs) configure(opts []KeyValueOption) error {
+	kv.writePre = kv.pre
+
+	for _, opt := range opts {
+		err := opt(kv)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // CreateKeyValue will create a KeyValue store with the following configuration.
-func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
+func (js *js) CreateKeyValue(cfg *KeyValueConfig, opts ...KeyValueOption) (KeyValue, error) {
 	if !js.nc.serverMinVersion(2, 6, 2) {
 		return nil, errors.New("nats: key-value requires at least server version 2.6.2")
 	}
@@ -329,6 +385,13 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, cfg.Bucket),
 		js:     js,
 	}
+
+	kv.writePre = kv.pre
+	err := kv.configure(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	return kv, nil
 }
 
@@ -342,10 +405,11 @@ func (js *js) DeleteKeyValue(bucket string) error {
 }
 
 type kvs struct {
-	name   string
-	stream string
-	pre    string
-	js     *js
+	name     string
+	stream   string
+	pre      string
+	writePre string
+	js       *js
 }
 
 // Underlying entry.
@@ -435,7 +499,7 @@ func (kv *kvs) Put(key string, value []byte) (revision uint64, err error) {
 	}
 
 	var b strings.Builder
-	b.WriteString(kv.pre)
+	b.WriteString(kv.writePre)
 	b.WriteString(key)
 
 	pa, err := kv.js.Publish(b.String(), value)
@@ -473,7 +537,7 @@ func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error)
 	}
 
 	var b strings.Builder
-	b.WriteString(kv.pre)
+	b.WriteString(kv.writePre)
 	b.WriteString(key)
 
 	m := Msg{Subject: b.String(), Header: Header{}, Data: value}
@@ -502,7 +566,7 @@ func (kv *kvs) delete(key string, purge bool) error {
 	}
 
 	var b strings.Builder
-	b.WriteString(kv.pre)
+	b.WriteString(kv.writePre)
 	b.WriteString(key)
 
 	// DEL op marker. For watch functionality.
@@ -521,13 +585,9 @@ func (kv *kvs) delete(key string, purge bool) error {
 // PurgeDeletes will remove all current delete markers.
 // This is a maintenance option if there is a larger buildup of delete markers.
 func (kv *kvs) PurgeDeletes(opts ...CancelOpt) error {
-	var o cancelOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configureCancel(&o); err != nil {
-				return err
-			}
-		}
+	o, err := newCancelOpts(opts...)
+	if err != nil {
+		return err
 	}
 
 	wopts := []WatchOpt{MetaOnly()}
@@ -555,6 +615,7 @@ func (kv *kvs) PurgeDeletes(opts ...CancelOpt) error {
 		pr streamPurgeRequest
 		b  strings.Builder
 	)
+
 	// Do actual purges here.
 	for _, entry := range deleteMarkers {
 		b.WriteString(kv.pre)
@@ -571,13 +632,9 @@ func (kv *kvs) PurgeDeletes(opts ...CancelOpt) error {
 
 // Keys will return all keys.
 func (kv *kvs) Keys(opts ...CancelOpt) ([]string, error) {
-	var o cancelOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configureCancel(&o); err != nil {
-				return nil, err
-			}
-		}
+	o, err := newCancelOpts(opts...)
+	if err != nil {
+		return nil, err
 	}
 
 	wopts := []WatchOpt{IgnoreDeletes(), MetaOnly()}
@@ -606,13 +663,9 @@ func (kv *kvs) Keys(opts ...CancelOpt) ([]string, error) {
 
 // History will return all values for the key.
 func (kv *kvs) History(key string, opts ...CancelOpt) ([]KeyValueEntry, error) {
-	var o cancelOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configureCancel(&o); err != nil {
-				return nil, err
-			}
-		}
+	o, err := newCancelOpts(opts...)
+	if err != nil {
+		return nil, err
 	}
 
 	wopts := []WatchOpt{IncludeHistory()}
