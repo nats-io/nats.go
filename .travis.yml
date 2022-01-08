@@ -1,7 +1,7 @@
 language: go
 go:
+- 1.17.x
 - 1.16.x
-- 1.15.x
 go_import_path: github.com/nats-io/nats.go
 install:
 - go get -t ./...
@@ -13,9 +13,9 @@ before_script:
 - $(exit $(go fmt ./... | wc -l))
 - go vet -modfile=go_test.mod ./...
 - find . -type f -name "*.go" | xargs misspell -error -locale US
-- staticcheck ./...
+- GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
 script:
 - go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
-- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; then ./scripts/cov.sh TRAVIS; else go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off; fi
+- if [[ "$TRAVIS_GO_VERSION" =~ 1.17 ]]; then ./scripts/cov.sh TRAVIS; else go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off; fi
 after_success:
-- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; then $HOME/gopath/bin/goveralls -coverprofile=acc.out -service travis-ci; fi
+- if [[ "$TRAVIS_GO_VERSION" =~ 1.17 ]]; then $HOME/gopath/bin/goveralls -coverprofile=acc.out -service travis-ci; fi
