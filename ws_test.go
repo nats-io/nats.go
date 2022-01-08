@@ -952,16 +952,6 @@ func TestWSStress(t *testing.T) {
 			s := RunServerWithOptions(sopts)
 			defer s.Shutdown()
 
-			createConn := func() *Conn {
-				t.Helper()
-				nc, err := Connect(fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port),
-					Compression(test.compress))
-				if err != nil {
-					t.Fatalf("Error connecting: %v", err)
-				}
-				return nc
-			}
-
 			var count int64
 			consDoneCh := make(chan struct{}, 1)
 			errCh := make(chan error, 1)
@@ -972,6 +962,22 @@ func TestWSStress(t *testing.T) {
 				case errCh <- e:
 				default:
 				}
+			}
+
+			createConn := func() *Conn {
+				t.Helper()
+				nc, err := Connect(fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port),
+					Compression(test.compress),
+					ErrorHandler(func(_ *Conn, sub *Subscription, err error) {
+						if sub != nil {
+							err = fmt.Errorf("Subscription on %q - err=%v", sub.Subject, err)
+						}
+						pushErr(err)
+					}))
+				if err != nil {
+					t.Fatalf("Error connecting: %v", err)
+				}
+				return nc
 			}
 
 			cb := func(m *Msg) {
@@ -998,9 +1004,11 @@ func TestWSStress(t *testing.T) {
 				for i := 0; i < 2; i++ {
 					nc := createConn()
 					defer nc.Close()
-					if _, err := nc.Subscribe(subj, cb); err != nil {
+					sub, err := nc.Subscribe(subj, cb)
+					if err != nil {
 						t.Fatalf("Error on subscribe: %v", err)
 					}
+					sub.SetPendingLimits(-1, -1)
 					if err := nc.Flush(); err != nil {
 						t.Fatalf("Error on flush: %v", err)
 					}
@@ -1032,6 +1040,7 @@ func TestWSStress(t *testing.T) {
 								return
 							}
 						}
+						nc.Flush()
 					}(subj)
 				}
 			}
