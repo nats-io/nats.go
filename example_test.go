@@ -415,7 +415,7 @@ func ExampleJetStreamManager() {
 		MaxBytes: 2048,
 	})
 
-	// Create a druable consumer
+	// Create a durable consumer
 	js.AddConsumer("FOO", &nats.ConsumerConfig{
 		Durable: "BAR",
 	})
