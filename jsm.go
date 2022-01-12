@@ -124,6 +124,7 @@ type ExternalStream struct {
 // apiError is included in all API responses if there was an error.
 type apiError struct {
 	Code        int    `json:"code"`
+	ErrorCode   int    `json:"err_code"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -264,6 +265,9 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 		return nil, err
 	}
 	if info.Error != nil {
+		if info.Error.ErrorCode == 10059 {
+			return nil, ErrStreamNotFound
+		}
 		if info.Error.Code == 404 {
 			return nil, ErrConsumerNotFound
 		}
