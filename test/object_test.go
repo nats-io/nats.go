@@ -319,15 +319,7 @@ func TestObjectNames(t *testing.T) {
 	expectOk(t, err)
 
 	// Errors
-	_, err = obs.PutString("*", "A")
-	expectErr(t, err)
-	_, err = obs.PutString(">", "A")
-	expectErr(t, err)
 	_, err = obs.PutString("", "A")
-	expectErr(t, err)
-	_, err = obs.PutString("", "\t")
-	expectErr(t, err)
-	_, err = obs.PutString("", "\n")
 	expectErr(t, err)
 }
 
@@ -345,26 +337,44 @@ func TestObjectMetadata(t *testing.T) {
 	_, err = obs.PutString("A", "AAA")
 	expectOk(t, err)
 
-	meta := &nats.ObjectMeta{Name: "B"}
+	meta := &nats.ObjectMeta{Name: "A"}
+	meta.Description = "descA"
+	meta.Headers = make(nats.Header)
+	meta.Headers.Set("color", "blue")
+
+	// simple update that does not change the name, just adds data
+	err = obs.UpdateMeta("A", meta)
+	expectOk(t, err)
+
+	info, err := obs.GetInfo("A")
+	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" {
+		t.Fatalf("Update failed: %+v", info)
+	}
+
+	// update that changes the name and some data
+	meta = &nats.ObjectMeta{Name: "B"}
+	meta.Description = "descB"
+	meta.Headers = make(nats.Header)
+	meta.Headers.Set("color", "red")
 
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, err := obs.GetInfo("B")
-	expectOk(t, err)
-	if info.Name != "B" {
-		t.Fatalf("Update failed: %+v", info)
+	info, err = obs.GetInfo("A")
+	if err != nil {
+		t.Fatal("Object meta for original name was not removed.")
 	}
-	meta.Headers = make(nats.Header)
-	meta.Headers.Set("color", "red")
-
-	err = obs.UpdateMeta("B", meta)
-	expectOk(t, err)
 
 	info, err = obs.GetInfo("B")
 	expectOk(t, err)
-	if info.Headers == nil || info.Headers.Get("color") != "red" {
+
+	if info.Name != "B" || info.Description != "descB" || info.Headers == nil || info.Headers.Get("color") != "red" {
 		t.Fatalf("Update failed: %+v", info)
+	}
+
+	err = obs.UpdateMeta("X", meta)
+	if err == nil {
+		t.Fatal("Expected an error when trying to update an object that does not exist.")
 	}
 }
 
@@ -463,12 +473,18 @@ func TestObjectLinks(t *testing.T) {
 	_, err = root.PutString("B", "BBB")
 	expectOk(t, err)
 
-	info, err := root.GetInfo("A")
+	infoA, err := root.GetInfo("A")
 	expectOk(t, err)
 
-	// Self link to individual object.
-	_, err = root.AddLink("LA", info)
+	// Link to individual object.
+	infoLA, err := root.AddLink("LA", infoA)
 	expectOk(t, err)
+	expectLinkIsCorrect(t, infoA, infoLA)
+
+	// link to a link
+	infoLALA, err := root.AddLink("LALA", infoLA)
+	expectOk(t, err)
+	expectLinkIsCorrect(t, infoLA, infoLALA)
 
 	dir, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "DIR"})
 	expectOk(t, err)
@@ -478,27 +494,64 @@ func TestObjectLinks(t *testing.T) {
 	_, err = dir.PutString("DIR/B", "DIR-BBB")
 	expectOk(t, err)
 
-	info, err = dir.GetInfo("DIR/B")
+	infoB, err := dir.GetInfo("DIR/B")
 	expectOk(t, err)
 
-	binfo, err := root.AddLink("DBL", info)
+	infoLB, err := root.AddLink("DBL", infoB)
 	expectOk(t, err)
-
-	if binfo.Name != "DBL" || binfo.NUID == "" || binfo.ModTime.IsZero() {
-		t.Fatalf("Link info not what was expected: %+v", binfo)
-	}
+	expectLinkIsCorrect(t, infoB, infoLB)
 
 	// Now add whole other store as a link, like a directory.
-	_, err = root.AddBucketLink("dir", dir)
+	infoBucketLink, err := root.AddBucketLink("dir", dir)
 	expectOk(t, err)
 
-	// Now try to get a linked object.
-	dbl, err := root.GetString("DBL")
+	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
+
+	// Try to get a linked object, same bucket
+	getLA, err := root.GetString("LA")
 	expectOk(t, err)
 
-	if dbl != "DIR-BBB" {
-		t.Fatalf("Expected %q but got %q", "DIR-BBB", dbl)
+	if getLA != "AAA" {
+		t.Fatalf("Expected %q but got %q", "AAA", getLA)
 	}
+
+	// Test the link to a link get
+	getLALA, err := root.GetString("LALA")
+	expectOk(t, err)
+
+	if getLALA != "AAA" {
+		t.Fatalf("Expected %q but got %q", "AAA", getLALA)
+	}
+
+	// Try to get a linked object, cross bucket
+	getDbl, err := root.GetString("DBL")
+	expectOk(t, err)
+
+	if getDbl != "DIR-BBB" {
+		t.Fatalf("Expected %q but got %q", "DIR-BBB", getDbl)
+	}
+}
+
+func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {
+	if linkObject.Opts.Link != nil {
+		if expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
+			return;
+		}
+	}
+	t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)
+}
+
+func expectLinkPartsAreCorrect(t *testing.T, linkObject *nats.ObjectInfo, bucket, name string) bool {
+	if linkObject.Opts.Link.Bucket == bucket {
+		if linkObject.Opts.Link.Name == name {
+			if !linkObject.ModTime.IsZero() {
+				if linkObject.NUID != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Right now no history, just make sure we are cleaning up after ourselves.
@@ -512,11 +565,19 @@ func TestObjectHistory(t *testing.T) {
 	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
 	expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 100))
+	info, err := obs.PutBytes("A", bytes.Repeat([]byte("A"), 10))
 	expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 100))
+	if info.Size != 10 {
+		t.Fatalf("Invalid first put when testing history %+v", info)
+	}
+
+	info, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20))
 	expectOk(t, err)
+
+	if info.Size != 20 {
+		t.Fatalf("Invalid second put when testing history %+v", info)
+	}
 
 	// Should only be 1 copy of 'A', so 1 data and 1 meta since history was not selected.
 	si, err := js.StreamInfo("OBJ_OBJS")
