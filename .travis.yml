@@ -7,8 +7,8 @@ install:
 - go get -t ./...
 - go get github.com/mattn/goveralls
 - go get github.com/wadey/gocovmerge
-- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; go get -u honnef.co/go/tools/cmd/staticcheck; else go get -d honnef.co/go/tools/cmd/staticcheck; fi
-- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; go get -u github.com/client9/misspell/cmd/misspell; else go get -d github.com/client9/misspell/cmd/misspell; fi
+- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; then go get -u honnef.co/go/tools/cmd/staticcheck; else go get -d honnef.co/go/tools/cmd/staticcheck; fi
+- if [[ "$TRAVIS_GO_VERSION" =~ 1.16 ]]; then go get -u github.com/client9/misspell/cmd/misspell; else go get -d github.com/client9/misspell/cmd/misspell; fi
 before_script:
 - $(exit $(go fmt ./... | wc -l))
 - go vet -modfile=go_test.mod ./...
