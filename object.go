@@ -282,7 +282,7 @@ func (js *js) DeleteObjectStore(bucket string) error {
 }
 
 func encodeName(name string) string {
-	return base64.URLEncoding.EncodeToString([]byte(name));
+	return base64.URLEncoding.EncodeToString([]byte(name))
 }
 
 // toDefaultMetaSubject and toPublishMetaSubject will diverge once there is account support
@@ -650,7 +650,9 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	// @derek Maybe we need an addOrUpdateLink or just an updateLink function,
 	// or add a flag/option to the method?
 	// either way, we should not update a non link to a link
-	if err := doesntExistOrIsDeleted(obs, name); err != nil { return nil, err }
+	if err := doesntExistOrIsDeleted(obs, name); err != nil {
+		return nil, err
+	}
 
 	return finishAddLink(obs, name, &ObjectLink{Bucket: obj.Bucket, Name: obj.Name})
 }
@@ -685,7 +687,9 @@ func finishAddLink(obs *obs, name string, link *ObjectLink) (*ObjectInfo, error)
 	info := &ObjectInfo{Bucket: obs.name, NUID: nuid.Next(), ObjectMeta: *meta}
 
 	// publish
-	if err := publishMeta(obs, name, info); err != nil { return nil, err }
+	if err := publishMeta(obs, name, info); err != nil {
+		return nil, err
+	}
 
 	// again, we could just return the ObjectInfo as published, but the timestamp would not be a perfect match
 	return obs.GetInfo(name)
@@ -769,7 +773,7 @@ func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 		return nil, errors.New("nats: name is required")
 	}
 
-	metaSubj := toDefaultMetaSubject(obs, name);
+	metaSubj := toDefaultMetaSubject(obs, name)
 	stream := fmt.Sprintf(objNameTmpl, obs.name)
 
 	m, err := obs.js.GetLastMsg(stream, metaSubj)
@@ -806,7 +810,9 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	info.Description = meta.Description
 	info.Headers = meta.Headers
 
-	if err = publishMeta(obs, meta.Name, info); err != nil { return err }
+	if err = publishMeta(obs, meta.Name, info); err != nil {
+		return err
+	}
 
 	// did the name of this object change? We just stored the meta under the new name
 	// so delete the meta from the old name

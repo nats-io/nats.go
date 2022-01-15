@@ -535,7 +535,7 @@ func TestObjectLinks(t *testing.T) {
 func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {
 	if linkObject.Opts.Link != nil {
 		if expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
-			return;
+			return
 		}
 	}
 	t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)
