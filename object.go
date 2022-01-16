@@ -285,31 +285,14 @@ func encodeName(name string) string {
 	return base64.URLEncoding.EncodeToString([]byte(name))
 }
 
-// toDefaultMetaSubject and toPublishMetaSubject will diverge once there is account support
-func toDefaultMetaSubject(obs *obs, name string) string {
-	return fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
-}
-
-func toPublishMetaSubject(obs *obs, name string) string {
-	return fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
-}
-
-// toDefaultChunkSubject and toPublishChunkSubject will diverge once there is account support
-func toDefaultChunkSubject(obs *obs, nuid string) string {
-	return fmt.Sprintf(objChunksPreTmpl, obs.name, nuid)
-}
-
-func toPublishChunkSubject(obs *obs, nuid string) string {
-	return fmt.Sprintf(objChunksPreTmpl, obs.name, nuid)
-}
-
 func preparePublishMeta(obs *obs, name string, info *ObjectInfo) (*Msg, error) {
 	data, err := json.Marshal(info)
 	if err != nil {
 		return nil, err
 	}
 
-	mm := NewMsg(toPublishMetaSubject(obs, name))
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as a publish subject
+	mm := NewMsg(metaSubj)
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
 
@@ -325,7 +308,7 @@ func publishMeta(obs *obs, name string, info *ObjectInfo) error {
 }
 
 func purgeChunks(obs *obs, nuid string) error {
-	chunkSubj := toDefaultChunkSubject(obs, nuid)
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuid) // used as data in a JS API call
 	return obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: chunkSubj})
 }
 
@@ -385,7 +368,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		chunkSize = meta.Opts.ChunkSize
 	}
 
-	chunkSubj := toPublishChunkSubject(obs, nuid)
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuid) // used as a publish subject
 	m, h := NewMsg(chunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, chunkSize), 0, uint64(0)
 
@@ -593,7 +576,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		}
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID) // used in subscribe
 	_, err = obs.js.Subscribe(chunkSubj, processChunk, OrderedConsumer())
 	if err != nil {
 		return nil, err
@@ -773,7 +756,7 @@ func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 		return nil, errors.New("nats: name is required")
 	}
 
-	metaSubj := toDefaultMetaSubject(obs, name)
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as data in a JS API call
 	stream := fmt.Sprintf(objNameTmpl, obs.name)
 
 	m, err := obs.js.GetLastMsg(stream, metaSubj)
@@ -817,7 +800,7 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	// did the name of this object change? We just stored the meta under the new name
 	// so delete the meta from the old name
 	if err == nil && name != meta.Name {
-		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, name)
+		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, name) // used as data in a JS API call
 		err = obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: metaSubj})
 	}
 

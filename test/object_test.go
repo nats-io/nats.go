@@ -346,7 +346,7 @@ func TestObjectMetadata(t *testing.T) {
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, err := obs.GetInfo("A")
+	info, _ := obs.GetInfo("A")
 	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" {
 		t.Fatalf("Update failed: %+v", info)
 	}
@@ -360,7 +360,7 @@ func TestObjectMetadata(t *testing.T) {
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, err = obs.GetInfo("A")
+	_, err = obs.GetInfo("A")
 	if err != nil {
 		t.Fatal("Object meta for original name was not removed.")
 	}
