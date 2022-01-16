@@ -329,13 +329,14 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	ctx := o.ctx
 
 	// Grab existing meta info. Ok to be found or not found, any other error is a problem
+	// So chunks on the old nuid can be cleaned up at the end
 	einfo, err := obs.GetInfo(meta.Name)
 	if err != nil && err != ErrObjectNotFound {
 		return nil, err
 	}
 
 	// Create the nuid, the meta data and chunk subject uses this
-	nuid := nuid.Next()
+	nuwid := nuid.Next()
 
 	// For async error handling
 	var perr error
@@ -353,7 +354,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 	purgePartial := func() {
 		if r != nil { // check this here so we don't have to do it inline
-			purgeChunks(obs, nuid)
+			purgeChunks(obs, nuwid)
 		}
 	}
 
@@ -368,12 +369,12 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		chunkSize = meta.Opts.ChunkSize
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuid) // used as a publish subject
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuwid) // used as a publish subject
 	m, h := NewMsg(chunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, chunkSize), 0, uint64(0)
 
 	// setup the info object. The chunk upload sets the size and digest
-	info := &ObjectInfo{Bucket: obs.name, NUID: nuid, ObjectMeta: *meta}
+	info := &ObjectInfo{Bucket: obs.name, NUID: nuwid, ObjectMeta: *meta}
 
 	for r != nil {
 		if ctx != nil {
@@ -607,37 +608,21 @@ func (obs *obs) Delete(name string) error {
 	return purgeChunks(obs, info.NUID)
 }
 
-func doesntExistOrIsDeleted(obs *obs, name string) error {
-	info, err := obs.GetInfo(name)
-	if err != nil {
-		if err == ErrObjectNotFound {
-			return nil
-		}
-		return err
-	}
-	if info.Deleted {
-		return nil
-	}
-
-	return errors.New("nats: name already used for an existing object")
-}
-
 // AddLink will add a link to another object.
 func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	if obj == nil || obj.Name == "" || obj.Bucket == "" {
 		return nil, errors.New("nats: object required")
 	}
 
-	// If the link name already exists in this store, you cannot add as a link
-	// If the link name exists as a deleted object, that's fine
-	// @derek Maybe we need an addOrUpdateLink or just an updateLink function,
-	// or add a flag/option to the method?
-	// either way, we should not update a non link to a link
-	if err := doesntExistOrIsDeleted(obs, name); err != nil {
-		return nil, err
+	// create the meta object
+	meta := &ObjectMeta{
+		Name: name,
+		Opts: &ObjectMetaOptions{
+			Link: &ObjectLink{Bucket: obj.Bucket, Name: obj.Name},
+		},
 	}
 
-	return finishAddLink(obs, name, &ObjectLink{Bucket: obj.Bucket, Name: obj.Name})
+	return obs.Put(meta, nil)
 }
 
 // AddBucketLink will add a link to another object store.
@@ -651,31 +636,15 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 		return nil, errors.New("nats: bucket malformed")
 	}
 
-	err := doesntExistOrIsDeleted(ob, name)
-	if err != nil {
-		return nil, err
-	}
-
-	return finishAddLink(ob, name, &ObjectLink{Bucket: bos.name})
-}
-
-func finishAddLink(obs *obs, name string, link *ObjectLink) (*ObjectInfo, error) {
 	// create the meta object
 	meta := &ObjectMeta{
 		Name: name,
-		Opts: &ObjectMetaOptions{Link: link},
+		Opts: &ObjectMetaOptions{
+			Link: &ObjectLink{Bucket: bos.name},
+		},
 	}
 
-	// create the info
-	info := &ObjectInfo{Bucket: obs.name, NUID: nuid.Next(), ObjectMeta: *meta}
-
-	// publish
-	if err := publishMeta(obs, name, info); err != nil {
-		return nil, err
-	}
-
-	// again, we could just return the ObjectInfo as published, but the timestamp would not be a perfect match
-	return obs.GetInfo(name)
+	return ob.Put(meta, nil)
 }
 
 // PutBytes is convenience function to put a byte slice into this object store.
