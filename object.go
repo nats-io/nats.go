@@ -751,8 +751,7 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	if meta == nil {
 		return ErrBadObjectMeta
 	}
-
-	// Grab info.
+	// Grab meta info.
 	info, err := obs.GetInfo(name)
 	if err != nil {
 		return err
