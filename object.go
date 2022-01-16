@@ -353,7 +353,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	}
 
 	purgePartial := func() {
-		if r != nil { // check this here so we don't have to do it inline
+		if r != nil { // check this here, so we don't have to do it each time we call this
 			purgeChunks(obs, nuwid)
 		}
 	}
@@ -456,7 +456,6 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 	// Yes this is an extra call, but GetInfo sets the modified time correctly
 	// to the server message time, instead of just setting the time based on the client
-	// @derek if we don't want to do this, maybe we should just leave modified time empty?
 	return obs.GetInfo(meta.Name)
 }
 
@@ -597,7 +596,7 @@ func (obs *obs) Delete(name string) error {
 		return ErrBadObjectMeta
 	}
 
-	// Place a rollup delete marker / publish the meta
+	// Place a rollup delete marker and publish the meta
 	info.Deleted = true
 	info.Size, info.Chunks, info.Digest = 0, 0, _EMPTY_
 	if err = publishMeta(obs, name, info); err != nil {
@@ -612,6 +611,9 @@ func (obs *obs) Delete(name string) error {
 func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	if obj == nil || obj.Name == "" || obj.Bucket == "" {
 		return nil, errors.New("nats: object required")
+	}
+	if obj.Deleted {
+		return nil, errors.New("nats: object is deleted")
 	}
 
 	// create the meta object
