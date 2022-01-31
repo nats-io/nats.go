@@ -35,6 +35,20 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
+func getConnAndJS(t *testing.T, s *server.Server) (*nats.Conn, nats.JetStreamContext) {
+	t.Helper()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Got error during initialization %v", err)
+	}
+	return nc, js
+}
+
 func TestJetStreamNotEnabled(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
@@ -778,6 +792,32 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// Both ChanQueueSubscribers use the same consumer.
 	expectConsumers(t, 4)
+
+	sub, err = js.SubscribeSync("foo", nats.InactiveThreshold(-100*time.Millisecond))
+	if err == nil || !strings.Contains(err.Error(), "invalid InactiveThreshold") {
+		t.Fatalf("Expected error about invalid option, got %v", err)
+	}
+
+	// Create an ephemeral with a lower inactive threshold
+	sub, err = js.SubscribeSync("foo", nats.InactiveThreshold(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	ci, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error on consumer info: %v", err)
+	}
+	name := ci.Name
+	nc.Close()
+
+	time.Sleep(150 * time.Millisecond)
+
+	nc, js = getConnAndJS(t, s)
+	defer nc.Close()
+
+	if ci, err := js.ConsumerInfo("TEST", name); err == nil {
+		t.Fatalf("Expected no consumer to exist, got %+v", ci)
+	}
 }
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
@@ -1303,6 +1343,83 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 		if err := js.DeleteConsumer("foo", "dlc"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("update consumer", func(t *testing.T) {
+		ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+			Durable:        "update_push_consumer",
+			DeliverSubject: "bar",
+			AckPolicy:      nats.AckExplicitPolicy,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Currently, server supports these fields:
+		// description, ack_wait, max_deliver, sample_freq, max_ack_pending, max_waiting and headers_only
+		expected := ci.Config
+		expected.Description = "my description"
+		expected.AckWait = 2 * time.Second
+		expected.MaxDeliver = 1
+		expected.SampleFrequency = "30"
+		expected.MaxAckPending = 10
+		expected.HeadersOnly = true
+
+		// Check that stream name is required
+		_, err = js.UpdateConsumer("", &expected)
+		if err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected stream name required error, got %v", err)
+		}
+		// Check that durable name is required
+		expected.Durable = ""
+		_, err = js.UpdateConsumer("foo", &expected)
+		if err != nats.ErrInvalidDurableName {
+			t.Fatalf("Expected consumer name required error, got %v", err)
+		}
+		expected.Durable = "update_push_consumer"
+
+		// Check that configuration is required
+		_, err = js.UpdateConsumer("foo", nil)
+		if err != nats.ErrConsumerConfigRequired {
+			t.Fatalf("Expected consumer configuration required error, got %v", err)
+		}
+
+		// Now check that update works and expected fields have been updated
+		ci, err = js.UpdateConsumer("foo", &expected)
+		if err != nil {
+			t.Fatalf("Error on update: %v", err)
+		}
+		if !reflect.DeepEqual(ci.Config, expected) {
+			t.Fatalf("Expected config to be %+v, got %+v", expected, ci.Config)
+		}
+
+		// Now check with pull consumer
+		ci, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+			Durable:    "update_pull_consumer",
+			AckPolicy:  nats.AckExplicitPolicy,
+			MaxWaiting: 1,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Currently, server supports these fields:
+		// description, ack_wait, max_deliver, sample_freq, max_ack_pending, max_waiting and headers_only
+		expected = ci.Config
+		expected.Description = "my description"
+		expected.AckWait = 2 * time.Second
+		expected.MaxDeliver = 1
+		expected.SampleFrequency = "30"
+		expected.MaxAckPending = 10
+		expected.MaxWaiting = 20
+		expected.HeadersOnly = true
+		expected.MaxRequestBatch = 10
+		expected.MaxRequestExpires = 2 * time.Second
+		ci, err = js.UpdateConsumer("foo", &expected)
+		if err != nil {
+			t.Fatalf("Error on update: %v", err)
+		}
+		if !reflect.DeepEqual(ci.Config, expected) {
+			t.Fatalf("Expected config to be %+v, got %+v", expected, ci.Config)
 		}
 	})
 
@@ -5103,6 +5220,32 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 			}
 		}
 	}
+
+	t.Run("max request batch", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		sub, err := js.PullSubscribe(subject, "max-request-batch", nats.MaxRequestBatch(2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+		if _, err := sub.Fetch(10); err == nil || !strings.Contains(err.Error(), "MaxRequestBatch of 2") {
+			t.Fatalf("Expected error about max request batch size, got %v", err)
+		}
+	})
+
+	t.Run("max request expires", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		sub, err := js.PullSubscribe(subject, "max-request-expires", nats.MaxRequestExpires(50*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+		if _, err := sub.Fetch(10); err == nil || !strings.Contains(err.Error(), "MaxRequestExpires of 50ms") {
+			t.Fatalf("Expected error about max request expiration, got %v", err)
+		}
+	})
 
 	t.Run("batch size", func(t *testing.T) {
 		defer js.PurgeStream(subject)

@@ -903,6 +903,13 @@ type ConsumerConfig struct {
 	FlowControl     bool          `json:"flow_control,omitempty"`
 	Heartbeat       time.Duration `json:"idle_heartbeat,omitempty"`
 	HeadersOnly     bool          `json:"headers_only,omitempty"`
+
+	// Pull based options.
+	MaxRequestBatch   int           `json:"max_batch,omitempty"`
+	MaxRequestExpires time.Duration `json:"max_expires,omitempty"`
+
+	// Ephemeral inactivity threshold.
+	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -2236,6 +2243,36 @@ func DeliverSubject(subject string) SubOpt {
 func HeadersOnly() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.HeadersOnly = true
+		return nil
+	})
+}
+
+// MaxRequestBatch sets the maximum pull consumer batch size that a Fetch()
+// can request.
+func MaxRequestBatch(max int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxRequestBatch = max
+		return nil
+	})
+}
+
+// MaxRequestExpires sets the maximum pull consumer request expiration that a
+// Fetch() can request (using the Fetch's timeout value).
+func MaxRequestExpires(max time.Duration) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxRequestExpires = max
+		return nil
+	})
+}
+
+// InactiveThreshold indicates how long the server should keep an ephemeral
+// after detecting loss of interest.
+func InactiveThreshold(threshold time.Duration) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		if threshold < 0 {
+			return fmt.Errorf("invalid InactiveThreshold value (%v), needs to be greater or equal to 0", threshold)
+		}
+		opts.cfg.InactiveThreshold = threshold
 		return nil
 	})
 }
