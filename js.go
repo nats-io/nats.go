@@ -804,8 +804,9 @@ func ExpectLastMsgId(id string) PubOpt {
 }
 
 type ackOpts struct {
-	ttl time.Duration
-	ctx context.Context
+	ttl      time.Duration
+	ctx      context.Context
+	nakDelay time.Duration
 }
 
 // AckOpt are the options that can be passed when acknowledge a message.
@@ -841,6 +842,13 @@ func (ttl AckWait) configureSubscribe(opts *subOpts) error {
 
 func (ttl AckWait) configureAck(opts *ackOpts) error {
 	opts.ttl = time.Duration(ttl)
+	return nil
+}
+
+type NakDelay time.Duration
+
+func (delay NakDelay) configureAck(opts *ackOpts) error {
+	opts.nakDelay = time.Duration(delay)
 	return nil
 }
 
@@ -884,25 +892,26 @@ func Context(ctx context.Context) ContextOpt {
 
 // ConsumerConfig is the configuration of a JetStream consumer.
 type ConsumerConfig struct {
-	Durable         string        `json:"durable_name,omitempty"`
-	Description     string        `json:"description,omitempty"`
-	DeliverSubject  string        `json:"deliver_subject,omitempty"`
-	DeliverGroup    string        `json:"deliver_group,omitempty"`
-	DeliverPolicy   DeliverPolicy `json:"deliver_policy"`
-	OptStartSeq     uint64        `json:"opt_start_seq,omitempty"`
-	OptStartTime    *time.Time    `json:"opt_start_time,omitempty"`
-	AckPolicy       AckPolicy     `json:"ack_policy"`
-	AckWait         time.Duration `json:"ack_wait,omitempty"`
-	MaxDeliver      int           `json:"max_deliver,omitempty"`
-	FilterSubject   string        `json:"filter_subject,omitempty"`
-	ReplayPolicy    ReplayPolicy  `json:"replay_policy"`
-	RateLimit       uint64        `json:"rate_limit_bps,omitempty"` // Bits per sec
-	SampleFrequency string        `json:"sample_freq,omitempty"`
-	MaxWaiting      int           `json:"max_waiting,omitempty"`
-	MaxAckPending   int           `json:"max_ack_pending,omitempty"`
-	FlowControl     bool          `json:"flow_control,omitempty"`
-	Heartbeat       time.Duration `json:"idle_heartbeat,omitempty"`
-	HeadersOnly     bool          `json:"headers_only,omitempty"`
+	Durable         string          `json:"durable_name,omitempty"`
+	Description     string          `json:"description,omitempty"`
+	DeliverSubject  string          `json:"deliver_subject,omitempty"`
+	DeliverGroup    string          `json:"deliver_group,omitempty"`
+	DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
+	OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
+	OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
+	AckPolicy       AckPolicy       `json:"ack_policy"`
+	AckWait         time.Duration   `json:"ack_wait,omitempty"`
+	MaxDeliver      int             `json:"max_deliver,omitempty"`
+	BackOff         []time.Duration `json:"backoff,omitempty"`
+	FilterSubject   string          `json:"filter_subject,omitempty"`
+	ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
+	RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
+	SampleFrequency string          `json:"sample_freq,omitempty"`
+	MaxWaiting      int             `json:"max_waiting,omitempty"`
+	MaxAckPending   int             `json:"max_ack_pending,omitempty"`
+	FlowControl     bool            `json:"flow_control,omitempty"`
+	Heartbeat       time.Duration   `json:"idle_heartbeat,omitempty"`
+	HeadersOnly     bool            `json:"headers_only,omitempty"`
 
 	// Pull based options.
 	MaxRequestBatch   int           `json:"max_batch,omitempty"`
@@ -2599,7 +2608,7 @@ func (m *Msg) checkReply() (*js, *jsSub, error) {
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
 // It ensures that an ack is only sent a single time, regardless of
 // how many times it is being called to avoid duplicated acks.
-func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
+func (m *Msg) ackReply(ackType []byte, nak, sync bool, opts ...AckOpt) error {
 	var o ackOpts
 	for _, opt := range opts {
 		if err := opt.configureAck(&o); err != nil {
@@ -2638,14 +2647,21 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 		wait = js.opts.wait
 	}
 
+	var body []byte
+	if nak && o.nakDelay > 0 {
+		body = []byte(fmt.Sprintf("%s {\"delay\": %d}", ackType, o.nakDelay.Nanoseconds()))
+	} else {
+		body = ackType
+	}
+
 	if sync {
 		if usesCtx {
-			_, err = nc.RequestWithContext(ctx, m.Reply, ackType)
+			_, err = nc.RequestWithContext(ctx, m.Reply, body)
 		} else {
-			_, err = nc.Request(m.Reply, ackType, wait)
+			_, err = nc.Request(m.Reply, body, wait)
 		}
 	} else {
-		err = nc.Publish(m.Reply, ackType)
+		err = nc.Publish(m.Reply, body)
 	}
 
 	// Mark that the message has been acked unless it is AckProgress
@@ -2660,32 +2676,32 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 // Ack acknowledges a message. This tells the server that the message was
 // successfully processed and it can move on to the next message.
 func (m *Msg) Ack(opts ...AckOpt) error {
-	return m.ackReply(ackAck, false, opts...)
+	return m.ackReply(ackAck, false, false, opts...)
 }
 
 // AckSync is the synchronous version of Ack. This indicates successful message
 // processing.
 func (m *Msg) AckSync(opts ...AckOpt) error {
-	return m.ackReply(ackAck, true, opts...)
+	return m.ackReply(ackAck, false, true, opts...)
 }
 
 // Nak negatively acknowledges a message. This tells the server to redeliver
 // the message. You can configure the number of redeliveries by passing
 // nats.MaxDeliver when you Subscribe. The default is infinite redeliveries.
 func (m *Msg) Nak(opts ...AckOpt) error {
-	return m.ackReply(ackNak, false, opts...)
+	return m.ackReply(ackNak, true, false, opts...)
 }
 
 // Term tells the server to not redeliver this message, regardless of the value
 // of nats.MaxDeliver.
 func (m *Msg) Term(opts ...AckOpt) error {
-	return m.ackReply(ackTerm, false, opts...)
+	return m.ackReply(ackTerm, false, false, opts...)
 }
 
 // InProgress tells the server that this message is being worked on. It resets
 // the redelivery timer on the server.
 func (m *Msg) InProgress(opts ...AckOpt) error {
-	return m.ackReply(ackProgress, false, opts...)
+	return m.ackReply(ackProgress, false, false, opts...)
 }
 
 // MsgMetadata is the JetStream metadata associated with received messages.
