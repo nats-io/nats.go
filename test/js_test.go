@@ -2752,7 +2752,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error on NextMsg: %v", err)
 		}
-		if err := msg.Nak(nats.NakDelay(500 * time.Millisecond)); err != nil {
+		if err := msg.NakWithDelay(500 * time.Millisecond); err != nil {
 			t.Fatalf("Error on Nak: %v", err)
 		}
 		// We should not get redelivery before 500ms+
@@ -2763,7 +2763,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error on NextMsg: %v", err)
 		}
-		if err := msg.Nak(nats.NakDelay(0)); err != nil {
+		if err := msg.NakWithDelay(0); err != nil {
 			t.Fatalf("Error on Nak: %v", err)
 		}
 		msg, err = sub.NextMsg(250 * time.Millisecond)
