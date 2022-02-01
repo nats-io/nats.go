@@ -2465,7 +2465,7 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
-		Subjects: []string{"foo"},
+		Subjects: []string{"foo", "bar"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -2740,6 +2740,100 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 		}
 
 		checkAcks(t, sub)
+	})
+
+	t.Run("Nak with delay", func(t *testing.T) {
+		js.Publish("bar", []byte("msg"))
+		sub, err := js.SubscribeSync("bar", nats.Durable("nak_dur"))
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on NextMsg: %v", err)
+		}
+		if err := msg.NakWithDelay(500 * time.Millisecond); err != nil {
+			t.Fatalf("Error on Nak: %v", err)
+		}
+		// We should not get redelivery before 500ms+
+		if _, err = sub.NextMsg(250 * time.Millisecond); err != nats.ErrTimeout {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+		msg, err = sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on NextMsg: %v", err)
+		}
+		if err := msg.NakWithDelay(0); err != nil {
+			t.Fatalf("Error on Nak: %v", err)
+		}
+		msg, err = sub.NextMsg(250 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+		msg.Ack()
+	})
+
+	t.Run("BackOff redeliveries", func(t *testing.T) {
+		inbox := nats.NewInbox()
+		sub, err := nc.SubscribeSync(inbox)
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+		defer sub.Unsubscribe()
+		cc := nats.ConsumerConfig{
+			Durable:        "backoff",
+			AckPolicy:      nats.AckExplicitPolicy,
+			DeliverPolicy:  nats.DeliverAllPolicy,
+			FilterSubject:  "bar",
+			DeliverSubject: inbox,
+			BackOff:        []time.Duration{50 * time.Millisecond, 250 * time.Millisecond},
+		}
+		// First, try with a MaxDeliver that is < len(BackOff), which the
+		// server should reject.
+		cc.MaxDeliver = 1
+		_, err = js.AddConsumer("TEST", &cc)
+		if err == nil || !strings.Contains(err.Error(), "max deliver is required to be > length of backoff values") {
+			t.Fatalf("Expected backoff/max deliver error, got %v", err)
+		}
+		// Now put a valid value
+		cc.MaxDeliver = 4
+		ci, err := js.AddConsumer("TEST", &cc)
+		if err != nil {
+			t.Fatalf("Error on add consumer: %v", err)
+		}
+		if !reflect.DeepEqual(ci.Config.BackOff, cc.BackOff) {
+			t.Fatalf("Expected backoff to be %v, got %v", cc.BackOff, ci.Config.BackOff)
+		}
+		// Consume the first delivery
+		_, err = sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on nextMsg: %v", err)
+		}
+		// We should get a redelivery at around 50ms
+		start := time.Now()
+		_, err = sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on nextMsg: %v", err)
+		}
+		if dur := time.Since(start); dur < 25*time.Millisecond || dur > 100*time.Millisecond {
+			t.Fatalf("Expected to be redelivered at around 50ms, took %v", dur)
+		}
+		// Now it should be every 250ms or so
+		for i := 0; i < 2; i++ {
+			start = time.Now()
+			_, err = sub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatalf("Error on nextMsg for iter=%v: %v", i+1, err)
+			}
+			if dur := time.Since(start); dur < 200*time.Millisecond || dur > 300*time.Millisecond {
+				t.Fatalf("Expected to be redelivered at around 250ms, took %v", dur)
+			}
+		}
+		// At this point, we should have go reach MaxDeliver
+		_, err = sub.NextMsg(300 * time.Millisecond)
+		if err != nats.ErrTimeout {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
 	})
 }
 

@@ -804,8 +804,9 @@ func ExpectLastMsgId(id string) PubOpt {
 }
 
 type ackOpts struct {
-	ttl time.Duration
-	ctx context.Context
+	ttl      time.Duration
+	ctx      context.Context
+	nakDelay time.Duration
 }
 
 // AckOpt are the options that can be passed when acknowledge a message.
@@ -880,29 +881,37 @@ func Context(ctx context.Context) ContextOpt {
 	return ContextOpt{ctx}
 }
 
+type nakDelay time.Duration
+
+func (d nakDelay) configureAck(opts *ackOpts) error {
+	opts.nakDelay = time.Duration(d)
+	return nil
+}
+
 // Subscribe
 
 // ConsumerConfig is the configuration of a JetStream consumer.
 type ConsumerConfig struct {
-	Durable         string        `json:"durable_name,omitempty"`
-	Description     string        `json:"description,omitempty"`
-	DeliverSubject  string        `json:"deliver_subject,omitempty"`
-	DeliverGroup    string        `json:"deliver_group,omitempty"`
-	DeliverPolicy   DeliverPolicy `json:"deliver_policy"`
-	OptStartSeq     uint64        `json:"opt_start_seq,omitempty"`
-	OptStartTime    *time.Time    `json:"opt_start_time,omitempty"`
-	AckPolicy       AckPolicy     `json:"ack_policy"`
-	AckWait         time.Duration `json:"ack_wait,omitempty"`
-	MaxDeliver      int           `json:"max_deliver,omitempty"`
-	FilterSubject   string        `json:"filter_subject,omitempty"`
-	ReplayPolicy    ReplayPolicy  `json:"replay_policy"`
-	RateLimit       uint64        `json:"rate_limit_bps,omitempty"` // Bits per sec
-	SampleFrequency string        `json:"sample_freq,omitempty"`
-	MaxWaiting      int           `json:"max_waiting,omitempty"`
-	MaxAckPending   int           `json:"max_ack_pending,omitempty"`
-	FlowControl     bool          `json:"flow_control,omitempty"`
-	Heartbeat       time.Duration `json:"idle_heartbeat,omitempty"`
-	HeadersOnly     bool          `json:"headers_only,omitempty"`
+	Durable         string          `json:"durable_name,omitempty"`
+	Description     string          `json:"description,omitempty"`
+	DeliverSubject  string          `json:"deliver_subject,omitempty"`
+	DeliverGroup    string          `json:"deliver_group,omitempty"`
+	DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
+	OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
+	OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
+	AckPolicy       AckPolicy       `json:"ack_policy"`
+	AckWait         time.Duration   `json:"ack_wait,omitempty"`
+	MaxDeliver      int             `json:"max_deliver,omitempty"`
+	BackOff         []time.Duration `json:"backoff,omitempty"`
+	FilterSubject   string          `json:"filter_subject,omitempty"`
+	ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
+	RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
+	SampleFrequency string          `json:"sample_freq,omitempty"`
+	MaxWaiting      int             `json:"max_waiting,omitempty"`
+	MaxAckPending   int             `json:"max_ack_pending,omitempty"`
+	FlowControl     bool            `json:"flow_control,omitempty"`
+	Heartbeat       time.Duration   `json:"idle_heartbeat,omitempty"`
+	HeadersOnly     bool            `json:"headers_only,omitempty"`
 
 	// Pull based options.
 	MaxRequestBatch   int           `json:"max_batch,omitempty"`
@@ -2638,14 +2647,22 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 		wait = js.opts.wait
 	}
 
+	var body []byte
+	// This will be > 0 only when called from NakWithDelay()
+	if o.nakDelay > 0 {
+		body = []byte(fmt.Sprintf("%s {\"delay\": %d}", ackType, o.nakDelay.Nanoseconds()))
+	} else {
+		body = ackType
+	}
+
 	if sync {
 		if usesCtx {
-			_, err = nc.RequestWithContext(ctx, m.Reply, ackType)
+			_, err = nc.RequestWithContext(ctx, m.Reply, body)
 		} else {
-			_, err = nc.Request(m.Reply, ackType, wait)
+			_, err = nc.Request(m.Reply, body, wait)
 		}
 	} else {
-		err = nc.Publish(m.Reply, ackType)
+		err = nc.Publish(m.Reply, body)
 	}
 
 	// Mark that the message has been acked unless it is AckProgress
@@ -2673,6 +2690,17 @@ func (m *Msg) AckSync(opts ...AckOpt) error {
 // the message. You can configure the number of redeliveries by passing
 // nats.MaxDeliver when you Subscribe. The default is infinite redeliveries.
 func (m *Msg) Nak(opts ...AckOpt) error {
+	return m.ackReply(ackNak, false, opts...)
+}
+
+// Nak negatively acknowledges a message. This tells the server to redeliver
+// the message after the give `delay` duration. You can configure the number
+// of redeliveries by passing nats.MaxDeliver when you Subscribe.
+// The default is infinite redeliveries.
+func (m *Msg) NakWithDelay(delay time.Duration, opts ...AckOpt) error {
+	if delay > 0 {
+		opts = append(opts, nakDelay(delay))
+	}
 	return m.ackReply(ackNak, false, opts...)
 }
 
