@@ -3762,12 +3762,8 @@ func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testi
 		// Ensure that they get shutdown and remove their state.
 		for _, node := range nodes {
 			node.restart.Lock()
-			if config := node.JetStreamConfig(); config != nil {
-				os.RemoveAll(config.StoreDir)
-			}
+			shutdownJSServerAndRemoveStorage(t, node.Server)
 			node.restart.Unlock()
-			node.Shutdown()
-			node.WaitForShutdown()
 		}
 	}()
 	tfn(t, nodes...)
