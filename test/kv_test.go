@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,7 +16,6 @@ package test
 import (
 	"context"
 	"fmt"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -29,7 +28,7 @@ import (
 
 func TestKeyValueBasics(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -108,7 +107,7 @@ func TestKeyValueBasics(t *testing.T) {
 
 func TestKeyValueHistory(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -146,7 +145,7 @@ func TestKeyValueHistory(t *testing.T) {
 
 func TestKeyValueWatch(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -231,7 +230,7 @@ func TestKeyValueWatch(t *testing.T) {
 
 func TestKeyValueWatchContext(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -261,7 +260,7 @@ func TestKeyValueWatchContext(t *testing.T) {
 
 func TestKeyValueBindStore(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -290,7 +289,7 @@ func TestKeyValueBindStore(t *testing.T) {
 
 func TestKeyValueDeleteStore(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -307,7 +306,7 @@ func TestKeyValueDeleteStore(t *testing.T) {
 
 func TestKeyValueDeleteVsPurge(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -357,7 +356,7 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 
 func TestKeyValueDeleteTombstones(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -394,7 +393,7 @@ func TestKeyValueDeleteTombstones(t *testing.T) {
 
 func TestKeyValueKeys(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -469,30 +468,23 @@ func TestKeyValueKeys(t *testing.T) {
 
 // Helpers
 
-func client(t *testing.T, s *server.Server) *nats.Conn {
+func client(t *testing.T, s *server.Server, opts ...nats.Option) *nats.Conn {
 	t.Helper()
-	nc, err := nats.Connect(s.ClientURL())
+	nc, err := nats.Connect(s.ClientURL(), opts...)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	return nc
 }
 
-func jsClient(t *testing.T, s *server.Server) (*nats.Conn, nats.JetStreamContext) {
+func jsClient(t *testing.T, s *server.Server, opts ...nats.Option) (*nats.Conn, nats.JetStreamContext) {
 	t.Helper()
-	nc := client(t, s)
+	nc := client(t, s, opts...)
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error getting JetStream context: %v", err)
 	}
 	return nc, js
-}
-
-func shutdown(s *server.Server) {
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-	s.Shutdown()
 }
 
 func expectOk(t *testing.T, err error) {

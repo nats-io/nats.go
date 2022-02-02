@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -54,15 +54,29 @@ func serverVersionAtLeast(major, minor, update int) error {
 func TestServersOption(t *testing.T) {
 	opts := nats.GetDefaultOptions()
 	opts.NoRandomize = true
+	// Need to lower this for Windows tests, otherwise would take too long.
+	opts.Timeout = 100 * time.Millisecond
 
+	// When getting "connection refused", we transform to ErrNoServers.
+	// However, on Windows, the connect() will get a i/o timeout, but
+	// we can't really suppress that one since we don't know if it is
+	// a real timeout or a failure to connect. So check differencly.
 	_, err := opts.Connect()
-	if err != nats.ErrNoServers {
-		t.Fatalf("Wrong error: '%v'\n", err)
+	if runtime.GOOS == "windows" {
+		if err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+	} else if err != nats.ErrNoServers {
+		t.Fatalf("Wrong error: '%v'", err)
 	}
 	opts.Servers = testServers
 	_, err = opts.Connect()
-	if err == nil || err != nats.ErrNoServers {
-		t.Fatalf("Did not receive proper error: %v\n", err)
+	if runtime.GOOS == "windows" {
+		if err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+	} else if err == nil || err != nats.ErrNoServers {
+		t.Fatalf("Did not receive proper error: %v", err)
 	}
 
 	// Make sure we can connect to first server if running
@@ -99,14 +113,22 @@ func TestServersOption(t *testing.T) {
 }
 
 func TestNewStyleServersOption(t *testing.T) {
-	_, err := nats.Connect(nats.DefaultURL, nats.DontRandomize())
-	if err != nats.ErrNoServers {
+	_, err := nats.Connect(nats.DefaultURL, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
+	if runtime.GOOS == "windows" {
+		if err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+	} else if err != nats.ErrNoServers {
 		t.Fatalf("Wrong error: '%v'\n", err)
 	}
 	servers := strings.Join(testServers, ",")
 
-	_, err = nats.Connect(servers, nats.DontRandomize())
-	if err == nil || err != nats.ErrNoServers {
+	_, err = nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
+	if runtime.GOOS == "windows" {
+		if err == nil || !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("Expected timeout, got %v", err)
+		}
+	} else if err == nil || err != nats.ErrNoServers {
 		t.Fatalf("Did not receive proper error: %v\n", err)
 	}
 
@@ -115,7 +137,7 @@ func TestNewStyleServersOption(t *testing.T) {
 	// Do this in case some failure occurs before explicit shutdown
 	defer s1.Shutdown()
 
-	nc, err := nats.Connect(servers, nats.DontRandomize())
+	nc, err := nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
@@ -132,7 +154,7 @@ func TestNewStyleServersOption(t *testing.T) {
 	// Do this in case some failure occurs before explicit shutdown
 	defer s2.Shutdown()
 
-	nc, err = nats.Connect(servers, nats.DontRandomize())
+	nc, err = nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
@@ -200,6 +222,7 @@ func TestBasicClusterReconnect(t *testing.T) {
 	dcbCalled := false
 
 	opts := []nats.Option{nats.DontRandomize(),
+		nats.Timeout(100 * time.Millisecond),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, _ error) {
 			// Suppress any additional callbacks
 			if dcbCalled {
@@ -256,13 +279,6 @@ func TestHotSpotReconnect(t *testing.T) {
 	s1 := RunServerOnPort(1222)
 	defer s1.Shutdown()
 
-	var srvrs string
-	if runtime.GOOS == "windows" {
-		srvrs = strings.Join(testServers[:5], ",")
-	} else {
-		srvrs = servers
-	}
-
 	numClients := 32
 	clients := []*nats.Conn{}
 
@@ -273,6 +289,13 @@ func TestHotSpotReconnect(t *testing.T) {
 		nats.ReconnectWait(50 * time.Millisecond),
 		nats.ReconnectJitter(0, 0),
 		nats.ReconnectHandler(func(_ *nats.Conn) { wg.Done() }),
+	}
+	var srvrs string
+	if runtime.GOOS == "windows" {
+		srvrs = strings.Join(testServers[:5], ",")
+		opts = append(opts, nats.Timeout(100*time.Millisecond))
+	} else {
+		srvrs = servers
 	}
 
 	for i := 0; i < numClients; i++ {
@@ -384,6 +407,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
+		opts.Timeout = 100 * time.Millisecond
 	} else {
 		opts.Servers = testServers
 		opts.MaxReconnect = 5
@@ -454,6 +478,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	opts.NoRandomize = true
 	if runtime.GOOS == "windows" {
 		opts.MaxReconnect = 2
+		opts.Timeout = 100 * time.Millisecond
 	} else {
 		opts.MaxReconnect = 5
 	}
@@ -521,6 +546,7 @@ func TestTimeoutOnNoServers(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		opts.Servers = testServers[:2]
 		opts.MaxReconnect = 2
+		opts.Timeout = 100 * time.Millisecond
 		opts.ReconnectWait = (100 * time.Millisecond)
 		nats.ReconnectJitter(0, 0)(&opts)
 	} else {
@@ -588,6 +614,7 @@ func TestPingReconnect(t *testing.T) {
 	opts := nats.GetDefaultOptions()
 	opts.Servers = testServers
 	opts.NoRandomize = true
+	opts.Timeout = 100 * time.Millisecond
 	opts.ReconnectWait = 200 * time.Millisecond
 	nats.ReconnectJitter(0, 0)(&opts)
 	opts.PingInterval = 50 * time.Millisecond

@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -1483,6 +1483,9 @@ func (d *lowWriteBufferDialer) Dial(network, address string) (net.Conn, error) {
 }
 
 func TestCustomFlusherTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.SkipNow()
+	}
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
