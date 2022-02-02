@@ -137,10 +137,6 @@ func TestExpandPath(t *testing.T) {
 			{path: "/Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "/Foo/Bar"},
 			{path: "Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "Foo/Bar"},
 			{path: "~/Fizz", userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
-			// That one would fail because expandPath(), if not finding `~` returns
-			// the given path, which since ${HOMEDRIVE}${HOMEPATH} is not set,
-			// would return `\Fizz` but test expects `C:\Foo\Bar\Fizz`?
-			// {path: `${HOMEDRIVE}${HOMEPATH}\Fizz`, userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
 
 			// Missing USERPROFILE.
 			{path: "~/Fizz", homeDrive: "X:", homePath: `\Foo\Bar`, wantPath: `X:\Foo\Bar\Fizz`},

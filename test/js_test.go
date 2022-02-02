@@ -36,6 +36,7 @@ import (
 )
 
 func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
+	t.Helper()
 	var sd string
 	if config := s.JetStreamConfig(); config != nil {
 		sd = config.StoreDir
