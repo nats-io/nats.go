@@ -29,7 +29,7 @@ import (
 
 func TestNoRaceObjectContextOpt(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -61,7 +61,7 @@ func TestNoRaceObjectContextOpt(t *testing.T) {
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 	time.AfterFunc(100*time.Millisecond, cancel)
 
-	time.AfterFunc(20*time.Millisecond, func() { shutdown(s) })
+	time.AfterFunc(20*time.Millisecond, func() { shutdownJSServerAndRemoveStorage(t, s) })
 	start = time.Now()
 	_, err = obs.GetBytes("BLOB", nats.Context(ctx))
 	expectErr(t, err)
@@ -84,7 +84,7 @@ func (sr *slow) Read(p []byte) (n int, err error) {
 
 func TestNoRaceObjectDoublePut(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()

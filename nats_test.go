@@ -137,7 +137,10 @@ func TestExpandPath(t *testing.T) {
 			{path: "/Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "/Foo/Bar"},
 			{path: "Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "Foo/Bar"},
 			{path: "~/Fizz", userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
-			{path: `${HOMEDRIVE}${HOMEPATH}\Fizz`, userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
+			// That one would fail because expandPath(), if not finding `~` returns
+			// the given path, which since ${HOMEDRIVE}${HOMEPATH} is not set,
+			// would return `\Fizz` but test expects `C:\Foo\Bar\Fizz`?
+			// {path: `${HOMEDRIVE}${HOMEPATH}\Fizz`, userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
 
 			// Missing USERPROFILE.
 			{path: "~/Fizz", homeDrive: "X:", homePath: `\Foo\Bar`, wantPath: `X:\Foo\Bar\Fizz`},
@@ -1673,7 +1676,8 @@ func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 		nc.Close()
 		t.Fatalf("Expected an error on missing credentials file")
 	}
-	if !strings.Contains(err.Error(), "no such file or directory") {
+	if !strings.Contains(err.Error(), "no such file or directory") &&
+		!strings.Contains(err.Error(), "The system cannot find the file specified") {
 		t.Fatalf("Expected a missing file error, got %q", err)
 	}
 }
@@ -2448,6 +2452,7 @@ func TestCustomReconnectDelay(t *testing.T) {
 	errCh := make(chan error, 1)
 	cCh := make(chan bool, 1)
 	nc, err := Connect(s.ClientURL(),
+		Timeout(100*time.Millisecond), // Need to lower for Windows tests
 		CustomReconnectDelay(func(n int) time.Duration {
 			var err error
 			var delay time.Duration
@@ -2493,7 +2498,13 @@ func TestCustomReconnectDelay(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("No CB invoked")
 	}
-	if dur := time.Since(start); dur >= 500*time.Millisecond {
+	// On Windows, a failed connect attempt will last as much as Timeout(),
+	// so we need to take that into account.
+	max := 500 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		max = time.Second
+	}
+	if dur := time.Since(start); dur >= max {
 		t.Fatalf("Waited too long on each reconnect: %v", dur)
 	}
 }

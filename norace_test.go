@@ -108,23 +108,16 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	t.SkipNow()
 
 	s := RunServerOnPort(-1)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	if err := s.EnableJetStream(nil); err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	defer os.RemoveAll(s.JetStreamConfig().StoreDir)
 
-	nc, err := Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&StreamConfig{
 		Name:     "PENDING_TEST",
@@ -182,26 +175,16 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	errHandler := ErrorHandler(func(c *Conn, sub *Subscription, err error) {
 		t.Logf("WARN: %s", err)
 	})
 
-	nc, err := Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s, errHandler)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&StreamConfig{
 		Name:     "TEST",
@@ -401,22 +384,12 @@ func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeAsync(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&StreamConfig{
 		Name:     "TEST",
@@ -485,26 +458,16 @@ func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeAsync(t *testing.T) {
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	errHandler := ErrorHandler(func(c *Conn, sub *Subscription, err error) {
 		t.Logf("WARN: %s : %v", err, sub.Subject)
 	})
 
-	nc, err := Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s, errHandler)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&StreamConfig{
 		Name:     "TEST",
@@ -642,11 +605,7 @@ Loop:
 
 func TestJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	errCh := make(chan error)
 	errHandler := ErrorHandler(func(c *Conn, sub *Subscription, err error) {
@@ -754,22 +713,12 @@ func TestNoRaceJetStreamChanSubscribeStall(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create a stream.
 	if _, err = js.AddStream(&StreamConfig{Name: "STALL"}); err != nil {

@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -35,35 +35,28 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
-func getConnAndJS(t *testing.T, s *server.Server) (*nats.Conn, nats.JetStreamContext) {
-	t.Helper()
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
+	var sd string
+	if config := s.JetStreamConfig(); config != nil {
+		sd = config.StoreDir
 	}
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Got error during initialization %v", err)
+	s.Shutdown()
+	if sd != "" {
+		if err := os.RemoveAll(sd); err != nil {
+			t.Fatalf("Unable to remove storage %q: %v", sd, err)
+		}
 	}
-	return nc, js
+	s.WaitForShutdown()
 }
 
 func TestJetStreamNotEnabled(t *testing.T) {
 	s := RunServerOnPort(-1)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Got error during initialization %v", err)
-	}
-	if _, err = js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
+	if _, err := js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
 }
@@ -86,41 +79,24 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Got error during initialization %v", err)
-	}
-	if _, err = js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
+	if _, err := js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
 }
 
 func TestJetStreamPublish(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Make sure we get a proper failure when no stream is present.
 	_, err = js.Publish("foo", []byte("Hello JS"))
@@ -297,22 +273,12 @@ func TestJetStreamPublish(t *testing.T) {
 
 func TestJetStreamSubscribe(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	expectConsumers := func(t *testing.T, expected int) {
 		t.Helper()
@@ -812,7 +778,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
-	nc, js = getConnAndJS(t, s)
+	nc, js = jsClient(t, s)
 	defer nc.Close()
 
 	if ci, err := js.ConsumerInfo("TEST", name); err == nil {
@@ -822,23 +788,12 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 func TestJetStreamAckPending_Pull(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -885,22 +840,12 @@ func TestJetStreamAckPending_Pull(t *testing.T) {
 
 func TestJetStreamAckPending_Push(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -1046,11 +991,7 @@ func TestJetStreamAckPending_Push(t *testing.T) {
 
 func TestJetStream_Drain(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
 
@@ -1139,7 +1080,7 @@ func TestJetStream_Drain(t *testing.T) {
 
 func TestAckForNonJetStream(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -1172,22 +1113,10 @@ func TestJetStreamManagement(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("foo", ""))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s, nats.UserInfo("foo", ""))
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
@@ -1208,6 +1137,7 @@ func TestJetStreamManagement(t *testing.T) {
 		js.Publish("foo", []byte("hi"))
 	}
 
+	var err error
 	t.Run("stream not found", func(t *testing.T) {
 		si, err = js.StreamInfo("bar")
 		if !errors.Is(err, nats.ErrStreamNotFound) {
@@ -1495,17 +1425,10 @@ func TestJetStreamManagement_GetMsg(t *testing.T) {
 
 func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 	s := srvs[0]
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s.Server)
 	defer nc.Close()
 
-	// constructor
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "foo",
@@ -1657,22 +1580,12 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 
 func TestJetStreamManagement_DeleteMsg(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "foo",
@@ -1795,23 +1708,13 @@ func TestJetStreamImport(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	// Create a stream using JSM.
-	ncm, err := nats.Connect(s.ClientURL(), nats.UserInfo("dlc", "foo"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	ncm, jsm := jsClient(t, s, nats.UserInfo("dlc", "foo"))
 	defer ncm.Close()
 
-	jsm, err := ncm.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 
 	_, err = jsm.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -1906,23 +1809,13 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	// Create a stream using JSM.
-	ncm, err := nats.Connect(s.ClientURL(), nats.UserInfo("dlc", "foo"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	ncm, jsm := jsClient(t, s, nats.UserInfo("dlc", "foo"))
 	defer ncm.Close()
 
-	jsm, err := ncm.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 
 	// Create a stream using the server directly.
 	_, err = jsm.AddStream(&nats.StreamConfig{Name: "ORDERS"})
@@ -1964,16 +1857,8 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
 		t.Fatalf("push consumer create failed: %v", err)
 	}
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	// Now make sure we can send to the stream from another account.
 	toSend := 100
@@ -2098,21 +1983,12 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc1, err := nats.Connect(s.ClientURL(), nats.UserInfo("rip", "pass"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	nc1, js1 := jsClient(t, s, nats.UserInfo("rip", "pass"))
 	defer nc1.Close()
-	js1, err := nc1.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+
+	var err error
 
 	_, err = js1.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -2135,15 +2011,8 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 		}
 	}
 
-	nc2, err := nats.Connect(s.ClientURL(), nats.UserInfo("dlc", "pass"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	nc2, js2 := jsClient(t, s, nats.UserInfo("dlc", "pass"))
 	defer nc2.Close()
-	js2, err := nc2.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	checkMsgCount := func(t *testing.T, stream string) {
 		t.Helper()
@@ -2222,22 +2091,12 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 
 func TestJetStreamAutoMaxAckPending(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL(), nats.SyncQueueLen(500))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s, nats.SyncQueueLen(500))
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{Name: "foo"})
 	if err != nil {
@@ -2297,27 +2156,17 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 
 func TestJetStreamInterfaces(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	var js nats.JetStream
 	var jsm nats.JetStreamManager
 	var jsctx nats.JetStreamContext
 
 	// JetStream that can publish/subscribe but cannot manage streams.
-	js, err = nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
 	js.Publish("foo", []byte("hello"))
 
 	// JetStream context that can manage streams/consumers but cannot produce messages.
@@ -2344,22 +2193,12 @@ func TestJetStreamInterfaces(t *testing.T) {
 
 func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -2378,6 +2217,7 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 			publishTime = time.Now()
 		}
 		js.Publish("foo", []byte(payload))
+		time.Sleep(15 * time.Millisecond)
 	}
 
 	for _, test := range []struct {
@@ -2403,7 +2243,11 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			timeout := 2 * time.Second
+			if test.expected == 0 {
+				timeout = 250 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
 			got := 0
@@ -2445,22 +2289,12 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 
 func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -2839,22 +2673,12 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 
 func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -3055,22 +2879,12 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 
 func TestJetStreamSubscribe_AckDup(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -3127,22 +2941,12 @@ func TestJetStreamSubscribe_AckDup(t *testing.T) {
 
 func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -3194,22 +2998,12 @@ func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 
 func TestJetStream_Unsubscribe(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "foo",
@@ -3341,22 +3135,13 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 
 func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	serverURL := s.ClientURL()
-	mc, err := nats.Connect(serverURL)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	mc, jsm := jsClient(t, s)
 	defer mc.Close()
-	jsm, err := mc.JetStream()
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
+
+	var err error
 
 	_, err = jsm.AddStream(&nats.StreamConfig{
 		Name:     "foo",
@@ -3408,15 +3193,8 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	jsm.Publish("foo.C", []byte("C.1"))
 
 	t.Run("conn close does not delete any consumer", func(t *testing.T) {
-		nc, err := nats.Connect(serverURL)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		js, err := nc.JetStream()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		nc, js := jsClient(t, s)
+		defer nc.Close()
 
 		if _, err := js.SubscribeSync("foo.A"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -3448,16 +3226,8 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	jsm.Publish("foo.C", []byte("C.2"))
 
 	t.Run("reattached durables consumers cannot be deleted with unsubscribe", func(t *testing.T) {
-		nc, err := nats.Connect(serverURL)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		nc, js := jsClient(t, s)
 		defer nc.Close()
-
-		js, err := nc.JetStream()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
 
 		fetchConsumers(t, 2)
 
@@ -3523,11 +3293,7 @@ func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	errCh := make(chan error, 2)
 	nc, err := nats.Connect(s.ClientURL(), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
@@ -3576,22 +3342,12 @@ func TestJetStream_UnsubscribeDeleteNoPermissions(t *testing.T) {
 
 func TestJetStreamSubscribe_ReplayPolicy(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -3662,22 +3418,12 @@ func TestJetStreamSubscribe_ReplayPolicy(t *testing.T) {
 
 func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -3743,22 +3489,12 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 
 func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -4013,14 +3749,7 @@ func withJSServer(t *testing.T, tfn func(t *testing.T, srvs ...*jsServer)) {
 	opts.LameDuckDuration = 3 * time.Second
 	opts.LameDuckGracePeriod = 2 * time.Second
 	s := &jsServer{Server: RunServerWithOptions(opts), myopts: &opts}
-
-	defer func() {
-		if config := s.JetStreamConfig(); config != nil {
-			os.RemoveAll(config.StoreDir)
-		}
-		s.Shutdown()
-		s.WaitForShutdown()
-	}()
+	defer shutdownJSServerAndRemoveStorage(t, s.Server)
 	tfn(t, s)
 }
 
@@ -4133,16 +3862,10 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 		cluster := "PLC1"
 		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
 			srvA := nodes[0]
-			nc, err := nats.Connect(srvA.ClientURL())
-			if err != nil {
-				t.Error(err)
-			}
+			nc, js := jsClient(t, srvA.Server)
 			defer nc.Close()
 
-			js, err := nc.JetStream()
-			if err != nil {
-				t.Fatal(err)
-			}
+			var err error
 
 			stream := &nats.StreamConfig{
 				Name: "TEST",
@@ -4162,16 +3885,10 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 		cluster := "PLC2"
 		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
 			srvA := nodes[0]
-			nc, err := nats.Connect(srvA.ClientURL())
-			if err != nil {
-				t.Error(err)
-			}
+			nc, js := jsClient(t, srvA.Server)
 			defer nc.Close()
 
-			js, err := nc.JetStream()
-			if err != nil {
-				t.Fatal(err)
-			}
+			var err error
 
 			stream := &nats.StreamConfig{
 				Name: "TEST",
@@ -4192,16 +3909,10 @@ func TestJetStream_ClusterPlacement(t *testing.T) {
 		cluster := "PLC3"
 		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
 			srvA := nodes[0]
-			nc, err := nats.Connect(srvA.ClientURL())
-			if err != nil {
-				t.Error(err)
-			}
+			nc, js := jsClient(t, srvA.Server)
 			defer nc.Close()
 
-			js, err := nc.JetStream()
-			if err != nil {
-				t.Fatal(err)
-			}
+			var err error
 
 			stream := &nats.StreamConfig{
 				Name: "TEST",
@@ -4228,16 +3939,10 @@ func TestJetStreamStreamMirror(t *testing.T) {
 
 func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 	srvA := nodes[0]
-	nc, err := nats.Connect(srvA.ClientURL())
-	if err != nil {
-		t.Error(err)
-	}
+	nc, js := jsClient(t, srvA.Server)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name: "origin",
@@ -4758,20 +4463,12 @@ func testJetStream_ClusterMultipleQueueSubscribe(t *testing.T, subject string, s
 
 func testJetStream_ClusterMultiplePullSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
 	srv := srvs[0]
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatal(err)
-	}
+	nc, js := jsClient(t, srv.Server)
 	defer nc.Close()
 
 	var wg sync.WaitGroup
 	ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
 	defer done()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	size := 5
 	subs := make([]*nats.Subscription, size)
@@ -5284,16 +4981,10 @@ func TestJetStreamPullSubscribeOptions(t *testing.T) {
 
 func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 	srv := srvs[0]
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Error(err)
-	}
+	nc, js := jsClient(t, srv.Server)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 
 	subject := "WQ"
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -5537,22 +5228,10 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 
 func TestJetStreamPublishAsync(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	// Make sure we get a proper failure when no stream is present.
 	paf, err := js.PublishAsync("foo", []byte("Hello JS"))
@@ -5667,11 +5346,7 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	t.SkipNow()
 
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -5726,22 +5401,10 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 
 func TestJetStreamBindConsumer(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	if _, err := js.AddStream(nil); err == nil {
 		t.Fatalf("Unexpected success")
@@ -5926,11 +5589,7 @@ func TestJetStreamDomain(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -6047,22 +5706,13 @@ func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := RunBasicJetStreamServer()
-			defer s.Shutdown()
-
-			if config := s.JetStreamConfig(); config != nil {
-				defer os.RemoveAll(config.StoreDir)
-			}
+			defer shutdownJSServerAndRemoveStorage(t, s)
 
 			// Client for API requests.
-			nc, err := nats.Connect(s.ClientURL())
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			nc, js := jsClient(t, s)
 			defer nc.Close()
-			js, err := nc.JetStream()
-			if err != nil {
-				t.Fatalf("Got error during initialization %v", err)
-			}
+
+			var err error
 
 			_, err = js.AddStream(c.mconfig)
 			if err != nil {
@@ -6110,11 +5760,7 @@ func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
 
 func TestJetStreamDrainFailsToDeleteConsumer(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
-
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	errCh := make(chan error, 1)
 	nc, err := nats.Connect(s.ClientURL(), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
@@ -6180,23 +5826,10 @@ func TestJetStreamDomainInPubAck(t *testing.T) {
 	defer os.Remove(conf)
 
 	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	config := s.JetStreamConfig()
-	if config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	// Client for API requests.
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Got error during initialization %v", err)
-	}
 
 	cfg := &nats.StreamConfig{
 		Name:     "TEST",
@@ -6218,22 +5851,10 @@ func TestJetStreamDomainInPubAck(t *testing.T) {
 
 func TestJetStreamStreamAndConsumerDescription(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	streamDesc := "stream description"
 	si, err := js.AddStream(&nats.StreamConfig{
@@ -6264,22 +5885,10 @@ func TestJetStreamStreamAndConsumerDescription(t *testing.T) {
 
 func TestJetStreamMsgSubjectRewrite(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	if _, err := js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -6321,16 +5930,10 @@ func TestJetStreamPullSubscribeFetchContext(t *testing.T) {
 
 func testJetStreamFetchContext(t *testing.T, srvs ...*jsServer) {
 	srv := srvs[0]
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Error(err)
-	}
+	nc, js := jsClient(t, srv.Server)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 
 	subject := "WQ"
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -6582,22 +6185,12 @@ func testJetStreamFetchContext(t *testing.T, srvs ...*jsServer) {
 
 func TestJetStreamSubscribeContextCancel(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer s.Shutdown()
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	if config := s.JetStreamConfig(); config != nil {
-		defer os.RemoveAll(config.StoreDir)
-	}
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	var err error
 
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
