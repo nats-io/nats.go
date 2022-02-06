@@ -454,7 +454,7 @@ func (info *ObjectInfo) isLink() bool {
 	return info.ObjectMeta.Opts != nil && info.ObjectMeta.Opts.Link != nil
 }
 
-// GetObject will pull the object from the underlying stream.
+// Get will pull the object from the underlying stream.
 func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 	// Grab meta info.
 	info, err := obs.GetInfo(name)

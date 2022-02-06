@@ -224,7 +224,7 @@ func (nc *Conn) FlushWithContext(ctx context.Context) error {
 
 // RequestWithContext will create an Inbox and perform a Request
 // using the provided cancellation context with the Inbox reply
-// for the data v. A response will be decoded into the vPtrResponse.
+// for the data v. A response will be decoded into the vPtr last parameter.
 func (c *EncodedConn) RequestWithContext(ctx context.Context, subject string, v interface{}, vPtr interface{}) error {
 	if ctx == nil {
 		return ErrInvalidContext

@@ -403,7 +403,7 @@ func (r *websocketReader) handleControlFrame(frameType wsOpCode, buf []byte, pos
 			}
 		}
 		r.nc.wsEnqueueCloseMsg(status, body)
-		// Return io.EOF so that readLoop will close the connection as ClientClosed
+		// Return io.EOF so that readLoop will close the connection as client closed
 		// after processing pending buffers.
 		return pos, io.EOF
 	case wsPingMessage:

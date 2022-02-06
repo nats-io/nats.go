@@ -42,7 +42,7 @@ type JetStream interface {
 	// The data should not be changed until the PubAckFuture has been processed.
 	PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFuture, error)
 
-	// PublishMsgAsync publishes a Msg to JetStream and returms a PubAckFuture.
+	// PublishMsgAsync publishes a Msg to JetStream and returns a PubAckFuture.
 	// The message should not be changed until the PubAckFuture has been processed.
 	PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error)
 
@@ -132,7 +132,7 @@ const (
 	// apiRequestNextT is the prefix for the request next message(s) for a consumer in worker/pull mode.
 	apiRequestNextT = "CONSUMER.MSG.NEXT.%s.%s"
 
-	// apiDeleteConsumerT is used to delete consumers.
+	// apiConsumerDeleteT is used to delete consumers.
 	apiConsumerDeleteT = "CONSUMER.DELETE.%s.%s"
 
 	// apiConsumerListT is used to return all detailed consumer information
@@ -150,17 +150,17 @@ const (
 	// apiStreamInfoT is the endpoint to get information on a stream.
 	apiStreamInfoT = "STREAM.INFO.%s"
 
-	// apiStreamUpdate is the endpoint to update existing streams.
+	// apiStreamUpdateT is the endpoint to update existing streams.
 	apiStreamUpdateT = "STREAM.UPDATE.%s"
 
 	// apiStreamDeleteT is the endpoint to delete streams.
 	apiStreamDeleteT = "STREAM.DELETE.%s"
 
-	// apiPurgeStreamT is the endpoint to purge streams.
+	// apiStreamPurgeT is the endpoint to purge streams.
 	apiStreamPurgeT = "STREAM.PURGE.%s"
 
 	// apiStreamListT is the endpoint that will return all detailed stream information
-	apiStreamList = "STREAM.LIST"
+	apiStreamListT = "STREAM.LIST"
 
 	// apiMsgGetT is the endpoint to get a message.
 	apiMsgGetT = "STREAM.MSG.GET.%s"
@@ -279,7 +279,7 @@ func TraceFunc(cb TraceCB) JSOpt {
 	})
 }
 
-// Domain changes the domain part of JetSteam API prefix.
+// Domain changes the domain part of JetStream API prefix.
 func Domain(domain string) JSOpt {
 	if domain == _EMPTY_ {
 		return APIPrefix(_EMPTY_)
@@ -653,7 +653,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 }
 
 // MsgErrHandler is used to process asynchronous errors from
-// JetStream PublishAsync and PublishAsynMsg. It will return the original
+// JetStream PublishAsync. It will return the original
 // message sent to the server for possible retransmitting and the error encountered.
 type MsgErrHandler func(JetStream, *Msg, error)
 
@@ -763,7 +763,7 @@ func (js *js) PublishAsyncComplete() <-chan struct{} {
 	return dch
 }
 
-// MsgId sets the message ID used for de-duplication.
+// MsgId sets the message ID used for deduplication.
 func MsgId(id string) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.id = id
@@ -1216,8 +1216,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		}
 	}
 
-	// If no stream name is specified, or if option SubjectIsDelivery is
-	// specified, the subject cannot be empty.
+	// If no stream name is specified, the subject cannot be empty.
 	if subj == _EMPTY_ && o.stream == _EMPTY_ {
 		return nil, fmt.Errorf("nats: subject required")
 	}
@@ -1666,7 +1665,7 @@ func (sub *Subscription) trackSequences(reply string) {
 // The caller has verified that sub.jsi != nil and that this is not a control message.
 // Lock should be held.
 func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
-	// Ignore msgs with no reply like HBs and flowcontrol, they are handled elsewhere.
+	// Ignore msgs with no reply like HBs and flow control, they are handled elsewhere.
 	if m.Reply == _EMPTY_ {
 		return false
 	}
@@ -1747,7 +1746,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	// Snapshot the new sid under sub lock.
 	nsid := sub.sid
 
-	// We are still in the low level readloop for the connection so we need
+	// We are still in the low level readLoop for the connection so we need
 	// to spin a go routine to try to create the new consumer.
 	go func() {
 		// Unsubscribe and subscribe with new inbox and sid.
@@ -1996,7 +1995,7 @@ type subOpts struct {
 	ctx     context.Context
 }
 
-// OrderedConsumer will create a fifo direct/ephemeral consumer for in order delivery of messages.
+// OrderedConsumer will create a FIFO direct/ephemeral consumer for in order delivery of messages.
 // There are no redeliveries and no acks, and flow control and heartbeats will be added but
 // will be taken care of without additional client code.
 func OrderedConsumer() SubOpt {
@@ -2248,7 +2247,7 @@ func DeliverSubject(subject string) SubOpt {
 	})
 }
 
-// HeadersOnly() will instruct the consumer to only deleiver headers and no payloads.
+// HeadersOnly() will instruct the consumer to only deliver headers and no payloads.
 func HeadersOnly() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.HeadersOnly = true
@@ -2527,7 +2526,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 					err = sendReq()
 				} else if err == ErrTimeout && len(msgs) == 0 {
 					// If we get a 408, we will bail if we already collected some
-					// messages, otherwise ignore and go back calling nextMsg.
+					// messages, otherwise ignore and go back calling NextMsg.
 					err = nil
 				}
 			}
@@ -2665,7 +2664,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 		err = nc.Publish(m.Reply, body)
 	}
 
-	// Mark that the message has been acked unless it is AckProgress
+	// Mark that the message has been acked unless it is ackProgress
 	// which can be sent many times.
 	if err == nil && !bytes.Equal(ackType, ackProgress) {
 		atomic.StoreUint32(&m.ackd, 1)
@@ -2824,7 +2823,7 @@ func parseNum(d string) (n int64) {
 		return -1
 	}
 
-	// Ascii numbers 0-9
+	// ASCII numbers 0-9
 	const (
 		asciiZero = 48
 		asciiNine = 57

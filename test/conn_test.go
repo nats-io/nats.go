@@ -31,6 +31,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
+
 	"github.com/nats-io/nats.go"
 )
 
@@ -1398,7 +1399,7 @@ func TestUseCustomDialer(t *testing.T) {
 	}
 	defer nc3.Close()
 	if nc3.Opts.Dialer.Timeout != nats.DefaultTimeout {
-		t.Fatalf("Expected DialTimeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
+		t.Fatalf("Expected Dialer.Timeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
 	}
 
 	// Create custom dialer that return error on Dial().

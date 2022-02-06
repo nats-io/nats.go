@@ -40,9 +40,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nats-io/nats.go/util"
 	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
+
+	"github.com/nats-io/nats.go/util"
 )
 
 // Default Constants
@@ -336,12 +337,10 @@ type Options struct {
 
 	// ReconnectJitter sets the upper bound for a random delay added to
 	// ReconnectWait during a reconnect when no TLS is used.
-	// Note that any jitter is capped with ReconnectJitterMax.
 	ReconnectJitter time.Duration
 
 	// ReconnectJitterTLS sets the upper bound for a random delay added to
 	// ReconnectWait during a reconnect when TLS is used.
-	// Note that any jitter is capped with ReconnectJitterMax.
 	ReconnectJitterTLS time.Duration
 
 	// Timeout sets the timeout for a Dial operation on a connection.
@@ -443,7 +442,7 @@ type Options struct {
 
 	// LameDuckModeHandler sets the callback to invoke when the server notifies
 	// the connection that it entered lame duck mode, that is, going to
-	// gradually disconnect all its connections before shuting down. This is
+	// gradually disconnect all its connections before shutting down. This is
 	// often used in deployments when upgrading NATS Servers.
 	LameDuckModeHandler ConnHandler
 
@@ -889,7 +888,7 @@ func PingInterval(t time.Duration) Option {
 }
 
 // MaxPingsOutstanding is an Option to set the maximum number of ping requests
-// that can go un-answered by the server before closing the connection.
+// that can go unanswered by the server before closing the connection.
 func MaxPingsOutstanding(max int) Option {
 	return func(o *Options) error {
 		o.MaxPingsOut = max
@@ -1111,7 +1110,7 @@ func NoCallbacksAfterClientClose() Option {
 
 // LameDuckModeHandler sets the callback to invoke when the server notifies
 // the connection that it entered lame duck mode, that is, going to
-// gradually disconnect all its connections before shuting down. This is
+// gradually disconnect all its connections before shutting down. This is
 // often used in deployments when upgrading NATS Servers.
 func LameDuckModeHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
@@ -1254,7 +1253,7 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, ErrNkeyButNoSigCB
 	}
 
-	// Allow custom Dialer for connecting using DialTimeout by default
+	// Allow custom Dialer for connecting using a timeout by default
 	if nc.Opts.Dialer == nil {
 		nc.Opts.Dialer = &net.Dialer{
 			Timeout: nc.Opts.Timeout,
@@ -1869,7 +1868,7 @@ func versionComponents(version string) (major, minor, patch int, err error) {
 	return major, minor, patch, err
 }
 
-// Check for mininum server requirement.
+// Check for minimum server requirement.
 func (nc *Conn) serverMinVersion(major, minor, patch int) bool {
 	smajor, sminor, spatch, _ := versionComponents(nc.ConnectedServerVersion())
 	if smajor < major || (smajor == major && sminor < minor) || (smajor == major && sminor == minor && spatch < patch) {
@@ -2275,7 +2274,7 @@ func parseControl(line string, c *control) {
 	}
 }
 
-// flushReconnectPending will push the pending items that were
+// flushReconnectPendingItems will push the pending items that were
 // gathered while we were in a RECONNECTING state to the socket.
 func (nc *Conn) flushReconnectPendingItems() error {
 	return nc.bw.flushPendingBuffer()
@@ -2811,13 +2810,13 @@ func (nc *Conn) processMsg(data []byte) {
 		if h != nil {
 			ctrlMsg, ctrlType = isJSControlMessage(m)
 			if ctrlMsg && ctrlType == jsCtrlHB {
-				// Check if the hearbeat has a "Consumer Stalled" header, if
+				// Check if the heartbeat has a "Consumer Stalled" header, if
 				// so, the value is the FC reply to send a nil message to.
 				// We will send it at the end of this function.
 				fcReply = m.Header.Get(consumerStalledHdr)
 			}
 		}
-		// Check for ordered consumer here. If checkOrdered returns true that means it detected a gap.
+		// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
 		if !ctrlMsg && jsi.ordered && sub.checkOrderedMsgs(m) {
 			sub.mu.Unlock()
 			return
@@ -3163,7 +3162,7 @@ func checkAuthError(e string) error {
 }
 
 // processErr processes any error messages from the server and
-// sets the connection's lastError.
+// sets the connection's LastError.
 func (nc *Conn) processErr(ie string) {
 	// Trim, remove quotes
 	ne := normalizeErr(ie)
@@ -3370,7 +3369,7 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 	return nc.publish(subj, reply, nil, data)
 }
 
-// Used for handrolled itoa
+// Used for handrolled Itoa
 const digits = "0123456789"
 
 // publish is the internal function to publish messages to a nats-server.
@@ -4703,7 +4702,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.stopPingTimer()
 	nc.ptmr = nil
 
-	// Need to close and set tcp conn to nil if reconnect loop has stopped,
+	// Need to close and set TCP conn to nil if reconnect loop has stopped,
 	// otherwise we would incorrectly invoke Disconnect handler (if set)
 	// down below.
 	if nc.ar && nc.conn != nil {
@@ -4726,7 +4725,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 			close(s.mch)
 		}
 		s.mch = nil
-		// Mark as invalid, for signaling to deliverMsgs
+		// Mark as invalid, for signaling to waitForMsgs
 		s.closed = true
 		// Mark connection closed in subscription
 		s.connClosed = true
@@ -4756,7 +4755,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		}
 	}
 	// If this is terminal, then we have to notify the asyncCB handler that
-	// it can exit once all async cbs have been dispatched.
+	// it can exit once all async callbacks have been dispatched.
 	if status == CLOSED {
 		nc.ach.close()
 	}

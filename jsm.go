@@ -884,7 +884,7 @@ func (js *js) DeleteMsg(name string, seq uint64, opts ...JSOpt) error {
 	return nil
 }
 
-// purgeRequest is optional request information to the purge API.
+// streamPurgeRequest is optional request information to the purge API.
 type streamPurgeRequest struct {
 	// Purge up to but not including sequence.
 	Sequence uint64 `json:"seq,omitempty"`
@@ -986,7 +986,7 @@ func (s *streamLister) Next() bool {
 		defer cancel()
 	}
 
-	slSubj := s.js.apiSubj(apiStreamList)
+	slSubj := s.js.apiSubj(apiStreamListT)
 	r, err := s.js.apiRequestWithContext(ctx, slSubj, req)
 	if err != nil {
 		s.err = err
