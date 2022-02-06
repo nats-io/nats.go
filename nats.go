@@ -158,6 +158,7 @@ var (
 	ErrConsumerNotActive            = errors.New("nats: consumer not active")
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
+	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
 )
 
 func init() {
@@ -3936,6 +3937,11 @@ func (nc *Conn) removeSub(s *Subscription) {
 		if jsi.csfct != nil {
 			jsi.csfct.Stop()
 			jsi.csfct = nil
+		}
+		// Check on any watcher. If we have one close the update chan.
+		if jsi.w != nil {
+			jsi.w.close()
+			jsi.w = nil
 		}
 	}
 

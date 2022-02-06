@@ -1,4 +1,4 @@
-// Copyright 2020-2021 The NATS Authors
+// Copyright 2020-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -919,6 +919,9 @@ type ConsumerConfig struct {
 
 	// Ephemeral inactivity threshold.
 	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+
+	// Internal Use
+	Direct bool `json:"direct,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -968,6 +971,7 @@ type jsSub struct {
 	consumer string
 	stream   string
 	deliver  string
+	pending  uint64
 	pull     bool
 	dc       bool // Delete JS consumer
 
@@ -976,6 +980,9 @@ type jsSub struct {
 	dseq    uint64
 	sseq    uint64
 	ccreq   *createConsumerRequest
+
+	// Optional watcher
+	w *watcher
 
 	// Heartbeats and Flow Control handling from push consumers.
 	hbc    *time.Timer
@@ -1312,6 +1319,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		o.cfg.AckPolicy = AckNonePolicy
 		o.cfg.MaxDeliver = 1
 		o.cfg.AckWait = 22 * time.Hour // Just set to something known, not utilized.
+		o.cfg.Direct = true
 		if !hasHeartbeats {
 			o.cfg.Heartbeat = orderedHeartbeatsInterval
 		}
@@ -1518,6 +1526,8 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				if err != nil {
 					return nil, err
 				}
+				jsi.pending = info.NumPending
+
 				if !isPullMode {
 					// We can't reuse the channel, so if one was passed, we need to create a new one.
 					if isSync {
@@ -1534,6 +1544,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 					}
 					jsi.deliver = deliver
 					jsi.hbi = info.Config.Heartbeat
+
 					// Recreate the subscription here.
 					sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
 					if err != nil {
@@ -1552,6 +1563,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			// Since the library created the JS consumer, it will delete it on Unsubscribe()/Drain()
 			sub.mu.Lock()
 			sub.jsi.dc = true
+			jsi.pending = info.NumPending
 			// If this is an ephemeral, we did not have a consumer name, we get it from the info
 			// after the AddConsumer returns.
 			if consumer == _EMPTY_ {
@@ -1860,7 +1872,7 @@ func (sub *Subscription) activityCheck() {
 	}
 
 	active := jsi.active
-	jsi.hbc.Reset(jsi.hbi)
+	jsi.hbc.Reset(jsi.hbi * hbcThresh)
 	jsi.active = false
 	nc := sub.conn
 	sub.mu.Unlock()
@@ -1888,7 +1900,7 @@ func (sub *Subscription) scheduleHeartbeatCheck() {
 	if jsi.hbc == nil {
 		jsi.hbc = time.AfterFunc(jsi.hbi*hbcThresh, sub.activityCheck)
 	} else {
-		jsi.hbc.Reset(jsi.hbi)
+		jsi.hbc.Reset(jsi.hbi * hbcThresh)
 	}
 }
 

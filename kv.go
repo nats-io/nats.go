@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -306,6 +307,11 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		DenyDelete:        true,
 	}
 
+	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
+	if js.nc.serverMinVersion(2, 7, 2) {
+		scfg.Discard = DiscardNew
+	}
+
 	if _, err := js.AddStream(scfg); err != nil {
 		return nil, err
 	}
@@ -588,6 +594,7 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 
 // Implementation for Watch
 type watcher struct {
+	mu      sync.Mutex
 	updates chan KeyValueEntry
 	sub     *Subscription
 }
@@ -597,7 +604,22 @@ func (w *watcher) Updates() <-chan KeyValueEntry {
 	if w == nil {
 		return nil
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.updates
+}
+
+// close the update chan.
+func (w *watcher) close() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	if w.updates != nil {
+		close(w.updates)
+		w.updates = nil
+	}
+	w.mu.Unlock()
 }
 
 // Stop will unsubscribe from the watcher.
@@ -605,6 +627,7 @@ func (w *watcher) Stop() error {
 	if w == nil {
 		return nil
 	}
+	w.close()
 	return w.sub.Unsubscribe()
 }
 
@@ -626,6 +649,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	}
 
 	var initDoneMarker bool
+	initPending, received := uint64(0), uint64(0)
 
 	// Could be a pattern so don't check for validity as we normally do.
 	var b strings.Builder
@@ -633,7 +657,8 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	b.WriteString(keys)
 	keys = b.String()
 
-	w := &watcher{updates: make(chan KeyValueEntry, 32)}
+	// We will block below on placing items on the chan. That is by design.
+	w := &watcher{updates: make(chan KeyValueEntry, 256)}
 
 	update := func(m *Msg) {
 		tokens, err := getMetadataFields(m.Reply)
@@ -655,30 +680,38 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 			}
 		}
 		delta := uint64(parseNum(tokens[ackNumPendingTokenPos]))
-		entry := &kve{
-			bucket:   kv.name,
-			key:      subj,
-			value:    m.Data,
-			revision: uint64(parseNum(tokens[ackStreamSeqTokenPos])),
-			created:  time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
-			delta:    delta,
-			op:       op,
-		}
 		if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
-			w.updates <- entry
+			entry := &kve{
+				bucket:   kv.name,
+				key:      subj,
+				value:    m.Data,
+				revision: uint64(parseNum(tokens[ackStreamSeqTokenPos])),
+				created:  time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
+				delta:    delta,
+				op:       op,
+			}
+			w.mu.Lock()
+			if w.updates != nil {
+				w.updates <- entry
+			}
+			w.mu.Unlock()
 		}
-		// Check if done initial values.
-		if !initDoneMarker && delta == 0 {
-			initDoneMarker = true
-			w.updates <- nil
+		// Check if done and initial values.
+		if !initDoneMarker {
+			received++
+			// We set this on the first trip through..
+			if initPending == 0 {
+				initPending = delta
+			}
+			if received > initPending || delta == 0 {
+				initDoneMarker = true
+				w.mu.Lock()
+				if w.updates != nil {
+					w.updates <- nil
+				}
+				w.mu.Unlock()
+			}
 		}
-	}
-
-	// Check if we have anything pending.
-	_, err := kv.js.GetLastMsg(kv.stream, keys)
-	if err == ErrMsgNotFound {
-		initDoneMarker = true
-		w.updates <- nil
 	}
 
 	// Used ordered consumer to deliver results.
@@ -696,6 +729,15 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Track watcher.
+	sub.jsi.w = w
+
+	// Check on pending count.
+	if sub.jsi.pending == 0 {
+		initDoneMarker = true
+		w.updates <- nil
+	}
+
 	w.sub = sub
 	return w, nil
 }
