@@ -3929,7 +3929,8 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.mch = nil
 
 	// If JS subscription then stop HB timer.
-	if jsi := s.jsi; jsi != nil {
+	jsi := s.jsi
+	if jsi != nil {
 		if jsi.hbc != nil {
 			jsi.hbc.Stop()
 			jsi.hbc = nil
@@ -3938,17 +3939,19 @@ func (nc *Conn) removeSub(s *Subscription) {
 			jsi.csfct.Stop()
 			jsi.csfct = nil
 		}
-		// Check on any watcher. If we have one close the update chan.
-		if jsi.w != nil {
-			jsi.w.close()
-			jsi.w = nil
-		}
 	}
 
 	// Mark as invalid
 	s.closed = true
 	if s.pCond != nil {
 		s.pCond.Broadcast()
+	}
+
+	// Check for watchers.
+	if jsi != nil && jsi.w != nil {
+		// Check on any watcher. If we have one close the update chan.
+		jsi.w.close()
+		jsi.w = nil
 	}
 }
 

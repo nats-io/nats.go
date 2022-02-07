@@ -20,7 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -594,9 +594,9 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 
 // Implementation for Watch
 type watcher struct {
-	mu      sync.Mutex
 	updates chan KeyValueEntry
 	sub     *Subscription
+	closed  uint32
 }
 
 // Updates returns the interior channel.
@@ -604,22 +604,13 @@ func (w *watcher) Updates() <-chan KeyValueEntry {
 	if w == nil {
 		return nil
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	return w.updates
 }
 
-// close the update chan.
 func (w *watcher) close() {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	if w.updates != nil {
+	if atomic.CompareAndSwapUint32(&w.closed, 0, 1) {
 		close(w.updates)
-		w.updates = nil
 	}
-	w.mu.Unlock()
 }
 
 // Stop will unsubscribe from the watcher.
@@ -627,8 +618,9 @@ func (w *watcher) Stop() error {
 	if w == nil {
 		return nil
 	}
+	err := w.sub.Unsubscribe()
 	w.close()
-	return w.sub.Unsubscribe()
+	return err
 }
 
 // WatchAll watches all keys.
@@ -690,11 +682,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 				delta:    delta,
 				op:       op,
 			}
-			w.mu.Lock()
-			if w.updates != nil {
-				w.updates <- entry
-			}
-			w.mu.Unlock()
+			w.updates <- entry
 		}
 		// Check if done and initial values.
 		if !initDoneMarker {
@@ -705,11 +693,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 			}
 			if received > initPending || delta == 0 {
 				initDoneMarker = true
-				w.mu.Lock()
-				if w.updates != nil {
-					w.updates <- nil
-				}
-				w.mu.Unlock()
+				w.updates <- nil
 			}
 		}
 	}
