@@ -20,7 +20,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -596,7 +595,6 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 type watcher struct {
 	updates chan KeyValueEntry
 	sub     *Subscription
-	closed  uint32
 }
 
 // Updates returns the interior channel.
@@ -607,20 +605,12 @@ func (w *watcher) Updates() <-chan KeyValueEntry {
 	return w.updates
 }
 
-func (w *watcher) close() {
-	if atomic.CompareAndSwapUint32(&w.closed, 0, 1) {
-		close(w.updates)
-	}
-}
-
 // Stop will unsubscribe from the watcher.
 func (w *watcher) Stop() error {
 	if w == nil {
 		return nil
 	}
-	err := w.sub.Unsubscribe()
-	w.close()
-	return err
+	return w.sub.Unsubscribe()
 }
 
 // WatchAll watches all keys.
@@ -715,7 +705,10 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	}
 	// Track watcher.
 	sub.jsi.w = w
-
+	// Set us up to close when the waitForMessages func returns.
+	sub.pDone = func() {
+		close(w.updates)
+	}
 	// Check on pending count.
 	if sub.jsi.pending == 0 {
 		initDoneMarker = true

@@ -587,6 +587,7 @@ type Subscription struct {
 	pHead *Msg
 	pTail *Msg
 	pCond *sync.Cond
+	pDone func()
 
 	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
@@ -2697,7 +2698,13 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 		}
 		s.pHead = m.next
 	}
+	// Now check for pDone
+	done := s.pDone
 	s.mu.Unlock()
+
+	if done != nil {
+		done()
+	}
 }
 
 // Used for debugging and simulating loss for certain tests.
@@ -3945,13 +3952,6 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.closed = true
 	if s.pCond != nil {
 		s.pCond.Broadcast()
-	}
-
-	// Check for watchers.
-	if jsi != nil && jsi.w != nil {
-		// Check on any watcher. If we have one close the update chan.
-		jsi.w.close()
-		jsi.w = nil
 	}
 }
 
