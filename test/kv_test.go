@@ -1,4 +1,4 @@
-// Copyright 2022 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -258,6 +259,44 @@ func TestKeyValueWatchContext(t *testing.T) {
 	}
 }
 
+func TestKeyValueWatchContextUpdates(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
+	expectOk(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	watcher, err := kv.WatchAll(nats.Context(ctx))
+	expectOk(t, err)
+	defer watcher.Stop()
+
+	// Pull the initial state done marker which is nil.
+	select {
+	case v := <-watcher.Updates():
+		if v != nil {
+			t.Fatalf("Expected nil marker, got %+v", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive nil marker like expected")
+	}
+
+	// Fire a timer and cancel the context after 250ms.
+	time.AfterFunc(250*time.Millisecond, cancel)
+
+	// Make sure canceling will break us out here.
+	select {
+	case <-watcher.Updates():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not break out like expected")
+	}
+}
+
 func TestKeyValueBindStore(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -463,6 +502,48 @@ func TestKeyValueKeys(t *testing.T) {
 	}
 	if _, ok := kmap["age"]; !ok {
 		t.Fatalf("Expected %q to be only key present", "age")
+	}
+}
+
+func TestKeyValueDiscardNew(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 1, MaxBytes: 256})
+	expectOk(t, err)
+
+	vc := func() (major, minor, patch int) {
+		semVerRe := regexp.MustCompile(`\Av?([0-9]+)\.?([0-9]+)?\.?([0-9]+)?`)
+		m := semVerRe.FindStringSubmatch(nc.ConnectedServerVersion())
+		expectOk(t, err)
+		major, err = strconv.Atoi(m[1])
+		expectOk(t, err)
+		minor, err = strconv.Atoi(m[2])
+		expectOk(t, err)
+		patch, err = strconv.Atoi(m[3])
+		expectOk(t, err)
+		return major, minor, patch
+	}
+
+	major, minor, patch := vc()
+	status, err := kv.Status()
+	expectOk(t, err)
+	kvs := status.(*nats.KeyValueBucketStatus)
+	si := kvs.StreamInfo()
+
+	// If we are 2.7.1 or below DiscardOld should be used.
+	// If 2.7.2 or above should be DiscardNew
+	if major <= 2 && minor <= 7 && patch <= 1 {
+		if si.Config.Discard != nats.DiscardOld {
+			t.Fatalf("Expected Discard Old for server version %d.%d.%d", major, minor, patch)
+		}
+	} else {
+		if si.Config.Discard != nats.DiscardNew {
+			t.Fatalf("Expected Discard New for server version %d.%d.%d", major, minor, patch)
+		}
 	}
 }
 

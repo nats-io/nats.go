@@ -159,6 +159,7 @@ var (
 	ErrConsumerNotActive            = errors.New("nats: consumer not active")
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
+	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
 )
 
 func init() {
@@ -585,6 +586,7 @@ type Subscription struct {
 	pHead *Msg
 	pTail *Msg
 	pCond *sync.Cond
+	pDone func()
 
 	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
@@ -2695,7 +2697,13 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 		}
 		s.pHead = m.next
 	}
+	// Now check for pDone
+	done := s.pDone
 	s.mu.Unlock()
+
+	if done != nil {
+		done()
+	}
 }
 
 // Used for debugging and simulating loss for certain tests.
@@ -3927,7 +3935,8 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.mch = nil
 
 	// If JS subscription then stop HB timer.
-	if jsi := s.jsi; jsi != nil {
+	jsi := s.jsi
+	if jsi != nil {
 		if jsi.hbc != nil {
 			jsi.hbc.Stop()
 			jsi.hbc = nil
