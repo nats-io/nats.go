@@ -974,6 +974,14 @@ type jsSub struct {
 	pull     bool
 	dc       bool // Delete JS consumer
 
+	// This is ConsumerInfo's Pending+Consumer.Delivered that we get from the
+	// add consumer response. Note that some versions of the server gather the
+	// consumer info *after* the creation of the consumer, which means that
+	// some messages may have been already delivered. So the sum of the two
+	// is a more accurate representation of the number of messages pending or
+	// in the process of being delivered to the subscription when created.
+	pending uint64
+
 	// Ordered consumers
 	ordered bool
 	dseq    uint64
@@ -1281,37 +1289,33 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// Do some quick checks here for ordered consumers. We do these here instead of spread out
 	// in the individual SubOpts.
 	if o.ordered {
-		// Skip checks in special case where we use an internal option to bind to
-		// an existing consumer.
-		if !o.boc {
-			// Make sure we are not durable.
-			if isDurable {
-				return nil, fmt.Errorf("nats: durable can not be set for an ordered consumer")
-			}
-			// Check ack policy.
-			if o.cfg.AckPolicy != ackPolicyNotSet {
-				return nil, fmt.Errorf("nats: ack policy can not be set for an ordered consumer")
-			}
-			// Check max deliver.
-			if o.cfg.MaxDeliver != 1 && o.cfg.MaxDeliver != 0 {
-				return nil, fmt.Errorf("nats: max deliver can not be set for an ordered consumer")
-			}
-			// No deliver subject, we pick our own.
-			if o.cfg.DeliverSubject != _EMPTY_ {
-				return nil, fmt.Errorf("nats: deliver subject can not be set for an ordered consumer")
-			}
-			// Queue groups not allowed.
-			if queue != _EMPTY_ {
-				return nil, fmt.Errorf("nats: queues not be set for an ordered consumer")
-			}
-			// Check for bound consumers.
-			if consumer != _EMPTY_ {
-				return nil, fmt.Errorf("nats: can not bind existing consumer for an ordered consumer")
-			}
-			// Check for pull mode.
-			if isPullMode {
-				return nil, fmt.Errorf("nats: can not use pull mode for an ordered consumer")
-			}
+		// Make sure we are not durable.
+		if isDurable {
+			return nil, fmt.Errorf("nats: durable can not be set for an ordered consumer")
+		}
+		// Check ack policy.
+		if o.cfg.AckPolicy != ackPolicyNotSet {
+			return nil, fmt.Errorf("nats: ack policy can not be set for an ordered consumer")
+		}
+		// Check max deliver.
+		if o.cfg.MaxDeliver != 1 && o.cfg.MaxDeliver != 0 {
+			return nil, fmt.Errorf("nats: max deliver can not be set for an ordered consumer")
+		}
+		// No deliver subject, we pick our own.
+		if o.cfg.DeliverSubject != _EMPTY_ {
+			return nil, fmt.Errorf("nats: deliver subject can not be set for an ordered consumer")
+		}
+		// Queue groups not allowed.
+		if queue != _EMPTY_ {
+			return nil, fmt.Errorf("nats: queues not be set for an ordered consumer")
+		}
+		// Check for bound consumers.
+		if consumer != _EMPTY_ {
+			return nil, fmt.Errorf("nats: can not bind existing consumer for an ordered consumer")
+		}
+		// Check for pull mode.
+		if isPullMode {
+			return nil, fmt.Errorf("nats: can not use pull mode for an ordered consumer")
 		}
 		// Setup how we need it to be here.
 		o.cfg.FlowControl = true
@@ -1346,7 +1350,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// With an explicit durable name, we can lookup the consumer first
 	// to which it should be attaching to.
 	// If bind to ordered consumer is true, skip the lookup.
-	if consumer != _EMPTY_ && !o.boc {
+	if consumer != _EMPTY_ {
 		info, err = js.ConsumerInfo(stream, consumer)
 		notFoundErr = errors.Is(err, ErrConsumerNotFound)
 		lookupErr = err == ErrJetStreamNotEnabled || err == ErrTimeout || err == context.DeadlineExceeded
@@ -1415,14 +1419,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			Config: &cfg,
 		}
 		hbi = cfg.Heartbeat
-
-		// If bind to ordered consumer is true, we wanted to do all above so that
-		// we have information about the ordered consumer and how to recreate it
-		// if later a gap is detected. However, we are not going to actually
-		// create the consumer since it was done by the caller.
-		if o.boc {
-			shouldCreate = false
-		}
 	}
 
 	if isPullMode {
@@ -1450,9 +1446,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		nms:      nms,
 		psubj:    subj,
 		cancel:   cancel,
-		// Special internal case: the consumer was created outside, but we
-		// take ownership and will delete the consumer on unsub/drain.
-		dc: o.boc,
 	}
 
 	// Check if we are manual ack.
@@ -1537,6 +1530,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				if err != nil {
 					return nil, err
 				}
+				jsi.pending = info.NumPending + info.Delivered.Consumer
 
 				if !isPullMode {
 					// We can't reuse the channel, so if one was passed, we need to create a new one.
@@ -1573,6 +1567,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			// Since the library created the JS consumer, it will delete it on Unsubscribe()/Drain()
 			sub.mu.Lock()
 			sub.jsi.dc = true
+			sub.jsi.pending = info.NumPending + info.Delivered.Consumer
 			// If this is an ephemeral, we did not have a consumer name, we get it from the info
 			// after the AddConsumer returns.
 			if consumer == _EMPTY_ {
@@ -2014,16 +2009,7 @@ type subOpts struct {
 	mack bool
 	// For an ordered consumer.
 	ordered bool
-	// Special case for KV to be able to bind an ordered consumer
-	boc bool
-	ctx context.Context
-}
-
-func bindOrderedConsumer() SubOpt {
-	return subOptFn(func(opts *subOpts) error {
-		opts.boc = true
-		return nil
-	})
+	ctx     context.Context
 }
 
 // OrderedConsumer will create a FIFO direct/ephemeral consumer for in order delivery of messages.

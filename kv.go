@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -593,11 +594,11 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 
 // Implementation for Watch
 type watcher struct {
+	mu          sync.Mutex
 	updates     chan KeyValueEntry
 	sub         *Subscription
 	initDone    bool
 	initPending uint64
-	received    uint64
 }
 
 // Updates returns the interior channel.
@@ -662,6 +663,8 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 			}
 		}
 		delta := uint64(parseNum(tokens[ackNumPendingTokenPos]))
+		w.mu.Lock()
+		defer w.mu.Unlock()
 		if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
 			entry := &kve{
 				bucket:   kv.name,
@@ -676,68 +679,46 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 		}
 		// Check if done and initial values.
 		if !w.initDone {
-			w.received++
 			// We set this on the first trip through..
 			if w.initPending == 0 {
 				w.initPending = delta
 			}
-			if w.received > w.initPending || delta == 0 {
+			if w.initPending == 0 {
 				w.initDone = true
 				w.updates <- nil
+			} else {
+				w.initPending--
 			}
 		}
 	}
 
-	// The server sends the ConsumerInfo after the actual creation,
-	// and there is a possibility that the NumPending then does not
-	// reflect the real value. So we are creating the consumer
-	// without the NATS subscription started to make sure that
-	// there is no delivery.
-	cfg := ConsumerConfig{
-		DeliverSubject: kv.js.nc.newInbox(),
-		DeliverPolicy:  DeliverAllPolicy,
-		FilterSubject:  keys,
-		FlowControl:    true,
-		AckPolicy:      AckNonePolicy,
-		MaxDeliver:     1,
-		AckWait:        22 * time.Hour,
-		Direct:         true,
-		Heartbeat:      orderedHeartbeatsInterval,
-	}
 	// Used ordered consumer to deliver results.
-	// Use the deliver subject from the config and also set the internal option
-	// to indicate that we will bind to the above consumer, by-passing some of
-	// the check for public ordered consumers.
-	subOpts := []SubOpt{
-		OrderedConsumer(),
-		DeliverSubject(cfg.DeliverSubject),
-		bindOrderedConsumer()}
+	subOpts := []SubOpt{OrderedConsumer()}
 	if !o.includeHistory {
-		cfg.DeliverPolicy = DeliverLastPerSubjectPolicy
 		subOpts = append(subOpts, DeliverLastPerSubject())
 	}
 	if o.metaOnly {
-		cfg.HeadersOnly = true
 		subOpts = append(subOpts, HeadersOnly())
 	}
 	if o.ctx != nil {
 		subOpts = append(subOpts, Context(o.ctx))
 	}
-	ci, err := kv.js.AddConsumer(kv.stream, &cfg)
-	if err != nil {
-		return nil, err
-	}
-	if ci.NumPending == 0 {
-		w.initDone = true
-		w.updates <- nil
-	}
-	// Now that we have the consumer name, use the Bind option.
-	subOpts = append(subOpts, Bind(kv.stream, ci.Name))
+	// Create the sub and rest of initialization under the lock.
+	// We want to prevent the race between this code and the
+	// update() callback.
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	sub, err := kv.js.Subscribe(keys, update, subOpts...)
 	if err != nil {
 		return nil, err
 	}
 	sub.mu.Lock()
+	// If there were no pending messages at the time of the creation
+	// of the consumer, send the marker.
+	if sub.jsi != nil && sub.jsi.pending == 0 {
+		w.initDone = true
+		w.updates <- nil
+	}
 	// Set us up to close when the waitForMessages func returns.
 	sub.pDone = func() {
 		close(w.updates)
