@@ -3935,8 +3935,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.mch = nil
 
 	// If JS subscription then stop HB timer.
-	jsi := s.jsi
-	if jsi != nil {
+	if jsi := s.jsi; jsi != nil {
 		if jsi.hbc != nil {
 			jsi.hbc.Stop()
 			jsi.hbc = nil
