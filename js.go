@@ -1530,7 +1530,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				if err != nil {
 					return nil, err
 				}
-				jsi.pending = info.NumPending + info.Delivered.Consumer
 
 				if !isPullMode {
 					// We can't reuse the channel, so if one was passed, we need to create a new one.
