@@ -599,6 +599,7 @@ type watcher struct {
 	sub         *Subscription
 	initDone    bool
 	initPending uint64
+	received    uint64
 }
 
 // Updates returns the interior channel.
@@ -679,15 +680,14 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 		}
 		// Check if done and initial values.
 		if !w.initDone {
+			w.received++
 			// We set this on the first trip through..
 			if w.initPending == 0 {
 				w.initPending = delta
 			}
-			if w.initPending == 0 {
+			if w.received > w.initPending || delta == 0 {
 				w.initDone = true
 				w.updates <- nil
-			} else {
-				w.initPending--
 			}
 		}
 	}
