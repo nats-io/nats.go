@@ -93,8 +93,8 @@ type KeyValueStatus interface {
 
 // KeyWatcher is what is returned when doing a watch.
 type KeyWatcher interface {
-	// GetContext returns watcher context optionally provided by nats.Context option.
-	GetContext() context.Context
+	// Context returns watcher context optionally provided by nats.Context option.
+	Context() context.Context
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
 	// Stop will stop this watcher.
@@ -630,8 +630,8 @@ type watcher struct {
 	ctx         context.Context
 }
 
-// GetContext returns the context for the watcher if set.
-func (w *watcher) GetContext() context.Context {
+// Context returns the context for the watcher if set.
+func (w *watcher) Context() context.Context {
 	if w == nil {
 		return nil
 	}
