@@ -411,6 +411,9 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 		m, err = kv.js.GetLastMsg(kv.stream, b.String())
 	} else {
 		m, err = kv.js.GetMsg(kv.stream, revision)
+		if err == nil && m.Subject != b.String() {
+			return nil, ErrKeyNotFound
+		}
 	}
 
 	if err != nil {
@@ -418,10 +421,6 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 			err = ErrKeyNotFound
 		}
 		return nil, err
-	}
-
-	if m.Subject != b.String() {
-		return nil, ErrKeyNotFound
 	}
 
 	entry := &kve{
