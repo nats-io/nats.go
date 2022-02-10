@@ -373,10 +373,10 @@ func keyValid(key string) bool {
 // Get returns the latest value for the key.
 func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 	e, err := kv.get(key, kvLatestRevision)
-	if err == ErrKeyDeleted {
-		return nil, ErrKeyNotFound
-	}
 	if err != nil {
+		if err == ErrKeyDeleted {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 
@@ -386,10 +386,10 @@ func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 // GetRevision returns a specific revision value for the key.
 func (kv *kvs) GetRevision(key string, revision uint64) (KeyValueEntry, error) {
 	e, err := kv.get(key, revision)
-	if err == ErrKeyDeleted {
-		return nil, ErrKeyNotFound
-	}
 	if err != nil {
+		if err == ErrKeyDeleted {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 
