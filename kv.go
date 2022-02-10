@@ -93,6 +93,8 @@ type KeyValueStatus interface {
 
 // KeyWatcher is what is returned when doing a watch.
 type KeyWatcher interface {
+	// GetContext returns watcher context optionally provided by nats.Context option.
+	GetContext() context.Context
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
 	// Stop will stop this watcher.
@@ -625,6 +627,15 @@ type watcher struct {
 	initDone    bool
 	initPending uint64
 	received    uint64
+	options     watchOpts
+}
+
+// GetContext returns the context for the watcher if set.
+func (w *watcher) GetContext() context.Context {
+	if w == nil {
+		return nil
+	}
+	return w.options.ctx
 }
 
 // Updates returns the interior channel.
@@ -667,7 +678,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	keys = b.String()
 
 	// We will block below on placing items on the chan. That is by design.
-	w := &watcher{updates: make(chan KeyValueEntry, 256)}
+	w := &watcher{updates: make(chan KeyValueEntry, 256), options: o}
 
 	update := func(m *Msg) {
 		tokens, err := getMetadataFields(m.Reply)
