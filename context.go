@@ -150,7 +150,7 @@ func (s *Subscription) nextMsgWithContext(ctx context.Context, pullSubInternal, 
 		// If internal and we don't want to wait, signal that there is no
 		// message in the internal queue.
 		if pullSubInternal && !waitIfNoMsg {
-			return nil, errNoMessages
+			return nil, ErrNoMessages
 		}
 	}
 

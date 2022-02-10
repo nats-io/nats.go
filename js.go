@@ -2335,8 +2335,6 @@ func PullMaxWaiting(n int) SubOpt {
 	})
 }
 
-var errNoMessages = errors.New("nats: no messages")
-
 // Returns if the given message is a user message or not, and if
 // `checkSts` is true, returns appropriate error based on the
 // content of the status (404, etc..)
@@ -2367,7 +2365,7 @@ func checkMsg(msg *Msg, checkSts bool) (usrMsg bool, err error) {
 		err = ErrNoResponders
 	case noMessagesSts:
 		// 404 indicates that there are no messages.
-		err = errNoMessages
+		err = ErrNoMessages
 	case reqTimeoutSts:
 		// Older servers may send a 408 when a request in the server was expired
 		// and interest is still found, which will be the case for our
@@ -2479,7 +2477,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		// are no messages.
 		msg, err = sub.nextMsgWithContext(ctx, true, false)
 		if err != nil {
-			if err == errNoMessages {
+			if err == ErrNoMessages {
 				err = nil
 			}
 			break
@@ -2534,7 +2532,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 				usrMsg, err = checkMsg(msg, true)
 				if err == nil && usrMsg {
 					msgs = append(msgs, msg)
-				} else if noWait && (err == errNoMessages) && len(msgs) == 0 {
+				} else if noWait && (err == ErrNoMessages) && len(msgs) == 0 {
 					// If we have a 404 for our "no_wait" request and have
 					// not collected any message, then resend request to
 					// wait this time.

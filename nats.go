@@ -160,6 +160,7 @@ var (
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
 	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
+	ErrNoMessages                   = errors.New("nats: no messages")
 )
 
 func init() {
