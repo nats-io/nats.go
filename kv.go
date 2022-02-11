@@ -68,7 +68,7 @@ type KeyValue interface {
 	// Bucket returns the current bucket name.
 	Bucket() string
 	// PurgeDeletes will remove all current delete markers.
-	PurgeDeletes(opts ...WatchOpt) error
+	PurgeDeletes(opts ...PurgeOpt) error
 	// Status retrieves the status and configuration of a bucket
 	Status() (KeyValueStatus, error)
 }
@@ -147,6 +147,34 @@ func MetaOnly() WatchOpt {
 		opts.metaOnly = true
 		return nil
 	})
+}
+
+type PurgeOpt interface {
+	configurePurge(opts *purgeOpts) error
+}
+
+type purgeOpts struct {
+	dmthr time.Duration // Delete markers threshold
+	ctx   context.Context
+}
+
+// DeleteMarkersOlderThan indicates that delete or purge markers older than that
+// will be deleted as part of PurgeDeletes() operation, otherwise, only the data
+// will be removed but markers that are recent will be kept.
+// Note that if no option is specified, the default is 30 minutes. You can set
+// this option to a negative value to instruct to always remove the markers,
+// regardless of their age.
+type DeleteMarkersOlderThan time.Duration
+
+func (ttl DeleteMarkersOlderThan) configurePurge(opts *purgeOpts) error {
+	opts.dmthr = time.Duration(ttl)
+	return nil
+}
+
+// For nats.Context() support.
+func (ctx ContextOpt) configurePurge(opts *purgeOpts) error {
+	opts.ctx = ctx
+	return nil
 }
 
 // KeyValueConfig is for configuring a KeyValue store.
@@ -536,14 +564,42 @@ func (kv *kvs) delete(key string, purge bool) error {
 	return err
 }
 
+const kvDefaultPurgeDeletesMarkerThreshold = 30 * time.Minute
+
 // PurgeDeletes will remove all current delete markers.
 // This is a maintenance option if there is a larger buildup of delete markers.
-func (kv *kvs) PurgeDeletes(opts ...WatchOpt) error {
-	watcher, err := kv.WatchAll(opts...)
+// See DeleteMarkersOlderThan() option for more information.
+func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
+	var o purgeOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configurePurge(&o); err != nil {
+				return err
+			}
+		}
+	}
+	// Transfer possible context purge option to the watcher. This is the
+	// only option that matters for the PurgeDeletes() feature.
+	var wopts []WatchOpt
+	if o.ctx != nil {
+		wopts = append(wopts, Context(o.ctx))
+	}
+	watcher, err := kv.WatchAll(wopts...)
 	if err != nil {
 		return err
 	}
 	defer watcher.Stop()
+
+	var limit time.Time
+	olderThan := o.dmthr
+	// Negative value is used to instruct to always remove markers, regardless
+	// of age. If set to 0 (or not set), use our default value.
+	if olderThan == 0 {
+		olderThan = kvDefaultPurgeDeletesMarkerThreshold
+	}
+	if olderThan > 0 {
+		limit = time.Now().Add(-olderThan)
+	}
 
 	var deleteMarkers []KeyValueEntry
 	for entry := range watcher.Updates() {
@@ -564,8 +620,11 @@ func (kv *kvs) PurgeDeletes(opts ...WatchOpt) error {
 		b.WriteString(kv.pre)
 		b.WriteString(entry.Key())
 		pr.Subject = b.String()
-		err := kv.js.purgeStream(kv.stream, &pr)
-		if err != nil {
+		pr.Keep = 0
+		if olderThan > 0 && entry.Created().After(limit) {
+			pr.Keep = 1
+		}
+		if err := kv.js.purgeStream(kv.stream, &pr); err != nil {
 			return err
 		}
 		b.Reset()
