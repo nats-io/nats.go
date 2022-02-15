@@ -1461,7 +1461,7 @@ func (nc *Conn) connScheme() string {
 	return "nats"
 }
 
-// Return true iff u.Hostname() is an IP address.
+// Return true if u.Hostname() is an IP address.
 func hostIsIP(u *url.URL) bool {
 	return net.ParseIP(u.Hostname()) != nil
 }

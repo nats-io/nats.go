@@ -48,9 +48,9 @@ type KeyValue interface {
 	Put(key string, value []byte) (revision uint64, err error)
 	// PutString will place the string for the key into the store.
 	PutString(key string, value string) (revision uint64, err error)
-	// Create will add the key/value pair iff it does not exist.
+	// Create will add the key/value pair if it does not exist.
 	Create(key string, value []byte) (revision uint64, err error)
-	// Update will update the value iff the latest revision matches.
+	// Update will update the value if the latest revision matches.
 	Update(key string, value []byte, last uint64) (revision uint64, err error)
 	// Delete will place a delete marker and leave all revisions.
 	Delete(key string) error
@@ -468,7 +468,7 @@ func (kv *kvs) PutString(key string, value string) (revision uint64, err error) 
 	return kv.Put(key, []byte(value))
 }
 
-// Create will add the key/value pair iff it does not exist.
+// Create will add the key/value pair if it does not exist.
 func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	v, err := kv.Update(key, value, 0)
 	if err == nil {
@@ -484,7 +484,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	return 0, err
 }
 
-// Update will update the value iff the latest revision matches.
+// Update will update the value if the latest revision matches.
 func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error) {
 	if !keyValid(key) {
 		return 0, ErrInvalidKey
