@@ -291,6 +291,8 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 		stream: stream,
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
 		js:     js,
+		// Determine if we need to use the JS prefix in front of Put and Delete operations
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
 }
@@ -352,6 +354,8 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		stream: scfg.Name,
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, cfg.Bucket),
 		js:     js,
+		// Determine if we need to use the JS prefix in front of Put and Delete operations
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
 }
@@ -370,6 +374,10 @@ type kvs struct {
 	stream string
 	pre    string
 	js     *js
+	// If true, it means that APIPrefix/Domain was set in the context
+	// and we need to add something to some of our high level protocols
+	// (such as Put, etc..)
+	useJSPfx bool
 }
 
 // Underlying entry.
@@ -481,6 +489,9 @@ func (kv *kvs) Put(key string, value []byte) (revision uint64, err error) {
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
@@ -548,6 +559,9 @@ func (kv *kvs) delete(key string, purge bool) error {
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
