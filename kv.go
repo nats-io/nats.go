@@ -530,6 +530,9 @@ func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error)
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 

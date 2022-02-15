@@ -640,7 +640,7 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 	nc1, js1 := jsClient(t, s, nats.UserInfo("a", "a"))
 	defer nc1.Close()
 
-	kv1, err := js1.CreateKeyValue(&nats.KeyValueConfig{Bucket: "Map"})
+	kv1, err := js1.CreateKeyValue(&nats.KeyValueConfig{Bucket: "Map", History: 10})
 	if err != nil {
 		t.Fatalf("Error creating kv store: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 		t.Fatalf("Error getting jetstream context: %v", err)
 	}
 
-	kv2, err := js2.CreateKeyValue(&nats.KeyValueConfig{Bucket: "Map"})
+	kv2, err := js2.CreateKeyValue(&nats.KeyValueConfig{Bucket: "Map", History: 10})
 	if err != nil {
 		t.Fatalf("Error creating kv store: %v", err)
 	}
@@ -676,7 +676,9 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 		t.Fatalf("Expected nil entry, got %+v", e)
 	}
 
-	if _, err := kv2.Put("map", []byte("value")); err != nil {
+	// Do a Put from kv2
+	rev, err := kv2.Put("map", []byte("value"))
+	if err != nil {
 		t.Fatalf("Error on put: %v", err)
 	}
 
@@ -705,6 +707,39 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 
 	// Watcher 2
 	if e := watchNext(w2); e == nil || e.Key() != "map" || string(e.Value()) != "value" {
+		t.Fatalf("Unexpected entry: %+v", e)
+	}
+
+	// Try an update form kv2
+	if _, err := kv2.Update("map", []byte("updated"), rev); err != nil {
+		t.Fatalf("Failed to update: %v", err)
+	}
+
+	// Get from kv1
+	e, err = kv1.Get("map")
+	if err != nil {
+		t.Fatalf("Error on get: %v", err)
+	}
+	if e.Key() != "map" || string(e.Value()) != "updated" {
+		t.Fatalf("Unexpected entry: +%v", e)
+	}
+
+	// Get from kv2
+	e, err = kv2.Get("map")
+	if err != nil {
+		t.Fatalf("Error on get: %v", err)
+	}
+	if e.Key() != "map" || string(e.Value()) != "updated" {
+		t.Fatalf("Unexpected entry: +%v", e)
+	}
+
+	// Watcher 1
+	if e := watchNext(w1); e == nil || e.Key() != "map" || string(e.Value()) != "updated" {
+		t.Fatalf("Unexpected entry: %+v", e)
+	}
+
+	// Watcher 2
+	if e := watchNext(w2); e == nil || e.Key() != "map" || string(e.Value()) != "updated" {
 		t.Fatalf("Unexpected entry: %+v", e)
 	}
 
