@@ -865,19 +865,20 @@ func TestJetStreamTracing(t *testing.T) {
 	defer nc.Close()
 
 	ctr := 0
-	js, err := nc.JetStream(TraceFunc(func(op TraceOperation, subj string, payload []byte, hdr Header) {
-		ctr++
-		if ctr == 1 {
-			if op != TraceSent || subj != "$JS.API.STREAM.CREATE.X" {
-				t.Fatalf("Exected sent trace to %s: got: %d %s", "$JS.API.STREAM.CREATE.X", op, subj)
+	js, err := nc.JetStream(&ClientTrace{
+		RequestSent: func(subj string, payload []byte) {
+			ctr++
+			if subj != "$JS.API.STREAM.CREATE.X" {
+				t.Fatalf("Expected sent trace to %s: got: %s", "$JS.API.STREAM.CREATE.X", subj)
 			}
-			return
-		}
-
-		if op != TraceReceived || subj != "$JS.API.STREAM.CREATE.X" {
-			t.Fatalf("Exected received trace to %s: got: %d %s", "$JS.API.STREAM.CREATE.X", op, subj)
-		}
-	}))
+		},
+		ResponseReceived: func(subj string, payload []byte, hdr Header) {
+			ctr++
+			if subj != "$JS.API.STREAM.CREATE.X" {
+				t.Fatalf("Expected received trace to %s: got: %s", "$JS.API.STREAM.CREATE.X", subj)
+			}
+		},
+	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
