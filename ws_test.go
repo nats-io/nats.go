@@ -860,6 +860,36 @@ func TestWSWithTLS(t *testing.T) {
 	}
 }
 
+func TestWSTlsNoConfig(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.Servers = []string{"wss://localhost:443"}
+
+	nc := &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Error setting up pool: %v", err)
+	}
+	// Verify that this has set Secure/TLSConfig
+	nc.mu.Lock()
+	ok := nc.Opts.Secure && nc.Opts.TLSConfig != nil
+	nc.mu.Unlock()
+	if !ok {
+		t.Fatal("Secure and TLSConfig were not set")
+	}
+	// Now try to add a bare host:ip to the pool and verify
+	// that the wss:// scheme is added.
+	if err := nc.addURLToPool("1.2.3.4:443", true, false); err != nil {
+		t.Fatalf("Error adding to pool: %v", err)
+	}
+	nc.mu.Lock()
+	for _, srv := range nc.srvPool {
+		if srv.url.Scheme != wsSchemeTLS {
+			nc.mu.Unlock()
+			t.Fatalf("Expected scheme to be %q, got url: %s", wsSchemeTLS, srv.url)
+		}
+	}
+	nc.mu.Unlock()
+}
+
 func TestWSGossipAndReconnect(t *testing.T) {
 	o1 := testWSGetDefaultOptions(t, false)
 	o1.ServerName = "A"

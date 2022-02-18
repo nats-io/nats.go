@@ -1435,7 +1435,7 @@ func (nc *Conn) setupServerPool() error {
 
 	// Check for Scheme hint to move to TLS mode.
 	for _, srv := range nc.srvPool {
-		if srv.url.Scheme == tlsScheme {
+		if srv.url.Scheme == tlsScheme || srv.url.Scheme == wsSchemeTLS {
 			// FIXME(dlc), this is for all in the pool, should be case by case.
 			nc.Opts.Secure = true
 			if nc.Opts.TLSConfig == nil {
