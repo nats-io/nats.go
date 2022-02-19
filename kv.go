@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -346,7 +347,21 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 	}
 
 	if _, err := js.AddStream(scfg); err != nil {
-		return nil, err
+		// If we have a failure to add, it could be because we have
+		// a config change if the KV was created against a pre 2.7.2
+		// and we are now moving to a v2.7.2+. If that is the case
+		// and the only difference is the discard policy, then update
+		// the stream.
+		if strings.Contains(err.Error(), "already in use") {
+			if si, _ := js.StreamInfo(scfg.Name); si != nil {
+				if streamCfgSameSansDiscard(&si.Config, scfg) {
+					_, err = js.UpdateStream(scfg)
+				}
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	kv := &kvs{
@@ -358,6 +373,25 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
+}
+
+func streamCfgSameSansDiscard(srvCfg, ourCfg *StreamConfig) bool {
+	// The server sets some values (like -1) when sending 0.
+	// So we need to align to what the server may return to
+	// have a meaningfull comparison.
+	ours := *ourCfg
+	if ours.MaxMsgSize == 0 {
+		ours.MaxMsgSize = -1
+	}
+	if ours.MaxBytes == 0 {
+		ours.MaxBytes = -1
+	}
+	ours.Duplicates = 2 * time.Minute
+	ours.MaxMsgs = -1
+	ours.MaxConsumers = -1
+	// Set our discard to what server has for the comparison
+	ours.Discard = srvCfg.Discard
+	return reflect.DeepEqual(srvCfg, &ours)
 }
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
