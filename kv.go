@@ -327,18 +327,31 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		replicas = 1
 	}
 
+	// We will set explicitly some values so that we can do comparison
+	// if we get an "already in use" error and need to check if it is same.
+	maxBytes := cfg.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = -1
+	}
+	maxMsgSize := cfg.MaxValueSize
+	if maxMsgSize == 0 {
+		maxMsgSize = -1
+	}
 	scfg := &StreamConfig{
 		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
 		Description:       cfg.Description,
 		Subjects:          []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)},
 		MaxMsgsPerSubject: history,
-		MaxBytes:          cfg.MaxBytes,
+		MaxBytes:          maxBytes,
 		MaxAge:            cfg.TTL,
-		MaxMsgSize:        cfg.MaxValueSize,
+		MaxMsgSize:        maxMsgSize,
 		Storage:           cfg.Storage,
 		Replicas:          replicas,
 		AllowRollup:       true,
 		DenyDelete:        true,
+		Duplicates:        2 * time.Minute,
+		MaxMsgs:           -1,
+		MaxConsumers:      -1,
 	}
 
 	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
@@ -352,9 +365,12 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		// and we are now moving to a v2.7.2+. If that is the case
 		// and the only difference is the discard policy, then update
 		// the stream.
-		if strings.Contains(err.Error(), "already in use") {
+		if err == ErrStreamNameAlreadyInUse {
 			if si, _ := js.StreamInfo(scfg.Name); si != nil {
-				if streamCfgSameSansDiscard(&si.Config, scfg) {
+				// To compare, make the server's stream info discard
+				// policy same than ours.
+				si.Config.Discard = scfg.Discard
+				if reflect.DeepEqual(&si.Config, scfg) {
 					_, err = js.UpdateStream(scfg)
 				}
 			}
@@ -373,25 +389,6 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
-}
-
-func streamCfgSameSansDiscard(srvCfg, ourCfg *StreamConfig) bool {
-	// The server sets some values (like -1) when sending 0.
-	// So we need to align to what the server may return to
-	// have a meaningfull comparison.
-	ours := *ourCfg
-	if ours.MaxMsgSize == 0 {
-		ours.MaxMsgSize = -1
-	}
-	if ours.MaxBytes == 0 {
-		ours.MaxBytes = -1
-	}
-	ours.Duplicates = 2 * time.Minute
-	ours.MaxMsgs = -1
-	ours.MaxConsumers = -1
-	// Set our discard to what server has for the comparison
-	ours.Discard = srvCfg.Discard
-	return reflect.DeepEqual(srvCfg, &ours)
 }
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
