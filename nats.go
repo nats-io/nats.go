@@ -2138,7 +2138,7 @@ func (nc *Conn) connectProto() (string, error) {
 		}
 		sigraw, err := o.SignatureCB([]byte(nc.info.Nonce))
 		if err != nil {
-			return _EMPTY_, err
+			return _EMPTY_, fmt.Errorf("error signing nonce: %v", err)
 		}
 		sig = base64.RawURLEncoding.EncodeToString(sigraw)
 	}
@@ -5237,7 +5237,7 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
 	kp, err := nkeyPairFromSeedFile(seedFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to extract key pair from file %q: %v", seedFile, err)
 	}
 	// Wipe our key on exit.
 	defer kp.Wipe()

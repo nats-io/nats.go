@@ -1483,6 +1483,17 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 		t.Fatalf("Expected to connect, got %v", err)
 	}
 	nc.Close()
+
+	chainedFile = createTmpFile(t, []byte("invalid content"))
+	defer os.Remove(chainedFile)
+	nc, err = Connect(url, UserCredentials(chainedFile))
+	if err == nil || !strings.Contains(err.Error(),
+		"error signing nonce: unable to extract key pair from file") {
+		if nc != nil {
+			nc.Close()
+		}
+		t.Fatalf("Expected error about invalid creds file, got %q", err)
+	}
 }
 
 func TestExpiredAuthentication(t *testing.T) {
