@@ -919,9 +919,6 @@ type ConsumerConfig struct {
 
 	// Ephemeral inactivity threshold.
 	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
-
-	// Internal Use
-	Direct bool `json:"direct,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -1323,7 +1320,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		o.cfg.AckPolicy = AckNonePolicy
 		o.cfg.MaxDeliver = 1
 		o.cfg.AckWait = 22 * time.Hour // Just set to something known, not utilized.
-		o.cfg.Direct = true
 		if !hasHeartbeats {
 			o.cfg.Heartbeat = orderedHeartbeatsInterval
 		}
