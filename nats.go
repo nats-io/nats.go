@@ -1803,6 +1803,21 @@ func (nc *Conn) ConnectedUrl() string {
 	return nc.current.url.String()
 }
 
+// ConnectedUrlRedacted reports the connected server's URL with passwords redacted
+func (nc *Conn) ConnectedUrlRedacted() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.current.url.Redacted()
+}
+
 // ConnectedAddr returns the connected server's IP
 func (nc *Conn) ConnectedAddr() string {
 	if nc == nil {
