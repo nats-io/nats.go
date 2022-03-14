@@ -22,6 +22,7 @@ import (
 	"io"
 	"math/rand"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -599,7 +600,7 @@ func TestWSControlFrames(t *testing.T) {
 	defer nc.Close()
 
 	// Enqueue a PING and make sure that we don't break
-	nc.wsEnqueueControlMsg(wsPingMessage, []byte("this is a ping payload"))
+	nc.wsEnqueueControlMsg(true, wsPingMessage, []byte("this is a ping payload"))
 	select {
 	case e := <-dch:
 		t.Fatal(e)
@@ -1086,4 +1087,24 @@ func TestWSStress(t *testing.T) {
 			<-consDoneCh
 		})
 	}
+}
+
+func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
+	o := testWSGetDefaultOptions(t, false)
+	o.Username = "user"
+	o.Password = "pwd"
+	s := RunServerWithOptions(o)
+	defer s.Shutdown()
+
+	tm := time.AfterFunc(3*time.Second, func() {
+		buf := make([]byte, 1000000)
+		n := runtime.Stack(buf, true)
+		panic(fmt.Sprintf("Test has probably deadlocked!\n%s\n", buf[:n]))
+	})
+
+	if _, err := Connect(fmt.Sprintf("ws://127.0.0.1:%d", o.Websocket.Port)); err == nil {
+		t.Fatal("Expected auth error, did not get any error")
+	}
+
+	tm.Stop()
 }

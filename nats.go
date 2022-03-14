@@ -1649,6 +1649,17 @@ func (w *natsWriter) doneWithPending() {
 	w.pending = nil
 }
 
+// Notify the reader that we are done with the connect, where "read" operations
+// happen synchronously and under the connection lock. After this point, "read"
+// will be happening from the read loop, without the connection lock.
+//
+// Note: this runs under the connection lock.
+func (r *natsReader) doneWithConnect() {
+	if wsr, ok := r.r.(*websocketReader); ok {
+		wsr.doneWithConnect()
+	}
+}
+
 func (r *natsReader) Read() ([]byte, error) {
 	if r.off >= 0 {
 		off := r.off
@@ -1976,6 +1987,10 @@ func (nc *Conn) processConnectInit() error {
 	nc.wg.Add(2)
 	go nc.readLoop()
 	go nc.flusher()
+
+	// Notify the reader that we are done with the connect handshake, where
+	// reads were done synchronously and under the connection lock.
+	nc.br.doneWithConnect()
 
 	return nil
 }
