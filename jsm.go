@@ -587,6 +587,9 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
+		if resp.Error.ErrorCode == 10058 {
+			return nil, ErrStreamNameAlreadyInUse
+		}
 		return nil, errors.New(resp.Error.Description)
 	}
 

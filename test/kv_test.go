@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -555,48 +554,6 @@ func TestKeyValueKeys(t *testing.T) {
 	}
 	if _, ok := kmap["age"]; !ok {
 		t.Fatalf("Expected %q to be only key present", "age")
-	}
-}
-
-func TestKeyValueDiscardNew(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 1, MaxBytes: 256})
-	expectOk(t, err)
-
-	vc := func() (major, minor, patch int) {
-		semVerRe := regexp.MustCompile(`\Av?([0-9]+)\.?([0-9]+)?\.?([0-9]+)?`)
-		m := semVerRe.FindStringSubmatch(nc.ConnectedServerVersion())
-		expectOk(t, err)
-		major, err = strconv.Atoi(m[1])
-		expectOk(t, err)
-		minor, err = strconv.Atoi(m[2])
-		expectOk(t, err)
-		patch, err = strconv.Atoi(m[3])
-		expectOk(t, err)
-		return major, minor, patch
-	}
-
-	major, minor, patch := vc()
-	status, err := kv.Status()
-	expectOk(t, err)
-	kvs := status.(*nats.KeyValueBucketStatus)
-	si := kvs.StreamInfo()
-
-	// If we are 2.7.1 or below DiscardOld should be used.
-	// If 2.7.2 or above should be DiscardNew
-	if major <= 2 && minor <= 7 && patch <= 1 {
-		if si.Config.Discard != nats.DiscardOld {
-			t.Fatalf("Expected Discard Old for server version %d.%d.%d", major, minor, patch)
-		}
-	} else {
-		if si.Config.Discard != nats.DiscardNew {
-			t.Fatalf("Expected Discard New for server version %d.%d.%d", major, minor, patch)
-		}
 	}
 }
 
