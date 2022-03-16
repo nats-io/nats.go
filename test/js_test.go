@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	mrand "math/rand"
 	"net"
 	"os"
 	"reflect"
@@ -6264,5 +6265,94 @@ func TestJetStreamSubscribeContextCancel(t *testing.T) {
 			}
 			return fmt.Errorf("Consumer still active, got: %v (info=%+v)", err, info)
 		})
+	})
+}
+
+func TestJetStreamClusterStreamLeaderChangeClientErr(t *testing.T) {
+	cfg := &nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+		Replicas: 3,
+	}
+
+	withJSClusterAndStream(t, "R3S", 3, cfg, func(t *testing.T, stream string, servers ...*jsServer) {
+		// We want to make sure the worse thing seen by the lower levels during a leadership change is NoResponders.
+		// We will have three concurrent contexts going on.
+		// 1. Leadership Changes every 500ms.
+		// 2. Publishing messages to the stream every 10ms.
+		// 3. StreamInfo calls every 15ms.
+		expires := time.Now().Add(5 * time.Second)
+		var wg sync.WaitGroup
+		wg.Add(3)
+
+		randServer := func() *server.Server {
+			return servers[mrand.Intn(len(servers))].Server
+		}
+
+		// Leadership changes.
+		go func() {
+			defer wg.Done()
+			nc, js := jsClient(t, randServer())
+			defer nc.Close()
+
+			sds := fmt.Sprintf(server.JSApiStreamLeaderStepDownT, "TEST")
+			for time.Now().Before(expires) {
+				time.Sleep(500 * time.Millisecond)
+				si, err := js.StreamInfo("TEST")
+				expectOk(t, err)
+				_, err = nc.Request(sds, nil, time.Second)
+				expectOk(t, err)
+
+				// Wait on new leader.
+				checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+					si, err = js.StreamInfo("TEST")
+					if err != nil {
+						return err
+					}
+					if si.Cluster.Leader == "" {
+						return fmt.Errorf("No leader yet")
+					}
+					return nil
+				})
+			}
+		}()
+
+		// Published every 10ms
+		toc := 0
+		go func() {
+			defer wg.Done()
+			nc, js := jsClient(t, randServer())
+			defer nc.Close()
+
+			for time.Now().Before(expires) {
+				time.Sleep(10 * time.Millisecond)
+				_, err := js.Publish("foo", []byte("OK"))
+				if err == nats.ErrTimeout {
+					toc++
+					continue
+				}
+				expectOk(t, err)
+			}
+		}()
+
+		// StreamInfo calls.
+		go func() {
+			defer wg.Done()
+			nc, js := jsClient(t, randServer())
+			defer nc.Close()
+
+			for time.Now().Before(expires) {
+				time.Sleep(15 * time.Millisecond)
+				_, err := js.StreamInfo("TEST")
+				expectOk(t, err)
+			}
+		}()
+
+		wg.Wait()
+
+		// An occasional timeout can occur, but should be 0 or maybe 1 with ~10 leadership changes per test run.
+		if toc > 1 {
+			t.Fatalf("Got too many timeout errors from publish: %d", toc)
+		}
 	})
 }
