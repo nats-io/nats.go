@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -138,6 +138,7 @@ type ObjectStoreConfig struct {
 	TTL         time.Duration
 	Storage     StorageType
 	Replicas    int
+	Placement   *Placement
 }
 
 type ObjectStoreStatus interface {
@@ -245,6 +246,7 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 		MaxAge:      cfg.TTL,
 		Storage:     cfg.Storage,
 		Replicas:    cfg.Replicas,
+		Placement:   cfg.Placement,
 		Discard:     DiscardNew,
 		AllowRollup: true,
 	}
