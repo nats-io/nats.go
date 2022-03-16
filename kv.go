@@ -188,6 +188,7 @@ type KeyValueConfig struct {
 	MaxBytes     int64
 	Storage      StorageType
 	Replicas     int
+	Placement    *Placement
 }
 
 // Used to watch all keys.
@@ -347,6 +348,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		MaxMsgSize:        maxMsgSize,
 		Storage:           cfg.Storage,
 		Replicas:          replicas,
+		Placement:         cfg.Placement,
 		AllowRollup:       true,
 		DenyDelete:        true,
 		Duplicates:        2 * time.Minute,
