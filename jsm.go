@@ -624,7 +624,7 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 		if resp.Error.Code == 404 {
 			return nil, ErrStreamNotFound
 		}
-		return nil, errors.New(resp.Error.Description)
+		return nil, fmt.Errorf("nats: %s", resp.Error.Description)
 	}
 
 	return resp.StreamInfo, nil
