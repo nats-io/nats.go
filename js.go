@@ -181,6 +181,12 @@ const (
 	// routine. Without this, the subscription would possibly stall until
 	// a new message or heartbeat/fc are received.
 	chanSubFCCheckInterval = 250 * time.Millisecond
+
+	// Default time wait between retries on Publish iff err is NoResponders.
+	DefaultPubRetryWait = 250 * time.Millisecond
+
+	// Default number of retries
+	DefaultPubRetryAttempts = 2
 )
 
 // Types of control messages, so far heartbeat and flow control
@@ -340,6 +346,11 @@ type pubOpts struct {
 	str string // Expected stream name
 	seq uint64 // Expected last sequence
 	lss uint64 // Expected last sequence per subject
+
+	// Publish retries for NoResponders err.
+	rwait time.Duration // Retry wait between attempts
+	rnum  int           // Retry attempts
+
 }
 
 // pubAckResponse is the ack response from the JetStream API when publishing a message.
@@ -377,7 +388,7 @@ const (
 
 // PublishMsg publishes a Msg to a stream from JetStream.
 func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
-	var o pubOpts
+	var o = pubOpts{rwait: DefaultPubRetryWait, rnum: DefaultPubRetryAttempts}
 	if len(opts) > 0 {
 		if m.Header == nil {
 			m.Header = Header{}
@@ -422,11 +433,23 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 
 	if err != nil {
-		if err == ErrNoResponders {
-			err = ErrNoStreamResponse
+		for r := 0; err == ErrNoResponders && r < o.rnum; r++ {
+			// To protect against small blips in leadership changes etc, if we get a no responders here retry.
+			time.Sleep(o.rwait)
+			if o.ttl > 0 {
+				resp, err = js.nc.RequestMsg(m, time.Duration(o.ttl))
+			} else {
+				resp, err = js.nc.RequestMsgWithContext(o.ctx, m)
+			}
 		}
-		return nil, err
+		if err != nil {
+			if err == ErrNoResponders {
+				err = ErrNoStreamResponse
+			}
+			return nil, err
+		}
 	}
+
 	var pa pubAckResponse
 	if err := json.Unmarshal(resp.Data, &pa); err != nil {
 		return nil, ErrInvalidJSAck
@@ -799,6 +822,22 @@ func ExpectLastSequencePerSubject(seq uint64) PubOpt {
 func ExpectLastMsgId(id string) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.lid = id
+		return nil
+	})
+}
+
+// RetryWait sets the retry wait time when ErrNoResponders is encountered.
+func RetryWait(dur time.Duration) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.rwait = dur
+		return nil
+	})
+}
+
+// RetryAttempts sets the retry number of attemopts when ErrNoResponders is encountered.
+func RetryAttempts(num int) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.rnum = num
 		return nil
 	})
 }
