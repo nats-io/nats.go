@@ -338,6 +338,15 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 	if maxMsgSize == 0 {
 		maxMsgSize = -1
 	}
+	// When stream's MaxAge is not set, server uses 2 minutes as the default
+	// for the duplicate window. If MaxAge is set, and lower than 2 minutes,
+	// then the duplicate window will be set to that. If MaxAge is greater,
+	// we will cap the duplicate window to 2 minutes (to be consistent with
+	// previous behavior).
+	duplicateWindow := 2 * time.Minute
+	if cfg.TTL > 0 && cfg.TTL < duplicateWindow {
+		duplicateWindow = cfg.TTL
+	}
 	scfg := &StreamConfig{
 		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
 		Description:       cfg.Description,
@@ -351,7 +360,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		Placement:         cfg.Placement,
 		AllowRollup:       true,
 		DenyDelete:        true,
-		Duplicates:        2 * time.Minute,
+		Duplicates:        duplicateWindow,
 		MaxMsgs:           -1,
 		MaxConsumers:      -1,
 	}
