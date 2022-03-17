@@ -736,6 +736,34 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 	}
 }
 
+func TestKeyValueDuplicatesWindow(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	checkWindow := func(ttl, expectedDuplicates time.Duration) {
+		t.Helper()
+
+		_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: ttl})
+		expectOk(t, err)
+		defer js.DeleteKeyValue("TEST")
+
+		si, err := js.StreamInfo("KV_TEST")
+		if err != nil {
+			t.Fatalf("StreamInfo error: %v", err)
+		}
+		if si.Config.Duplicates != expectedDuplicates {
+			t.Fatalf("Expected duplicates to be %v, got %v", expectedDuplicates, si.Config.Duplicates)
+		}
+	}
+
+	checkWindow(0, 2*time.Minute)
+	checkWindow(time.Hour, 2*time.Minute)
+	checkWindow(5*time.Second, 5*time.Second)
+}
+
 // Helpers
 
 func client(t *testing.T, s *server.Server, opts ...nats.Option) *nats.Conn {
