@@ -110,6 +110,11 @@ func TestRequestMsg(t *testing.T) {
 	if _, err = nc.RequestMsg(nil, time.Second); err != nats.ErrInvalidMsg {
 		t.Errorf("Unexpected error: %v", err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if _, err = nc.RequestMsgWithContext(ctx, nil); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
 }
 
 func TestRequestMsgRaceAsyncInfo(t *testing.T) {
@@ -144,6 +149,13 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 	}
 	defer nc.Close()
 
+	// Extra client with old request.
+	nc2, err := nats.Connect(s.ClientURL(), nats.DontRandomize(), nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc2.Close()
+
 	subject := "headers.test"
 	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
 		r := nats.NewMsg(m.Reply)
@@ -161,7 +173,8 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 
 	// Leave some goroutines publishing in parallel while
 	// async protocols are being received.
-	var received int64
+	var received, receivedWithContext int64
+	var receivedOldStyle, receivedOldStyleWithContext int64
 	var producers int = 50
 	for i := 0; i < producers; i++ {
 		go func() {
@@ -175,10 +188,31 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 				}
 				msg := nats.NewMsg(subject)
 				msg.Header["Hdr-Test"] = []string{"foo"}
-				resp, _ := nc.RequestMsg(msg, 250*time.Millisecond)
+
+				ttl := 250 * time.Millisecond
+				resp, _ := nc.RequestMsg(msg, ttl)
 				if resp != nil {
 					atomic.AddInt64(&received, 1)
 				}
+
+				ctx2, cancel2 := context.WithTimeout(context.Background(), ttl)
+				resp, _ = nc.RequestMsgWithContext(ctx2, msg)
+				if resp != nil {
+					atomic.AddInt64(&receivedWithContext, 1)
+				}
+				cancel2()
+
+				// Check with old style requests as well.
+				resp, _ = nc2.RequestMsg(msg, ttl)
+				if resp != nil {
+					atomic.AddInt64(&receivedOldStyle, 1)
+				}
+				ctx2, cancel2 = context.WithTimeout(context.Background(), ttl)
+				resp, _ = nc2.RequestMsgWithContext(ctx2, msg)
+				if resp != nil {
+					atomic.AddInt64(&receivedOldStyleWithContext, 1)
+				}
+				cancel2()
 			}
 		}()
 	}
@@ -244,11 +278,40 @@ Loop:
 	if err := nc.PublishMsg(msg); err != nats.ErrHeadersNotSupported {
 		t.Fatalf("Expected an error, got %v", err)
 	}
+
+	// Check context based variations as well.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel2()
+	if _, err := nc.RequestMsgWithContext(ctx2, msg); err != nats.ErrHeadersNotSupported {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+	if _, err := nc2.RequestMsgWithContext(ctx2, msg); err != nats.ErrHeadersNotSupported {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+
 	if nc.HeadersSupported() {
+		t.Fatalf("Unexpected Headers support")
+	}
+	if nc2.HeadersSupported() {
 		t.Fatalf("Unexpected Headers support")
 	}
 
 	count := atomic.LoadInt64(&received)
+	if int(count) < producers {
+		t.Errorf("Expected at least %d responses, got: %d", producers, count)
+	}
+
+	count = atomic.LoadInt64(&receivedWithContext)
+	if int(count) < producers {
+		t.Errorf("Expected at least %d responses, got: %d", producers, count)
+	}
+
+	count = atomic.LoadInt64(&receivedOldStyle)
+	if int(count) < producers {
+		t.Errorf("Expected at least %d responses, got: %d", producers, count)
+	}
+
+	count = atomic.LoadInt64(&receivedOldStyleWithContext)
 	if int(count) < producers {
 		t.Errorf("Expected at least %d responses, got: %d", producers, count)
 	}
