@@ -14,15 +14,18 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"net/http/httptest"
 
+	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 )
@@ -99,6 +102,155 @@ func TestRequestMsg(t *testing.T) {
 	}
 	if resp.Header.Get("Hdr-Test") != "1" {
 		t.Fatalf("Did not receive header in response")
+	}
+
+	if err = nc.PublishMsg(nil); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if _, err = nc.RequestMsg(nil, time.Second); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestRequestMsgRaceAsyncInfo(t *testing.T) {
+	s1Opts := natsserver.DefaultTestOptions
+	s1Opts.Host = "127.0.0.1"
+	s1Opts.Port = -1
+	s1Opts.Cluster.Name = "CLUSTER"
+	s1Opts.Cluster.Host = "127.0.0.1"
+	s1Opts.Cluster.Port = -1
+	s := natsserver.RunServer(&s1Opts)
+	defer s.Shutdown()
+
+	eventsCh := make(chan int, 20)
+	discoverCB := func(nc *nats.Conn) {
+		eventsCh <- len(nc.DiscoveredServers())
+	}
+
+	reconnectCh := make(chan struct{})
+	reconnectedEvent := make(chan struct{})
+	reconnectCB := func(nc *nats.Conn) {
+		reconnectCh <- struct{}{}
+	}
+
+	copts := []nats.Option{
+		nats.DiscoveredServersHandler(discoverCB),
+		nats.DontRandomize(),
+		nats.ReconnectHandler(reconnectCB),
+	}
+	nc, err := nats.Connect(s.ClientURL(), copts...)
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	subject := "headers.test"
+	sub, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		r := nats.NewMsg(m.Reply)
+		r.Header["Hdr-Test"] = []string{"bar"}
+		r.Data = []byte("+OK")
+		m.RespondMsg(r)
+	})
+	if err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Leave some goroutines publishing in parallel while
+	// async protocols are being received.
+	var received int64
+	var producers int = 50
+	for i := 0; i < producers; i++ {
+		go func() {
+			for range time.NewTicker(1 * time.Millisecond).C {
+				select {
+				case <-ctx.Done():
+					return
+				case <-reconnectedEvent:
+					return
+				default:
+				}
+				msg := nats.NewMsg(subject)
+				msg.Header["Hdr-Test"] = []string{"foo"}
+				resp, _ := nc.RequestMsg(msg, 250*time.Millisecond)
+				if resp != nil {
+					atomic.AddInt64(&received, 1)
+				}
+			}
+		}()
+	}
+
+	// Add servers a few times to get async info protocols.
+	expectedServers := 5
+	runningServers := make([]*server.Server, expectedServers)
+	for i := 0; i < expectedServers; i++ {
+		s2Opts := natsserver.DefaultTestOptions
+		s2Opts.Host = "127.0.0.1"
+		s2Opts.Port = -1
+		s2Opts.Cluster.Name = "CLUSTER"
+		s2Opts.Cluster.Host = "127.0.0.1"
+		s2Opts.Cluster.Port = -1
+		s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s.ClusterAddr().Port))
+
+		// New servers will not have Header support so APIs ought to fail on reconnect.
+		s2Opts.NoHeaderSupport = true
+
+		s2 := natsserver.RunServer(&s2Opts)
+		runningServers[i] = s2
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	defer func() {
+		for _, rs := range runningServers {
+			rs.Shutdown()
+		}
+	}()
+
+Loop:
+	for {
+		select {
+		case i := <-eventsCh:
+			if i == expectedServers {
+				break Loop
+			}
+		case <-ctx.Done():
+			t.Fatal("Timed out waiting for enough servers to join")
+		}
+	}
+	if !nc.HeadersSupported() {
+		t.Fatalf("Expected Headers support")
+	}
+
+	// Trigger a disconnect to reconnect to a server without Headers support.
+	s.Shutdown()
+
+	select {
+	case <-reconnectCh:
+		// Stop producers in goroutines.
+		close(reconnectedEvent)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for reconnect")
+	}
+
+	// Try to send message to server without header support.
+	msg := nats.NewMsg(subject)
+	msg.Header["Hdr-Test"] = []string{"quux"}
+	if _, err := nc.RequestMsg(msg, time.Second); err != nats.ErrHeadersNotSupported {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+	if err := nc.PublishMsg(msg); err != nats.ErrHeadersNotSupported {
+		t.Fatalf("Expected an error, got %v", err)
+	}
+	if nc.HeadersSupported() {
+		t.Fatalf("Unexpected Headers support")
+	}
+
+	count := atomic.LoadInt64(&received)
+	if int(count) < producers {
+		t.Errorf("Expected at least %d responses, got: %d", producers, count)
 	}
 }
 
