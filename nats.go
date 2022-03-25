@@ -83,6 +83,9 @@ const (
 
 	// ACCOUNT_AUTHENTICATION_EXPIRED_ERR is for when nats server account authorization has expired.
 	ACCOUNT_AUTHENTICATION_EXPIRED_ERR = "account authentication expired"
+
+	// MAX_CONNECTIONS_ERR is for when nats server denies the connection due to server max_connections limit
+	MAX_CONNECTIONS_ERR = "maximum connections exceeded"
 )
 
 // Errors
@@ -161,6 +164,7 @@ var (
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
 	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
 	ErrStreamNameAlreadyInUse       = errors.New("nats: stream name already in use")
+	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")
 )
 
 func init() {
@@ -3213,6 +3217,8 @@ func (nc *Conn) processErr(ie string) {
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {
 		nc.processOpErr(ErrStaleConnection)
+	} else if e == MAX_CONNECTIONS_ERR {
+		nc.processOpErr(ErrMaxConnectionsExceeded)
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
 		nc.processPermissionsViolation(ne)
 	} else if authErr := checkAuthError(e); authErr != nil {
