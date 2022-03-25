@@ -21,20 +21,13 @@ import (
 // RequestMsgWithContext takes a context, a subject and payload
 // in bytes and request expecting a single response.
 func (nc *Conn) RequestMsgWithContext(ctx context.Context, msg *Msg) (*Msg, error) {
-	var hdr []byte
-	var err error
-
-	if len(msg.Header) > 0 {
-		if !nc.info.Headers {
-			return nil, ErrHeadersNotSupported
-		}
-
-		hdr, err = msg.headerBytes()
-		if err != nil {
-			return nil, err
-		}
+	if msg == nil {
+		return nil, ErrInvalidMsg
 	}
-
+	hdr, err := msg.headerBytes()
+	if err != nil {
+		return nil, err
+	}
 	return nc.requestWithContext(ctx, msg.Subject, hdr, msg.Data)
 }
 
