@@ -277,15 +277,12 @@ var testServers = []string{
 }
 
 func TestMaxConnectionsReconnect(t *testing.T) {
-	// Join cluster on first server
-	routes := []*url.URL{&url.URL{Scheme: "nats", Host: fmt.Sprintf("127.0.0.1:%d", TEST_PORT)}}
 
 	// Start first server
 	s1Opts := natsserver.DefaultTestOptions
 	s1Opts.Port = -1
 	s1Opts.MaxConn = 2
-	s1Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: TEST_PORT}
-	s1Opts.Routes = routes
+	s1Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
 	s1 := RunServerWithOptions(&s1Opts)
 	defer s1.Shutdown()
 
@@ -293,38 +290,35 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	s2Opts := natsserver.DefaultTestOptions
 	s2Opts.Port = -1
 	s2Opts.MaxConn = 2
-	s2Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: TEST_PORT + 1}
-	s2Opts.Routes = routes
+	s2Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
+	s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s1Opts.Cluster.Port))
 	s2 := RunServerWithOptions(&s2Opts)
 	defer s2.Shutdown()
 
-	// Only explicitly connect to first server
-	var opts = Options{
-		Url:            s1.ClientURL(),
-		AllowReconnect: true,
-		MaxReconnect:   2,
-		ReconnectWait:  10 * time.Millisecond,
-		Timeout:        200 * time.Millisecond,
+	opts := []Option{
+		MaxReconnects(2),
+		ReconnectWait(10 * time.Millisecond),
+		Timeout(200 * time.Millisecond),
 	}
 
-	// Create two connections (the current max) for first server
-	nc1, _ := opts.Connect()
+	// Create two connections (the current max) to first server
+	nc1, _ := Connect(s1.ClientURL(), opts...)
 	defer nc1.Close()
 	nc1.Flush()
 
-	nc2, _ := opts.Connect()
+	nc2, _ := Connect(s1.ClientURL(), opts...)
 	defer nc2.Close()
 	nc2.Flush()
 
 	if s1.NumClients() != 2 {
-		t.Fatalf("Expected 2 client connections to first server. Got %d\n", s1.NumClients())
+		t.Fatalf("Expected 2 client connections to first server. Got %d", s1.NumClients())
 	}
 
 	if s2.NumClients() > 0 {
-		t.Fatalf("Expected 0 client connections to second server. Got %d\n", s2.NumClients())
+		t.Fatalf("Expected 0 client connections to second server. Got %d", s2.NumClients())
 	}
 
-	// Kick one of our two server connections off first server. One client should reconnect to second server.
+	// Kick one of our two server connections off first server. One client should reconnect to second server
 	newS1Opts := s1Opts
 	newS1Opts.MaxConn = 1
 	err := s1.ReloadOptions(&newS1Opts)
@@ -335,7 +329,7 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	if s2.NumClients() <= 0 || s1.NumClients() > 1 {
-		t.Fatalf("Expected client reconnection to second server.\n")
+		t.Fatalf("Expected client reconnection to second server")
 	}
 }
 
