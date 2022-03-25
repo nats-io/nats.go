@@ -295,10 +295,20 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	s2 := RunServerWithOptions(&s2Opts)
 	defer s2.Shutdown()
 
+	errCh := make(chan error, 2)
+	reconnectCh := make(chan struct{})
 	opts := []Option{
 		MaxReconnects(2),
 		ReconnectWait(10 * time.Millisecond),
 		Timeout(200 * time.Millisecond),
+		DisconnectErrHandler(func(_ *Conn, err error) {
+			if err != nil {
+				errCh <- err
+			}
+		}),
+		ReconnectHandler(func(_ *Conn) {
+			reconnectCh <- struct{}{}
+		}),
 	}
 
 	// Create two connections (the current max) to first server
@@ -326,7 +336,20 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 		t.Fatalf("Unexpected error changing max_connections [%s]", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-errCh:
+		if err != ErrMaxConnectionsExceeded {
+			t.Fatalf("Unexpected error %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for disconnect event")
+	}
+
+	select {
+	case <-reconnectCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for reconnect event")
+	}
 
 	if s2.NumClients() <= 0 || s1.NumClients() > 1 {
 		t.Fatalf("Expected client reconnection to second server")
