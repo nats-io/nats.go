@@ -5337,6 +5337,19 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("Did not receive completion signal")
 	}
+
+	// Check invalid options
+	_, err = js.PublishAsync("foo", []byte("Bad"), nats.StallWait(0))
+	expectedErr := "nats: stall wait should be more than 0"
+	if err == nil || err.Error() != expectedErr {
+		t.Errorf("Expected %v, got: %v", expectedErr, err)
+	}
+
+	_, err = js.Publish("foo", []byte("Also bad"), nats.StallWait(200*time.Millisecond))
+	expectedErr = "nats: stall wait cannot be set to sync publish"
+	if err == nil || err.Error() != expectedErr {
+		t.Errorf("Expected %v, got: %v", expectedErr, err)
+	}
 }
 
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
