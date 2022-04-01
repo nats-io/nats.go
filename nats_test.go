@@ -2883,3 +2883,62 @@ func TestRespInbox(t *testing.T) {
 		t.Fatalf("Error: %s", resp.Data)
 	}
 }
+
+func TestConnectionURIOpts(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		getOpts func() *Options
+		fopts   []Option
+		err     string
+	}{
+		{
+			"with timeout",
+			"nats://localhost:4223?timeout=10",
+			func() *Options {
+				opts := GetDefaultOptions()
+				opts.Servers = []string{"nats://localhost:4223"}
+				opts.Timeout = 10 * time.Second
+				return &opts
+			},
+			nil,
+			"",
+		},
+		{
+			"dup params are errors",
+			"nats://localhost:4223?timeout=10&timeout=1",
+			func() *Options {
+				opts := GetDefaultOptions()
+				opts.Servers = []string{"nats://localhost:4223"}
+				opts.Timeout = 10 * time.Second
+				return &opts
+			},
+			nil,
+			`nats: multiple uri options for "timeout"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts, err := processOptions(test.uri, test.fopts...)
+			if err != nil && test.err == "" {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			} else if test.err != "" && err == nil {
+				t.Errorf("Expected an error: %v", err)
+				return
+			} else if err != nil && !strings.Contains(test.err, err.Error()) {
+				t.Errorf("\nExpected: %+v\n     Got: %+v", test.err, err.Error())
+				return
+			}
+			// Checked expected error already.
+			if err != nil {
+				return
+			}
+			expected := test.getOpts()
+			if !reflect.DeepEqual(expected, opts) {
+				t.Errorf("\nExpected %+v\nGot: %+v", expected, opts)
+			}
+		})
+	}
+}
