@@ -7,7 +7,7 @@ install:
 - go get -t ./...
 - go get github.com/mattn/goveralls
 - go get github.com/wadey/gocovmerge
-- go get -u honnef.co/go/tools/cmd/staticcheck
+- go install honnef.co/go/tools/cmd/staticcheck@v0.2.2
 - go get -u github.com/client9/misspell/cmd/misspell
 before_script:
 - $(exit $(go fmt ./... | wc -l))
