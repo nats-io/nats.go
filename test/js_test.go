@@ -1123,9 +1123,6 @@ func TestJetStreamManagement(t *testing.T) {
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
 	t.Run("create stream", func(t *testing.T) {
-		if _, err := js.AddStream(nil); err == nil {
-			t.Fatalf("Unexpected success")
-		}
 		si, err := js.AddStream(&nats.StreamConfig{Name: "foo"})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1161,22 +1158,35 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 
 	t.Run("create bad stream", func(t *testing.T) {
-		_, err := js.AddStream(&nats.StreamConfig{Name: "foo.invalid"})
-		if err != nats.ErrInvalidStreamName {
-			t.Fatalf("Unexpected error: %v", err)
+		if _, err := js.AddStream(nil); err != nats.ErrStreamConfigRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamConfigRequired, err)
+		}
+		if _, err := js.AddStream(&nats.StreamConfig{Name: ""}); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "bad.stream.name"}); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
 		}
 	})
 
 	t.Run("bad stream info", func(t *testing.T) {
-		_, err := js.StreamInfo("foo.invalid")
-		if err != nats.ErrInvalidStreamName {
-			t.Fatalf("Unexpected error: %v", err)
+		if _, err := js.StreamInfo(""); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if _, err := js.StreamInfo("bad.stream.name"); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
 		}
 	})
 
 	t.Run("stream update", func(t *testing.T) {
-		if _, err := js.UpdateStream(nil); err == nil {
-			t.Fatal("Unexpected success")
+		if _, err := js.UpdateStream(nil); err != nats.ErrStreamConfigRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamConfigRequired, err)
+		}
+		if _, err := js.UpdateStream(&nats.StreamConfig{Name: ""}); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if _, err := js.UpdateStream(&nats.StreamConfig{Name: "bad.stream.name"}); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
 		}
 		prevMaxMsgs := si.Config.MaxMsgs
 		si, err = js.UpdateStream(&nats.StreamConfig{Name: "foo", MaxMsgs: prevMaxMsgs + 100})
@@ -1209,7 +1219,34 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 	})
 
+	t.Run("create consumer check params", func(t *testing.T) {
+		_, err = js.AddConsumer("", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy})
+		if err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got: %v", nats.ErrStreamNameRequired, err)
+		}
+		_, err = js.AddConsumer("bad.stream.name", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy})
+		if err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got: %v", nats.ErrInvalidStreamName, err)
+		}
+		_, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "bad.consumer.name", AckPolicy: nats.AckExplicitPolicy})
+		if err != nats.ErrInvalidDurableName {
+			t.Fatalf("Expected %v, got: %v", nats.ErrInvalidDurableName, err)
+		}
+	})
+
 	t.Run("consumer info", func(t *testing.T) {
+		if _, err := js.ConsumerInfo("", "dlc"); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if _, err := js.ConsumerInfo("bad.stream.name", "dlc"); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
+		}
+		if _, err := js.ConsumerInfo("foo", ""); err != nats.ErrConsumerNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrConsumerNameRequired, err)
+		}
+		if _, err := js.ConsumerInfo("foo", "bad.consumer.name"); err != nats.ErrInvalidConsumerName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidConsumerName, err)
+		}
 		ci, err := js.ConsumerInfo("foo", "dlc")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1247,7 +1284,12 @@ func TestJetStreamManagement(t *testing.T) {
 		if len(infos) != 0 {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
-
+		for info := range js.ConsumersInfo("bad.stream.name") {
+			infos = append(infos, info)
+		}
+		if len(infos) != 0 {
+			t.Fatalf("ConsumerInfo is not correct %+v", infos)
+		}
 		infos = infos[:0]
 		for info := range js.ConsumersInfo("foo") {
 			infos = append(infos, info)
@@ -1270,8 +1312,17 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 
 	t.Run("delete consumers", func(t *testing.T) {
-		if err := js.DeleteConsumer("", ""); err == nil {
-			t.Fatalf("Unexpected success")
+		if err := js.DeleteConsumer("", "dlc"); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if err := js.DeleteConsumer("bad.stream.name", "dlc"); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
+		}
+		if err := js.DeleteConsumer("foo", ""); err != nats.ErrConsumerNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrConsumerNameRequired, err)
+		}
+		if err := js.DeleteConsumer("foo", "bad.consumer.name"); err != nats.ErrInvalidConsumerName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidConsumerName, err)
 		}
 		if err := js.DeleteConsumer("foo", "dlc"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1302,8 +1353,19 @@ func TestJetStreamManagement(t *testing.T) {
 		if err != nats.ErrStreamNameRequired {
 			t.Fatalf("Expected stream name required error, got %v", err)
 		}
+		// Check that stream name is valid
+		_, err = js.UpdateConsumer("bad.stream.name", &expected)
+		if err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected stream name required error, got %v", err)
+		}
 		// Check that durable name is required
 		expected.Durable = ""
+		_, err = js.UpdateConsumer("foo", &expected)
+		if err != nats.ErrInvalidDurableName {
+			t.Fatalf("Expected consumer name required error, got %v", err)
+		}
+		// Check that durable name is valid
+		expected.Durable = "bad.consumer.name"
 		_, err = js.UpdateConsumer("foo", &expected)
 		if err != nats.ErrInvalidDurableName {
 			t.Fatalf("Expected consumer name required error, got %v", err)
@@ -1356,6 +1418,12 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 
 	t.Run("purge stream", func(t *testing.T) {
+		if err := js.PurgeStream(""); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if err := js.PurgeStream("bad.stream.name"); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
+		}
 		if err := js.PurgeStream("foo"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1379,8 +1447,11 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 
 	t.Run("delete stream", func(t *testing.T) {
-		if err := js.DeleteStream(""); err == nil {
-			t.Fatal("Unexpected success")
+		if err := js.DeleteStream(""); err != nats.ErrStreamNameRequired {
+			t.Fatalf("Expected %v, got %v", nats.ErrStreamNameRequired, err)
+		}
+		if err := js.DeleteStream("bad.stream.name"); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
 		}
 		if err := js.DeleteStream("foo"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
