@@ -2259,6 +2259,14 @@ func RateLimit(n uint64) SubOpt {
 	})
 }
 
+// BackOff is an array of time durations that represent the time to delay based on delivery count.
+func BackOff(backOff []time.Duration) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.BackOff = backOff
+		return nil
+	})
+}
+
 // BindStream binds a consumer to a stream explicitly based on a name.
 // When a stream name is not specified, the library uses the subscribe
 // subject as a way to find the stream name. It is done by making a request
