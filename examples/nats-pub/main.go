@@ -1,4 +1,4 @@
-// Copyright 2012-2021 The NATS Authors
+// Copyright 2012-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,7 +23,6 @@ import (
 
 // NOTE: Can test with demo servers.
 // nats-pub -s demo.nats.io <subject> <msg>
-// nats-pub -s demo.nats.io:4443 <subject> <msg> (TLS version)
 
 func usage() {
 	log.Printf("Usage: nats-pub [-s server] [-creds file] [-nkey file] [-tlscert file] [-tlskey file] [-tlscacert file] <subject> <msg>\n")
