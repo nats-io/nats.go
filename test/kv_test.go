@@ -67,9 +67,13 @@ func TestKeyValueBasics(t *testing.T) {
 	if r != 3 {
 		t.Fatalf("Expected 3 for the revision, got %d", r)
 	}
+	err = kv.Delete("name", nats.LastRevision(4))
+	expectErr(t, err)
+	err = kv.Delete("name", nats.LastRevision(3))
+	expectOk(t, err)
 
 	// Conditional Updates.
-	r, err = kv.Update("name", []byte("rip"), 3)
+	r, err = kv.Update("name", []byte("rip"), 4)
 	expectOk(t, err)
 	_, err = kv.Update("name", []byte("ik"), 3)
 	expectErr(t, err)
@@ -374,7 +378,9 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 	if len(entries) != 4 {
 		t.Fatalf("Expected 4 entries for age after delete, got %d", len(entries))
 	}
-	err = kv.Purge("name")
+	err = kv.Purge("name", nats.LastRevision(4))
+	expectErr(t, err)
+	err = kv.Purge("name", nats.LastRevision(5))
 	expectOk(t, err)
 	// Check marker
 	e, err := kv.Get("name")

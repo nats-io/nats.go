@@ -54,9 +54,9 @@ type KeyValue interface {
 	// Update will update the value iff the latest revision matches.
 	Update(key string, value []byte, last uint64) (revision uint64, err error)
 	// Delete will place a delete marker and leave all revisions.
-	Delete(key string) error
+	Delete(key string, opts ...DeleteOpt) error
 	// Purge will place a delete marker and remove all previous revisions.
-	Purge(key string) error
+	Purge(key string, opts ...DeleteOpt) error
 	// Watch for any updates to keys that match the keys argument which could include wildcards.
 	// Watch will send a nil entry when it has received all initial values.
 	Watch(keys string, opts ...WatchOpt) (KeyWatcher, error)
@@ -178,6 +178,40 @@ func (ttl DeleteMarkersOlderThan) configurePurge(opts *purgeOpts) error {
 func (ctx ContextOpt) configurePurge(opts *purgeOpts) error {
 	opts.ctx = ctx
 	return nil
+}
+
+type DeleteOpt interface {
+	configureDelete(opts *deleteOpts) error
+}
+
+type deleteOpts struct {
+	// Remove all previous revisions.
+	purge bool
+
+	// Delete only if the latest revision matches.
+	revision uint64
+}
+
+type deleteOptFn func(opts *deleteOpts) error
+
+func (opt deleteOptFn) configureDelete(opts *deleteOpts) error {
+	return opt(opts)
+}
+
+// LastRevision deletes if the latest revision matches.
+func LastRevision(revision uint64) DeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.revision = revision
+		return nil
+	})
+}
+
+// purge removes all previous revisions.
+func purge() DeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.purge = true
+		return nil
+	})
 }
 
 // KeyValueConfig is for configuring a KeyValue store.
@@ -591,16 +625,7 @@ func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error)
 }
 
 // Delete will place a delete marker and leave all revisions.
-func (kv *kvs) Delete(key string) error {
-	return kv.delete(key, false)
-}
-
-// Purge will remove the key and all revisions.
-func (kv *kvs) Purge(key string) error {
-	return kv.delete(key, true)
-}
-
-func (kv *kvs) delete(key string, purge bool) error {
+func (kv *kvs) Delete(key string, opts ...DeleteOpt) error {
 	if !keyValid(key) {
 		return ErrInvalidKey
 	}
@@ -615,14 +640,33 @@ func (kv *kvs) delete(key string, purge bool) error {
 	// DEL op marker. For watch functionality.
 	m := NewMsg(b.String())
 
-	if purge {
+	var o deleteOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureDelete(&o); err != nil {
+				return err
+			}
+		}
+	}
+
+	if o.purge {
 		m.Header.Set(kvop, kvpurge)
 		m.Header.Set(MsgRollup, MsgRollupSubject)
 	} else {
 		m.Header.Set(kvop, kvdel)
 	}
+
+	if o.revision != 0 {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.revision, 10))
+	}
+
 	_, err := kv.js.PublishMsg(m)
 	return err
+}
+
+// Purge will remove the key and all revisions.
+func (kv *kvs) Purge(key string, opts ...DeleteOpt) error {
+	return kv.Delete(key, append(opts, purge())...)
 }
 
 const kvDefaultPurgeDeletesMarkerThreshold = 30 * time.Minute
