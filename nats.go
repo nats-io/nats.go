@@ -3600,7 +3600,15 @@ func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return nc.RequestMsgWithContext(ctx, msg)
+	reply, err := nc.RequestMsgWithContext(ctx, msg)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return nil, ErrTimeout
+	case err != nil:
+		return nil, err
+	}
+
+	return reply, nil
 }
 
 // Request will send a request payload and deliver the response message,
@@ -3609,7 +3617,15 @@ func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return nc.RequestWithContext(ctx, subj, data)
+	reply, err := nc.RequestWithContext(ctx, subj, data)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return nil, ErrTimeout
+	case err != nil:
+		return nil, err
+	}
+
+	return reply, nil
 }
 
 func (nc *Conn) useOldRequestStyle() bool {
