@@ -44,7 +44,7 @@ func showUsageAndExit(exitcode int) {
 }
 
 func printMsg(m *nats.Msg, i int) {
-	log.Printf("[#%d] Echoing to [%s]: %q", i, m.Reply, m.Data)
+	log.Printf("[#%d] Echoing from [%s] to [%s]: %q", i, m.Subject, m.Reply, m.Data)
 }
 
 func main() {
@@ -103,7 +103,7 @@ func main() {
 
 	subj, i := args[0], 0
 
-	nc.QueueSubscribe(subj, "echo", func(msg *nats.Msg) {
+	handleMsg := func(msg *nats.Msg) {
 		i++
 		if msg.Reply != "" {
 			printMsg(msg, i)
@@ -115,6 +115,14 @@ func main() {
 				nc.Publish(msg.Reply, msg.Data)
 			}
 		}
+	}
+
+	nc.QueueSubscribe(subj, "echo", func(msg *nats.Msg) {
+		handleMsg(msg)
+	})
+	allSubj := subj + ".all"
+	nc.Subscribe(allSubj, func(msg *nats.Msg) {
+		handleMsg(msg)
 	})
 	nc.Flush()
 
@@ -123,8 +131,9 @@ func main() {
 	}
 
 	log.Printf("Echo Service listening on [%s]\n", subj)
+	log.Printf("Echo Service (All) listening on [%s]\n", allSubj)
 
-	// Now handle signal to terminate so we cam drain on exit.
+	// Now handle signal to terminate so we can drain on exit.
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT)
 
