@@ -17,6 +17,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -3596,21 +3597,19 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 // RequestMsg will send a request payload including optional headers and deliver
 // the response message, or an error, including a timeout if no message was received properly.
 func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
-	if msg == nil {
-		return nil, ErrInvalidMsg
-	}
-	hdr, err := msg.headerBytes()
-	if err != nil {
-		return nil, err
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	return nc.request(msg.Subject, hdr, msg.Data, timeout)
+	return nc.RequestMsgWithContext(ctx, msg)
 }
 
 // Request will send a request payload and deliver the response message,
 // or an error, including a timeout if no message was received properly.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
-	return nc.request(subj, nil, data, timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	return nc.RequestWithContext(ctx, subj, data)
 }
 
 func (nc *Conn) useOldRequestStyle() bool {
@@ -3618,76 +3617,6 @@ func (nc *Conn) useOldRequestStyle() bool {
 	r := nc.Opts.UseOldRequestStyle
 	nc.mu.RUnlock()
 	return r
-}
-
-func (nc *Conn) request(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
-
-	var m *Msg
-	var err error
-
-	if nc.useOldRequestStyle() {
-		m, err = nc.oldRequest(subj, hdr, data, timeout)
-	} else {
-		m, err = nc.newRequest(subj, hdr, data, timeout)
-	}
-
-	// Check for no responder status.
-	if err == nil && len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
-		m, err = nil, ErrNoResponders
-	}
-	return m, err
-}
-
-func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	mch, token, err := nc.createNewRequestAndSend(subj, hdr, data)
-	if err != nil {
-		return nil, err
-	}
-
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
-
-	var ok bool
-	var msg *Msg
-
-	select {
-	case msg, ok = <-mch:
-		if !ok {
-			return nil, ErrConnectionClosed
-		}
-	case <-t.C:
-		nc.mu.Lock()
-		delete(nc.respMap, token)
-		nc.mu.Unlock()
-		return nil, ErrTimeout
-	}
-
-	return msg, nil
-}
-
-// oldRequest will create an Inbox and perform a Request() call
-// with the Inbox reply and return the first reply received.
-// This is optimized for the case of multiple responses.
-func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := nc.newInbox()
-	ch := make(chan *Msg, RequestChanLen)
-
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
-	if err != nil {
-		return nil, err
-	}
-	s.AutoUnsubscribe(1)
-	defer s.Unsubscribe()
-
-	err = nc.publish(subj, inbox, hdr, data)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.NextMsg(timeout)
 }
 
 // InboxPrefix is the prefix for all inbox subjects.
@@ -4251,8 +4180,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	// If we are here a message was not immediately available, so lets loop
 	// with a timeout.
 
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	select {
 	case msg, ok = <-mch:
@@ -4262,7 +4191,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 		if err := s.processNextMsgDelivered(msg); err != nil {
 			return nil, err
 		}
-	case <-t.C:
+	case <-ctx.Done():
 		return nil, ErrTimeout
 	}
 
@@ -4583,8 +4512,8 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	// Create a buffered channel to prevent chan send to block
 	// in processPong() if this code here times out just when
@@ -4600,7 +4529,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		} else {
 			close(ch)
 		}
-	case <-t.C:
+	case <-ctx.Done():
 		err = ErrTimeout
 	}
 
