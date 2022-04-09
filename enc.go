@@ -37,6 +37,7 @@ var encLock sync.Mutex
 const (
 	JSON_ENCODER    = "json"
 	GOB_ENCODER     = "gob"
+	BSON_ECODER     = "bson"
 	DEFAULT_ENCODER = "default"
 )
 
@@ -44,6 +45,7 @@ func init() {
 	encMap = make(map[string]Encoder)
 	// Register json, gob and default encoder
 	RegisterEncoder(JSON_ENCODER, &builtin.JsonEncoder{})
+	RegisterEncoder(BSON_ECODER, &builtin.BsonEncoder{})
 	RegisterEncoder(GOB_ENCODER, &builtin.GobEncoder{})
 	RegisterEncoder(DEFAULT_ENCODER, &builtin.DefaultEncoder{})
 }
