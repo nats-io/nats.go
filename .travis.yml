@@ -9,6 +9,7 @@ install:
 - go get github.com/wadey/gocovmerge
 - go install honnef.co/go/tools/cmd/staticcheck@v0.2.2
 - go get -u github.com/client9/misspell/cmd/misspell
+- go get -u go.mongodb.org/mongo-driver/bson
 before_script:
 - $(exit $(go fmt ./... | wc -l))
 - go vet -modfile=go_test.mod ./...
