@@ -16,7 +16,6 @@ package nats
 import (
 	"errors"
 	"fmt"
-	"github.com/nats-io/nats.go/encoders/mongo"
 	"reflect"
 	"sync"
 	"time"
@@ -38,7 +37,6 @@ var encLock sync.Mutex
 const (
 	JSON_ENCODER    = "json"
 	GOB_ENCODER     = "gob"
-	BSON_ECODER     = "bson"
 	DEFAULT_ENCODER = "default"
 )
 
@@ -46,7 +44,6 @@ func init() {
 	encMap = make(map[string]Encoder)
 	// Register json, gob and default encoder
 	RegisterEncoder(JSON_ENCODER, &builtin.JsonEncoder{})
-	RegisterEncoder(BSON_ECODER, &mongo.BsonEncoder{})
 	RegisterEncoder(GOB_ENCODER, &builtin.GobEncoder{})
 	RegisterEncoder(DEFAULT_ENCODER, &builtin.DefaultEncoder{})
 }

@@ -14,9 +14,20 @@
 package mongo
 
 import (
+	"github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/bson"
 	"strings"
 )
+
+// Additional index for registered Encoders.
+const (
+	BSON_ECODER = "bson"
+)
+
+func init() {
+	// Register bson encoder
+	nats.RegisterEncoder(BSON_ECODER, &BsonEncoder{})
+}
 
 // BsonEncoder is a BSON Encoder implementation for EncodedConn.
 // This encoder will use the mongo bson encoder to Marshal

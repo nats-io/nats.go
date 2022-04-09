@@ -15,6 +15,7 @@ package nats_test
 
 import (
 	"fmt"
+	"github.com/nats-io/nats.go/encoders/mongo"
 	"testing"
 	"time"
 
@@ -332,7 +333,7 @@ func TestRequestBson(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ec, err := NewEncodedConn(nc, BSON_ECODER)
+	ec, err := NewEncodedConn(nc, mongo.BSON_ECODER)
 	if err != nil {
 		t.Fatalf("Unable to create encoded connection: %v", err)
 	}
