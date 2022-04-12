@@ -588,3 +588,22 @@ func TestObjectList(t *testing.T) {
 		t.Fatalf("Expected %+v but got %+v", expected, omap)
 	}
 }
+
+func TestObjectMaxBytes(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", MaxBytes: 1024})
+	expectOk(t, err)
+
+	status, err := obs.Status()
+	expectOk(t, err)
+	bs := status.(*nats.ObjectBucketStatus)
+	info := bs.StreamInfo()
+	if info.Config.MaxBytes != 1024 {
+		t.Fatalf("invalid object stream MaxSize %+v", info.Config.MaxBytes)
+	}
+}

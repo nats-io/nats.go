@@ -136,6 +136,7 @@ type ObjectStoreConfig struct {
 	Bucket      string
 	Description string
 	TTL         time.Duration
+	MaxBytes    int64
 	Storage     StorageType
 	Replicas    int
 	Placement   *Placement
@@ -244,6 +245,7 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 		Description: cfg.Description,
 		Subjects:    []string{chunks, meta},
 		MaxAge:      cfg.TTL,
+		MaxBytes:    cfg.MaxBytes,
 		Storage:     cfg.Storage,
 		Replicas:    cfg.Replicas,
 		Placement:   cfg.Placement,
