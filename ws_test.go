@@ -22,6 +22,7 @@ import (
 	"io"
 	"math/rand"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -599,7 +600,7 @@ func TestWSControlFrames(t *testing.T) {
 	defer nc.Close()
 
 	// Enqueue a PING and make sure that we don't break
-	nc.wsEnqueueControlMsg(wsPingMessage, []byte("this is a ping payload"))
+	nc.wsEnqueueControlMsg(true, wsPingMessage, []byte("this is a ping payload"))
 	select {
 	case e := <-dch:
 		t.Fatal(e)
@@ -860,6 +861,36 @@ func TestWSWithTLS(t *testing.T) {
 	}
 }
 
+func TestWSTlsNoConfig(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.Servers = []string{"wss://localhost:443"}
+
+	nc := &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Error setting up pool: %v", err)
+	}
+	// Verify that this has set Secure/TLSConfig
+	nc.mu.Lock()
+	ok := nc.Opts.Secure && nc.Opts.TLSConfig != nil
+	nc.mu.Unlock()
+	if !ok {
+		t.Fatal("Secure and TLSConfig were not set")
+	}
+	// Now try to add a bare host:ip to the pool and verify
+	// that the wss:// scheme is added.
+	if err := nc.addURLToPool("1.2.3.4:443", true, false); err != nil {
+		t.Fatalf("Error adding to pool: %v", err)
+	}
+	nc.mu.Lock()
+	for _, srv := range nc.srvPool {
+		if srv.url.Scheme != wsSchemeTLS {
+			nc.mu.Unlock()
+			t.Fatalf("Expected scheme to be %q, got url: %s", wsSchemeTLS, srv.url)
+		}
+	}
+	nc.mu.Unlock()
+}
+
 func TestWSGossipAndReconnect(t *testing.T) {
 	o1 := testWSGetDefaultOptions(t, false)
 	o1.ServerName = "A"
@@ -1056,4 +1087,24 @@ func TestWSStress(t *testing.T) {
 			<-consDoneCh
 		})
 	}
+}
+
+func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
+	o := testWSGetDefaultOptions(t, false)
+	o.Username = "user"
+	o.Password = "pwd"
+	s := RunServerWithOptions(o)
+	defer s.Shutdown()
+
+	tm := time.AfterFunc(3*time.Second, func() {
+		buf := make([]byte, 1000000)
+		n := runtime.Stack(buf, true)
+		panic(fmt.Sprintf("Test has probably deadlocked!\n%s\n", buf[:n]))
+	})
+
+	if _, err := Connect(fmt.Sprintf("ws://127.0.0.1:%d", o.Websocket.Port)); err == nil {
+		t.Fatal("Expected auth error, did not get any error")
+	}
+
+	tm.Stop()
 }

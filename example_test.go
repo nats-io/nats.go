@@ -415,7 +415,7 @@ func ExampleJetStreamManager() {
 		MaxBytes: 2048,
 	})
 
-	// Create a druable consumer
+	// Create a durable consumer
 	js.AddConsumer("FOO", &nats.ConsumerConfig{
 		Durable: "BAR",
 	})
@@ -620,6 +620,11 @@ func ExampleSubOpt() {
 	js.Subscribe("foo", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.StartTime(time.Now().Add(-2*time.Hour)))
+
+	// Start delivering messages with delay based on BackOff array of time durations.
+	js.Subscribe("foo", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.ManualAck(), nats.MaxDeliver(2), nats.BackOff([]time.Duration{50 * time.Millisecond, 250 * time.Millisecond}))
 }
 
 func ExampleMaxWait() {

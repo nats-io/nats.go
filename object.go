@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -136,8 +136,10 @@ type ObjectStoreConfig struct {
 	Bucket      string
 	Description string
 	TTL         time.Duration
+	MaxBytes    int64
 	Storage     StorageType
 	Replicas    int
+	Placement   *Placement
 }
 
 type ObjectStoreStatus interface {
@@ -243,8 +245,10 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 		Description: cfg.Description,
 		Subjects:    []string{chunks, meta},
 		MaxAge:      cfg.TTL,
+		MaxBytes:    cfg.MaxBytes,
 		Storage:     cfg.Storage,
 		Replicas:    cfg.Replicas,
+		Placement:   cfg.Placement,
 		Discard:     DiscardNew,
 		AllowRollup: true,
 	}
@@ -472,7 +476,7 @@ func (info *ObjectInfo) isLink() bool {
 	return info.ObjectMeta.Opts != nil && info.ObjectMeta.Opts.Link != nil
 }
 
-// GetObject will pull the object from the underlying stream.
+// Get will pull the object from the underlying stream.
 func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 	// Grab meta info.
 	info, err := obs.GetInfo(name)

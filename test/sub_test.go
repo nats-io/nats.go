@@ -365,17 +365,16 @@ func TestCloseSubRelease(t *testing.T) {
 	sub, _ := nc.SubscribeSync("foo")
 	start := time.Now()
 	go func() {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(15 * time.Millisecond)
 		nc.Close()
 	}()
-	_, err := sub.NextMsg(50 * time.Millisecond)
-	if err == nil {
+	if _, err := sub.NextMsg(time.Second); err == nil {
 		t.Fatalf("Expected an error from NextMsg")
 	}
 	elapsed := time.Since(start)
 
 	// On Windows, the minimum waitTime is at least 15ms.
-	if elapsed > 20*time.Millisecond {
+	if elapsed > 50*time.Millisecond {
 		t.Fatalf("Too much time has elapsed to release NextMsg: %dms",
 			(elapsed / time.Millisecond))
 	}

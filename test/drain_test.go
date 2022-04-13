@@ -58,7 +58,7 @@ func TestDrain(t *testing.T) {
 	select {
 	case <-done:
 		break
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		r := atomic.LoadInt32(&received)
 		if r != expected {
 			t.Fatalf("Did not receive all messages: %d of %d", r, expected)

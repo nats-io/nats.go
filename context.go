@@ -21,20 +21,13 @@ import (
 // RequestMsgWithContext takes a context, a subject and payload
 // in bytes and request expecting a single response.
 func (nc *Conn) RequestMsgWithContext(ctx context.Context, msg *Msg) (*Msg, error) {
-	var hdr []byte
-	var err error
-
-	if len(msg.Header) > 0 {
-		if !nc.info.Headers {
-			return nil, ErrHeadersNotSupported
-		}
-
-		hdr, err = msg.headerBytes()
-		if err != nil {
-			return nil, err
-		}
+	if msg == nil {
+		return nil, ErrInvalidMsg
 	}
-
+	hdr, err := msg.headerBytes()
+	if err != nil {
+		return nil, err
+	}
 	return nc.requestWithContext(ctx, msg.Subject, hdr, msg.Data)
 }
 
@@ -224,7 +217,7 @@ func (nc *Conn) FlushWithContext(ctx context.Context) error {
 
 // RequestWithContext will create an Inbox and perform a Request
 // using the provided cancellation context with the Inbox reply
-// for the data v. A response will be decoded into the vPtrResponse.
+// for the data v. A response will be decoded into the vPtr last parameter.
 func (c *EncodedConn) RequestWithContext(ctx context.Context, subject string, v interface{}, vPtr interface{}) error {
 	if ctx == nil {
 		return ErrInvalidContext

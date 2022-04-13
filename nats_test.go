@@ -137,7 +137,6 @@ func TestExpandPath(t *testing.T) {
 			{path: "/Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "/Foo/Bar"},
 			{path: "Foo/Bar", userProfile: `C:\Foo\Bar`, wantPath: "Foo/Bar"},
 			{path: "~/Fizz", userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
-			{path: `${HOMEDRIVE}${HOMEPATH}\Fizz`, userProfile: `C:\Foo\Bar`, wantPath: `C:\Foo\Bar\Fizz`},
 
 			// Missing USERPROFILE.
 			{path: "~/Fizz", homeDrive: "X:", homePath: `\Foo\Bar`, wantPath: `X:\Foo\Bar\Fizz`},
@@ -275,6 +274,86 @@ var testServers = []string{
 	"nats://localhost:1226",
 	"nats://localhost:1227",
 	"nats://localhost:1228",
+}
+
+func TestMaxConnectionsReconnect(t *testing.T) {
+
+	// Start first server
+	s1Opts := natsserver.DefaultTestOptions
+	s1Opts.Port = -1
+	s1Opts.MaxConn = 2
+	s1Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
+	s1 := RunServerWithOptions(&s1Opts)
+	defer s1.Shutdown()
+
+	// Start second server
+	s2Opts := natsserver.DefaultTestOptions
+	s2Opts.Port = -1
+	s2Opts.MaxConn = 2
+	s2Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
+	s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s1Opts.Cluster.Port))
+	s2 := RunServerWithOptions(&s2Opts)
+	defer s2.Shutdown()
+
+	errCh := make(chan error, 2)
+	reconnectCh := make(chan struct{})
+	opts := []Option{
+		MaxReconnects(2),
+		ReconnectWait(10 * time.Millisecond),
+		Timeout(200 * time.Millisecond),
+		DisconnectErrHandler(func(_ *Conn, err error) {
+			if err != nil {
+				errCh <- err
+			}
+		}),
+		ReconnectHandler(func(_ *Conn) {
+			reconnectCh <- struct{}{}
+		}),
+	}
+
+	// Create two connections (the current max) to first server
+	nc1, _ := Connect(s1.ClientURL(), opts...)
+	defer nc1.Close()
+	nc1.Flush()
+
+	nc2, _ := Connect(s1.ClientURL(), opts...)
+	defer nc2.Close()
+	nc2.Flush()
+
+	if s1.NumClients() != 2 {
+		t.Fatalf("Expected 2 client connections to first server. Got %d", s1.NumClients())
+	}
+
+	if s2.NumClients() > 0 {
+		t.Fatalf("Expected 0 client connections to second server. Got %d", s2.NumClients())
+	}
+
+	// Kick one of our two server connections off first server. One client should reconnect to second server
+	newS1Opts := s1Opts
+	newS1Opts.MaxConn = 1
+	err := s1.ReloadOptions(&newS1Opts)
+	if err != nil {
+		t.Fatalf("Unexpected error changing max_connections [%s]", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != ErrMaxConnectionsExceeded {
+			t.Fatalf("Unexpected error %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for disconnect event")
+	}
+
+	select {
+	case <-reconnectCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for reconnect event")
+	}
+
+	if s2.NumClients() <= 0 || s1.NumClients() > 1 {
+		t.Fatalf("Expected client reconnection to second server")
+	}
 }
 
 func TestSimplifiedURLs(t *testing.T) {
@@ -1484,6 +1563,17 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 		t.Fatalf("Expected to connect, got %v", err)
 	}
 	nc.Close()
+
+	chainedFile = createTmpFile(t, []byte("invalid content"))
+	defer os.Remove(chainedFile)
+	nc, err = Connect(url, UserCredentials(chainedFile))
+	if err == nil || !strings.Contains(err.Error(),
+		"error signing nonce: unable to extract key pair from file") {
+		if nc != nil {
+			nc.Close()
+		}
+		t.Fatalf("Expected error about invalid creds file, got %q", err)
+	}
 }
 
 func TestExpiredAuthentication(t *testing.T) {
@@ -1673,7 +1763,8 @@ func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 		nc.Close()
 		t.Fatalf("Expected an error on missing credentials file")
 	}
-	if !strings.Contains(err.Error(), "no such file or directory") {
+	if !strings.Contains(err.Error(), "no such file or directory") &&
+		!strings.Contains(err.Error(), "The system cannot find the file specified") {
 		t.Fatalf("Expected a missing file error, got %q", err)
 	}
 }
@@ -2448,6 +2539,7 @@ func TestCustomReconnectDelay(t *testing.T) {
 	errCh := make(chan error, 1)
 	cCh := make(chan bool, 1)
 	nc, err := Connect(s.ClientURL(),
+		Timeout(100*time.Millisecond), // Need to lower for Windows tests
 		CustomReconnectDelay(func(n int) time.Duration {
 			var err error
 			var delay time.Duration
@@ -2493,7 +2585,13 @@ func TestCustomReconnectDelay(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("No CB invoked")
 	}
-	if dur := time.Since(start); dur >= 500*time.Millisecond {
+	// On Windows, a failed connect attempt will last as much as Timeout(),
+	// so we need to take that into account.
+	max := 500 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		max = time.Second
+	}
+	if dur := time.Since(start); dur >= max {
 		t.Fatalf("Waited too long on each reconnect: %v", dur)
 	}
 }

@@ -14,15 +14,18 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
 	"net/http/httptest"
 
+	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 )
@@ -100,6 +103,95 @@ func TestRequestMsg(t *testing.T) {
 	if resp.Header.Get("Hdr-Test") != "1" {
 		t.Fatalf("Did not receive header in response")
 	}
+
+	if err = nc.PublishMsg(nil); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if _, err = nc.RequestMsg(nil, time.Second); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if _, err = nc.RequestMsgWithContext(ctx, nil); err != nats.ErrInvalidMsg {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestRequestMsgRaceAsyncInfo(t *testing.T) {
+	s1Opts := natsserver.DefaultTestOptions
+	s1Opts.Host = "127.0.0.1"
+	s1Opts.Port = -1
+	s1Opts.Cluster.Name = "CLUSTER"
+	s1Opts.Cluster.Host = "127.0.0.1"
+	s1Opts.Cluster.Port = -1
+	s := natsserver.RunServer(&s1Opts)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	// Extra client with old request.
+	nc2, err := nats.Connect(s.ClientURL(), nats.UseOldRequestStyle())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc2.Close()
+
+	subject := "headers.test"
+	if _, err := nc.Subscribe(subject, func(m *nats.Msg) {
+		r := nats.NewMsg(m.Reply)
+		r.Header["Hdr-Test"] = []string{"bar"}
+		r.Data = []byte("+OK")
+		m.RespondMsg(r)
+	}); err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+	nc.Flush()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	ch := make(chan struct{})
+	go func() {
+		defer wg.Done()
+
+		s2Opts := natsserver.DefaultTestOptions
+		s2Opts.Host = "127.0.0.1"
+		s2Opts.Port = -1
+		s2Opts.Cluster.Name = "CLUSTER"
+		s2Opts.Cluster.Host = "127.0.0.1"
+		s2Opts.Cluster.Port = -1
+		s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s.ClusterAddr().Port))
+		for {
+			s := natsserver.RunServer(&s2Opts)
+			s.Shutdown()
+			select {
+			case <-ch:
+				return
+			default:
+			}
+		}
+	}()
+
+	msg := nats.NewMsg(subject)
+	msg.Header["Hdr-Test"] = []string{"quux"}
+	for i := 0; i < 100; i++ {
+		nc.RequestMsg(msg, time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		nc.RequestMsgWithContext(ctx, msg)
+		cancel()
+
+		// Check with old style requests as well.
+		nc2.RequestMsg(msg, time.Second)
+		ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+		nc2.RequestMsgWithContext(ctx2, msg)
+		cancel2()
+	}
+
+	close(ch)
+	wg.Wait()
 }
 
 func TestNoHeaderSupport(t *testing.T) {

@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,9 +17,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,6 +43,8 @@ type KeyValueManager interface {
 type KeyValue interface {
 	// Get returns the latest value for the key.
 	Get(key string) (entry KeyValueEntry, err error)
+	// GetRevision returns a specific revision value for the key.
+	GetRevision(key string, revision uint64) (entry KeyValueEntry, err error)
 	// Put will place the new value for the key into the store.
 	Put(key string, value []byte) (revision uint64, err error)
 	// PutString will place the string for the key into the store.
@@ -50,9 +54,9 @@ type KeyValue interface {
 	// Update will update the value iff the latest revision matches.
 	Update(key string, value []byte, last uint64) (revision uint64, err error)
 	// Delete will place a delete marker and leave all revisions.
-	Delete(key string) error
+	Delete(key string, opts ...DeleteOpt) error
 	// Purge will place a delete marker and remove all previous revisions.
-	Purge(key string) error
+	Purge(key string, opts ...DeleteOpt) error
 	// Watch for any updates to keys that match the keys argument which could include wildcards.
 	// Watch will send a nil entry when it has received all initial values.
 	Watch(keys string, opts ...WatchOpt) (KeyWatcher, error)
@@ -65,7 +69,7 @@ type KeyValue interface {
 	// Bucket returns the current bucket name.
 	Bucket() string
 	// PurgeDeletes will remove all current delete markers.
-	PurgeDeletes(opts ...WatchOpt) error
+	PurgeDeletes(opts ...PurgeOpt) error
 	// Status retrieves the status and configuration of a bucket
 	Status() (KeyValueStatus, error)
 }
@@ -90,6 +94,8 @@ type KeyValueStatus interface {
 
 // KeyWatcher is what is returned when doing a watch.
 type KeyWatcher interface {
+	// Context returns watcher context optionally provided by nats.Context option.
+	Context() context.Context
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
 	// Stop will stop this watcher.
@@ -146,6 +152,68 @@ func MetaOnly() WatchOpt {
 	})
 }
 
+type PurgeOpt interface {
+	configurePurge(opts *purgeOpts) error
+}
+
+type purgeOpts struct {
+	dmthr time.Duration // Delete markers threshold
+	ctx   context.Context
+}
+
+// DeleteMarkersOlderThan indicates that delete or purge markers older than that
+// will be deleted as part of PurgeDeletes() operation, otherwise, only the data
+// will be removed but markers that are recent will be kept.
+// Note that if no option is specified, the default is 30 minutes. You can set
+// this option to a negative value to instruct to always remove the markers,
+// regardless of their age.
+type DeleteMarkersOlderThan time.Duration
+
+func (ttl DeleteMarkersOlderThan) configurePurge(opts *purgeOpts) error {
+	opts.dmthr = time.Duration(ttl)
+	return nil
+}
+
+// For nats.Context() support.
+func (ctx ContextOpt) configurePurge(opts *purgeOpts) error {
+	opts.ctx = ctx
+	return nil
+}
+
+type DeleteOpt interface {
+	configureDelete(opts *deleteOpts) error
+}
+
+type deleteOpts struct {
+	// Remove all previous revisions.
+	purge bool
+
+	// Delete only if the latest revision matches.
+	revision uint64
+}
+
+type deleteOptFn func(opts *deleteOpts) error
+
+func (opt deleteOptFn) configureDelete(opts *deleteOpts) error {
+	return opt(opts)
+}
+
+// LastRevision deletes if the latest revision matches.
+func LastRevision(revision uint64) DeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.revision = revision
+		return nil
+	})
+}
+
+// purge removes all previous revisions.
+func purge() DeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.purge = true
+		return nil
+	})
+}
+
 // KeyValueConfig is for configuring a KeyValue store.
 type KeyValueConfig struct {
 	Bucket       string
@@ -156,12 +224,14 @@ type KeyValueConfig struct {
 	MaxBytes     int64
 	Storage      StorageType
 	Replicas     int
+	Placement    *Placement
 }
 
 // Used to watch all keys.
 const (
 	KeyValueMaxHistory = 64
 	AllKeys            = ">"
+	kvLatestRevision   = 0
 	kvop               = "KV-Operation"
 	kvdel              = "DEL"
 	kvpurge            = "PURGE"
@@ -259,6 +329,8 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 		stream: stream,
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
 		js:     js,
+		// Determine if we need to use the JS prefix in front of Put and Delete operations
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
 }
@@ -292,22 +364,67 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		replicas = 1
 	}
 
+	// We will set explicitly some values so that we can do comparison
+	// if we get an "already in use" error and need to check if it is same.
+	maxBytes := cfg.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = -1
+	}
+	maxMsgSize := cfg.MaxValueSize
+	if maxMsgSize == 0 {
+		maxMsgSize = -1
+	}
+	// When stream's MaxAge is not set, server uses 2 minutes as the default
+	// for the duplicate window. If MaxAge is set, and lower than 2 minutes,
+	// then the duplicate window will be set to that. If MaxAge is greater,
+	// we will cap the duplicate window to 2 minutes (to be consistent with
+	// previous behavior).
+	duplicateWindow := 2 * time.Minute
+	if cfg.TTL > 0 && cfg.TTL < duplicateWindow {
+		duplicateWindow = cfg.TTL
+	}
 	scfg := &StreamConfig{
 		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
 		Description:       cfg.Description,
 		Subjects:          []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)},
 		MaxMsgsPerSubject: history,
-		MaxBytes:          cfg.MaxBytes,
+		MaxBytes:          maxBytes,
 		MaxAge:            cfg.TTL,
-		MaxMsgSize:        cfg.MaxValueSize,
+		MaxMsgSize:        maxMsgSize,
 		Storage:           cfg.Storage,
 		Replicas:          replicas,
+		Placement:         cfg.Placement,
 		AllowRollup:       true,
 		DenyDelete:        true,
+		Duplicates:        duplicateWindow,
+		MaxMsgs:           -1,
+		MaxConsumers:      -1,
+	}
+
+	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
+	if js.nc.serverMinVersion(2, 7, 2) {
+		scfg.Discard = DiscardNew
 	}
 
 	if _, err := js.AddStream(scfg); err != nil {
-		return nil, err
+		// If we have a failure to add, it could be because we have
+		// a config change if the KV was created against a pre 2.7.2
+		// and we are now moving to a v2.7.2+. If that is the case
+		// and the only difference is the discard policy, then update
+		// the stream.
+		if err == ErrStreamNameAlreadyInUse {
+			if si, _ := js.StreamInfo(scfg.Name); si != nil {
+				// To compare, make the server's stream info discard
+				// policy same than ours.
+				si.Config.Discard = scfg.Discard
+				if reflect.DeepEqual(&si.Config, scfg) {
+					_, err = js.UpdateStream(scfg)
+				}
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	kv := &kvs{
@@ -315,6 +432,8 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		stream: scfg.Name,
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, cfg.Bucket),
 		js:     js,
+		// Determine if we need to use the JS prefix in front of Put and Delete operations
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
 	}
 	return kv, nil
 }
@@ -333,6 +452,10 @@ type kvs struct {
 	stream string
 	pre    string
 	js     *js
+	// If true, it means that APIPrefix/Domain was set in the context
+	// and we need to add something to some of our high level protocols
+	// (such as Put, etc..)
+	useJSPfx bool
 }
 
 // Underlying entry.
@@ -363,18 +486,31 @@ func keyValid(key string) bool {
 
 // Get returns the latest value for the key.
 func (kv *kvs) Get(key string) (KeyValueEntry, error) {
-	e, err := kv.get(key)
-	if err == ErrKeyDeleted {
-		return nil, ErrKeyNotFound
-	}
+	e, err := kv.get(key, kvLatestRevision)
 	if err != nil {
+		if err == ErrKeyDeleted {
+			return nil, ErrKeyNotFound
+		}
 		return nil, err
 	}
 
 	return e, nil
 }
 
-func (kv *kvs) get(key string) (KeyValueEntry, error) {
+// GetRevision returns a specific revision value for the key.
+func (kv *kvs) GetRevision(key string, revision uint64) (KeyValueEntry, error) {
+	e, err := kv.get(key, revision)
+	if err != nil {
+		if err == ErrKeyDeleted {
+			return nil, ErrKeyNotFound
+		}
+		return nil, err
+	}
+
+	return e, nil
+}
+
+func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 	if !keyValid(key) {
 		return nil, ErrInvalidKey
 	}
@@ -383,7 +519,17 @@ func (kv *kvs) get(key string) (KeyValueEntry, error) {
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
-	m, err := kv.js.GetLastMsg(kv.stream, b.String())
+	var m *RawStreamMsg
+	var err error
+	if revision == kvLatestRevision {
+		m, err = kv.js.GetLastMsg(kv.stream, b.String())
+	} else {
+		m, err = kv.js.GetMsg(kv.stream, revision)
+		if err == nil && m.Subject != b.String() {
+			return nil, ErrKeyNotFound
+		}
+	}
+
 	if err != nil {
 		if err == ErrMsgNotFound {
 			err = ErrKeyNotFound
@@ -409,7 +555,6 @@ func (kv *kvs) get(key string) (KeyValueEntry, error) {
 			entry.op = KeyValuePurge
 			return entry, ErrKeyDeleted
 		}
-
 	}
 
 	return entry, nil
@@ -422,6 +567,9 @@ func (kv *kvs) Put(key string, value []byte) (revision uint64, err error) {
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
@@ -446,7 +594,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 
 	// TODO(dlc) - Since we have tombstones for DEL ops for watchers, this could be from that
 	// so we need to double check.
-	if e, err := kv.get(key); err == ErrKeyDeleted {
+	if e, err := kv.get(key, kvLatestRevision); err == ErrKeyDeleted {
 		return kv.Update(key, value, e.Revision())
 	}
 
@@ -460,6 +608,9 @@ func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error)
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
@@ -474,45 +625,86 @@ func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error)
 }
 
 // Delete will place a delete marker and leave all revisions.
-func (kv *kvs) Delete(key string) error {
-	return kv.delete(key, false)
-}
-
-// Purge will remove the key and all revisions.
-func (kv *kvs) Purge(key string) error {
-	return kv.delete(key, true)
-}
-
-func (kv *kvs) delete(key string, purge bool) error {
+func (kv *kvs) Delete(key string, opts ...DeleteOpt) error {
 	if !keyValid(key) {
 		return ErrInvalidKey
 	}
 
 	var b strings.Builder
+	if kv.useJSPfx {
+		b.WriteString(kv.js.opts.pre)
+	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
 
 	// DEL op marker. For watch functionality.
 	m := NewMsg(b.String())
 
-	if purge {
+	var o deleteOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureDelete(&o); err != nil {
+				return err
+			}
+		}
+	}
+
+	if o.purge {
 		m.Header.Set(kvop, kvpurge)
 		m.Header.Set(MsgRollup, MsgRollupSubject)
 	} else {
 		m.Header.Set(kvop, kvdel)
 	}
+
+	if o.revision != 0 {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.revision, 10))
+	}
+
 	_, err := kv.js.PublishMsg(m)
 	return err
 }
 
+// Purge will remove the key and all revisions.
+func (kv *kvs) Purge(key string, opts ...DeleteOpt) error {
+	return kv.Delete(key, append(opts, purge())...)
+}
+
+const kvDefaultPurgeDeletesMarkerThreshold = 30 * time.Minute
+
 // PurgeDeletes will remove all current delete markers.
 // This is a maintenance option if there is a larger buildup of delete markers.
-func (kv *kvs) PurgeDeletes(opts ...WatchOpt) error {
-	watcher, err := kv.WatchAll(opts...)
+// See DeleteMarkersOlderThan() option for more information.
+func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
+	var o purgeOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configurePurge(&o); err != nil {
+				return err
+			}
+		}
+	}
+	// Transfer possible context purge option to the watcher. This is the
+	// only option that matters for the PurgeDeletes() feature.
+	var wopts []WatchOpt
+	if o.ctx != nil {
+		wopts = append(wopts, Context(o.ctx))
+	}
+	watcher, err := kv.WatchAll(wopts...)
 	if err != nil {
 		return err
 	}
 	defer watcher.Stop()
+
+	var limit time.Time
+	olderThan := o.dmthr
+	// Negative value is used to instruct to always remove markers, regardless
+	// of age. If set to 0 (or not set), use our default value.
+	if olderThan == 0 {
+		olderThan = kvDefaultPurgeDeletesMarkerThreshold
+	}
+	if olderThan > 0 {
+		limit = time.Now().Add(-olderThan)
+	}
 
 	var deleteMarkers []KeyValueEntry
 	for entry := range watcher.Updates() {
@@ -533,8 +725,11 @@ func (kv *kvs) PurgeDeletes(opts ...WatchOpt) error {
 		b.WriteString(kv.pre)
 		b.WriteString(entry.Key())
 		pr.Subject = b.String()
-		err := kv.js.purgeStream(kv.stream, &pr)
-		if err != nil {
+		pr.Keep = 0
+		if olderThan > 0 && entry.Created().After(limit) {
+			pr.Keep = 1
+		}
+		if err := kv.js.purgeStream(kv.stream, &pr); err != nil {
 			return err
 		}
 		b.Reset()
@@ -588,8 +783,21 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 
 // Implementation for Watch
 type watcher struct {
-	updates chan KeyValueEntry
-	sub     *Subscription
+	mu          sync.Mutex
+	updates     chan KeyValueEntry
+	sub         *Subscription
+	initDone    bool
+	initPending uint64
+	received    uint64
+	ctx         context.Context
+}
+
+// Context returns the context for the watcher if set.
+func (w *watcher) Context() context.Context {
+	if w == nil {
+		return nil
+	}
+	return w.ctx
 }
 
 // Updates returns the interior channel.
@@ -625,15 +833,14 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 		}
 	}
 
-	var initDoneMarker bool
-
 	// Could be a pattern so don't check for validity as we normally do.
 	var b strings.Builder
 	b.WriteString(kv.pre)
 	b.WriteString(keys)
 	keys = b.String()
 
-	w := &watcher{updates: make(chan KeyValueEntry, 32)}
+	// We will block below on placing items on the chan. That is by design.
+	w := &watcher{updates: make(chan KeyValueEntry, 256), ctx: o.ctx}
 
 	update := func(m *Msg) {
 		tokens, err := getMetadataFields(m.Reply)
@@ -655,30 +862,32 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 			}
 		}
 		delta := uint64(parseNum(tokens[ackNumPendingTokenPos]))
-		entry := &kve{
-			bucket:   kv.name,
-			key:      subj,
-			value:    m.Data,
-			revision: uint64(parseNum(tokens[ackStreamSeqTokenPos])),
-			created:  time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
-			delta:    delta,
-			op:       op,
-		}
+		w.mu.Lock()
+		defer w.mu.Unlock()
 		if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
+			entry := &kve{
+				bucket:   kv.name,
+				key:      subj,
+				value:    m.Data,
+				revision: uint64(parseNum(tokens[ackStreamSeqTokenPos])),
+				created:  time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
+				delta:    delta,
+				op:       op,
+			}
 			w.updates <- entry
 		}
-		// Check if done initial values.
-		if !initDoneMarker && delta == 0 {
-			initDoneMarker = true
-			w.updates <- nil
+		// Check if done and initial values.
+		if !w.initDone {
+			w.received++
+			// We set this on the first trip through..
+			if w.initPending == 0 {
+				w.initPending = delta
+			}
+			if w.received > w.initPending || delta == 0 {
+				w.initDone = true
+				w.updates <- nil
+			}
 		}
-	}
-
-	// Check if we have anything pending.
-	_, err := kv.js.GetLastMsg(kv.stream, keys)
-	if err == ErrMsgNotFound {
-		initDoneMarker = true
-		w.updates <- nil
 	}
 
 	// Used ordered consumer to deliver results.
@@ -692,10 +901,28 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	if o.ctx != nil {
 		subOpts = append(subOpts, Context(o.ctx))
 	}
+	// Create the sub and rest of initialization under the lock.
+	// We want to prevent the race between this code and the
+	// update() callback.
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	sub, err := kv.js.Subscribe(keys, update, subOpts...)
 	if err != nil {
 		return nil, err
 	}
+	sub.mu.Lock()
+	// If there were no pending messages at the time of the creation
+	// of the consumer, send the marker.
+	if sub.jsi != nil && sub.jsi.pending == 0 {
+		w.initDone = true
+		w.updates <- nil
+	}
+	// Set us up to close when the waitForMessages func returns.
+	sub.pDone = func() {
+		close(w.updates)
+	}
+	sub.mu.Unlock()
+
 	w.sub = sub
 	return w, nil
 }

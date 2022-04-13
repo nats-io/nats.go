@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ import (
 
 func TestObjectBasics(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -114,7 +115,7 @@ func TestObjectBasics(t *testing.T) {
 
 func TestDefaultObjectStatus(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -141,8 +142,15 @@ func TestDefaultObjectStatus(t *testing.T) {
 }
 
 func TestObjectFileBasics(t *testing.T) {
+	// The filename is likely to be something like C:\xxx and we don't allow
+	// the '\' or ':' characters. We could translate the tmpFile.Name() from
+	// C:\foo\bar to C:/foo/bar (since Windows is OK with that), however,
+	// that would still fail on key validation because `:` is not allowed.
+	if runtime.GOOS == "windows" {
+		t.SkipNow()
+	}
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -184,7 +192,7 @@ func TestObjectFileBasics(t *testing.T) {
 
 func TestObjectMulti(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -230,7 +238,7 @@ func TestObjectMulti(t *testing.T) {
 
 func TestObjectDeleteMarkers(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -262,7 +270,7 @@ func TestObjectDeleteMarkers(t *testing.T) {
 
 func TestObjectMultiWithDelete(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -303,7 +311,7 @@ func TestObjectMultiWithDelete(t *testing.T) {
 
 func TestObjectNames(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -325,7 +333,7 @@ func TestObjectNames(t *testing.T) {
 
 func TestObjectMetadata(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -380,7 +388,7 @@ func TestObjectMetadata(t *testing.T) {
 
 func TestObjectWatch(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -460,7 +468,7 @@ func TestObjectWatch(t *testing.T) {
 
 func TestObjectLinks(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -557,7 +565,7 @@ func expectLinkPartsAreCorrect(t *testing.T, linkObject *nats.ObjectInfo, bucket
 // Right now no history, just make sure we are cleaning up after ourselves.
 func TestObjectHistory(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -590,7 +598,7 @@ func TestObjectHistory(t *testing.T) {
 
 func TestObjectList(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdown(s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, js := jsClient(t, s)
 	defer nc.Close()
@@ -639,5 +647,24 @@ func TestObjectList(t *testing.T) {
 	}
 	if !reflect.DeepEqual(omap, expected) {
 		t.Fatalf("Expected %+v but got %+v", expected, omap)
+	}
+}
+
+func TestObjectMaxBytes(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", MaxBytes: 1024})
+	expectOk(t, err)
+
+	status, err := obs.Status()
+	expectOk(t, err)
+	bs := status.(*nats.ObjectBucketStatus)
+	info := bs.StreamInfo()
+	if info.Config.MaxBytes != 1024 {
+		t.Fatalf("invalid object stream MaxSize %+v", info.Config.MaxBytes)
 	}
 }

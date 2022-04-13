@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -31,6 +31,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats-server/v2/test"
+
 	"github.com/nats-io/nats.go"
 )
 
@@ -1398,7 +1399,7 @@ func TestUseCustomDialer(t *testing.T) {
 	}
 	defer nc3.Close()
 	if nc3.Opts.Dialer.Timeout != nats.DefaultTimeout {
-		t.Fatalf("Expected DialTimeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
+		t.Fatalf("Expected Dialer.Timeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
 	}
 
 	// Create custom dialer that return error on Dial().
@@ -1483,6 +1484,9 @@ func (d *lowWriteBufferDialer) Dial(network, address string) (net.Conn, error) {
 }
 
 func TestCustomFlusherTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.SkipNow()
+	}
 	s := RunDefaultServer()
 	defer s.Shutdown()
 

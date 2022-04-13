@@ -784,3 +784,45 @@ func TestConnCloseNoCallback(t *testing.T) {
 		t.Fatalf("%s issued a callback and it shouldn't have", what)
 	}
 }
+
+func TestReconnectBufSizeDisable(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	o := nats.GetDefaultOptions()
+
+	// Disable buffering to always get a synchronous error when publish fails.
+	o.ReconnectBufSize = -1
+
+	dch := make(chan bool)
+	o.DisconnectedErrCB = func(_ *nats.Conn, _ error) {
+		dch <- true
+	}
+
+	nc, err := o.Connect()
+	if err != nil {
+		t.Fatalf("Should have connected ok: %v", err)
+	}
+	defer nc.Close()
+
+	err = nc.Flush()
+	if err != nil {
+		t.Fatalf("Error during flush: %v", err)
+	}
+
+	// Force disconnected state.
+	s.Shutdown()
+
+	if e := Wait(dch); e != nil {
+		t.Fatal("DisconnectedErrCB should have been triggered")
+	}
+
+	msg := []byte("food")
+	if err := nc.Publish("foo", msg); err != nats.ErrReconnectBufExceeded {
+		t.Fatalf("Unexpected error: %v\n", err)
+	}
+	got, _ := nc.Buffered()
+	if got != 0 {
+		t.Errorf("Unexpected buffered bytes: %v", got)
+	}
+}
