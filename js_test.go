@@ -20,6 +20,7 @@ package nats
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -843,7 +844,7 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 	}
 
 	// Publish bunch of messages.
-	payload := make([]byte, 1024)
+	payload := make([]byte, 100*1024)
 	for i := 0; i < 250; i++ {
 		nc.Publish("a", payload)
 	}
@@ -937,5 +938,75 @@ func TestJetStreamExpiredPullRequests(t *testing.T) {
 		if err == nil || dur < 50*time.Millisecond {
 			t.Fatalf("Expected error and wait for 250ms, got err=%v and dur=%v", err, dur)
 		}
+	}
+}
+
+func TestJetStreamSyncSubscribeWithMaxAckPending(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	opts.JetStreamLimits.MaxAckPending = 100
+	s := natsserver.RunServer(&opts)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&StreamConfig{Name: "MAX_ACK_PENDING", Subjects: []string{"foo"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	// We should be able to create a sync subscription
+	sub, err := js.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	sub.Unsubscribe()
+
+	// And pull sub
+	sub, err = js.PullSubscribe("foo", "bar")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	sub.Unsubscribe()
+}
+
+func TestJetStreamClusterPlacement(t *testing.T) {
+	// There used to be a test here that would not work because it would require
+	// all servers in the cluster to know about each other tags. So we will simply
+	// verify that if a stream is configured with placement and tags, the proper
+	// "stream create" request is sent.
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API."+apiStreamCreateT, "TEST"))
+	if err != nil {
+		t.Fatalf("Error on sub: %v", err)
+	}
+	js.AddStream(&StreamConfig{
+		Name: "TEST",
+		Placement: &Placement{
+			Tags: []string{"my_tag"},
+		},
+	})
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting stream create request: %v", err)
+	}
+	var req StreamConfig
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if req.Placement == nil {
+		t.Fatal("Expected placement, did not get it")
+	}
+	if n := len(req.Placement.Tags); n != 1 {
+		t.Fatalf("Expected 1 tag, got %v", n)
+	}
+	if v := req.Placement.Tags[0]; v != "my_tag" {
+		t.Fatalf("Unexpected tag: %q", v)
 	}
 }

@@ -1465,12 +1465,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		if cfg.ReplayPolicy == replayPolicyNotSet {
 			cfg.ReplayPolicy = ReplayInstantPolicy
 		}
+		// Note: Do not set MaxAckPending if not set by the user. The server may
+		// have limits that are lower than the sync subscription go channel size,
+		// so don't use the cap size as the "default" MaxAckPending.
 
-		// If we have acks at all and the MaxAckPending is not set go ahead
-		// and set to the internal max for channel based consumers
-		if cfg.MaxAckPending == 0 && ch != nil && cfg.AckPolicy != AckNonePolicy {
-			cfg.MaxAckPending = cap(ch)
-		}
 		// Create request here.
 		ccreq = &createConsumerRequest{
 			Stream: stream,

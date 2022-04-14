@@ -2162,7 +2162,7 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 	checkConsume(t, js2, publishSubj, sourceName, toSend)
 }
 
-func TestJetStreamAutoMaxAckPending(t *testing.T) {
+func TestJetStreamNoAutoMaxAckPending(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -2176,14 +2176,9 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	toSend := 10_000
-
-	msg := []byte("Hello")
-	for i := 0; i < toSend; i++ {
-		// Use plain NATS here for speed.
-		nc.Publish("foo", msg)
-	}
-	nc.Flush()
+	// We no longer use the cap of the sync sub's go channel as the
+	// default MaxAckPending, so check that it is actually NOT set
+	// to our value.
 
 	// Create a consumer.
 	sub, err := js.SubscribeSync("foo")
@@ -2191,39 +2186,13 @@ func TestJetStreamAutoMaxAckPending(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer sub.Unsubscribe()
-	expectedMaxAck, _, _ := sub.PendingLimits()
 
 	ci, err := sub.ConsumerInfo()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if ci.Config.MaxAckPending != expectedMaxAck {
-		t.Fatalf("Expected MaxAckPending to be set to %d, got %d", expectedMaxAck, ci.Config.MaxAckPending)
-	}
-
-	waitForPending := func(n int) {
-		timeout := time.Now().Add(2 * time.Second)
-		for time.Now().Before(timeout) {
-			if msgs, _, _ := sub.Pending(); msgs == n {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		msgs, _, _ := sub.Pending()
-		t.Fatalf("Expected to receive %d messages, but got %d", n, msgs)
-	}
-
-	waitForPending(expectedMaxAck)
-	// We do it twice to make sure it does not go over.
-	waitForPending(expectedMaxAck)
-
-	// Now make sure we can consume them all with no slow consumers etc.
-	for i := 0; i < toSend; i++ {
-		m, err := sub.NextMsg(time.Second)
-		if err != nil {
-			t.Fatalf("Unexpected error receiving %d: %v", i+1, err)
-		}
-		m.Ack()
+	if ci.Config.MaxAckPending == 500 {
+		t.Fatalf("Expected MaxAckPending to not be set to the channel's cap, got %d", ci.Config.MaxAckPending)
 	}
 }
 
@@ -3674,7 +3643,7 @@ func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
 		{"default ack wait", nats.AckWait(30 * time.Second)},
 		{"default replay policy", nats.ReplayInstant()},
 		{"default max waiting", nats.PullMaxWaiting(512)},
-		{"default ack pending", nats.MaxAckPending(65536)},
+		{"default ack pending", nats.MaxAckPending(1000)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			durName := nuid.Next()
@@ -3683,6 +3652,7 @@ func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
 				t.Fatalf("Error on subscribe: %v", err)
 			}
 			// If the option is the same as the server default, it is not an error either.
+			// This test is dependent on what the server default is, so it may need adjustment.
 			_, err = js.PullSubscribe("foo", durName, test.opt)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -3921,84 +3891,6 @@ func checkSubsPending(t *testing.T, sub *nats.Subscription, numExpected int) {
 			return fmt.Errorf("Did not receive correct number of messages: %d vs %d", nmsgs, numExpected)
 		}
 		return nil
-	})
-}
-
-func TestJetStream_ClusterPlacement(t *testing.T) {
-	size := 3
-
-	t.Run("default cluster", func(t *testing.T) {
-		cluster := "PLC1"
-		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
-			srvA := nodes[0]
-			nc, js := jsClient(t, srvA.Server)
-			defer nc.Close()
-
-			var err error
-
-			stream := &nats.StreamConfig{
-				Name: "TEST",
-				Placement: &nats.Placement{
-					Tags: []string{"NODE_0"},
-				},
-			}
-
-			_, err = js.AddStream(stream)
-			if err != nil {
-				t.Errorf("Unexpected error placing stream: %v", err)
-			}
-		})
-	})
-
-	t.Run("known cluster", func(t *testing.T) {
-		cluster := "PLC2"
-		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
-			srvA := nodes[0]
-			nc, js := jsClient(t, srvA.Server)
-			defer nc.Close()
-
-			var err error
-
-			stream := &nats.StreamConfig{
-				Name: "TEST",
-				Placement: &nats.Placement{
-					Cluster: cluster,
-					Tags:    []string{"NODE_0"},
-				},
-			}
-
-			_, err = js.AddStream(stream)
-			if err != nil {
-				t.Errorf("Unexpected error placing stream: %v", err)
-			}
-		})
-	})
-
-	t.Run("unknown cluster", func(t *testing.T) {
-		cluster := "PLC3"
-		withJSCluster(t, cluster, size, func(t *testing.T, nodes ...*jsServer) {
-			srvA := nodes[0]
-			nc, js := jsClient(t, srvA.Server)
-			defer nc.Close()
-
-			var err error
-
-			stream := &nats.StreamConfig{
-				Name: "TEST",
-				Placement: &nats.Placement{
-					Cluster: "UNKNOWN",
-				},
-			}
-
-			_, err = js.AddStream(stream)
-			if err == nil {
-				t.Error("Unexpected success creating stream in unknown cluster")
-			}
-			expected := `insufficient resources`
-			if err != nil && err.Error() != expected {
-				t.Errorf("Expected %q error, got: %v", expected, err)
-			}
-		})
 	})
 }
 
