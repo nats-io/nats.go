@@ -585,14 +585,17 @@ func TestJetStreamSubscribe(t *testing.T) {
 	// Now go ahead and consume these and ack, but not ack+next.
 	for i := 0; i < batch; i++ {
 		m := bmsgs[i]
-		err = m.Ack()
+		err = m.AckSync()
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if info, _ := sub.ConsumerInfo(); info.AckFloor.Consumer != uint64(batch) {
-		t.Fatalf("Expected ack floor to be %d, got %d", batch, info.AckFloor.Consumer)
-	}
+	checkFor(t, time.Second, 15*time.Millisecond, func() error {
+		if info, _ := sub.ConsumerInfo(); info.AckFloor.Consumer != uint64(batch) {
+			return fmt.Errorf("Expected ack floor to be %d, got %d", batch, info.AckFloor.Consumer)
+		}
+		return nil
+	})
 	waitForPending(t, sub, 0)
 
 	// Make a request for 10 but should only receive a few.
@@ -607,7 +610,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 
 	for _, msg := range bmsgs {
-		msg.Ack()
+		msg.AckSync()
 	}
 
 	// Now test attaching to a pull based durable.
@@ -2746,6 +2749,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	nextMsg := func() *nats.Msg {
+		t.Helper()
 		msgs, err := sub.Fetch(1)
 		if err != nil {
 			t.Fatal(err)
@@ -2754,6 +2758,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	getPending := func() (int, int) {
+		t.Helper()
 		info, err := sub.ConsumerInfo()
 		if err != nil {
 			t.Fatal(err)
@@ -2762,6 +2767,7 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	getMetadata := func(msg *nats.Msg) *nats.MsgMetadata {
+		t.Helper()
 		meta, err := msg.Metadata()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -2770,16 +2776,23 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	expectedPending := func(inflight int, pending int) {
-		i, p := getPending()
-		if i != inflight || p != pending {
-			t.Errorf("Unexpected inflight/pending msgs: %v/%v", i, p)
-		}
+		t.Helper()
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			i, p := getPending()
+			if i != inflight || p != pending {
+				return fmt.Errorf("Unexpected inflight/pending msgs: %v/%v", i, p)
+			}
+			return nil
+		})
 	}
 
-	inflight, pending := getPending()
-	if inflight != 0 || pending != totalMsgs {
-		t.Errorf("Unexpected inflight/pending msgs: %v/%v", inflight, pending)
-	}
+	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		inflight, pending := getPending()
+		if inflight != 0 || pending != totalMsgs {
+			return fmt.Errorf("Unexpected inflight/pending msgs: %v/%v", inflight, pending)
+		}
+		return nil
+	})
 
 	// Normal Ack should decrease pending
 	msg := nextMsg()
@@ -2908,13 +2921,17 @@ func TestJetStreamPullSubscribe_AckPending(t *testing.T) {
 	}
 
 	// Get rest of messages.
-	msgs, err := sub.Fetch(5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, msg := range msgs {
-		getMetadata(msg)
-		msg.Ack()
+	count := 5
+	for count > 0 {
+		msgs, err := sub.Fetch(count)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, msg := range msgs {
+			count--
+			getMetadata(msg)
+			msg.Ack()
+		}
 	}
 	expectedPending(0, 0)
 }
