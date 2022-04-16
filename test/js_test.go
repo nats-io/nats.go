@@ -5481,6 +5481,85 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	fmt.Printf("%.0f msgs/sec\n\n", float64(toSend)/tt.Seconds())
 }
 
+func TestJetStreamPublishExpectZero(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test", "foo", "bar"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Errorf("Error: %s", err)
+	}
+
+	// Explicitly set the header to zero.
+	_, err = js.Publish("foo", []byte("bar"),
+		nats.ExpectLastSequence(0),
+		nats.ExpectLastSequencePerSubject(0),
+	)
+	if err != nil {
+		t.Errorf("Error: %v", err)
+	}
+
+	rawMsg, err := js.GetMsg("TEST", 1)
+	if err != nil {
+		t.Fatalf("Error: %s", err)
+	}
+	hdr, ok := rawMsg.Header["Nats-Expected-Last-Sequence"]
+	if !ok {
+		t.Fatal("Missing header")
+	}
+	got := hdr[0]
+	expected := "0"
+	if got != expected {
+		t.Fatalf("Expected %v, got: %v", expected, got)
+	}
+	hdr, ok = rawMsg.Header["Nats-Expected-Last-Subject-Sequence"]
+	if !ok {
+		t.Fatal("Missing header")
+	}
+	got = hdr[0]
+	expected = "0"
+	if got != expected {
+		t.Fatalf("Expected %v, got: %v", expected, got)
+	}
+
+	msg, err := sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatalf("Error: %s", err)
+	}
+	hdr, ok = msg.Header["Nats-Expected-Last-Sequence"]
+	if !ok {
+		t.Fatal("Missing header")
+	}
+	got = hdr[0]
+	expected = "0"
+	if got != expected {
+		t.Fatalf("Expected %v, got: %v", expected, got)
+	}
+	hdr, ok = msg.Header["Nats-Expected-Last-Subject-Sequence"]
+	if !ok {
+		t.Fatal("Missing header")
+	}
+	got = hdr[0]
+	expected = "0"
+	if got != expected {
+		t.Fatalf("Expected %v, got: %v", expected, got)
+	}
+}
+
 func TestJetStreamBindConsumer(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)

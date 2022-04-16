@@ -336,10 +336,10 @@ type pubOpts struct {
 	ctx context.Context
 	ttl time.Duration
 	id  string
-	lid string // Expected last msgId
-	str string // Expected stream name
-	seq uint64 // Expected last sequence
-	lss uint64 // Expected last sequence per subject
+	lid string  // Expected last msgId
+	str string  // Expected stream name
+	seq *uint64 // Expected last sequence
+	lss *uint64 // Expected last sequence per subject
 
 	// Publish retries for NoResponders err.
 	rwait time.Duration // Retry wait between attempts
@@ -415,11 +415,11 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	if o.str != _EMPTY_ {
 		m.Header.Set(ExpectedStreamHdr, o.str)
 	}
-	if o.seq > 0 {
-		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(o.seq, 10))
+	if o.seq != nil {
+		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(*o.seq, 10))
 	}
-	if o.lss > 0 {
-		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.lss, 10))
+	if o.lss != nil {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
 	}
 
 	var resp *Msg
@@ -749,11 +749,11 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if o.str != _EMPTY_ {
 		m.Header.Set(ExpectedStreamHdr, o.str)
 	}
-	if o.seq > 0 {
-		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(o.seq, 10))
+	if o.seq != nil {
+		m.Header.Set(ExpectedLastSeqHdr, strconv.FormatUint(*o.seq, 10))
 	}
-	if o.lss > 0 {
-		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(o.lss, 10))
+	if o.lss != nil {
+		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
 	}
 
 	// Reply
@@ -822,7 +822,7 @@ func ExpectStream(stream string) PubOpt {
 // ExpectLastSequence sets the expected sequence in the response from the publish.
 func ExpectLastSequence(seq uint64) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
-		opts.seq = seq
+		opts.seq = &seq
 		return nil
 	})
 }
@@ -830,7 +830,7 @@ func ExpectLastSequence(seq uint64) PubOpt {
 // ExpectLastSequencePerSubject sets the expected sequence per subject in the response from the publish.
 func ExpectLastSequencePerSubject(seq uint64) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
-		opts.lss = seq
+		opts.lss = &seq
 		return nil
 	})
 }
