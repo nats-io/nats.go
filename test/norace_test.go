@@ -53,7 +53,7 @@ func TestNoRaceObjectContextOpt(t *testing.T) {
 	}
 
 	// Now put a large object in there.
-	blob := make([]byte, 8*1024*1024)
+	blob := make([]byte, 16*1024*1024)
 	rand.Read(blob)
 	_, err = obs.PutBytes("BLOB", blob)
 	expectOk(t, err)
