@@ -1136,6 +1136,12 @@ func UserJWT(userCB UserJWTHandler, sigCB SignatureHandler) Option {
 		if sigCB == nil {
 			return ErrUserButNoSigCB
 		}
+		// Smoke test the user callback to ensure it is setup properly
+		// when processing options.
+		if _, err := userCB(); err != nil {
+			return err
+		}
+
 		o.UserJWT = userCB
 		o.SignatureCB = sigCB
 		return nil
@@ -5432,12 +5438,12 @@ func wipeSlice(buf []byte) {
 func userFromFile(userFile string) (string, error) {
 	path, err := expandPath(userFile)
 	if err != nil {
-		return _EMPTY_, fmt.Errorf("nats: %v", err)
+		return _EMPTY_, fmt.Errorf("nats: %w", err)
 	}
 
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		return _EMPTY_, fmt.Errorf("nats: %v", err)
+		return _EMPTY_, fmt.Errorf("nats: %w", err)
 	}
 	defer wipeSlice(contents)
 	return nkeys.ParseDecoratedJWT(contents)
@@ -5486,7 +5492,7 @@ func expandPath(p string) (string, error) {
 func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 	contents, err := os.ReadFile(seedFile)
 	if err != nil {
-		return nil, fmt.Errorf("nats: %v", err)
+		return nil, fmt.Errorf("nats: %w", err)
 	}
 	defer wipeSlice(contents)
 	return nkeys.ParseDecoratedNKey(contents)
