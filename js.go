@@ -2414,12 +2414,20 @@ func PullMaxWaiting(n int) SubOpt {
 	})
 }
 
-var errNoMessages = errors.New("nats: no messages")
+var (
+	// errNoMessages is an error that a Fetch request using no_wait can receive to signal
+	// that there are no more messages available.
+	errNoMessages = errors.New("nats: no messages")
+
+	// errRequestsPending is an error that represents a sub.Fetch requests that was using
+	// no_wait and expires time got discarded by the server.
+	errRequestsPending = errors.New("nats: requests pending")
+)
 
 // Returns if the given message is a user message or not, and if
 // `checkSts` is true, returns appropriate error based on the
 // content of the status (404, etc..)
-func checkMsg(msg *Msg, checkSts bool) (usrMsg bool, err error) {
+func checkMsg(msg *Msg, checkSts, isNoWait bool) (usrMsg bool, err error) {
 	// Assume user message
 	usrMsg = true
 
@@ -2448,11 +2456,17 @@ func checkMsg(msg *Msg, checkSts bool) (usrMsg bool, err error) {
 		// 404 indicates that there are no messages.
 		err = errNoMessages
 	case reqTimeoutSts:
-		// Older servers may send a 408 when a request in the server was expired
-		// and interest is still found, which will be the case for our
-		// implementation. Regardless, ignore 408 errors until receiving at least
-		// one message.
-		err = ErrTimeout
+		// In case of a fetch request with no wait request and expires time,
+		// need to skip 408 errors and retry.
+		if isNoWait {
+			err = errRequestsPending
+		} else {
+			// Older servers may send a 408 when a request in the server was expired
+			// and interest is still found, which will be the case for our
+			// implementation. Regardless, ignore 408 errors until receiving at least
+			// one message when making requests without no_wait.
+			err = ErrTimeout
+		}
 	default:
 		err = fmt.Errorf("nats: %s", msg.Header.Get(descrHdr))
 	}
@@ -2567,7 +2581,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		// or status message, however, we don't care about values of status
 		// messages at this point in the Fetch() call, so checkMsg can't
 		// return an error.
-		if usrMsg, _ := checkMsg(msg, false); usrMsg {
+		if usrMsg, _ := checkMsg(msg, false, false); usrMsg {
 			msgs = append(msgs, msg)
 		}
 	}
@@ -2610,11 +2624,11 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			if err == nil {
 				var usrMsg bool
 
-				usrMsg, err = checkMsg(msg, true)
+				usrMsg, err = checkMsg(msg, true, noWait)
 				if err == nil && usrMsg {
 					msgs = append(msgs, msg)
-				} else if noWait && (err == errNoMessages) && len(msgs) == 0 {
-					// If we have a 404 for our "no_wait" request and have
+				} else if noWait && (err == errNoMessages || err == errRequestsPending) && len(msgs) == 0 {
+					// If we have a 404/408 for our "no_wait" request and have
 					// not collected any message, then resend request to
 					// wait this time.
 					noWait = false
