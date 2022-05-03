@@ -16,11 +16,13 @@ package nats
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"reflect"
 	"runtime"
 	"strings"
@@ -1107,4 +1109,32 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	}
 
 	tm.Stop()
+}
+
+func TestWSProxyPath(t *testing.T) {
+	const (
+		proxyPath = "proxy1"
+		proxyPort = "8080"
+	)
+
+	var proxyCalled bool
+
+	http.HandleFunc("/"+proxyPath, func(w http.ResponseWriter, r *http.Request) {
+		proxyCalled = true
+	})
+
+	httpServer := &http.Server{Addr: ":" + proxyPort}
+	defer httpServer.Shutdown(context.Background())
+	go httpServer.ListenAndServe()
+
+	opt := testWSGetDefaultOptions(t, false)
+	s := RunServerWithOptions(opt)
+	defer s.Shutdown()
+
+	url := fmt.Sprintf("ws://127.0.0.1:%s", proxyPort)
+	Connect(url, ProxyPath(proxyPath))
+
+	if !proxyCalled {
+		t.Fatal("Proxy didnt called")
+	}
 }
