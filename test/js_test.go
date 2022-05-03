@@ -4382,6 +4382,15 @@ func TestJetStream_ClusterMultipleSubscribe(t *testing.T) {
 				}
 				withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultiplePullSubscribe)
 			})
+
+			t.Run(fmt.Sprintf("psub n=%d r=%d multi fetch", n, r), func(t *testing.T) {
+				name := fmt.Sprintf("PFSUBN%d%d", n, r)
+				stream := &nats.StreamConfig{
+					Name:     name,
+					Replicas: n,
+				}
+				withJSClusterAndStream(t, name, n, stream, testJetStream_ClusterMultipleFetchPullSubscribe)
+			})
 		}
 	}
 }
@@ -4540,6 +4549,139 @@ func testJetStream_ClusterMultiplePullSubscribe(t *testing.T, subject string, sr
 		if err != nil {
 			t.Fatalf("Unexpected error with multiple pull subscribers: %v", err)
 		}
+	}
+}
+
+func testJetStream_ClusterMultipleFetchPullSubscribe(t *testing.T, subject string, srvs ...*jsServer) {
+	srv := srvs[0]
+	nc, js := jsClient(t, srv.Server)
+	defer nc.Close()
+
+	var wg sync.WaitGroup
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+	defer done()
+
+	// Setup a number of subscriptions with different inboxes that will be
+	// fetching the messages in parallel.
+	nsubs := 4
+	subs := make([]*nats.Subscription, nsubs)
+	errCh := make(chan error, nsubs)
+	var queues sync.Map
+	for i := 0; i < nsubs; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			var sub *nats.Subscription
+			var err error
+			sub, err = js.PullSubscribe(subject, "shared")
+			if err != nil {
+				errCh <- err
+			} else {
+				subs[n] = sub
+				queues.Store(sub.Subject, make([]*nats.Msg, 0))
+			}
+		}(i)
+	}
+
+	// Publishing of messages happens after the subscriptions are ready.
+	// The subscribers will be fetching messages while these are being
+	// produced so sometimes there are not going to be messages available.
+	wg.Wait()
+	var (
+		total     uint64 = 100
+		delivered uint64
+		batchSize = 2
+	)
+	go func() {
+		for i := 0; i < int(total); i++ {
+			js.Publish(subject, []byte(fmt.Sprintf("n:%v", i)))
+			time.Sleep(1 * time.Millisecond)
+		}
+	}()
+
+	ctx2, done2 := context.WithTimeout(ctx, 3*time.Second)
+	defer done2()
+
+	for _, psub := range subs {
+		if psub == nil {
+			continue
+		}
+		sub := psub
+		subject := sub.Subject
+		v, _ := queues.Load(sub.Subject)
+		queue := v.([]*nats.Msg)
+		go func() {
+			for {
+				select {
+				case <-ctx2.Done():
+					return
+				default:
+				}
+
+				if current := atomic.LoadUint64(&delivered); current >= total {
+					done2()
+					return
+				}
+
+				// Wait until all messages have been consumed.
+				for attempt := 0; attempt < 4; attempt++ {
+					recvd, err := sub.Fetch(batchSize, nats.MaxWait(1*time.Second))
+					if err != nil {
+						if err == nats.ErrConnectionClosed {
+							return
+						}
+						current := atomic.LoadUint64(&delivered)
+						if current >= total {
+							done2()
+							return
+						} else {
+							t.Logf("WARN: Timeout waiting for next message: %v", err)
+						}
+						continue
+					}
+					for _, msg := range recvd {
+						queue = append(queue, msg)
+						queues.Store(subject, queue)
+					}
+					atomic.AddUint64(&delivered, uint64(len(recvd)))
+					break
+				}
+			}
+		}()
+	}
+
+	// Wait until context is canceled after receiving all messages.
+	<-ctx2.Done()
+
+	if delivered < total {
+		t.Fatalf("Expected %v, got: %v", total, delivered)
+	}
+
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Unexpected error with multiple pull subscribers: %v", err)
+		}
+	}
+
+	var (
+		gotNoMessages bool
+		count         = 0
+	)
+	queues.Range(func(k, v interface{}) bool {
+		msgs := v.([]*nats.Msg)
+		count += len(msgs)
+
+		if len(msgs) == 0 {
+			gotNoMessages = true
+			return false
+		}
+		return true
+	})
+
+	if gotNoMessages {
+		t.Error("Expected all pull subscribers to receive some messages")
 	}
 }
 
