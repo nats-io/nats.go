@@ -1113,17 +1113,18 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 }
 
 func TestWSProxyPath(t *testing.T) {
-	const (
-		proxyPath = "/proxy1"
-		proxyPort = "8080"
-	)
-
+	const proxyPath = "/proxy1"
 	var proxyCalled bool
 
-	l, err := net.Listen("tcp", fmt.Sprintf(":%s", proxyPort))
+	// Listen to a random port
+	l, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatalf("Error in listen: %v", err)
 	}
+	defer l.Close()
+
+	proxyPort := l.Addr().(*net.TCPAddr).Port
+
 	proxySrv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			proxyCalled = r.URL.Path == proxyPath
@@ -1136,7 +1137,7 @@ func TestWSProxyPath(t *testing.T) {
 	s := RunServerWithOptions(opt)
 	defer s.Shutdown()
 
-	url := fmt.Sprintf("ws://127.0.0.1:%s", proxyPort)
+	url := fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
 	Connect(url, ProxyPath(proxyPath))
 
 	if !proxyCalled {
