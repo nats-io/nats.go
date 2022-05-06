@@ -851,7 +851,7 @@ func RetryWait(dur time.Duration) PubOpt {
 	})
 }
 
-// RetryAttempts sets the retry number of attemopts when ErrNoResponders is encountered.
+// RetryAttempts sets the retry number of attempts when ErrNoResponders is encountered.
 func RetryAttempts(num int) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.rnum = num
