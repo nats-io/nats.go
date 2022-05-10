@@ -467,6 +467,10 @@ type Options struct {
 	// supports compression. If the server does too, then data will be compressed.
 	Compression bool
 
+	// For websocket connections, adds a path to connections url.
+	// This is useful when connecting to NATS behind a proxy.
+	ProxyPath string
+
 	// InboxPrefix allows the default _INBOX prefix to be customized
 	InboxPrefix string
 }
@@ -1143,6 +1147,15 @@ func RetryOnFailedConnect(retry bool) Option {
 func Compression(enabled bool) Option {
 	return func(o *Options) error {
 		o.Compression = enabled
+		return nil
+	}
+}
+
+// ProxyPath is an option for websocket connections that adds a path to connections url.
+// This is useful when connecting to NATS behind a proxy.
+func ProxyPath(path string) Option {
+	return func(o *Options) error {
+		o.ProxyPath = path
 		return nil
 	}
 }

@@ -16,11 +16,14 @@ package nats
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
+	"net/http"
 	"reflect"
 	"runtime"
 	"strings"
@@ -1107,4 +1110,51 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	}
 
 	tm.Stop()
+}
+
+func TestWSProxyPath(t *testing.T) {
+	const proxyPath = "proxy1"
+
+	// Listen to a random port
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("Error in listen: %v", err)
+	}
+	defer l.Close()
+
+	proxyPort := l.Addr().(*net.TCPAddr).Port
+
+	ch := make(chan struct{}, 1)
+	proxySrv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/"+proxyPath {
+				ch <- struct{}{}
+			}
+		}),
+	}
+	defer proxySrv.Shutdown(context.Background())
+	go proxySrv.Serve(l)
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{"without slash", proxyPath},
+		{"with slash", "/" + proxyPath},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			url := fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
+			nc, err := Connect(url, ProxyPath(test.path))
+			if err == nil {
+				nc.Close()
+				t.Fatal("Did not expect to connect")
+			}
+			select {
+			case <-ch:
+				// OK:
+			case <-time.After(time.Second):
+				t.Fatal("Proxy was not reached")
+			}
+		})
+	}
 }
