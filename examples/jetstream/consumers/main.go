@@ -28,9 +28,9 @@ import (
 /*
 This example shows implementation of consumers management.
 `js-consumer-management` command can be used to create, update or get information about a consumer.
-`-push-target` option can be used to configure a delivery subject for a push-based consumer. If not provided, the consumer will be created in push mode.
+`-push-target` option can be used to configure a delivery subject for a push-based consumer. If not provided, the consumer will be created in pull mode.
 `-filter` option can be used to filter subjects from the stream.
-`-queue` option can be used to create a queue consumer.
+`-queue` option can be used to create a queue consumer. If used, `-push-target` should be provided as well (DeliverGroup is only relevant for push consumers).
 
 Example usage:
 ./js-consumer-management -creds '/path/to/nats/credentials' -s 'nats://127.0.0.1:4222' -push-target=ORDERS_RECV add ORDERS ORDERS_CONSUMER
@@ -56,9 +56,9 @@ func main() {
 		tlsClientCert = flag.String("tlscert", "", "TLS client certificate file")
 		tlsClientKey  = flag.String("tlskey", "", "Private key file for client certificate")
 		tlsCACert     = flag.String("tlscacert", "", "CA certificate to verify peer against")
-		pushTarget    = flag.String("push-target", "", "Deliverty subject for push-based consumer")
+		pushTarget    = flag.String("push-target", "", "Delivery subject for push-based consumer")
 		filter        = flag.String("filter", "", "FilterSubject for a consumer")
-		queue         = flag.String("queue", "", "Delivery target group for a consumer")
+		queue         = flag.String("queue", "", "Delivery target group for a consumer. Only applicable on push consumers (-push-target has to be provided)")
 		showHelp      = flag.Bool("h", false, "Show help message")
 	)
 
@@ -76,7 +76,7 @@ func main() {
 	}
 
 	// Connect Options.
-	opts := []nats.Option{nats.Name("JetStream Sample Stream Management")}
+	opts := []nats.Option{nats.Name("JetStream Consumer Management")}
 
 	if *userCreds != "" && *nkeyFile != "" {
 		log.Fatal("specify -seed or -creds")

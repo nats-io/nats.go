@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Connect Options.
-	opts := []nats.Option{nats.Name("JetStream Sample KeyValue Management")}
+	opts := []nats.Option{nats.Name("JetStream Sample KeyValue Put")}
 
 	if *userCreds != "" && *nkeyFile != "" {
 		log.Fatal("specify -seed or -creds")
