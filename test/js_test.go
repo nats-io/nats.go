@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -6616,4 +6617,114 @@ func TestJetStreamClusterStreamLeaderChangeClientErr(t *testing.T) {
 			t.Fatalf("Got too many timeout errors from publish: %d", toc)
 		}
 	})
+}
+
+func TestJetStreamConsumerConfigReplicasAndMemStorage(t *testing.T) {
+	withJSCluster(t, "CR", 3, func(t *testing.T, nodes ...*jsServer) {
+		nc, js := jsClient(t, nodes[0].Server)
+		defer nc.Close()
+
+		if _, err := js.AddStream(&nats.StreamConfig{
+			Name:     "CR",
+			Subjects: []string{"foo"},
+			Replicas: 3,
+		}); err != nil {
+			t.Fatalf("Error adding stream: %v", err)
+		}
+
+		// We can't really check if the consumer ends-up with memory storage or not.
+		// We are simply going to create a NATS subscription on the request subject
+		// and make sure that the request contains "mem_storage:true".
+		sub, err := nc.SubscribeSync("$JS.API.CONSUMER.DURABLE.CREATE.CR.dur")
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+
+		ci, err := js.AddConsumer("CR", &nats.ConsumerConfig{
+			Durable:        "dur",
+			DeliverSubject: "bar",
+			Replicas:       1,
+			MemoryStorage:  true,
+		})
+		if err != nil {
+			t.Fatalf("Error adding consumer: %v", err)
+		}
+		if n := len(ci.Cluster.Replicas); n > 0 {
+			t.Fatalf("Expected replicas to be 1, got %+v", ci.Cluster)
+		}
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on next msg: %v", err)
+		}
+		if str := string(msg.Data); !strings.Contains(str, "mem_storage\":true") {
+			t.Fatalf("Does not look like the request asked for memory storage: %s", str)
+		}
+	})
+}
+
+func TestJetStreamRePublish(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&nats.StreamConfig{
+		Name:     "RP",
+		Storage:  nats.MemoryStorage,
+		Subjects: []string{"foo", "bar", "baz"},
+		RePublish: &nats.SubjectMapping{
+			Source:      ">",
+			Destination: "RP.>",
+		},
+	}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	sub, err := nc.SubscribeSync("RP.>")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	msg, toSend := []byte("OK TO REPUBLISH?"), 100
+	for i := 0; i < toSend; i++ {
+		js.Publish("foo", msg)
+		js.Publish("bar", msg)
+		js.Publish("baz", msg)
+	}
+
+	lseq := map[string]int{
+		"foo": 0,
+		"bar": 0,
+		"baz": 0,
+	}
+
+	for i := 1; i <= toSend; i++ {
+		m, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on next msg: %v", err)
+		}
+		// Grab info from Header
+		stream := m.Header.Get(nats.JSStream)
+		if stream != "RP" {
+			t.Fatalf("Unexpected header: %+v", m.Header)
+		}
+		// Make sure sequence is correct.
+		seq, err := strconv.Atoi(m.Header.Get(nats.JSSequence))
+		if err != nil {
+			t.Fatalf("Error decoding sequence for %s", m.Header.Get(nats.JSSequence))
+		}
+		if seq != i {
+			t.Fatalf("Expected sequence to be %v, got %v", i, seq)
+		}
+		// Make sure last sequence matches last seq we received on this subject.
+		last, err := strconv.Atoi(m.Header.Get(nats.JSLastSequence))
+		if err != nil {
+			t.Fatalf("Error decoding last sequence for %s", m.Header.Get(nats.JSLastSequence))
+		}
+		if last != lseq[m.Subject] {
+			t.Fatalf("Expected last sequence to be %v, got %v", lseq[m.Subject], last)
+		}
+		lseq[m.Subject] = seq
+	}
 }

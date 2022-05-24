@@ -100,6 +100,15 @@ type StreamConfig struct {
 	DenyDelete        bool            `json:"deny_delete,omitempty"`
 	DenyPurge         bool            `json:"deny_purge,omitempty"`
 	AllowRollup       bool            `json:"allow_rollup_hdrs,omitempty"`
+
+	// Allow republish of the message after being sequenced and stored.
+	RePublish *SubjectMapping `json:"republish,omitempty"`
+}
+
+// SubjectMapping allows a source subject to be mapped to a destination subject for republishing.
+type SubjectMapping struct {
+	Source      string `json:"src,omitempty"`
+	Destination string `json:"dest"`
 }
 
 // Placement is used to guide placement of streams in clustered JetStream.

@@ -373,6 +373,13 @@ const (
 	MsgRollup              = "Nats-Rollup"
 )
 
+// Headers for republished messages.
+const (
+	JSStream       = "Nats-Stream"
+	JSSequence     = "Nats-Sequence"
+	JSLastSequence = "Nats-Last-Sequence"
+)
+
 // MsgSize is a header that will be part of a consumer's delivered message if HeadersOnly requested.
 const MsgSize = "Nats-Msg-Size"
 
@@ -961,8 +968,6 @@ func (d nakDelay) configureAck(opts *ackOpts) error {
 type ConsumerConfig struct {
 	Durable         string          `json:"durable_name,omitempty"`
 	Description     string          `json:"description,omitempty"`
-	DeliverSubject  string          `json:"deliver_subject,omitempty"`
-	DeliverGroup    string          `json:"deliver_group,omitempty"`
 	DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
 	OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
 	OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
@@ -984,8 +989,17 @@ type ConsumerConfig struct {
 	MaxRequestBatch   int           `json:"max_batch,omitempty"`
 	MaxRequestExpires time.Duration `json:"max_expires,omitempty"`
 
+	// Push based consumers.
+	DeliverSubject string `json:"deliver_subject,omitempty"`
+	DeliverGroup   string `json:"deliver_group,omitempty"`
+
 	// Ephemeral inactivity threshold.
 	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+
+	// Generally inherited by parent stream and other markers, now can be configured directly.
+	Replicas int `json:"num_replicas"`
+	// Force memory storage.
+	MemoryStorage bool `json:"mem_storage,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
