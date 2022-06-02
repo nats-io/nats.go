@@ -3030,6 +3030,78 @@ func TestJetStreamSubscribe_AckDup(t *testing.T) {
 	}
 }
 
+func TestJetStreamSubscribe_AutoAck(t *testing.T) {
+	tests := []struct {
+		name        string
+		opt         nats.SubOpt
+		expectedAck bool
+	}{
+		{
+			name:        "with ack explicit",
+			opt:         nats.AckExplicit(),
+			expectedAck: true,
+		},
+		{
+			name:        "with ack all",
+			opt:         nats.AckAll(),
+			expectedAck: true,
+		},
+		{
+			name:        "with ack none",
+			opt:         nats.AckNone(),
+			expectedAck: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			var err error
+
+			// Create the stream using our client API.
+			_, err = js.AddStream(&nats.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			js.Publish("foo", []byte("hello"))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+
+			acks := make(chan struct{}, 2)
+			nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+				acks <- struct{}{}
+			})
+			nc.Flush()
+
+			_, err = js.Subscribe("foo", func(m *nats.Msg) {
+			}, test.opt)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			<-ctx.Done()
+
+			if test.expectedAck {
+				if len(acks) != 1 {
+					t.Fatalf("Expected to receive a single ack, got: %v", len(acks))
+				}
+				return
+			}
+			if len(acks) != 0 {
+				t.Fatalf("Expected no acks, got: %v", len(acks))
+			}
+		})
+	}
+}
+
 func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)

@@ -1520,8 +1520,8 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		cancel:   cancel,
 	}
 
-	// Check if we are manual ack.
-	if cb != nil && !o.mack {
+	// Auto acknowledge unless manual ack is set or policy is set to AckNonePolicy
+	if cb != nil && !o.mack && o.cfg.AckPolicy != AckNonePolicy {
 		ocb := cb
 		cb = func(m *Msg) { ocb(m); m.Ack() }
 	}
