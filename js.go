@@ -1401,6 +1401,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		o.cfg.AckPolicy = AckNonePolicy
 		o.cfg.MaxDeliver = 1
 		o.cfg.AckWait = 22 * time.Hour // Just set to something known, not utilized.
+		// Force R1 and MemoryStorage for these.
+		o.cfg.Replicas = 1
+		o.cfg.MemoryStorage = true
+
 		if !hasHeartbeats {
 			o.cfg.Heartbeat = orderedHeartbeatsInterval
 		}
