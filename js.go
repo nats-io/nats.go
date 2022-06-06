@@ -228,6 +228,8 @@ type jsOpts struct {
 	// enables protocol tracing
 	ctrace      ClientTrace
 	shouldTrace bool
+	// purgeOpts contains optional stream purge options
+	purgeOpts *StreamPurgeRequest
 }
 
 const (
@@ -292,6 +294,11 @@ func Domain(domain string) JSOpt {
 		return nil
 	})
 
+}
+
+func (s *StreamPurgeRequest) configureJSContext(js *jsOpts) error {
+	js.purgeOpts = s
+	return nil
 }
 
 // APIPrefix changes the default prefix used for the JetStream API.

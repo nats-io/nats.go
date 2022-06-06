@@ -1491,6 +1491,217 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 }
 
+func TestPurgeStream(t *testing.T) {
+	testData := []nats.Msg{
+		{
+			Subject: "foo.A",
+			Data:    []byte("first on A"),
+		},
+		{
+			Subject: "foo.C",
+			Data:    []byte("first on C"),
+		},
+		{
+			Subject: "foo.B",
+			Data:    []byte("first on B"),
+		},
+		{
+			Subject: "foo.C",
+			Data:    []byte("second on C"),
+		},
+	}
+
+	tests := []struct {
+		name      string
+		stream    string
+		req       *nats.StreamPurgeRequest
+		withError error
+		expected  []nats.Msg
+	}{
+		{
+			name:     "purge all messages",
+			stream:   "foo",
+			expected: []nats.Msg{},
+		},
+		{
+			name:   "with filter subject",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Subject: "foo.C",
+			},
+			expected: []nats.Msg{
+				{
+					Subject: "foo.A",
+					Data:    []byte("first on A"),
+				},
+				{
+					Subject: "foo.B",
+					Data:    []byte("first on B"),
+				},
+			},
+		},
+		{
+			name:   "with sequence",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Sequence: 3,
+			},
+			expected: []nats.Msg{
+				{
+					Subject: "foo.B",
+					Data:    []byte("first on B"),
+				},
+				{
+					Subject: "foo.C",
+					Data:    []byte("second on C"),
+				},
+			},
+		},
+		{
+			name:   "with keep",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Keep: 1,
+			},
+			expected: []nats.Msg{
+				{
+					Subject: "foo.C",
+					Data:    []byte("second on C"),
+				},
+			},
+		},
+		{
+			name:   "with filter and sequence",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Subject:  "foo.C",
+				Sequence: 3,
+			},
+			expected: []nats.Msg{
+				{
+					Subject: "foo.A",
+					Data:    []byte("first on A"),
+				},
+				{
+					Subject: "foo.B",
+					Data:    []byte("first on B"),
+				},
+				{
+					Subject: "foo.C",
+					Data:    []byte("second on C"),
+				},
+			},
+		},
+		{
+			name:   "with filter and keep",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Subject: "foo.C",
+				Keep:    1,
+			},
+			expected: []nats.Msg{
+				{
+					Subject: "foo.A",
+					Data:    []byte("first on A"),
+				},
+				{
+					Subject: "foo.B",
+					Data:    []byte("first on B"),
+				},
+				{
+					Subject: "foo.C",
+					Data:    []byte("second on C"),
+				},
+			},
+		},
+		{
+			name:   "empty stream name",
+			stream: "",
+			req: &nats.StreamPurgeRequest{
+				Subject: "foo.C",
+				Keep:    1,
+			},
+			withError: nats.ErrStreamNameRequired,
+		},
+		{
+			name:   "invalid stream name",
+			stream: "bad.stream.name",
+			req: &nats.StreamPurgeRequest{
+				Subject: "foo.C",
+				Keep:    1,
+			},
+			withError: nats.ErrInvalidStreamName,
+		},
+		{
+			name:   "invalid request - both sequence and keep provided",
+			stream: "foo",
+			req: &nats.StreamPurgeRequest{
+				Sequence: 3,
+				Keep:     1,
+			},
+			withError: nats.ErrBadRequest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name:     "foo",
+				Subjects: []string{"foo.A", "foo.B", "foo.C"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			for _, msg := range testData {
+				if _, err := js.PublishMsg(&msg); err != nil {
+					t.Fatalf("Unexpected error during publish: %v", err)
+				}
+			}
+
+			err = js.PurgeStream(test.stream, test.req)
+			if test.withError != nil {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: '%s'; got '%s'", test.withError, err)
+				}
+				return
+			}
+
+			streamInfo, err := js.StreamInfo("foo", test.req)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if streamInfo.State.Msgs != uint64(len(test.expected)) {
+				t.Fatalf("Unexpected message count: expected %d; got: %d", len(test.expected), streamInfo.State.Msgs)
+			}
+			sub, err := js.SubscribeSync("foo.*", nats.BindStream("foo"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			for i := 0; i < int(streamInfo.State.Msgs); i++ {
+				msg, err := sub.NextMsg(1 * time.Second)
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+				if msg.Subject != test.expected[i].Subject {
+					t.Fatalf("Unexpected message; subject is different than expected: want %s; got: %s", test.expected[i].Subject, msg.Subject)
+				}
+				if string(msg.Data) != string(test.expected[i].Data) {
+					t.Fatalf("Unexpected message; data is different than expected: want %s; got: %s", test.expected[i].Data, msg.Data)
+				}
+			}
+		})
+	}
+}
+
 func TestJetStreamManagement_GetMsg(t *testing.T) {
 	t.Run("1-node", func(t *testing.T) {
 		withJSServer(t, testJetStreamManagement_GetMsg)

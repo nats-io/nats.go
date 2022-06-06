@@ -717,7 +717,7 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 	}
 
 	var (
-		pr streamPurgeRequest
+		pr StreamPurgeRequest
 		b  strings.Builder
 	)
 	// Do actual purges here.
