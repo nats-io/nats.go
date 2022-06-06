@@ -167,6 +167,7 @@ var (
 	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
 	ErrStreamNameAlreadyInUse       = errors.New("nats: stream name already in use")
 	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")
+	ErrBadRequest                   = errors.New("nats: bad request")
 )
 
 func init() {

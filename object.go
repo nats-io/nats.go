@@ -336,7 +336,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return perr
 	}
 
-	purgePartial := func() { obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: chunkSubj}) }
+	purgePartial := func() { obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}) }
 
 	// Create our own JS context to handle errors etc.
 	js, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
@@ -439,7 +439,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	// Delete any original one.
 	if einfo != nil && !einfo.Deleted {
 		chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
-		obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: chunkSubj})
+		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 	}
 
 	return info, nil
@@ -600,7 +600,7 @@ func (obs *obs) Delete(name string) error {
 
 	// Purge chunks for the object.
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	return obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: chunkSubj})
+	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 }
 
 // AddLink will add a link to another object into this object store.

@@ -925,8 +925,8 @@ func (js *js) DeleteMsg(name string, seq uint64, opts ...JSOpt) error {
 	return nil
 }
 
-// streamPurgeRequest is optional request information to the purge API.
-type streamPurgeRequest struct {
+// StreamPurgeRequest is optional request information to the purge API.
+type StreamPurgeRequest struct {
 	// Purge up to but not including sequence.
 	Sequence uint64 `json:"seq,omitempty"`
 	// Subject to match against messages for the purge command.
@@ -946,10 +946,18 @@ func (js *js) PurgeStream(stream string, opts ...JSOpt) error {
 	if err := checkStreamName(stream); err != nil {
 		return err
 	}
-	return js.purgeStream(stream, nil)
+	var req *StreamPurgeRequest
+	var ok bool
+	for _, opt := range opts {
+		// For PurgeStream, only request body opt is relevant
+		if req, ok = opt.(*StreamPurgeRequest); ok {
+			break
+		}
+	}
+	return js.purgeStream(stream, req)
 }
 
-func (js *js) purgeStream(stream string, req *streamPurgeRequest, opts ...JSOpt) error {
+func (js *js) purgeStream(stream string, req *StreamPurgeRequest, opts ...JSOpt) error {
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
 		return err
@@ -975,6 +983,9 @@ func (js *js) purgeStream(stream string, req *streamPurgeRequest, opts ...JSOpt)
 		return err
 	}
 	if resp.Error != nil {
+		if resp.Error.Code == 400 {
+			return fmt.Errorf("%w: %s", ErrBadRequest, "invalid purge request body")
+		}
 		return errors.New(resp.Error.Description)
 	}
 	return nil
