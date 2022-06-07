@@ -1262,7 +1262,7 @@ func checkConfig(s, u *ConsumerConfig) error {
 	if u.OptStartSeq > 0 && u.OptStartSeq != s.OptStartSeq {
 		return makeErr("optional start sequence", u.OptStartSeq, s.OptStartSeq)
 	}
-	if u.OptStartTime != nil && !u.OptStartTime.IsZero() && u.OptStartTime != s.OptStartTime {
+	if u.OptStartTime != nil && !u.OptStartTime.IsZero() && !(*u.OptStartTime).Equal(*s.OptStartTime) {
 		return makeErr("optional start time", u.OptStartTime, s.OptStartTime)
 	}
 	if u.AckPolicy != ackPolicyNotSet && u.AckPolicy != s.AckPolicy {
