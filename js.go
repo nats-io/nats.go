@@ -97,7 +97,8 @@ type JetStream interface {
 	QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscription, error)
 
 	// PullSubscribe creates a Subscription that can fetch messages.
-	// See important note in Subscribe()
+	// See important note in Subscribe(). Additionally, for an ephemeral pull consumer, the "durable" value must be
+	// set to an empty string.
 	PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error)
 }
 
