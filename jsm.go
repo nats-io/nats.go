@@ -634,7 +634,13 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 	return resp.StreamInfo, nil
 }
 
-type streamInfoResponse = streamCreateResponse
+type (
+	// StreamInfoRequest contains additional option to return details about messages deleted from a stream
+	StreamInfoRequest struct {
+		DeletedDetails bool `json:"deleted_details,omitempty"`
+	}
+	streamInfoResponse = streamCreateResponse
+)
 
 func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 	if err := checkStreamName(stream); err != nil {
@@ -647,9 +653,15 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 	if cancel != nil {
 		defer cancel()
 	}
+	var req []byte
+	if o.streamInfoOpts != nil {
+		if req, err = json.Marshal(o.streamInfoOpts); err != nil {
+			return nil, err
+		}
+	}
+	siSubj := js.apiSubj(fmt.Sprintf(apiStreamInfoT, stream))
 
-	csSubj := js.apiSubj(fmt.Sprintf(apiStreamInfoT, stream))
-	r, err := js.apiRequestWithContext(o.ctx, csSubj, nil)
+	r, err := js.apiRequestWithContext(o.ctx, siSubj, req)
 	if err != nil {
 		return nil, err
 	}
@@ -686,13 +698,15 @@ type StreamSourceInfo struct {
 
 // StreamState is information about the given stream.
 type StreamState struct {
-	Msgs      uint64    `json:"messages"`
-	Bytes     uint64    `json:"bytes"`
-	FirstSeq  uint64    `json:"first_seq"`
-	FirstTime time.Time `json:"first_ts"`
-	LastSeq   uint64    `json:"last_seq"`
-	LastTime  time.Time `json:"last_ts"`
-	Consumers int       `json:"consumer_count"`
+	Msgs       uint64    `json:"messages"`
+	Bytes      uint64    `json:"bytes"`
+	FirstSeq   uint64    `json:"first_seq"`
+	FirstTime  time.Time `json:"first_ts"`
+	LastSeq    uint64    `json:"last_seq"`
+	LastTime   time.Time `json:"last_ts"`
+	Consumers  int       `json:"consumer_count"`
+	Deleted    []uint64  `json:"deleted"`
+	NumDeleted int       `json:"num_deleted"`
 }
 
 // ClusterInfo shows information about the underlying set of servers
