@@ -1702,6 +1702,110 @@ func TestPurgeStream(t *testing.T) {
 	}
 }
 
+func TestStreamInfo(t *testing.T) {
+	testData := []string{"one", "two", "three", "four"}
+
+	tests := []struct {
+		name                   string
+		stream                 string
+		req                    *nats.StreamInfoRequest
+		withError              error
+		expectedDeletedDetails []uint64
+	}{
+		{
+			name:   "empty request body",
+			stream: "foo",
+		},
+		{
+			name:   "with deleted details",
+			stream: "foo",
+			req: &nats.StreamInfoRequest{
+				DeletedDetails: true,
+			},
+			expectedDeletedDetails: []uint64{2, 4},
+		},
+		{
+			name:   "with deleted details set to false",
+			stream: "foo",
+			req: &nats.StreamInfoRequest{
+				DeletedDetails: false,
+			},
+		},
+		{
+			name:      "empty stream name",
+			stream:    "",
+			withError: nats.ErrStreamNameRequired,
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "bad.stream.name",
+			withError: nats.ErrInvalidStreamName,
+		},
+		{
+			name:      "stream not found",
+			stream:    "bar",
+			withError: nats.ErrStreamNotFound,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name:     "foo",
+				Subjects: []string{"foo.A"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			for _, msg := range testData {
+				if _, err := js.Publish("foo.A", []byte(msg)); err != nil {
+					t.Fatalf("Unexpected error during publish: %v", err)
+				}
+			}
+			if err := js.DeleteMsg("foo", 2); err != nil {
+				t.Fatalf("Unexpected error while deleting message from stream: %v", err)
+			}
+			if err := js.DeleteMsg("foo", 4); err != nil {
+				t.Fatalf("Unexpected error while deleting message from stream: %v", err)
+			}
+
+			var streamInfo *nats.StreamInfo
+			if test.req != nil {
+				streamInfo, err = js.StreamInfo(test.stream, test.req)
+			} else {
+				streamInfo, err = js.StreamInfo(test.stream)
+			}
+			if test.withError != nil {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: '%s'; got '%s'", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if streamInfo.Config.Name != "foo" {
+				t.Fatalf("Invalid stream name in StreamInfo response: want: 'foo'; got: '%s'", streamInfo.Config.Name)
+			}
+			if streamInfo.State.NumDeleted != 2 {
+				t.Fatalf("Invalid value for num_deleted in state: want: 2; got: %d", streamInfo.State.NumDeleted)
+			}
+			if !reflect.DeepEqual(test.expectedDeletedDetails, streamInfo.State.Deleted) {
+				t.Fatalf("Invalid value for deleted msgs in state: want: %v; got: %v", test.expectedDeletedDetails, streamInfo.State.Deleted)
+			}
+		})
+	}
+}
+
 func TestJetStreamManagement_GetMsg(t *testing.T) {
 	t.Run("1-node", func(t *testing.T) {
 		withJSServer(t, testJetStreamManagement_GetMsg)
@@ -2361,7 +2465,7 @@ func TestJetStreamCrossAccountMirrorsAndSources(t *testing.T) {
 		Name:    sourceName,
 		Storage: nats.FileStorage,
 		Sources: []*nats.StreamSource{
-			&nats.StreamSource{
+			{
 				Name: publishSubj,
 				External: &nats.ExternalStream{
 					APIPrefix:     "RI.JS.API",

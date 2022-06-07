@@ -230,6 +230,8 @@ type jsOpts struct {
 	shouldTrace bool
 	// purgeOpts contains optional stream purge options
 	purgeOpts *StreamPurgeRequest
+	// streamInfoOpts contains optional stream info options
+	streamInfoOpts *StreamInfoRequest
 }
 
 const (
@@ -298,6 +300,11 @@ func Domain(domain string) JSOpt {
 
 func (s *StreamPurgeRequest) configureJSContext(js *jsOpts) error {
 	js.purgeOpts = s
+	return nil
+}
+
+func (s *StreamInfoRequest) configureJSContext(js *jsOpts) error {
+	js.streamInfoOpts = s
 	return nil
 }
 
