@@ -1,4 +1,4 @@
-// Copyright 2021 The NATS Authors
+// Copyright 2021-2022 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -100,15 +100,18 @@ type StreamConfig struct {
 	DenyDelete        bool            `json:"deny_delete,omitempty"`
 	DenyPurge         bool            `json:"deny_purge,omitempty"`
 	AllowRollup       bool            `json:"allow_rollup_hdrs,omitempty"`
+	AllowDirect       bool            `json:"allow_direct,omitempty"`
 
 	// Allow republish of the message after being sequenced and stored.
-	RePublish *SubjectMapping `json:"republish,omitempty"`
+	RePublish *RePublish `json:"republish,omitempty"`
 }
 
-// SubjectMapping allows a source subject to be mapped to a destination subject for republishing.
-type SubjectMapping struct {
+// RePublish is for republishing messages once committed to a stream. The original
+// subject cis remapped from the subject pattern to the destination pattern.
+type RePublish struct {
 	Source      string `json:"src,omitempty"`
 	Destination string `json:"dest"`
+	HeadersOnly bool   `json:"headers_only,omitempty"`
 }
 
 // Placement is used to guide placement of streams in clustered JetStream.

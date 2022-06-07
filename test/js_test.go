@@ -6956,7 +6956,7 @@ func TestJetStreamRePublish(t *testing.T) {
 		Name:     "RP",
 		Storage:  nats.MemoryStorage,
 		Subjects: []string{"foo", "bar", "baz"},
-		RePublish: &nats.SubjectMapping{
+		RePublish: &nats.RePublish{
 			Source:      ">",
 			Destination: "RP.>",
 		},
