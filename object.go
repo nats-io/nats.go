@@ -372,37 +372,43 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 		// Actual read.
 		// TODO(dlc) - Deadline?
-		n, err := r.Read(chunk)
+		n, readErr := r.Read(chunk)
+
+		// Handle all non EOF errors
+		if readErr != nil && readErr != io.EOF {
+			purgePartial()
+			return nil, readErr
+		}
+
+		// Add chunk only if we received data
+		if n > 0 {
+			// Chunk processing.
+			m.Data = chunk[:n]
+			h.Write(m.Data)
+
+			// Send msg itself.
+			if _, err := js.PublishMsgAsync(m); err != nil {
+				purgePartial()
+				return nil, err
+			}
+			if err := getErr(); err != nil {
+				purgePartial()
+				return nil, err
+			}
+			// Update totals.
+			sent++
+			total += uint64(n)
+		}
 
 		// EOF Processing.
-		if err == io.EOF {
+		if readErr == io.EOF {
 			// Finalize sha.
 			sha := h.Sum(nil)
 			// Place meta info.
 			info.Size, info.Chunks = uint64(total), uint32(sent)
 			info.Digest = fmt.Sprintf(objDigestTmpl, base64.URLEncoding.EncodeToString(sha[:]))
 			break
-		} else if err != nil {
-			purgePartial()
-			return nil, err
 		}
-
-		// Chunk processing.
-		m.Data = chunk[:n]
-		h.Write(m.Data)
-
-		// Send msg itself.
-		if _, err := js.PublishMsgAsync(m); err != nil {
-			purgePartial()
-			return nil, err
-		}
-		if err := getErr(); err != nil {
-			purgePartial()
-			return nil, err
-		}
-		// Update totals.
-		sent++
-		total += uint64(n)
 	}
 
 	// Publish the metadata.
