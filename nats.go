@@ -168,6 +168,7 @@ var (
 	ErrStreamNameAlreadyInUse       = errors.New("nats: stream name already in use")
 	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")
 	ErrBadRequest                   = errors.New("nats: bad request")
+	ErrConnectionNotTLS             = errors.New("nats: connection is not tls")
 )
 
 func init() {
@@ -1805,6 +1806,24 @@ func (nc *Conn) makeTLSConn() error {
 	}
 	nc.bindToNewConn()
 	return nil
+}
+
+// TLSConnectionState retrieves the state of the TLS connection to the server
+func (nc *Conn) TLSConnectionState() (tls.ConnectionState, error) {
+	if !nc.isConnected() {
+		return tls.ConnectionState{}, ErrDisconnected
+	}
+
+	nc.mu.RLock()
+	conn := nc.conn
+	nc.mu.RUnlock()
+
+	tc, ok := conn.(*tls.Conn)
+	if !ok {
+		return tls.ConnectionState{}, ErrConnectionNotTLS
+	}
+
+	return tc.ConnectionState(), nil
 }
 
 // waitForExits will wait for all socket watcher Go routines to

@@ -161,6 +161,14 @@ func TestServerSecureConnections(t *testing.T) {
 	}
 	nc.Flush()
 
+	state, err := nc.TLSConnectionState()
+	if err != nil {
+		t.Fatalf("Expected connection state: %v", err)
+	}
+	if !state.HandshakeComplete {
+		t.Fatalf("Expected valid connection state")
+	}
+
 	if err := Wait(checkRecv); err != nil {
 		t.Fatal("Failed receiving message")
 	}
