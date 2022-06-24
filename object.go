@@ -965,7 +965,16 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	r.SetReadDeadline(time.Now().Add(2 * time.Second))
+	deadline, ok := o.ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(2 * time.Second)
+	}
+
+	err = r.SetReadDeadline(deadline)
+	if err != nil {
+		return 0, err
+	}
+
 	n, err = r.Read(p)
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		if ctx := o.ctx; ctx != nil {
