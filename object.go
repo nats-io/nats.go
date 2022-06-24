@@ -965,11 +965,7 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	deadline, ok := o.ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(2 * time.Second)
-	}
-
+	deadline := getDeadline(o.ctx)
 	err = r.SetReadDeadline(deadline)
 	if err != nil {
 		return 0, err
@@ -1019,4 +1015,17 @@ func (o *objResult) Error() error {
 	o.Lock()
 	defer o.Unlock()
 	return o.err
+}
+
+func getDeadline(ctx context.Context) time.Time {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(2 * time.Second)
+	}
+
+	return deadline
 }
