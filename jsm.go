@@ -638,9 +638,12 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 }
 
 type (
-	// StreamInfoRequest contains additional option to return details about messages deleted from a stream
+	// StreamInfoRequest contains additional option to return
 	StreamInfoRequest struct {
+		// DeletedDetails when true includes information about deleted messages
 		DeletedDetails bool `json:"deleted_details,omitempty"`
+		// SubjectsFilter when set, returns information on the matched subjects
+		SubjectsFilter string `json:"subjects_filter,omitempty"`
 	}
 	streamInfoResponse = streamCreateResponse
 )
@@ -701,15 +704,17 @@ type StreamSourceInfo struct {
 
 // StreamState is information about the given stream.
 type StreamState struct {
-	Msgs       uint64    `json:"messages"`
-	Bytes      uint64    `json:"bytes"`
-	FirstSeq   uint64    `json:"first_seq"`
-	FirstTime  time.Time `json:"first_ts"`
-	LastSeq    uint64    `json:"last_seq"`
-	LastTime   time.Time `json:"last_ts"`
-	Consumers  int       `json:"consumer_count"`
-	Deleted    []uint64  `json:"deleted"`
-	NumDeleted int       `json:"num_deleted"`
+	Msgs        uint64            `json:"messages"`
+	Bytes       uint64            `json:"bytes"`
+	FirstSeq    uint64            `json:"first_seq"`
+	FirstTime   time.Time         `json:"first_ts"`
+	LastSeq     uint64            `json:"last_seq"`
+	LastTime    time.Time         `json:"last_ts"`
+	Consumers   int               `json:"consumer_count"`
+	Deleted     []uint64          `json:"deleted"`
+	NumDeleted  int               `json:"num_deleted"`
+	NumSubjects uint64            `json:"num_subjects"`
+	Subjects    map[string]uint64 `json:"subjects"`
 }
 
 // ClusterInfo shows information about the underlying set of servers

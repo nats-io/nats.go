@@ -1702,7 +1702,46 @@ func TestPurgeStream(t *testing.T) {
 	}
 }
 
-func TestStreamInfo(t *testing.T) {
+func TestStreamInfoSubjectInfo(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "foo",
+		Subjects: []string{"foo.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := js.Publish("foo.A", []byte("")); err != nil {
+		t.Fatalf("Unexpected error during publish: %v", err)
+	}
+	if _, err := js.Publish("foo.B", []byte("")); err != nil {
+		t.Fatalf("Unexpected error during publish: %v", err)
+	}
+
+	si, err := js.StreamInfo("foo", &nats.StreamInfoRequest{
+		SubjectsFilter: "foo.A",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si.State.NumSubjects != 2 {
+		t.Fatal("Expected NumSubjects to be 1")
+	}
+	if len(si.State.Subjects) != 1 {
+		t.Fatal("Expected Subjects len to be 1")
+	}
+	if si.State.Subjects["foo.A"] != 1 {
+		t.Fatal("Expected Subjects to have an entry for foo.A with a count of 1")
+	}
+}
+
+func TestStreamInfoDeletedDetails(t *testing.T) {
 	testData := []string{"one", "two", "three", "four"}
 
 	tests := []struct {
