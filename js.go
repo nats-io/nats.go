@@ -2574,9 +2574,9 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 	// Check if context not done already before making the request.
 	select {
 	case <-ctx.Done():
-		if ctx.Err() == context.Canceled {
+		if o.ctx != nil { // Timeout or Cancel triggered by context object option
 			err = ctx.Err()
-		} else {
+		} else { // Timeout triggered by timeout option
 			err = ErrTimeout
 		}
 	default:
