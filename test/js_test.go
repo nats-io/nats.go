@@ -6867,6 +6867,22 @@ func testJetStreamFetchContext(t *testing.T, srvs ...*jsServer) {
 			t.Errorf("Expected %d pending messages, got: %d", pending, total)
 		}
 	})
+
+	t.Run("MaxWait timeout should return nats error", func(t *testing.T) {
+		_, err := sub.Fetch(1, nats.MaxWait(1*time.Nanosecond))
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expect ErrTimeout, got err=%#v", err)
+		}
+	})
+
+	t.Run("Context timeout should return context error", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+		_, err := sub.Fetch(1, nats.Context(ctx))
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Expect context.DeadlineExceeded, got err=%#v", err)
+		}
+	})
 }
 
 func TestJetStreamSubscribeContextCancel(t *testing.T) {
