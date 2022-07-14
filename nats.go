@@ -3095,6 +3095,9 @@ func (nc *Conn) flusher() {
 				if nc.err == nil {
 					nc.err = err
 				}
+				if nc.Opts.AsyncErrorCB != nil {
+					nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+				}
 			}
 		}
 		nc.mu.Unlock()
