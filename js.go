@@ -2413,6 +2413,17 @@ func InactiveThreshold(threshold time.Duration) SubOpt {
 	})
 }
 
+// ConsumerReplicas sets the number of replica count for a consumer.
+func ConsumerReplicas(replicas int) SubOpt {
+	return subOptFn(func (opts *subOpts) error {
+		if replicas < 1 {
+			return fmt.Errorf("invalid ConsumerReplicas value (%v), needs to be greater than 0", replicas)
+		}
+		opts.cfg.Replicas = replicas
+		return nil
+	})
+}
+
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
