@@ -137,6 +137,14 @@ func WithDeletedDetails(deletedDetails bool) StreamInfoOpt {
 	}
 }
 
+// WithSubjectFilter can be used to display the information about messages stored on given subjects
+func WithSubjectFilter(subject string) StreamInfoOpt {
+	return func(req *streamInfoRequest) error {
+		req.SubjectFilter = subject
+		return nil
+	}
+}
+
 func WithNakDelay(delay time.Duration) AckOpt {
 	return func(opts *ackOpts) error {
 		opts.nakDelay = delay

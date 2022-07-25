@@ -14,17 +14,15 @@
 package jetstream
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/textproto"
 	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/headers"
 )
 
 type (
@@ -42,8 +40,10 @@ type (
 
 		// GetMsg retrieves a raw stream message stored in JetStream by sequence number
 		GetMsg(context.Context, uint64) (*RawStreamMsg, error)
-		// GetLastMsg  retrieves the last raw stream message stored in JetStream by subject
+		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
 		GetLastMsgForSubject(context.Context, string) (*RawStreamMsg, error)
+		// DeleteMsg erases a message from a stream
+		DeleteMsg(context.Context, uint64) error
 	}
 
 	RawStreamMsg struct {
@@ -74,7 +74,8 @@ type (
 	StreamInfoOpt func(*streamInfoRequest) error
 
 	streamInfoRequest struct {
-		DeletedDetails bool `json:"deleted_details,omitempty"`
+		DeletedDetails bool   `json:"deleted_details,omitempty"`
+		SubjectFilter  string `json:"subjects_filter,omitempty"`
 	}
 
 	consumerInfoResponse struct {
@@ -128,19 +129,44 @@ type (
 		Data     []byte    `json:"data,omitempty"`
 		Time     time.Time `json:"time"`
 	}
+
+	msgDeleteRequest struct {
+		Seq uint64 `json:"seq"`
+	}
+
+	msgDeleteResponse struct {
+		apiResponse
+		Success bool `json:"success,omitempty"`
+	}
 )
 
 var (
 	ErrStreamNotFound     = errors.New("nats: stream not found")
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
 	ErrMsgNotFound        = errors.New("nats: message not found")
+	ErrConsumerExists     = errors.New("nats: consumer with given name already exists")
 )
 
 func (s *stream) CreateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (Consumer, error) {
+	if cfg.Durable != "" {
+		c, err := s.Consumer(ctx, cfg.Durable)
+		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
+			return nil, err
+		}
+		if c != nil {
+			return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+		}
+	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
 
 func (s *stream) UpdateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (Consumer, error) {
+	if cfg.Durable != "" {
+		_, err := s.Consumer(ctx, cfg.Durable)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
 
@@ -156,6 +182,7 @@ func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 //
 // Available options:
 // WithDeletedDetails() - use to display the information about messages deleted from a stream
+// WithSubjectFilter() - use to display the information about messages stored on given subjects
 func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*nats.StreamInfo, error) {
 	var infoReq *streamInfoRequest
 	for _, opt := range opts {
@@ -168,7 +195,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*nats.StreamI
 	}
 	var req []byte
 	var err error
-	if req != nil {
+	if infoReq != nil {
 		req, err = json.Marshal(infoReq)
 		if err != nil {
 			return nil, err
@@ -232,13 +259,6 @@ func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	return nil
 }
 
-func validateDurableName(dur string) error {
-	if strings.Contains(dur, ".") {
-		return fmt.Errorf("%w: '%s'", ErrInvalidDurableName, dur)
-	}
-	return nil
-}
-
 func (s *stream) GetMsg(ctx context.Context, seq uint64) (*RawStreamMsg, error) {
 	return s.getMsg(ctx, &apiMsgGetRequest{Seq: seq})
 }
@@ -255,7 +275,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 
 	var resp apiMsgGetResponse
 	dsSubj := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiMsgGetT, s.name))
-	_, err = s.jetStream.apiRequestJSON(ctx, dsSubj, req)
+	_, err = s.jetStream.apiRequestJSON(ctx, dsSubj, &resp, req)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +291,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 
 	var hdr nats.Header
 	if len(msg.Header) > 0 {
-		hdr, err = decodeHeadersMsg(msg.Header)
+		hdr, err = headers.DecodeHeadersMsg(msg.Header)
 		if err != nil {
 			return nil, err
 		}
@@ -286,66 +306,18 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}, nil
 }
 
-// decodeHeadersMsg will decode and headers.
-func decodeHeadersMsg(data []byte) (nats.Header, error) {
-	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
-	l, err := tp.ReadLine()
-	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
-		return nil, ErrBadHeaderMsg
-	}
-
-	mh, err := readMIMEHeader(tp)
+func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
+	req, err := json.Marshal(&msgDeleteRequest{Seq: seq})
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	// Check if we have an inlined status.
-	if len(l) > hdrPreEnd {
-		var description string
-		status := strings.TrimSpace(l[hdrPreEnd:])
-		if len(status) != statusLen {
-			description = strings.TrimSpace(status[statusLen:])
-			status = status[:statusLen]
-		}
-		mh.Add(statusHdr, status)
-		if len(description) > 0 {
-			mh.Add(descrHdr, description)
-		}
+	subj := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiMsgDeleteT, s.name))
+	var resp msgDeleteResponse
+	if _, err = s.jetStream.apiRequestJSON(ctx, subj, &resp, req); err != nil {
+		return err
 	}
-	return nats.Header(mh), nil
-}
-
-// readMIMEHeader returns a MIMEHeader that preserves the
-// original case of the MIME header, based on the implementation
-// of textproto.ReadMIMEHeader.
-//
-// https://golang.org/pkg/net/textproto/#Reader.ReadMIMEHeader
-func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
-	m := make(textproto.MIMEHeader)
-	for {
-		kv, err := tp.ReadLine()
-		if len(kv) == 0 {
-			return m, err
-		}
-
-		// Process key fetching original case.
-		i := bytes.IndexByte([]byte(kv), ':')
-		if i < 0 {
-			return nil, ErrBadHeaderMsg
-		}
-		key := kv[:i]
-		if key == "" {
-			// Skip empty keys.
-			continue
-		}
-		i++
-		for i < len(kv) && (kv[i] == ' ' || kv[i] == '\t') {
-			i++
-		}
-		value := string(kv[i:])
-		m[key] = append(m[key], value)
-		if err != nil {
-			return m, err
-		}
+	if !resp.Success {
+		return fmt.Errorf("%w: %s", ErrMsgDeleteUnsuccessful, err)
 	}
+	return nil
 }
