@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jsv2/parser"
+	"github.com/nats-io/nats.go/parser"
 )
 
 type (
@@ -84,11 +84,11 @@ const (
 )
 
 var (
-	ErrNotJSMessage   = errors.New("nats: not a jetstream message")
-	ErrMsgAlreadyAckd = errors.New("nats: message was already acknowledged")
-	ErrMsgNotBound    = errors.New("nats: message is not bound to subscription/connection")
-	ErrMsgNoReply     = errors.New("nats: message does not have a reply")
-	ErrBadHeaderMsg   = errors.New("nats: message could not decode headers")
+	ErrNotJSMessage          = errors.New("nats: not a jetstream message")
+	ErrMsgAlreadyAckd        = errors.New("nats: message was already acknowledged")
+	ErrMsgNotBound           = errors.New("nats: message is not bound to subscription/connection")
+	ErrMsgNoReply            = errors.New("nats: message does not have a reply")
+	ErrMsgDeleteUnsuccessful = errors.New("nats: message deletion unsuccessful")
 )
 
 var (

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"errors"
@@ -385,6 +386,13 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 			return ErrConsumerNotFound
 		}
 		return resp.Error
+	}
+	return nil
+}
+
+func validateDurableName(dur string) error {
+	if strings.Contains(dur, ".") {
+		return fmt.Errorf("%w: '%s'", ErrInvalidDurableName, dur)
 	}
 	return nil
 }

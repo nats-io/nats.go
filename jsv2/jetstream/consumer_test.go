@@ -527,7 +527,6 @@ func TestPullConsumerStream(t *testing.T) {
 
 	t.Run("no options", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
-		fmt.Println(srv.StoreDir())
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
 		if err != nil {

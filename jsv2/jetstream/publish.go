@@ -90,15 +90,7 @@ type (
 )
 
 const (
-	hdrLine            = "NATS/1.0\r\n"
-	crlf               = "\r\n"
-	hdrPreEnd          = len(hdrLine) - len(crlf)
-	statusHdr          = "Status"
-	descrHdr           = "Description"
-	lastConsumerSeqHdr = "Nats-Last-Consumer"
-	lastStreamSeqHdr   = "Nats-Last-Stream"
-	consumerStalledHdr = "Nats-Consumer-Stalled"
-	statusLen          = 3 // e.g. 20x, 40x, 50x
+	statusHdr = "Status"
 
 	inboxPrefix = "_INBOX."
 	rdigits     = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
