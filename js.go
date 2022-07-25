@@ -166,6 +166,9 @@ const (
 	// apiMsgGetT is the endpoint to get a message.
 	apiMsgGetT = "STREAM.MSG.GET.%s"
 
+	// apiMsgGetT is the endpoint to perform a direct get of a message.
+	apiDirectMsgGetT = "DIRECT.GET.%s"
+
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 
@@ -388,10 +391,12 @@ const (
 	MsgRollup              = "Nats-Rollup"
 )
 
-// Headers for republished messages.
+// Headers for republished messages and direct gets.
 const (
 	JSStream       = "Nats-Stream"
 	JSSequence     = "Nats-Sequence"
+	JSTimeStamp    = "Nats-Time-Stamp"
+	JSSubject      = "Nats-Subject"
 	JSLastSequence = "Nats-Last-Sequence"
 )
 

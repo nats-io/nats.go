@@ -7170,3 +7170,108 @@ func TestJetStreamRePublish(t *testing.T) {
 		lseq[m.Subject] = seq
 	}
 }
+
+func TestJetStreamDirectGetMsg(t *testing.T) {
+	// Using standlone server here, we are testing the client side API, not
+	// the server feature, which has tests checking it works in cluster mode.
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	si, err := js.AddStream(&nats.StreamConfig{
+		Name:     "DGM",
+		Storage:  nats.MemoryStorage,
+		Subjects: []string{"foo", "bar"},
+	})
+	if err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	send := func(subj, body string) {
+		t.Helper()
+		if _, err := js.Publish(subj, []byte(body)); err != nil {
+			t.Fatalf("Error on publish: %v", err)
+		}
+	}
+
+	send("foo", "a")
+	send("foo", "b")
+	send("foo", "c")
+	send("bar", "d")
+	send("foo", "e")
+
+	if _, err := js.DirectGetMsg("", &nats.DirectGetMsgRequest{}); err != nats.ErrStreamNameRequired {
+		t.Fatalf("Expected stream name required error, got %v", err)
+	}
+	if _, err := js.DirectGetMsg("DGM", nil); err == nil || !strings.Contains(err.Error(), "request is required") {
+		t.Fatalf("Expected request info required, got %v", err)
+	}
+
+	// Without AllowDirect, we should get a timeout (so reduce the timeout for this call)
+	if _, err := js.DirectGetMsg("DGM",
+		&nats.DirectGetMsgRequest{Seq: 1},
+		nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Update stream:
+	si.Config.AllowDirect = true
+	si, err = js.UpdateStream(&si.Config)
+	if err != nil {
+		t.Fatalf("Error updating stream: %v", err)
+	}
+	if !si.Config.AllowDirect {
+		t.Fatalf("AllowDirect should be true: %+v", si)
+	}
+
+	check := func(req *nats.DirectGetMsgRequest, expectedSubj string, expectedSeq uint64, expectedBody string) {
+		t.Helper()
+
+		msg, err := js.DirectGetMsg("DGM", req)
+		if err != nil {
+			t.Fatalf("Unable to get message: %v", err)
+		}
+		if msg.Subject != expectedSubj {
+			t.Fatalf("Expected subject %q, got %q", expectedSubj, msg.Subject)
+		}
+		if msg.Sequence != expectedSeq {
+			t.Fatalf("Expected sequence %v, got %v", expectedSeq, msg.Sequence)
+		}
+		if msg.Time.IsZero() {
+			t.Fatal("Expected timestamp, did not get one")
+		}
+		if b := string(msg.Data); b != expectedBody {
+			t.Fatalf("Expected body %q, got %q", expectedBody, b)
+		}
+	}
+
+	check(&nats.DirectGetMsgRequest{NextFor: "bar"}, "bar", 4, "d")
+	check(&nats.DirectGetMsgRequest{LastFor: "foo"}, "foo", 5, "e")
+	check(&nats.DirectGetMsgRequest{NextFor: "foo"}, "foo", 1, "a")
+	check(&nats.DirectGetMsgRequest{Seq: 4, NextFor: "foo"}, "foo", 5, "e")
+	check(&nats.DirectGetMsgRequest{Seq: 2, NextFor: "foo"}, "foo", 2, "b")
+
+	msg := nats.NewMsg("foo")
+	msg.Header.Set("MyHeader", "MyValue")
+	if _, err := js.PublishMsg(msg); err != nil {
+		t.Fatalf("Error publishing message: %v", err)
+	}
+	r, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{Seq: 6})
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	if v := r.Header.Get("MyHeader"); v != "MyValue" {
+		t.Fatalf("Expected header to be present, was not: %v", r.Header)
+	}
+
+	// Check for not found
+	if _, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{Seq: 100}); err != nats.ErrMsgNotFound {
+		t.Fatalf("Expected not found error, got %v", err)
+	}
+	// Or invalid request
+	if _, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{}); err == nil || !strings.Contains(err.Error(), "Empty Request") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}

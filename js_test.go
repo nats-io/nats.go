@@ -1026,3 +1026,65 @@ func TestJetStreamClusterPlacement(t *testing.T) {
 		t.Fatalf("Unexpected tag: %q", v)
 	}
 }
+
+func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
+	// This test checks the conversion of a "direct get message" response
+	// to a JS message based on the content of specific NATS headers.
+	// It is very specific to the order headers retrieval is made in
+	// convertDirectGetMsgResponseToMsg(), so it may need adjustment
+	// if changes are made there.
+
+	msg := NewMsg("inbox")
+
+	check := func(errTxt string) {
+		t.Helper()
+		m, err := convertDirectGetMsgResponseToMsg("test", msg)
+		if err == nil || !strings.Contains(err.Error(), errTxt) {
+			t.Fatalf("Expected error contain %q, got %v", errTxt, err)
+		}
+		if m != nil {
+			t.Fatalf("Expected nil message, got %v", m)
+		}
+	}
+
+	check("should have headers")
+
+	msg.Header.Set("some", "header")
+	check("missing stream")
+
+	msg.Header.Set(JSStream, "other")
+	check("stream header is 'other', not 'test'")
+
+	msg.Header.Set(JSStream, "test")
+	check("missing sequence")
+
+	msg.Header.Set(JSSequence, "abc")
+	check("invalid sequence")
+
+	msg.Header.Set(JSSequence, "1")
+	check("missing timestamp")
+
+	msg.Header.Set(JSTimeStamp, "aaaaaaaaa bbbbbbbbbbbb cccccccccc ddddddddddd eeeeeeeeee ffffff")
+	check("invalid timestamp")
+
+	msg.Header.Set(JSTimeStamp, "2006-01-02 15:04:05.999999999 +0000 UTC")
+	check("missing subject")
+
+	msg.Header.Set(JSSubject, "foo")
+	r, err := convertDirectGetMsgResponseToMsg("test", msg)
+	if err != nil {
+		t.Fatalf("Error during convert: %v", err)
+	}
+	if r.Subject != "foo" {
+		t.Fatalf("Expected subject to be 'foo', got %q", r.Subject)
+	}
+	if r.Sequence != 1 {
+		t.Fatalf("Expected sequence to be 1, got %v", r.Sequence)
+	}
+	if r.Time.UnixNano() != 0xFC4A4D639917BFF {
+		t.Fatalf("Invalid timestamp: %v", r.Time.UnixNano())
+	}
+	if r.Header.Get("some") != "header" {
+		t.Fatalf("Wrong header: %v", r.Header)
+	}
+}
