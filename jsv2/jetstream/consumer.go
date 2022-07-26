@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"errors"
@@ -56,10 +58,12 @@ type (
 		name         string
 		subscription *nats.Subscription
 		info         *nats.ConsumerInfo
+		sync.Mutex
 	}
 	pullConsumer struct {
 		consumer
-		heartbeat chan struct{}
+		heartbeat   chan struct{}
+		isStreaming uint32
 	}
 
 	pullRequest struct {
@@ -79,7 +83,9 @@ var (
 	// ErrHandlerRequired is returned when no handler func is provided in Stream()
 	ErrHandlerRequired = errors.New("nats: handler cannot be empty")
 	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
-	ErrNoHeartbeat = errors.New("no heartbeat received, canceling subscription")
+	ErrNoHeartbeat = errors.New("nats: no heartbeat received, canceling subscription")
+	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
+	ErrConsumerHasActiveSubscription = errors.New("nats: consumer has active subscription")
 )
 
 // Next fetches an individual message from a consumer.
@@ -89,6 +95,11 @@ var (
 // WithNoWait() - when set to true, `Next()` request does not wait for a message if no message is available at the time of request
 // WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request
 func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
+	p.Lock()
+	defer p.Unlock()
+	if atomic.LoadUint32(&p.isStreaming) == 1 {
+		return nil, ErrConsumerHasActiveSubscription
+	}
 	timeout := 30 * time.Second
 	deadline, hasDeadline := ctx.Deadline()
 	if hasDeadline {
@@ -155,6 +166,9 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 // WithExpiry() - sets a timeout for individual batch request, default is set to 30 seconds
 // WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request, no heartbeat is set by default
 func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts ...ConsumerStreamOpt) error {
+	if atomic.LoadUint32(&p.isStreaming) == 1 {
+		return ErrConsumerHasActiveSubscription
+	}
 	if handler == nil {
 		return ErrHandlerRequired
 	}
@@ -171,13 +185,12 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 	ctx, cancel := context.WithCancel(ctx)
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
 	p.heartbeat = make(chan struct{})
-	errs := make(chan error)
+	errs := make(chan error, 1)
+	atomic.StoreUint32(&p.isStreaming, 1)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				close(p.heartbeat)
-				close(pending)
 				return
 			default:
 				if len(pending) < req.Batch {
@@ -205,8 +218,12 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 					cancel()
 					p.subscription.Unsubscribe()
 					p.subscription = nil
+					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				case <-ctx.Done():
+					p.subscription.Unsubscribe()
+					p.subscription = nil
+					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				}
 				continue
@@ -217,6 +234,9 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 			case err := <-errs:
 				handler(nil, err)
 			case <-ctx.Done():
+				p.subscription.Unsubscribe()
+				p.subscription = nil
+				atomic.StoreUint32(&p.isStreaming, 0)
 				return
 			}
 		}
