@@ -466,6 +466,41 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 	})
 
+	t.Run("with active streaming", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = c.Next(ctx)
+		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
+			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
+		}
+	})
+
 	t.Run("with timeout", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -571,6 +606,116 @@ func TestPullConsumerStream(t *testing.T) {
 		}
 		for i, msg := range msgs {
 			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+		}
+	})
+
+	t.Run("subscribe twice on the same consumer", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
+			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
+		}
+	})
+
+	t.Run("subscribe, cancel subscription, then subscribe again", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		msgs := make([]JetStreamMsg, 0)
+		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg.Ack()
+			msgs = append(msgs, msg)
+			if len(msgs) == 5 {
+				cancel()
+			}
+			wg.Done()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		<-ctx.Done()
+		time.Sleep(10 * time.Millisecond)
+		wg.Add(len(testMsgs))
+		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg.Ack()
+			msgs = append(msgs, msg)
+			wg.Done()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		publishTestMsgs(t, nc)
+		wg.Wait()
+		if len(msgs) != 2*len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		expectedMsgs := append(testMsgs, testMsgs...)
+		for i, msg := range msgs {
+			if string(msg.Data()) != expectedMsgs[i] {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
 		}
@@ -827,7 +972,6 @@ func TestPullConsumerStream(t *testing.T) {
 
 	t.Run("with idle heartbeat, server shutdown", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
-		fmt.Println(srv.StoreDir())
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
 		if err != nil {
