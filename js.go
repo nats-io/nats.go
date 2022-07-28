@@ -1299,6 +1299,9 @@ func checkConfig(s, u *ConsumerConfig) error {
 	if u.Heartbeat > 0 && u.Heartbeat != s.Heartbeat {
 		return makeErr("heartbeat", u.Heartbeat, s.Heartbeat)
 	}
+	if u.Replicas > 0 && u.Replicas != s.Replicas {
+		return makeErr("replicas", u.Replicas, s.Replicas)
+	}
 	return nil
 }
 
