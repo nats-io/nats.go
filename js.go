@@ -1037,8 +1037,9 @@ type ConsumerConfig struct {
 	HeadersOnly     bool            `json:"headers_only,omitempty"`
 
 	// Pull based options.
-	MaxRequestBatch   int           `json:"max_batch,omitempty"`
-	MaxRequestExpires time.Duration `json:"max_expires,omitempty"`
+	MaxRequestBatch    int           `json:"max_batch,omitempty"`
+	MaxRequestExpires  time.Duration `json:"max_expires,omitempty"`
+	MaxRequestMaxBytes int           `json:"max_bytes,omitempty"`
 
 	// Push based consumers.
 	DeliverSubject string `json:"deliver_subject,omitempty"`
@@ -2441,6 +2442,15 @@ func MaxRequestBatch(max int) SubOpt {
 func MaxRequestExpires(max time.Duration) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxRequestExpires = max
+		return nil
+	})
+}
+
+// MaxRequesMaxBytes sets the maximum pull consumer request bytes that a
+// Fetch() can receive.
+func MaxRequestMaxBytes(bytes int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MaxRequestMaxBytes = bytes
 		return nil
 	})
 }
