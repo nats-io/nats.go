@@ -1038,7 +1038,7 @@ func TestConsumerReplicasOption(t *testing.T) {
 		t.Fatalf("Error adding stream: %v", err)
 	}
 
-	cb := func(msg *Msg) { return }
+	cb := func(msg *Msg) {}
 	// Subscribe to the stream with a durable consumer "bar".
 	_, err := js.Subscribe("foo", cb, Durable("bar"), ConsumerReplicas(1))
 	if err != nil {
