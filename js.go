@@ -1332,6 +1332,9 @@ func checkConfig(s, u *ConsumerConfig) error {
 	if u.Heartbeat > 0 && u.Heartbeat != s.Heartbeat {
 		return makeErr("heartbeat", u.Heartbeat, s.Heartbeat)
 	}
+	if u.Replicas > 0 && u.Replicas != s.Replicas {
+		return makeErr("replicas", u.Replicas, s.Replicas)
+	}
 	return nil
 }
 
@@ -2445,6 +2448,17 @@ func InactiveThreshold(threshold time.Duration) SubOpt {
 			return fmt.Errorf("invalid InactiveThreshold value (%v), needs to be greater or equal to 0", threshold)
 		}
 		opts.cfg.InactiveThreshold = threshold
+		return nil
+	})
+}
+
+// ConsumerReplicas sets the number of replica count for a consumer.
+func ConsumerReplicas(replicas int) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		if replicas < 1 {
+			return fmt.Errorf("invalid ConsumerReplicas value (%v), needs to be greater than 0", replicas)
+		}
+		opts.cfg.Replicas = replicas
 		return nil
 	})
 }
