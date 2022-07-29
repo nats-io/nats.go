@@ -166,6 +166,9 @@ const (
 	// apiMsgGetT is the endpoint to get a message.
 	apiMsgGetT = "STREAM.MSG.GET.%s"
 
+	// apiMsgGetT is the endpoint to perform a direct get of a message.
+	apiDirectMsgGetT = "DIRECT.GET.%s"
+
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 
@@ -233,6 +236,10 @@ type jsOpts struct {
 	purgeOpts *StreamPurgeRequest
 	// streamInfoOpts contains optional stream info options
 	streamInfoOpts *StreamInfoRequest
+	// For direct get message requests
+	directGet bool
+	// For direct get next message
+	directNextFor string
 }
 
 const (
@@ -325,6 +332,30 @@ func APIPrefix(pre string) JSOpt {
 	})
 }
 
+// DirectGet is an option that can be used to make GetMsg() or GetLastMsg()
+// retrieve message directly from a group of servers (leader and replicas)
+// if the stream was created with the AllowDirect option.
+func DirectGet() JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.directGet = true
+		return nil
+	})
+}
+
+// DirectGetNext is an option that can be used to make GetMsg() retrieve message
+// directly from a group of servers (leader and replicas) if the stream was
+// created with the AllowDirect option.
+// The server will find the next message matching the filter `subject` starting
+// at the start sequence (argument in GetMsg()). The filter `subject` can be a
+// wildcard.
+func DirectGetNext(subject string) JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.directGet = true
+		js.directNextFor = subject
+		return nil
+	})
+}
+
 func (js *js) apiSubj(subj string) string {
 	if js.opts.pre == _EMPTY_ {
 		return subj
@@ -388,10 +419,12 @@ const (
 	MsgRollup              = "Nats-Rollup"
 )
 
-// Headers for republished messages.
+// Headers for republished messages and direct gets.
 const (
 	JSStream       = "Nats-Stream"
 	JSSequence     = "Nats-Sequence"
+	JSTimeStamp    = "Nats-Time-Stamp"
+	JSSubject      = "Nats-Subject"
 	JSLastSequence = "Nats-Last-Sequence"
 )
 
@@ -1662,6 +1695,9 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			// after the AddConsumer returns.
 			if consumer == _EMPTY_ {
 				sub.jsi.consumer = info.Name
+				if isPullMode {
+					sub.jsi.nms = fmt.Sprintf(js.apiSubj(apiRequestNextT), stream, info.Name)
+				}
 			}
 			sub.mu.Unlock()
 		}
