@@ -833,7 +833,11 @@ func TestWSWithTLS(t *testing.T) {
 			// since we used self signed certificates, this should fail without
 			// asking to skip server cert verification.
 			nc, err = Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
-			if err == nil || !strings.Contains(err.Error(), "authority") {
+			// Since Go 1.18, we had to regenerate certs to not have to use GODEBUG="x509sha1=1"
+			// But on macOS, with our test CA certs, no SCTs included, it will fail
+			// for the reason "x509: “localhost” certificate is not standards compliant"
+			// instead of "unknown authority".
+			if err == nil || (!strings.Contains(err.Error(), "authority") && !strings.Contains(err.Error(), "compliant")) {
 				if nc != nil {
 					nc.Close()
 				}
