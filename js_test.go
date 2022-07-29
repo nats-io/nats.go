@@ -1026,33 +1026,3 @@ func TestJetStreamClusterPlacement(t *testing.T) {
 		t.Fatalf("Unexpected tag: %q", v)
 	}
 }
-
-func TestConsumerReplicasOption(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	if _, err := js.AddStream(&StreamConfig{Name: "CONSUMER_REPLICAS_TEST", Subjects: []string{"foo"}}); err != nil {
-		t.Fatalf("Error adding stream: %v", err)
-	}
-
-	cb := func(msg *Msg) {}
-	// Subscribe to the stream with a durable consumer "bar".
-	_, err := js.Subscribe("foo", cb, Durable("bar"), ConsumerReplicas(1))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Get consumer info
-	consInfo, err := js.ConsumerInfo("CONSUMER_REPLICAS_TEST", "bar")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Check if the number of replicas is the same as we provided.
-	if consInfo.Config.Replicas != 1 {
-		t.Fatalf("Expected consumer replica to be %v, got %+v", 1, consInfo.Config.Replicas)
-	}
-}
