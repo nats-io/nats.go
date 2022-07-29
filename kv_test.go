@@ -67,3 +67,45 @@ func TestKeyValueDiscardOldToDiscardNew(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyValueNonDirectGet(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kvi, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating store: %v", err)
+	}
+	si, err := js.StreamInfo("KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+	if !si.Config.AllowDirect {
+		t.Fatal("Expected allow direct to be set, it was not")
+	}
+
+	kv := kvi.(*kvs)
+	if !kv.useDirect {
+		t.Fatal("useDirect should have been true, it was not")
+	}
+	kv.useDirect = false
+
+	if _, err := kv.PutString("key1", "val1"); err != nil {
+		t.Fatalf("Error putting key: %v", err)
+	}
+	if _, err := kv.PutString("key2", "val2"); err != nil {
+		t.Fatalf("Error putting key: %v", err)
+	}
+	if v, err := kv.Get("key2"); err != nil || string(v.Value()) != "val2" {
+		t.Fatalf("Error on get: v=%+v err=%v", v, err)
+	}
+	if v, err := kv.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
+		t.Fatalf("Error on get revisiong: v=%+v err=%v", v, err)
+	}
+	if v, err := kv.GetRevision("key1", 2); err == nil {
+		t.Fatalf("Expected error, got %+v", v)
+	}
+}

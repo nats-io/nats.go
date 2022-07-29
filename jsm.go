@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -46,7 +47,16 @@ type JetStreamManager interface {
 	StreamNames(opts ...JSOpt) <-chan string
 
 	// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
+	// Use options nats.DirectGet() or nats.DirectGetNext() to trigger retrieval
+	// directly from a distributed group of servers (leader and replicas).
+	// The stream must have been created/updated with the AllowDirect boolean.
 	GetMsg(name string, seq uint64, opts ...JSOpt) (*RawStreamMsg, error)
+
+	// GetLastMsg retrieves the last raw stream message stored in JetStream by subject.
+	// Use option nats.DirectGet() to trigger retrieval
+	// directly from a distributed group of servers (leader and replicas).
+	// The stream must have been created/updated with the AllowDirect boolean.
+	GetLastMsg(name, subject string, opts ...JSOpt) (*RawStreamMsg, error)
 
 	// DeleteMsg erases a message from a stream.
 	DeleteMsg(name string, seq uint64, opts ...JSOpt) error
@@ -100,10 +110,14 @@ type StreamConfig struct {
 	DenyDelete        bool            `json:"deny_delete,omitempty"`
 	DenyPurge         bool            `json:"deny_purge,omitempty"`
 	AllowRollup       bool            `json:"allow_rollup_hdrs,omitempty"`
-	AllowDirect       bool            `json:"allow_direct,omitempty"`
 
 	// Allow republish of the message after being sequenced and stored.
 	RePublish *RePublish `json:"republish,omitempty"`
+
+	// Allow higher performance, direct access to get individual messages. E.g. KeyValue
+	AllowDirect bool `json:"allow_direct,omitempty"`
+	// Allow higher performance and unified direct access for mirrors as well.
+	MirrorDirect bool `json:"mirror_direct,omitempty"`
 }
 
 // RePublish is for republishing messages once committed to a stream. The original
@@ -812,6 +826,7 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 type apiMsgGetRequest struct {
 	Seq     uint64 `json:"seq,omitempty"`
 	LastFor string `json:"last_by_subj,omitempty"`
+	NextFor string `json:"next_by_subj,omitempty"`
 }
 
 // RawStreamMsg is a raw message stored in JetStream.
@@ -858,8 +873,16 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		defer cancel()
 	}
 
-	if name == _EMPTY_ {
-		return nil, ErrStreamNameRequired
+	if err := checkStreamName(name); err != nil {
+		return nil, err
+	}
+
+	var apiSubj string
+	if o.directGet {
+		apiSubj = apiDirectMsgGetT
+		mreq.NextFor = o.directNextFor
+	} else {
+		apiSubj = apiMsgGetT
 	}
 
 	req, err := json.Marshal(mreq)
@@ -867,10 +890,14 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		return nil, err
 	}
 
-	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgGetT, name))
+	dsSubj := js.apiSubj(fmt.Sprintf(apiSubj, name))
 	r, err := js.apiRequestWithContext(o.ctx, dsSubj, req)
 	if err != nil {
 		return nil, err
+	}
+
+	if o.directGet {
+		return convertDirectGetMsgResponseToMsg(name, r)
 	}
 
 	var resp apiMsgGetResponse
@@ -900,6 +927,64 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		Header:   hdr,
 		Data:     msg.Data,
 		Time:     msg.Time,
+	}, nil
+}
+
+func convertDirectGetMsgResponseToMsg(name string, r *Msg) (*RawStreamMsg, error) {
+	// Check for 404/408. We would get a no-payload message and a "Status" header
+	if len(r.Data) == 0 {
+		val := r.Header.Get(statusHdr)
+		if val != _EMPTY_ {
+			switch val {
+			case noMessagesSts:
+				return nil, ErrMsgNotFound
+			default:
+				desc := r.Header.Get(descrHdr)
+				if desc == _EMPTY_ {
+					desc = "unable to get message"
+				}
+				return nil, fmt.Errorf("nats: %s", desc)
+			}
+		}
+	}
+	// Check for headers that give us the required information to
+	// reconstruct the message.
+	if len(r.Header) == 0 {
+		return nil, fmt.Errorf("nats: response should have headers")
+	}
+	stream := r.Header.Get(JSStream)
+	if stream == _EMPTY_ {
+		return nil, fmt.Errorf("nats: missing stream header")
+	}
+	if stream != name {
+		return nil, fmt.Errorf("nats: response stream header is '%s', not '%s'", stream, name)
+	}
+	seqStr := r.Header.Get(JSSequence)
+	if seqStr == _EMPTY_ {
+		return nil, fmt.Errorf("nats: missing sequence header")
+	}
+	seq, err := strconv.ParseUint(seqStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("nats: invalid sequence header '%s': %v", seqStr, err)
+	}
+	timeStr := r.Header.Get(JSTimeStamp)
+	if timeStr == _EMPTY_ {
+		return nil, fmt.Errorf("nats: missing timestamp header")
+	}
+	tm, err := time.Parse("2006-01-02 15:04:05.999999999 +0000 UTC", timeStr)
+	if err != nil {
+		return nil, fmt.Errorf("nats: invalid timestamp header '%s': %v", timeStr, err)
+	}
+	subj := r.Header.Get(JSSubject)
+	if subj == _EMPTY_ {
+		return nil, fmt.Errorf("nats: missing subject header")
+	}
+	return &RawStreamMsg{
+		Subject:  subj,
+		Sequence: seq,
+		Header:   r.Header,
+		Data:     r.Data,
+		Time:     tm,
 	}, nil
 }
 

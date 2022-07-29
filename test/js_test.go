@@ -7171,35 +7171,137 @@ func TestJetStreamRePublish(t *testing.T) {
 	}
 }
 
+func TestJetStreamDirectGetMsg(t *testing.T) {
+	// Using standlone server here, we are testing the client side API, not
+	// the server feature, which has tests checking it works in cluster mode.
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	si, err := js.AddStream(&nats.StreamConfig{
+		Name:     "DGM",
+		Storage:  nats.MemoryStorage,
+		Subjects: []string{"foo", "bar"},
+	})
+	if err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	send := func(subj, body string) {
+		t.Helper()
+		if _, err := js.Publish(subj, []byte(body)); err != nil {
+			t.Fatalf("Error on publish: %v", err)
+		}
+	}
+
+	send("foo", "a")
+	send("foo", "b")
+	send("foo", "c")
+	send("bar", "d")
+	send("foo", "e")
+
+	// Without AllowDirect, we should get a timeout (so reduce the timeout for this call)
+	if _, err := js.GetMsg("DGM", 1, nats.DirectGet(), nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Update stream:
+	si.Config.AllowDirect = true
+	si, err = js.UpdateStream(&si.Config)
+	if err != nil {
+		t.Fatalf("Error updating stream: %v", err)
+	}
+	if !si.Config.AllowDirect {
+		t.Fatalf("AllowDirect should be true: %+v", si)
+	}
+
+	check := func(seq uint64, opt nats.JSOpt, useGetLast bool, expectedSubj string, expectedSeq uint64, expectedBody string) {
+		t.Helper()
+
+		var msg *nats.RawStreamMsg
+		var err error
+		if useGetLast {
+			msg, err = js.GetLastMsg("DGM", expectedSubj, []nats.JSOpt{opt}...)
+		} else {
+			msg, err = js.GetMsg("DGM", seq, []nats.JSOpt{opt}...)
+		}
+		if err != nil {
+			t.Fatalf("Unable to get message: %v", err)
+		}
+		if msg.Subject != expectedSubj {
+			t.Fatalf("Expected subject %q, got %q", expectedSubj, msg.Subject)
+		}
+		if msg.Sequence != expectedSeq {
+			t.Fatalf("Expected sequence %v, got %v", expectedSeq, msg.Sequence)
+		}
+		if msg.Time.IsZero() {
+			t.Fatal("Expected timestamp, did not get one")
+		}
+		if b := string(msg.Data); b != expectedBody {
+			t.Fatalf("Expected body %q, got %q", expectedBody, b)
+		}
+	}
+
+	check(0, nats.DirectGetNext("bar"), false, "bar", 4, "d")
+	check(0, nats.DirectGet(), true, "foo", 5, "e")
+	check(0, nats.DirectGetNext("foo"), false, "foo", 1, "a")
+	check(4, nats.DirectGetNext("foo"), false, "foo", 5, "e")
+	check(2, nats.DirectGetNext("foo"), false, "foo", 2, "b")
+
+	msg := nats.NewMsg("foo")
+	msg.Header.Set("MyHeader", "MyValue")
+	if _, err := js.PublishMsg(msg); err != nil {
+		t.Fatalf("Error publishing message: %v", err)
+	}
+	r, err := js.GetMsg("DGM", 6, nats.DirectGet())
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	if v := r.Header.Get("MyHeader"); v != "MyValue" {
+		t.Fatalf("Expected header to be present, was not: %v", r.Header)
+	}
+
+	// Check for not found
+	if _, err := js.GetMsg("DGM", 100, nats.DirectGet()); err != nats.ErrMsgNotFound {
+		t.Fatalf("Expected not found error, got %v", err)
+	}
+	// Or invalid request
+	if _, err := js.GetMsg("DGM", 0, nats.DirectGet()); err == nil || !strings.Contains(err.Error(), "Empty Request") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
 func TestJetStreamConsumerReplicasOption(t *testing.T) {
 	withJSCluster(t, "CR", 3, func(t *testing.T, nodes ...*jsServer) {
 		nc, js := jsClient(t, nodes[0].Server)
 		defer nc.Close()
 
 		if _, err := js.AddStream(&nats.StreamConfig{
-			Name:     "ConsumerReplicasTest",
-			Subjects: []string{"foo"},
-			Replicas: 3,
-		}); err != nil {
-			t.Fatalf("Error adding stream: %v", err)
-		}
+				Name:     "ConsumerReplicasTest",
+				Subjects: []string{"foo"},
+				Replicas: 3,
+			}); err != nil {
+				t.Fatalf("Error adding stream: %v", err)
+			}
 
-		// Subscribe to the stream with a durable consumer "bar" and replica set to 1.
-		cb := func(msg *nats.Msg) {}
-		_, err := js.Subscribe("foo", cb, nats.Durable("bar"), nats.ConsumerReplicas(1))
-		if err != nil {
-			t.Fatalf("Error on subscribe: %v", err)
-		}
+			// Subscribe to the stream with a durable consumer "bar" and replica set to 1.
+			cb := func(msg *nats.Msg) {}
+			_, err := js.Subscribe("foo", cb, nats.Durable("bar"), nats.ConsumerReplicas(1))
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
 
-		// Get consumer info
-		consInfo, err := js.ConsumerInfo("ConsumerReplicasTest", "bar")
-		if err != nil {
-			t.Fatalf("Error getting consumer info: %v", err)
-		}
+			// Get consumer info
+			consInfo, err := js.ConsumerInfo("ConsumerReplicasTest", "bar")
+			if err != nil {
+				t.Fatalf("Error getting consumer info: %v", err)
+			}
 
-		// Check if the number of replicas is the same as we provided.
-		if consInfo.Config.Replicas != 1 {
-			t.Fatalf("Expected consumer replica to be %v, got %+v", 1, consInfo.Config.Replicas)
-		}
+			// Check if the number of replicas is the same as we provided.
+			if consInfo.Config.Replicas != 1 {
+				t.Fatalf("Expected consumer replica to be %v, got %+v", 1, consInfo.Config.Replicas)
+			}
 	})
 }
