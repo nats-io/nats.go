@@ -1049,6 +1049,17 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 
 	check("should have headers")
 
+	msg.Header.Set(statusHdr, noMessagesSts)
+	check(ErrMsgNotFound.Error())
+
+	msg.Header.Set(statusHdr, reqTimeoutSts)
+	check("unable to get message")
+
+	msg.Header.Set(descrHdr, "some error text")
+	check("some error text")
+
+	msg.Header.Del(statusHdr)
+	msg.Header.Del(descrHdr)
 	msg.Header.Set("some", "header")
 	check("missing stream")
 

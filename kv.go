@@ -527,25 +527,21 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 
 	var m *RawStreamMsg
 	var err error
+	var _opts [1]JSOpt
+	opts := _opts[:0]
 	if kv.useDirect {
-		req := DirectGetMsgRequest{}
-		if revision == kvLatestRevision {
-			req.LastFor = b.String()
-		} else {
-			req.Seq = revision
-		}
-		m, err = kv.js.DirectGetMsg(kv.stream, &req)
-	} else {
-		if revision == kvLatestRevision {
-			m, err = kv.js.GetLastMsg(kv.stream, b.String())
-		} else {
-			m, err = kv.js.GetMsg(kv.stream, revision)
-		}
+		_opts[0] = DirectGet()
+		opts = _opts[:1]
 	}
-	// If a sequence was provided, just make sure that the retrieved
-	// message subject matches the request.
-	if err == nil && revision != kvLatestRevision && m.Subject != b.String() {
-		return nil, ErrKeyNotFound
+	if revision == kvLatestRevision {
+		m, err = kv.js.GetLastMsg(kv.stream, b.String(), opts...)
+	} else {
+		m, err = kv.js.GetMsg(kv.stream, revision, opts...)
+		// If a sequence was provided, just make sure that the retrieved
+		// message subject matches the request.
+		if err == nil && m.Subject != b.String() {
+			return nil, ErrKeyNotFound
+		}
 	}
 	if err != nil {
 		if err == ErrMsgNotFound {

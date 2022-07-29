@@ -7202,17 +7202,8 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	send("bar", "d")
 	send("foo", "e")
 
-	if _, err := js.DirectGetMsg("", &nats.DirectGetMsgRequest{}); err != nats.ErrStreamNameRequired {
-		t.Fatalf("Expected stream name required error, got %v", err)
-	}
-	if _, err := js.DirectGetMsg("DGM", nil); err == nil || !strings.Contains(err.Error(), "request is required") {
-		t.Fatalf("Expected request info required, got %v", err)
-	}
-
 	// Without AllowDirect, we should get a timeout (so reduce the timeout for this call)
-	if _, err := js.DirectGetMsg("DGM",
-		&nats.DirectGetMsgRequest{Seq: 1},
-		nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
+	if _, err := js.GetMsg("DGM", 1, nats.DirectGet(), nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
@@ -7226,10 +7217,16 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 		t.Fatalf("AllowDirect should be true: %+v", si)
 	}
 
-	check := func(req *nats.DirectGetMsgRequest, expectedSubj string, expectedSeq uint64, expectedBody string) {
+	check := func(seq uint64, opt nats.JSOpt, useGetLast bool, expectedSubj string, expectedSeq uint64, expectedBody string) {
 		t.Helper()
 
-		msg, err := js.DirectGetMsg("DGM", req)
+		var msg *nats.RawStreamMsg
+		var err error
+		if useGetLast {
+			msg, err = js.GetLastMsg("DGM", expectedSubj, []nats.JSOpt{opt}...)
+		} else {
+			msg, err = js.GetMsg("DGM", seq, []nats.JSOpt{opt}...)
+		}
 		if err != nil {
 			t.Fatalf("Unable to get message: %v", err)
 		}
@@ -7247,18 +7244,18 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 		}
 	}
 
-	check(&nats.DirectGetMsgRequest{NextFor: "bar"}, "bar", 4, "d")
-	check(&nats.DirectGetMsgRequest{LastFor: "foo"}, "foo", 5, "e")
-	check(&nats.DirectGetMsgRequest{NextFor: "foo"}, "foo", 1, "a")
-	check(&nats.DirectGetMsgRequest{Seq: 4, NextFor: "foo"}, "foo", 5, "e")
-	check(&nats.DirectGetMsgRequest{Seq: 2, NextFor: "foo"}, "foo", 2, "b")
+	check(0, nats.DirectGetNext("bar"), false, "bar", 4, "d")
+	check(0, nats.DirectGet(), true, "foo", 5, "e")
+	check(0, nats.DirectGetNext("foo"), false, "foo", 1, "a")
+	check(4, nats.DirectGetNext("foo"), false, "foo", 5, "e")
+	check(2, nats.DirectGetNext("foo"), false, "foo", 2, "b")
 
 	msg := nats.NewMsg("foo")
 	msg.Header.Set("MyHeader", "MyValue")
 	if _, err := js.PublishMsg(msg); err != nil {
 		t.Fatalf("Error publishing message: %v", err)
 	}
-	r, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{Seq: 6})
+	r, err := js.GetMsg("DGM", 6, nats.DirectGet())
 	if err != nil {
 		t.Fatalf("Error getting message: %v", err)
 	}
@@ -7267,11 +7264,11 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	}
 
 	// Check for not found
-	if _, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{Seq: 100}); err != nats.ErrMsgNotFound {
+	if _, err := js.GetMsg("DGM", 100, nats.DirectGet()); err != nats.ErrMsgNotFound {
 		t.Fatalf("Expected not found error, got %v", err)
 	}
 	// Or invalid request
-	if _, err := js.DirectGetMsg("DGM", &nats.DirectGetMsgRequest{}); err == nil || !strings.Contains(err.Error(), "Empty Request") {
+	if _, err := js.GetMsg("DGM", 0, nats.DirectGet()); err == nil || !strings.Contains(err.Error(), "Empty Request") {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 }

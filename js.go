@@ -236,6 +236,10 @@ type jsOpts struct {
 	purgeOpts *StreamPurgeRequest
 	// streamInfoOpts contains optional stream info options
 	streamInfoOpts *StreamInfoRequest
+	// For direct get message requests
+	directGet bool
+	// For direct get next message
+	directNextFor string
 }
 
 const (
@@ -324,6 +328,30 @@ func APIPrefix(pre string) JSOpt {
 			js.pre = js.pre + "."
 		}
 
+		return nil
+	})
+}
+
+// DirectGet is an option that can be used to make GetMsg() or GetLastMsg()
+// retrieve message directly from a group of servers (leader and replicas)
+// if the stream was created with the AllowDirect option.
+func DirectGet() JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.directGet = true
+		return nil
+	})
+}
+
+// DirectGetNext is an option that can be used to make GetMsg() retrieve message
+// directly from a group of servers (leader and replicas) if the stream was
+// created with the AllowDirect option.
+// The server will find the next message matching the filter `subject` starting
+// at the start sequence (argument in GetMsg()). The filter `subject` can be a
+// wildcard.
+func DirectGetNext(subject string) JSOpt {
+	return jsOptFn(func(js *jsOpts) error {
+		js.directGet = true
+		js.directNextFor = subject
 		return nil
 	})
 }
