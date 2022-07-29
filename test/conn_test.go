@@ -1314,7 +1314,7 @@ func TestUseDefaultTimeout(t *testing.T) {
 	}
 }
 
-func TestNoRaceOnLastError(t *testing.T) {
+func TestLastErrorNoRace(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 

@@ -3322,9 +3322,9 @@ const (
 func (st StorageType) String() string {
 	switch st {
 	case MemoryStorage:
-		return strings.Title(memoryStorageString)
+		return "Memory"
 	case FileStorage:
-		return strings.Title(fileStorageString)
+		return "File"
 	default:
 		return "Unknown Storage Type"
 	}
