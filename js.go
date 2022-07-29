@@ -1695,6 +1695,9 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			// after the AddConsumer returns.
 			if consumer == _EMPTY_ {
 				sub.jsi.consumer = info.Name
+				if isPullMode {
+					sub.jsi.nms = fmt.Sprintf(js.apiSubj(apiRequestNextT), stream, info.Name)
+				}
 			}
 			sub.mu.Unlock()
 		}
