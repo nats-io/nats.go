@@ -2883,3 +2883,25 @@ func TestRespInbox(t *testing.T) {
 		t.Fatalf("Error: %s", resp.Data)
 	}
 }
+
+func TestInProcessConn(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect("", InProcessServer(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer nc.Close()
+
+	// Status should be connected.
+	if nc.Status() != CONNECTED {
+		t.Fatal("should be status CONNECTED")
+	}
+
+	// The server should respond to a request.
+	if _, err := nc.RTT(); err != nil {
+		t.Fatal(err)
+	}
+}
