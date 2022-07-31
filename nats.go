@@ -283,6 +283,10 @@ type CustomDialer interface {
 	Dial(network, address string) (net.Conn, error)
 }
 
+type InProcessConnProvider interface {
+	InProcessConn() (net.Conn, error)
+}
+
 // Options can be used to create a customized connection.
 type Options struct {
 
@@ -290,6 +294,11 @@ type Options struct {
 	// will be connecting. If the Servers option is also set, it
 	// then becomes the first server in the Servers array.
 	Url string
+
+	// InProcessServer represents a NATS server running within the
+	// same process. If this is set then we will attempt to connect
+	// to the server directly rather than using external TCP conns.
+	InProcessServer InProcessConnProvider
 
 	// Servers is a configured set of servers which this client
 	// will use when attempting to connect.
@@ -779,6 +788,15 @@ func Connect(url string, options ...Option) (*Conn, error) {
 func Name(name string) Option {
 	return func(o *Options) error {
 		o.Name = name
+		return nil
+	}
+}
+
+// InProcessServer is an Option that will try to establish a direction to a NATS server
+// running within the process instead of dialing via TCP.
+func InProcessServer(server InProcessConnProvider) Option {
+	return func(o *Options) error {
+		o.InProcessServer = server
 		return nil
 	}
 }
@@ -1747,6 +1765,18 @@ func (nc *Conn) createConn() (err error) {
 	}
 	if _, cur := nc.currentServer(); cur == nil {
 		return ErrNoServers
+	}
+
+	// If we have a reference to an in-process server then establish a
+	// connection using that.
+	if nc.Opts.InProcessServer != nil {
+		conn, err := nc.Opts.InProcessServer.InProcessConn()
+		if err != nil {
+			return fmt.Errorf("failed to get in-process connection: %w", err)
+		}
+		nc.conn = conn
+		nc.bindToNewConn()
+		return nil
 	}
 
 	// We will auto-expand host names if they resolve to multiple IPs
