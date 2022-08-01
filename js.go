@@ -2466,7 +2466,7 @@ func ConsumerReplicas(replicas int) SubOpt {
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
-	if sub.jsi.consumer == _EMPTY_ {
+	if sub.jsi == nil || sub.jsi.consumer == _EMPTY_ {
 		sub.mu.Unlock()
 		return nil, ErrTypeSubscription
 	}
