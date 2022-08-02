@@ -1203,7 +1203,7 @@ func ProxyPath(path string) Option {
 func CustomInboxPrefix(p string) Option {
 	return func(o *Options) error {
 		if p == "" || strings.Contains(p, ">") || strings.Contains(p, "*") || strings.HasSuffix(p, ".") {
-			return fmt.Errorf("nats: invald custom prefix")
+			return fmt.Errorf("nats: invalid custom prefix")
 		}
 		o.InboxPrefix = p
 		return nil
