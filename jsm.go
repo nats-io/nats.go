@@ -178,12 +178,17 @@ type apiPagedRequest struct {
 
 // AccountInfo contains info about the JetStream usage from the current account.
 type AccountInfo struct {
+	Tier
+	Domain string          `json:"domain"`
+	API    APIStats        `json:"api"`
+	Tiers  map[string]Tier `json:"tier"`
+}
+
+type Tier struct {
 	Memory    uint64        `json:"memory"`
 	Store     uint64        `json:"storage"`
 	Streams   int           `json:"streams"`
 	Consumers int           `json:"consumers"`
-	Domain    string        `json:"domain"`
-	API       APIStats      `json:"api"`
 	Limits    AccountLimits `json:"limits"`
 }
 
@@ -195,10 +200,14 @@ type APIStats struct {
 
 // AccountLimits includes the JetStream limits of the current account.
 type AccountLimits struct {
-	MaxMemory    int64 `json:"max_memory"`
-	MaxStore     int64 `json:"max_storage"`
-	MaxStreams   int   `json:"max_streams"`
-	MaxConsumers int   `json:"max_consumers"`
+	MaxMemory            int64 `json:"max_memory"`
+	MaxStore             int64 `json:"max_storage"`
+	MaxStreams           int   `json:"max_streams"`
+	MaxConsumers         int   `json:"max_consumers"`
+	MaxAckPending        int   `json:"max_ack_pending"`
+	MemoryMaxStreamBytes int64 `json:"memory_max_stream_bytes"`
+	StoreMaxStreamBytes  int64 `json:"storage_max_stream_bytes"`
+	MaxBytesRequired     bool  `json:"max_bytes_required"`
 }
 
 type accountInfoResponse struct {
