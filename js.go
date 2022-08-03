@@ -169,6 +169,9 @@ const (
 	// apiMsgGetT is the endpoint to perform a direct get of a message.
 	apiDirectMsgGetT = "DIRECT.GET.%s"
 
+	// apiDirectMsgGetLastBySubjectT is the endpoint to perform a direct get of a message by subject.
+	apiDirectMsgGetLastBySubjectT = "DIRECT.GET.%s.%s"
+
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 
