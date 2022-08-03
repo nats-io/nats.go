@@ -622,3 +622,117 @@ func TestDeleteMsg(t *testing.T) {
 		})
 	}
 }
+
+func TestListConsumers(t *testing.T) {
+	tests := []struct {
+		name         string
+		consumersNum int
+		withError    error
+	}{
+		{
+			name:         "list consumers",
+			consumersNum: 500,
+		},
+		{
+			name:         "no consumers available",
+			consumersNum: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			js, err := New(nc)
+			defer nc.Close()
+			s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			for i := 0; i < test.consumersNum; i++ {
+				_, err = s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			consumersList := s.ListConsumers(ctx)
+			consumers := make([]*nats.ConsumerInfo, 0)
+		Loop:
+			for {
+				select {
+				case s := <-consumersList.Info():
+					consumers = append(consumers, s)
+				case err := <-consumersList.Err():
+					if !errors.Is(err, ErrEndOfData) {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					break Loop
+				}
+			}
+			if len(consumers) != test.consumersNum {
+				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.consumersNum, len(consumers))
+			}
+		})
+	}
+}
+
+func TestConsumerNames(t *testing.T) {
+	tests := []struct {
+		name         string
+		consumersNum int
+		withError    error
+	}{
+		{
+			name:         "list consumer names",
+			consumersNum: 500,
+		},
+		{
+			name:         "no consumers available",
+			consumersNum: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			js, err := New(nc)
+			defer nc.Close()
+			s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			for i := 0; i < test.consumersNum; i++ {
+				_, err = s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			consumersList := s.ConsumerNames(ctx)
+			consumers := make([]string, 0)
+		Loop:
+			for {
+				select {
+				case s := <-consumersList.Names():
+					consumers = append(consumers, s)
+				case err := <-consumersList.Err():
+					if !errors.Is(err, ErrEndOfData) {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					break Loop
+				}
+			}
+			if len(consumers) != test.consumersNum {
+				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.consumersNum, len(consumers))
+			}
+		})
+	}
+}

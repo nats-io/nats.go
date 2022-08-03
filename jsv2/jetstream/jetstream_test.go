@@ -532,8 +532,116 @@ func TestAccountInfo(t *testing.T) {
 	fmt.Printf("Streams: %d\n", info.Streams)
 }
 
-func TestAddConsumer(t *testing.T) {
+func TestListStreams(t *testing.T) {
+	tests := []struct {
+		name       string
+		streamsNum int
+		withError  error
+	}{
+		{
+			name:       "list streams",
+			streamsNum: 500,
+		},
+		{
+			name:       "no stream available",
+			streamsNum: 0,
+		},
+	}
 
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			js, err := New(nc)
+			defer nc.Close()
+			for i := 0; i < test.streamsNum; i++ {
+				_, err = js.CreateStream(ctx, nats.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			streamsList := js.ListStreams(ctx)
+			streams := make([]*nats.StreamInfo, 0)
+		Loop:
+			for {
+				select {
+				case s := <-streamsList.Info():
+					streams = append(streams, s)
+				case err := <-streamsList.Err():
+					if !errors.Is(err, ErrEndOfData) {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					break Loop
+				}
+			}
+			if len(streams) != test.streamsNum {
+				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.streamsNum, len(streams))
+			}
+		})
+	}
+}
+
+func TestStreamNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		streamsNum int
+		withError  error
+	}{
+		{
+			name:       "list streams",
+			streamsNum: 500,
+		},
+		{
+			name:       "no stream available",
+			streamsNum: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			js, err := New(nc)
+			defer nc.Close()
+			for i := 0; i < test.streamsNum; i++ {
+				_, err = js.CreateStream(ctx, nats.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			streamsList := js.StreamNames(ctx)
+			streams := make([]string, 0)
+		Loop:
+			for {
+				select {
+				case s := <-streamsList.Names():
+					streams = append(streams, s)
+				case err := <-streamsList.Err():
+					if !errors.Is(err, ErrEndOfData) {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					break Loop
+				}
+			}
+			if len(streams) != test.streamsNum {
+				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.streamsNum, len(streams))
+			}
+		})
+	}
 }
 
 // func TestPublishStream(t *testing.T) {
