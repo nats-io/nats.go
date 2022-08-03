@@ -7419,7 +7419,6 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 		t.Fatalf("expected subject to be 'bar', got: %v", r.Subject)
 	}
 	if string(r.Data) != "d" {
-		t.Fatalf("Error getting message: %v", err)
 		t.Fatalf("expected data to be 'd', got: %v", string(r.Data))
 	}
 }
