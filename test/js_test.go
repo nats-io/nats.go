@@ -1408,7 +1408,6 @@ func TestJetStreamManagement(t *testing.T) {
 		expected.MaxDeliver = 1
 		expected.SampleFrequency = "30"
 		expected.MaxAckPending = 10
-		expected.MaxWaiting = 20
 		expected.HeadersOnly = true
 		expected.MaxRequestBatch = 10
 		expected.MaxRequestExpires = 2 * time.Second
