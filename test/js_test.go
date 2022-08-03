@@ -7409,6 +7409,19 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	if _, err := js.GetMsg("DGM", 0, nats.DirectGet()); err == nil || !strings.Contains(err.Error(), "Empty Request") {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+
+	// Test direct get by subject by trying to get 'bar' directly
+	r, err = js.GetLastMsg("DGM", "bar", nats.DirectGet())
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	if r.Subject != "bar" {
+		t.Fatalf("expected subject to be 'bar', got: %v", r.Subject)
+	}
+	if string(r.Data) != "d" {
+		t.Fatalf("Error getting message: %v", err)
+		t.Fatalf("expected data to be 'd', got: %v", string(r.Data))
+	}
 }
 
 func TestJetStreamConsumerReplicasOption(t *testing.T) {
