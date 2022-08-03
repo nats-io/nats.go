@@ -225,6 +225,7 @@ type KeyValueConfig struct {
 	Storage      StorageType
 	Replicas     int
 	Placement    *Placement
+	RePublish    *RePublish
 }
 
 // Used to watch all keys.
@@ -401,6 +402,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		MaxMsgs:           -1,
 		MaxConsumers:      -1,
 		AllowDirect:       true,
+		RePublish:         cfg.RePublish,
 	}
 
 	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
