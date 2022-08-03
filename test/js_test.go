@@ -1491,6 +1491,144 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 }
 
+func TestAccountInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       string
+		expected  *nats.AccountInfo
+		withError error
+	}{
+		{
+			name: "server with default values",
+			cfg: `
+				listen: 127.0.0.1:-1
+				jetstream: enabled
+			`,
+			expected: &nats.AccountInfo{
+				Tier: nats.Tier{
+					Memory:    0,
+					Store:     0,
+					Streams:   0,
+					Consumers: 0,
+					Limits: nats.AccountLimits{
+						MaxMemory:            -1,
+						MaxStore:             -1,
+						MaxStreams:           -1,
+						MaxConsumers:         -1,
+						MaxAckPending:        -1,
+						MemoryMaxStreamBytes: -1,
+						StoreMaxStreamBytes:  -1,
+						MaxBytesRequired:     false,
+					},
+				},
+				API: nats.APIStats{
+					Total:  0,
+					Errors: 0,
+				},
+			},
+		},
+		{
+			name: "server with limits set",
+			cfg: `
+				listen: 127.0.0.1:-1
+				jetstream: {domain: "test-domain"}
+				accounts: {
+				A {
+					users: [{ user: "foo" }]
+					jetstream: { 
+						max_mem: 64MB, 
+						max_file: 32MB,
+						max_streams: 10,
+						max_consumers: 20,
+						max_ack_pending: 100,
+						memory_max_stream_bytes: 2048,
+						store_max_stream_bytes: 4096,
+						max_stream_bytes: true
+					}
+				}
+				}	
+			`,
+			expected: &nats.AccountInfo{
+				Tier: nats.Tier{
+					Memory:    0,
+					Store:     0,
+					Streams:   0,
+					Consumers: 0,
+					Limits: nats.AccountLimits{
+						MaxMemory:            67108864,
+						MaxStore:             33554432,
+						MaxStreams:           10,
+						MaxConsumers:         20,
+						MaxAckPending:        100,
+						MemoryMaxStreamBytes: 2048,
+						StoreMaxStreamBytes:  4096,
+						MaxBytesRequired:     true,
+					},
+				},
+				Domain: "test-domain",
+				API: nats.APIStats{
+					Total:  0,
+					Errors: 0,
+				},
+			},
+		},
+		{
+			name: "jetstream not enabled",
+			cfg: `
+				listen: 127.0.0.1:-1
+			`,
+			withError: nats.ErrJetStreamNotEnabled,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conf := createConfFile(t, []byte(test.cfg))
+			defer os.Remove(conf)
+			s, _ := RunServerWithConfig(conf)
+			defer shutdownJSServerAndRemoveStorage(t, s)
+			nc, js := jsClient(t, s, nats.UserInfo("foo", ""))
+			defer nc.Close()
+			info, err := js.AccountInfo()
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: '%s'; got '%s'", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !reflect.DeepEqual(test.expected, info) {
+				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
+			}
+			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", MaxBytes: 1024})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			_, err = js.AddConsumer("FOO", &nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// a total of 3 API calls is expected - get account info, create stream, create consumer
+			test.expected.API.Total = 3
+			test.expected.Streams = 1
+			test.expected.Consumers = 1
+
+			info, err = js.AccountInfo()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !reflect.DeepEqual(test.expected, info) {
+				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
+			}
+		})
+	}
+}
+
 func TestPurgeStream(t *testing.T) {
 	testData := []nats.Msg{
 		{
