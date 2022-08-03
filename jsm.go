@@ -887,6 +887,20 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 	}
 
 	var apiSubj string
+
+	doDirectGetLastBySubject := o.directGet && mreq.LastFor != ""
+
+	if doDirectGetLastBySubject && js.nc.serverMinVersion(2, 9, 0) {
+		apiSubj = apiDirectMsgGetLastBySubjectT
+		dsSubj := js.apiSubj(fmt.Sprintf(apiSubj, name, mreq.LastFor))
+		r, err := js.apiRequestWithContext(o.ctx, dsSubj, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		return convertDirectGetMsgResponseToMsg(name, r)
+	}
+
 	if o.directGet {
 		apiSubj = apiDirectMsgGetT
 		mreq.NextFor = o.directNextFor
