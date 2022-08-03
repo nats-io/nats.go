@@ -27,6 +27,13 @@ type (
 		Error *apiError `json:"error,omitempty"`
 	}
 
+	// apiPaged includes variables used to create paged responses from the JSON API
+	apiPaged struct {
+		Total  int `json:"total"`
+		Offset int `json:"offset"`
+		Limit  int `json:"limit"`
+	}
+
 	// apiError is included in all API responses if there was an error.
 	apiError struct {
 		Code        int    `json:"code"`

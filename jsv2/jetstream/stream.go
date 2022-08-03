@@ -63,6 +63,10 @@ type (
 		Consumer(context.Context, string) (Consumer, error)
 		// DeleteConsumer removes a consumer
 		DeleteConsumer(context.Context, string) error
+		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of stream infos
+		ListConsumers(context.Context) ConsumerInfoLister
+		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of stream names
+		ConsumerNames(context.Context) ConsumerNameLister
 	}
 
 	stream struct {
@@ -137,6 +141,38 @@ type (
 	msgDeleteResponse struct {
 		apiResponse
 		Success bool `json:"success,omitempty"`
+	}
+
+	ConsumerInfoLister interface {
+		Info() <-chan *nats.ConsumerInfo
+		Err() <-chan error
+	}
+
+	ConsumerNameLister interface {
+		Names() <-chan string
+		Err() <-chan error
+	}
+
+	consumerLister struct {
+		js       *jetStream
+		offset   int
+		pageInfo *apiPaged
+
+		consumers chan *nats.ConsumerInfo
+		names     chan string
+		errs      chan error
+	}
+
+	consumerListResponse struct {
+		apiResponse
+		apiPaged
+		Consumers []*nats.ConsumerInfo `json:"consumers"`
+	}
+
+	consumerNamesResponse struct {
+		apiResponse
+		apiPaged
+		Consumers []string `json:"consumers"`
 	}
 )
 
@@ -320,4 +356,136 @@ func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
 		return fmt.Errorf("%w: %s", ErrMsgDeleteUnsuccessful, err)
 	}
 	return nil
+}
+
+func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
+	l := &consumerLister{
+		js:        s.jetStream,
+		consumers: make(chan *nats.ConsumerInfo),
+		errs:      make(chan error, 1),
+	}
+	go func() {
+		defer close(l.consumers)
+		for {
+			page, err := l.consumerInfos(ctx, s.name)
+			if err != nil && !errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+			for _, info := range page {
+				select {
+				case l.consumers <- info:
+				case <-ctx.Done():
+					l.errs <- ctx.Err()
+					return
+				}
+			}
+			if errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+		}
+	}()
+
+	return l
+}
+
+func (s *consumerLister) Info() <-chan *nats.ConsumerInfo {
+	return s.consumers
+}
+
+func (s *consumerLister) Err() <-chan error {
+	return s.errs
+}
+
+func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
+	l := &consumerLister{
+		js:    s.jetStream,
+		names: make(chan string),
+		errs:  make(chan error, 1),
+	}
+	go func() {
+		defer close(l.names)
+		for {
+			page, err := l.consumerNames(ctx, s.name)
+			if err != nil && !errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+			for _, info := range page {
+				select {
+				case l.names <- info:
+				case <-ctx.Done():
+					l.errs <- ctx.Err()
+					return
+				}
+			}
+			if errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+		}
+	}()
+
+	return l
+}
+
+func (s *consumerLister) Names() <-chan string {
+	return s.names
+}
+
+// infos fetches the next ConsumerInfo page
+func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*nats.ConsumerInfo, error) {
+	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
+		return nil, ErrEndOfData
+	}
+
+	req, err := json.Marshal(
+		apiPagedRequest{Offset: s.offset},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slSubj := apiSubj(s.js.apiPrefix, fmt.Sprintf(apiConsumerListT, stream))
+	var resp consumerListResponse
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+
+	s.pageInfo = &resp.apiPaged
+	s.offset += len(resp.Consumers)
+	return resp.Consumers, nil
+}
+
+// names fetches the next consumer names page
+func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]string, error) {
+	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
+		return nil, ErrEndOfData
+	}
+
+	req, err := json.Marshal(
+		apiPagedRequest{Offset: s.offset},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slSubj := apiSubj(s.js.apiPrefix, fmt.Sprintf(apiConsumerNamesT, stream))
+	var resp consumerNamesResponse
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+
+	s.pageInfo = &resp.apiPaged
+	s.offset += len(resp.Consumers)
+	return resp.Consumers, nil
 }

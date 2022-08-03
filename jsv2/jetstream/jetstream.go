@@ -44,6 +44,10 @@ type (
 		Stream(context.Context, string) (Stream, error)
 		// DeleteStream removes a stream with given name
 		DeleteStream(context.Context, string) error
+		// ListStreams returns StreamInfoLister enabling iterating over a channel of stream infos
+		ListStreams(context.Context) StreamInfoLister
+		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
+		StreamNames(context.Context) StreamNameLister
 
 		// AddConsumer creates a consumer on a given stream with given config
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
@@ -59,7 +63,6 @@ type (
 		PublishAsync(context.Context, string, []byte, ...PublishOpt) (nats.PubAckFuture, error)
 		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (nats.PubAckFuture, error)
 	}
-
 	jetStream struct {
 		conn *nats.Conn
 		jsOpts
@@ -94,6 +97,41 @@ type (
 		apiResponse
 		Success bool `json:"success,omitempty"`
 	}
+
+	StreamInfoLister interface {
+		Info() <-chan *nats.StreamInfo
+		Err() <-chan error
+	}
+
+	StreamNameLister interface {
+		Names() <-chan string
+		Err() <-chan error
+	}
+
+	apiPagedRequest struct {
+		Offset int `json:"offset"`
+	}
+	streamLister struct {
+		js       *jetStream
+		offset   int
+		pageInfo *apiPaged
+
+		streams chan *nats.StreamInfo
+		names   chan string
+		errs    chan error
+	}
+
+	streamListResponse struct {
+		apiResponse
+		apiPaged
+		Streams []*nats.StreamInfo `json:"streams"`
+	}
+
+	streamNamesResponse struct {
+		apiResponse
+		apiPaged
+		Streams []string `json:"streams"`
+	}
 )
 
 var (
@@ -102,6 +140,7 @@ var (
 	ErrStreamNameAlreadyInUse = errors.New("nats: stream name already in use")
 	ErrStreamNameRequired     = errors.New("nats: stream name is required")
 	ErrInvalidStreamName      = errors.New("nats: invalid stream name")
+	ErrEndOfData              = errors.New("end of data reached")
 )
 
 // New returns a enw JetStream instance
@@ -321,4 +360,136 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*nats.AccountInfo, error)
 	}
 
 	return &resp.AccountInfo, nil
+}
+
+func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
+	l := &streamLister{
+		js:      js,
+		streams: make(chan *nats.StreamInfo),
+		errs:    make(chan error, 1),
+	}
+	go func() {
+		defer close(l.streams)
+		for {
+			page, err := l.streamInfos(ctx)
+			if err != nil && !errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+			for _, info := range page {
+				select {
+				case l.streams <- info:
+				case <-ctx.Done():
+					l.errs <- ctx.Err()
+					return
+				}
+			}
+			if errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+		}
+	}()
+
+	return l
+}
+
+func (s *streamLister) Info() <-chan *nats.StreamInfo {
+	return s.streams
+}
+
+func (s *streamLister) Err() <-chan error {
+	return s.errs
+}
+
+func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
+	l := &streamLister{
+		js:    js,
+		names: make(chan string),
+		errs:  make(chan error, 1),
+	}
+	go func() {
+		defer close(l.names)
+		for {
+			page, err := l.streamNames(ctx)
+			if err != nil && !errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+			for _, info := range page {
+				select {
+				case l.names <- info:
+				case <-ctx.Done():
+					l.errs <- ctx.Err()
+					return
+				}
+			}
+			if errors.Is(err, ErrEndOfData) {
+				l.errs <- err
+				return
+			}
+		}
+	}()
+
+	return l
+}
+
+func (s *streamLister) Names() <-chan string {
+	return s.names
+}
+
+// infos fetches the next StreamInfo page
+func (s *streamLister) streamInfos(ctx context.Context) ([]*nats.StreamInfo, error) {
+	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
+		return nil, ErrEndOfData
+	}
+
+	req, err := json.Marshal(
+		apiPagedRequest{Offset: s.offset},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slSubj := apiSubj(s.js.apiPrefix, apiStreamListT)
+	var resp streamListResponse
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+
+	s.pageInfo = &resp.apiPaged
+	s.offset += len(resp.Streams)
+	return resp.Streams, nil
+}
+
+// names fetches the next stream names page
+func (s *streamLister) streamNames(ctx context.Context) ([]string, error) {
+	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
+		return nil, ErrEndOfData
+	}
+
+	req, err := json.Marshal(
+		apiPagedRequest{Offset: s.offset},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	slSubj := apiSubj(s.js.apiPrefix, apiStreams)
+	var resp streamNamesResponse
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+
+	s.pageInfo = &resp.apiPaged
+	s.offset += len(resp.Streams)
+	return resp.Streams, nil
 }
