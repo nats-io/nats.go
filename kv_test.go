@@ -119,6 +119,20 @@ func TestKeyValueRePublish(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
+	if _, err := js.CreateKeyValue(&KeyValueConfig{
+		Bucket: "TEST_UPDATE",
+	}); err != nil {
+		t.Fatalf("Error creating store: %v", err)
+	}
+	// This is expected to fail since server does not support as of now
+	// the update of RePublish.
+	if _, err := js.CreateKeyValue(&KeyValueConfig{
+		Bucket:    "TEST_UPDATE",
+		RePublish: &RePublish{Source: ">", Destination: "bar.>"},
+	}); err == nil {
+		t.Fatal("Expected failure, did not get one")
+	}
+
 	kv, err := js.CreateKeyValue(&KeyValueConfig{
 		Bucket:    "TEST",
 		RePublish: &RePublish{Source: ">", Destination: "bar.>"},
