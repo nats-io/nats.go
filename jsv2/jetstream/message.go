@@ -16,7 +16,6 @@ package jetstream
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -81,14 +80,6 @@ const (
 const (
 	MsgRollupSubject = "sub"
 	MsgRollupAll     = "all"
-)
-
-var (
-	ErrNotJSMessage          = errors.New("nats: not a jetstream message")
-	ErrMsgAlreadyAckd        = errors.New("nats: message was already acknowledged")
-	ErrMsgNotBound           = errors.New("nats: message is not bound to subscription/connection")
-	ErrMsgNoReply            = errors.New("nats: message does not have a reply")
-	ErrMsgDeleteUnsuccessful = errors.New("nats: message deletion unsuccessful")
 )
 
 var (

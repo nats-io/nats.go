@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -176,13 +175,6 @@ type (
 	}
 )
 
-var (
-	ErrStreamNotFound     = errors.New("nats: stream not found")
-	ErrInvalidDurableName = errors.New("nats: invalid durable name")
-	ErrMsgNotFound        = errors.New("nats: message not found")
-	ErrConsumerExists     = errors.New("nats: consumer with given name already exists")
-)
-
 func (s *stream) CreateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (Consumer, error) {
 	if cfg.Durable != "" {
 		c, err := s.Consumer(ctx, cfg.Durable)
@@ -245,7 +237,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*nats.StreamI
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == ConsumerNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -317,7 +309,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}
 
 	if resp.Error != nil {
-		if resp.Error.Code == 404 && strings.Contains(resp.Error.Description, "message") {
+		if resp.Error.ErrorCode == MessageNotFound {
 			return nil, ErrMsgNotFound
 		}
 		return nil, resp.Error

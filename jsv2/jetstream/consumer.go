@@ -75,19 +75,6 @@ type (
 	}
 )
 
-var (
-	// ErrNoMessages is returned when no messages are currectly available for a consumer
-	ErrNoMessages = errors.New("nats: no messages")
-	// ErrConsumerNotFound is returned when a consumer with given name is not found
-	ErrConsumerNotFound = errors.New("nats: consumer not found")
-	// ErrHandlerRequired is returned when no handler func is provided in Stream()
-	ErrHandlerRequired = errors.New("nats: handler cannot be empty")
-	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
-	ErrNoHeartbeat = errors.New("nats: no heartbeat received, canceling subscription")
-	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
-	ErrConsumerHasActiveSubscription = errors.New("nats: consumer has active subscription")
-)
-
 // Next fetches an individual message from a consumer.
 // Timeout for this operation is handled using `context.Deadline()`, so it should always be set to avoid getting stuck
 //
@@ -301,7 +288,7 @@ func (p *pullConsumer) Info(ctx context.Context) (*nats.ConsumerInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == ConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, resp.Error
@@ -344,7 +331,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg nats.
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == 10059 {
+		if resp.Error.ErrorCode == StreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -373,7 +360,7 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == ConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, resp.Error
@@ -402,7 +389,7 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == ConsumerNotFound {
 			return ErrConsumerNotFound
 		}
 		return resp.Error

@@ -508,28 +508,80 @@ func TestPurgeStream(t *testing.T) {
 }
 
 func TestAccountInfo(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	t.Run("fetch account info", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	js, err := New(nc)
-	defer nc.Close()
-	_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	info, err := js.AccountInfo(ctx)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		defer nc.Close()
+		_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		info, err := js.AccountInfo(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	fmt.Printf("Max memory: %d\n", info.Limits.MaxMemory)
-	fmt.Printf("Streams: %d\n", info.Streams)
+		if info.Streams != 1 {
+			t.Fatalf("Invalid number of streams; want: 1; got: %d", info.Streams)
+		}
+	})
+
+	t.Run("jetstream not enabled on server", func(t *testing.T) {
+		srv := RunDefaultServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		defer nc.Close()
+
+		_, err = js.AccountInfo(ctx)
+		if err == nil || !errors.Is(err, ErrJetStreamNotEnabled) {
+			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabled, err)
+		}
+	})
+
+	t.Run("jetstream not enabled for account", func(t *testing.T) {
+		conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: enabled
+		no_auth_user: foo
+		accounts: {
+			JS: {
+				jetstream: disabled
+				users: [ {user: foo, password: bar} ]
+			},
+		}
+	`))
+		defer os.Remove(conf)
+		srv, _ := RunServerWithConfig(conf)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		defer nc.Close()
+		_, err = js.AccountInfo(ctx)
+		if err == nil || !errors.Is(err, ErrJetStreamNotEnabled) {
+			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabled, err)
+		}
+	})
 }
 
 func TestListStreams(t *testing.T) {

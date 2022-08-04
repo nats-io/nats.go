@@ -16,7 +16,6 @@ package jetstream
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -24,7 +23,7 @@ import (
 type (
 	apiResponse struct {
 		Type  string    `json:"type"`
-		Error *apiError `json:"error,omitempty"`
+		Error *APIError `json:"error,omitempty"`
 	}
 
 	// apiPaged includes variables used to create paged responses from the JSON API
@@ -32,13 +31,6 @@ type (
 		Total  int `json:"total"`
 		Offset int `json:"offset"`
 		Limit  int `json:"limit"`
-	}
-
-	// apiError is included in all API responses if there was an error.
-	apiError struct {
-		Code        int    `json:"code"`
-		ErrorCode   int    `json:"err_code"`
-		Description string `json:"description,omitempty"`
 	}
 )
 
@@ -156,9 +148,4 @@ func apiSubj(prefix, subject string) string {
 	b.WriteString(prefix)
 	b.WriteString(subject)
 	return b.String()
-}
-
-// Error prints the API error description
-func (e *apiError) Error() string {
-	return fmt.Sprintf("API error: %s", e.Description)
 }
