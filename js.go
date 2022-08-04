@@ -1102,6 +1102,7 @@ type jsSub struct {
 	deliver  string
 	pull     bool
 	dc       bool // Delete JS consumer
+	ackNone  bool
 
 	// This is ConsumerInfo's Pending+Consumer.Delivered that we get from the
 	// add consumer response. Note that some versions of the server gather the
@@ -1576,6 +1577,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		nms:      nms,
 		psubj:    subj,
 		cancel:   cancel,
+		ackNone:  o.cfg.AckPolicy == AckNonePolicy,
 	}
 
 	// Auto acknowledge unless manual ack is set or policy is set to AckNonePolicy
@@ -2785,24 +2787,14 @@ func (js *js) apiRequestWithContext(ctx context.Context, subj string, data []byt
 	return resp, nil
 }
 
-func (m *Msg) checkReply() (*js, *jsSub, error) {
+func (m *Msg) checkReply() error {
 	if m == nil || m.Sub == nil {
-		return nil, nil, ErrMsgNotBound
+		return ErrMsgNotBound
 	}
 	if m.Reply == _EMPTY_ {
-		return nil, nil, ErrMsgNoReply
+		return ErrMsgNoReply
 	}
-	sub := m.Sub
-	if sub.jsi == nil {
-		// Not using a JS context.
-		return nil, nil, nil
-	}
-	sub.mu.Lock()
-	js := sub.jsi.js
-	jsi := sub.jsi
-	sub.mu.Unlock()
-
-	return js, jsi, nil
+	return nil
 }
 
 // ackReply handles all acks. Will do the right thing for pull and sync mode.
@@ -2816,19 +2808,29 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 		}
 	}
 
-	js, _, err := m.checkReply()
-	if err != nil {
+	if err := m.checkReply(); err != nil {
 		return err
 	}
+
+	var ackNone bool
+	var js *js
+
+	sub := m.Sub
+	sub.mu.Lock()
+	nc := sub.conn
+	if jsi := sub.jsi; jsi != nil {
+		js = jsi.js
+		ackNone = jsi.ackNone
+	}
+	sub.mu.Unlock()
 
 	// Skip if already acked.
 	if atomic.LoadUint32(&m.ackd) == 1 {
 		return ErrMsgAlreadyAckd
 	}
-
-	m.Sub.mu.Lock()
-	nc := m.Sub.conn
-	m.Sub.mu.Unlock()
+	if ackNone {
+		return ErrCantAckIfConsumerAckNone
+	}
 
 	usesCtx := o.ctx != nil
 	usesWait := o.ttl > 0
@@ -2848,6 +2850,7 @@ func (m *Msg) ackReply(ackType []byte, sync bool, opts ...AckOpt) error {
 	}
 
 	var body []byte
+	var err error
 	// This will be > 0 only when called from NakWithDelay()
 	if o.nakDelay > 0 {
 		body = []byte(fmt.Sprintf("%s {\"delay\": %d}", ackType, o.nakDelay.Nanoseconds()))
@@ -2996,7 +2999,7 @@ func getMetadataFields(subject string) ([]string, error) {
 // Metadata retrieves the metadata from a JetStream message. This method will
 // return an error for non-JetStream Msgs.
 func (m *Msg) Metadata() (*MsgMetadata, error) {
-	if _, _, err := m.checkReply(); err != nil {
+	if err := m.checkReply(); err != nil {
 		return nil, err
 	}
 
