@@ -164,6 +164,7 @@ var (
 	ErrConsumerNotActive            = errors.New("nats: consumer not active")
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
+	ErrCantAckIfConsumerAckNone     = errors.New("nats: cannot acknowledge a message for a consumer with AckNone policy")
 	ErrStreamInfoMaxSubjects        = errors.New("nats: subject details would exceed maximum allowed")
 	ErrStreamNameAlreadyInUse       = errors.New("nats: stream name already in use")
 	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")

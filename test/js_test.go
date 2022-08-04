@@ -1534,8 +1534,8 @@ func TestAccountInfo(t *testing.T) {
 				accounts: {
 				A {
 					users: [{ user: "foo" }]
-					jetstream: { 
-						max_mem: 64MB, 
+					jetstream: {
+						max_mem: 64MB,
 						max_file: 32MB,
 						max_streams: 10,
 						max_consumers: 20,
@@ -1545,7 +1545,7 @@ func TestAccountInfo(t *testing.T) {
 						max_stream_bytes: true
 					}
 				}
-				}	
+				}
 			`,
 			expected: &nats.AccountInfo{
 				Tier: nats.Tier{
@@ -7453,4 +7453,35 @@ func TestJetStreamConsumerReplicasOption(t *testing.T) {
 			t.Fatalf("Expected consumer replica to be %v, got %+v", 1, consInfo.Config.Replicas)
 		}
 	})
+}
+
+func TestJetStreamMsgAckShouldErrForConsumerAckNone(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&nats.StreamConfig{
+		Name:     "ACKNONE",
+		Storage:  nats.MemoryStorage,
+		Subjects: []string{"foo"},
+	}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+	if _, err := js.Publish("foo", []byte("hello")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+
+	sub, err := js.SubscribeSync("foo", nats.OrderedConsumer())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	if err := msg.Ack(); err != nats.ErrCantAckIfConsumerAckNone {
+		t.Fatalf("Expected error indicating that sub is AckNone, got %v", err)
+	}
 }

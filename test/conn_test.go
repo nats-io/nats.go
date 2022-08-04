@@ -1592,6 +1592,9 @@ func TestCustomFlusherTimeout(t *testing.T) {
 		// Notify when connection lost
 		nats.ClosedHandler(func(_ *nats.Conn) {
 			doneCh <- struct{}{}
+		}),
+		// Use error handler to silence the stderr output
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {
 		}))
 	if err != nil {
 		t.Fatalf("Expected to be able to connect, got: %s", err)
