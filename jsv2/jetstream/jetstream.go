@@ -134,15 +134,6 @@ type (
 	}
 )
 
-var (
-	ErrJetStreamNotEnabled    = errors.New("nats: jetstream not enabled")
-	ErrJetStreamBadPre        = errors.New("nats: jetstream api prefix not valid")
-	ErrStreamNameAlreadyInUse = errors.New("nats: stream name already in use")
-	ErrStreamNameRequired     = errors.New("nats: stream name is required")
-	ErrInvalidStreamName      = errors.New("nats: invalid stream name")
-	ErrEndOfData              = errors.New("end of data reached")
-)
-
 // New returns a enw JetStream instance
 //
 // Available options:
@@ -225,7 +216,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg nats.StreamConfig) (S
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == 10058 {
+		if resp.Error.ErrorCode == StreamNameInUse {
 			return nil, ErrStreamNameAlreadyInUse
 		}
 		return nil, resp.Error
@@ -255,7 +246,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg nats.StreamConfig) (S
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == StreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -280,7 +271,7 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == StreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -303,7 +294,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 404 {
+		if resp.Error.ErrorCode == StreamNotFound {
 			return ErrStreamNotFound
 		}
 		return resp.Error
@@ -348,12 +339,12 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*nats.AccountInfo, error)
 	infoSubject := apiSubj(js.apiPrefix, apiAccountInfo)
 	if _, err := js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
 		if errors.Is(err, nats.ErrNoResponders) {
-			err = ErrJetStreamNotEnabled
+			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, err
 	}
 	if resp.Error != nil {
-		if strings.Contains(resp.Error.Description, "not enabled for") {
+		if resp.Error.ErrorCode == JetStreamNotEnabledForAccount {
 			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, resp.Error
