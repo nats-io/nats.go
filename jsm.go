@@ -58,8 +58,12 @@ type JetStreamManager interface {
 	// The stream must have been created/updated with the AllowDirect boolean.
 	GetLastMsg(name, subject string, opts ...JSOpt) (*RawStreamMsg, error)
 
-	// DeleteMsg erases a message from a stream.
+	// DeleteMsg deletes a message from a stream. The message is marked as erased, but its value is not overwritten.
 	DeleteMsg(name string, seq uint64, opts ...JSOpt) error
+
+	// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+	// As a result, this operation is slower than DeleteMsg()
+	SecureDeleteMsg(name string, seq uint64, opts ...JSOpt) error
 
 	// AddConsumer adds a consumer to a stream.
 	AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error)
@@ -1012,7 +1016,8 @@ func convertDirectGetMsgResponseToMsg(name string, r *Msg) (*RawStreamMsg, error
 }
 
 type msgDeleteRequest struct {
-	Seq uint64 `json:"seq"`
+	Seq     uint64 `json:"seq"`
+	NoErase bool   `json:"no_erase,omitempty"`
 }
 
 // msgDeleteResponse is the response for a Stream delete request.
@@ -1022,6 +1027,7 @@ type msgDeleteResponse struct {
 }
 
 // DeleteMsg deletes a message from a stream.
+// The message is marked as erased, but not overwritten
 func (js *js) DeleteMsg(name string, seq uint64, opts ...JSOpt) error {
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
@@ -1031,17 +1037,34 @@ func (js *js) DeleteMsg(name string, seq uint64, opts ...JSOpt) error {
 		defer cancel()
 	}
 
-	if name == _EMPTY_ {
-		return ErrStreamNameRequired
+	return js.deleteMsg(o.ctx, name, &msgDeleteRequest{Seq: seq, NoErase: true})
+}
+
+// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+// As a result, this operation is slower than DeleteMsg()
+func (js *js) SecureDeleteMsg(name string, seq uint64, opts ...JSOpt) error {
+	o, cancel, err := getJSContextOpts(js.opts, opts...)
+	if err != nil {
+		return err
+	}
+	if cancel != nil {
+		defer cancel()
 	}
 
-	req, err := json.Marshal(&msgDeleteRequest{Seq: seq})
+	return js.deleteMsg(o.ctx, name, &msgDeleteRequest{Seq: seq})
+}
+
+func (js *js) deleteMsg(ctx context.Context, stream string, req *msgDeleteRequest) error {
+	if err := checkStreamName(stream); err != nil {
+		return err
+	}
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 
-	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgDeleteT, name))
-	r, err := js.apiRequestWithContext(o.ctx, dsSubj, req)
+	dsSubj := js.apiSubj(fmt.Sprintf(apiMsgDeleteT, stream))
+	r, err := js.apiRequestWithContext(ctx, dsSubj, reqJSON)
 	if err != nil {
 		return err
 	}
