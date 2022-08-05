@@ -101,14 +101,14 @@ func (m *jetStreamMsg) Metadata() (*nats.MsgMetadata, error) {
 
 	meta := &nats.MsgMetadata{
 		Domain:       tokens[parser.AckDomainTokenPos],
-		NumDelivered: uint64(parser.ParseNum(tokens[parser.AckNumDeliveredTokenPos])),
-		NumPending:   uint64(parser.ParseNum(tokens[parser.AckNumPendingTokenPos])),
-		Timestamp:    time.Unix(0, parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos])),
+		NumDelivered: parser.ParseNum(tokens[parser.AckNumDeliveredTokenPos]),
+		NumPending:   parser.ParseNum(tokens[parser.AckNumPendingTokenPos]),
+		Timestamp:    time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos]))),
 		Stream:       tokens[parser.AckStreamTokenPos],
 		Consumer:     tokens[parser.AckConsumerTokenPos],
 	}
-	meta.Sequence.Stream = uint64(parser.ParseNum(tokens[parser.AckStreamSeqTokenPos]))
-	meta.Sequence.Consumer = uint64(parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos]))
+	meta.Sequence.Stream = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
+	meta.Sequence.Consumer = parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 	return meta, nil
 }
 

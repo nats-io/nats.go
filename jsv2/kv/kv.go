@@ -719,113 +719,18 @@ const kvDefaultPurgeDeletesMarkerThreshold = 30 * time.Minute
 // TODO: in order for watcher to work, ordered push consumer needs to be implemented for jsv2
 func (kv *kvs) PurgeDeletes(ctx context.Context, opts ...PurgeOpt) error {
 	panic("not implemented")
-
-	var o purgeOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configurePurge(&o); err != nil {
-				return err
-			}
-		}
-	}
-	watcher, err := kv.WatchAll(ctx)
-	if err != nil {
-		return err
-	}
-	defer watcher.Stop()
-
-	var limit time.Time
-	olderThan := o.dmthr
-	// Negative value is used to instruct to always remove markers, regardless
-	// of age. If set to 0 (or not set), use our default value.
-	if olderThan == 0 {
-		olderThan = kvDefaultPurgeDeletesMarkerThreshold
-	}
-	if olderThan > 0 {
-		limit = time.Now().Add(-olderThan)
-	}
-
-	var deleteMarkers []KeyValueEntry
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
-		}
-		if op := entry.Operation(); op == KeyValueDelete || op == KeyValuePurge {
-			deleteMarkers = append(deleteMarkers, entry)
-		}
-	}
-
-	var (
-		pr jetstream.StreamPurgeRequest
-		b  strings.Builder
-	)
-	// Do actual purges here.
-	for _, entry := range deleteMarkers {
-		b.WriteString(kv.pre)
-		b.WriteString(entry.Key())
-		pr.Subject = b.String()
-		purgeOpts := []jetstream.StreamPurgeOpt{
-			jetstream.WithSubject(b.String()),
-		}
-		if olderThan > 0 && entry.Created().After(limit) {
-			purgeOpts = append(purgeOpts, jetstream.WithKeep(1))
-		}
-		if err := kv.stream.Purge(ctx, purgeOpts...); err != nil {
-			return err
-		}
-		b.Reset()
-	}
-	return nil
 }
 
 // Keys() will return all keys.
 // TODO: in order for watcher to work, ordered push consumer needs to be implemented for jsv2
 func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 	panic("not implemented")
-
-	opts = append(opts, IgnoreDeletes(), MetaOnly())
-	watcher, err := kv.WatchAll(ctx, opts...)
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	var keys []string
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
-		}
-		keys = append(keys, entry.Key())
-	}
-	if len(keys) == 0 {
-		return nil, ErrNoKeysFound
-	}
-	return keys, nil
 }
 
 // History will return all values for the key.
 // TODO: in order for watcher to work, ordered push consumer needs to be implemented for jsv2
 func (kv *kvs) History(ctx context.Context, key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 	panic("not implemented")
-
-	opts = append(opts, IncludeHistory())
-	watcher, err := kv.Watch(ctx, key, opts...)
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	var entries []KeyValueEntry
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
-		}
-		entries = append(entries, entry)
-	}
-	if len(entries) == 0 {
-		return nil, ErrKeyNotFound
-	}
-	return entries, nil
 }
 
 // Implementation for Watch
@@ -867,8 +772,6 @@ func (w *watcher) Stop() error {
 // TODO: in order for watcher to work, ordered push consumer needs to be implemented for jsv2
 func (kv *kvs) WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, error) {
 	panic("not implemented")
-
-	return kv.Watch(ctx, AllKeys, opts...)
 }
 
 // Watch will fire the callback when a key that matches the keys pattern is updated.
@@ -876,108 +779,6 @@ func (kv *kvs) WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, erro
 // TODO: in order for watcher to work, ordered push consumer needs to be implemented for jsv2
 func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	panic("not implemented")
-
-	// var o watchOpts
-	// for _, opt := range opts {
-	// 	if opt != nil {
-	// 		if err := opt.configureWatcher(&o); err != nil {
-	// 			return nil, err
-	// 		}
-	// 	}
-	// }
-
-	// // Could be a pattern so don't check for validity as we normally do.
-	// var b strings.Builder
-	// b.WriteString(kv.pre)
-	// b.WriteString(keys)
-	// keys = b.String()
-
-	// // We will block below on placing items on the chan. That is by design.
-	// w := &watcher{updates: make(chan KeyValueEntry, 256), ctx: o.ctx}
-
-	// update := func(m *nats.Msg) {
-	// 	tokens, err := getMetadataFields(m.Reply)
-	// 	if err != nil {
-	// 		return
-	// 	}
-	// 	if len(m.Subject) <= len(kv.pre) {
-	// 		return
-	// 	}
-	// 	subj := m.Subject[len(kv.pre):]
-
-	// 	var op KeyValueOp
-	// 	if len(m.Header) > 0 {
-	// 		switch m.Header.Get(kvop) {
-	// 		case kvdel:
-	// 			op = KeyValueDelete
-	// 		case kvpurge:
-	// 			op = KeyValuePurge
-	// 		}
-	// 	}
-	// 	delta := uint64(parseNum(tokens[ackNumPendingTokenPos]))
-	// 	w.mu.Lock()
-	// 	defer w.mu.Unlock()
-	// 	if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
-	// 		entry := &kve{
-	// 			bucket:   kv.name,
-	// 			key:      subj,
-	// 			value:    m.Data,
-	// 			revision: uint64(parseNum(tokens[ackStreamSeqTokenPos])),
-	// 			created:  time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
-	// 			delta:    delta,
-	// 			op:       op,
-	// 		}
-	// 		w.updates <- entry
-	// 	}
-	// 	// Check if done and initial values.
-	// 	if !w.initDone {
-	// 		w.received++
-	// 		// We set this on the first trip through..
-	// 		if w.initPending == 0 {
-	// 			w.initPending = delta
-	// 		}
-	// 		if w.received > w.initPending || delta == 0 {
-	// 			w.initDone = true
-	// 			w.updates <- nil
-	// 		}
-	// 	}
-	// }
-
-	// // Used ordered consumer to deliver results.
-	// subOpts := []SubOpt{OrderedConsumer()}
-	// if !o.includeHistory {
-	// 	subOpts = append(subOpts, DeliverLastPerSubject())
-	// }
-	// if o.metaOnly {
-	// 	subOpts = append(subOpts, HeadersOnly())
-	// }
-	// if o.ctx != nil {
-	// 	subOpts = append(subOpts, Context(o.ctx))
-	// }
-	// // Create the sub and rest of initialization under the lock.
-	// // We want to prevent the race between this code and the
-	// // update() callback.
-	// w.mu.Lock()
-	// defer w.mu.Unlock()
-	// sub, err := kv.js.Subscribe(keys, update, subOpts...)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// sub.mu.Lock()
-	// // If there were no pending messages at the time of the creation
-	// // of the consumer, send the marker.
-	// if sub.jsi != nil && sub.jsi.pending == 0 {
-	// 	w.initDone = true
-	// 	w.updates <- nil
-	// }
-	// // Set us up to close when the waitForMessages func returns.
-	// sub.pDone = func() {
-	// 	close(w.updates)
-	// }
-	// sub.mu.Unlock()
-
-	// w.sub = sub
-	// return w, nil
 }
 
 // Bucket returns the current bucket name (JetStream stream).

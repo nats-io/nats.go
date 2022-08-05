@@ -13,7 +13,10 @@
 
 package parser
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 const (
 	AckDomainTokenPos = iota + 2
@@ -27,10 +30,13 @@ const (
 	AckNumPendingTokenPos
 )
 
+var ErrInvalidSubjectFormat = errors.New("invalid format of ACK subject")
+
 // Quick parser for positive numbers in ack reply encoding.
-func ParseNum(d string) (n int64) {
+// NOTE: This parser does not detect uint64 overflow
+func ParseNum(d string) (n uint64) {
 	if len(d) == 0 {
-		return -1
+		return 0
 	}
 
 	// ASCII numbers 0-9
@@ -41,11 +47,11 @@ func ParseNum(d string) (n int64) {
 
 	for _, dec := range d {
 		if dec < asciiZero || dec > asciiNine {
-			return -1
+			return 0
 		}
-		n = n*10 + (int64(dec) - asciiZero)
+		n = n*10 + uint64(dec) - asciiZero
 	}
-	return n
+	return
 }
 
 func GetMetadataFields(subject string) ([]string, error) {
@@ -77,10 +83,10 @@ func GetMetadataFields(subject string) ([]string, error) {
 	tokensLen := len(tokens)
 	// If lower than 9 or more than 9 but less than 11, report an error
 	if tokensLen < v1TokenCounts || (tokensLen > v1TokenCounts && tokensLen < v2TokenCounts-1) {
-		return nil, fmt.Errorf("invalid format of ACK subject")
+		return nil, ErrInvalidSubjectFormat
 	}
 	if tokens[0] != "$JS" || tokens[1] != "ACK" {
-		return nil, fmt.Errorf("invalid format of ACK subject")
+		return nil, fmt.Errorf("%w: subject should start with $JS.ACK", ErrInvalidSubjectFormat)
 	}
 	// For v1 style, we insert 2 empty tokens (domain and hash) so that the
 	// rest of the library references known fields at a constant location.
