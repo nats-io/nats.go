@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nats-io/nats.go/parser"
 	"github.com/nats-io/nuid"
 )
 
@@ -1855,11 +1856,11 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	}
 
 	// Normal message here.
-	tokens, err := getMetadataFields(m.Reply)
+	tokens, err := parser.GetMetadataFields(m.Reply)
 	if err != nil {
 		return false
 	}
-	sseq, dseq := uint64(parseNum(tokens[ackStreamSeqTokenPos])), uint64(parseNum(tokens[ackConsumerSeqTokenPos]))
+	sseq, dseq := parser.ParseNum(tokens[ackStreamSeqTokenPos]), parser.ParseNum(tokens[ackConsumerSeqTokenPos])
 
 	jsi := sub.jsi
 	if dseq != jsi.dseq {
@@ -2109,7 +2110,7 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 		return
 	}
 
-	tokens, err := getMetadataFields(ctrl)
+	tokens, err := parser.GetMetadataFields(ctrl)
 	if err != nil {
 		return
 	}
@@ -2127,7 +2128,7 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 	if ldseq != dseq {
 		// Dispatch async error including details such as
 		// from where the consumer could be restarted.
-		sseq := parseNum(tokens[ackStreamSeqTokenPos])
+		sseq := parser.ParseNum(tokens[ackStreamSeqTokenPos])
 		if ordered {
 			s.mu.Lock()
 			s.resetOrderedConsumer(jsi.sseq + 1)
@@ -2135,8 +2136,8 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 		} else {
 			ecs := &ErrConsumerSequenceMismatch{
 				StreamResumeSequence: uint64(sseq),
-				ConsumerSequence:     uint64(parseNum(dseq)),
-				LastConsumerSequence: uint64(parseNum(ldseq)),
+				ConsumerSequence:     parser.ParseNum(dseq),
+				LastConsumerSequence: parser.ParseNum(ldseq),
 			}
 			nc.handleConsumerSequenceMismatch(s, ecs)
 		}
@@ -3227,60 +3228,6 @@ const (
 	ackNumPendingTokenPos   = 10
 )
 
-func getMetadataFields(subject string) ([]string, error) {
-	const v1TokenCounts = 9
-	const v2TokenCounts = 12
-	const noDomainName = "_"
-
-	const btsep = '.'
-	tsa := [v2TokenCounts]string{}
-	start, tokens := 0, tsa[:0]
-	for i := 0; i < len(subject); i++ {
-		if subject[i] == btsep {
-			tokens = append(tokens, subject[start:i])
-			start = i + 1
-		}
-	}
-	tokens = append(tokens, subject[start:])
-	//
-	// Newer server will include the domain name and account hash in the subject,
-	// and a token at the end.
-	//
-	// Old subject was:
-	// $JS.ACK.<stream>.<consumer>.<delivered>.<sseq>.<cseq>.<tm>.<pending>
-	//
-	// New subject would be:
-	// $JS.ACK.<domain>.<account hash>.<stream>.<consumer>.<delivered>.<sseq>.<cseq>.<tm>.<pending>.<a token with a random value>
-	//
-	// v1 has 9 tokens, v2 has 12, but we must not be strict on the 12th since
-	// it may be removed in the future. Also, the library has no use for it.
-	// The point is that a v2 ACK subject is valid if it has at least 11 tokens.
-	//
-	l := len(tokens)
-	// If lower than 9 or more than 9 but less than 11, report an error
-	if l < v1TokenCounts || (l > v1TokenCounts && l < v2TokenCounts-1) {
-		return nil, ErrNotJSMessage
-	}
-	if tokens[0] != "$JS" || tokens[1] != "ACK" {
-		return nil, ErrNotJSMessage
-	}
-	// For v1 style, we insert 2 empty tokens (domain and hash) so that the
-	// rest of the library references known fields at a constant location.
-	if l == 9 {
-		// Extend the array (we know the backend is big enough)
-		tokens = append(tokens, _EMPTY_, _EMPTY_)
-		// Move to the right anything that is after "ACK" token.
-		copy(tokens[ackDomainTokenPos+2:], tokens[ackDomainTokenPos:])
-		// Clear the domain and hash tokens
-		tokens[ackDomainTokenPos], tokens[ackAccHashTokenPos] = _EMPTY_, _EMPTY_
-
-	} else if tokens[ackDomainTokenPos] == noDomainName {
-		// If domain is "_", replace with empty value.
-		tokens[ackDomainTokenPos] = _EMPTY_
-	}
-	return tokens, nil
-}
-
 // Metadata retrieves the metadata from a JetStream message. This method will
 // return an error for non-JetStream Msgs.
 func (m *Msg) Metadata() (*MsgMetadata, error) {
@@ -3288,43 +3235,22 @@ func (m *Msg) Metadata() (*MsgMetadata, error) {
 		return nil, err
 	}
 
-	tokens, err := getMetadataFields(m.Reply)
+	tokens, err := parser.GetMetadataFields(m.Reply)
 	if err != nil {
 		return nil, err
 	}
 
 	meta := &MsgMetadata{
 		Domain:       tokens[ackDomainTokenPos],
-		NumDelivered: uint64(parseNum(tokens[ackNumDeliveredTokenPos])),
-		NumPending:   uint64(parseNum(tokens[ackNumPendingTokenPos])),
-		Timestamp:    time.Unix(0, parseNum(tokens[ackTimestampSeqTokenPos])),
+		NumDelivered: parser.ParseNum(tokens[ackNumDeliveredTokenPos]),
+		NumPending:   parser.ParseNum(tokens[ackNumPendingTokenPos]),
+		Timestamp:    time.Unix(0, int64(parser.ParseNum(tokens[ackTimestampSeqTokenPos]))),
 		Stream:       tokens[ackStreamTokenPos],
 		Consumer:     tokens[ackConsumerTokenPos],
 	}
-	meta.Sequence.Stream = uint64(parseNum(tokens[ackStreamSeqTokenPos]))
-	meta.Sequence.Consumer = uint64(parseNum(tokens[ackConsumerSeqTokenPos]))
+	meta.Sequence.Stream = parser.ParseNum(tokens[ackStreamSeqTokenPos])
+	meta.Sequence.Consumer = parser.ParseNum(tokens[ackConsumerSeqTokenPos])
 	return meta, nil
-}
-
-// Quick parser for positive numbers in ack reply encoding.
-func parseNum(d string) (n int64) {
-	if len(d) == 0 {
-		return -1
-	}
-
-	// ASCII numbers 0-9
-	const (
-		asciiZero = 48
-		asciiNine = 57
-	)
-
-	for _, dec := range d {
-		if dec < asciiZero || dec > asciiNine {
-			return -1
-		}
-		n = n*10 + (int64(dec) - asciiZero)
-	}
-	return n
 }
 
 // AckPolicy determines how the consumer should acknowledge delivered messages.
