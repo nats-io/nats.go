@@ -33,7 +33,7 @@ type (
 	Consumer interface {
 		// Next is used to retrieve a single message from the stream
 		Next(context.Context, ...ConsumerNextOpt) (JetStreamMsg, error)
-		// Stream can be used to continously receive messages and handle them with the provided callback function
+		// Stream can be used to continuously receive messages and handle them with the provided callback function
 		Stream(context.Context, MessageHandler, ...ConsumerStreamOpt) error
 
 		// Info returns Consumer details
@@ -145,7 +145,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	}
 }
 
-// Stream continously receives messages from a consumer and handles them with the provided callback function
+// Stream continuously receives messages from a consumer and handles them with the provided callback function
 // ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, an empty context should be provided
 //
 // Available options:
