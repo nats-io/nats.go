@@ -519,6 +519,9 @@ func TestAccountInfo(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		defer nc.Close()
 		_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 		if err != nil {
@@ -545,6 +548,9 @@ func TestAccountInfo(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		defer nc.Close()
 
 		_, err = js.AccountInfo(ctx)
@@ -576,6 +582,9 @@ func TestAccountInfo(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		defer nc.Close()
 		_, err = js.AccountInfo(ctx)
 		if err == nil || !errors.Is(err, ErrJetStreamNotEnabled) {
@@ -612,6 +621,9 @@ func TestListStreams(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			js, err := New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
 				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
@@ -668,6 +680,9 @@ func TestStreamNames(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			js, err := New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
 				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})

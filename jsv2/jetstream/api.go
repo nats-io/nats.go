@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"time"
 )
 
 type (
@@ -92,15 +91,6 @@ const (
 
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
-
-	// Default time wait between retries on Publish iff err is NoResponders.
-	DefaultPubRetryWait = 250 * time.Millisecond
-
-	// Default number of retries
-	DefaultPubRetryAttempts = 2
-
-	// defaultAsyncPubAckInflight is the number of async pub acks inflight.
-	defaultAsyncPubAckInflight = 4000
 )
 
 func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp interface{}, data ...[]byte) (*jetStreamMsg, error) {

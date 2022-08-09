@@ -95,6 +95,14 @@ var (
 )
 
 const (
+	// Default time wait between retries on Publish iff err is NoResponders.
+	DefaultPubRetryWait = 250 * time.Millisecond
+
+	// Default number of retries
+	DefaultPubRetryAttempts = 2
+)
+
+const (
 	statusHdr = "Status"
 
 	inboxPrefix = "_INBOX."
