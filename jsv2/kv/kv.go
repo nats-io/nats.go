@@ -162,7 +162,7 @@ type (
 
 	// KeyValueBucketStatus represents status of a Bucket, implements KeyValueStatus
 	KeyValueBucketStatus struct {
-		nfo    *nats.StreamInfo
+		nfo    *jetstream.StreamInfo
 		bucket string
 	}
 )
@@ -278,9 +278,9 @@ type KeyValueConfig struct {
 	History      uint8
 	TTL          time.Duration
 	MaxBytes     int64
-	Storage      nats.StorageType
+	Storage      jetstream.StorageType
 	Replicas     int
-	Placement    *nats.Placement
+	Placement    *jetstream.Placement
 }
 
 // Used to watch all keys.
@@ -443,7 +443,7 @@ func (kv *keyValue) CreateBucket(ctx context.Context, cfg *KeyValueConfig) (Buck
 	if cfg.TTL > 0 && cfg.TTL < duplicateWindow {
 		duplicateWindow = cfg.TTL
 	}
-	scfg := nats.StreamConfig{
+	scfg := jetstream.StreamConfig{
 		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
 		Description:       cfg.Description,
 		Subjects:          []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)},
@@ -463,7 +463,7 @@ func (kv *keyValue) CreateBucket(ctx context.Context, cfg *KeyValueConfig) (Buck
 
 	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
 	if kv.serverMinVersion(2, 7, 2) {
-		scfg.Discard = nats.DiscardNew
+		scfg.Discard = jetstream.DiscardNew
 	}
 
 	s, err := kv.js.CreateStream(ctx, scfg)
@@ -802,7 +802,7 @@ func (s *KeyValueBucketStatus) TTL() time.Duration { return s.nfo.Config.MaxAge 
 func (s *KeyValueBucketStatus) BackingStore() string { return "JetStream" }
 
 // StreamInfo is the stream info retrieved to create the status
-func (s *KeyValueBucketStatus) StreamInfo() *nats.StreamInfo { return s.nfo }
+func (s *KeyValueBucketStatus) StreamInfo() *jetstream.StreamInfo { return s.nfo }
 
 // Status retrieves the status and configuration of a bucket
 func (kv *kvs) Status(ctx context.Context) (KeyValueStatus, error) {

@@ -37,9 +37,9 @@ type (
 		Stream(context.Context, MessageHandler, ...ConsumerStreamOpt) error
 
 		// Info returns Consumer details
-		Info(context.Context) (*nats.ConsumerInfo, error)
-		// CachedInfo returns *nats.ConsumerInfo cached on a consumer struct
-		CachedInfo() *nats.ConsumerInfo
+		Info(context.Context) (*ConsumerInfo, error)
+		// CachedInfo returns *ConsumerInfo cached on a consumer struct
+		CachedInfo() *ConsumerInfo
 	}
 
 	// ConsumerNextOpt is used to configure `Next()` method with additional parameters
@@ -57,7 +57,7 @@ type (
 		durable      bool
 		name         string
 		subscription *nats.Subscription
-		info         *nats.ConsumerInfo
+		info         *ConsumerInfo
 		sync.Mutex
 	}
 	pullConsumer struct {
@@ -279,8 +279,8 @@ func (c *pullConsumer) fetch(ctx context.Context, req pullRequest, target chan<-
 	return nil
 }
 
-// Info returns nats.ConsumerInfo for a given consumer
-func (p *pullConsumer) Info(ctx context.Context) (*nats.ConsumerInfo, error) {
+// Info returns ConsumerInfo for a given consumer
+func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	infoSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, p.stream, p.name))
 	var resp consumerInfoResponse
 
@@ -298,15 +298,15 @@ func (p *pullConsumer) Info(ctx context.Context) (*nats.ConsumerInfo, error) {
 	return resp.ConsumerInfo, nil
 }
 
-// CachedInfo returns nats.ConsumerInfo fetched when initializing/updating a consumer
+// CachedInfo returns ConsumerInfo fetched when initializing/updating a consumer
 //
 // NOTE: The returned object might not be up to date with the most recent updates on the server
 // For up-to-date information, use `Info()`
-func (p *pullConsumer) CachedInfo() *nats.ConsumerInfo {
+func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg nats.ConsumerConfig) (Consumer, error) {
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig) (Consumer, error) {
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,

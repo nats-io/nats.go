@@ -89,6 +89,11 @@ type (
 	}
 )
 
+var (
+	ErrInvalidJSAck     = errors.New("nats: invalid jetstream publish response")
+	ErrNoStreamResponse = errors.New("nats: no response from stream")
+)
+
 const (
 	statusHdr = "Status"
 
@@ -153,7 +158,7 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		}
 		if err != nil {
 			if errors.Is(err, nats.ErrNoResponders) {
-				return nil, nats.ErrNoStreamResponse
+				return nil, ErrNoStreamResponse
 			}
 			return nil, err
 		}
@@ -161,13 +166,13 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 
 	var ackResp pubAckResponse
 	if err := json.Unmarshal(resp.Data, &ackResp); err != nil {
-		return nil, nats.ErrInvalidJSAck
+		return nil, ErrInvalidJSAck
 	}
 	if ackResp.Error != nil {
 		return nil, fmt.Errorf("nats: %w", ackResp.Error)
 	}
 	if ackResp.PubAck == nil || ackResp.PubAck.Stream == "" {
-		return nil, nats.ErrInvalidJSAck
+		return nil, ErrInvalidJSAck
 	}
 	return ackResp.PubAck, nil
 }
@@ -330,7 +335,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 
 	var pa pubAckResponse
 	if err := json.Unmarshal(m.Data, &pa); err != nil {
-		doErr(nats.ErrInvalidJSAck)
+		doErr(ErrInvalidJSAck)
 		return
 	}
 	if pa.Error != nil {
@@ -338,7 +343,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		return
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == "" {
-		doErr(nats.ErrInvalidJSAck)
+		doErr(ErrInvalidJSAck)
 		return
 	}
 

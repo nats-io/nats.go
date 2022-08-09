@@ -33,13 +33,13 @@ type (
 	//
 	// Client returns a JetStremClient, used to publish messages on a stream or fetch messages by sequence number
 	JetStream interface {
-		// Returns *nats.AccountInfo, containing details about the account associated with this JetStream connection
-		AccountInfo(ctx context.Context) (*nats.AccountInfo, error)
+		// Returns *AccountInfo, containing details about the account associated with this JetStream connection
+		AccountInfo(ctx context.Context) (*AccountInfo, error)
 
 		// AddStream creates a new stream with given config and returns a hook to operate on it
-		CreateStream(context.Context, nats.StreamConfig) (Stream, error)
+		CreateStream(context.Context, StreamConfig) (Stream, error)
 		// UpdateStream updates an existing stream
-		UpdateStream(context.Context, nats.StreamConfig) (Stream, error)
+		UpdateStream(context.Context, StreamConfig) (Stream, error)
 		// Stream returns a `Stream` hook for a given stream name
 		Stream(context.Context, string) (Stream, error)
 		// DeleteStream removes a stream with given name
@@ -52,7 +52,7 @@ type (
 		// AddConsumer creates a consumer on a given stream with given config
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		AddConsumer(context.Context, string, nats.ConsumerConfig) (Consumer, error)
+		AddConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
@@ -63,6 +63,32 @@ type (
 		PublishAsync(context.Context, string, []byte, ...PublishOpt) (nats.PubAckFuture, error)
 		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (nats.PubAckFuture, error)
 	}
+
+	// AccountInfo contains info about the JetStream usage from the current account.
+	AccountInfo struct {
+		Memory    uint64        `json:"memory"`
+		Store     uint64        `json:"storage"`
+		Streams   int           `json:"streams"`
+		Consumers int           `json:"consumers"`
+		Domain    string        `json:"domain"`
+		API       APIStats      `json:"api"`
+		Limits    AccountLimits `json:"limits"`
+	}
+
+	// APIStats reports on API calls to JetStream for this account.
+	APIStats struct {
+		Total  uint64 `json:"total"`
+		Errors uint64 `json:"errors"`
+	}
+
+	// AccountLimits includes the JetStream limits of the current account.
+	AccountLimits struct {
+		MaxMemory    int64 `json:"max_memory"`
+		MaxStore     int64 `json:"max_storage"`
+		MaxStreams   int   `json:"max_streams"`
+		MaxConsumers int   `json:"max_consumers"`
+	}
+
 	jetStream struct {
 		conn *nats.Conn
 		jsOpts
@@ -85,12 +111,12 @@ type (
 	}
 	streamInfoResponse struct {
 		apiResponse
-		*nats.StreamInfo
+		*StreamInfo
 	}
 
 	accountInfoResponse struct {
 		apiResponse
-		nats.AccountInfo
+		AccountInfo
 	}
 
 	streamDeleteResponse struct {
@@ -99,7 +125,7 @@ type (
 	}
 
 	StreamInfoLister interface {
-		Info() <-chan *nats.StreamInfo
+		Info() <-chan *StreamInfo
 		Err() <-chan error
 	}
 
@@ -116,7 +142,7 @@ type (
 		offset   int
 		pageInfo *apiPaged
 
-		streams chan *nats.StreamInfo
+		streams chan *StreamInfo
 		names   chan string
 		errs    chan error
 	}
@@ -124,7 +150,7 @@ type (
 	streamListResponse struct {
 		apiResponse
 		apiPaged
-		Streams []*nats.StreamInfo `json:"streams"`
+		Streams []*StreamInfo `json:"streams"`
 	}
 
 	streamNamesResponse struct {
@@ -199,7 +225,7 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 	return js, nil
 }
 
-func (js *jetStream) CreateStream(ctx context.Context, cfg nats.StreamConfig) (Stream, error) {
+func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
@@ -229,7 +255,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg nats.StreamConfig) (S
 	}, nil
 }
 
-func (js *jetStream) UpdateStream(ctx context.Context, cfg nats.StreamConfig) (Stream, error) {
+func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
@@ -302,7 +328,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg nats.ConsumerConfig) (Consumer, error) {
+func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
@@ -333,7 +359,7 @@ func validateStreamName(stream string) error {
 	return nil
 }
 
-func (js *jetStream) AccountInfo(ctx context.Context) (*nats.AccountInfo, error) {
+func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	var resp accountInfoResponse
 
 	infoSubject := apiSubj(js.apiPrefix, apiAccountInfo)
@@ -356,7 +382,7 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*nats.AccountInfo, error)
 func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 	l := &streamLister{
 		js:      js,
-		streams: make(chan *nats.StreamInfo),
+		streams: make(chan *StreamInfo),
 		errs:    make(chan error, 1),
 	}
 	go func() {
@@ -385,7 +411,7 @@ func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 	return l
 }
 
-func (s *streamLister) Info() <-chan *nats.StreamInfo {
+func (s *streamLister) Info() <-chan *StreamInfo {
 	return s.streams
 }
 
@@ -430,7 +456,7 @@ func (s *streamLister) Names() <-chan string {
 }
 
 // infos fetches the next StreamInfo page
-func (s *streamLister) streamInfos(ctx context.Context) ([]*nats.StreamInfo, error) {
+func (s *streamLister) streamInfos(ctx context.Context) ([]*StreamInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
 	}
