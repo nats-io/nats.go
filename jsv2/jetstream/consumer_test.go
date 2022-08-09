@@ -41,13 +41,13 @@ func TestConsumerInfo(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{
 			Durable:     "cons",
-			AckPolicy:   nats.AckExplicitPolicy,
+			AckPolicy:   AckExplicitPolicy,
 			Description: "test consumer",
 		})
 		if err != nil {
@@ -67,9 +67,9 @@ func TestConsumerInfo(t *testing.T) {
 		}
 
 		// update consumer and see if info is updated
-		_, err = s.UpdateConsumer(ctx, nats.ConsumerConfig{
+		_, err = s.UpdateConsumer(ctx, ConsumerConfig{
 			Durable:     "cons",
-			AckPolicy:   nats.AckExplicitPolicy,
+			AckPolicy:   AckExplicitPolicy,
 			Description: "updated consumer",
 		})
 		if err != nil {
@@ -137,13 +137,13 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 	defer nc.Close()
 
-	s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{
+	c, err := s.CreateConsumer(ctx, ConsumerConfig{
 		Durable:     "cons",
-		AckPolicy:   nats.AckExplicitPolicy,
+		AckPolicy:   AckExplicitPolicy,
 		Description: "test consumer",
 	})
 	if err != nil {
@@ -160,9 +160,9 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 
 	// update consumer and see if info is updated
-	_, err = s.UpdateConsumer(ctx, nats.ConsumerConfig{
+	_, err = s.UpdateConsumer(ctx, ConsumerConfig{
 		Durable:     "cons",
-		AckPolicy:   nats.AckExplicitPolicy,
+		AckPolicy:   AckExplicitPolicy,
 		Description: "updated consumer",
 	})
 	if err != nil {
@@ -209,11 +209,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -266,11 +266,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -319,11 +319,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -378,11 +378,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -434,11 +434,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -482,11 +482,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -517,11 +517,11 @@ func TestPullConsumerNext(t *testing.T) {
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -576,11 +576,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -627,11 +627,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -662,11 +662,11 @@ func TestPullConsumerStream(t *testing.T) {
 		defer nc.Close()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -737,11 +737,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -803,11 +803,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -835,11 +835,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -903,11 +903,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -935,11 +935,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -986,11 +986,11 @@ func TestPullConsumerStream(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, nats.ConsumerConfig{AckPolicy: nats.AckExplicitPolicy})
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}

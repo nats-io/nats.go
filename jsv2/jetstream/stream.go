@@ -30,9 +30,9 @@ type (
 		streamConsumerManager
 
 		// Info returns stream details
-		Info(context.Context, ...StreamInfoOpt) (*nats.StreamInfo, error)
-		// CachedInfo returns *nats.StreamInfo cached on a consumer struct
-		CachedInfo() *nats.StreamInfo
+		Info(context.Context, ...StreamInfoOpt) (*StreamInfo, error)
+		// CachedInfo returns *StreamInfo cached on a consumer struct
+		CachedInfo() *StreamInfo
 
 		// Purge removes messages from a stream
 		Purge(context.Context, ...StreamPurgeOpt) error
@@ -45,19 +45,11 @@ type (
 		DeleteMsg(context.Context, uint64) error
 	}
 
-	RawStreamMsg struct {
-		Subject  string
-		Sequence uint64
-		Header   nats.Header
-		Data     []byte
-		Time     time.Time
-	}
-
 	streamConsumerManager interface {
 		// CreateConsumer adds a new consumer to a stream
-		CreateConsumer(context.Context, nats.ConsumerConfig) (Consumer, error)
+		CreateConsumer(context.Context, ConsumerConfig) (Consumer, error)
 		// UpdateConsumer updates an existing consumer
-		UpdateConsumer(context.Context, nats.ConsumerConfig) (Consumer, error)
+		UpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
 		// Consumer returns a Consumer interface for an existing consumer
 		Consumer(context.Context, string) (Consumer, error)
 		// DeleteConsumer removes a consumer
@@ -67,10 +59,17 @@ type (
 		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of stream names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
+	RawStreamMsg struct {
+		Subject  string
+		Sequence uint64
+		Header   nats.Header
+		Data     []byte
+		Time     time.Time
+	}
 
 	stream struct {
 		name      string
-		info      *nats.StreamInfo
+		info      *StreamInfo
 		jetStream *jetStream
 	}
 
@@ -83,12 +82,12 @@ type (
 
 	consumerInfoResponse struct {
 		apiResponse
-		*nats.ConsumerInfo
+		*ConsumerInfo
 	}
 
 	createConsumerRequest struct {
-		Stream string               `json:"stream_name"`
-		Config *nats.ConsumerConfig `json:"config"`
+		Stream string          `json:"stream_name"`
+		Config *ConsumerConfig `json:"config"`
 	}
 
 	StreamPurgeOpt func(*StreamPurgeRequest) error
@@ -143,7 +142,7 @@ type (
 	}
 
 	ConsumerInfoLister interface {
-		Info() <-chan *nats.ConsumerInfo
+		Info() <-chan *ConsumerInfo
 		Err() <-chan error
 	}
 
@@ -157,7 +156,7 @@ type (
 		offset   int
 		pageInfo *apiPaged
 
-		consumers chan *nats.ConsumerInfo
+		consumers chan *ConsumerInfo
 		names     chan string
 		errs      chan error
 	}
@@ -165,7 +164,7 @@ type (
 	consumerListResponse struct {
 		apiResponse
 		apiPaged
-		Consumers []*nats.ConsumerInfo `json:"consumers"`
+		Consumers []*ConsumerInfo `json:"consumers"`
 	}
 
 	consumerNamesResponse struct {
@@ -175,7 +174,7 @@ type (
 	}
 )
 
-func (s *stream) CreateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (Consumer, error) {
+func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	if cfg.Durable != "" {
 		c, err := s.Consumer(ctx, cfg.Durable)
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
@@ -188,7 +187,7 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (C
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
 
-func (s *stream) UpdateConsumer(ctx context.Context, cfg nats.ConsumerConfig) (Consumer, error) {
+func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	if cfg.Durable != "" {
 		_, err := s.Consumer(ctx, cfg.Durable)
 		if err != nil {
@@ -206,12 +205,12 @@ func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 	return deleteConsumer(ctx, s.jetStream, s.name, name)
 }
 
-// Info fetches *nats.StreamInfo from server
+// Info fetches *StreamInfo from server
 //
 // Available options:
 // WithDeletedDetails() - use to display the information about messages deleted from a stream
 // WithSubjectFilter() - use to display the information about messages stored on given subjects
-func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*nats.StreamInfo, error) {
+func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error) {
 	var infoReq *streamInfoRequest
 	for _, opt := range opts {
 		if infoReq == nil {
@@ -246,11 +245,11 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*nats.StreamI
 	return resp.StreamInfo, nil
 }
 
-// CachedInfo returns *nats.StreamInfo cached on a stream struct
+// CachedInfo returns *StreamInfo cached on a stream struct
 //
 // NOTE: The returned object might not be up to date with the most recent updates on the server
 // For up-to-date information, use `Info()`
-func (s *stream) CachedInfo() *nats.StreamInfo {
+func (s *stream) CachedInfo() *StreamInfo {
 	return s.info
 }
 
@@ -353,7 +352,7 @@ func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
 func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	l := &consumerLister{
 		js:        s.jetStream,
-		consumers: make(chan *nats.ConsumerInfo),
+		consumers: make(chan *ConsumerInfo),
 		errs:      make(chan error, 1),
 	}
 	go func() {
@@ -382,7 +381,7 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	return l
 }
 
-func (s *consumerLister) Info() <-chan *nats.ConsumerInfo {
+func (s *consumerLister) Info() <-chan *ConsumerInfo {
 	return s.consumers
 }
 
@@ -427,7 +426,7 @@ func (s *consumerLister) Names() <-chan string {
 }
 
 // infos fetches the next ConsumerInfo page
-func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*nats.ConsumerInfo, error) {
+func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*ConsumerInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
 	}

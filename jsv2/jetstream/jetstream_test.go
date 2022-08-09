@@ -61,7 +61,7 @@ func TestNewWithAPIPrefix(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = jsMain.CreateStream(ctx, nats.StreamConfig{
+		_, err = jsMain.CreateStream(ctx, StreamConfig{
 			Name:     "TEST",
 			Subjects: []string{"foo"},
 		})
@@ -131,7 +131,7 @@ func TestNewWithDomain(t *testing.T) {
 			t.Errorf("Invalid domain; want %v, got: %v", "ABC", accInfo.Domain)
 		}
 
-		_, err = js.CreateStream(ctx, nats.StreamConfig{
+		_, err = js.CreateStream(ctx, StreamConfig{
 			Name:     "TEST",
 			Subjects: []string{"foo"},
 		})
@@ -183,7 +183,7 @@ func TestWithClientTrace(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestCreateStream(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err = js.CreateStream(ctx, nats.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			_, err = js.CreateStream(ctx, StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -307,13 +307,13 @@ func TestUpdateStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s, err := js.UpdateStream(ctx, nats.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			s, err := js.UpdateStream(ctx, StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -375,7 +375,7 @@ func TestStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestDeleteStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestPurgeStream(t *testing.T) {
 	}
 	defer nc.Close()
 
-	s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestAccountInfo(t *testing.T) {
 		defer cancel()
 		js, err := New(nc)
 		defer nc.Close()
-		_, err = js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+		_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -614,13 +614,13 @@ func TestListStreams(t *testing.T) {
 			js, err := New(nc)
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, nats.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
 			streamsList := js.ListStreams(ctx)
-			streams := make([]*nats.StreamInfo, 0)
+			streams := make([]*StreamInfo, 0)
 		Loop:
 			for {
 				select {
@@ -670,7 +670,7 @@ func TestStreamNames(t *testing.T) {
 			js, err := New(nc)
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, nats.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -717,7 +717,7 @@ func TestStreamNames(t *testing.T) {
 // 	// 	t.Fatalf("Expected no error: %v", err)
 // 	// }
 
-// 	s, err := js.CreateStream(ctx, nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+// 	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 // 	if err != nil {
 // 		t.Fatalf("Unexpected error: %v", err)
 // 	}
@@ -736,7 +736,7 @@ func TestStreamNames(t *testing.T) {
 // 	fmt.Println(info.Config.Name)
 // 	fmt.Println(info.Config.Description)
 
-// 	cons, err := s.CreateConsumer(ctx, nats.ConsumerConfig{Durable: "test", AckPolicy: nats.AckExplicitPolicy})
+// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{Durable: "test", AckPolicy: AckExplicitPolicy})
 // 	if err != nil {
 // 		t.Fatalf("Unexpected error: %v", err)
 // 	}
@@ -832,7 +832,7 @@ func TestStreamNames(t *testing.T) {
 // 	}
 
 // 	// Now create a stream and expect a PubAck from <-OK().
-// 	if _, err := js.CreateStream(ctx, nats.StreamConfig{Name: "TEST"}); err != nil {
+// 	if _, err := js.CreateStream(ctx, StreamConfig{Name: "TEST"}); err != nil {
 // 		t.Fatalf("Unexpected error: %v", err)
 // 	}
 
@@ -953,16 +953,16 @@ func TestStreamNames(t *testing.T) {
 // 	defer nc.Close()
 // 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 // 	defer cancel()
-// 	s, err := js.CreateStream(ctx, nats.StreamConfig{
+// 	s, err := js.CreateStream(ctx, StreamConfig{
 // 		Name:     "TEST",
 // 		Subjects: []string{"foo"},
 // 	})
 // 	if err != nil {
 // 		b.Fatalf("Unexpected error: %v", err)
 // 	}
-// 	cons, err := s.CreateConsumer(ctx, nats.ConsumerConfig{
+// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{
 // 		Durable:   "dlc",
-// 		AckPolicy: nats.AckExplicitPolicy,
+// 		AckPolicy: AckExplicitPolicy,
 // 	})
 // 	if err != nil {
 // 		b.Fatalf("Unexpected error: %v", err)
@@ -1012,16 +1012,16 @@ func TestStreamNames(t *testing.T) {
 // 	defer nc.Close()
 // 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 // 	defer cancel()
-// 	s, err := js.CreateStream(ctx, nats.StreamConfig{
+// 	s, err := js.CreateStream(ctx, StreamConfig{
 // 		Name:     "TEST",
 // 		Subjects: []string{"foo"},
 // 	})
 // 	if err != nil {
 // 		b.Fatalf("Unexpected error: %v", err)
 // 	}
-// 	cons, err := s.CreateConsumer(ctx, nats.ConsumerConfig{
+// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{
 // 		Durable:   "dlc",
-// 		AckPolicy: nats.AckExplicitPolicy,
+// 		AckPolicy: AckExplicitPolicy,
 // 	})
 // 	if err != nil {
 // 		b.Fatalf("Unexpected error: %v", err)

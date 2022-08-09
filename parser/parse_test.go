@@ -115,8 +115,18 @@ func TestGetMetadataFields(t *testing.T) {
 			withError: ErrInvalidSubjectFormat,
 		},
 		{
-			name:      "invalid subject length",
+			name:      "invalid subject length (10)",
 			subject:   "$JS.ACK.stream.cons.100.200.150.123456789.100.ABC",
+			withError: ErrInvalidSubjectFormat,
+		},
+		{
+			name:      "invalid subject length (5)",
+			subject:   "$JS.ACK.stream.cons.100",
+			withError: ErrInvalidSubjectFormat,
+		},
+		{
+			name:      "invalid subject ",
+			subject:   "",
 			withError: ErrInvalidSubjectFormat,
 		},
 	}
