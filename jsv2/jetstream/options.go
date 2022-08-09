@@ -24,7 +24,7 @@ import (
 // ErrInvalidOption is returned when there is a collision between options
 var ErrInvalidOption = errors.New("jetstream: invalid option")
 
-// WithClientTrace enables request/responce API calls tracing
+// WithClientTrace enables request/response API calls tracing
 // ClientTrace is used to provide handlers for each event
 func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 	return func(opts *jsOpts) error {
