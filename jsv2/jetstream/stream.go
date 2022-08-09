@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/headers"
 )
 
 type (
@@ -318,7 +317,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 
 	var hdr nats.Header
 	if len(msg.Header) > 0 {
-		hdr, err = headers.DecodeHeadersMsg(msg.Header)
+		hdr, err = nats.DecodeHeadersMsg(msg.Header)
 		if err != nil {
 			return nil, err
 		}

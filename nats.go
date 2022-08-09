@@ -2975,7 +2975,7 @@ func (nc *Conn) processMsg(data []byte) {
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
 		msgPayload = msgPayload[nc.ps.ma.hdr:]
-		h, err = decodeHeadersMsg(hbuf)
+		h, err = DecodeHeadersMsg(hbuf)
 		if err != nil {
 			// We will pass the message through but send async error.
 			nc.mu.Lock()
@@ -3490,8 +3490,8 @@ const (
 	statusLen          = 3 // e.g. 20x, 40x, 50x
 )
 
-// decodeHeadersMsg will decode and headers.
-func decodeHeadersMsg(data []byte) (Header, error) {
+// DecodeHeadersMsg will decode and headers.
+func DecodeHeadersMsg(data []byte) (Header, error) {
 	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
 	l, err := tp.ReadLine()
 	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
