@@ -179,12 +179,21 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 	return js, nil
 }
 
+const (
+	// defaultAsyncPubAckInflight is the number of async pub acks inflight.
+	defaultAsyncPubAckInflight = 4000
+)
+
 // NewWithAPIPrefix returns a new JetStream instance and sets the API prefix to be used in requests to JetStream API
 //
 // Available options:
 // WithClientTrace() - enables request/response tracing
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
-	var jsOpts jsOpts
+	jsOpts := jsOpts{
+		publisherOpts: asyncPublisherOpts{
+			maxpa: defaultAsyncPubAckInflight,
+		},
+	}
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err

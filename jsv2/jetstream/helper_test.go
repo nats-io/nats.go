@@ -14,10 +14,13 @@
 package jetstream
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"net"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +29,12 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
+
+type jsServer struct {
+	*server.Server
+	myopts  *server.Options
+	restart sync.Mutex
+}
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
@@ -107,13 +116,13 @@ func RunBasicJetStreamServer() *server.Server {
 
 func createConfFile(t *testing.T, content []byte) string {
 	t.Helper()
-	conf, err := ioutil.TempFile("", "")
+	conf, err := os.CreateTemp("", "")
 	if err != nil {
 		t.Fatalf("Error creating conf file: %v", err)
 	}
 	fName := conf.Name()
 	conf.Close()
-	if err := ioutil.WriteFile(fName, content, 0666); err != nil {
+	if err := os.WriteFile(fName, content, 0666); err != nil {
 		os.Remove(fName)
 		t.Fatalf("Error writing conf file: %v", err)
 	}
@@ -133,4 +142,151 @@ func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
 		}
 	}
 	s.WaitForShutdown()
+}
+
+func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsServer {
+	t.Helper()
+	nodes := make([]*jsServer, size)
+	opts := make([]*server.Options, 0)
+
+	getAddr := func() (string, string, int) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l.Close()
+
+		addr := l.Addr()
+		host := addr.(*net.TCPAddr).IP.String()
+		port := addr.(*net.TCPAddr).Port
+		l.Close()
+		time.Sleep(100 * time.Millisecond)
+		return addr.String(), host, port
+	}
+
+	routes := []string{}
+	for i := 0; i < size; i++ {
+		o := natsserver.DefaultTestOptions
+		o.JetStream = true
+		o.ServerName = fmt.Sprintf("NODE_%d", i)
+		tdir, err := os.MkdirTemp(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		o.StoreDir = tdir
+
+		if size > 1 {
+			o.Cluster.Name = clusterName
+			_, host1, port1 := getAddr()
+			o.Host = host1
+			o.Port = port1
+
+			addr2, host2, port2 := getAddr()
+			o.Cluster.Host = host2
+			o.Cluster.Port = port2
+			o.Tags = []string{o.ServerName}
+			routes = append(routes, fmt.Sprintf("nats://%s", addr2))
+		}
+		opts = append(opts, &o)
+	}
+
+	if size > 1 {
+		routesStr := server.RoutesFromStr(strings.Join(routes, ","))
+
+		for i, o := range opts {
+			o.Routes = routesStr
+			nodes[i] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
+		}
+	} else {
+		o := opts[0]
+		nodes[0] = &jsServer{Server: natsserver.RunServer(o), myopts: o}
+	}
+
+	// Wait until JS is ready.
+	srvA := nodes[0]
+	nc, err := nats.Connect(srvA.ClientURL())
+	if err != nil {
+		t.Error(err)
+	}
+	waitForJSReady(t, nc)
+	nc.Close()
+
+	return nodes
+}
+
+func waitForJSReady(t *testing.T, nc *nats.Conn) {
+	var err error
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		// Use a smaller MaxWait here since if it fails, we don't want
+		// to wait for too long since we are going to try again.
+		js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = js.AccountInfo()
+		if err != nil {
+			continue
+		}
+		return
+	}
+	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
+}
+
+func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream StreamConfig, tfn func(t *testing.T, subject string, srvs ...*jsServer)) {
+	t.Helper()
+
+	withJSCluster(t, clusterName, size, func(t *testing.T, nodes ...*jsServer) {
+		srvA := nodes[0]
+		nc, err := nats.Connect(srvA.ClientURL())
+		if err != nil {
+			t.Error(err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		jsm, err := New(nc)
+		if err != nil {
+			t.Fatal(err)
+		}
+	CreateStream:
+		for {
+			select {
+			case <-ctx.Done():
+				if err != nil {
+					t.Fatalf("Unexpected error creating stream: %v", err)
+				}
+				t.Fatalf("Unable to create stream on cluster")
+			case <-time.After(500 * time.Millisecond):
+				_, err = jsm.AccountInfo(ctx)
+				if err != nil {
+					// Backoff for a bit until cluster and resources are ready.
+					time.Sleep(500 * time.Millisecond)
+				}
+				_, err = jsm.CreateStream(ctx, stream)
+				if err != nil {
+					continue CreateStream
+				}
+				break CreateStream
+			}
+		}
+
+		tfn(t, stream.Name, nodes...)
+	})
+}
+
+func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testing.T, srvs ...*jsServer)) {
+	t.Helper()
+
+	nodes := setupJSClusterWithSize(t, clusterName, size)
+	defer func() {
+		// Ensure that they get shutdown and remove their state.
+		for _, node := range nodes {
+			node.restart.Lock()
+			shutdownJSServerAndRemoveStorage(t, node.Server)
+			node.restart.Unlock()
+		}
+	}()
+	tfn(t, nodes...)
 }

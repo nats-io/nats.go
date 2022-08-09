@@ -107,9 +107,6 @@ const (
 	// DeliverLastPerSubjectPolicy will start the consumer with the last message
 	// for all subjects received.
 	DeliverLastPerSubjectPolicy
-
-	// For configuration mismatch check
-	deliverPolicyNotSet = 99
 )
 
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
@@ -230,9 +227,6 @@ const (
 
 	// ReplayOriginalPolicy will maintain the same timing as the messages were received.
 	ReplayOriginalPolicy
-
-	// For configuration mismatch check
-	replayPolicyNotSet = 99
 )
 
 func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
