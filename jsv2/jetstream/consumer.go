@@ -33,7 +33,7 @@ type (
 	Consumer interface {
 		// Next is used to retrieve a single message from the stream
 		Next(context.Context, ...ConsumerNextOpt) (JetStreamMsg, error)
-		// Stream can be used to continously receive messages and handle them with the provided callback function
+		// Stream can be used to continuously receive messages and handle them with the provided callback function
 		Stream(context.Context, MessageHandler, ...ConsumerStreamOpt) error
 
 		// Info returns Consumer details
@@ -83,8 +83,8 @@ type (
 // WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request
 func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
 	p.Lock()
-	defer p.Unlock()
 	if atomic.LoadUint32(&p.isStreaming) == 1 {
+		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
 	timeout := 30 * time.Second
@@ -101,6 +101,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
+			p.Unlock()
 			return nil, err
 		}
 	}
@@ -110,6 +111,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	msgChan := make(chan *jetStreamMsg, 1)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error)
+	p.Unlock()
 
 	go func() {
 		err := p.fetch(ctx, *req, msgChan)
@@ -127,11 +129,16 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 			case msg := <-msgChan:
 				return msg, nil
 			case err := <-errs:
+				if errors.Is(err, ErrNoMessages) {
+					return nil, nil
+				}
 				return nil, err
 			case <-p.heartbeat:
 			case <-time.After(2 * req.Heartbeat):
+				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
+				p.Unlock()
 				return nil, ErrNoHeartbeat
 			}
 			continue
@@ -145,7 +152,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	}
 }
 
-// Stream continously receives messages from a consumer and handles them with the provided callback function
+// Stream continuously receives messages from a consumer and handles them with the provided callback function
 // ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, an empty context should be provided
 //
 // Available options:
@@ -203,13 +210,17 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 				case <-time.After(2 * req.Heartbeat):
 					handler(nil, ErrNoHeartbeat)
 					cancel()
+					p.Lock()
 					p.subscription.Unsubscribe()
 					p.subscription = nil
+					p.Unlock()
 					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				case <-ctx.Done():
+					p.Lock()
 					p.subscription.Unsubscribe()
 					p.subscription = nil
+					p.Unlock()
 					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				}
@@ -221,8 +232,10 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 			case err := <-errs:
 				handler(nil, err)
 			case <-ctx.Done():
+				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
+				p.Unlock()
 				atomic.StoreUint32(&p.isStreaming, 0)
 				return
 			}
@@ -238,6 +251,8 @@ func (c *pullConsumer) fetch(ctx context.Context, req pullRequest, target chan<-
 	if req.Batch < 1 {
 		return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
 	}
+	c.Lock()
+	defer c.Unlock()
 	// if there is no subscription for this consumer, create new inbox subject and subscribe
 	if c.subscription == nil {
 		inbox := nats.NewInbox()
@@ -400,6 +415,94 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 func validateDurableName(dur string) error {
 	if strings.Contains(dur, ".") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidDurableName, dur)
+	}
+	return nil
+}
+
+func compareConsumerConfig(s, u *ConsumerConfig) error {
+	makeErr := func(fieldName string, usrVal, srvVal interface{}) error {
+		return fmt.Errorf("configuration requests %s to be %v, but consumer's value is %v", fieldName, usrVal, srvVal)
+	}
+
+	if u.Durable != s.Durable {
+		return makeErr("durable", u.Durable, s.Durable)
+	}
+	if u.Description != s.Description {
+		return makeErr("description", u.Description, s.Description)
+	}
+	if u.DeliverPolicy != s.DeliverPolicy {
+		return makeErr("deliver policy", u.DeliverPolicy, s.DeliverPolicy)
+	}
+	if u.OptStartSeq != s.OptStartSeq {
+		return makeErr("optional start sequence", u.OptStartSeq, s.OptStartSeq)
+	}
+	if u.OptStartTime != nil && !u.OptStartTime.IsZero() && !(*u.OptStartTime).Equal(*s.OptStartTime) {
+		return makeErr("optional start time", u.OptStartTime, s.OptStartTime)
+	}
+	if u.AckPolicy != s.AckPolicy {
+		return makeErr("ack policy", u.AckPolicy, s.AckPolicy)
+	}
+	if u.AckWait != 0 && u.AckWait != s.AckWait {
+		return makeErr("ack wait", u.AckWait.String(), s.AckWait.String())
+	}
+	if !(u.MaxDeliver == 0 && s.MaxDeliver == -1) && u.MaxDeliver != s.MaxDeliver {
+		return makeErr("max deliver", u.MaxDeliver, s.MaxDeliver)
+	}
+	if len(u.BackOff) != len(s.BackOff) {
+		return makeErr("backoff", u.BackOff, s.BackOff)
+	}
+	for i, val := range u.BackOff {
+		if val != s.BackOff[i] {
+			return makeErr("backoff", u.BackOff, s.BackOff)
+		}
+	}
+	if u.FilterSubject != s.FilterSubject {
+		return makeErr("filter subject", u.FilterSubject, s.FilterSubject)
+	}
+	if u.ReplayPolicy != s.ReplayPolicy {
+		return makeErr("replay policy", u.ReplayPolicy, s.ReplayPolicy)
+	}
+	if u.RateLimit != s.RateLimit {
+		return makeErr("rate limit", u.RateLimit, s.RateLimit)
+	}
+	if u.SampleFrequency != s.SampleFrequency {
+		return makeErr("sample frequency", u.SampleFrequency, s.SampleFrequency)
+	}
+	if u.MaxWaiting != 0 && u.MaxWaiting != s.MaxWaiting {
+		return makeErr("max waiting", u.MaxWaiting, s.MaxWaiting)
+	}
+	if u.MaxAckPending != 0 && u.MaxAckPending != s.MaxAckPending {
+		return makeErr("max ack pending", u.MaxAckPending, s.MaxAckPending)
+	}
+	if u.FlowControl != s.FlowControl {
+		return makeErr("flow control", u.FlowControl, s.FlowControl)
+	}
+	if u.Heartbeat != s.Heartbeat {
+		return makeErr("heartbeat", u.Heartbeat, s.Heartbeat)
+	}
+	if u.HeadersOnly != s.HeadersOnly {
+		return makeErr("headers only", u.HeadersOnly, s.HeadersOnly)
+	}
+	if u.MaxRequestBatch != s.MaxRequestBatch {
+		return makeErr("max request batch", u.MaxRequestBatch, s.MaxRequestBatch)
+	}
+	if u.MaxRequestExpires != s.MaxRequestExpires {
+		return makeErr("max request expires", u.MaxRequestExpires.String(), s.MaxRequestExpires.String())
+	}
+	if u.DeliverSubject != s.DeliverSubject {
+		return makeErr("deliver subject", u.DeliverSubject, s.DeliverSubject)
+	}
+	if u.DeliverGroup != s.DeliverGroup {
+		return makeErr("deliver group", u.DeliverSubject, s.DeliverSubject)
+	}
+	if u.InactiveThreshold != s.InactiveThreshold {
+		return makeErr("inactive threshhold", u.InactiveThreshold.String(), s.InactiveThreshold.String())
+	}
+	if u.Replicas != s.Replicas {
+		return makeErr("replicas", u.Replicas, s.Replicas)
+	}
+	if u.MemoryStorage != s.MemoryStorage {
+		return makeErr("memory storage", u.MemoryStorage, s.MemoryStorage)
 	}
 	return nil
 }

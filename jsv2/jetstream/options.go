@@ -22,9 +22,9 @@ import (
 )
 
 // ErrInvalidOption is returned when there is a collision between options
-var ErrInvalidOption = errors.New("jetstream: invalid option")
+var ErrInvalidOption = errors.New("nats: invalid jetstream option")
 
-// WithClientTrace enables request/responce API calls tracing
+// WithClientTrace enables request/response API calls tracing
 // ClientTrace is used to provide handlers for each event
 func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 	return func(opts *jsOpts) error {
@@ -37,6 +37,17 @@ func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 	return func(opts *jsOpts) error {
 		opts.publisherOpts.aecb = cb
+		return nil
+	}
+}
+
+// WithPublishAsyncMaxPending sets the maximum outstanding async publishes that can be inflight at one time.
+func WithPublishAsyncMaxPending(max int) JetStreamOpt {
+	return func(opts *jsOpts) error {
+		if max < 1 {
+			return fmt.Errorf("%w: max ack pending should be >= 1", ErrInvalidOption)
+		}
+		opts.publisherOpts.maxpa = max
 		return nil
 	}
 }
@@ -152,7 +163,7 @@ func WithNakDelay(delay time.Duration) AckOpt {
 	}
 }
 
-// MsgId sets the message ID used for deduplication.
+// WithMsgID sets the message ID used for deduplication.
 func WithMsgID(id string) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.id = id
@@ -160,7 +171,7 @@ func WithMsgID(id string) PublishOpt {
 	}
 }
 
-// ExpectStream sets the expected stream to respond from the publish.
+// WithExpectStream sets the expected stream to respond from the publish.
 func WithExpectStream(stream string) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.stream = stream
@@ -168,7 +179,7 @@ func WithExpectStream(stream string) PublishOpt {
 	}
 }
 
-// ExpectLastSequence sets the expected sequence in the response from the publish.
+// WithExpectLastSequence sets the expected sequence in the response from the publish.
 func WithExpectLastSequence(seq uint64) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastSeq = &seq
@@ -176,7 +187,7 @@ func WithExpectLastSequence(seq uint64) PublishOpt {
 	}
 }
 
-// ExpectLastSequencePerSubject sets the expected sequence per subject in the response from the publish.
+// WithExpectLastSequencePerSubject sets the expected sequence per subject in the response from the publish.
 func WithExpectLastSequencePerSubject(seq uint64) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastSubjectSeq = &seq
@@ -192,7 +203,7 @@ func WithExpectLastMsgID(id string) PublishOpt {
 	}
 }
 
-// RetryWait sets the retry wait time when ErrNoResponders is encountered.
+// WithRetryWait sets the retry wait time when ErrNoResponders is encountered.
 func WithRetryWait(dur time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.retryWait = dur
@@ -200,7 +211,7 @@ func WithRetryWait(dur time.Duration) PublishOpt {
 	}
 }
 
-// RetryAttempts sets the retry number of attempts when ErrNoResponders is encountered.
+// WithRetryAttempts sets the retry number of attempts when ErrNoResponders is encountered.
 func WithRetryAttempts(num int) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.retryAttempts = num
@@ -208,7 +219,7 @@ func WithRetryAttempts(num int) PublishOpt {
 	}
 }
 
-// StallWait sets the max wait when the producer becomes stall producing messages.
+// WithStallWait sets the max wait when the producer becomes stall producing messages.
 func WithStallWait(ttl time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if ttl <= 0 {

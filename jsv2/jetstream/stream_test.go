@@ -26,26 +26,34 @@ import (
 
 func TestCreateConsumer(t *testing.T) {
 	tests := []struct {
-		name      string
-		durable   string
-		withError error
+		name           string
+		consumerConfig ConsumerConfig
+		shouldCreate   bool
+		withError      error
 	}{
 		{
-			name:    "create durable pull consumer",
-			durable: "dur",
+			name:           "create durable pull consumer",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
+			shouldCreate:   true,
 		},
 		{
-			name: "create ephemeral pull consumer",
+			name:           "create ephemeral pull consumer",
+			consumerConfig: ConsumerConfig{AckPolicy: AckExplicitPolicy},
+			shouldCreate:   true,
 		},
 		{
-			name:      "consumer already exists",
-			durable:   "dur",
-			withError: ErrConsumerExists,
+			name:           "consumer already exists, idempotent operation",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
 		},
 		{
-			name:      "invalid durable name",
-			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			name:           "consumer already exists, config mismatch",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test"},
+			withError:      ErrConsumerExists,
+		},
+		{
+			name:           "invalid durable name",
+			consumerConfig: ConsumerConfig{Durable: "dur.123", AckPolicy: AckExplicitPolicy},
+			withError:      ErrInvalidDurableName,
 		},
 	}
 
@@ -72,12 +80,12 @@ func TestCreateConsumer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var sub *nats.Subscription
-			if test.durable != "" {
-				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.durable))
+			if test.consumerConfig.Durable != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.consumerConfig.Durable))
 			} else {
 				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{Durable: test.durable, AckPolicy: AckAllPolicy})
+			c, err := s.CreateConsumer(ctx, test.consumerConfig)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -87,8 +95,10 @@ func TestCreateConsumer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			if _, err := sub.NextMsgWithContext(ctx); err != nil {
-				t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
+			if test.shouldCreate {
+				if _, err := sub.NextMsgWithContext(ctx); err != nil {
+					t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
+				}
 			}
 			_, err = s.Consumer(ctx, c.CachedInfo().Name)
 			if err != nil {

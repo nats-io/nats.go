@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/headers"
 )
 
 type (
@@ -181,7 +180,10 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 			return nil, err
 		}
 		if c != nil {
-			return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
+				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+			}
+			return c, nil
 		}
 	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
@@ -318,7 +320,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 
 	var hdr nats.Header
 	if len(msg.Header) > 0 {
-		hdr, err = headers.DecodeHeadersMsg(msg.Header)
+		hdr, err = nats.DecodeHeadersMsg(msg.Header)
 		if err != nil {
 			return nil, err
 		}

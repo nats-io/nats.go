@@ -54,13 +54,25 @@ type (
 		stallWait time.Duration
 	}
 
+	// PubAckFuture is a future for a PubAck.
+	PubAckFuture interface {
+		// Ok returns a receive only channel that can be used to get a PubAck.
+		Ok() <-chan *PubAck
+
+		// Err returns a receive only channel that can be used to get the error from an async publish.
+		Err() <-chan error
+
+		// Msg returns the message that was sent to the server.
+		Msg() *nats.Msg
+	}
+
 	pubAckFuture struct {
 		jsClient *jetStreamClient
 		msg      *nats.Msg
-		ack      *nats.PubAck
+		ack      *PubAck
 		err      error
 		errCh    chan error
-		doneCh   chan *nats.PubAck
+		doneCh   chan *PubAck
 	}
 
 	jetStreamClient struct {
@@ -85,13 +97,16 @@ type (
 
 	pubAckResponse struct {
 		apiResponse
-		*nats.PubAck
+		*PubAck
 	}
-)
 
-var (
-	ErrInvalidJSAck     = errors.New("nats: invalid jetstream publish response")
-	ErrNoStreamResponse = errors.New("nats: no response from stream")
+	// PubAck is an ack received after successfully publishing a message.
+	PubAck struct {
+		Stream    string `json:"stream"`
+		Sequence  uint64 `json:"seq"`
+		Duplicate bool   `json:"duplicate,omitempty"`
+		Domain    string `json:"domain,omitempty"`
+	}
 )
 
 const (
@@ -110,12 +125,12 @@ const (
 	base        = 62
 )
 
-func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (*nats.PubAck, error) {
+func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (*PubAck, error) {
 	return js.PublishMsg(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
 // PublishMsg publishes a Msg to a stream from JetStream.
-func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*nats.PubAck, error) {
+func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
 	o := pubOpts{
 		retryWait:     DefaultPubRetryWait,
 		retryAttempts: DefaultPubRetryAttempts,
@@ -131,7 +146,7 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		}
 	}
 	if o.stallWait > 0 {
-		return nil, fmt.Errorf("nats: stall wait cannot be set to sync publish")
+		return nil, fmt.Errorf("%w: stall wait cannot be set to sync publish", ErrInvalidOption)
 	}
 
 	if o.id != "" {
@@ -185,11 +200,11 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	return ackResp.PubAck, nil
 }
 
-func (js *jetStream) PublishAsync(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (nats.PubAckFuture, error) {
+func (js *jetStream) PublishAsync(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (PubAckFuture, error) {
 	return js.PublishMsgAsync(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
-func (js *jetStream) PublishMsgAsync(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (nats.PubAckFuture, error) {
+func (js *jetStream) PublishMsgAsync(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (PubAckFuture, error) {
 	var o pubOpts
 	if len(opts) > 0 {
 		if m.Header == nil {
@@ -226,7 +241,7 @@ func (js *jetStream) PublishMsgAsync(ctx context.Context, m *nats.Msg, opts ...P
 
 	// Reply
 	if m.Reply != "" {
-		return nil, errors.New("nats: reply subject should be empty")
+		return nil, ErrAsyncPublishReplySubjectSet
 	}
 	var err error
 	reply := m.Reply
@@ -237,15 +252,15 @@ func (js *jetStream) PublishMsgAsync(ctx context.Context, m *nats.Msg, opts ...P
 	defer func() { m.Reply = reply }()
 
 	id := m.Reply[aReplyPreLen:]
-	paf := &pubAckFuture{msg: m}
+	paf := &pubAckFuture{msg: m, jsClient: js.publisher}
 	numPending, maxPending := js.registerPAF(id, paf)
 
-	if maxPending > 0 && numPending >= maxPending {
+	if maxPending > 0 && numPending > maxPending {
 		select {
 		case <-js.asyncStall():
 		case <-time.After(stallWait):
 			js.clearPAF(id)
-			return nil, errors.New("nats: stalled with too many outstanding async published messages")
+			return nil, ErrTooManyStalledMsgs
 		}
 	}
 	if err := js.conn.PublishMsg(m); err != nil {
@@ -347,7 +362,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		return
 	}
 	if pa.Error != nil {
-		doErr(fmt.Errorf("nats: %s", pa.Error))
+		doErr(pa.Error)
 		return
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == "" {
@@ -401,12 +416,12 @@ func (js *jetStream) asyncStall() <-chan struct{} {
 	return stc
 }
 
-func (paf *pubAckFuture) Ok() <-chan *nats.PubAck {
+func (paf *pubAckFuture) Ok() <-chan *PubAck {
 	paf.jsClient.Lock()
 	defer paf.jsClient.Unlock()
 
 	if paf.doneCh == nil {
-		paf.doneCh = make(chan *nats.PubAck, 1)
+		paf.doneCh = make(chan *PubAck, 1)
 		if paf.ack != nil {
 			paf.doneCh <- paf.ack
 		}
@@ -433,4 +448,26 @@ func (paf *pubAckFuture) Msg() *nats.Msg {
 	paf.jsClient.RLock()
 	defer paf.jsClient.RUnlock()
 	return paf.msg
+}
+
+// PublishAsyncPending returns how many PubAckFutures are pending.
+func (js *jetStream) PublishAsyncPending() int {
+	js.publisher.RLock()
+	defer js.publisher.RUnlock()
+	return len(js.publisher.acks)
+}
+
+// PublishAsyncComplete returns a channel that will be closed when all outstanding messages have been ack'd.
+func (js *jetStream) PublishAsyncComplete() <-chan struct{} {
+	js.publisher.Lock()
+	defer js.publisher.Unlock()
+	if js.publisher.doneCh == nil {
+		js.publisher.doneCh = make(chan struct{})
+	}
+	dch := js.publisher.doneCh
+	if len(js.publisher.acks) == 0 {
+		close(js.publisher.doneCh)
+		js.publisher.doneCh = nil
+	}
+	return dch
 }
