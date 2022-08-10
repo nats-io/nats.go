@@ -1000,9 +1000,16 @@ func convertDirectGetMsgResponseToMsg(name string, r *Msg) (*RawStreamMsg, error
 	if timeStr == _EMPTY_ {
 		return nil, fmt.Errorf("nats: missing timestamp header")
 	}
-	tm, err := time.Parse("2006-01-02 15:04:05.999999999 +0000 UTC", timeStr)
+	// Temporary code: the server in main branch is sending with format
+	// "2006-01-02 15:04:05.999999999 +0000 UTC", but will be changed
+	// to use format RFC3339Nano. Because of server test deps/cycle,
+	// support both until the server PR lands.
+	tm, err := time.Parse(time.RFC3339Nano, timeStr)
 	if err != nil {
-		return nil, fmt.Errorf("nats: invalid timestamp header '%s': %v", timeStr, err)
+		tm, err = time.Parse("2006-01-02 15:04:05.999999999 +0000 UTC", timeStr)
+		if err != nil {
+			return nil, fmt.Errorf("nats: invalid timestamp header '%s': %v", timeStr, err)
+		}
 	}
 	subj := r.Header.Get(JSSubject)
 	if subj == _EMPTY_ {
