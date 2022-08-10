@@ -83,8 +83,8 @@ type (
 // WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request
 func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
 	p.Lock()
-	defer p.Unlock()
 	if atomic.LoadUint32(&p.isStreaming) == 1 {
+		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
 	timeout := 30 * time.Second
@@ -101,6 +101,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
+			p.Unlock()
 			return nil, err
 		}
 	}
@@ -110,6 +111,7 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	msgChan := make(chan *jetStreamMsg, 1)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error)
+	p.Unlock()
 
 	go func() {
 		err := p.fetch(ctx, *req, msgChan)
@@ -130,8 +132,10 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 				return nil, err
 			case <-p.heartbeat:
 			case <-time.After(2 * req.Heartbeat):
+				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
+				p.Unlock()
 				return nil, ErrNoHeartbeat
 			}
 			continue
@@ -203,13 +207,17 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 				case <-time.After(2 * req.Heartbeat):
 					handler(nil, ErrNoHeartbeat)
 					cancel()
+					p.Lock()
 					p.subscription.Unsubscribe()
 					p.subscription = nil
+					p.Unlock()
 					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				case <-ctx.Done():
+					p.Lock()
 					p.subscription.Unsubscribe()
 					p.subscription = nil
+					p.Unlock()
 					atomic.StoreUint32(&p.isStreaming, 0)
 					return
 				}
@@ -221,8 +229,10 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 			case err := <-errs:
 				handler(nil, err)
 			case <-ctx.Done():
+				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
+				p.Unlock()
 				atomic.StoreUint32(&p.isStreaming, 0)
 				return
 			}
@@ -238,6 +248,8 @@ func (c *pullConsumer) fetch(ctx context.Context, req pullRequest, target chan<-
 	if req.Batch < 1 {
 		return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
 	}
+	c.Lock()
+	defer c.Unlock()
 	// if there is no subscription for this consumer, create new inbox subject and subscribe
 	if c.subscription == nil {
 		inbox := nats.NewInbox()
