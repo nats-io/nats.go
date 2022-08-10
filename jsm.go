@@ -154,8 +154,8 @@ type ExternalStream struct {
 	DeliverPrefix string `json:"deliver"`
 }
 
-// apiError is included in all API responses if there was an error.
-type apiError struct {
+// APIError is included in all API responses if there was an error.
+type APIError struct {
 	Code        int    `json:"code"`
 	ErrorCode   int    `json:"err_code"`
 	Description string `json:"description,omitempty"`
@@ -164,7 +164,7 @@ type apiError struct {
 // apiResponse is a standard response from the JetStream JSON API
 type apiResponse struct {
 	Type  string    `json:"type"`
-	Error *apiError `json:"error,omitempty"`
+	Error *APIError `json:"error,omitempty"`
 }
 
 // apiPaged includes variables used to create paged responses from the JSON API
@@ -724,9 +724,11 @@ type StreamInfo struct {
 
 // StreamSourceInfo shows information about an upstream stream source.
 type StreamSourceInfo struct {
-	Name   string        `json:"name"`
-	Lag    uint64        `json:"lag"`
-	Active time.Duration `json:"active"`
+	Name     string          `json:"name"`
+	Lag      uint64          `json:"lag"`
+	Active   time.Duration   `json:"active"`
+	External *ExternalStream `json:"external"`
+	Error    *APIError       `json:"error"`
 }
 
 // StreamState is information about the given stream.
