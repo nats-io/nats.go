@@ -144,7 +144,6 @@ var (
 	ErrNoStreamResponse             = errors.New("nats: no response from stream")
 	ErrNotJSMessage                 = errors.New("nats: not a jetstream message")
 	ErrInvalidStreamName            = errors.New("nats: invalid stream name")
-	ErrInvalidDurableName           = errors.New("nats: invalid durable name")
 	ErrInvalidConsumerName          = errors.New("nats: invalid consumer name")
 	ErrNoMatchingStream             = errors.New("nats: no stream matches subject")
 	ErrSubjectMismatch              = errors.New("nats: subject does not match consumer")
@@ -162,6 +161,7 @@ var (
 	ErrPullSubscribeToPushConsumer  = errors.New("nats: cannot pull subscribe to push based consumer")
 	ErrPullSubscribeRequired        = errors.New("nats: must use pull subscribe to bind to pull based consumer")
 	ErrConsumerNotActive            = errors.New("nats: consumer not active")
+	ErrConsumerNameAlreadyInUse     = errors.New("nats: consumer name already in use")
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
 	ErrCantAckIfConsumerAckNone     = errors.New("nats: cannot acknowledge a message for a consumer with AckNone policy")
@@ -634,22 +634,21 @@ type Subscription struct {
 // Msg represents a message delivered by NATS. This structure is used
 // by Subscribers and PublishMsg().
 //
-// Types of Acknowledgements
+// # Types of Acknowledgements
 //
 // In case using JetStream, there are multiple ways to ack a Msg:
 //
-//   // Acknowledgement that a message has been processed.
-//   msg.Ack()
+//	// Acknowledgement that a message has been processed.
+//	msg.Ack()
 //
-//   // Negatively acknowledges a message.
-//   msg.Nak()
+//	// Negatively acknowledges a message.
+//	msg.Nak()
 //
-//   // Terminate a message so that it is not redelivered further.
-//   msg.Term()
+//	// Terminate a message so that it is not redelivered further.
+//	msg.Term()
 //
-//   // Signal the server that the message is being worked on and reset redelivery timer.
-//   msg.InProgress()
-//
+//	// Signal the server that the message is being worked on and reset redelivery timer.
+//	msg.InProgress()
 type Msg struct {
 	Subject string
 	Reply   string

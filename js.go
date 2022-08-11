@@ -524,7 +524,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 		return nil, ErrInvalidJSAck
 	}
 	if pa.Error != nil {
-		return nil, fmt.Errorf("nats: %s", pa.Error.Description)
+		return nil, pa.Error
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == _EMPTY_ {
 		return nil, ErrInvalidJSAck
@@ -728,7 +728,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 		return
 	}
 	if pa.Error != nil {
-		doErr(fmt.Errorf("nats: %s", pa.Error.Description))
+		doErr(pa.Error)
 		return
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == _EMPTY_ {
@@ -1228,7 +1228,10 @@ func (js *js) ChanQueueSubscribe(subj, queue string, ch chan *Msg, opts ...SubOp
 // See important note in Subscribe()
 func (js *js) PullSubscribe(subj, durable string, opts ...SubOpt) (*Subscription, error) {
 	mch := make(chan *Msg, js.nc.Opts.SubChanLen)
-	return js.subscribe(subj, _EMPTY_, nil, mch, true, true, append(opts, Durable(durable)))
+	if durable != "" {
+		opts = append(opts, Durable(durable))
+	}
+	return js.subscribe(subj, _EMPTY_, nil, mch, true, true, opts)
 }
 
 func processConsInfo(info *ConsumerInfo, userCfg *ConsumerConfig, isPullMode bool, subj, queue string) (string, error) {
@@ -1394,7 +1397,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		// If this is a queue subscription and no consumer nor durable name was specified,
 		// then we will use the queue name as a durable name.
 		if o.consumer == _EMPTY_ && o.cfg.Durable == _EMPTY_ {
-			if err := checkDurName(queue); err != nil {
+			if err := checkConsumerName(queue); err != nil {
 				return nil, err
 			}
 			o.cfg.Durable = queue
@@ -1651,8 +1654,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 			}
 			if consumer != _EMPTY_ &&
-				(strings.Contains(cinfo.Error.Description, `consumer already exists`) ||
-					strings.Contains(cinfo.Error.Description, `consumer name already in use`)) {
+				(cinfo.Error.ErrorCode == ConsumerAlreadyExists || cinfo.Error.ErrorCode == ConsumerNameExists) {
 
 				info, err = js.ConsumerInfo(stream, consumer)
 				if err != nil {
@@ -1689,10 +1691,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 					hasHeartbeats = info.Config.Heartbeat > 0
 				}
 			} else {
-				if cinfo.Error.Code == 404 {
+				if cinfo.Error.ErrorCode == StreamNotFound {
 					return nil, ErrStreamNotFound
 				}
-				return nil, fmt.Errorf("nats: %s", cinfo.Error.Description)
+				return nil, cinfo.Error
 			}
 		} else {
 			// Since the library created the JS consumer, it will delete it on Unsubscribe()/Drain()
@@ -1970,7 +1972,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		}
 
 		if cinfo.Error != nil {
-			pushErr(fmt.Errorf("nats: %s", cinfo.Error.Description))
+			pushErr(cinfo.Error)
 			return
 		}
 
@@ -2185,17 +2187,8 @@ func Description(description string) SubOpt {
 	})
 }
 
-// Check that the durable name is valid, that is, that it does not contain
-// any ".", and if it does return ErrInvalidDurableName, otherwise nil.
-func checkDurName(dur string) error {
-	if strings.Contains(dur, ".") {
-		return ErrInvalidDurableName
-	}
-	return nil
-}
-
 // Durable defines the consumer name for JetStream durable subscribers.
-// This function will return ErrInvalidDurableName in the name contains
+// This function will return ErrInvalidConsumerName in the name contains
 // any dot ".".
 func Durable(consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
@@ -2205,7 +2198,7 @@ func Durable(consumer string) SubOpt {
 		if opts.consumer != _EMPTY_ && opts.consumer != consumer {
 			return fmt.Errorf("nats: duplicate consumer names (%s and %s)", opts.consumer, consumer)
 		}
-		if err := checkDurName(consumer); err != nil {
+		if err := checkConsumerName(consumer); err != nil {
 			return err
 		}
 
@@ -2757,10 +2750,13 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.Code == 404 {
+		if info.Error.ErrorCode == ConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
-		return nil, fmt.Errorf("nats: %s", info.Error.Description)
+		if info.Error.ErrorCode == StreamNotFound {
+			return nil, ErrStreamNotFound
+		}
+		return nil, info.Error
 	}
 	return info.ConsumerInfo, nil
 }
