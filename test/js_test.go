@@ -87,8 +87,17 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	if _, err := js.AccountInfo(); err != nats.ErrJetStreamNotEnabledForAccount {
+	_, err := js.AccountInfo()
+	if err != nats.ErrJetStreamNotEnabledForAccount {
 		t.Fatalf("Did not get the proper error, got %v", err)
+	}
+	jserr, ok := err.(nats.JetStreamAPIError)
+	if !ok {
+		t.Fatal("Expected a JetStreamAPIError")
+	}
+	expected := nats.JSErrCodeJetStreamNotEnabledForAccount
+	if jserr.ErrorCode() != nats.ErrorCode(expected) {
+		t.Fatalf("Expected: %v, got: %v", expected, jserr.ErrorCode())
 	}
 }
 

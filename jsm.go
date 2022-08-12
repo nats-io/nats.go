@@ -161,6 +161,37 @@ type APIError struct {
 	Description string    `json:"description,omitempty"`
 }
 
+// JetStreamAPIError is an error result from making a request to the
+// JetStream API.
+type JetStreamAPIError interface {
+	Code() int
+	ErrorCode() ErrorCode
+	Description() string
+	Error() string
+}
+
+type jsAPIError struct {
+	code        int
+	errorCode   ErrorCode
+	description string
+}
+
+func (err *jsAPIError) Code() int {
+	return err.code
+}
+
+func (err *jsAPIError) ErrorCode() ErrorCode {
+	return err.errorCode
+}
+
+func (err *jsAPIError) Description() string {
+	return err.description
+}
+
+func (err *jsAPIError) Error() string {
+	return err.description
+}
+
 // apiResponse is a standard response from the JetStream JSON API
 type apiResponse struct {
 	Type  string    `json:"type"`
@@ -240,6 +271,14 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
 }
 
+var (
+	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled.
+	ErrJetStreamNotEnabledForAccount JetStreamAPIError = &jsAPIError{errorCode: JSErrCodeJetStreamNotEnabledForAccount, description: "nats: jetstream not enabled for account"}
+
+	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
+	ErrJetStreamNotEnabled JetStreamAPIError = &jsAPIError{errorCode: JSErrCodeJetStreamNotEnabled, description: "nats: jetstream not enabled"}
+)
+
 // AccountInfo retrieves info about the JetStream usage from the current account.
 // If JetStream is not enabled, this will return ErrJetStreamNotEnabled
 // Other errors can happen but are generally considered retryable
@@ -265,13 +304,19 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		return nil, err
 	}
 	if info.Error != nil {
+		// Check based on error code instead of description match.
 		if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabledForAccount {
-			return nil, ErrJetStreamNotEnabledForAccount
+			err = ErrJetStreamNotEnabledForAccount
+		} else if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
+			err = ErrJetStreamNotEnabled
+		} else {
+			err = &jsAPIError{
+				code:        info.Error.Code,
+				errorCode:   info.Error.ErrorCode,
+				description: info.Error.Description,
+			}
 		}
-		if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
-			return nil, ErrJetStreamNotEnabled
-		}
-		return nil, info.Error
+		return nil, err
 	}
 
 	return &info.AccountInfo, nil
