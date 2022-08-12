@@ -1083,6 +1083,28 @@ func UserCredentials(userOrChainedFile string, seedFiles ...string) Option {
 	return UserJWT(userCB, sigCB)
 }
 
+// UserJWTAndSeed is a convenience function that takes the JWT and seed
+// values as strings.
+func UserJWTAndSeed(jwt string, seed string) Option {
+	userCB := func() (string, error) {
+		return jwt, nil
+	}
+
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, err := nkeys.FromSeed([]byte(seed))
+		if err != nil {
+			return nil, fmt.Errorf("unable to extract key pair from seed: %v", err)
+		}
+		// Wipe our key on exit.
+		defer kp.Wipe()
+
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	return UserJWT(userCB, sigCB)
+}
+
 // UserJWT will set the callbacks to retrieve the user's JWT and
 // the signature callback to sign the server nonce. This an the Nkey
 // option are mutually exclusive.

@@ -1576,6 +1576,21 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	}
 }
 
+func TestUserJWTAndSeed(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	nc, err := Connect(url, UserJWTAndSeed(uJWT, string(uSeed)))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	nc.Close()
+}
+
 func TestExpiredAuthentication(t *testing.T) {
 	// The goal of these tests was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
