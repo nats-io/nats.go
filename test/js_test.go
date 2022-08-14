@@ -88,9 +88,23 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	defer nc.Close()
 
 	_, err := js.AccountInfo()
+	// check directly to var (backwards compatible)
 	if err != nats.ErrJetStreamNotEnabledForAccount {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
+
+	// matching via errors.Is
+	if ok := errors.Is(err, nats.ErrJetStreamNotEnabled); !ok {
+		t.Fatal("Expected ErrJetStreamNotEnabled")
+	}
+
+	// matching wrapped via error.Is
+	err2 := fmt.Errorf("custom error: %w", nats.ErrJetStreamNotEnabled)
+	if ok := errors.Is(err2, nats.ErrJetStreamNotEnabled); !ok {
+		t.Fatal("Expected wrapped ErrJetStreamNotEnabled")
+	}
+
+	// via classic type assertion.
 	jserr, ok := err.(nats.JetStreamAPIError)
 	if !ok {
 		t.Fatal("Expected a JetStreamAPIError")
@@ -98,6 +112,44 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	expected := nats.JSErrCodeJetStreamNotEnabledForAccount
 	if jserr.ErrorCode() != nats.ErrorCode(expected) {
 		t.Fatalf("Expected: %v, got: %v", expected, jserr.ErrorCode())
+	}
+
+	// matching to interface via errors.As(...)
+	var apierr nats.JetStreamAPIError
+	ok = errors.As(err, &apierr)
+	if !ok {
+		t.Fatal("Expected a JetStreamAPIError")
+	}
+	if apierr.ErrorCode() != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, apierr.ErrorCode())
+	}
+	expectedMessage := "nats: jetstream not enabled"
+	if apierr.Error() != expectedMessage {
+		t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
+	}
+
+	// matching arbitrary custom error via errors.Is(...)
+	customErr := &nats.APIError{ErrorCode: expected}
+	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabled); !ok {
+		t.Fatal("Expected wrapped ErrJetStreamNotEnabled")
+	}
+	customErr = &nats.APIError{ErrorCode: 1}
+	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabled); ok {
+		t.Fatal("Expected to not match ErrJetStreamNotEnabled")
+	}
+
+	// matching to concrete type via errors.As(...)
+	var aerr *nats.APIError
+	ok = errors.As(err, &aerr)
+	if !ok {
+		t.Fatal("Expected an APIError")
+	}
+	if aerr.ErrorCode != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, aerr.ErrorCode)
+	}
+	expectedMessage = "nats: API error 10039: jetstream not enabled"
+	if aerr.Error() != expectedMessage {
+		t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 	}
 }
 

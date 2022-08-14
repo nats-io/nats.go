@@ -161,19 +161,36 @@ type APIError struct {
 	Description string    `json:"description,omitempty"`
 }
 
+// Error prints the JetStream API error code and description
+func (e *APIError) Error() string {
+	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
+}
+
+// Is matches against an APIError.
+func (e *APIError) Is(err error) bool {
+	// Extract internal APIError to match against.
+	var aerr *APIError
+	ok := errors.As(err, &aerr)
+	if !ok {
+		return ok
+	}
+	return e.ErrorCode == aerr.ErrorCode
+}
+
 // JetStreamAPIError is an error result from making a request to the
 // JetStream API.
 type JetStreamAPIError interface {
 	Code() int
 	ErrorCode() ErrorCode
 	Description() string
-	Error() string
+	error
 }
 
 type jsAPIError struct {
 	code        int
 	errorCode   ErrorCode
 	description string
+	message     string
 }
 
 func (err *jsAPIError) Code() int {
@@ -185,11 +202,22 @@ func (err *jsAPIError) ErrorCode() ErrorCode {
 }
 
 func (err *jsAPIError) Description() string {
+	if err.description == "" {
+		return err.message
+	}
 	return err.description
 }
 
 func (err *jsAPIError) Error() string {
-	return err.description
+	return fmt.Sprintf("nats: %v", err.message)
+}
+
+func (err *jsAPIError) Unwrap() error {
+	return &APIError{
+		Code:        err.Code(),
+		ErrorCode:   err.ErrorCode(),
+		Description: err.Description(),
+	}
 }
 
 // apiResponse is a standard response from the JetStream JSON API
@@ -265,11 +293,6 @@ const (
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
 )
-
-// Error prints the JetStream API error code and description
-func (e *APIError) Error() string {
-	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
-}
 
 var (
 	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled.

@@ -169,10 +169,6 @@ var (
 	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")
 	ErrBadRequest                   = errors.New("nats: bad request")
 	ErrConnectionNotTLS             = errors.New("nats: connection is not tls")
-
-	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases
-	// Use ErrInvalidConsumerName instead
-	ErrInvalidDurableName = errors.New("nats: invalid durable name")
 )
 
 func init() {
