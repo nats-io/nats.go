@@ -327,10 +327,9 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		return nil, err
 	}
 	if info.Error != nil {
-		// Check based on error code instead of description match.
-		if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabledForAccount {
-			err = ErrJetStreamNotEnabledForAccount
-		} else if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
+		var err error
+		// Internally checks based on error code instead of description match.
+		if errors.Is(info.Error, ErrJetStreamNotEnabledForAccount) {
 			err = ErrJetStreamNotEnabled
 		} else {
 			err = &jsAPIError{
