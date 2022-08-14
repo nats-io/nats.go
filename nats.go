@@ -153,14 +153,13 @@ var (
 	ErrStreamNameRequired           = errors.New("nats: stream name is required")
 	ErrStreamNotFound               = errors.New("nats: stream not found")
 	ErrConsumerNotFound             = errors.New("nats: consumer not found")
+	ErrConsumerNameAlreadyInUse     = errors.New("nats: consumer name already in use")
 	ErrConsumerNameRequired         = errors.New("nats: consumer name is required")
 	ErrConsumerConfigRequired       = errors.New("nats: consumer configuration is required")
 	ErrStreamSnapshotConfigRequired = errors.New("nats: stream snapshot configuration is required")
 	ErrDeliverSubjectRequired       = errors.New("nats: deliver subject is required")
 	ErrPullSubscribeToPushConsumer  = errors.New("nats: cannot pull subscribe to push based consumer")
 	ErrPullSubscribeRequired        = errors.New("nats: must use pull subscribe to bind to pull based consumer")
-	ErrConsumerNameAlreadyInUse     = errors.New("nats: consumer name already in use")
-	ErrConsumerNotActive            = errors.New("nats: consumer not active")
 	ErrMsgNotFound                  = errors.New("nats: message not found")
 	ErrMsgAlreadyAckd               = errors.New("nats: message was already acknowledged")
 	ErrCantAckIfConsumerAckNone     = errors.New("nats: cannot acknowledge a message for a consumer with AckNone policy")
@@ -169,6 +168,17 @@ var (
 	ErrMaxConnectionsExceeded       = errors.New("nats: server maximum connections exceeded")
 	ErrBadRequest                   = errors.New("nats: bad request")
 	ErrConnectionNotTLS             = errors.New("nats: connection is not tls")
+)
+
+var (
+	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled for an account.
+	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &JetStreamAPIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled"}}
+
+	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
+	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &JetStreamAPIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled"}}
+
+	// ErrConsumerNotActive is an error returned when consumer is not active.
+	ErrConsumerNotActive JetStreamError = &jsError{message: "consumer not active"}
 )
 
 func init() {

@@ -154,22 +154,22 @@ type ExternalStream struct {
 	DeliverPrefix string `json:"deliver"`
 }
 
-// APIError is included in all API responses if there was an error.
-type APIError struct {
+// JetStreamAPIError is included in all API responses if there was an error.
+type JetStreamAPIError struct {
 	Code        int       `json:"code"`
 	ErrorCode   ErrorCode `json:"err_code"`
 	Description string    `json:"description,omitempty"`
 }
 
 // Error prints the JetStream API error code and description
-func (e *APIError) Error() string {
+func (e *JetStreamAPIError) Error() string {
 	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
 }
 
-// Is matches against an APIError.
-func (e *APIError) Is(err error) bool {
+// Is matches against an JetStreamAPIError.
+func (e *JetStreamAPIError) Is(err error) bool {
 	// Extract internal APIError to match against.
-	var aerr *APIError
+	var aerr *JetStreamAPIError
 	ok := errors.As(err, &aerr)
 	if !ok {
 		return ok
@@ -177,53 +177,37 @@ func (e *APIError) Is(err error) bool {
 	return e.ErrorCode == aerr.ErrorCode
 }
 
-// JetStreamAPIError is an error result from making a request to the
-// JetStream API.
-type JetStreamAPIError interface {
-	Code() int
-	ErrorCode() ErrorCode
-	Description() string
+// JetStreamError is an error result that happens when using JetStream.
+type JetStreamError interface {
+	APIError() *JetStreamAPIError
 	error
 }
 
-type jsAPIError struct {
-	code        int
-	errorCode   ErrorCode
-	description string
-	message     string
+type jsError struct {
+	apiErr  *JetStreamAPIError
+	message string
 }
 
-func (err *jsAPIError) Code() int {
-	return err.code
+func (err *jsError) APIError() *JetStreamAPIError {
+	return err.apiErr
 }
 
-func (err *jsAPIError) ErrorCode() ErrorCode {
-	return err.errorCode
-}
-
-func (err *jsAPIError) Description() string {
-	if err.description == "" {
-		return err.message
+func (err *jsError) Error() string {
+	if err.apiErr != nil && err.apiErr.Description != "" {
+		return fmt.Sprintf("nats: %v", err.apiErr.Description)
 	}
-	return err.description
-}
-
-func (err *jsAPIError) Error() string {
 	return fmt.Sprintf("nats: %v", err.message)
 }
 
-func (err *jsAPIError) Unwrap() error {
-	return &APIError{
-		Code:        err.Code(),
-		ErrorCode:   err.ErrorCode(),
-		Description: err.Description(),
-	}
+func (err *jsError) Unwrap() error {
+	// Allow matching to embedded APIError in case there is one.
+	return err.apiErr
 }
 
 // apiResponse is a standard response from the JetStream JSON API
 type apiResponse struct {
-	Type  string    `json:"type"`
-	Error *APIError `json:"error,omitempty"`
+	Type  string             `json:"type"`
+	Error *JetStreamAPIError `json:"error,omitempty"`
 }
 
 // apiPaged includes variables used to create paged responses from the JSON API
@@ -294,14 +278,6 @@ const (
 	JSErrCodeMessageNotFound ErrorCode = 10037
 )
 
-var (
-	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled.
-	ErrJetStreamNotEnabledForAccount JetStreamAPIError = &jsAPIError{errorCode: JSErrCodeJetStreamNotEnabledForAccount, description: "nats: jetstream not enabled for account"}
-
-	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
-	ErrJetStreamNotEnabled JetStreamAPIError = &jsAPIError{errorCode: JSErrCodeJetStreamNotEnabled, description: "nats: jetstream not enabled"}
-)
-
 // AccountInfo retrieves info about the JetStream usage from the current account.
 // If JetStream is not enabled, this will return ErrJetStreamNotEnabled
 // Other errors can happen but are generally considered retryable
@@ -330,12 +306,10 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		var err error
 		// Internally checks based on error code instead of description match.
 		if errors.Is(info.Error, ErrJetStreamNotEnabledForAccount) {
-			err = ErrJetStreamNotEnabled
+			err = ErrJetStreamNotEnabledForAccount
 		} else {
-			err = &jsAPIError{
-				code:        info.Error.Code,
-				errorCode:   info.Error.ErrorCode,
-				description: info.Error.Description,
+			err = &jsError{
+				apiErr: info.Error,
 			}
 		}
 		return nil, err
@@ -829,11 +803,11 @@ type StreamInfo struct {
 
 // StreamSourceInfo shows information about an upstream stream source.
 type StreamSourceInfo struct {
-	Name     string          `json:"name"`
-	Lag      uint64          `json:"lag"`
-	Active   time.Duration   `json:"active"`
-	External *ExternalStream `json:"external"`
-	Error    *APIError       `json:"error"`
+	Name     string             `json:"name"`
+	Lag      uint64             `json:"lag"`
+	Active   time.Duration      `json:"active"`
+	External *ExternalStream    `json:"external"`
+	Error    *JetStreamAPIError `json:"error"`
 }
 
 // StreamState is information about the given stream.
