@@ -1411,6 +1411,8 @@ func TestJetStreamManagement(t *testing.T) {
 		expected.HeadersOnly = true
 		expected.MaxRequestBatch = 10
 		expected.MaxRequestExpires = 2 * time.Second
+		expected.MaxRequestMaxBytes = 1024
+
 		ci, err = js.UpdateConsumer("foo", &expected)
 		if err != nil {
 			t.Fatalf("Error on update: %v", err)
@@ -5867,6 +5869,20 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		defer sub.Unsubscribe()
 		if _, err := sub.Fetch(10); err == nil || !strings.Contains(err.Error(), "MaxRequestBatch of 2") {
 			t.Fatalf("Expected error about max request batch size, got %v", err)
+		}
+	})
+
+	t.Run("max request max bytes", func(t *testing.T) {
+		defer js.PurgeStream(subject)
+
+		sub, err := js.PullSubscribe(subject, "max-request-max-bytes", nats.MaxRequestMaxBytes(100))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		if _, err := sub.Fetch(10, nats.PullMaxBytes(200)); err == nil || !strings.Contains(err.Error(), "MaxRequestMaxBytes of 100") {
+			t.Fatalf("Expected error about max request max bytes, got %v", err)
 		}
 	})
 
