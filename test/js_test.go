@@ -5880,7 +5880,8 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 			t.Fatal(err)
 		}
 		defer sub.Unsubscribe()
-		if _, err := sub.Fetch(10); err == nil || !strings.Contains(err.Error(), "MaxRequestMaxBytes of 100") {
+
+		if _, err := sub.Fetch(10, nats.PullMaxBytes(200)); err == nil || !strings.Contains(err.Error(), "MaxRequestMaxBytes of 100") {
 			t.Fatalf("Expected error about max request max bytes, got %v", err)
 		}
 	})
