@@ -222,16 +222,17 @@ type accountInfoResponse struct {
 type ErrorCode uint16
 
 const (
-	JetStreamNotEnabledForAccount ErrorCode = 10039
+	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
+	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
 
-	StreamNotFound  ErrorCode = 10059
-	StreamNameInUse ErrorCode = 10058
+	JSErrCodeStreamNotFound  ErrorCode = 10059
+	JSErrCodeStreamNameInUse ErrorCode = 10058
 
-	ConsumerNotFound      ErrorCode = 10014
-	ConsumerNameExists    ErrorCode = 10013
-	ConsumerAlreadyExists ErrorCode = 10105
+	JSErrCodeConsumerNotFound      ErrorCode = 10014
+	JSErrCodeConsumerNameExists    ErrorCode = 10013
+	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
 
-	MessageNotFound ErrorCode = 10037
+	JSErrCodeMessageNotFound ErrorCode = 10037
 )
 
 // Error prints the JetStream API error code and description
@@ -264,7 +265,10 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.ErrorCode == JetStreamNotEnabledForAccount {
+		if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabledForAccount {
+			return nil, ErrJetStreamNotEnabledForAccount
+		}
+		if info.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
 			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, info.Error
@@ -290,8 +294,12 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) && !errors.Is(err, ErrStreamNotFound) {
 			return nil, err
 		}
+
 		if consInfo != nil {
-			return nil, fmt.Errorf("creating consumer %q on stream %q: %w", cfg.Durable, stream, ErrConsumerNameAlreadyInUse)
+			sameConfig := checkConfig(&consInfo.Config, cfg)
+			if sameConfig != nil {
+				return nil, fmt.Errorf("%w: creating consumer %q on stream %q", ErrConsumerNameAlreadyInUse, cfg.Durable, stream)
+			}
 		}
 	}
 
@@ -348,10 +356,10 @@ func (js *js) upsertConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) 
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.ErrorCode == StreamNotFound {
+		if info.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
-		if info.Error.ErrorCode == ConsumerNotFound {
+		if info.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, info.Error
@@ -414,7 +422,7 @@ func (js *js) DeleteConsumer(stream, consumer string, opts ...JSOpt) error {
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return ErrConsumerNotFound
 		}
 		return resp.Error
@@ -685,7 +693,7 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNameInUse {
+		if resp.Error.ErrorCode == JSErrCodeStreamNameInUse {
 			return nil, ErrStreamNameAlreadyInUse
 		}
 		return nil, resp.Error
@@ -733,7 +741,7 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -825,7 +833,7 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -863,7 +871,7 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return ErrStreamNotFound
 		}
 		return resp.Error
@@ -967,10 +975,10 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == MessageNotFound {
+		if resp.Error.ErrorCode == JSErrCodeMessageNotFound {
 			return nil, ErrMsgNotFound
 		}
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error

@@ -87,7 +87,7 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	if _, err := js.AccountInfo(); err != nats.ErrJetStreamNotEnabled {
+	if _, err := js.AccountInfo(); err != nats.ErrJetStreamNotEnabledForAccount {
 		t.Fatalf("Did not get the proper error, got %v", err)
 	}
 }
@@ -1223,8 +1223,14 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 
 	t.Run("consumer with given name already exists", func(t *testing.T) {
-		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy}); !errors.Is(err, nats.ErrConsumerNameAlreadyInUse) {
+		// configs do not match
+		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckAllPolicy}); !errors.Is(err, nats.ErrConsumerNameAlreadyInUse) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrConsumerNameAlreadyInUse, err)
+		}
+
+		// configs are the same
+		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy}); err != nil {
+			t.Fatalf("Expected no error; got: %v", err)
 		}
 	})
 
@@ -1589,6 +1595,20 @@ func TestAccountInfo(t *testing.T) {
 				listen: 127.0.0.1:-1
 			`,
 			withError: nats.ErrJetStreamNotEnabled,
+		},
+		{
+			name: "jetstream not enabled for account",
+			cfg: `
+			listen: 127.0.0.1:-1
+			no_auth_user: foo
+			jetstream: enabled
+			accounts: {
+				A: {
+					users: [ {user: foo} ]
+				},
+			}
+			`,
+			withError: nats.ErrJetStreamNotEnabledForAccount,
 		},
 	}
 

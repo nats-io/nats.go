@@ -1654,7 +1654,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 			}
 			if consumer != _EMPTY_ &&
-				(cinfo.Error.ErrorCode == ConsumerAlreadyExists || cinfo.Error.ErrorCode == ConsumerNameExists) {
+				(cinfo.Error.ErrorCode == JSErrCodeConsumerAlreadyExists || cinfo.Error.ErrorCode == JSErrCodeConsumerNameExists) {
 
 				info, err = js.ConsumerInfo(stream, consumer)
 				if err != nil {
@@ -1691,7 +1691,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 					hasHeartbeats = info.Config.Heartbeat > 0
 				}
 			} else {
-				if cinfo.Error.ErrorCode == StreamNotFound {
+				if cinfo.Error.ErrorCode == JSErrCodeStreamNotFound {
 					return nil, ErrStreamNotFound
 				}
 				return nil, cinfo.Error
@@ -2750,10 +2750,10 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.ErrorCode == ConsumerNotFound {
+		if info.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
-		if info.Error.ErrorCode == StreamNotFound {
+		if info.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, info.Error
