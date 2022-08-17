@@ -58,10 +58,14 @@ type (
 		// DeleteConsumer removes a consumer with given name from a stream
 		DeleteConsumer(context.Context, string, string) error
 
-		Publish(context.Context, string, []byte, ...PublishOpt) (*nats.PubAck, error)
-		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*nats.PubAck, error)
-		PublishAsync(context.Context, string, []byte, ...PublishOpt) (nats.PubAckFuture, error)
-		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (nats.PubAckFuture, error)
+		Publish(context.Context, string, []byte, ...PublishOpt) (*PubAck, error)
+		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*PubAck, error)
+		PublishAsync(context.Context, string, []byte, ...PublishOpt) (PubAckFuture, error)
+		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (PubAckFuture, error)
+		// PublishAsyncPending returns the number of async publishes outstanding for this context.
+		PublishAsyncPending() int
+		// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
+		PublishAsyncComplete() <-chan struct{}
 	}
 
 	// AccountInfo contains info about the JetStream usage from the current account.
@@ -172,8 +176,9 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 		}
 	}
 	js := &jetStream{
-		conn:   nc,
-		jsOpts: jsOpts,
+		conn:      nc,
+		jsOpts:    jsOpts,
+		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 
 	return js, nil
@@ -206,8 +211,9 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 		jsOpts.apiPrefix = fmt.Sprintf("%s.", apiPrefix)
 	}
 	js := &jetStream{
-		conn:   nc,
-		jsOpts: jsOpts,
+		conn:      nc,
+		jsOpts:    jsOpts,
+		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 	return js, nil
 }
@@ -228,8 +234,9 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 	}
 	jsOpts.apiPrefix = fmt.Sprintf(jsDomainT, domain)
 	js := &jetStream{
-		conn:   nc,
-		jsOpts: jsOpts,
+		conn:      nc,
+		jsOpts:    jsOpts,
+		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 	return js, nil
 }
@@ -380,6 +387,9 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	}
 	if resp.Error != nil {
 		if resp.Error.ErrorCode == JetStreamNotEnabledForAccount {
+			return nil, ErrJetStreamNotEnabledForAccount
+		}
+		if resp.Error.ErrorCode == JetStreamNotEnabled {
 			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, resp.Error
@@ -492,7 +502,7 @@ func (s *streamLister) streamInfos(ctx context.Context) ([]*StreamInfo, error) {
 	return resp.Streams, nil
 }
 
-// names fetches the next stream names page
+// streamNames fetches the next stream names page
 func (s *streamLister) streamNames(ctx context.Context) ([]string, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData

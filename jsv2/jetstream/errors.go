@@ -1,3 +1,16 @@
+// Copyright 2020-2022 The NATS Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package jetstream
 
 import (
@@ -19,6 +32,7 @@ type (
 
 const (
 	JetStreamNotEnabledForAccount ErrorCode = 10039
+	JetStreamNotEnabled           ErrorCode = 10076
 
 	StreamNotFound  ErrorCode = 10059
 	StreamNameInUse ErrorCode = 10058
@@ -31,10 +45,12 @@ const (
 var (
 	// JetStream general errors
 
-	// ErrJetStreamNotEnabled is when JetStream is disabled on either server (globally) or on a specific account
+	// ErrJetStreamNotEnabled is when JetStream is disabled on server (globally)
 	ErrJetStreamNotEnabled = errors.New("nats: jetstream not enabled")
+	// ErrJetStreamNotEnabledForAccount is when JetStream is disabled for the account
+	ErrJetStreamNotEnabledForAccount = errors.New("nats: jetstream not enabled")
 	// ErrEndOfData is returned when iterating over paged API from JetStream reaches end of data
-	ErrEndOfData = errors.New("end of data reached")
+	ErrEndOfData = errors.New("nats: end of data reached")
 
 	// Stream errors
 
@@ -78,9 +94,17 @@ var (
 	ErrMsgDeleteUnsuccessful = errors.New("nats: message deletion unsuccessful")
 	// ErrMsgNotFound is returned when a message with provided sequence does not exist on stream
 	ErrMsgNotFound = errors.New("nats: message not found")
+	// ErrInvalidJSAck is returned when the ack response from server is invalid
+	ErrInvalidJSAck = errors.New("nats: invalid jetstream publish response")
+	// ErrNoStreamResponse is retured when stream does not respond with ack after the defined retry attempts are reached
+	ErrNoStreamResponse = errors.New("nats: no response from stream")
+	// ErrAsyncPublishReplySubjectSet is returned when reply subject is set on async message publish
+	ErrAsyncPublishReplySubjectSet = errors.New("nats: reply subject should be empty")
+	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack
+	ErrTooManyStalledMsgs = errors.New("nats: stalled with too many outstanding async published messages")
 )
 
 // Error prints the API error conde and description
 func (e *APIError) Error() string {
-	return fmt.Sprintf("API error %d: %s", e.ErrorCode, e.Description)
+	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
 }
