@@ -488,22 +488,20 @@ func TestPurgeStream(t *testing.T) {
 		}
 	}
 
-	info, err := s.Info(ctx)
+	_, err = s.Info(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	fmt.Printf("Before purge: %d\n", info.State.Msgs)
 
 	err = s.Purge(ctx, WithSequence(10))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	info, err = s.Info(ctx)
+	_, err = s.Info(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	fmt.Printf("After purge: %d\n", info.State.Msgs)
 
 }
 
@@ -587,8 +585,8 @@ func TestAccountInfo(t *testing.T) {
 		}
 		defer nc.Close()
 		_, err = js.AccountInfo(ctx)
-		if err == nil || !errors.Is(err, ErrJetStreamNotEnabled) {
-			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabled, err)
+		if err == nil || !errors.Is(err, ErrJetStreamNotEnabledForAccount) {
+			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabledForAccount, err)
 		}
 	})
 }
