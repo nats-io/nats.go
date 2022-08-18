@@ -390,6 +390,7 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -399,18 +400,23 @@ func TestPullConsumerNext(t *testing.T) {
 					errs <- err
 					break
 				}
+				if msg == nil {
+					close(done)
+					break
+				}
 				msgs = append(msgs, msg)
 			}
 		}()
 
 		time.Sleep(20 * time.Millisecond)
 		publishTestMsgs(t, nc)
-		err = <-errs
-		if !errors.Is(err, ErrNoMessages) {
+		select {
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %v", err)
-		}
-		if len(msgs) != len(testMsgs) {
-			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		case <-done:
+			if len(msgs) != len(testMsgs) {
+				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+			}
 		}
 		for i, msg := range msgs {
 			if string(msg.Data()) != testMsgs[i] {

@@ -180,7 +180,10 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 			return nil, err
 		}
 		if c != nil {
-			return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
+				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+			}
+			return c, nil
 		}
 	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
