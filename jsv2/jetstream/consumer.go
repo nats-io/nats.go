@@ -129,6 +129,9 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 			case msg := <-msgChan:
 				return msg, nil
 			case err := <-errs:
+				if errors.Is(err, ErrNoMessages) {
+					return nil, nil
+				}
 				return nil, err
 			case <-p.heartbeat:
 			case <-time.After(2 * req.Heartbeat):
@@ -412,6 +415,94 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 func validateDurableName(dur string) error {
 	if strings.Contains(dur, ".") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidDurableName, dur)
+	}
+	return nil
+}
+
+func compareConsumerConfig(s, u *ConsumerConfig) error {
+	makeErr := func(fieldName string, usrVal, srvVal interface{}) error {
+		return fmt.Errorf("configuration requests %s to be %v, but consumer's value is %v", fieldName, usrVal, srvVal)
+	}
+
+	if u.Durable != s.Durable {
+		return makeErr("durable", u.Durable, s.Durable)
+	}
+	if u.Description != s.Description {
+		return makeErr("description", u.Description, s.Description)
+	}
+	if u.DeliverPolicy != s.DeliverPolicy {
+		return makeErr("deliver policy", u.DeliverPolicy, s.DeliverPolicy)
+	}
+	if u.OptStartSeq != s.OptStartSeq {
+		return makeErr("optional start sequence", u.OptStartSeq, s.OptStartSeq)
+	}
+	if u.OptStartTime != nil && !u.OptStartTime.IsZero() && !(*u.OptStartTime).Equal(*s.OptStartTime) {
+		return makeErr("optional start time", u.OptStartTime, s.OptStartTime)
+	}
+	if u.AckPolicy != s.AckPolicy {
+		return makeErr("ack policy", u.AckPolicy, s.AckPolicy)
+	}
+	if u.AckWait != 0 && u.AckWait != s.AckWait {
+		return makeErr("ack wait", u.AckWait.String(), s.AckWait.String())
+	}
+	if !(u.MaxDeliver == 0 && s.MaxDeliver == -1) && u.MaxDeliver != s.MaxDeliver {
+		return makeErr("max deliver", u.MaxDeliver, s.MaxDeliver)
+	}
+	if len(u.BackOff) != len(s.BackOff) {
+		return makeErr("backoff", u.BackOff, s.BackOff)
+	}
+	for i, val := range u.BackOff {
+		if val != s.BackOff[i] {
+			return makeErr("backoff", u.BackOff, s.BackOff)
+		}
+	}
+	if u.FilterSubject != s.FilterSubject {
+		return makeErr("filter subject", u.FilterSubject, s.FilterSubject)
+	}
+	if u.ReplayPolicy != s.ReplayPolicy {
+		return makeErr("replay policy", u.ReplayPolicy, s.ReplayPolicy)
+	}
+	if u.RateLimit != s.RateLimit {
+		return makeErr("rate limit", u.RateLimit, s.RateLimit)
+	}
+	if u.SampleFrequency != s.SampleFrequency {
+		return makeErr("sample frequency", u.SampleFrequency, s.SampleFrequency)
+	}
+	if u.MaxWaiting != 0 && u.MaxWaiting != s.MaxWaiting {
+		return makeErr("max waiting", u.MaxWaiting, s.MaxWaiting)
+	}
+	if u.MaxAckPending != 0 && u.MaxAckPending != s.MaxAckPending {
+		return makeErr("max ack pending", u.MaxAckPending, s.MaxAckPending)
+	}
+	if u.FlowControl != s.FlowControl {
+		return makeErr("flow control", u.FlowControl, s.FlowControl)
+	}
+	if u.Heartbeat != s.Heartbeat {
+		return makeErr("heartbeat", u.Heartbeat, s.Heartbeat)
+	}
+	if u.HeadersOnly != s.HeadersOnly {
+		return makeErr("headers only", u.HeadersOnly, s.HeadersOnly)
+	}
+	if u.MaxRequestBatch != s.MaxRequestBatch {
+		return makeErr("max request batch", u.MaxRequestBatch, s.MaxRequestBatch)
+	}
+	if u.MaxRequestExpires != s.MaxRequestExpires {
+		return makeErr("max request expires", u.MaxRequestExpires.String(), s.MaxRequestExpires.String())
+	}
+	if u.DeliverSubject != s.DeliverSubject {
+		return makeErr("deliver subject", u.DeliverSubject, s.DeliverSubject)
+	}
+	if u.DeliverGroup != s.DeliverGroup {
+		return makeErr("deliver group", u.DeliverSubject, s.DeliverSubject)
+	}
+	if u.InactiveThreshold != s.InactiveThreshold {
+		return makeErr("inactive threshhold", u.InactiveThreshold.String(), s.InactiveThreshold.String())
+	}
+	if u.Replicas != s.Replicas {
+		return makeErr("replicas", u.Replicas, s.Replicas)
+	}
+	if u.MemoryStorage != s.MemoryStorage {
+		return makeErr("memory storage", u.MemoryStorage, s.MemoryStorage)
 	}
 	return nil
 }

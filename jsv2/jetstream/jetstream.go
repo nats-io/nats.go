@@ -348,6 +348,22 @@ func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg Consume
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
+	if cfg.Durable != "" {
+		s, err := js.Stream(ctx, stream)
+		if err != nil {
+			return nil, err
+		}
+		c, err := s.Consumer(ctx, cfg.Durable)
+		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
+			return nil, err
+		}
+		if c != nil {
+			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
+				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+			}
+			return c, nil
+		}
+	}
 	return upsertConsumer(ctx, js, stream, cfg)
 }
 
