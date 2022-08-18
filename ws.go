@@ -570,6 +570,15 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 		scheme = "https"
 	}
 	ustr := fmt.Sprintf("%s://%s", scheme, u.Host)
+
+	if nc.Opts.ProxyPath != "" {
+		proxyPath := nc.Opts.ProxyPath
+		if !strings.HasPrefix(proxyPath, "/") {
+			proxyPath = "/" + proxyPath
+		}
+		ustr += proxyPath
+	}
+
 	u, err = url.Parse(ustr)
 	if err != nil {
 		return err

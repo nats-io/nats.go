@@ -110,6 +110,19 @@ func TestLeakingGoRoutinesOnFailedConnect(t *testing.T) {
 	checkNoGoroutineLeak(t, base, "failed connect")
 }
 
+func TestTLSConnectionStateNonTLS(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	_, err := nc.TLSConnectionState()
+	if err != nats.ErrConnectionNotTLS {
+		t.Fatalf("Expected a not tls error, got: %v", err)
+	}
+}
+
 func TestConnectedServer(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()

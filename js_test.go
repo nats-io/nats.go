@@ -20,6 +20,7 @@ package nats
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -843,7 +844,7 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 	}
 
 	// Publish bunch of messages.
-	payload := make([]byte, 1024)
+	payload := make([]byte, 100*1024)
 	for i := 0; i < 250; i++ {
 		nc.Publish("a", payload)
 	}
@@ -937,5 +938,164 @@ func TestJetStreamExpiredPullRequests(t *testing.T) {
 		if err == nil || dur < 50*time.Millisecond {
 			t.Fatalf("Expected error and wait for 250ms, got err=%v and dur=%v", err, dur)
 		}
+	}
+}
+
+func TestJetStreamSyncSubscribeWithMaxAckPending(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	opts.JetStreamLimits.MaxAckPending = 123
+	s := natsserver.RunServer(&opts)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&StreamConfig{Name: "MAX_ACK_PENDING", Subjects: []string{"foo"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	// By default, the sync subscription will be created with a MaxAckPending equal
+	// to the internal sync queue len, which is 64K. So that should error out
+	// and make sure we get the actual limit
+
+	checkSub := func(pull bool) {
+		var sub *Subscription
+		var err error
+		if pull {
+			_, err = js.PullSubscribe("foo", "bar")
+		} else {
+			_, err = js.SubscribeSync("foo")
+		}
+		if err == nil || !strings.Contains(err.Error(), "system limit of 123") {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// But it should work if we use MaxAckPending() with lower value
+		if pull {
+			sub, err = js.PullSubscribe("foo", "bar", MaxAckPending(64))
+		} else {
+			sub, err = js.SubscribeSync("foo", MaxAckPending(64))
+		}
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		sub.Unsubscribe()
+	}
+	checkSub(false)
+	checkSub(true)
+}
+
+func TestJetStreamClusterPlacement(t *testing.T) {
+	// There used to be a test here that would not work because it would require
+	// all servers in the cluster to know about each other tags. So we will simply
+	// verify that if a stream is configured with placement and tags, the proper
+	// "stream create" request is sent.
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API."+apiStreamCreateT, "TEST"))
+	if err != nil {
+		t.Fatalf("Error on sub: %v", err)
+	}
+	js.AddStream(&StreamConfig{
+		Name: "TEST",
+		Placement: &Placement{
+			Tags: []string{"my_tag"},
+		},
+	})
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting stream create request: %v", err)
+	}
+	var req StreamConfig
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if req.Placement == nil {
+		t.Fatal("Expected placement, did not get it")
+	}
+	if n := len(req.Placement.Tags); n != 1 {
+		t.Fatalf("Expected 1 tag, got %v", n)
+	}
+	if v := req.Placement.Tags[0]; v != "my_tag" {
+		t.Fatalf("Unexpected tag: %q", v)
+	}
+}
+
+func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
+	// This test checks the conversion of a "direct get message" response
+	// to a JS message based on the content of specific NATS headers.
+	// It is very specific to the order headers retrieval is made in
+	// convertDirectGetMsgResponseToMsg(), so it may need adjustment
+	// if changes are made there.
+
+	msg := NewMsg("inbox")
+
+	check := func(errTxt string) {
+		t.Helper()
+		m, err := convertDirectGetMsgResponseToMsg("test", msg)
+		if err == nil || !strings.Contains(err.Error(), errTxt) {
+			t.Fatalf("Expected error contain %q, got %v", errTxt, err)
+		}
+		if m != nil {
+			t.Fatalf("Expected nil message, got %v", m)
+		}
+	}
+
+	check("should have headers")
+
+	msg.Header.Set(statusHdr, noMessagesSts)
+	check(ErrMsgNotFound.Error())
+
+	msg.Header.Set(statusHdr, reqTimeoutSts)
+	check("unable to get message")
+
+	msg.Header.Set(descrHdr, "some error text")
+	check("some error text")
+
+	msg.Header.Del(statusHdr)
+	msg.Header.Del(descrHdr)
+	msg.Header.Set("some", "header")
+	check("missing stream")
+
+	msg.Header.Set(JSStream, "other")
+	check("stream header is 'other', not 'test'")
+
+	msg.Header.Set(JSStream, "test")
+	check("missing sequence")
+
+	msg.Header.Set(JSSequence, "abc")
+	check("invalid sequence")
+
+	msg.Header.Set(JSSequence, "1")
+	check("missing timestamp")
+
+	msg.Header.Set(JSTimeStamp, "aaaaaaaaa bbbbbbbbbbbb cccccccccc ddddddddddd eeeeeeeeee ffffff")
+	check("invalid timestamp")
+
+	msg.Header.Set(JSTimeStamp, "2006-01-02 15:04:05.999999999 +0000 UTC")
+	check("missing subject")
+
+	msg.Header.Set(JSSubject, "foo")
+	r, err := convertDirectGetMsgResponseToMsg("test", msg)
+	if err != nil {
+		t.Fatalf("Error during convert: %v", err)
+	}
+	if r.Subject != "foo" {
+		t.Fatalf("Expected subject to be 'foo', got %q", r.Subject)
+	}
+	if r.Sequence != 1 {
+		t.Fatalf("Expected sequence to be 1, got %v", r.Sequence)
+	}
+	if r.Time.UnixNano() != 0xFC4A4D639917BFF {
+		t.Fatalf("Invalid timestamp: %v", r.Time.UnixNano())
+	}
+	if r.Header.Get("some") != "header" {
+		t.Fatalf("Wrong header: %v", r.Header)
 	}
 }
