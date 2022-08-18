@@ -313,7 +313,7 @@ func publishMeta(obs *obs, name string, info *ObjectInfo) error {
 
 func purgeChunks(obs *obs, nuid string) error {
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuid) // used as data in a JS API call
-	return obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: chunkSubj})
+	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 }
 
 // Put will place the contents from the reader into this object-store.
@@ -356,15 +356,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return perr
 	}
 
-// <<<<<<< os-link-change-sff TODO revisit
-// 	purgePartial := func() {
-// 		if r != nil { // check this here, so we don't have to do it each time we call this
-// 			purgeChunks(obs, nuwid)
-// 		}
-// 	}
-// =======
-	purgePartial := func() { obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}) }
-// >>>>>>> main
+	purgePartial := func() {
+		purgeChunks(obs, nuwid) // sff - what to do if error? ignore?
+	}
 
 	// Create our own JS context to handle errors etc.
 	js, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
@@ -456,7 +450,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	select {
 	case <-js.PublishAsyncComplete():
 		if err := getErr(); err != nil {
-			purgePartial()
+			if r != nil {
+				purgePartial()
+			}
 			return nil, err
 		}
 	case <-time.After(obs.js.opts.wait):
@@ -465,12 +461,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
-// <<<<<<< os-link-change-sff TODO revisit
-// 		purgeChunks(obs, einfo.NUID)
-// =======
-		chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
-		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
-// >>>>>>> main
+		purgeChunks(obs, einfo.NUID)
 	}
 
 	// Yes this is an extra call, but GetInfo sets the modified time correctly
@@ -622,14 +613,8 @@ func (obs *obs) Delete(name string) error {
 		return err
 	}
 
-// <<<<<<< os-link-change-sff TODO revisit
-// 	// Purge chunks for the object
-// 	return purgeChunks(obs, info.NUID)
-// =======
-	// Purge chunks for the object.
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
-// >>>>>>> main
+	// Purge chunks for the object
+	return purgeChunks(obs, info.NUID)
 }
 
 // AddLink will add a link to another object.
