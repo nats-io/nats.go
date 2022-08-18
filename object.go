@@ -781,7 +781,7 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	// so delete the meta from the old name
 	if err == nil && name != meta.Name {
 		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, name) // used as data in a JS API call
-		err = obs.js.purgeStream(obs.stream, &streamPurgeRequest{Subject: metaSubj})
+		err = obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: metaSubj})
 	}
 
 	return err
