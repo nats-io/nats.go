@@ -458,12 +458,15 @@ func TestObjectWatch(t *testing.T) {
 	expectOk(t, err)
 
 	// Update Meta
-	info, err := obs.GetInfo("A")
+	deletedInfo, err := obs.GetInfo("A")
 	expectOk(t, err)
-	meta := &info.ObjectMeta
-	meta.Description = "A's are better than B's"
+	if !deletedInfo.Deleted {
+		t.Fatalf("Expected object to be deleted.")
+	}
+	meta := &deletedInfo.ObjectMeta
+	meta.Description = "Making a change."
 	err = obs.UpdateMeta("A", meta)
-	expectOk(t, err)
+	expectErr(t, err)
 }
 
 func TestObjectLinks(t *testing.T) {
@@ -490,9 +493,11 @@ func TestObjectLinks(t *testing.T) {
 	expectLinkIsCorrect(t, infoA, infoLA)
 
 	// link to a link
-	infoLALA, err := root.AddLink("LALA", infoLA)
-	expectOk(t, err)
-	expectLinkIsCorrect(t, infoLA, infoLALA)
+	_, err = root.AddLink("LALA", infoLA)
+	expectErr(t, err)
+	//infoLALA, err := root.AddLink("LALA", infoLA)
+	//expectOk(t, err)
+	//expectLinkIsCorrect(t, infoLA, infoLALA)
 
 	dir, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "DIR"})
 	expectOk(t, err)
@@ -524,12 +529,12 @@ func TestObjectLinks(t *testing.T) {
 	}
 
 	// Test the link to a link get
-	getLALA, err := root.GetString("LALA")
-	expectOk(t, err)
-
-	if getLALA != "AAA" {
-		t.Fatalf("Expected %q but got %q", "AAA", getLALA)
-	}
+	//getLALA, err := root.GetString("LALA")
+	//expectOk(t, err)
+	//
+	//if getLALA != "AAA" {
+	//	t.Fatalf("Expected %q but got %q", "AAA", getLALA)
+	//}
 
 	// Try to get a linked object, cross bucket
 	getDbl, err := root.GetString("DBL")
