@@ -206,12 +206,12 @@ type ObjectResult interface {
 }
 
 const (
-	objNameTmpl         = "OBJ_%s"      // OBJ_<bucket>                 // stream name
+	objNameTmpl         = "OBJ_%s" // OBJ_<bucket> // stream name
 	objSubjectsPre      = "$O."
-	objAllChunksPreTmpl = "$O.%s.C.>"   // $O.<bucket>.C.>              // chunk stream subject
-	objAllMetaPreTmpl   = "$O.%s.M.>"   // $O.<bucket>.M.>              // meta stream subject
-	objChunksPreTmpl    = "$O.%s.C.%s"  // $O.<bucket>.C.<object-nuid>  // chunk message subject
-	objMetaPreTmpl      = "$O.%s.M.%s"  // $O.<bucket>.M.<name-encoded> // meta message subject
+	objAllChunksPreTmpl = "$O.%s.C.>"  // $O.<bucket>.C.> // chunk stream subject
+	objAllMetaPreTmpl   = "$O.%s.M.>"  // $O.<bucket>.M.> // meta stream subject
+	objChunksPreTmpl    = "$O.%s.C.%s" // $O.<bucket>.C.<object-nuid> // chunk message subject
+	objMetaPreTmpl      = "$O.%s.M.%s" // $O.<bucket>.M.<name-encoded> // meta message subject
 	objNoPending        = "0"
 	objDefaultChunkSize = uint32(128 * 1024) // 128k
 	objDigestType       = "SHA-256="
@@ -442,7 +442,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	case <-time.After(obs.js.opts.wait):
 		return nil, ErrTimeout
 	}
-	
+
 	info.ModTime = time.Now().UTC() // TODO get the time from the PublishAck
 
 	// Delete any original chunks.
@@ -487,7 +487,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		// is the link in the same bucket?
 		lbuck := info.ObjectMeta.Opts.Link.Bucket
 		if lbuck == obs.name {
-            return obs.Get(info.ObjectMeta.Opts.Link.Name)
+			return obs.Get(info.ObjectMeta.Opts.Link.Name)
 		}
 
 		// different bucket
@@ -745,7 +745,7 @@ func (obs *obs) GetFile(name, file string, opts ...ObjectOpt) error {
 func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 	// Grab last meta value we have.
 	if name == "" {
-    	return nil, errors.New("nats: name is required")
+		return nil, errors.New("nats: name is required")
 	}
 
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as data in a JS API call
