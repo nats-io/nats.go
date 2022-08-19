@@ -206,15 +206,15 @@ type ObjectResult interface {
 }
 
 const (
-	objNameTmpl         = "OBJ_%s"
+	objNameTmpl         = "OBJ_%s"      // OBJ_<bucket>                 // stream name
 	objSubjectsPre      = "$O."
-	objAllChunksPreTmpl = "$O.%s.C.>"
-	objAllMetaPreTmpl   = "$O.%s.M.>"
-	objChunksPreTmpl    = "$O.%s.C.%s"
-	objMetaPreTmpl      = "$O.%s.M.%s"
+	objAllChunksPreTmpl = "$O.%s.C.>"   // $O.<bucket>.C.>              // chunk stream subject
+	objAllMetaPreTmpl   = "$O.%s.M.>"   // $O.<bucket>.M.>              // meta stream subject
+	objChunksPreTmpl    = "$O.%s.C.%s"  // $O.<bucket>.C.<object-nuid>  // chunk message subject
+	objMetaPreTmpl      = "$O.%s.M.%s"  // $O.<bucket>.M.<name-encoded> // meta message subject
 	objNoPending        = "0"
 	objDefaultChunkSize = uint32(128 * 1024) // 128k
-	objDigestType       = "sha-256="
+	objDigestType       = "SHA-256="
 	objDigestTmpl       = objDigestType + "%s"
 )
 
@@ -262,7 +262,7 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 	return &obs{name: name, stream: scfg.Name, js: js}, nil
 }
 
-// ObjectStore will lookup and bind to an existing object store instance.
+// ObjectStore will look up and bind to an existing object store instance.
 func (js *js) ObjectStore(bucket string) (ObjectStore, error) {
 	if !validBucketRe.MatchString(bucket) {
 		return nil, ErrInvalidStoreName
@@ -289,33 +289,6 @@ func encodeName(name string) string {
 	return base64.URLEncoding.EncodeToString([]byte(name))
 }
 
-func preparePublishMeta(obs *obs, name string, info *ObjectInfo) (*Msg, error) {
-	data, err := json.Marshal(info)
-	if err != nil {
-		return nil, err
-	}
-
-	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as a publish subject
-	mm := NewMsg(metaSubj)
-	mm.Header.Set(MsgRollup, MsgRollupSubject)
-	mm.Data = data
-
-	return mm, nil
-}
-
-func publishMeta(obs *obs, name string, info *ObjectInfo) error {
-	mm, err := preparePublishMeta(obs, name, info)
-	if err == nil {
-		_, err = obs.js.PublishMsg(mm)
-	}
-	return err
-}
-
-func purgeChunks(obs *obs, nuid string) error {
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuid) // used as data in a JS API call
-	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
-}
-
 // Put will place the contents from the reader into this object-store.
 func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectInfo, error) {
 	if meta == nil || meta.Name == "" {
@@ -332,15 +305,18 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	}
 	ctx := o.ctx
 
-	// Grab existing meta info. Ok to be found or not found, any other error is a problem
-	// So chunks on the old nuid can be cleaned up at the end
-	einfo, err := obs.GetInfo(meta.Name)
+	// Create the new nuid so chunks go on a new subject if the name is re-used
+	newnuid := nuid.Next()
+
+	// These will be used in more than one place
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, newnuid)
+
+	// Grab existing meta info (einfo). Ok to be found or not found, any other error is a problem
+	// Chunks on the old nuid can be cleaned up at the end
+	einfo, err := obs.GetInfo(meta.Name) // GetInfo will encode the name
 	if err != nil && err != ErrObjectNotFound {
 		return nil, err
 	}
-
-	// Create the nuid, the meta data and chunk subject uses this
-	nuwid := nuid.Next()
 
 	// For async error handling
 	var perr error
@@ -356,9 +332,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return perr
 	}
 
-	purgePartial := func() {
-		purgeChunks(obs, nuwid) // sff - what to do if error? ignore?
-	}
+	purgePartial := func() { obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}) }
 
 	// Create our own JS context to handle errors etc.
 	js, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
@@ -371,12 +345,11 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		chunkSize = meta.Opts.ChunkSize
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, nuwid) // used as a publish subject
 	m, h := NewMsg(chunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, chunkSize), 0, uint64(0)
 
-	// setup the info object. The chunk upload sets the size and digest
-	info := &ObjectInfo{Bucket: obs.name, NUID: nuwid, ObjectMeta: *meta}
+	// set up the info object. The chunk upload sets the size and digest
+	info := &ObjectInfo{Bucket: obs.name, NUID: newnuid, ObjectMeta: *meta}
 
 	for r != nil {
 		if ctx != nil {
@@ -436,13 +409,24 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		}
 	}
 
-	// Publish the metadata.
-	mm, err := preparePublishMeta(obs, meta.Name, info)
-	if err == nil {
-		_, err = js.PublishMsgAsync(mm)
-	}
+	// Prepare the meta message
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
+	mm := NewMsg(metaSubj)
+	mm.Header.Set(MsgRollup, MsgRollupSubject)
+	mm.Data, err = json.Marshal(info)
 	if err != nil {
-		purgePartial()
+		if r != nil {
+			purgePartial()
+		}
+		return nil, err
+	}
+
+	// Publish the meta message.
+	_, err = js.PublishMsgAsync(mm)
+	if err != nil {
+		if r != nil {
+			purgePartial()
+		}
 		return nil, err
 	}
 
@@ -458,15 +442,16 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	case <-time.After(obs.js.opts.wait):
 		return nil, ErrTimeout
 	}
+	
+	info.ModTime = time.Now().UTC() // TODO get the time from the PublishAck
 
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
-		purgeChunks(obs, einfo.NUID)
+		echunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
+		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj})
 	}
 
-	// Yes this is an extra call, but GetInfo sets the modified time correctly
-	// to the server message time, instead of just setting the time based on the client
-	return obs.GetInfo(meta.Name)
+	return info, nil
 }
 
 // ObjectResult impl.
@@ -493,12 +478,20 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		return nil, ErrBadObjectMeta
 	}
 
-	// Check for object links.If single objects we do a pass through.
+	// Check for object links. If single objects we do a pass through.
 	if info.isLink() {
 		if info.ObjectMeta.Opts.Link.Name == _EMPTY_ {
 			return nil, errors.New("nats: link is a bucket")
 		}
-		lobs, err := obs.js.ObjectStore(info.ObjectMeta.Opts.Link.Bucket)
+
+		// is the link in the same bucket?
+		lbuck := info.ObjectMeta.Opts.Link.Bucket
+		if lbuck == obs.name {
+			return obs.Get(info.ObjectMeta.Opts.Link.Name)
+		}
+
+		// different bucket
+		lobs, err := obs.js.ObjectStore(lbuck)
 		if err != nil {
 			return nil, err
 		}
@@ -586,7 +579,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		}
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID) // used in subscribe
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID) // subscribe
 	_, err = obs.js.Subscribe(chunkSubj, processChunk, OrderedConsumer())
 	if err != nil {
 		return nil, err
@@ -609,53 +602,73 @@ func (obs *obs) Delete(name string) error {
 	// Place a rollup delete marker and publish the meta
 	info.Deleted = true
 	info.Size, info.Chunks, info.Digest = 0, 0, _EMPTY_
-	if err = publishMeta(obs, name, info); err != nil {
+
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
+	mm := NewMsg(metaSubj)
+	mm.Data, err = json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	mm.Header.Set(MsgRollup, MsgRollupSubject)
+	_, err = obs.js.PublishMsg(mm)
+	if err != nil {
 		return err
 	}
 
-	// Purge chunks for the object
-	return purgeChunks(obs, info.NUID)
+	// Purge chunks for the object.
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
+	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 }
 
-// AddLink will add a link to another object.
+// AddLink will add a link to another object if it's not deleted and not another link
+// name is the name of this link object
+// obj is what is being linked too
 func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
+	if name == "" {
+		return nil, errors.New("nats: link name required")
+	}
 	if obj == nil || obj.Name == "" || obj.Bucket == "" {
 		return nil, errors.New("nats: object required")
 	}
 	if obj.Deleted {
-		return nil, errors.New("nats: object is deleted")
+		return nil, errors.New("nats: attempting to link to a deleted object")
+	}
+	if obj.isLink() {
+		return nil, errors.New("nats: attempting to link to another link")
 	}
 
-	// create the meta object
+	// create the meta for the link
 	meta := &ObjectMeta{
 		Name: name,
 		Opts: &ObjectMetaOptions{
-			Link: &ObjectLink{Bucket: obj.Bucket, Name: obj.Name},
-		},
+			Link: &ObjectLink{Bucket: obj.Bucket, Name: obj.Name}},
 	}
 
+	// put the link object
 	return obs.Put(meta, nil)
 }
 
 // AddBucketLink will add a link to another object store.
 func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, error) {
+	if name == "" {
+		return nil, errors.New("nats: link name required")
+	}
 	if bucket == nil {
 		return nil, errors.New("nats: bucket required")
 	}
-
 	bos, ok := bucket.(*obs)
 	if !ok {
 		return nil, errors.New("nats: bucket malformed")
 	}
 
-	// create the meta object
+	// create the meta for the link
 	meta := &ObjectMeta{
 		Name: name,
 		Opts: &ObjectMetaOptions{
-			Link: &ObjectLink{Bucket: bos.name},
-		},
+			Link: &ObjectLink{Bucket: bos.name}},
 	}
 
+	// put the link object
 	return ob.Put(meta, nil)
 }
 
@@ -734,7 +747,7 @@ func (obs *obs) GetFile(name, file string, opts ...ObjectOpt) error {
 func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 	// Grab last meta value we have.
 	if name == "" {
-		return nil, errors.New("nats: name is required")
+    	return nil, errors.New("nats: name is required")
 	}
 
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as data in a JS API call
@@ -751,20 +764,24 @@ func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 	if err := json.Unmarshal(m.Data, &info); err != nil {
 		return nil, ErrBadObjectMeta
 	}
-
 	info.ModTime = m.Time
 	return &info, nil
 }
 
-// UpdateMeta will update the meta data for the object.
+// UpdateMeta will update the meta for the object.
 func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	if meta == nil {
 		return ErrBadObjectMeta
 	}
-	// Grab meta info.
+
+	// Grab the current meta.
 	info, err := obs.GetInfo(name)
 	if err != nil {
 		return err
+	}
+
+	if info.Deleted {
+		return errors.New("nats: cannot update meta for a deleted object")
 	}
 
 	// Update Meta prevents update of ObjectMetaOptions (Link, ChunkSize)
@@ -773,14 +790,25 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	info.Description = meta.Description
 	info.Headers = meta.Headers
 
-	if err = publishMeta(obs, meta.Name, info); err != nil {
+	// Prepare the meta message
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
+	mm := NewMsg(metaSubj)
+	mm.Header.Set(MsgRollup, MsgRollupSubject)
+	mm.Data, err = json.Marshal(info)
+	if err != nil {
+		return err
+	}
+
+	// Publish the meta message.
+	_, err = obs.js.PublishMsg(mm)
+	if err != nil {
 		return err
 	}
 
 	// did the name of this object change? We just stored the meta under the new name
-	// so delete the meta from the old name
-	if err == nil && name != meta.Name {
-		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, name) // used as data in a JS API call
+	// so delete the meta from the old name via purge stream for subject
+	if name != meta.Name {
+		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
 		err = obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: metaSubj})
 	}
 
