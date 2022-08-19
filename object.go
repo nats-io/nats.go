@@ -487,7 +487,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		// is the link in the same bucket?
 		lbuck := info.ObjectMeta.Opts.Link.Bucket
 		if lbuck == obs.name {
-			return obs.Get(info.ObjectMeta.Opts.Link.Name)
+            return obs.Get(info.ObjectMeta.Opts.Link.Name)
 		}
 
 		// different bucket
@@ -579,7 +579,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 		}
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID) // subscribe
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
 	_, err = obs.js.Subscribe(chunkSubj, processChunk, OrderedConsumer())
 	if err != nil {
 		return nil, err
@@ -599,7 +599,7 @@ func (obs *obs) Delete(name string) error {
 		return ErrBadObjectMeta
 	}
 
-	// Place a rollup delete marker and publish the meta
+	// Place a rollup delete marker and publish the info
 	info.Deleted = true
 	info.Size, info.Chunks, info.Digest = 0, 0, _EMPTY_
 
@@ -627,21 +627,20 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	if name == "" {
 		return nil, errors.New("nats: link name required")
 	}
-	if obj == nil || obj.Name == "" || obj.Bucket == "" {
+	if obj == nil || obj.Name == "" {
 		return nil, errors.New("nats: object required")
 	}
 	if obj.Deleted {
-		return nil, errors.New("nats: attempting to link to a deleted object")
+		return nil, errors.New("nats: not allowed to link to a deleted object")
 	}
 	if obj.isLink() {
-		return nil, errors.New("nats: attempting to link to another link")
+		return nil, errors.New("nats: not allowed to link to another link")
 	}
 
 	// create the meta for the link
 	meta := &ObjectMeta{
 		Name: name,
-		Opts: &ObjectMetaOptions{
-			Link: &ObjectLink{Bucket: obj.Bucket, Name: obj.Name}},
+		Opts: &ObjectMetaOptions{Link: &ObjectLink{Bucket: obj.Bucket, Name: obj.Name}},
 	}
 
 	// put the link object
@@ -664,8 +663,7 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 	// create the meta for the link
 	meta := &ObjectMeta{
 		Name: name,
-		Opts: &ObjectMetaOptions{
-			Link: &ObjectLink{Bucket: bos.name}},
+		Opts: &ObjectMetaOptions{Link: &ObjectLink{Bucket: bos.name}},
 	}
 
 	// put the link object
