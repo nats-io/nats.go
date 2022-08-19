@@ -369,7 +369,7 @@ func TestObjectMetadata(t *testing.T) {
 	expectOk(t, err)
 
 	_, err = obs.GetInfo("A")
-	if err != nil {
+	if err == nil {
 		t.Fatal("Object meta for original name was not removed.")
 	}
 

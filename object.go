@@ -807,10 +807,10 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	// so delete the meta from the old name via purge stream for subject
 	if name != meta.Name {
 		metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
-		err = obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: metaSubj})
+		return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: metaSubj})
 	}
 
-	return err
+	return nil
 }
 
 // Seal will seal the object store, no further modifications will be allowed.
