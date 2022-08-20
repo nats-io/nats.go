@@ -142,13 +142,6 @@ func TestDefaultObjectStatus(t *testing.T) {
 }
 
 func TestObjectFileBasics(t *testing.T) {
-	// The filename is likely to be something like C:\xxx and we don't allow
-	// the '\' or ':' characters. We could translate the tmpFile.Name() from
-	// C:\foo\bar to C:/foo/bar (since Windows is OK with that), however,
-	// that would still fail on key validation because `:` is not allowed.
-	if runtime.GOOS == "windows" {
-		t.SkipNow()
-	}
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
