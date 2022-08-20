@@ -17,10 +17,10 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io/ioutil"
+	"os"
 	"path"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
 	"time"
 
