@@ -82,10 +82,6 @@ func TestObjectBasics(t *testing.T) {
 		t.Fatalf("invalid description: '%s'", status.Description())
 	}
 
-	// Check simple errors.
-	_, err = obs.Get("FOO")
-	expectErr(t, err)
-
 	// Now get the object back.
 	result, err := obs.Get("BLOB")
 	expectOk(t, err)
@@ -110,6 +106,19 @@ func TestObjectBasics(t *testing.T) {
 	expectOk(t, err)
 	_, err = obs.Get("BLOB")
 	expectErr(t, err, nats.ErrStreamNotFound)
+
+	// Check simple errors.
+	_, err = obs.Get("FOO")
+	expectErr(t, err)
+
+	_, err = obs.Get("")
+	expectErr(t, err)
+
+	_, err = obs.Get("")
+	expectErr(t, err)
+
+	_, err = obs.PutBytes("", blob)
+	expectErr(t, err)
 }
 
 func TestDefaultObjectStatus(t *testing.T) {
@@ -378,6 +387,12 @@ func TestObjectMetadata(t *testing.T) {
 		t.Fatalf("Update failed: %+v", info)
 	}
 
+	// delete the object to test updating against a deleted object
+	err = obs.Delete("B")
+	expectOk(t, err)
+	err = obs.UpdateMeta("B", meta)
+	expectErr(t, err)
+
 	err = obs.UpdateMeta("X", meta)
 	if err == nil {
 		t.Fatal("Expected an error when trying to update an object that does not exist.")
@@ -541,6 +556,28 @@ func TestObjectLinks(t *testing.T) {
 	if getDbl != "DIR-BBB" {
 		t.Fatalf("Expected %q but got %q", "DIR-BBB", getDbl)
 	}
+
+	// Check simple errors.
+	_, err = root.AddLink("", infoB)
+	expectErr(t, err)
+
+	_, err = root.AddLink("Nil Object", nil)
+	expectErr(t, err)
+
+	infoB.Name = ""
+	_, err = root.AddLink("Empty Info Name", infoB)
+	expectErr(t, err)
+
+	// Check Error Link to a Link
+	_, err = root.AddLink("Link To Link", infoLB)
+	expectErr(t, err)
+
+	// Check Error Link to a Link
+	_, err = root.AddBucketLink("", root)
+	expectErr(t, err)
+
+	_, err = root.AddBucketLink("Nil Bucket", nil)
+	expectErr(t, err)
 }
 
 func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {

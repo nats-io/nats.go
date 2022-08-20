@@ -37,7 +37,7 @@ import (
 //
 // This functionality is EXPERIMENTAL and may be changed in later releases.
 type ObjectStoreManager interface {
-	// ObjectStore will lookup and bind to an existing object store instance.
+	// ObjectStore will look up and bind to an existing object store instance.
 	ObjectStore(bucket string) (ObjectStore, error)
 	// CreateObjectStore will create an object store.
 	CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error)
@@ -62,7 +62,7 @@ type ObjectStore interface {
 	// GetBytes is a convenience function to pull an object from this object store and return it as a byte slice.
 	GetBytes(name string, opts ...ObjectOpt) ([]byte, error)
 
-	// PutBytes is convenience function to put a string into this object store.
+	// PutString is convenience function to put a string into this object store.
 	PutString(name string, data string, opts ...ObjectOpt) (*ObjectInfo, error)
 	// GetString is a convenience function to pull an object from this object store and return it as a string.
 	GetString(name string, opts ...ObjectOpt) (string, error)
@@ -126,7 +126,6 @@ var (
 	ErrBadObjectMeta        = errors.New("nats: object-store meta information invalid")
 	ErrObjectNotFound       = errors.New("nats: object not found")
 	ErrInvalidStoreName     = errors.New("nats: invalid object-store name")
-	ErrInvalidObjectName    = errors.New("nats: invalid object name")
 	ErrDigestMismatch       = errors.New("nats: received a corrupt object, digests do not match")
 	ErrNoObjectsFound       = errors.New("nats: no objects found")
 )
@@ -207,7 +206,6 @@ type ObjectResult interface {
 
 const (
 	objNameTmpl         = "OBJ_%s" // OBJ_<bucket> // stream name
-	objSubjectsPre      = "$O."
 	objAllChunksPreTmpl = "$O.%s.C.>"  // $O.<bucket>.C.> // chunk stream subject
 	objAllMetaPreTmpl   = "$O.%s.M.>"  // $O.<bucket>.M.> // meta stream subject
 	objChunksPreTmpl    = "$O.%s.C.%s" // $O.<bucket>.C.<object-nuid> // chunk message subject
@@ -690,7 +688,7 @@ func (obs *obs) GetBytes(name string, opts ...ObjectOpt) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// PutBytes is convenience function to put a string into this object store.
+// PutString is convenience function to put a string into this object store.
 func (obs *obs) PutString(name string, data string, opts ...ObjectOpt) (*ObjectInfo, error) {
 	return obs.Put(&ObjectMeta{Name: name}, strings.NewReader(data), opts...)
 }
