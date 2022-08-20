@@ -314,8 +314,14 @@ func TestObjectNames(t *testing.T) {
 	// Test filename like naming.
 	_, err = obs.PutString("BLOB.txt", "A")
 	expectOk(t, err)
+
 	// Spaces ok
 	_, err = obs.PutString("foo bar", "A")
+	expectOk(t, err)
+
+	// things that can be in a filename across multiple OSes
+	// dot, asterisk, lt, gt, colon, double-quote, fwd-slash, backslash, pipe, question-mark, ampersand
+	_, err = obs.PutString(".*<>:\"/\\|?&", "A")
 	expectOk(t, err)
 
 	// Errors
