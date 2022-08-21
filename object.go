@@ -238,17 +238,30 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 	chunks := fmt.Sprintf(objAllChunksPreTmpl, name)
 	meta := fmt.Sprintf(objAllMetaPreTmpl, name)
 
+	// We will set explicitly some values so that we can do comparison
+	// if we get an "already in use" error and need to check if it is same.
+	// See kv
+	replicas := cfg.Replicas
+	if replicas == 0 {
+		replicas = 1
+	}
+	maxBytes := cfg.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = -1
+	}
+
 	scfg := &StreamConfig{
 		Name:        fmt.Sprintf(objNameTmpl, name),
 		Description: cfg.Description,
 		Subjects:    []string{chunks, meta},
 		MaxAge:      cfg.TTL,
-		MaxBytes:    cfg.MaxBytes,
+		MaxBytes:    maxBytes,
 		Storage:     cfg.Storage,
-		Replicas:    cfg.Replicas,
+		Replicas:    replicas,
 		Placement:   cfg.Placement,
 		Discard:     DiscardNew,
 		AllowRollup: true,
+		AllowDirect: true,
 	}
 
 	// Create our stream.
