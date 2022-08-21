@@ -205,7 +205,7 @@ type ObjectResult interface {
 }
 
 const (
-	objNameTmpl         = "OBJ_%s" // OBJ_<bucket> // stream name
+	objNameTmpl         = "OBJ_%s"     // OBJ_<bucket> // stream name
 	objAllChunksPreTmpl = "$O.%s.C.>"  // $O.<bucket>.C.> // chunk stream subject
 	objAllMetaPreTmpl   = "$O.%s.M.>"  // $O.<bucket>.M.> // meta stream subject
 	objChunksPreTmpl    = "$O.%s.C.%s" // $O.<bucket>.C.<object-nuid> // chunk message subject
