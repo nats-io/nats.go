@@ -441,13 +441,18 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return nil, ErrTimeout
 	}
 
-	info.ModTime = time.Now().UTC() // TODO get the time from the PublishAck
+	info.ModTime = time.Now().UTC() // This time is not actually the correct time
 
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
 		echunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
 		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj})
 	}
+
+	// TODO would it be okay to do this to return the info with the correct time?
+	// With the understanding that it is an extra call to the server.
+	// Otherwise the time the user gets back is the client time, not the server time.
+	// return obs.GetInfo(info.Name)
 
 	return info, nil
 }
