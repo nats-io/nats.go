@@ -134,6 +134,9 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 		t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 	}
 
+	// an APIError also implements the JetStreamError interface.
+	var _ nats.JetStreamError = &nats.APIError{}
+
 	// matching arbitrary custom error via errors.Is(...)
 	customErr := &nats.APIError{ErrorCode: expected}
 	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabledForAccount); !ok {
@@ -142,6 +145,10 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	customErr = &nats.APIError{ErrorCode: 1}
 	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabledForAccount); ok {
 		t.Fatal("Expected to not match ErrJetStreamNotEnabled")
+	}
+	var cerr nats.JetStreamError
+	if ok := errors.As(customErr, &cerr); !ok {
+		t.Fatal("Expected custom error to be a JetStreamError")
 	}
 
 	// matching to concrete type via errors.As(...)

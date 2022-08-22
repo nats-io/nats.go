@@ -166,6 +166,11 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
 }
 
+// APIError implements the JetStreamError interface.
+func (e *APIError) APIError() *APIError {
+	return e
+}
+
 // Is matches against an APIError.
 func (e *APIError) Is(err error) bool {
 	// Extract internal APIError to match against.
@@ -303,14 +308,11 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		return nil, err
 	}
 	if info.Error != nil {
-		var err error
+		var err JetStreamError = info.Error
+
 		// Internally checks based on error code instead of description match.
 		if errors.Is(info.Error, ErrJetStreamNotEnabledForAccount) {
 			err = ErrJetStreamNotEnabledForAccount
-		} else {
-			err = &jsError{
-				apiErr: info.Error,
-			}
 		}
 		return nil, err
 	}
