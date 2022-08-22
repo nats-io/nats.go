@@ -361,7 +361,8 @@ func TestObjectMetadata(t *testing.T) {
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, _ := obs.GetInfo("A")
+	info, err := obs.GetInfo("A")
+	expectOk(t, err)
 	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" {
 		t.Fatalf("Update failed: %+v", info)
 	}

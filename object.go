@@ -690,6 +690,17 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 		return nil, errors.New("nats: bucket malformed")
 	}
 
+	// If object with link's name is found, error.
+	// If there was an error that was not ErrObjectNotFound, error.
+	// sff - Is there a better go way to do this?
+	_, err := ob.GetInfo(name)
+	if err != ErrObjectNotFound {
+		if err == nil {
+			return nil, ErrObjectAlreadyExists
+		}
+		return nil, err
+	}
+
 	// create the meta for the link
 	meta := &ObjectMeta{
 		Name: name,
