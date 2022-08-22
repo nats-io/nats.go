@@ -128,6 +128,9 @@ var (
 	ErrInvalidStoreName     = errors.New("nats: invalid object-store name")
 	ErrDigestMismatch       = errors.New("nats: received a corrupt object, digests do not match")
 	ErrNoObjectsFound       = errors.New("nats: no objects found")
+	ErrObjectAlreadyExists  = errors.New("nats: an object already exists with that name")
+	ErrNameRequired         = errors.New("nats: name is required")
+	ErrNeeds262             = errors.New("nats: object-store requires at least server version 2.6.2")
 )
 
 // ObjectStoreConfig is the config for the object store.
@@ -225,7 +228,7 @@ type obs struct {
 // CreateObjectStore will create an object store.
 func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 	if !js.nc.serverMinVersion(2, 6, 2) {
-		return nil, errors.New("nats: object-store requires at least server version 2.6.2")
+		return nil, ErrNeeds262
 	}
 	if cfg == nil {
 		return nil, ErrObjectConfigRequired
@@ -279,7 +282,7 @@ func (js *js) ObjectStore(bucket string) (ObjectStore, error) {
 		return nil, ErrInvalidStoreName
 	}
 	if !js.nc.serverMinVersion(2, 6, 2) {
-		return nil, errors.New("nats: key-value requires at least server version 2.6.2")
+		return nil, ErrNeeds262
 	}
 
 	stream := fmt.Sprintf(objNameTmpl, bucket)
@@ -497,7 +500,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 	// Check for object links. If single objects we do a pass through.
 	if info.isLink() {
 		if info.ObjectMeta.Opts.Link.Name == _EMPTY_ {
-			return nil, errors.New("nats: link is a bucket")
+			return nil, errors.New("nats: object is a link to a bucket")
 		}
 
 		// is the link in the same bucket?
@@ -641,7 +644,7 @@ func (obs *obs) Delete(name string) error {
 // obj is what is being linked too
 func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	if name == "" {
-		return nil, errors.New("nats: link name required")
+		return nil, ErrNameRequired
 	}
 	if obj == nil || obj.Name == "" {
 		return nil, errors.New("nats: object required")
@@ -651,6 +654,17 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	}
 	if obj.isLink() {
 		return nil, errors.New("nats: not allowed to link to another link")
+	}
+
+	// If object with link's name is found, error.
+	// If there was an error that was not ErrObjectNotFound, error.
+	// sff - Is there a better go way to do this?
+	_, err := obs.GetInfo(name)
+	if err != ErrObjectNotFound {
+		if err == nil {
+			return nil, ErrObjectAlreadyExists
+		}
+		return nil, err
 	}
 
 	// create the meta for the link
@@ -666,7 +680,7 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 // AddBucketLink will add a link to another object store.
 func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, error) {
 	if name == "" {
-		return nil, errors.New("nats: link name required")
+		return nil, ErrNameRequired
 	}
 	if bucket == nil {
 		return nil, errors.New("nats: bucket required")
@@ -761,7 +775,7 @@ func (obs *obs) GetFile(name, file string, opts ...ObjectOpt) error {
 func (obs *obs) GetInfo(name string) (*ObjectInfo, error) {
 	// Grab last meta value we have.
 	if name == "" {
-		return nil, errors.New("nats: name is required")
+		return nil, ErrNameRequired
 	}
 
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name)) // used as data in a JS API call
@@ -796,6 +810,19 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 
 	if info.Deleted {
 		return errors.New("nats: cannot update meta for a deleted object")
+	}
+
+	// If the new name is different from the old, and it exists, error
+	// If there was an error that was not ErrObjectNotFound, error.
+	// sff - Is there a better go way to do this?
+	if name != meta.Name {
+		_, err = obs.GetInfo(meta.Name)
+		if err != ErrObjectNotFound {
+			if err == nil {
+				return ErrObjectAlreadyExists
+			}
+			return err
+		}
 	}
 
 	// Update Meta prevents update of ObjectMetaOptions (Link, ChunkSize)
