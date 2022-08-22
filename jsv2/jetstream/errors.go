@@ -19,6 +19,18 @@ import (
 )
 
 type (
+	// JetStreamError is an error result that happens when using JetStream.
+	// In case of client-side error, `APIError()` returns nil
+	JetStreamError interface {
+		APIError() *APIError
+		error
+	}
+
+	jsError struct {
+		apiErr  *APIError
+		message string
+	}
+
 	// APIError is included in all API responses if there was an error.
 	APIError struct {
 		Code        int       `json:"code"`
@@ -31,80 +43,144 @@ type (
 )
 
 const (
-	JetStreamNotEnabledForAccount ErrorCode = 10039
-	JetStreamNotEnabled           ErrorCode = 10076
+	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
+	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
 
-	StreamNotFound  ErrorCode = 10059
-	StreamNameInUse ErrorCode = 10058
+	JSErrCodeStreamNotFound  ErrorCode = 10059
+	JSErrCodeStreamNameInUse ErrorCode = 10058
 
-	ConsumerNotFound ErrorCode = 10014
+	JSErrCodeConsumerNotFound      ErrorCode = 10014
+	JSErrCodeConsumerNameExists    ErrorCode = 10013
+	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
 
-	MessageNotFound ErrorCode = 10037
+	JSErrCodeMessageNotFound ErrorCode = 10037
+
+	JSErrCodeBadRequest ErrorCode = 10003
 )
 
 var (
-	// JetStream general errors
+	// API errors
 
-	// ErrJetStreamNotEnabled is when JetStream is disabled on server (globally)
-	ErrJetStreamNotEnabled = errors.New("nats: jetstream not enabled")
-	// ErrJetStreamNotEnabledForAccount is when JetStream is disabled for the account
-	ErrJetStreamNotEnabledForAccount = errors.New("nats: jetstream not enabled")
+	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled for an account.
+	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled", Code: 503}}
+
+	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
+	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled for account", Code: 503}}
+
+	// ErrStreamNotFound is an error returned when stream with given name does not exist.
+	ErrStreamNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNotFound, Description: "stream not found", Code: 404}}
+
+	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration
+	ErrStreamNameAlreadyInUse JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNameInUse, Description: "stream name already in use", Code: 400}}
+
+	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
+	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
+
+	// ErrMsgNotFound is returned when message with provided sequence number does npt exist.
+	ErrMsgNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMessageNotFound, Description: "message not found", Code: 404}}
+
+	// ErrBadRequest is returned when invalid request is sent to JetStream API.
+	ErrBadRequest JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBadRequest, Description: "bad request", Code: 400}}
+
+	// Client errors
+
+	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
+	ErrConsumerNameAlreadyInUse JetStreamError = &jsError{message: "consumer name already in use"}
+
+	// ErrInvalidJSAck is returned when JetStream ack from message publish is invalid.
+	ErrInvalidJSAck JetStreamError = &jsError{message: "invalid jetstream publish response"}
+
+	// ErrStreamNameRequired is returned when the provided stream name is empty.
+	ErrStreamNameRequired JetStreamError = &jsError{message: "stream name is required"}
+
+	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty,
+	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
+
+	// ErrMsgAlreadyAckd is returned when attempting to acknowledge message more than once.
+	ErrMsgAlreadyAckd JetStreamError = &jsError{message: "message was already acknowledged"}
+
+	// ErrNoStreamResponse is returned when there is no response from stream (e.g. no responders error).
+	ErrNoStreamResponse JetStreamError = &jsError{message: "no response from stream"}
+
+	// ErrNotJSMessage is returned when attempting to get metadata from non JetStream message .
+	ErrNotJSMessage JetStreamError = &jsError{message: "not a jetstream message"}
+
+	// ErrInvalidStreamName is returned when the provided stream name is invalid (contains '.').
+	ErrInvalidStreamName JetStreamError = &jsError{message: "invalid stream name"}
+
+	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.').
+	ErrInvalidConsumerName JetStreamError = &jsError{message: "invalid consumer name"}
+
+	// ErrNoMessages is returned when no messages are currently available for a consumer.
+	ErrNoMessages = &jsError{message: "no messages"}
+
+	// ErrHandlerRequired is returned when no handler func is provided in Stream()
+	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
+
 	// ErrEndOfData is returned when iterating over paged API from JetStream reaches end of data
 	ErrEndOfData = errors.New("nats: end of data reached")
 
-	// Stream errors
-
-	// ErrStreamNameAlreadyInUse is returned when stream with given name already exists
-	ErrStreamNameAlreadyInUse = errors.New("nats: stream name already in use")
-	// ErrStreamNameRequired is returned when the provided stream name is empty
-	ErrStreamNameRequired = errors.New("nats: stream name is required")
-	// ErrInvalidStreamName is returned when provided stream name is invalid
-	ErrInvalidStreamName = errors.New("nats: invalid stream name")
-	// ErrStreamNotFound is returned when stream with provided name does not exist
-	ErrStreamNotFound = errors.New("nats: stream not found")
-
-	// Consumer errors
-
-	// ErrInvalidDurableName is returned when the provided durable name for the consumer is invalid
-	ErrInvalidDurableName = errors.New("nats: invalid durable name")
-	// ErrConsumerExists is returned when consumer with provided name already exists on the server
-	ErrConsumerExists = errors.New("nats: consumer with given name already exists")
-	// ErrNoMessages is returned when no messages are currectly available for a consumer
-	ErrNoMessages = errors.New("nats: no messages")
-	// ErrConsumerNotFound is returned when a consumer with given name is not found
-	ErrConsumerNotFound = errors.New("nats: consumer not found")
-	// ErrHandlerRequired is returned when no handler func is provided in Stream()
-	ErrHandlerRequired = errors.New("nats: handler cannot be empty")
 	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
-	ErrNoHeartbeat = errors.New("nats: no heartbeat received, canceling subscription")
+	ErrNoHeartbeat = &jsError{message: "no heartbeat received, canceling subscription"}
+
 	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
-	ErrConsumerHasActiveSubscription = errors.New("nats: consumer has active subscription")
+	ErrConsumerHasActiveSubscription = &jsError{message: "consumer has active subscription"}
 
-	// Message errors
-
-	// ErrNotJSMessage is returned when a message is not from JetStream (does not contain valid metadata)
-	ErrNotJSMessage = errors.New("nats: not a jetstream message")
-	// ErrMsgAlreadyAckd is returned on an attempt to ack a message which was previously acknowledged
-	ErrMsgAlreadyAckd = errors.New("nats: message was already acknowledged")
 	// ErrMsgNotBound is returned when given message is not bound to any subscription
-	ErrMsgNotBound = errors.New("nats: message is not bound to subscription/connection")
+	ErrMsgNotBound = &jsError{message: "message is not bound to subscription/connection"}
+
 	// ErrMsgNoReply is returned when attempting to reply to a message without a reply subject
-	ErrMsgNoReply = errors.New("nats: message does not have a reply")
+	ErrMsgNoReply = &jsError{message: "message does not have a reply"}
+
 	// ErrMsgDeleteUnsuccessful is returned when an attempt to delete a message is unsuccessful
-	ErrMsgDeleteUnsuccessful = errors.New("nats: message deletion unsuccessful")
-	// ErrMsgNotFound is returned when a message with provided sequence does not exist on stream
-	ErrMsgNotFound = errors.New("nats: message not found")
-	// ErrInvalidJSAck is returned when the ack response from server is invalid
-	ErrInvalidJSAck = errors.New("nats: invalid jetstream publish response")
-	// ErrNoStreamResponse is retured when stream does not respond with ack after the defined retry attempts are reached
-	ErrNoStreamResponse = errors.New("nats: no response from stream")
+	ErrMsgDeleteUnsuccessful = &jsError{message: "message deletion unsuccessful"}
+
 	// ErrAsyncPublishReplySubjectSet is returned when reply subject is set on async message publish
-	ErrAsyncPublishReplySubjectSet = errors.New("nats: reply subject should be empty")
+	ErrAsyncPublishReplySubjectSet = &jsError{message: "reply subject should be empty"}
+
 	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack
-	ErrTooManyStalledMsgs = errors.New("nats: stalled with too many outstanding async published messages")
+	ErrTooManyStalledMsgs = &jsError{message: "stalled with too many outstanding async published messages"}
 )
 
-// Error prints the API error conde and description
+// Error prints the JetStream API error code and description
 func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
+}
+
+// APIError implements the JetStreamError interface.
+func (e *APIError) APIError() *APIError {
+	return e
+}
+
+// Is matches against an APIError.
+func (e *APIError) Is(err error) bool {
+	if e == nil {
+		return false
+	}
+	// Extract internal APIError to match against.
+	var aerr *APIError
+	ok := errors.As(err, &aerr)
+	if !ok {
+		return ok
+	}
+	return e.ErrorCode == aerr.ErrorCode
+}
+
+func (err *jsError) APIError() *APIError {
+	return err.apiErr
+}
+
+func (err *jsError) Error() string {
+	if err.apiErr != nil && err.apiErr.Description != "" {
+		return err.apiErr.Error()
+	}
+	return fmt.Sprintf("nats: %s", err.message)
+}
+
+func (err *jsError) Unwrap() error {
+	// Allow matching to embedded APIError in case there is one.
+	if err.apiErr == nil {
+		return nil
+	}
+	return err.apiErr
 }

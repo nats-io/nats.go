@@ -40,12 +40,19 @@ type (
 		GetMsg(context.Context, uint64) (*RawStreamMsg, error)
 		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
 		GetLastMsgForSubject(context.Context, string) (*RawStreamMsg, error)
-		// DeleteMsg erases a message from a stream
+		// DeleteMsg deletes a message from a stream.
+		// The message is marked as erased, but not overwritten
 		DeleteMsg(context.Context, uint64) error
+
+		// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+		// As a result, this operation is slower than DeleteMsg()
+		SecureDeleteMsg(context.Context, uint64) error
 	}
 
 	streamConsumerManager interface {
-		// CreateConsumer adds a new consumer to a stream
+		// CreateConsumer creates a consumer on a given stream with given config
+		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateConsumer(context.Context, ConsumerConfig) (Consumer, error)
 		// UpdateConsumer updates an existing consumer
 		UpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
@@ -53,9 +60,9 @@ type (
 		Consumer(context.Context, string) (Consumer, error)
 		// DeleteConsumer removes a consumer
 		DeleteConsumer(context.Context, string) error
-		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of stream infos
+		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister
-		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of stream names
+		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
 	RawStreamMsg struct {
@@ -132,7 +139,8 @@ type (
 	}
 
 	msgDeleteRequest struct {
-		Seq uint64 `json:"seq"`
+		Seq     uint64 `json:"seq"`
+		NoErase bool   `json:"no_erase,omitempty"`
 	}
 
 	msgDeleteResponse struct {
@@ -146,7 +154,7 @@ type (
 	}
 
 	ConsumerNameLister interface {
-		Names() <-chan string
+		Name() <-chan string
 		Err() <-chan error
 	}
 
@@ -181,7 +189,7 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 		}
 		if c != nil {
 			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
 			}
 			return c, nil
 		}
@@ -190,11 +198,12 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 }
 
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	if cfg.Durable != "" {
-		_, err := s.Consumer(ctx, cfg.Durable)
-		if err != nil {
-			return nil, err
-		}
+	if cfg.Durable == "" {
+		return nil, ErrConsumerNameRequired
+	}
+	_, err := s.Consumer(ctx, cfg.Durable)
+	if err != nil {
+		return nil, err
 	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
@@ -238,11 +247,12 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
 	}
+	s.info = resp.StreamInfo
 
 	return resp.StreamInfo, nil
 }
@@ -310,7 +320,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == MessageNotFound {
+		if resp.Error.ErrorCode == JSErrCodeMessageNotFound {
 			return nil, ErrMsgNotFound
 		}
 		return nil, resp.Error
@@ -335,14 +345,26 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}, nil
 }
 
+// DeleteMsg deletes a message from a stream.
+// The message is marked as erased, but not overwritten
 func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
-	req, err := json.Marshal(&msgDeleteRequest{Seq: seq})
+	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq, NoErase: true})
+}
+
+// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+// As a result, this operation is slower than DeleteMsg()
+func (s *stream) SecureDeleteMsg(ctx context.Context, seq uint64) error {
+	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq})
+}
+
+func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
+	r, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 	subj := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiMsgDeleteT, s.name))
 	var resp msgDeleteResponse
-	if _, err = s.jetStream.apiRequestJSON(ctx, subj, &resp, req); err != nil {
+	if _, err = s.jetStream.apiRequestJSON(ctx, subj, &resp, r); err != nil {
 		return err
 	}
 	if !resp.Success {
@@ -351,6 +373,7 @@ func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
 	return nil
 }
 
+// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	l := &consumerLister{
 		js:        s.jetStream,
@@ -391,6 +414,7 @@ func (s *consumerLister) Err() <-chan error {
 	return s.errs
 }
 
+// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	l := &consumerLister{
 		js:    s.jetStream,
@@ -423,11 +447,11 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	return l
 }
 
-func (s *consumerLister) Names() <-chan string {
+func (s *consumerLister) Name() <-chan string {
 	return s.names
 }
 
-// infos fetches the next ConsumerInfo page
+// consumerInfos fetches the next ConsumerInfo page
 func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*ConsumerInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
@@ -455,7 +479,7 @@ func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*C
 	return resp.Consumers, nil
 }
 
-// names fetches the next consumer names page
+// consumerNames fetches the next consumer names page
 func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]string, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData

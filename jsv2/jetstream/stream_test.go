@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,12 +49,12 @@ func TestCreateConsumer(t *testing.T) {
 		{
 			name:           "consumer already exists, config mismatch",
 			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test"},
-			withError:      ErrConsumerExists,
+			withError:      ErrConsumerNameAlreadyInUse,
 		},
 		{
 			name:           "invalid durable name",
 			consumerConfig: ConsumerConfig{Durable: "dur.123", AckPolicy: AckExplicitPolicy},
-			withError:      ErrInvalidDurableName,
+			withError:      ErrInvalidConsumerName,
 		},
 	}
 
@@ -139,9 +140,9 @@ func TestCreateConsumer_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy})
-			if err == nil || !errors.Is(err, ErrConsumerExists) {
-				t.Fatalf("Expected error: %v; got %v", ErrConsumerExists, err)
+			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "test"})
+			if err == nil || !errors.Is(err, ErrConsumerNameAlreadyInUse) {
+				t.Fatalf("Expected error: %v; got %v", ErrConsumerNameAlreadyInUse, err)
 			}
 		})
 	})
@@ -165,7 +166,7 @@ func TestUpdateConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
@@ -234,7 +235,7 @@ func TestConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
@@ -299,7 +300,7 @@ func TestDeleteConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
@@ -654,6 +655,10 @@ func TestDeleteMsg(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			sub, err := nc.SubscribeSync("$JS.API.STREAM.MSG.DELETE.foo")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			err = s.DeleteMsg(ctx, test.seq)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
@@ -664,7 +669,87 @@ func TestDeleteMsg(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			deleteMsg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !strings.Contains(string(deleteMsg.Data), `"no_erase":true`) {
+				t.Fatalf("Expected no_erase on request; got: %q", string(deleteMsg.Data))
+			}
+			if _, err = s.GetMsg(ctx, test.seq); err == nil || !errors.Is(err, ErrMsgNotFound) {
+				t.Fatalf("Expected error: %v; got: %v", ErrMsgNotFound, err)
+			}
+		})
+	}
+}
 
+func TestSecureDeleteMsg(t *testing.T) {
+	tests := []struct {
+		name      string
+		seq       uint64
+		withError error
+	}{
+		{
+			name: "delete message",
+			seq:  3,
+		},
+		{
+			name:      "msg not found",
+			seq:       10,
+			withError: ErrMsgDeleteUnsuccessful,
+		},
+	}
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 1; i < 5; i++ {
+		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.Publish(ctx, "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sub, err := nc.SubscribeSync("$JS.API.STREAM.MSG.DELETE.foo")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			err = s.SecureDeleteMsg(ctx, test.seq)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			deleteMsg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if strings.Contains(string(deleteMsg.Data), `"no_erase":true`) {
+				t.Fatalf("Expected no_erase to be set to false on request; got: %q", string(deleteMsg.Data))
+			}
 			if _, err = s.GetMsg(ctx, test.seq); err == nil || !errors.Is(err, ErrMsgNotFound) {
 				t.Fatalf("Expected error: %v; got: %v", ErrMsgNotFound, err)
 			}
@@ -782,7 +867,7 @@ func TestConsumerNames(t *testing.T) {
 		Loop:
 			for {
 				select {
-				case s := <-consumersList.Names():
+				case s := <-consumersList.Name():
 					consumers = append(consumers, s)
 				case err := <-consumersList.Err():
 					if !errors.Is(err, ErrEndOfData) {

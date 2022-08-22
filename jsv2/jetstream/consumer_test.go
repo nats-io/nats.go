@@ -221,6 +221,7 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -230,18 +231,23 @@ func TestPullConsumerNext(t *testing.T) {
 					errs <- err
 					break
 				}
+				if msg == nil {
+					close(done)
+					break
+				}
 				msgs = append(msgs, msg)
 			}
 		}()
 
 		time.Sleep(10 * time.Millisecond)
 		publishTestMsgs(t, nc)
-		err = <-errs
-		if !errors.Is(err, ErrNoMessages) {
+		select {
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %v", err)
-		}
-		if len(msgs) != len(testMsgs) {
-			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		case <-done:
+			if len(msgs) != len(testMsgs) {
+				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+			}
 		}
 		for i, msg := range msgs {
 			if string(msg.Data()) != testMsgs[i] {
@@ -278,13 +284,18 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait(true))
+				msg, err = c.Next(nextCtx, WithNoWait())
 				cancel()
 				if err != nil {
 					errs <- err
+					break
+				}
+				if msg == nil {
+					close(done)
 					break
 				}
 				msgs = append(msgs, msg)
@@ -294,12 +305,13 @@ func TestPullConsumerNext(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		publishTestMsgs(t, nc)
 
-		err = <-errs
-		if !errors.Is(err, ErrNoMessages) {
+		select {
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %v", err)
-		}
-		if len(msgs) != 0 {
-			t.Fatalf("Expected no messages, got %d", len(msgs))
+		case <-done:
+			if len(msgs) != 0 {
+				t.Fatalf("Expected no messages, got %d", len(msgs))
+			}
 		}
 	})
 
@@ -332,13 +344,18 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait(true))
+				msg, err = c.Next(nextCtx, WithNoWait())
 				cancel()
 				if err != nil {
 					errs <- err
+					break
+				}
+				if msg == nil {
+					close(done)
 					break
 				}
 				msgs = append(msgs, msg)
@@ -348,16 +365,12 @@ func TestPullConsumerNext(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		publishTestMsgs(t, nc)
 
-		err = <-errs
-		if !errors.Is(err, ErrNoMessages) {
+		select {
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %v", err)
-		}
-		if len(msgs) != 5 {
-			t.Fatalf("Expected no messages, got %d", len(msgs))
-		}
-		for i, msg := range msgs {
-			if string(msg.Data()) != testMsgs[i] {
-				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+		case <-done:
+			if len(msgs) != 5 {
+				t.Fatalf("Expected no messages, got %d", len(msgs))
 			}
 		}
 	})
@@ -452,6 +465,7 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -461,14 +475,22 @@ func TestPullConsumerNext(t *testing.T) {
 					errs <- err
 					break
 				}
+				if msg == nil {
+					close(done)
+					break
+				}
 				msgs = append(msgs, msg)
 			}
 		}()
 
 		shutdownJSServerAndRemoveStorage(t, srv)
-		err = <-errs
-		if !errors.Is(err, ErrNoHeartbeat) {
-			t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
+		select {
+		case err := <-errs:
+			if !errors.Is(err, ErrNoHeartbeat) {
+				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
+			}
+		case <-done:
+			t.Fatalf("Expected error: %v; got none", ErrNoHeartbeat)
 		}
 	})
 
@@ -535,6 +557,7 @@ func TestPullConsumerNext(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		var msg JetStreamMsg
 		errs := make(chan error)
+		done := make(chan struct{})
 		go func() {
 			for {
 				nextCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
@@ -544,13 +567,20 @@ func TestPullConsumerNext(t *testing.T) {
 					errs <- err
 					break
 				}
+				if msg == nil {
+					close(done)
+					break
+				}
 				msgs = append(msgs, msg)
 			}
 		}()
 
-		err = <-errs
-		if !errors.Is(err, ErrNoMessages) {
-			t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
+		select {
+		case err := <-errs:
+			if !errors.Is(err, ErrNoMessages) {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		case <-done:
 		}
 	})
 }
@@ -601,6 +631,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			msgs := make([]JetStreamMsg, 0)
 			var msg JetStreamMsg
 			errs := make(chan error)
+			done := make(chan struct{})
 			go func() {
 				for {
 					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -610,16 +641,21 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 						errs <- err
 						break
 					}
+					if msg == nil {
+						close(done)
+						break
+					}
 					msgs = append(msgs, msg)
 				}
 			}()
 			publishTestMsgs(t, nc)
-			err = <-errs
-			if !errors.Is(err, ErrNoMessages) {
+			select {
+			case err := <-errs:
 				t.Fatalf("Unexpected error: %v", err)
-			}
-			if len(msgs) != len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+			case <-done:
+				if len(msgs) != len(testMsgs) {
+					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+				}
 			}
 			for i, msg := range msgs {
 				if string(msg.Data()) != testMsgs[i] {
@@ -656,13 +692,18 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			msgs := make([]JetStreamMsg, 0)
 			var msg JetStreamMsg
 			errs := make(chan error)
+			done := make(chan struct{})
 			go func() {
 				for {
 					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-					msg, err = c.Next(nextCtx, WithNoWait(true))
+					msg, err = c.Next(nextCtx, WithNoWait())
 					cancel()
 					if err != nil {
 						errs <- err
+						break
+					}
+					if msg == nil {
+						close(done)
 						break
 					}
 					msgs = append(msgs, msg)
@@ -672,12 +713,13 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			publishTestMsgs(t, nc)
 
-			err = <-errs
-			if !errors.Is(err, ErrNoMessages) {
+			select {
+			case err := <-errs:
 				t.Fatalf("Unexpected error: %v", err)
-			}
-			if len(msgs) != 0 {
-				t.Fatalf("Expected no messages, got %d", len(msgs))
+			case <-done:
+				if len(msgs) != 0 {
+					t.Fatalf("Expected no messages, got %d", len(msgs))
+				}
 			}
 		})
 	})
@@ -709,6 +751,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			msgs := make([]JetStreamMsg, 0)
 			var msg JetStreamMsg
 			errs := make(chan error)
+			done := make(chan struct{})
 			go func() {
 				for {
 					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -718,18 +761,23 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 						errs <- err
 						break
 					}
+					if msg == nil {
+						close(done)
+						break
+					}
 					msgs = append(msgs, msg)
 				}
 			}()
 
 			time.Sleep(20 * time.Millisecond)
 			publishTestMsgs(t, nc)
-			err = <-errs
-			if !errors.Is(err, ErrNoMessages) {
+			select {
+			case err := <-errs:
 				t.Fatalf("Unexpected error: %v", err)
-			}
-			if len(msgs) != len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+			case <-done:
+				if len(msgs) != len(testMsgs) {
+					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+				}
 			}
 			for i, msg := range msgs {
 				if string(msg.Data()) != testMsgs[i] {

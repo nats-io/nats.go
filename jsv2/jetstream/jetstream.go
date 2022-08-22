@@ -29,7 +29,7 @@ type (
 	// Create, update and get operations return 'Stream' interface,
 	// allowing operations on consumers
 	//
-	// AddConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
+	// CreateConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
 	//
 	// Client returns a JetStremClient, used to publish messages on a stream or fetch messages by sequence number
 	JetStream interface {
@@ -49,10 +49,12 @@ type (
 		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
 		StreamNames(context.Context) StreamNameLister
 
-		// AddConsumer creates a consumer on a given stream with given config
+		// CreateConsumer creates a consumer on a given stream with given config
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		AddConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		CreateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		// UpdateConsumer updates an existing consumer
+		UpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
@@ -134,7 +136,7 @@ type (
 	}
 
 	StreamNameLister interface {
-		Names() <-chan string
+		Name() <-chan string
 		Err() <-chan error
 	}
 
@@ -258,7 +260,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNameInUse {
+		if resp.Error.ErrorCode == JSErrCodeStreamNameInUse {
 			return nil, ErrStreamNameAlreadyInUse
 		}
 		return nil, resp.Error
@@ -288,7 +290,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -313,7 +315,7 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -336,7 +338,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return ErrStreamNotFound
 		}
 		return resp.Error
@@ -344,25 +346,35 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
 	if cfg.Durable != "" {
-		s, err := js.Stream(ctx, stream)
-		if err != nil {
-			return nil, err
-		}
-		c, err := s.Consumer(ctx, cfg.Durable)
+		c, err := js.Consumer(ctx, stream, cfg.Durable)
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
 			return nil, err
 		}
 		if c != nil {
 			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
 			}
 			return c, nil
 		}
+	}
+	return upsertConsumer(ctx, js, stream, cfg)
+}
+
+func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	if cfg.Durable == "" {
+		return nil, ErrConsumerNameRequired
+	}
+	_, err := js.Consumer(ctx, stream, cfg.Durable)
+	if err != nil {
+		return nil, err
 	}
 	return upsertConsumer(ctx, js, stream, cfg)
 }
@@ -402,10 +414,10 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JetStreamNotEnabledForAccount {
+		if resp.Error.ErrorCode == JSErrCodeJetStreamNotEnabledForAccount {
 			return nil, ErrJetStreamNotEnabledForAccount
 		}
-		if resp.Error.ErrorCode == JetStreamNotEnabled {
+		if resp.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
 			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, resp.Error
@@ -486,7 +498,7 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 	return l
 }
 
-func (s *streamLister) Names() <-chan string {
+func (s *streamLister) Name() <-chan string {
 	return s.names
 }
 

@@ -693,7 +693,7 @@ func TestStreamNames(t *testing.T) {
 		Loop:
 			for {
 				select {
-				case s := <-streamsList.Names():
+				case s := <-streamsList.Name():
 					streams = append(streams, s)
 				case err := <-streamsList.Err():
 					if !errors.Is(err, ErrEndOfData) {
@@ -709,354 +709,350 @@ func TestStreamNames(t *testing.T) {
 	}
 }
 
-// func TestPublishStream(t *testing.T) {
-// 	srv := RunBasicJetStreamServer()
-// 	defer shutdownJSServerAndRemoveStorage(t, srv)
-// 	nc, err := nats.Connect(srv.ClientURL())
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+func TestJetStream_CreateConsumer(t *testing.T) {
+	tests := []struct {
+		name           string
+		stream         string
+		consumerConfig ConsumerConfig
+		shouldCreate   bool
+		withError      error
+	}{
+		{
+			name:           "create durable pull consumer",
+			stream:         "foo",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
+			shouldCreate:   true,
+		},
+		{
+			name:           "create ephemeral pull consumer",
+			stream:         "foo",
+			consumerConfig: ConsumerConfig{AckPolicy: AckExplicitPolicy},
+			shouldCreate:   true,
+		},
+		{
+			name:           "consumer already exists, idempotent operation",
+			stream:         "foo",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
+		},
+		{
+			name:           "consumer already exists, config mismatch",
+			stream:         "foo",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test"},
+			withError:      ErrConsumerNameAlreadyInUse,
+		},
+		{
+			name:      "stream does not exist",
+			stream:    "abc",
+			withError: ErrStreamNotFound,
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.1",
+			withError: ErrInvalidStreamName,
+		},
+		{
+			name:           "invalid durable name",
+			stream:         "foo",
+			consumerConfig: ConsumerConfig{Durable: "dur.123", AckPolicy: AckExplicitPolicy},
+			withError:      ErrInvalidConsumerName,
+		},
+	}
 
-// 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 	defer cancel()
-// 	js, err := New(nc)
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	defer nc.Close()
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	// _, err = js.Stream(ctx, "foo")
-// 	// if err == nil {
-// 	// 	t.Fatalf("Expected no error: %v", err)
-// 	// }
+	js, err := New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-// 	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	info, err := s.Info(ctx)
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	fmt.Println(info.Config.Name)
-// 	fmt.Println(info.Config.Description)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sub *nats.Subscription
+			if test.consumerConfig.Durable != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.consumerConfig.Durable))
+			} else {
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
+			}
+			c, err := js.CreateConsumer(ctx, test.stream, test.consumerConfig)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if test.shouldCreate {
+				if _, err := sub.NextMsgWithContext(ctx); err != nil {
+					t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
+				}
+			}
+			_, err = js.Consumer(ctx, test.stream, c.CachedInfo().Name)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
 
-// 	info, err = s.Info(ctx)
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	fmt.Println(info.Config.Name)
-// 	fmt.Println(info.Config.Description)
+func TestJetStream_UpdateConsumer(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		durable   string
+		withError error
+	}{
+		{
+			name:    "update consumer",
+			stream:  "foo",
+			durable: "dur",
+		},
+		{
+			name:      "consumer does not exist",
+			stream:    "foo",
+			durable:   "abc",
+			withError: ErrConsumerNotFound,
+		},
+		{
+			name:      "invalid durable name",
+			stream:    "foo",
+			durable:   "dur.123",
+			withError: ErrInvalidConsumerName,
+		},
+		{
+			name:      "stream does not exist",
+			stream:    "abc",
+			durable:   "dur",
+			withError: ErrStreamNotFound,
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.1",
+			durable:   "dur",
+			withError: ErrInvalidStreamName,
+		},
+	}
 
-// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{Durable: "test", AckPolicy: AckExplicitPolicy})
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	for i := 0; i < 14; i++ {
-// 		ack, err := js.Publish(ctx, "FOO.123", []byte(fmt.Sprintf("msg %d", i)))
-// 		if err != nil {
-// 			t.Fatalf("Unexpected error: %v", err)
-// 		}
-// 		fmt.Printf("Published msg with seq: %d on stream %s\n", ack.Sequence, ack.Stream)
-// 	}
+	js, err := New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-// 	time.Sleep(2 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	err = cons.Stream(ctx, func(msg JetStreamMsg, err error) {
-// 		fmt.Println(string(msg.Data()))
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, err := js.UpdateConsumer(ctx, test.stream, ConsumerConfig{Durable: test.durable, AckPolicy: AckAllPolicy, Description: test.name})
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err = s.Consumer(ctx, c.CachedInfo().Name)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if c.CachedInfo().Config.Description != test.name {
+				t.Fatalf("Invalid consumer description after update; want: %s; got: %s", test.name, c.CachedInfo().Config.Description)
+			}
+		})
+	}
+}
 
-// 	time.Sleep(2 * time.Second)
+func TestJetStream_Consumer(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		durable   string
+		withError error
+	}{
+		{
+			name:    "get existing consumer",
+			stream:  "foo",
+			durable: "dur",
+		},
+		{
+			name:      "consumer does not exist",
+			stream:    "foo",
+			durable:   "abc",
+			withError: ErrConsumerNotFound,
+		},
+		{
+			name:      "invalid durable name",
+			stream:    "foo",
+			durable:   "dur.123",
+			withError: ErrInvalidConsumerName,
+		},
+		{
+			name:      "stream does not exist",
+			stream:    "abc",
+			durable:   "dur",
+			withError: ErrStreamNotFound,
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.1",
+			durable:   "dur",
+			withError: ErrInvalidStreamName,
+		},
+	}
 
-// 	for i := 0; i < 14; i++ {
-// 		ack, err := js.Publish(ctx, "FOO.123", []byte(fmt.Sprintf("second batch msg %d", i)))
-// 		if err != nil {
-// 			t.Fatalf("Unexpected error: %v", err)
-// 		}
-// 		fmt.Printf("Published msg with seq: %d on stream %s\n", ack.Sequence, ack.Stream)
-// 	}
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	time.Sleep(5 * time.Second)
-// }
+	js, err := New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-// func BenchmarkGetMetadataFields(b *testing.B) {
-// 	sub := "$JS.ACK.<stream>.<consumer>.<delivered>.<sseq>.<cseq>.<tm>.<pending>"
-// 	for n := 0; n < b.N; n++ {
-// 		getMetadataFields(sub)
-// 	}
-// }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// func TestGetMetadataFields(t *testing.T) {
-// 	sub := "$JS.ACK.<stream>.<consumer>.<delivered>.<sseq>.<cseq>.<tm>.<pending>"
-// 	res, err := getMetadataFields(sub)
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, err := js.Consumer(ctx, test.stream, test.durable)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if c.CachedInfo().Name != test.durable {
+				t.Fatalf("Unexpected consumer fetched; want: %s; got: %s", test.durable, c.CachedInfo().Name)
+			}
+		})
+	}
+}
 
-// 	expected := []string{"$JS", "ACK", "", "", "<stream>", "<consumer>", "<delivered>", "<sseq>", "<cseq>", "<tm>", "<pending>"}
-// 	if !reflect.DeepEqual(res, expected) {
-// 		t.Fatalf("\nExpected: %v\nGot:%v", expected, res)
-// 	}
-// }
+func TestJetStream_DeleteConsumer(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		durable   string
+		withError error
+	}{
+		{
+			name:    "delete existing consumer",
+			stream:  "foo",
+			durable: "dur",
+		},
+		{
+			name:      "consumer does not exist",
+			stream:    "foo",
+			durable:   "dur",
+			withError: ErrConsumerNotFound,
+		},
+		{
+			name:      "invalid durable name",
+			stream:    "foo",
+			durable:   "dur.123",
+			withError: ErrInvalidConsumerName,
+		},
+		{
+			name:      "stream not found",
+			stream:    "abc",
+			durable:   "dur",
+			withError: ErrStreamNotFound,
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.1",
+			durable:   "dur",
+			withError: ErrInvalidStreamName,
+		},
+	}
 
-// func TestJetStreamPublishAsync(t *testing.T) {
-// 	srv := RunBasicJetStreamServer()
-// 	defer shutdownJSServerAndRemoveStorage(t, srv)
-// 	nc, err := nats.Connect(srv.ClientURL())
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 	defer cancel()
-// 	js, err := New(nc)
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	defer nc.Close()
-// 	// Make sure we get a proper failure when no stream is present.
-// 	paf, err := js.PublishAsync(ctx, "foo", []byte("Hello JS"))
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
+	js, err := New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-// 	select {
-// 	case <-paf.Ok():
-// 		t.Fatalf("Did not expect to get PubAck")
-// 	case err := <-paf.Err():
-// 		if err != nats.ErrNoResponders {
-// 			t.Fatalf("Expected a ErrNoResponders error, got %v", err)
-// 		}
-// 		// Should be able to get the message back to resend, etc.
-// 		m := paf.Msg()
-// 		if m == nil {
-// 			t.Fatalf("Expected to be able to retrieve the message")
-// 		}
-// 		if m.Subject != "foo" || string(m.Data) != "Hello JS" {
-// 			t.Fatalf("Wrong message: %+v", m)
-// 		}
-// 	case <-time.After(time.Second):
-// 		t.Fatalf("Did not receive an error in time")
-// 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-// 	// Now create a stream and expect a PubAck from <-OK().
-// 	if _, err := js.CreateStream(ctx, StreamConfig{Name: "TEST"}); err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	paf, err = js.PublishAsync(ctx, "TEST", []byte("Hello JS ASYNC PUB"))
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	select {
-// 	case pa := <-paf.Ok():
-// 		if pa.Stream != "TEST" || pa.Sequence != 1 {
-// 			t.Fatalf("Bad PubAck: %+v", pa)
-// 		}
-// 	case err := <-paf.Err():
-// 		t.Fatalf("Did not expect to get an error: %v", err)
-// 	case <-time.After(time.Second):
-// 		t.Fatalf("Did not receive a PubAck in time")
-// 	}
-
-// 	errCh := make(chan error, 1)
-
-// 	// Make sure we can register an async err handler for these.
-// 	errHandler := func(js JetStream, originalMsg *nats.Msg, err error) {
-// 		if originalMsg == nil {
-// 			t.Fatalf("Expected non-nil original message")
-// 		}
-// 		errCh <- err
-// 	}
-// 	js, err = New(nc, WithPublishAsyncErrHandler(errHandler))
-// 	if err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	if _, err = js.PublishAsync(ctx, "bar", []byte("Hello JS ASYNC PUB")); err != nil {
-// 		t.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	select {
-// 	case err := <-errCh:
-// 		if err != nats.ErrNoResponders {
-// 			t.Fatalf("Expected a ErrNoResponders error, got %v", err)
-// 		}
-// 	case <-time.After(time.Second):
-// 		t.Fatalf("Did not receive an async err in time")
-// 	}
-
-// 	// // Now test that we can set our window for the JetStream context to limit number of outstanding messages.
-// 	// js, err = nc.JetStream(nats.PublishAsyncMaxPending(10))
-// 	// if err != nil {
-// 	// 	t.Fatalf("Unexpected error: %v", err)
-// 	// }
-
-// 	// for i := 0; i < 100; i++ {
-// 	// 	if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
-// 	// 		t.Fatalf("Unexpected error: %v", err)
-// 	// 	}
-// 	// 	if np := js.PublishAsyncPending(); np > 10 {
-// 	// 		t.Fatalf("Expected num pending to not exceed 10, got %d", np)
-// 	// 	}
-// 	// }
-
-// 	// // Now test that we can wait on all prior outstanding if we want.
-// 	// js, err = nc.JetStream(nats.PublishAsyncMaxPending(10))
-// 	// if err != nil {
-// 	// 	t.Fatalf("Unexpected error: %v", err)
-// 	// }
-
-// 	// for i := 0; i < 500; i++ {
-// 	// 	if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
-// 	// 		t.Fatalf("Unexpected error: %v", err)
-// 	// 	}
-// 	// }
-
-// 	// select {
-// 	// case <-js.PublishAsyncComplete():
-// 	// case <-time.After(5 * time.Second):
-// 	// 	t.Fatalf("Did not receive completion signal")
-// 	// }
-
-// 	// // Check invalid options
-// 	// _, err = js.PublishAsync("foo", []byte("Bad"), nats.StallWait(0))
-// 	// expectedErr := "nats: stall wait should be more than 0"
-// 	// if err == nil || err.Error() != expectedErr {
-// 	// 	t.Errorf("Expected %v, got: %v", expectedErr, err)
-// 	// }
-
-// 	// _, err = js.Publish("foo", []byte("Also bad"), nats.StallWait(200*time.Millisecond))
-// 	// expectedErr = "nats: stall wait cannot be set to sync publish"
-// 	// if err == nil || err.Error() != expectedErr {
-// 	// 	t.Errorf("Expected %v, got: %v", expectedErr, err)
-// 	// }
-// }
-
-// func BenchmarkNext(b *testing.B) {
-// 	srv := RunBasicJetStreamServer()
-// 	defer func() {
-// 		var sd string
-// 		if config := srv.JetStreamConfig(); config != nil {
-// 			sd = config.StoreDir
-// 		}
-// 		srv.Shutdown()
-// 		if sd != "" {
-// 			if err := os.RemoveAll(sd); err != nil {
-// 				b.Fatalf("Unable to remove storage %q: %v", sd, err)
-// 			}
-// 		}
-// 		srv.WaitForShutdown()
-// 	}()
-// 	nc, err := nats.Connect(srv.ClientURL())
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	js, err := New(nc)
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	defer nc.Close()
-// 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 	defer cancel()
-// 	s, err := js.CreateStream(ctx, StreamConfig{
-// 		Name:     "TEST",
-// 		Subjects: []string{"foo"},
-// 	})
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{
-// 		Durable:   "dlc",
-// 		AckPolicy: AckExplicitPolicy,
-// 	})
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	for n := 0; n < b.N; n++ {
-// 		if _, err := js.Publish(ctx, "foo", []byte("test")); err != nil {
-// 			b.Fatalf("Unexpected error: %v", err)
-// 		}
-// 	}
-
-// 	start := time.Now()
-// 	for n := 0; n < b.N; n++ {
-// 		msg, err := cons.Next(ctx)
-// 		if err != nil {
-// 			b.Fatalf("Unexpected error: %v", err)
-// 		}
-// 		msg.Ack()
-// 	}
-// 	fmt.Printf("Execution time: %s\n Operations: %d\n", time.Since(start).String(), b.N)
-
-// }
-
-// func TestStreamBench(b *testing.T) {
-// 	srv := RunBasicJetStreamServer()
-// 	defer func() {
-// 		var sd string
-// 		if config := srv.JetStreamConfig(); config != nil {
-// 			sd = config.StoreDir
-// 		}
-// 		srv.Shutdown()
-// 		if sd != "" {
-// 			if err := os.RemoveAll(sd); err != nil {
-// 				b.Fatalf("Unable to remove storage %q: %v", sd, err)
-// 			}
-// 		}
-// 		srv.WaitForShutdown()
-// 	}()
-// 	nc, err := nats.Connect(srv.ClientURL())
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-
-// 	js, err := New(nc)
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	defer nc.Close()
-// 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 	defer cancel()
-// 	s, err := js.CreateStream(ctx, StreamConfig{
-// 		Name:     "TEST",
-// 		Subjects: []string{"foo"},
-// 	})
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	cons, err := s.CreateConsumer(ctx, ConsumerConfig{
-// 		Durable:   "dlc",
-// 		AckPolicy: AckExplicitPolicy,
-// 	})
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	wg := sync.WaitGroup{}
-// 	for n := 0; n < 500000; n++ {
-// 		if _, err := js.Publish(ctx, "foo", []byte("test")); err != nil {
-// 			b.Fatalf("Unexpected error: %v", err)
-// 		}
-// 		wg.Add(1)
-// 	}
-
-// 	start := time.Now()
-// 	err = cons.Stream(ctx, func(msg JetStreamMsg, err error) {
-// 		// fmt.Println(string(msg.Data()))
-// 		msg.Ack()
-// 		wg.Done()
-// 	}, WithStreamHeartbeat(1*time.Second))
-// 	if err != nil {
-// 		b.Fatalf("Unexpected error: %v", err)
-// 	}
-// 	wg.Wait()
-// 	fmt.Printf("Execution time: %s\n", time.Since(start).String())
-
-// }
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := js.DeleteConsumer(ctx, test.stream, test.durable)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			_, err = s.Consumer(ctx, test.durable)
+			if err == nil || !errors.Is(err, ErrConsumerNotFound) {
+				t.Fatalf("Expected error: %v; got: %v", ErrConsumerNotFound, err)
+			}
+		})
+	}
+}
