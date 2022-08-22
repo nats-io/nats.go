@@ -29,7 +29,7 @@ type (
 	// Create, update and get operations return 'Stream' interface,
 	// allowing operations on consumers
 	//
-	// AddConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
+	// CreateConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
 	//
 	// Client returns a JetStremClient, used to publish messages on a stream or fetch messages by sequence number
 	JetStream interface {
@@ -49,10 +49,10 @@ type (
 		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
 		StreamNames(context.Context) StreamNameLister
 
-		// AddConsumer creates a consumer on a given stream with given config
+		// CreateConsumer creates a consumer on a given stream with given config
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		AddConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		CreateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
@@ -134,7 +134,7 @@ type (
 	}
 
 	StreamNameLister interface {
-		Names() <-chan string
+		Name() <-chan string
 		Err() <-chan error
 	}
 
@@ -344,7 +344,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
@@ -363,6 +363,21 @@ func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg Consume
 			}
 			return c, nil
 		}
+	}
+	return upsertConsumer(ctx, js, stream, cfg)
+}
+
+func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+	if cfg.Durable == "" {
+		return nil, ErrConsumerNameRequired
+	}
+	s, err := js.Stream(ctx, stream)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.Consumer(ctx, cfg.Durable)
+	if err != nil {
+		return nil, err
 	}
 	return upsertConsumer(ctx, js, stream, cfg)
 }
@@ -486,7 +501,7 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 	return l
 }
 
-func (s *streamLister) Names() <-chan string {
+func (s *streamLister) Name() <-chan string {
 	return s.names
 }
 

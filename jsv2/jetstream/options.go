@@ -85,9 +85,9 @@ func WithKeep(keep uint64) StreamPurgeOpt {
 }
 
 // WithNoWait can be used to terminate the 'Next()` request and return ErrNoMessages immediately if there are no messages at the time of request
-func WithNoWait(noWait bool) ConsumerNextOpt {
+func WithNoWait() ConsumerNextOpt {
 	return func(cfg *pullRequest) error {
-		cfg.NoWait = noWait
+		cfg.NoWait = true
 		cfg.Expires = 0
 		return nil
 	}
