@@ -172,10 +172,10 @@ var (
 
 var (
 	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled for an account.
-	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &JetStreamAPIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled"}}
+	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled"}}
 
 	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
-	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &JetStreamAPIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled"}}
+	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled"}}
 
 	// ErrConsumerNotActive is an error returned when consumer is not active.
 	ErrConsumerNotActive JetStreamError = &jsError{message: "consumer not active"}

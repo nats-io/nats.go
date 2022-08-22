@@ -135,17 +135,17 @@ func TestJetStreamNotAccountEnabled(t *testing.T) {
 	}
 
 	// matching arbitrary custom error via errors.Is(...)
-	customErr := &nats.JetStreamAPIError{ErrorCode: expected}
+	customErr := &nats.APIError{ErrorCode: expected}
 	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabledForAccount); !ok {
 		t.Fatal("Expected wrapped ErrJetStreamNotEnabledForAccount")
 	}
-	customErr = &nats.JetStreamAPIError{ErrorCode: 1}
+	customErr = &nats.APIError{ErrorCode: 1}
 	if ok := errors.Is(customErr, nats.ErrJetStreamNotEnabledForAccount); ok {
 		t.Fatal("Expected to not match ErrJetStreamNotEnabled")
 	}
 
 	// matching to concrete type via errors.As(...)
-	var aerr *nats.JetStreamAPIError
+	var aerr *nats.APIError
 	ok = errors.As(err, &aerr)
 	if !ok {
 		t.Fatal("Expected an APIError")
@@ -4900,7 +4900,7 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		apiErr := &nats.JetStreamAPIError{}
+		apiErr := &nats.APIError{}
 		if !errors.As(err, &apiErr) || apiErr.ErrorCode != 10093 {
 			t.Fatalf("Expected API error 10093; got: %v", err)
 		}

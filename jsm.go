@@ -154,22 +154,22 @@ type ExternalStream struct {
 	DeliverPrefix string `json:"deliver"`
 }
 
-// JetStreamAPIError is included in all API responses if there was an error.
-type JetStreamAPIError struct {
+// APIError is included in all API responses if there was an error.
+type APIError struct {
 	Code        int       `json:"code"`
 	ErrorCode   ErrorCode `json:"err_code"`
 	Description string    `json:"description,omitempty"`
 }
 
 // Error prints the JetStream API error code and description
-func (e *JetStreamAPIError) Error() string {
+func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
 }
 
-// Is matches against an JetStreamAPIError.
-func (e *JetStreamAPIError) Is(err error) bool {
+// Is matches against an APIError.
+func (e *APIError) Is(err error) bool {
 	// Extract internal APIError to match against.
-	var aerr *JetStreamAPIError
+	var aerr *APIError
 	ok := errors.As(err, &aerr)
 	if !ok {
 		return ok
@@ -179,16 +179,16 @@ func (e *JetStreamAPIError) Is(err error) bool {
 
 // JetStreamError is an error result that happens when using JetStream.
 type JetStreamError interface {
-	APIError() *JetStreamAPIError
+	APIError() *APIError
 	error
 }
 
 type jsError struct {
-	apiErr  *JetStreamAPIError
+	apiErr  *APIError
 	message string
 }
 
-func (err *jsError) APIError() *JetStreamAPIError {
+func (err *jsError) APIError() *APIError {
 	return err.apiErr
 }
 
@@ -206,8 +206,8 @@ func (err *jsError) Unwrap() error {
 
 // apiResponse is a standard response from the JetStream JSON API
 type apiResponse struct {
-	Type  string             `json:"type"`
-	Error *JetStreamAPIError `json:"error,omitempty"`
+	Type  string    `json:"type"`
+	Error *APIError `json:"error,omitempty"`
 }
 
 // apiPaged includes variables used to create paged responses from the JSON API
@@ -803,11 +803,11 @@ type StreamInfo struct {
 
 // StreamSourceInfo shows information about an upstream stream source.
 type StreamSourceInfo struct {
-	Name     string             `json:"name"`
-	Lag      uint64             `json:"lag"`
-	Active   time.Duration      `json:"active"`
-	External *ExternalStream    `json:"external"`
-	Error    *JetStreamAPIError `json:"error"`
+	Name     string          `json:"name"`
+	Lag      uint64          `json:"lag"`
+	Active   time.Duration   `json:"active"`
+	External *ExternalStream `json:"external"`
+	Error    *APIError       `json:"error"`
 }
 
 // StreamState is information about the given stream.
