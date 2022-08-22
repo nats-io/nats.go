@@ -146,7 +146,7 @@ type (
 	}
 
 	ConsumerNameLister interface {
-		Names() <-chan string
+		Name() <-chan string
 		Err() <-chan error
 	}
 
@@ -190,11 +190,12 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 }
 
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	if cfg.Durable != "" {
-		_, err := s.Consumer(ctx, cfg.Durable)
-		if err != nil {
-			return nil, err
-		}
+	if cfg.Durable == "" {
+		return nil, ErrConsumerNameRequired
+	}
+	_, err := s.Consumer(ctx, cfg.Durable)
+	if err != nil {
+		return nil, err
 	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
@@ -243,6 +244,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 		}
 		return nil, resp.Error
 	}
+	s.info = resp.StreamInfo
 
 	return resp.StreamInfo, nil
 }
@@ -423,7 +425,7 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	return l
 }
 
-func (s *consumerLister) Names() <-chan string {
+func (s *consumerLister) Name() <-chan string {
 	return s.names
 }
 

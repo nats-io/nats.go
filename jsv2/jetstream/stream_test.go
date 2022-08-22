@@ -782,7 +782,7 @@ func TestConsumerNames(t *testing.T) {
 		Loop:
 			for {
 				select {
-				case s := <-consumersList.Names():
+				case s := <-consumersList.Name():
 					consumers = append(consumers, s)
 				case err := <-consumersList.Err():
 					if !errors.Is(err, ErrEndOfData) {

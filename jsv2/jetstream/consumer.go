@@ -80,7 +80,7 @@ type (
 //
 // Available options:
 // WithNoWait() - when set to true, `Next()` request does not wait for a message if no message is available at the time of request
-// WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request
+// WithNextHeartbeat() - sets an idle heartbeat setting for a pull request
 func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
 	p.Lock()
 	if atomic.LoadUint32(&p.isStreaming) == 1 {
@@ -147,13 +147,16 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 		case msg := <-msgChan:
 			return msg, nil
 		case err := <-errs:
+			if errors.Is(err, ErrNoMessages) {
+				return nil, nil
+			}
 			return nil, err
 		}
 	}
 }
 
 // Stream continuously receives messages from a consumer and handles them with the provided callback function
-// ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, an empty context should be provided
+// ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, a context without Deadline should be provided
 //
 // Available options:
 // WithBatchSize() - sets a single batch request messages limit, default is set to 100

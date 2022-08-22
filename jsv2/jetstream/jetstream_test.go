@@ -693,7 +693,7 @@ func TestStreamNames(t *testing.T) {
 		Loop:
 			for {
 				select {
-				case s := <-streamsList.Names():
+				case s := <-streamsList.Name():
 					streams = append(streams, s)
 				case err := <-streamsList.Err():
 					if !errors.Is(err, ErrEndOfData) {

@@ -79,6 +79,8 @@ var (
 	ErrNoHeartbeat = errors.New("nats: no heartbeat received, canceling subscription")
 	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
 	ErrConsumerHasActiveSubscription = errors.New("nats: consumer has active subscription")
+	// ErrConsumerNameRequired is returned when attempting to update consumer without providing durable name
+	ErrConsumerNameRequired = errors.New("nats: consumer name is required")
 
 	// Message errors
 
