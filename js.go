@@ -1693,7 +1693,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 					hasHeartbeats = info.Config.Heartbeat > 0
 				}
 			} else {
-				if cinfo.Error.ErrorCode == JSErrCodeStreamNotFound {
+				if errors.Is(cinfo.Error, ErrStreamNotFound) {
 					return nil, ErrStreamNotFound
 				}
 				return nil, cinfo.Error
@@ -2772,10 +2772,10 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.ErrorCode == JSErrCodeConsumerNotFound {
+		if errors.Is(info.Error, ErrConsumerNotFound) {
 			return nil, ErrConsumerNotFound
 		}
-		if info.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(info.Error, ErrStreamNotFound) {
 			return nil, ErrStreamNotFound
 		}
 		return nil, info.Error

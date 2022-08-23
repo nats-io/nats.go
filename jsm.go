@@ -154,61 +154,6 @@ type ExternalStream struct {
 	DeliverPrefix string `json:"deliver"`
 }
 
-// APIError is included in all API responses if there was an error.
-type APIError struct {
-	Code        int       `json:"code"`
-	ErrorCode   ErrorCode `json:"err_code"`
-	Description string    `json:"description,omitempty"`
-}
-
-// Error prints the JetStream API error code and description
-func (e *APIError) Error() string {
-	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
-}
-
-// APIError implements the JetStreamError interface.
-func (e *APIError) APIError() *APIError {
-	return e
-}
-
-// Is matches against an APIError.
-func (e *APIError) Is(err error) bool {
-	// Extract internal APIError to match against.
-	var aerr *APIError
-	ok := errors.As(err, &aerr)
-	if !ok {
-		return ok
-	}
-	return e.ErrorCode == aerr.ErrorCode
-}
-
-// JetStreamError is an error result that happens when using JetStream.
-type JetStreamError interface {
-	APIError() *APIError
-	error
-}
-
-type jsError struct {
-	apiErr  *APIError
-	message string
-}
-
-func (err *jsError) APIError() *APIError {
-	return err.apiErr
-}
-
-func (err *jsError) Error() string {
-	if err.apiErr != nil && err.apiErr.Description != "" {
-		return fmt.Sprintf("nats: %v", err.apiErr.Description)
-	}
-	return fmt.Sprintf("nats: %v", err.message)
-}
-
-func (err *jsError) Unwrap() error {
-	// Allow matching to embedded APIError in case there is one.
-	return err.apiErr
-}
-
 // apiResponse is a standard response from the JetStream JSON API
 type apiResponse struct {
 	Type  string    `json:"type"`
@@ -267,22 +212,6 @@ type accountInfoResponse struct {
 	AccountInfo
 }
 
-type ErrorCode uint16
-
-const (
-	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
-	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
-
-	JSErrCodeStreamNotFound  ErrorCode = 10059
-	JSErrCodeStreamNameInUse ErrorCode = 10058
-
-	JSErrCodeConsumerNotFound      ErrorCode = 10014
-	JSErrCodeConsumerNameExists    ErrorCode = 10013
-	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
-
-	JSErrCodeMessageNotFound ErrorCode = 10037
-)
-
 // AccountInfo retrieves info about the JetStream usage from the current account.
 // If JetStream is not enabled, this will return ErrJetStreamNotEnabled
 // Other errors can happen but are generally considered retryable
@@ -308,13 +237,11 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 		return nil, err
 	}
 	if info.Error != nil {
-		var err JetStreamError = info.Error
-
 		// Internally checks based on error code instead of description match.
 		if errors.Is(info.Error, ErrJetStreamNotEnabledForAccount) {
-			err = ErrJetStreamNotEnabledForAccount
+			return nil, ErrJetStreamNotEnabledForAccount
 		}
-		return nil, err
+		return nil, info.Error
 	}
 
 	return &info.AccountInfo, nil
@@ -399,10 +326,10 @@ func (js *js) upsertConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) 
 		return nil, err
 	}
 	if info.Error != nil {
-		if info.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(info.Error, ErrStreamNotFound) {
 			return nil, ErrStreamNotFound
 		}
-		if info.Error.ErrorCode == JSErrCodeConsumerNotFound {
+		if errors.Is(info.Error, ErrConsumerNotFound) {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, info.Error
@@ -465,7 +392,7 @@ func (js *js) DeleteConsumer(stream, consumer string, opts ...JSOpt) error {
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
+		if errors.Is(resp.Error, ErrConsumerNotFound) {
 			return ErrConsumerNotFound
 		}
 		return resp.Error
@@ -736,7 +663,7 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeStreamNameInUse {
+		if errors.Is(resp.Error, ErrStreamNameAlreadyInUse) {
 			return nil, ErrStreamNameAlreadyInUse
 		}
 		return nil, resp.Error
@@ -784,7 +711,7 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(resp.Error, ErrStreamNotFound) {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -876,7 +803,7 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(resp.Error, ErrStreamNotFound) {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -914,7 +841,7 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(resp.Error, ErrStreamNotFound) {
 			return ErrStreamNotFound
 		}
 		return resp.Error
@@ -1018,10 +945,10 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeMessageNotFound {
+		if errors.Is(resp.Error, ErrMsgNotFound) {
 			return nil, ErrMsgNotFound
 		}
-		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
+		if errors.Is(resp.Error, ErrStreamNotFound) {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -1232,7 +1159,7 @@ func (js *js) purgeStream(stream string, req *StreamPurgeRequest, opts ...JSOpt)
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == 400 {
+		if errors.Is(resp.Error, ErrBadRequest) {
 			return fmt.Errorf("%w: %s", ErrBadRequest, "invalid purge request body")
 		}
 		return resp.Error
