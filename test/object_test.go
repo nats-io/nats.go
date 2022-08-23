@@ -564,7 +564,7 @@ func TestObjectLinks(t *testing.T) {
 	expectOk(t, err)
 	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
 
-	infoBucketLink, err = root.AddBucketLink("dir", root);
+	infoBucketLink, err = root.AddBucketLink("dir", root)
 	expectOk(t, err)
 	expectLinkPartsAreCorrect(t, infoBucketLink, "ROOT", "")
 
