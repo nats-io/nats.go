@@ -509,9 +509,6 @@ func TestObjectLinks(t *testing.T) {
 	// link to a link
 	_, err = root.AddLink("LALA", infoLA)
 	expectErr(t, err)
-	//infoLALA, err := root.AddLink("LALA", infoLA)
-	//expectOk(t, err)
-	//expectLinkIsCorrect(t, infoLA, infoLALA)
 
 	dir, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "DIR"})
 	expectOk(t, err)
@@ -542,14 +539,6 @@ func TestObjectLinks(t *testing.T) {
 		t.Fatalf("Expected %q but got %q", "AAA", getLA)
 	}
 
-	// Test the link to a link get
-	//getLALA, err := root.GetString("LALA")
-	//expectOk(t, err)
-	//
-	//if getLALA != "AAA" {
-	//	t.Fatalf("Expected %q but got %q", "AAA", getLALA)
-	//}
-
 	// Try to get a linked object, cross bucket
 	getDbl, err := root.GetString("DBL")
 	expectOk(t, err)
@@ -557,6 +546,27 @@ func TestObjectLinks(t *testing.T) {
 	if getDbl != "DIR-BBB" {
 		t.Fatalf("Expected %q but got %q", "DIR-BBB", getDbl)
 	}
+
+	// change a link
+	infoB, err = root.GetInfo("B")
+	expectOk(t, err)
+
+	infoLA, err = root.GetInfo("LA")
+	expectOk(t, err)
+	expectLinkIsCorrect(t, infoA, infoLA)
+
+	infoLA, err = root.AddLink("LA", infoB)
+	expectOk(t, err)
+	expectLinkIsCorrect(t, infoB, infoLA)
+
+	// change a bucket link
+	infoBucketLink, err = root.GetInfo("dir")
+	expectOk(t, err)
+	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
+
+	infoBucketLink, err = root.AddBucketLink("dir", root);
+	expectOk(t, err)
+	expectLinkPartsAreCorrect(t, infoBucketLink, "ROOT", "")
 
 	// Check simple errors.
 	_, err = root.AddLink("", infoB)

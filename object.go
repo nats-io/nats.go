@@ -657,13 +657,14 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	}
 
 	// If object with link's name is found, error.
+	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
-	// sff - Is there a better go way to do this?
-	_, err := obs.GetInfo(name)
-	if err != ErrObjectNotFound {
-		if err == nil {
+	einfo, err := obs.GetInfo(name)
+	if einfo != nil {
+		if !einfo.isLink() {
 			return nil, ErrObjectAlreadyExists
 		}
+	} else if err != ErrObjectNotFound {
 		return nil, err
 	}
 
@@ -691,13 +692,14 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 	}
 
 	// If object with link's name is found, error.
+	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
-	// sff - Is there a better go way to do this?
-	_, err := ob.GetInfo(name)
-	if err != ErrObjectNotFound {
-		if err == nil {
+	einfo, err := ob.GetInfo(name)
+	if einfo != nil {
+		if !einfo.isLink() {
 			return nil, ErrObjectAlreadyExists
 		}
+	} else if err != ErrObjectNotFound {
 		return nil, err
 	}
 
