@@ -16,6 +16,7 @@ package test
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
@@ -114,11 +115,43 @@ func TestObjectBasics(t *testing.T) {
 	_, err = obs.Get("")
 	expectErr(t, err)
 
-	_, err = obs.Get("")
-	expectErr(t, err)
-
 	_, err = obs.PutBytes("", blob)
 	expectErr(t, err)
+}
+
+func TestGetObjectDigestMismatch(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "FOO"})
+	expectOk(t, err)
+
+	_, err = obs.PutString("A", "abc")
+	expectOk(t, err)
+	res, err := obs.Get("A")
+	expectOk(t, err)
+	// first read should be successful
+	data, err := ioutil.ReadAll(res)
+	expectOk(t, err)
+	if string(data) != "abc" {
+		t.Fatalf("Expected result: 'abc'; got: %s", string(data))
+	}
+
+	info, err := obs.GetInfo("A")
+	expectOk(t, err)
+
+	// add new chunk after using Put(), this will change the digest hash on Get()
+	_, err = js.Publish(fmt.Sprintf("$O.FOO.C.%s", info.NUID), []byte("123"))
+	expectOk(t, err)
+
+	res, err = obs.Get("A")
+	expectOk(t, err)
+	_, err = ioutil.ReadAll(res)
+	expectErr(t, err, nats.ErrDigestMismatch)
+	expectErr(t, res.Error(), nats.ErrDigestMismatch)
 }
 
 func TestDefaultObjectStatus(t *testing.T) {
@@ -592,25 +625,16 @@ func TestObjectLinks(t *testing.T) {
 }
 
 func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {
-	if linkObject.Opts.Link != nil {
-		if expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
-			return
-		}
+	if linkObject.Opts.Link == nil || !expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
+		t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)
 	}
-	t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)
 }
 
 func expectLinkPartsAreCorrect(t *testing.T, linkObject *nats.ObjectInfo, bucket, name string) bool {
-	if linkObject.Opts.Link.Bucket == bucket {
-		if linkObject.Opts.Link.Name == name {
-			if !linkObject.ModTime.IsZero() {
-				if linkObject.NUID != "" {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return linkObject.Opts.Link.Bucket == bucket &&
+		linkObject.Opts.Link.Name == name &&
+		!linkObject.ModTime.IsZero() &&
+		linkObject.NUID != ""
 }
 
 // Right now no history, just make sure we are cleaning up after ourselves.
