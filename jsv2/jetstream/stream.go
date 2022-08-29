@@ -40,8 +40,13 @@ type (
 		GetMsg(context.Context, uint64) (*RawStreamMsg, error)
 		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
 		GetLastMsgForSubject(context.Context, string) (*RawStreamMsg, error)
-		// DeleteMsg erases a message from a stream
+		// DeleteMsg deletes a message from a stream.
+		// The message is marked as erased, but not overwritten
 		DeleteMsg(context.Context, uint64) error
+
+		// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+		// As a result, this operation is slower than DeleteMsg()
+		SecureDeleteMsg(context.Context, uint64) error
 	}
 
 	streamConsumerManager interface {
@@ -132,7 +137,8 @@ type (
 	}
 
 	msgDeleteRequest struct {
-		Seq uint64 `json:"seq"`
+		Seq     uint64 `json:"seq"`
+		NoErase bool   `json:"no_erase,omitempty"`
 	}
 
 	msgDeleteResponse struct {
@@ -337,14 +343,26 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}, nil
 }
 
+// DeleteMsg deletes a message from a stream.
+// The message is marked as erased, but not overwritten
 func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
-	req, err := json.Marshal(&msgDeleteRequest{Seq: seq})
+	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq, NoErase: true})
+}
+
+// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
+// As a result, this operation is slower than DeleteMsg()
+func (s *stream) SecureDeleteMsg(ctx context.Context, seq uint64) error {
+	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq})
+}
+
+func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
+	r, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 	subj := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiMsgDeleteT, s.name))
 	var resp msgDeleteResponse
-	if _, err = s.jetStream.apiRequestJSON(ctx, subj, &resp, req); err != nil {
+	if _, err = s.jetStream.apiRequestJSON(ctx, subj, &resp, r); err != nil {
 		return err
 	}
 	if !resp.Success {
