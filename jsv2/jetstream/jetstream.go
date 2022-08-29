@@ -258,7 +258,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNameInUse {
+		if resp.Error.ErrorCode == JSErrCodeStreamNameInUse {
 			return nil, ErrStreamNameAlreadyInUse
 		}
 		return nil, resp.Error
@@ -288,7 +288,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -313,7 +313,7 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -336,7 +336,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return ErrStreamNotFound
 		}
 		return resp.Error
@@ -359,7 +359,7 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 		}
 		if c != nil {
 			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
 			}
 			return c, nil
 		}
@@ -417,10 +417,10 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == JetStreamNotEnabledForAccount {
+		if resp.Error.ErrorCode == JSErrCodeJetStreamNotEnabledForAccount {
 			return nil, ErrJetStreamNotEnabledForAccount
 		}
-		if resp.Error.ErrorCode == JetStreamNotEnabled {
+		if resp.Error.ErrorCode == JSErrCodeJetStreamNotEnabled {
 			return nil, ErrJetStreamNotEnabled
 		}
 		return nil, resp.Error

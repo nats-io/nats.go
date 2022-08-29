@@ -181,7 +181,7 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 		}
 		if c != nil {
 			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerExists, cfg.Durable)
+				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
 			}
 			return c, nil
 		}
@@ -239,7 +239,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -312,7 +312,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}
 
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == MessageNotFound {
+		if resp.Error.ErrorCode == JSErrCodeMessageNotFound {
 			return nil, ErrMsgNotFound
 		}
 		return nil, resp.Error

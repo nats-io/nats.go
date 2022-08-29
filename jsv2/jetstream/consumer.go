@@ -306,7 +306,7 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, resp.Error
@@ -349,7 +349,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == StreamNotFound {
+		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
@@ -378,7 +378,7 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 		return nil, err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return nil, ErrConsumerNotFound
 		}
 		return nil, resp.Error
@@ -407,7 +407,7 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 		return err
 	}
 	if resp.Error != nil {
-		if resp.Error.ErrorCode == ConsumerNotFound {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
 			return ErrConsumerNotFound
 		}
 		return resp.Error
@@ -417,7 +417,7 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 
 func validateDurableName(dur string) error {
 	if strings.Contains(dur, ".") {
-		return fmt.Errorf("%w: '%s'", ErrInvalidDurableName, dur)
+		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, dur)
 	}
 	return nil
 }
