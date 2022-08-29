@@ -48,12 +48,12 @@ func TestCreateConsumer(t *testing.T) {
 		{
 			name:           "consumer already exists, config mismatch",
 			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test"},
-			withError:      ErrConsumerExists,
+			withError:      ErrConsumerNameAlreadyInUse,
 		},
 		{
 			name:           "invalid durable name",
 			consumerConfig: ConsumerConfig{Durable: "dur.123", AckPolicy: AckExplicitPolicy},
-			withError:      ErrInvalidDurableName,
+			withError:      ErrInvalidConsumerName,
 		},
 	}
 
@@ -139,9 +139,9 @@ func TestCreateConsumer_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy})
-			if err == nil || !errors.Is(err, ErrConsumerExists) {
-				t.Fatalf("Expected error: %v; got %v", ErrConsumerExists, err)
+			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "test"})
+			if err == nil || !errors.Is(err, ErrConsumerNameAlreadyInUse) {
+				t.Fatalf("Expected error: %v; got %v", ErrConsumerNameAlreadyInUse, err)
 			}
 		})
 	})
@@ -165,7 +165,7 @@ func TestUpdateConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
@@ -234,7 +234,7 @@ func TestConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
@@ -299,7 +299,7 @@ func TestDeleteConsumer(t *testing.T) {
 		{
 			name:      "invalid durable name",
 			durable:   "dur.123",
-			withError: ErrInvalidDurableName,
+			withError: ErrInvalidConsumerName,
 		},
 	}
 
