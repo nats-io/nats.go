@@ -14,15 +14,11 @@
 package jetstream
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/nats-io/nats.go"
 )
-
-// ErrInvalidOption is returned when there is a collision between options
-var ErrInvalidOption = errors.New("nats: invalid jetstream option")
 
 // WithClientTrace enables request/response API calls tracing
 // ClientTrace is used to provide handlers for each event
@@ -156,6 +152,7 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
+// WithNakDelay can be used to specify the duration after which the message should be redelivered
 func WithNakDelay(delay time.Duration) NakOpt {
 	return func(opts *ackOpts) error {
 		opts.nakDelay = delay

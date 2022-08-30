@@ -163,14 +163,21 @@ func (m *jetStreamMsg) Reply() string {
 	return m.msg.Reply
 }
 
+// Ack acknowledges a message
+// This tells the server that the message was successfully processed and it can move on to the next message
 func (m *jetStreamMsg) Ack() error {
 	return m.ackReply(context.Background(), ackAck, false, ackOpts{})
 }
 
+// DoubleAck acknowledges a message and waits for ack from server
 func (m *jetStreamMsg) DoubleAck(ctx context.Context) error {
 	return m.ackReply(ctx, ackAck, true, ackOpts{})
 }
 
+// Nak negatively acknowledges a message
+// This tells the server to redeliver the message
+// Nak() can be supplied with following options:
+// - WithNakDelay() - specify the duration after which the mesage should be redelivered
 func (m *jetStreamMsg) Nak(opts ...NakOpt) error {
 	var o ackOpts
 	for _, opt := range opts {
@@ -181,10 +188,13 @@ func (m *jetStreamMsg) Nak(opts ...NakOpt) error {
 	return m.ackReply(context.Background(), ackNak, false, o)
 }
 
+// InProgress tells the server that this message is being worked on
+// It resets the redelivery timer on the server
 func (m *jetStreamMsg) InProgress() error {
 	return m.ackReply(context.Background(), ackProgress, false, ackOpts{})
 }
 
+// Term tells the server to not redeliver this message, regardless of the value of nats.MaxDeliver
 func (m *jetStreamMsg) Term() error {
 	return m.ackReply(context.Background(), ackTerm, false, ackOpts{})
 }
@@ -272,7 +282,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
 }
 
-// toJSMsg converts core `nats.Msg` to `jetStreamMsg`, wxposing JetStream-specific operations
+// toJSMsg converts core `nats.Msg` to `jetStreamMsg`, exposing JetStream-specific operations
 func (js *jetStream) toJSMsg(msg *nats.Msg) *jetStreamMsg {
 	return &jetStreamMsg{
 		msg:   msg,

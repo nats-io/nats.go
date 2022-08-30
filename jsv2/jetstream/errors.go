@@ -140,6 +140,9 @@ var (
 
 	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack
 	ErrTooManyStalledMsgs = &jsError{message: "stalled with too many outstanding async published messages"}
+
+	// ErrInvalidOption is returned when there is a collision between options
+	ErrInvalidOption = &jsError{message: "invalid jetstream option"}
 )
 
 // Error prints the JetStream API error code and description
