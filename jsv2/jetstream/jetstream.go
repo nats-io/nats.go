@@ -53,6 +53,8 @@ type (
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		// UpdateConsumer updates an existing consumer
+		UpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
@@ -349,11 +351,7 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 		return nil, err
 	}
 	if cfg.Durable != "" {
-		s, err := js.Stream(ctx, stream)
-		if err != nil {
-			return nil, err
-		}
-		c, err := s.Consumer(ctx, cfg.Durable)
+		c, err := js.Consumer(ctx, stream, cfg.Durable)
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
 			return nil, err
 		}
@@ -368,14 +366,13 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 }
 
 func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
 	if cfg.Durable == "" {
 		return nil, ErrConsumerNameRequired
 	}
-	s, err := js.Stream(ctx, stream)
-	if err != nil {
-		return nil, err
-	}
-	_, err = s.Consumer(ctx, cfg.Durable)
+	_, err := js.Consumer(ctx, stream, cfg.Durable)
 	if err != nil {
 		return nil, err
 	}

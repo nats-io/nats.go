@@ -111,7 +111,7 @@ var (
 	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.').
 	ErrInvalidConsumerName JetStreamError = &jsError{message: "invalid consumer name"}
 
-	// ErrNoMessages is returned when no messages are currectly available for a consumer
+	// ErrNoMessages is returned when no messages are currently available for a consumer.
 	ErrNoMessages = &jsError{message: "no messages"}
 
 	// ErrHandlerRequired is returned when no handler func is provided in Stream()

@@ -50,7 +50,9 @@ type (
 	}
 
 	streamConsumerManager interface {
-		// CreateConsumer adds a new consumer to a stream
+		// CreateConsumer creates a consumer on a given stream with given config
+		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateConsumer(context.Context, ConsumerConfig) (Consumer, error)
 		// UpdateConsumer updates an existing consumer
 		UpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
@@ -58,9 +60,9 @@ type (
 		Consumer(context.Context, string) (Consumer, error)
 		// DeleteConsumer removes a consumer
 		DeleteConsumer(context.Context, string) error
-		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of stream infos
+		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister
-		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of stream names
+		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
 	RawStreamMsg struct {
@@ -371,6 +373,7 @@ func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
 	return nil
 }
 
+// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	l := &consumerLister{
 		js:        s.jetStream,
@@ -411,6 +414,7 @@ func (s *consumerLister) Err() <-chan error {
 	return s.errs
 }
 
+// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	l := &consumerLister{
 		js:    s.jetStream,
@@ -447,7 +451,7 @@ func (s *consumerLister) Name() <-chan string {
 	return s.names
 }
 
-// infos fetches the next ConsumerInfo page
+// consumerInfos fetches the next ConsumerInfo page
 func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*ConsumerInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
@@ -475,7 +479,7 @@ func (s *consumerLister) consumerInfos(ctx context.Context, stream string) ([]*C
 	return resp.Consumers, nil
 }
 
-// names fetches the next consumer names page
+// consumerNames fetches the next consumer names page
 func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]string, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
