@@ -156,7 +156,7 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
-func WithNakDelay(delay time.Duration) AckOpt {
+func WithNakDelay(delay time.Duration) NakOpt {
 	return func(opts *ackOpts) error {
 		opts.nakDelay = delay
 		return nil

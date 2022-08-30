@@ -25,20 +25,51 @@ import (
 )
 
 type (
+	// JetStreamMsg contains methods to operate on a JetStream message
+	// Metadata, Data, Headers, Subject and Reply can be used to retrieve the specific parts of the underlying message
+	// Ack, DoubleAck, Nak, InProgress and Term are various flavors of ack requests
 	JetStreamMsg interface {
-		JetStreamMessageReader
-		Ack(...AckOpt) error
-		DoubleAck(context.Context, ...AckOpt) error
+		// Metadata returns `MsgMetadata` for a JetStream message
+		Metadata() (*MsgMetadata, error)
+		// Data returns the message body
+		Data() []byte
+		// Headers returns a map of headers for a message
+		Headers() nats.Header
+		// Subject returns a subject on which a message is published
+		Subject() string
+		// Reply returns a reply subject for a message
+		Reply() string
+
+		// Ack acknowledges a message
+		// This tells the server that the message was successfully processed and it can move on to the next message
+		Ack() error
+		// DoubleAck acknowledges a message and waits for ack from server
+		DoubleAck(context.Context) error
+		// Nak negatively acknowledges a message
+		// This tells the server to redeliver the message
 		Nak(...NakOpt) error
-		InProgress(...AckOpt) error
-		Term(...AckOpt) error
+		// InProgress tells the server that this message is being worked on
+		// It resets the redelivery timer on the server
+		InProgress() error
+		// Term tells the server to not redeliver this message, regardless of the value of nats.MaxDeliver
+		Term() error
 	}
 
-	JetStreamMessageReader interface {
-		Metadata() (*nats.MsgMetadata, error)
-		Data() []byte
-		Headers() nats.Header
-		Subject() string
+	// MsgMetadata is the JetStream metadata associated with received messages.
+	MsgMetadata struct {
+		Sequence     SequencePair
+		NumDelivered uint64
+		NumPending   uint64
+		Timestamp    time.Time
+		Stream       string
+		Consumer     string
+		Domain       string
+	}
+
+	// SequencePair includes the consumer and stream sequence info from a JetStream consumer.
+	SequencePair struct {
+		Consumer uint64 `json:"consumer_seq"`
+		Stream   uint64 `json:"stream_seq"`
 	}
 
 	jetStreamMsg struct {
@@ -50,7 +81,6 @@ type (
 
 	ackOpts struct {
 		nakDelay time.Duration
-		ctx      context.Context
 	}
 
 	AckOpt func(*ackOpts) error
@@ -89,7 +119,8 @@ var (
 	ackTerm     ackType = []byte("+TERM")
 )
 
-func (m *jetStreamMsg) Metadata() (*nats.MsgMetadata, error) {
+// Metadata returns `MsgMetadata` for a JetStream message
+func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	if err := m.checkReply(); err != nil {
 		return nil, err
 	}
@@ -99,7 +130,7 @@ func (m *jetStreamMsg) Metadata() (*nats.MsgMetadata, error) {
 		return nil, fmt.Errorf("%w: %s", ErrNotJSMessage, err)
 	}
 
-	meta := &nats.MsgMetadata{
+	meta := &MsgMetadata{
 		Domain:       tokens[parser.AckDomainTokenPos],
 		NumDelivered: parser.ParseNum(tokens[parser.AckNumDeliveredTokenPos]),
 		NumPending:   parser.ParseNum(tokens[parser.AckNumPendingTokenPos]),
@@ -112,27 +143,32 @@ func (m *jetStreamMsg) Metadata() (*nats.MsgMetadata, error) {
 	return meta, nil
 }
 
+// Data returns the message body
 func (m *jetStreamMsg) Data() []byte {
 	return m.msg.Data
 }
 
+// Headers returns a map of headers for a message
 func (m *jetStreamMsg) Headers() nats.Header {
 	return m.msg.Header
 }
 
+// Subject reutrns a subject on which a message is published
 func (m *jetStreamMsg) Subject() string {
 	return m.msg.Subject
 }
 
-func (m *jetStreamMsg) Ack(opts ...AckOpt) error {
-	return m.ackReply(ackAck, false, ackOpts{})
+// Reply reutrns a reply subject for a JetStream message
+func (m *jetStreamMsg) Reply() string {
+	return m.msg.Reply
 }
 
-func (m *jetStreamMsg) DoubleAck(ctx context.Context, opts ...AckOpt) error {
-	o := ackOpts{
-		ctx: ctx,
-	}
-	return m.ackReply(ackAck, true, o)
+func (m *jetStreamMsg) Ack() error {
+	return m.ackReply(context.Background(), ackAck, false, ackOpts{})
+}
+
+func (m *jetStreamMsg) DoubleAck(ctx context.Context) error {
+	return m.ackReply(ctx, ackAck, true, ackOpts{})
 }
 
 func (m *jetStreamMsg) Nak(opts ...NakOpt) error {
@@ -142,18 +178,18 @@ func (m *jetStreamMsg) Nak(opts ...NakOpt) error {
 			return err
 		}
 	}
-	return m.ackReply(ackNak, false, o)
+	return m.ackReply(context.Background(), ackNak, false, o)
 }
 
-func (m *jetStreamMsg) InProgress(_ ...AckOpt) error {
-	return m.ackReply(ackProgress, false, ackOpts{})
+func (m *jetStreamMsg) InProgress() error {
+	return m.ackReply(context.Background(), ackProgress, false, ackOpts{})
 }
 
-func (m *jetStreamMsg) Term(_ ...AckOpt) error {
-	return m.ackReply(ackTerm, false, ackOpts{})
+func (m *jetStreamMsg) Term() error {
+	return m.ackReply(context.Background(), ackTerm, false, ackOpts{})
 }
 
-func (m *jetStreamMsg) ackReply(ackType ackType, sync bool, opts ackOpts) error {
+func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool, opts ackOpts) error {
 	err := m.checkReply()
 	if err != nil {
 		return err
@@ -165,15 +201,10 @@ func (m *jetStreamMsg) ackReply(ackType ackType, sync bool, opts ackOpts) error 
 	}
 	m.Unlock()
 
-	var hasDeadline bool
-	if opts.ctx != nil {
-		_, hasDeadline = opts.ctx.Deadline()
-	}
-	if sync && !hasDeadline {
-		return fmt.Errorf("for synchronous acknowledgements, context with deadline has to be provided")
-	}
-	if opts.nakDelay != 0 && !bytes.Equal(ackType, ackNak) {
-		return fmt.Errorf("delay can only be set for NAK")
+	if sync {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			return nats.ErrNoDeadlineContext
+		}
 	}
 
 	var body []byte
@@ -184,7 +215,7 @@ func (m *jetStreamMsg) ackReply(ackType ackType, sync bool, opts ackOpts) error 
 	}
 
 	if sync {
-		_, err = m.js.conn.RequestWithContext(opts.ctx, m.msg.Reply, body)
+		_, err = m.js.conn.RequestWithContext(ctx, m.msg.Reply, body)
 	} else {
 		err = m.js.conn.Publish(m.msg.Reply, body)
 	}
