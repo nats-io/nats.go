@@ -52,17 +52,17 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	}
 }
 
-// WithSubject sets a sprecific subject for which messages on a stream will be purged
-func WithSubject(subject string) StreamPurgeOpt {
+// WithPurgeSubject sets a sprecific subject for which messages on a stream will be purged
+func WithPurgeSubject(subject string) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		req.Subject = subject
 		return nil
 	}
 }
 
-// WithSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// WithPurgeSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
 // Can be combined with `WithSubject()` option, but not with `WithKeep()`
-func WithSequence(sequence uint64) StreamPurgeOpt {
+func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Keep != 0 {
 			return fmt.Errorf("%w: both 'keep' and 'sequence' cannot be provided in purge request", ErrInvalidOption)
@@ -72,9 +72,9 @@ func WithSequence(sequence uint64) StreamPurgeOpt {
 	}
 }
 
-// WithKeep sets the number of messages to be kept in the stream after purge.
+// WithPurgeKeep sets the number of messages to be kept in the stream after purge.
 // Can be combined with `WithSubject()` option, but not with `WithSequence()`
-func WithKeep(keep uint64) StreamPurgeOpt {
+func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Sequence != 0 {
 			return fmt.Errorf("%w: both 'keep' and 'sequence' cannot be provided in purge request", ErrInvalidOption)
