@@ -133,6 +133,7 @@ var (
 	ErrObjectAlreadyExists  = errors.New("nats: an object already exists with that name")
 	ErrNameRequired         = errors.New("nats: name is required")
 	ErrNeeds262             = errors.New("nats: object-store requires at least server version 2.6.2")
+	ErrLinkNotAllowed       = errors.New("nats: a link is not allowed with an object")
 )
 
 // ObjectStoreConfig is the config for the object store.
@@ -311,6 +312,14 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return nil, ErrBadObjectMeta
 	}
 
+	if meta.Opts == nil {
+		meta.Opts = &ObjectMetaOptions{ChunkSize: objDefaultChunkSize}
+	} else if meta.Opts.Link != nil {
+		return nil, ErrLinkNotAllowed
+	} else if meta.Opts.ChunkSize <= 0 {
+		meta.Opts.ChunkSize = objDefaultChunkSize
+	}
+
 	var o objOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -356,13 +365,8 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return nil, err
 	}
 
-	chunkSize := objDefaultChunkSize
-	if meta.Opts != nil && meta.Opts.ChunkSize > 0 {
-		chunkSize = meta.Opts.ChunkSize
-	}
-
 	m, h := NewMsg(chunkSubj), sha256.New()
-	chunk, sent, total := make([]byte, chunkSize), 0, uint64(0)
+	chunk, sent, total := make([]byte, meta.Opts.ChunkSize), 0, uint64(0)
 
 	// set up the info object. The chunk upload sets the size and digest
 	info := &ObjectInfo{Bucket: obs.name, NUID: newnuid, ObjectMeta: *meta}

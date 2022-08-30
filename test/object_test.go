@@ -431,6 +431,11 @@ func TestObjectMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected an error when trying to update an object that does not exist.")
 	}
+
+	// can't have a link when putting an object
+	meta.Opts = &nats.ObjectMetaOptions{Link: &nats.ObjectLink{Bucket: "DoesntMatter"}}
+	_, err = obs.Put(meta, nil)
+	expectErr(t, err, nats.ErrLinkNotAllowed)
 }
 
 func TestObjectWatch(t *testing.T) {
