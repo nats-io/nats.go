@@ -268,9 +268,9 @@ func (s *stream) CachedInfo() *StreamInfo {
 // Purge removes messages from a stream
 //
 // Available options:
-// WithSubject() - can be used set a sprecific subject for which messages on a stream will be purged
-// WithSequence() - can be used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
-// WithKeep() - can be used to set the number of messages to be kept in the stream after purge.
+// WithPurgeSubject() - can be used set a sprecific subject for which messages on a stream will be purged
+// WithPurgeSequence() - can be used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// WithPurgeKeep() - can be used to set the number of messages to be kept in the stream after purge.
 func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	var purgeReq StreamPurgeRequest
 	for _, opt := range opts {
