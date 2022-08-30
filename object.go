@@ -316,7 +316,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		meta.Opts = &ObjectMetaOptions{ChunkSize: objDefaultChunkSize}
 	} else if meta.Opts.Link != nil {
 		return nil, ErrLinkNotAllowed
-	} else if meta.Opts.ChunkSize <= 0 {
+	} else if meta.Opts.ChunkSize == 0 {
 		meta.Opts.ChunkSize = objDefaultChunkSize
 	}
 
