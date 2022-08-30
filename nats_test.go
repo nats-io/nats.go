@@ -2920,3 +2920,23 @@ func TestInProcessConn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestServerListWithTrailingComma(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	// Notice the comma at the end of the "list"
+	nc, err := Connect(fmt.Sprintf("%s,", s.ClientURL()))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Now check server pool
+	nc.mu.Lock()
+	l := len(nc.srvPool)
+	nc.mu.Unlock()
+	if l != 1 {
+		t.Fatalf("There should be only 1 URL in the list, got %v", l)
+	}
+}
