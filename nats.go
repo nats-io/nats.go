@@ -1268,10 +1268,15 @@ func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 // Return an array of urls, even if only one.
 func processUrlString(url string) []string {
 	urls := strings.Split(url, ",")
-	for i, s := range urls {
-		urls[i] = strings.TrimSpace(s)
+	var j int
+	for _, s := range urls {
+		u := strings.TrimSpace(s)
+		if len(u) > 0 {
+			urls[j] = u
+			j++
+		}
 	}
-	return urls
+	return urls[:j]
 }
 
 // Connect will attempt to connect to a NATS server with multiple options.
