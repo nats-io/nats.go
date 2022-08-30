@@ -193,8 +193,6 @@ func TestWithClientTrace(t *testing.T) {
 	if received != "Response received: $JS.API.STREAM.CREATE.foo" {
 		t.Fatalf(`Invalid value on response receive trace; want: "Response received: $JS.API.STREAM.CREATE.foo"; got: %s`, sent)
 	}
-	fmt.Println(sent)
-	fmt.Println(received)
 	defer nc.Close()
 }
 
@@ -555,7 +553,7 @@ func TestListStreams(t *testing.T) {
 	}{
 		{
 			name:       "list streams",
-			streamsNum: 500,
+			streamsNum: 260,
 		},
 		{
 			name:       "no stream available",
