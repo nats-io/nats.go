@@ -193,8 +193,6 @@ func TestWithClientTrace(t *testing.T) {
 	if received != "Response received: $JS.API.STREAM.CREATE.foo" {
 		t.Fatalf(`Invalid value on response receive trace; want: "Response received: $JS.API.STREAM.CREATE.foo"; got: %s`, sent)
 	}
-	fmt.Println(sent)
-	fmt.Println(received)
 	defer nc.Close()
 }
 
@@ -461,50 +459,6 @@ func TestDeleteStream(t *testing.T) {
 	}
 }
 
-func TestPurgeStream(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	js, err := New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	for i := 0; i < 14; i++ {
-		if err := nc.Publish("FOO.123", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-	}
-
-	_, err = s.Info(ctx)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	err = s.Purge(ctx, WithSequence(10))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = s.Info(ctx)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-}
-
 func TestAccountInfo(t *testing.T) {
 	t.Run("fetch account info", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
@@ -599,7 +553,7 @@ func TestListStreams(t *testing.T) {
 	}{
 		{
 			name:       "list streams",
-			streamsNum: 500,
+			streamsNum: 260,
 		},
 		{
 			name:       "no stream available",

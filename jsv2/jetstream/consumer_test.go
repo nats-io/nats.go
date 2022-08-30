@@ -287,9 +287,7 @@ func TestPullConsumerNext(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait())
-				cancel()
+				msg, err = c.NextNoWait()
 				if err != nil {
 					errs <- err
 					break
@@ -347,9 +345,7 @@ func TestPullConsumerNext(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait())
-				cancel()
+				msg, err = c.NextNoWait()
 				if err != nil {
 					errs <- err
 					break
@@ -372,125 +368,6 @@ func TestPullConsumerNext(t *testing.T) {
 			if len(msgs) != 5 {
 				t.Fatalf("Expected no messages, got %d", len(msgs))
 			}
-		}
-	})
-
-	t.Run("with idle heartbeat", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		msgs := make([]JetStreamMsg, 0)
-		var msg JetStreamMsg
-		errs := make(chan error)
-		done := make(chan struct{})
-		go func() {
-			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNextHeartbeat(10*time.Millisecond))
-				cancel()
-				if err != nil {
-					errs <- err
-					break
-				}
-				if msg == nil {
-					close(done)
-					break
-				}
-				msgs = append(msgs, msg)
-			}
-		}()
-
-		time.Sleep(20 * time.Millisecond)
-		publishTestMsgs(t, nc)
-		select {
-		case err := <-errs:
-			t.Fatalf("Unexpected error: %v", err)
-		case <-done:
-			if len(msgs) != len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
-			}
-		}
-		for i, msg := range msgs {
-			if string(msg.Data()) != testMsgs[i] {
-				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
-			}
-		}
-	})
-
-	t.Run("with idle heartbeat, server shutdown", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		msgs := make([]JetStreamMsg, 0)
-		var msg JetStreamMsg
-		errs := make(chan error)
-		done := make(chan struct{})
-		go func() {
-			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNextHeartbeat(10*time.Millisecond))
-				cancel()
-				if err != nil {
-					errs <- err
-					break
-				}
-				if msg == nil {
-					close(done)
-					break
-				}
-				msgs = append(msgs, msg)
-			}
-		}()
-
-		shutdownJSServerAndRemoveStorage(t, srv)
-		select {
-		case err := <-errs:
-			if !errors.Is(err, ErrNoHeartbeat) {
-				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
-			}
-		case <-done:
-			t.Fatalf("Expected error: %v; got none", ErrNoHeartbeat)
 		}
 	})
 
@@ -519,7 +396,7 @@ func TestPullConsumerNext(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {})
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -695,9 +572,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				for {
-					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-					msg, err = c.Next(nextCtx, WithNoWait())
-					cancel()
+					msg, err = c.NextNoWait()
 					if err != nil {
 						errs <- err
 						break
@@ -719,69 +594,6 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			case <-done:
 				if len(msgs) != 0 {
 					t.Fatalf("Expected no messages, got %d", len(msgs))
-				}
-			}
-		})
-	})
-
-	t.Run("with idle heartbeat", func(t *testing.T) {
-		withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
-			nc, err := nats.Connect(srvs[0].ClientURL())
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			js, err := New(nc)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer nc.Close()
-
-			s, err := js.Stream(ctx, stream.Name)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			msgs := make([]JetStreamMsg, 0)
-			var msg JetStreamMsg
-			errs := make(chan error)
-			done := make(chan struct{})
-			go func() {
-				for {
-					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-					msg, err = c.Next(nextCtx, WithNextHeartbeat(10*time.Millisecond))
-					cancel()
-					if err != nil {
-						errs <- err
-						break
-					}
-					if msg == nil {
-						close(done)
-						break
-					}
-					msgs = append(msgs, msg)
-				}
-			}()
-
-			time.Sleep(20 * time.Millisecond)
-			publishTestMsgs(t, nc)
-			select {
-			case err := <-errs:
-				t.Fatalf("Unexpected error: %v", err)
-			case <-done:
-				if len(msgs) != len(testMsgs) {
-					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
-				}
-			}
-			for i, msg := range msgs {
-				if string(msg.Data()) != testMsgs[i] {
-					t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 				}
 			}
 		})
@@ -827,7 +639,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -875,12 +687,12 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {})
 		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
 			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
 		}
@@ -913,7 +725,7 @@ func TestPullConsumerStream(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(testMsgs))
 		msgs := make([]JetStreamMsg, 0)
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -938,7 +750,7 @@ func TestPullConsumerStream(t *testing.T) {
 		wg.Add(len(testMsgs))
 		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -997,7 +809,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1055,7 +867,7 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {
 		}, WithBatchSize(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1096,7 +908,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1155,7 +967,7 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {
 		}, WithExpiry(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1190,7 +1002,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1240,7 +1052,7 @@ func TestPullConsumerStream(t *testing.T) {
 
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		err = c.Stream(ctx, func(_ JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, err error) {
 			if !errors.Is(err, ErrNoHeartbeat) {
 				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
 			}
@@ -1299,7 +1111,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			msgs := make([]JetStreamMsg, 0)
 			wg := &sync.WaitGroup{}
 			wg.Add(len(testMsgs))
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1349,7 +1161,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg := sync.WaitGroup{}
 			wg.Add(len(testMsgs))
 			msgs := make([]JetStreamMsg, 0)
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1374,7 +1186,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg.Add(len(testMsgs))
 			ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}

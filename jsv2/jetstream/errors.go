@@ -140,11 +140,14 @@ var (
 
 	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack
 	ErrTooManyStalledMsgs = &jsError{message: "stalled with too many outstanding async published messages"}
+
+	// ErrInvalidOption is returned when there is a collision between options
+	ErrInvalidOption = &jsError{message: "invalid jetstream option"}
 )
 
 // Error prints the JetStream API error code and description
 func (e *APIError) Error() string {
-	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
+	return fmt.Sprintf("nats: API error: code=%d err_code=%d description=%s", e.Code, e.ErrorCode, e.Description)
 }
 
 // APIError implements the JetStreamError interface.

@@ -88,12 +88,6 @@ type (
 		Stream   uint64     `json:"stream_seq"`
 		Last     *time.Time `json:"last_active,omitempty"`
 	}
-
-	// SequencePair includes the consumer and stream sequence info from a JetStream consumer.
-	SequencePair struct {
-		Consumer uint64 `json:"consumer_seq"`
-		Stream   uint64 `json:"stream_seq"`
-	}
 )
 
 const (

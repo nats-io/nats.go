@@ -882,3 +882,112 @@ func TestConsumerNames(t *testing.T) {
 		})
 	}
 }
+
+func TestPurgeStream(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        []StreamPurgeOpt
+		expectedSeq []uint64
+		withError   error
+	}{
+		{
+			name:        "purge all messages",
+			expectedSeq: []uint64{},
+		},
+		{
+			name:        "purge on subject",
+			opts:        []StreamPurgeOpt{WithPurgeSubject("FOO.2")},
+			expectedSeq: []uint64{1, 3, 5, 7, 9},
+		},
+		{
+			name:        "purge with sequence",
+			opts:        []StreamPurgeOpt{WithPurgeSequence(5)},
+			expectedSeq: []uint64{5, 6, 7, 8, 9, 10},
+		},
+		{
+			name:        "purge with keep",
+			opts:        []StreamPurgeOpt{WithPurgeKeep(3)},
+			expectedSeq: []uint64{8, 9, 10},
+		},
+		{
+			name:        "purge with filter and sequence",
+			opts:        []StreamPurgeOpt{WithPurgeSubject("FOO.2"), WithPurgeSequence(8)},
+			expectedSeq: []uint64{1, 3, 5, 7, 8, 9, 10},
+		},
+		{
+			name:        "purge with filter and keep",
+			opts:        []StreamPurgeOpt{WithPurgeSubject("FOO.2"), WithPurgeKeep(3)},
+			expectedSeq: []uint64{1, 3, 5, 6, 7, 8, 9, 10},
+		},
+		{
+			name:      "with sequence and keep",
+			opts:      []StreamPurgeOpt{WithPurgeSequence(5), WithPurgeKeep(3)},
+			withError: ErrInvalidOption,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			js, err := New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			for i := 0; i < 5; i++ {
+				if _, err := js.Publish(ctx, "FOO.1", []byte(fmt.Sprintf("msg %d on FOO.1", i))); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if _, err := js.Publish(ctx, "FOO.2", []byte(fmt.Sprintf("msg %d on FOO.2", i))); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			err = s.Purge(ctx, test.opts...)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			seqs := make([]uint64, 0)
+			for {
+				msg, err := c.NextNoWait()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if msg == nil {
+					break
+				}
+				meta, err := msg.Metadata()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				seqs = append(seqs, meta.Sequence.Stream)
+			}
+			if !reflect.DeepEqual(seqs, test.expectedSeq) {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.expectedSeq, seqs)
+			}
+		})
+	}
+}

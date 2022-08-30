@@ -31,10 +31,15 @@ type (
 
 	// Consumer contains methods for fetching/processing messages from a stream, as well as fetching consumer info
 	Consumer interface {
-		// Next is used to retrieve a single message from the stream
-		Next(context.Context, ...ConsumerNextOpt) (JetStreamMsg, error)
-		// Stream can be used to continuously receive messages and handle them with the provided callback function
-		Stream(context.Context, MessageHandler, ...ConsumerStreamOpt) error
+		// Next is used to retrieve a single message from the stream.
+		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Listen()
+		Next(context.Context) (JetStreamMsg, error)
+		// NextNoWait is used to retrieve a single message from the stream.
+		// It returns a message immediately if it is available on a stream at the time of request and does not wait if there is none
+		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Listen()
+		NextNoWait() (JetStreamMsg, error)
+		// Listen can be used to continuously receive messages and handle them with the provided callback function
+		Listen(context.Context, MessageHandler, ...ConsumerListenOpt) error
 
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
@@ -42,11 +47,8 @@ type (
 		CachedInfo() *ConsumerInfo
 	}
 
-	// ConsumerNextOpt is used to configure `Next()` method with additional parameters
-	ConsumerNextOpt func(*pullRequest) error
-
-	// ConsumerStreamOpt represent additional options used in `Stream()` for pull consumers
-	ConsumerStreamOpt func(*pullRequest) error
+	// ConsumerListenOpt represent additional options used in `Stream()` for pull consumers
+	ConsumerListenOpt func(*pullRequest) error
 
 	// MessageHandler is a handler function used as callback in `Stream()`
 	MessageHandler func(msg JetStreamMsg, err error)
@@ -63,7 +65,7 @@ type (
 	pullConsumer struct {
 		consumer
 		heartbeat   chan struct{}
-		isStreaming uint32
+		isListening uint32
 	}
 
 	pullRequest struct {
@@ -77,13 +79,9 @@ type (
 
 // Next fetches an individual message from a consumer.
 // Timeout for this operation is handled using `context.Deadline()`, so it should always be set to avoid getting stuck
-//
-// Available options:
-// WithNoWait() - when set to true, `Next()` request does not wait for a message if no message is available at the time of request
-// WithNextHeartbeat() - sets an idle heartbeat setting for a pull request
-func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
+func (p *pullConsumer) Next(ctx context.Context) (JetStreamMsg, error) {
 	p.Lock()
-	if atomic.LoadUint32(&p.isStreaming) == 1 {
+	if atomic.LoadUint32(&p.isListening) == 1 {
 		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
@@ -99,20 +97,37 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	if timeout >= 20*time.Millisecond {
 		req.Expires = timeout - 10*time.Millisecond
 	}
-	for _, opt := range opts {
-		if err := opt(req); err != nil {
-			p.Unlock()
-			return nil, err
-		}
+	// for longer pulls, set heartbeat vealue
+	if timeout >= 10*time.Second {
+		req.Heartbeat = 25 * time.Millisecond
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	p.Unlock()
 
+	return p.next(ctx, req)
+
+}
+
+func (p *pullConsumer) NextNoWait() (JetStreamMsg, error) {
+	p.Lock()
+	if atomic.LoadUint32(&p.isListening) == 1 {
+		p.Unlock()
+		return nil, ErrConsumerHasActiveSubscription
+	}
+	req := &pullRequest{
+		Batch:  1,
+		NoWait: true,
+	}
+	p.Unlock()
+
+	return p.next(context.Background(), req)
+}
+
+func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (JetStreamMsg, error) {
 	msgChan := make(chan *jetStreamMsg, 1)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error)
-	p.Unlock()
-
 	go func() {
 		err := p.fetch(ctx, *req, msgChan)
 		if err != nil {
@@ -155,15 +170,15 @@ func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetSt
 	}
 }
 
-// Stream continuously receives messages from a consumer and handles them with the provided callback function
+// Listen continuously receives messages from a consumer and handles them with the provided callback function
 // ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, a context without Deadline should be provided
 //
 // Available options:
 // WithBatchSize() - sets a single batch request messages limit, default is set to 100
 // WithExpiry() - sets a timeout for individual batch request, default is set to 30 seconds
 // WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request, no heartbeat is set by default
-func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts ...ConsumerStreamOpt) error {
-	if atomic.LoadUint32(&p.isStreaming) == 1 {
+func (p *pullConsumer) Listen(ctx context.Context, handler MessageHandler, opts ...ConsumerListenOpt) error {
+	if atomic.LoadUint32(&p.isListening) == 1 {
 		return ErrConsumerHasActiveSubscription
 	}
 	if handler == nil {
@@ -171,8 +186,9 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 	}
 	defaultTimeout := 30 * time.Second
 	req := &pullRequest{
-		Batch:   100,
-		Expires: defaultTimeout,
+		Batch:     100,
+		Expires:   defaultTimeout,
+		Heartbeat: 5 * time.Second,
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
@@ -183,7 +199,7 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error, 1)
-	atomic.StoreUint32(&p.isStreaming, 1)
+	atomic.StoreUint32(&p.isListening, 1)
 	go func() {
 		for {
 			select {
@@ -203,45 +219,30 @@ func (p *pullConsumer) Stream(ctx context.Context, handler MessageHandler, opts 
 
 	go func() {
 		for {
-			if req.Heartbeat != 0 {
-				select {
-				case msg := <-pending:
-					handler(msg, nil)
-				case err := <-errs:
-					handler(nil, err)
-				case <-p.heartbeat:
-				case <-time.After(2 * req.Heartbeat):
-					handler(nil, ErrNoHeartbeat)
-					cancel()
-					p.Lock()
-					p.subscription.Unsubscribe()
-					p.subscription = nil
-					p.Unlock()
-					atomic.StoreUint32(&p.isStreaming, 0)
-					return
-				case <-ctx.Done():
-					p.Lock()
-					p.subscription.Unsubscribe()
-					p.subscription = nil
-					p.Unlock()
-					atomic.StoreUint32(&p.isStreaming, 0)
-					return
-				}
-				continue
-			}
 			select {
 			case msg := <-pending:
 				handler(msg, nil)
 			case err := <-errs:
 				handler(nil, err)
+			case <-p.heartbeat:
+			case <-time.After(2 * req.Heartbeat):
+				handler(nil, ErrNoHeartbeat)
+				cancel()
+				p.Lock()
+				p.subscription.Unsubscribe()
+				p.subscription = nil
+				p.Unlock()
+				atomic.StoreUint32(&p.isListening, 0)
+				return
 			case <-ctx.Done():
 				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
 				p.Unlock()
-				atomic.StoreUint32(&p.isStreaming, 0)
+				atomic.StoreUint32(&p.isListening, 0)
 				return
 			}
+			continue
 		}
 	}()
 

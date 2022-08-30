@@ -14,15 +14,11 @@
 package jetstream
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/nats-io/nats.go"
 )
-
-// ErrInvalidOption is returned when there is a collision between options
-var ErrInvalidOption = errors.New("nats: invalid jetstream option")
 
 // WithClientTrace enables request/response API calls tracing
 // ClientTrace is used to provide handlers for each event
@@ -52,17 +48,17 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	}
 }
 
-// WithSubject sets a sprecific subject for which messages on a stream will be purged
-func WithSubject(subject string) StreamPurgeOpt {
+// WithPurgeSubject sets a sprecific subject for which messages on a stream will be purged
+func WithPurgeSubject(subject string) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		req.Subject = subject
 		return nil
 	}
 }
 
-// WithSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// WithPurgeSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
 // Can be combined with `WithSubject()` option, but not with `WithKeep()`
-func WithSequence(sequence uint64) StreamPurgeOpt {
+func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Keep != 0 {
 			return fmt.Errorf("%w: both 'keep' and 'sequence' cannot be provided in purge request", ErrInvalidOption)
@@ -72,9 +68,9 @@ func WithSequence(sequence uint64) StreamPurgeOpt {
 	}
 }
 
-// WithKeep sets the number of messages to be kept in the stream after purge.
+// WithPurgeKeep sets the number of messages to be kept in the stream after purge.
 // Can be combined with `WithSubject()` option, but not with `WithSequence()`
-func WithKeep(keep uint64) StreamPurgeOpt {
+func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Sequence != 0 {
 			return fmt.Errorf("%w: both 'keep' and 'sequence' cannot be provided in purge request", ErrInvalidOption)
@@ -84,30 +80,9 @@ func WithKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithNoWait can be used to terminate the 'Next()` request and return ErrNoMessages immediately if there are no messages at the time of request
-func WithNoWait() ConsumerNextOpt {
-	return func(cfg *pullRequest) error {
-		cfg.NoWait = true
-		cfg.Expires = 0
-		return nil
-	}
-}
-
-// WithStreamHeartbeat sets the idle heartbeat duration for a pull subscription
-// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithNextHeartbeat(hb time.Duration) ConsumerNextOpt {
-	return func(req *pullRequest) error {
-		if hb <= 0 {
-			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", nats.ErrInvalidArg)
-		}
-		req.Heartbeat = hb
-		return nil
-	}
-}
-
 // WithBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithBatchSize(batch int) ConsumerStreamOpt {
+func WithBatchSize(batch int) ConsumerListenOpt {
 	return func(cfg *pullRequest) error {
 		if batch < 0 {
 			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
@@ -118,7 +93,7 @@ func WithBatchSize(batch int) ConsumerStreamOpt {
 }
 
 // WithExpiry sets timeount on a single batch request, waiting until at least one message is available
-func WithExpiry(expires time.Duration) ConsumerStreamOpt {
+func WithExpiry(expires time.Duration) ConsumerListenOpt {
 	return func(cfg *pullRequest) error {
 		if expires < 0 {
 			return fmt.Errorf("%w: expires value must be positive", nats.ErrInvalidArg)
@@ -130,7 +105,7 @@ func WithExpiry(expires time.Duration) ConsumerStreamOpt {
 
 // WithStreamHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithStreamHeartbeat(hb time.Duration) ConsumerStreamOpt {
+func WithStreamHeartbeat(hb time.Duration) ConsumerListenOpt {
 	return func(req *pullRequest) error {
 		if hb <= 0 {
 			return fmt.Errorf("idle_heartbeat value must be greater than 0")
@@ -156,7 +131,8 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
-func WithNakDelay(delay time.Duration) AckOpt {
+// WithNakDelay can be used to specify the duration after which the message should be redelivered
+func WithNakDelay(delay time.Duration) NakOpt {
 	return func(opts *ackOpts) error {
 		opts.nakDelay = delay
 		return nil
