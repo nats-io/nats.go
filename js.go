@@ -1390,7 +1390,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// Some checks for pull subscribers
 	if isPullMode {
 		// Check for bad ack policy
-		if o.cfg.AckPolicy == AckNonePolicy || o.cfg.AckPolicy == AckAllPolicy {
+		if o.cfg.AckPolicy == AckNonePolicy {
 			return nil, fmt.Errorf("nats: invalid ack mode for pull consumers: %s", o.cfg.AckPolicy)
 		}
 		// No deliver subject should be provided
