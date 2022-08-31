@@ -363,7 +363,7 @@ func DirectGetNext(subject string) JSOpt {
 
 // StreamListFilter is an option that can be used to configure `StreamsInfo()` and `StreamNames()` requests.
 // It allows filtering the retured streams by subject associated with each stream.
-// Wildcards can be used. For example, `StreamListFilter(FOO.>.A) will return
+// Wildcards can be used. For example, `StreamListFilter(FOO.*.A) will return
 // all streams which have at least one subject matching the provided pattern (e.g. FOO.TEST.A).
 func StreamListFilter(subject string) JSOpt {
 	return jsOptFn(func(opts *jsOpts) error {
