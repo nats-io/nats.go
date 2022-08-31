@@ -134,6 +134,13 @@ var (
 	ErrNameRequired         = errors.New("nats: name is required")
 	ErrNeeds262             = errors.New("nats: object-store requires at least server version 2.6.2")
 	ErrLinkNotAllowed       = errors.New("nats: link cannot be set when putting the object in bucket")
+	ErrObjectRequired       = errors.New("nats: object required")
+	ErrNoLinkToDeleted      = errors.New("nats: not allowed to link to a deleted object")
+	ErrNoLinkToLink         = errors.New("nats: not allowed to link to another link")
+	ErrCantGetBucket        = errors.New("nats: invalid Get, object is a link to a bucket")
+	ErrBucketRequired       = errors.New("nats: bucket required")
+	ErrBucketMalformed      = errors.New("nats: bucket malformed")
+	ErrUpdateMetaDeleted    = errors.New("nats: cannot update meta for a deleted object")
 )
 
 // ObjectStoreConfig is the config for the object store.
@@ -507,7 +514,7 @@ func (obs *obs) Get(name string, opts ...ObjectOpt) (ObjectResult, error) {
 	// Check for object links. If single objects we do a pass through.
 	if info.isLink() {
 		if info.ObjectMeta.Opts.Link.Name == _EMPTY_ {
-			return nil, errors.New("nats: object is a link to a bucket")
+			return nil, ErrCantGetBucket
 		}
 
 		// is the link in the same bucket?
@@ -617,15 +624,7 @@ func (obs *obs) Delete(name string) error {
 	info.Deleted = true
 	info.Size, info.Chunks, info.Digest = 0, 0, _EMPTY_
 
-	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(name))
-	mm := NewMsg(metaSubj)
-	mm.Data, err = json.Marshal(info)
-	if err != nil {
-		return err
-	}
-	mm.Header.Set(MsgRollup, MsgRollupSubject)
-	_, err = obs.js.PublishMsg(mm)
-	if err != nil {
+	if err = publishMeta(info, obs.js); err != nil {
 		return err
 	}
 
@@ -635,18 +634,16 @@ func (obs *obs) Delete(name string) error {
 }
 
 func publishMeta(info *ObjectInfo, js JetStreamContext) error {
-	// Prepare the meta message
-	metaSubj := fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name))
-	mm := NewMsg(metaSubj)
-	mm.Header.Set(MsgRollup, MsgRollupSubject)
-
-	info.ModTime = time.Time{} // We don't store this, just do it after publish
+	// marshal the object into json, don't store an actual time
+	info.ModTime = time.Time{}
 	data, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
 
-	// Publish the meta message.
+	// Prepare and publish the message.
+	mm := NewMsg(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
 	if _, err := js.PublishMsg(mm); err != nil {
 		return err
@@ -664,14 +661,17 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	if name == "" {
 		return nil, ErrNameRequired
 	}
+
+	// TODO Handle stale info
+
 	if obj == nil || obj.Name == "" {
-		return nil, errors.New("nats: object required")
+		return nil, ErrObjectRequired
 	}
 	if obj.Deleted {
-		return nil, errors.New("nats: not allowed to link to a deleted object")
+		return nil, ErrNoLinkToDeleted
 	}
 	if obj.isLink() {
-		return nil, errors.New("nats: not allowed to link to another link")
+		return nil, ErrNoLinkToLink
 	}
 
 	// If object with link's name is found, error.
@@ -707,11 +707,11 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 		return nil, ErrNameRequired
 	}
 	if bucket == nil {
-		return nil, errors.New("nats: bucket required")
+		return nil, ErrBucketRequired
 	}
 	bos, ok := bucket.(*obs)
 	if !ok {
-		return nil, errors.New("nats: bucket malformed")
+		return nil, ErrBucketMalformed
 	}
 
 	// If object with link's name is found, error.
@@ -851,12 +851,11 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	}
 
 	if info.Deleted {
-		return errors.New("nats: cannot update meta for a deleted object")
+		return ErrUpdateMetaDeleted
 	}
 
 	// If the new name is different from the old, and it exists, error
 	// If there was an error that was not ErrObjectNotFound, error.
-	// sff - Is there a better go way to do this?
 	if name != meta.Name {
 		_, err = obs.GetInfo(meta.Name)
 		if err != ErrObjectNotFound {
@@ -874,17 +873,7 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	info.Headers = meta.Headers
 
 	// Prepare the meta message
-	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
-	mm := NewMsg(metaSubj)
-	mm.Header.Set(MsgRollup, MsgRollupSubject)
-	mm.Data, err = json.Marshal(info)
-	if err != nil {
-		return err
-	}
-
-	// Publish the meta message.
-	_, err = obs.js.PublishMsg(mm)
-	if err != nil {
+	if err = publishMeta(info, obs.js); err != nil {
 		return err
 	}
 

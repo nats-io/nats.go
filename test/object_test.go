@@ -35,7 +35,13 @@ func TestObjectBasics(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
+	obs, err := js.CreateObjectStore(nil)
+	expectErr(t, err, nats.ErrObjectConfigRequired)
+
+	obs, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "notok!", Description: "testing"})
+	expectErr(t, err, nats.ErrInvalidStoreName)
+
+	obs, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
 	expectOk(t, err)
 
 	// Create ~16MB object.
@@ -102,21 +108,22 @@ func TestObjectBasics(t *testing.T) {
 	if !bytes.Equal(copy, blob) {
 		t.Fatalf("Result not the same")
 	}
+
+	// Check simple errors.
+	_, err = obs.Get("FOO")
+	expectErr(t, err, nats.ErrObjectNotFound)
+
+	_, err = obs.Get("")
+	expectErr(t, err, nats.ErrNameRequired)
+
+	_, err = obs.PutBytes("", blob)
+	expectErr(t, err, nats.ErrBadObjectMeta)
+
 	// Test delete.
 	err = js.DeleteObjectStore("OBJS")
 	expectOk(t, err)
 	_, err = obs.Get("BLOB")
 	expectErr(t, err, nats.ErrStreamNotFound)
-
-	// Check simple errors.
-	_, err = obs.Get("FOO")
-	expectErr(t, err)
-
-	_, err = obs.Get("")
-	expectErr(t, err)
-
-	_, err = obs.PutBytes("", blob)
-	expectErr(t, err)
 }
 
 func TestGetObjectDigestMismatch(t *testing.T) {
@@ -290,7 +297,7 @@ func TestObjectDeleteMarkers(t *testing.T) {
 	si, err := js.StreamInfo("OBJ_OBJS")
 	expectOk(t, err)
 
-	// We should have one message left. The delete marker.
+	// We should have one message left, the "delete" marker.
 	if si.State.Msgs != 1 {
 		t.Fatalf("Expected 1 marker msg, got %d msgs", si.State.Msgs)
 	}
@@ -368,7 +375,7 @@ func TestObjectNames(t *testing.T) {
 
 	// Errors
 	_, err = obs.PutString("", "A")
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrBadObjectMeta)
 }
 
 func TestObjectMetadata(t *testing.T) {
@@ -425,7 +432,7 @@ func TestObjectMetadata(t *testing.T) {
 	err = obs.Delete("B")
 	expectOk(t, err)
 	err = obs.UpdateMeta("B", meta)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrUpdateMetaDeleted)
 
 	err = obs.UpdateMeta("X", meta)
 	if err == nil {
@@ -456,7 +463,7 @@ func TestObjectWatch(t *testing.T) {
 		t.Helper()
 		select {
 		case info := <-watcher.Updates():
-			if false && info.Name != name {
+			if false && info.Name != name { // TODO what is supposed to happen here?
 				t.Fatalf("Expected update for %q, but got %+v", name, info)
 			}
 		case <-time.After(time.Second):
@@ -518,7 +525,7 @@ func TestObjectWatch(t *testing.T) {
 	meta := &deletedInfo.ObjectMeta
 	meta.Description = "Making a change."
 	err = obs.UpdateMeta("A", meta)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrUpdateMetaDeleted)
 }
 
 func TestObjectLinks(t *testing.T) {
@@ -546,7 +553,7 @@ func TestObjectLinks(t *testing.T) {
 
 	// link to a link
 	_, err = root.AddLink("LALA", infoLA)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrNoLinkToLink)
 
 	dir, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "DIR"})
 	expectOk(t, err)
@@ -566,6 +573,9 @@ func TestObjectLinks(t *testing.T) {
 	// Now add whole other store as a link, like a directory.
 	infoBucketLink, err := root.AddBucketLink("dir", dir)
 	expectOk(t, err)
+
+	_, err = root.Get(infoBucketLink.Name)
+	expectErr(t, err, nats.ErrCantGetBucket)
 
 	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
 
@@ -608,25 +618,41 @@ func TestObjectLinks(t *testing.T) {
 
 	// Check simple errors.
 	_, err = root.AddLink("", infoB)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrNameRequired)
+
+	// A is already an object
+	_, err = root.AddLink("A", infoB)
+	expectErr(t, err, nats.ErrObjectAlreadyExists)
 
 	_, err = root.AddLink("Nil Object", nil)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrObjectRequired)
 
 	infoB.Name = ""
 	_, err = root.AddLink("Empty Info Name", infoB)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrObjectRequired)
 
 	// Check Error Link to a Link
 	_, err = root.AddLink("Link To Link", infoLB)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrNoLinkToLink)
 
-	// Check Error Link to a Link
+	// Check Errors on bucket linking
 	_, err = root.AddBucketLink("", root)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrNameRequired)
 
 	_, err = root.AddBucketLink("Nil Bucket", nil)
-	expectErr(t, err)
+	expectErr(t, err, nats.ErrBucketRequired)
+
+	err = root.Delete("A")
+	expectOk(t, err)
+
+	_, err = root.AddLink("ToDeletedStale", infoA)
+	expectOk(t, err) // TODO deal with this in the code somehow
+
+	infoA, err = root.GetInfo("A")
+	expectOk(t, err)
+
+	_, err = root.AddLink("ToDeletedFresh", infoA)
+	expectErr(t, err, nats.ErrNoLinkToDeleted)
 }
 
 func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {
@@ -686,6 +712,9 @@ func TestObjectList(t *testing.T) {
 	root, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "ROOT"})
 	expectOk(t, err)
 
+	lch, err := root.List()
+	expectErr(t, err, nats.ErrNoObjectsFound)
+
 	put := func(name, value string) {
 		_, err = root.PutString(name, value)
 		expectOk(t, err)
@@ -706,7 +735,7 @@ func TestObjectList(t *testing.T) {
 	err = root.Delete("D")
 	expectOk(t, err)
 
-	lch, err := root.List()
+	lch, err = root.List()
 	expectOk(t, err)
 
 	omap := make(map[string]struct{})
