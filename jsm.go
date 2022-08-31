@@ -547,7 +547,7 @@ type consumerNamesListResponse struct {
 	Consumers []string `json:"consumers"`
 }
 
-// Next fetches the next ConsumerInfo page.
+// Next fetches the next consumer names page.
 func (c *consumerNamesLister) Next() bool {
 	if c.err != nil {
 		return false
@@ -567,8 +567,15 @@ func (c *consumerNamesLister) Next() bool {
 		defer cancel()
 	}
 
+	req, err := json.Marshal(consumersRequest{
+		apiPagedRequest: apiPagedRequest{Offset: c.offset},
+	})
+	if err != nil {
+		c.err = err
+		return false
+	}
 	clSubj := c.js.apiSubj(fmt.Sprintf(apiConsumerNamesT, c.stream))
-	r, err := c.js.apiRequestWithContext(ctx, clSubj, nil)
+	r, err := c.js.apiRequestWithContext(ctx, clSubj, req)
 	if err != nil {
 		c.err = err
 		return false
@@ -1286,7 +1293,7 @@ type streamNamesLister struct {
 	pageInfo *apiPaged
 }
 
-// Next fetches the next ConsumerInfo page.
+// Next fetches the next stream names page.
 func (l *streamNamesLister) Next() bool {
 	if l.err != nil {
 		return false
@@ -1302,7 +1309,14 @@ func (l *streamNamesLister) Next() bool {
 		defer cancel()
 	}
 
-	r, err := l.js.apiRequestWithContext(ctx, l.js.apiSubj(apiStreams), nil)
+	req, err := json.Marshal(streamNamesRequest{
+		apiPagedRequest: apiPagedRequest{Offset: l.offset},
+	})
+	if err != nil {
+		l.err = err
+		return false
+	}
+	r, err := l.js.apiRequestWithContext(ctx, l.js.apiSubj(apiStreams), req)
 	if err != nil {
 		l.err = err
 		return false

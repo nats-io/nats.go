@@ -1647,6 +1647,97 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 }
 
+func TestStreamLister(t *testing.T) {
+	tests := []struct {
+		name       string
+		streamsNum int
+	}{
+		{
+			name:       "single page",
+			streamsNum: 5,
+		},
+		{
+			name:       "multi page",
+			streamsNum: 1025,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+			for i := 0; i < test.streamsNum; i++ {
+				if _, err := js.AddStream(&nats.StreamConfig{Name: fmt.Sprintf("stream_%d", i)}); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			names := make([]string, 0)
+			for name := range js.StreamNames() {
+				names = append(names, name)
+			}
+			if len(names) != test.streamsNum {
+				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.streamsNum, len(names))
+			}
+			infos := make([]*nats.StreamInfo, 0)
+			for info := range js.StreamsInfo() {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.streamsNum {
+				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.streamsNum, len(infos))
+			}
+		})
+	}
+}
+
+func TestConsumersLister(t *testing.T) {
+	tests := []struct {
+		name         string
+		consumersNum int
+	}{
+		{
+			name:         "single page",
+			consumersNum: 5,
+		},
+		{
+			name:         "multi page",
+			consumersNum: 1025,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+			js.AddStream(&nats.StreamConfig{Name: "foo"})
+			for i := 0; i < test.consumersNum; i++ {
+				if _, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: fmt.Sprintf("cons_%d", i), AckPolicy: nats.AckExplicitPolicy}); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			names := make([]string, 0)
+			for name := range js.ConsumerNames("foo") {
+				names = append(names, name)
+			}
+			if len(names) != test.consumersNum {
+				t.Fatalf("Invalid number of consumer names; want: %d; got: %d", test.consumersNum, len(names))
+			}
+			infos := make([]*nats.ConsumerInfo, 0)
+			for info := range js.ConsumersInfo("foo") {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.consumersNum {
+				t.Fatalf("Invalid number of consumers; want: %d; got: %d", test.consumersNum, len(infos))
+			}
+		})
+	}
+}
+
 func TestAccountInfo(t *testing.T) {
 	tests := []struct {
 		name      string
