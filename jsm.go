@@ -1211,6 +1211,7 @@ func (s *streamLister) Next() bool {
 
 	req, err := json.Marshal(streamNamesRequest{
 		apiPagedRequest: apiPagedRequest{Offset: s.offset},
+		Subject:         s.js.opts.streamListSubject,
 	})
 	if err != nil {
 		s.err = err
@@ -1311,6 +1312,7 @@ func (l *streamNamesLister) Next() bool {
 
 	req, err := json.Marshal(streamNamesRequest{
 		apiPagedRequest: apiPagedRequest{Offset: l.offset},
+		Subject:         l.js.opts.streamListSubject,
 	})
 	if err != nil {
 		l.err = err
