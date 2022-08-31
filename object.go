@@ -648,8 +648,7 @@ func publishMeta(info *ObjectInfo, js JetStreamContext) error {
 
 	// Publish the meta message.
 	mm.Data = data
-	_, err = js.PublishMsg(mm)
-	if err != nil {
+	if _, err := js.PublishMsg(mm); err != nil {
 		return err
 	}
 
@@ -695,8 +694,7 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 	info := &ObjectInfo{Bucket: obs.name, NUID: nuid.Next(), ModTime: time.Now().UTC(), ObjectMeta: *meta}
 
 	// put the link object
-	err = publishMeta(info, obs.js)
-	if err != nil {
+	if err = publishMeta(info, obs.js); err != nil {
 		return nil, err
 	}
 
