@@ -239,6 +239,8 @@ type jsOpts struct {
 	purgeOpts *StreamPurgeRequest
 	// streamInfoOpts contains optional stream info options
 	streamInfoOpts *StreamInfoRequest
+	// streamListSubject is used for subject filtering when listing streams / stream names
+	streamListSubject string
 	// For direct get message requests
 	directGet bool
 	// For direct get next message
@@ -355,6 +357,17 @@ func DirectGetNext(subject string) JSOpt {
 	return jsOptFn(func(js *jsOpts) error {
 		js.directGet = true
 		js.directNextFor = subject
+		return nil
+	})
+}
+
+// StreamListFilter is an option that can be used to configure `StreamsInfo()` and `StreamNames()` requests.
+// It allows filtering the retured streams by subject associated with each stream.
+// Wildcards can be used. For example, `StreamListFilter(FOO.*.A) will return
+// all streams which have at least one subject matching the provided pattern (e.g. FOO.TEST.A).
+func StreamListFilter(subject string) JSOpt {
+	return jsOptFn(func(opts *jsOpts) error {
+		opts.streamListSubject = subject
 		return nil
 	})
 }

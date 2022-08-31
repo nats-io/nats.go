@@ -1692,6 +1692,75 @@ func TestStreamLister(t *testing.T) {
 	}
 }
 
+func TestStreamLister_FilterSubject(t *testing.T) {
+	streams := map[string][]string{
+		"s1": {"foo"},
+		"s2": {"bar"},
+		"s3": {"foo.*", "bar.*"},
+		"s4": {"foo-1.A"},
+		"s5": {"foo.A.bar.B"},
+		"s6": {"foo.C.bar.D.E"},
+	}
+	tests := []struct {
+		filter   string
+		expected []string
+	}{
+		{
+			filter:   "foo",
+			expected: []string{"s1"},
+		},
+		{
+			filter:   "bar",
+			expected: []string{"s2"},
+		},
+		{
+			filter:   "*",
+			expected: []string{"s1", "s2"},
+		},
+		{
+			filter:   ">",
+			expected: []string{"s1", "s2", "s3", "s4", "s5", "s6"},
+		},
+		{
+			filter:   "*.A",
+			expected: []string{"s3", "s4"},
+		},
+	}
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	for name, subjects := range streams {
+		if _, err := js.AddStream(&nats.StreamConfig{Name: name, Subjects: subjects}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	for _, test := range tests {
+		t.Run(test.filter, func(t *testing.T) {
+			names := make([]string, 0)
+
+			// list stream names
+			for name := range js.StreamNames(nats.StreamListFilter(test.filter)) {
+				names = append(names, name)
+			}
+			if !reflect.DeepEqual(names, test.expected) {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.expected, names)
+			}
+
+			// list streams
+			names = make([]string, 0)
+			for info := range js.StreamsInfo(nats.StreamListFilter(test.filter)) {
+				names = append(names, info.Config.Name)
+			}
+			if !reflect.DeepEqual(names, test.expected) {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.expected, names)
+			}
+		})
+	}
+}
+
 func TestConsumersLister(t *testing.T) {
 	tests := []struct {
 		name         string
