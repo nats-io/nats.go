@@ -75,7 +75,7 @@ type ObjectStore interface {
 
 	// GetInfo will retrieve the current information for the object.
 	GetInfo(name string) (*ObjectInfo, error)
-	// UpdateMeta will update the meta data for the object.
+	// UpdateMeta will update the metadata for the object.
 	UpdateMeta(name string, meta *ObjectMeta) error
 
 	// Delete will delete the named object.
