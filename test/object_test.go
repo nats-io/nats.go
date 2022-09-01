@@ -35,13 +35,13 @@ func TestObjectBasics(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	obs, err := js.CreateObjectStore(nil)
+	_, err := js.CreateObjectStore(nil)
 	expectErr(t, err, nats.ErrObjectConfigRequired)
 
-	obs, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "notok!", Description: "testing"})
+	_, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "notok!", Description: "testing"})
 	expectErr(t, err, nats.ErrInvalidStoreName)
 
-	obs, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
 	expectOk(t, err)
 
 	// Create ~16MB object.
@@ -712,7 +712,7 @@ func TestObjectList(t *testing.T) {
 	root, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "ROOT"})
 	expectOk(t, err)
 
-	lch, err := root.List()
+	_, err = root.List()
 	expectErr(t, err, nats.ErrNoObjectsFound)
 
 	put := func(name, value string) {
@@ -735,7 +735,7 @@ func TestObjectList(t *testing.T) {
 	err = root.Delete("D")
 	expectOk(t, err)
 
-	lch, err = root.List()
+	lch, err := root.List()
 	expectOk(t, err)
 
 	omap := make(map[string]struct{})
