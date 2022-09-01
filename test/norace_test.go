@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !race
-// +build !race
+//go:build !race && !skip_no_race_tests
+// +build !race,!skip_no_race_tests
 
 package test
 
@@ -53,7 +53,7 @@ func TestNoRaceObjectContextOpt(t *testing.T) {
 	}
 
 	// Now put a large object in there.
-	blob := make([]byte, 8*1024*1024)
+	blob := make([]byte, 16*1024*1024)
 	rand.Read(blob)
 	_, err = obs.PutBytes("BLOB", blob)
 	expectOk(t, err)

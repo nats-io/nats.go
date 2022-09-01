@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !race
-// +build !race
+//go:build !race && !skip_no_race_tests
+// +build !race,!skip_no_race_tests
 
 package nats
 
@@ -603,7 +603,7 @@ Loop:
 	})
 }
 
-func TestJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
+func TestNoRaceJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -673,7 +673,7 @@ func TestJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	// Set this lower then normal to make sure we do not exceed bytes pending with FC turned on.
-	sub.SetPendingLimits(totalMsgs, 1024*1024) // This matches server window for flowcontrol.
+	sub.SetPendingLimits(totalMsgs, 4*1024*1024) // This matches server window for flowcontrol.
 
 	info, err := sub.ConsumerInfo()
 	if err != nil {

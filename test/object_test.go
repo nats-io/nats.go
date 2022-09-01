@@ -16,12 +16,12 @@ package test
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
 	"time"
 
@@ -83,10 +83,6 @@ func TestObjectBasics(t *testing.T) {
 		t.Fatalf("invalid description: '%s'", status.Description())
 	}
 
-	// Check simple errors.
-	_, err = obs.Get("FOO")
-	expectErr(t, err)
-
 	// Now get the object back.
 	result, err := obs.Get("BLOB")
 	expectOk(t, err)
@@ -111,6 +107,51 @@ func TestObjectBasics(t *testing.T) {
 	expectOk(t, err)
 	_, err = obs.Get("BLOB")
 	expectErr(t, err, nats.ErrStreamNotFound)
+
+	// Check simple errors.
+	_, err = obs.Get("FOO")
+	expectErr(t, err)
+
+	_, err = obs.Get("")
+	expectErr(t, err)
+
+	_, err = obs.PutBytes("", blob)
+	expectErr(t, err)
+}
+
+func TestGetObjectDigestMismatch(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "FOO"})
+	expectOk(t, err)
+
+	_, err = obs.PutString("A", "abc")
+	expectOk(t, err)
+	res, err := obs.Get("A")
+	expectOk(t, err)
+	// first read should be successful
+	data, err := ioutil.ReadAll(res)
+	expectOk(t, err)
+	if string(data) != "abc" {
+		t.Fatalf("Expected result: 'abc'; got: %s", string(data))
+	}
+
+	info, err := obs.GetInfo("A")
+	expectOk(t, err)
+
+	// add new chunk after using Put(), this will change the digest hash on Get()
+	_, err = js.Publish(fmt.Sprintf("$O.FOO.C.%s", info.NUID), []byte("123"))
+	expectOk(t, err)
+
+	res, err = obs.Get("A")
+	expectOk(t, err)
+	_, err = ioutil.ReadAll(res)
+	expectErr(t, err, nats.ErrDigestMismatch)
+	expectErr(t, res.Error(), nats.ErrDigestMismatch)
 }
 
 func TestDefaultObjectStatus(t *testing.T) {
@@ -142,13 +183,6 @@ func TestDefaultObjectStatus(t *testing.T) {
 }
 
 func TestObjectFileBasics(t *testing.T) {
-	// The filename is likely to be something like C:\xxx and we don't allow
-	// the '\' or ':' characters. We could translate the tmpFile.Name() from
-	// C:\foo\bar to C:/foo/bar (since Windows is OK with that), however,
-	// that would still fail on key validation because `:` is not allowed.
-	if runtime.GOOS == "windows" {
-		t.SkipNow()
-	}
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -322,20 +356,18 @@ func TestObjectNames(t *testing.T) {
 	// Test filename like naming.
 	_, err = obs.PutString("BLOB.txt", "A")
 	expectOk(t, err)
+
 	// Spaces ok
 	_, err = obs.PutString("foo bar", "A")
 	expectOk(t, err)
 
+	// things that can be in a filename across multiple OSes
+	// dot, asterisk, lt, gt, colon, double-quote, fwd-slash, backslash, pipe, question-mark, ampersand
+	_, err = obs.PutString(".*<>:\"/\\|?&", "A")
+	expectOk(t, err)
+
 	// Errors
-	_, err = obs.PutString("*", "A")
-	expectErr(t, err)
-	_, err = obs.PutString(">", "A")
-	expectErr(t, err)
 	_, err = obs.PutString("", "A")
-	expectErr(t, err)
-	_, err = obs.PutString("", "\t")
-	expectErr(t, err)
-	_, err = obs.PutString("", "\n")
 	expectErr(t, err)
 }
 
@@ -353,26 +385,51 @@ func TestObjectMetadata(t *testing.T) {
 	_, err = obs.PutString("A", "AAA")
 	expectOk(t, err)
 
-	meta := &nats.ObjectMeta{Name: "B"}
+	meta := &nats.ObjectMeta{Name: "A"}
+	meta.Description = "descA"
+	meta.Headers = make(nats.Header)
+	meta.Headers.Set("color", "blue")
+
+	// simple update that does not change the name, just adds data
+	err = obs.UpdateMeta("A", meta)
+	expectOk(t, err)
+
+	info, err := obs.GetInfo("A")
+	expectOk(t, err)
+	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" {
+		t.Fatalf("Update failed: %+v", info)
+	}
+
+	// update that changes the name and some data
+	meta = &nats.ObjectMeta{Name: "B"}
+	meta.Description = "descB"
+	meta.Headers = make(nats.Header)
+	meta.Headers.Set("color", "red")
 
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, err := obs.GetInfo("B")
-	expectOk(t, err)
-	if info.Name != "B" {
-		t.Fatalf("Update failed: %+v", info)
+	_, err = obs.GetInfo("A")
+	if err == nil {
+		t.Fatal("Object meta for original name was not removed.")
 	}
-	meta.Headers = make(nats.Header)
-	meta.Headers.Set("color", "red")
-
-	err = obs.UpdateMeta("B", meta)
-	expectOk(t, err)
 
 	info, err = obs.GetInfo("B")
 	expectOk(t, err)
-	if info.Headers == nil || info.Headers.Get("color") != "red" {
+
+	if info.Name != "B" || info.Description != "descB" || info.Headers == nil || info.Headers.Get("color") != "red" {
 		t.Fatalf("Update failed: %+v", info)
+	}
+
+	// delete the object to test updating against a deleted object
+	err = obs.Delete("B")
+	expectOk(t, err)
+	err = obs.UpdateMeta("B", meta)
+	expectErr(t, err)
+
+	err = obs.UpdateMeta("X", meta)
+	if err == nil {
+		t.Fatal("Expected an error when trying to update an object that does not exist.")
 	}
 }
 
@@ -448,12 +505,15 @@ func TestObjectWatch(t *testing.T) {
 	expectOk(t, err)
 
 	// Update Meta
-	info, err := obs.GetInfo("A")
+	deletedInfo, err := obs.GetInfo("A")
 	expectOk(t, err)
-	meta := &info.ObjectMeta
-	meta.Description = "A's are better than B's"
+	if !deletedInfo.Deleted {
+		t.Fatalf("Expected object to be deleted.")
+	}
+	meta := &deletedInfo.ObjectMeta
+	meta.Description = "Making a change."
 	err = obs.UpdateMeta("A", meta)
-	expectOk(t, err)
+	expectErr(t, err)
 }
 
 func TestObjectLinks(t *testing.T) {
@@ -471,12 +531,17 @@ func TestObjectLinks(t *testing.T) {
 	_, err = root.PutString("B", "BBB")
 	expectOk(t, err)
 
-	info, err := root.GetInfo("A")
+	infoA, err := root.GetInfo("A")
 	expectOk(t, err)
 
-	// Self link to individual object.
-	_, err = root.AddLink("LA", info)
+	// Link to individual object.
+	infoLA, err := root.AddLink("LA", infoA)
 	expectOk(t, err)
+	expectLinkIsCorrect(t, infoA, infoLA)
+
+	// link to a link
+	_, err = root.AddLink("LALA", infoLA)
+	expectErr(t, err)
 
 	dir, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "DIR"})
 	expectOk(t, err)
@@ -486,27 +551,90 @@ func TestObjectLinks(t *testing.T) {
 	_, err = dir.PutString("DIR/B", "DIR-BBB")
 	expectOk(t, err)
 
-	info, err = dir.GetInfo("DIR/B")
+	infoB, err := dir.GetInfo("DIR/B")
 	expectOk(t, err)
 
-	binfo, err := root.AddLink("DBL", info)
+	infoLB, err := root.AddLink("DBL", infoB)
 	expectOk(t, err)
-
-	if binfo.Name != "DBL" || binfo.NUID == "" || binfo.ModTime.IsZero() {
-		t.Fatalf("Link info not what was expected: %+v", binfo)
-	}
+	expectLinkIsCorrect(t, infoB, infoLB)
 
 	// Now add whole other store as a link, like a directory.
-	_, err = root.AddBucketLink("dir", dir)
+	infoBucketLink, err := root.AddBucketLink("dir", dir)
 	expectOk(t, err)
 
-	// Now try to get a linked object.
-	dbl, err := root.GetString("DBL")
+	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
+
+	// Try to get a linked object, same bucket
+	getLA, err := root.GetString("LA")
 	expectOk(t, err)
 
-	if dbl != "DIR-BBB" {
-		t.Fatalf("Expected %q but got %q", "DIR-BBB", dbl)
+	if getLA != "AAA" {
+		t.Fatalf("Expected %q but got %q", "AAA", getLA)
 	}
+
+	// Try to get a linked object, cross bucket
+	getDbl, err := root.GetString("DBL")
+	expectOk(t, err)
+
+	if getDbl != "DIR-BBB" {
+		t.Fatalf("Expected %q but got %q", "DIR-BBB", getDbl)
+	}
+
+	// change a link
+	infoB, err = root.GetInfo("B")
+	expectOk(t, err)
+
+	infoLA, err = root.GetInfo("LA")
+	expectOk(t, err)
+	expectLinkIsCorrect(t, infoA, infoLA)
+
+	infoLA, err = root.AddLink("LA", infoB)
+	expectOk(t, err)
+	expectLinkIsCorrect(t, infoB, infoLA)
+
+	// change a bucket link
+	infoBucketLink, err = root.GetInfo("dir")
+	expectOk(t, err)
+	expectLinkPartsAreCorrect(t, infoBucketLink, "DIR", "")
+
+	infoBucketLink, err = root.AddBucketLink("dir", root)
+	expectOk(t, err)
+	expectLinkPartsAreCorrect(t, infoBucketLink, "ROOT", "")
+
+	// Check simple errors.
+	_, err = root.AddLink("", infoB)
+	expectErr(t, err)
+
+	_, err = root.AddLink("Nil Object", nil)
+	expectErr(t, err)
+
+	infoB.Name = ""
+	_, err = root.AddLink("Empty Info Name", infoB)
+	expectErr(t, err)
+
+	// Check Error Link to a Link
+	_, err = root.AddLink("Link To Link", infoLB)
+	expectErr(t, err)
+
+	// Check Error Link to a Link
+	_, err = root.AddBucketLink("", root)
+	expectErr(t, err)
+
+	_, err = root.AddBucketLink("Nil Bucket", nil)
+	expectErr(t, err)
+}
+
+func expectLinkIsCorrect(t *testing.T, originalObject *nats.ObjectInfo, linkObject *nats.ObjectInfo) {
+	if linkObject.Opts.Link == nil || !expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
+		t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)
+	}
+}
+
+func expectLinkPartsAreCorrect(t *testing.T, linkObject *nats.ObjectInfo, bucket, name string) bool {
+	return linkObject.Opts.Link.Bucket == bucket &&
+		linkObject.Opts.Link.Name == name &&
+		!linkObject.ModTime.IsZero() &&
+		linkObject.NUID != ""
 }
 
 // Right now no history, just make sure we are cleaning up after ourselves.
@@ -520,11 +648,19 @@ func TestObjectHistory(t *testing.T) {
 	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
 	expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 100))
+	info, err := obs.PutBytes("A", bytes.Repeat([]byte("A"), 10))
 	expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 100))
+	if info.Size != 10 {
+		t.Fatalf("Invalid first put when testing history %+v", info)
+	}
+
+	info, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20))
 	expectOk(t, err)
+
+	if info.Size != 20 {
+		t.Fatalf("Invalid second put when testing history %+v", info)
+	}
 
 	// Should only be 1 copy of 'A', so 1 data and 1 meta since history was not selected.
 	si, err := js.StreamInfo("OBJ_OBJS")
@@ -586,5 +722,24 @@ func TestObjectList(t *testing.T) {
 	}
 	if !reflect.DeepEqual(omap, expected) {
 		t.Fatalf("Expected %+v but got %+v", expected, omap)
+	}
+}
+
+func TestObjectMaxBytes(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", MaxBytes: 1024})
+	expectOk(t, err)
+
+	status, err := obs.Status()
+	expectOk(t, err)
+	bs := status.(*nats.ObjectBucketStatus)
+	info := bs.StreamInfo()
+	if info.Config.MaxBytes != 1024 {
+		t.Fatalf("invalid object stream MaxSize %+v", info.Config.MaxBytes)
 	}
 }

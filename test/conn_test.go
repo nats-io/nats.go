@@ -161,6 +161,14 @@ func TestServerSecureConnections(t *testing.T) {
 	}
 	nc.Flush()
 
+	state, err := nc.TLSConnectionState()
+	if err != nil {
+		t.Fatalf("Expected connection state: %v", err)
+	}
+	if !state.HandshakeComplete {
+		t.Fatalf("Expected valid connection state")
+	}
+
 	if err := Wait(checkRecv); err != nil {
 		t.Fatal("Failed receiving message")
 	}
@@ -1306,7 +1314,7 @@ func TestUseDefaultTimeout(t *testing.T) {
 	}
 }
 
-func TestNoRaceOnLastError(t *testing.T) {
+func TestLastErrorNoRace(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -1584,6 +1592,9 @@ func TestCustomFlusherTimeout(t *testing.T) {
 		// Notify when connection lost
 		nats.ClosedHandler(func(_ *nats.Conn) {
 			doneCh <- struct{}{}
+		}),
+		// Use error handler to silence the stderr output
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {
 		}))
 	if err != nil {
 		t.Fatalf("Expected to be able to connect, got: %s", err)

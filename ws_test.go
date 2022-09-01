@@ -16,11 +16,14 @@ package nats
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
+	"net/http"
 	"reflect"
 	"runtime"
 	"strings"
@@ -830,7 +833,11 @@ func TestWSWithTLS(t *testing.T) {
 			// since we used self signed certificates, this should fail without
 			// asking to skip server cert verification.
 			nc, err = Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
-			if err == nil || !strings.Contains(err.Error(), "authority") {
+			// Since Go 1.18, we had to regenerate certs to not have to use GODEBUG="x509sha1=1"
+			// But on macOS, with our test CA certs, no SCTs included, it will fail
+			// for the reason "x509: “localhost” certificate is not standards compliant"
+			// instead of "unknown authority".
+			if err == nil || (!strings.Contains(err.Error(), "authority") && !strings.Contains(err.Error(), "compliant")) {
 				if nc != nil {
 					nc.Close()
 				}
@@ -1107,4 +1114,51 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	}
 
 	tm.Stop()
+}
+
+func TestWSProxyPath(t *testing.T) {
+	const proxyPath = "proxy1"
+
+	// Listen to a random port
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("Error in listen: %v", err)
+	}
+	defer l.Close()
+
+	proxyPort := l.Addr().(*net.TCPAddr).Port
+
+	ch := make(chan struct{}, 1)
+	proxySrv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/"+proxyPath {
+				ch <- struct{}{}
+			}
+		}),
+	}
+	defer proxySrv.Shutdown(context.Background())
+	go proxySrv.Serve(l)
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{"without slash", proxyPath},
+		{"with slash", "/" + proxyPath},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			url := fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
+			nc, err := Connect(url, ProxyPath(test.path))
+			if err == nil {
+				nc.Close()
+				t.Fatal("Did not expect to connect")
+			}
+			select {
+			case <-ch:
+				// OK:
+			case <-time.After(time.Second):
+				t.Fatal("Proxy was not reached")
+			}
+		})
+	}
 }

@@ -625,6 +625,11 @@ func ExampleSubOpt() {
 	js.Subscribe("foo", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.ManualAck(), nats.MaxDeliver(2), nats.BackOff([]time.Duration{50 * time.Millisecond, 250 * time.Millisecond}))
+
+	// Set consumer replicas count for a durable while subscribing.
+	js.Subscribe("foo", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.Durable("FOO"), nats.ConsumerReplicas(1))
 }
 
 func ExampleMaxWait() {

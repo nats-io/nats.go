@@ -225,6 +225,7 @@ type KeyValueConfig struct {
 	Storage      StorageType
 	Replicas     int
 	Placement    *Placement
+	RePublish    *RePublish
 }
 
 // Used to watch all keys.
@@ -330,7 +331,8 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
 		js:     js,
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx: js.opts.pre != defaultAPIPrefix,
+		useJSPfx:  js.opts.pre != defaultAPIPrefix,
+		useDirect: si.Config.AllowDirect,
 	}
 	return kv, nil
 }
@@ -399,6 +401,8 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		Duplicates:        duplicateWindow,
 		MaxMsgs:           -1,
 		MaxConsumers:      -1,
+		AllowDirect:       true,
+		RePublish:         cfg.RePublish,
 	}
 
 	// If we are at server version 2.7.2 or above use DiscardNew. We can not use DiscardNew for 2.7.1 or below.
@@ -406,19 +410,20 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		scfg.Discard = DiscardNew
 	}
 
-	if _, err := js.AddStream(scfg); err != nil {
+	si, err := js.AddStream(scfg)
+	if err != nil {
 		// If we have a failure to add, it could be because we have
 		// a config change if the KV was created against a pre 2.7.2
 		// and we are now moving to a v2.7.2+. If that is the case
 		// and the only difference is the discard policy, then update
 		// the stream.
 		if err == ErrStreamNameAlreadyInUse {
-			if si, _ := js.StreamInfo(scfg.Name); si != nil {
+			if si, _ = js.StreamInfo(scfg.Name); si != nil {
 				// To compare, make the server's stream info discard
 				// policy same than ours.
 				si.Config.Discard = scfg.Discard
 				if reflect.DeepEqual(&si.Config, scfg) {
-					_, err = js.UpdateStream(scfg)
+					si, err = js.UpdateStream(scfg)
 				}
 			}
 		}
@@ -433,7 +438,8 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		pre:    fmt.Sprintf(kvSubjectsPreTmpl, cfg.Bucket),
 		js:     js,
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx: js.opts.pre != defaultAPIPrefix,
+		useJSPfx:  js.opts.pre != defaultAPIPrefix,
+		useDirect: si.Config.AllowDirect,
 	}
 	return kv, nil
 }
@@ -456,6 +462,8 @@ type kvs struct {
 	// and we need to add something to some of our high level protocols
 	// (such as Put, etc..)
 	useJSPfx bool
+	// To know if we can use the stream direct get API
+	useDirect bool
 }
 
 // Underlying entry.
@@ -521,15 +529,22 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 
 	var m *RawStreamMsg
 	var err error
+	var _opts [1]JSOpt
+	opts := _opts[:0]
+	if kv.useDirect {
+		_opts[0] = DirectGet()
+		opts = _opts[:1]
+	}
 	if revision == kvLatestRevision {
-		m, err = kv.js.GetLastMsg(kv.stream, b.String())
+		m, err = kv.js.GetLastMsg(kv.stream, b.String(), opts...)
 	} else {
-		m, err = kv.js.GetMsg(kv.stream, revision)
+		m, err = kv.js.GetMsg(kv.stream, revision, opts...)
+		// If a sequence was provided, just make sure that the retrieved
+		// message subject matches the request.
 		if err == nil && m.Subject != b.String() {
 			return nil, ErrKeyNotFound
 		}
 	}
-
 	if err != nil {
 		if err == ErrMsgNotFound {
 			err = ErrKeyNotFound
@@ -717,7 +732,7 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 	}
 
 	var (
-		pr streamPurgeRequest
+		pr StreamPurgeRequest
 		b  strings.Builder
 	)
 	// Do actual purges here.

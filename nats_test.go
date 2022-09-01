@@ -1576,6 +1576,21 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	}
 }
 
+func TestUserJWTAndSeed(t *testing.T) {
+	if server.VERSION[0] == '1' {
+		t.Skip()
+	}
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	nc, err := Connect(url, UserJWTAndSeed(uJWT, string(uSeed)))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	nc.Close()
+}
+
 func TestExpiredAuthentication(t *testing.T) {
 	// The goal of these tests was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
@@ -2881,5 +2896,47 @@ func TestRespInbox(t *testing.T) {
 	}
 	if len(resp.Data) > 0 {
 		t.Fatalf("Error: %s", resp.Data)
+	}
+}
+
+func TestInProcessConn(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := Connect("", InProcessServer(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer nc.Close()
+
+	// Status should be connected.
+	if nc.Status() != CONNECTED {
+		t.Fatal("should be status CONNECTED")
+	}
+
+	// The server should respond to a request.
+	if _, err := nc.RTT(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerListWithTrailingComma(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	// Notice the comma at the end of the "list"
+	nc, err := Connect(fmt.Sprintf("%s,", s.ClientURL()))
+	if err != nil {
+		t.Fatalf("Unable to connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Now check server pool
+	nc.mu.Lock()
+	l := len(nc.srvPool)
+	nc.mu.Unlock()
+	if l != 1 {
+		t.Fatalf("There should be only 1 URL in the list, got %v", l)
 	}
 }
