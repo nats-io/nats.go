@@ -119,9 +119,9 @@ type StreamConfig struct {
 	RePublish *RePublish `json:"republish,omitempty"`
 
 	// Allow higher performance, direct access to get individual messages. E.g. KeyValue
-	AllowDirect bool `json:"allow_direct,omitempty"`
+	AllowDirect bool `json:"allow_direct"`
 	// Allow higher performance and unified direct access for mirrors as well.
-	MirrorDirect bool `json:"mirror_direct,omitempty"`
+	MirrorDirect bool `json:"mirror_direct"`
 }
 
 // RePublish is for republishing messages once committed to a stream. The original
