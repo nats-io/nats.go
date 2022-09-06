@@ -131,7 +131,7 @@ type APIError struct {
 
 // Error prints the JetStream API error code and description
 func (e *APIError) Error() string {
-	return fmt.Sprintf("nats: API error %d: %s", e.ErrorCode, e.Description)
+	return fmt.Sprintf("nats: %s", e.Description)
 }
 
 // APIError implements the JetStreamError interface.
