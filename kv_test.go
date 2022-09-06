@@ -168,3 +168,38 @@ func TestKeyValueRePublish(t *testing.T) {
 		t.Fatalf("Expected subject header %q, got %q", expected, v)
 	}
 }
+
+func TestKeyValueMirrorDirectGet(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+	_, err = js.AddStream(&StreamConfig{
+		Name:         "MIRROR",
+		Mirror:       &StreamSource{Name: "KV_TEST"},
+		MirrorDirect: true,
+	})
+	if err != nil {
+		t.Fatalf("Error creating mirror: %v", err)
+	}
+
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("KEY.%d", i)
+		if _, err := kv.PutString(key, "42"); err != nil {
+			t.Fatalf("Error adding key: %v", err)
+		}
+	}
+
+	// Make sure all gets work.
+	for i := 0; i < 100; i++ {
+		if _, err := kv.Get("KEY.22"); err != nil {
+			t.Fatalf("Got error getting key: %v", err)
+		}
+	}
+}

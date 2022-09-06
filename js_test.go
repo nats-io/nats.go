@@ -1063,9 +1063,6 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	msg.Header.Set("some", "header")
 	check("missing stream")
 
-	msg.Header.Set(JSStream, "other")
-	check("stream header is 'other', not 'test'")
-
 	msg.Header.Set(JSStream, "test")
 	check("missing sequence")
 

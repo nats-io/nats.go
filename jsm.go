@@ -912,7 +912,7 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 
 	var apiSubj string
 
-	doDirectGetLastBySubject := o.directGet && mreq.LastFor != ""
+	doDirectGetLastBySubject := o.directGet && mreq.LastFor != _EMPTY_
 
 	if doDirectGetLastBySubject {
 		apiSubj = apiDirectMsgGetLastBySubjectT
@@ -1006,9 +1006,10 @@ func convertDirectGetMsgResponseToMsg(name string, r *Msg) (*RawStreamMsg, error
 	if stream == _EMPTY_ {
 		return nil, fmt.Errorf("nats: missing stream header")
 	}
-	if stream != name {
-		return nil, fmt.Errorf("nats: response stream header is '%s', not '%s'", stream, name)
-	}
+
+	// Mirrors can now answer direct gets, so removing check for name equality.
+	// TODO(dlc) - We could have server also have a header with origin and check that?
+
 	seqStr := r.Header.Get(JSSequence)
 	if seqStr == _EMPTY_ {
 		return nil, fmt.Errorf("nats: missing sequence header")
