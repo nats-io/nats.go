@@ -1562,6 +1562,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		if cfg.MaxAckPending == 0 && ch != nil && cfg.AckPolicy != AckNonePolicy {
 			cfg.MaxAckPending = cap(ch)
 		}
+
+		// Set memory storage to true if it's an ephemeral.
+		if !isDurable {
+			cfg.MemoryStorage = true
+		}
 		// Create request here.
 		ccreq = &createConsumerRequest{
 			Stream: stream,
