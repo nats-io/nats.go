@@ -18,6 +18,7 @@ package nats
 ////////////////////////////////////////////////////////////////////////////////
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -1094,5 +1095,161 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	}
 	if r.Header.Get("some") != "header" {
 		t.Fatalf("Wrong header: %v", r.Header)
+	}
+}
+
+func TestJetStreamEmulatedPushOnPull(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	cases := []struct {
+		name string
+		n    int
+		sz   int
+	}{
+		{name: "msgs-small", n: 5_000_000, sz: 64},
+		{name: "msgs-medium", n: 1_000_000, sz: 2 * 1024},
+		{name: "bytes", n: 10_000, sz: 256 * 1024},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := js.AddStream(&StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"A"},
+				Storage:  MemoryStorage,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			n, msg := c.n, bytes.Repeat([]byte("Z"), c.sz)
+
+			for i := 0; i < n; i++ {
+				js.PublishAsync("A", msg)
+			}
+			select {
+			case <-js.PublishAsyncComplete():
+			case <-time.After(10 * time.Second):
+				t.Fatalf("Did not receive completion signal")
+			}
+
+			done := make(chan bool)
+			received := 0
+			var elapsed time.Duration
+
+			cb := func(m *Msg) {
+				received++
+				if received >= n {
+					close(done)
+				}
+			}
+
+			start := time.Now()
+
+			sub, err := js.Subscribe("A", cb, OrderedConsumer())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+
+			select {
+			case <-done:
+				elapsed = time.Since(start)
+			case <-time.After(20 * time.Second):
+				t.Fatalf("Did not receive all messages")
+			}
+
+			fmt.Printf("  ORDERED CONSUMER\n")
+			fmt.Printf("  time for %d msgs is %v\n", n, elapsed)
+			fmt.Printf("  %.0f msgs/sec\n", float64(n)/elapsed.Seconds())
+
+			////////////////////////////////////////////////////////
+			// Pull based emulation of an ordered push consumer
+			////////////////////////////////////////////////////////
+
+			// Initial Window and update every 25% of the initial window.
+			initialMaxBatch := 4096
+			updateMaxBatch := initialMaxBatch / 4
+			initialMaxBytes := 16 * 1024 * 1024 // 16MB limit
+			updateMaxBytes := initialMaxBytes / 4
+
+			ci, err := js.AddConsumer("TEST", &ConsumerConfig{
+				AckPolicy: AckNonePolicy,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			nms := fmt.Sprintf(server.JSApiRequestNextT, "TEST", ci.Name)
+			deliver := nc.newInbox()
+
+			received = 0
+			done = make(chan bool)
+
+			fastReq := []byte(fmt.Sprintf(`{"batch": %d, "max_bytes": %d}`, updateMaxBatch, updateMaxBytes))
+
+			// Windowed received for bytes and msgs.
+			wr, wbr := 0, 0
+
+			pcb := func(m *Msg) {
+				received++
+				if received >= n {
+					close(done)
+				}
+
+				// Check if we exceeded the bytes sliding window first.
+				// add in m.RawSize() as interface.
+				wbr += m.rsz
+				if wbr >= updateMaxBytes {
+					adjFastReq := []byte(fmt.Sprintf(`{"batch": %d, "max_bytes": %d}`, updateMaxBatch, wbr))
+					wr, wbr = 0, 0
+					nc.PublishRequest(nms, deliver, adjFastReq)
+					return
+				}
+
+				// Process windowing. Whenever we reach 25% of initial window, ask for 25% more.
+				// We have max bytes as backstop but flow if based off of msgs atm.
+				wr++
+				if wr == updateMaxBatch {
+					// Reset for internal accounting.
+					wr, wbr = 0, 0
+					nc.PublishRequest(nms, deliver, fastReq)
+				}
+			}
+
+			sub, err = nc.Subscribe(deliver, pcb)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+
+			start = time.Now()
+			nr := &nextRequest{
+				Batch:    initialMaxBatch,
+				MaxBytes: initialMaxBytes,
+				NoWait:   false,
+			}
+			req, _ := json.Marshal(nr)
+
+			nc.PublishRequest(nms, deliver, req)
+
+			select {
+			case <-done:
+				elapsed = time.Since(start)
+			case <-time.After(20 * time.Second):
+				t.Fatalf("Did not receive all messages")
+			}
+
+			fmt.Printf("  EMULATED PUSH CONSUMER\n")
+			fmt.Printf("  time for %d msgs is %v\n", n, elapsed)
+			fmt.Printf("  %.0f msgs/sec\n", float64(n)/elapsed.Seconds())
+
+			// Delete the stream
+			js.DeleteStream("TEST")
+		})
 	}
 }

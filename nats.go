@@ -625,6 +625,7 @@ type Msg struct {
 	Data    []byte
 	Sub     *Subscription
 	next    *Msg
+	rsz     int
 	barrier *barrierInfo
 	ackd    uint32
 }
@@ -2908,7 +2909,7 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// FIXME(dlc): Should we recycle these containers?
-	m := &Msg{Header: h, Data: msgPayload, Subject: subj, Reply: reply, Sub: sub}
+	m := &Msg{Header: h, Data: msgPayload, Subject: subj, Reply: reply, Sub: sub, rsz: len(data) + len(subj) + len(reply)}
 
 	// Check for message filters.
 	if mf != nil {
