@@ -178,7 +178,7 @@ type apiPaged struct {
 // apiPagedRequest includes parameters allowing specific pages to be requested
 // from APIs responding with apiPaged.
 type apiPagedRequest struct {
-	Offset int `json:"offset"`
+	Offset int `json:"offset,omitempty"`
 }
 
 // AccountInfo contains info about the JetStream usage from the current account.
@@ -696,12 +696,17 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 type (
 	// StreamInfoRequest contains additional option to return
 	StreamInfoRequest struct {
+		apiPagedRequest
 		// DeletedDetails when true includes information about deleted messages
 		DeletedDetails bool `json:"deleted_details,omitempty"`
 		// SubjectsFilter when set, returns information on the matched subjects
 		SubjectsFilter string `json:"subjects_filter,omitempty"`
 	}
-	streamInfoResponse = streamCreateResponse
+	streamInfoResponse = struct {
+		apiResponse
+		apiPaged
+		*StreamInfo
+	}
 )
 
 func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
@@ -715,30 +720,71 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 	if cancel != nil {
 		defer cancel()
 	}
+
+	var i int
+	var subjectMessagesMap map[string]uint64
 	var req []byte
+	var requestPayload bool
+
+	var siOpts StreamInfoRequest
 	if o.streamInfoOpts != nil {
-		if req, err = json.Marshal(o.streamInfoOpts); err != nil {
+		requestPayload = true
+		siOpts = *o.streamInfoOpts
+	}
+
+	for {
+		if requestPayload {
+			siOpts.Offset = i
+			if req, err = json.Marshal(&siOpts); err != nil {
+				return nil, err
+			}
+		}
+
+		siSubj := js.apiSubj(fmt.Sprintf(apiStreamInfoT, stream))
+
+		r, err := js.apiRequestWithContext(o.ctx, siSubj, req)
+		if err != nil {
 			return nil, err
 		}
-	}
-	siSubj := js.apiSubj(fmt.Sprintf(apiStreamInfoT, stream))
 
-	r, err := js.apiRequestWithContext(o.ctx, siSubj, req)
-	if err != nil {
-		return nil, err
-	}
-	var resp streamInfoResponse
-	if err := json.Unmarshal(r.Data, &resp); err != nil {
-		return nil, err
-	}
-	if resp.Error != nil {
-		if errors.Is(resp.Error, ErrStreamNotFound) {
-			return nil, ErrStreamNotFound
+		var resp streamInfoResponse
+		if err := json.Unmarshal(r.Data, &resp); err != nil {
+			return nil, err
 		}
-		return nil, resp.Error
-	}
 
-	return resp.StreamInfo, nil
+		if resp.Error != nil {
+			if errors.Is(resp.Error, ErrStreamNotFound) {
+				return nil, ErrStreamNotFound
+			}
+			return nil, resp.Error
+		}
+
+		var total int
+		// for backwards compatibility
+		if resp.Total != 0 {
+			total = resp.Total
+		} else {
+			total = len(resp.State.Subjects)
+		}
+
+		if requestPayload && len(resp.StreamInfo.State.Subjects) > 0 {
+			if subjectMessagesMap == nil {
+				subjectMessagesMap = make(map[string]uint64, total)
+			}
+
+			for k, j := range resp.State.Subjects {
+				subjectMessagesMap[k] = j
+				i++
+			}
+		}
+
+		if i >= total {
+			if requestPayload {
+				resp.StreamInfo.State.Subjects = subjectMessagesMap
+			}
+			return resp.StreamInfo, nil
+		}
+	}
 }
 
 // StreamInfo shows config and current state for this stream.

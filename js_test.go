@@ -1157,3 +1157,47 @@ func TestJetStreamConsumerMemoryStorage(t *testing.T) {
 		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
 	}
 }
+
+func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Publish on enough subjects to exercise the pagination
+	payload := make([]byte, 10)
+	for i := 0; i < 100001; i++ {
+		nc.Publish(fmt.Sprintf("test.%d", i), payload)
+	}
+
+	// Check that passing a filter returns the subject details
+	result, err := js.StreamInfo("TEST", &StreamInfoRequest{SubjectsFilter: ">"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.State.Subjects) != 100001 {
+		t.Fatalf("expected 100001 subjects in the stream, but got %d instead", len(result.State.Subjects))
+	}
+
+	// Check that passing no filter does not return any subject details
+	result, err = js.StreamInfo("TEST")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.State.Subjects) != 0 {
+		t.Fatalf("expected 0 subjects details from StreamInfo, but got %d instead", len(result.State.Subjects))
+	}
+}
