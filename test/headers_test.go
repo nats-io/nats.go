@@ -58,9 +58,7 @@ func TestBasicHeaders(t *testing.T) {
 		t.Fatalf("Did not receive response: %v", err)
 	}
 
-	// Blank out the sub since its not present in the original.
-	msg.Sub = nil
-	if !reflect.DeepEqual(m, msg) {
+	if !m.Equal(msg) {
 		t.Fatalf("Messages did not match! \n%+v\n%+v\n", m, msg)
 	}
 }
@@ -277,12 +275,8 @@ func TestMsgHeadersCasePreserving(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Did not receive response: %v", err)
 	}
-
-	// Blank out the sub since its not present in the original.
-	msg.Sub = nil
-
 	// Confirm that received message is just like the one originally sent.
-	if !reflect.DeepEqual(m, msg) {
+	if !m.Equal(msg) {
 		t.Fatalf("Messages did not match! \n%+v\n%+v\n", m, msg)
 	}
 
