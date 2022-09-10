@@ -3780,7 +3780,7 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := nc.newInbox()
+	inbox := nc.NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
@@ -3819,7 +3819,8 @@ func NewInbox() string {
 	return string(b[:])
 }
 
-func (nc *Conn) newInbox() string {
+// Create a new inbox that is prefix aware.
+func (nc *Conn) NewInbox() string {
 	if nc.Opts.InboxPrefix == _EMPTY_ {
 		return NewInbox()
 	}
@@ -3833,7 +3834,7 @@ func (nc *Conn) newInbox() string {
 
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
-	nc.respSubPrefix = fmt.Sprintf("%s.", nc.newInbox())
+	nc.respSubPrefix = fmt.Sprintf("%s.", nc.NewInbox())
 	nc.respSubLen = len(nc.respSubPrefix)
 	nc.respSub = fmt.Sprintf("%s*", nc.respSubPrefix)
 	nc.respMap = make(map[string]chan *Msg)

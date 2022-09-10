@@ -1532,7 +1532,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		if o.cfg.DeliverSubject != _EMPTY_ {
 			deliver = o.cfg.DeliverSubject
 		} else if !isPullMode {
-			deliver = nc.newInbox()
+			deliver = nc.NewInbox()
 			cfg.DeliverSubject = deliver
 		}
 
@@ -1572,7 +1572,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	if isPullMode {
 		nms = fmt.Sprintf(js.apiSubj(apiRequestNextT), stream, consumer)
-		deliver = nc.newInbox()
+		deliver = nc.NewInbox()
 	}
 
 	// In case this has a context, then create a child context that
@@ -1921,7 +1921,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	osid := sub.applyNewSID()
 
 	// Grab new inbox.
-	newDeliver := nc.newInbox()
+	newDeliver := nc.NewInbox()
 	sub.Subject = newDeliver
 
 	// Snapshot the new sid under sub lock.
