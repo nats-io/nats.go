@@ -624,9 +624,42 @@ type Msg struct {
 	Header  Header
 	Data    []byte
 	Sub     *Subscription
+	// Internal
 	next    *Msg
+	wsz     int
 	barrier *barrierInfo
 	ackd    uint32
+}
+
+// Compares two msgs, ignores sub but checks all other public fields.
+func (m *Msg) Equal(msg *Msg) bool {
+	if m == msg {
+		return true
+	}
+	if m == nil || msg == nil {
+		return false
+	}
+	if m.Subject != msg.Subject || m.Reply != msg.Reply {
+		return false
+	}
+	if !bytes.Equal(m.Data, msg.Data) {
+		return false
+	}
+	if len(m.Header) != len(msg.Header) {
+		return false
+	}
+	for k, v := range m.Header {
+		val, ok := msg.Header[k]
+		if !ok || len(v) != len(val) {
+			return false
+		}
+		for i, hdr := range v {
+			if hdr != val[i] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
@@ -2908,7 +2941,14 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// FIXME(dlc): Should we recycle these containers?
-	m := &Msg{Header: h, Data: msgPayload, Subject: subj, Reply: reply, Sub: sub}
+	m := &Msg{
+		Subject: subj,
+		Reply:   reply,
+		Header:  h,
+		Data:    msgPayload,
+		Sub:     sub,
+		wsz:     len(data) + len(subj) + len(reply),
+	}
 
 	// Check for message filters.
 	if mf != nil {
@@ -3753,7 +3793,7 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 // with the Inbox reply and return the first reply received.
 // This is optimized for the case of multiple responses.
 func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	inbox := nc.newInbox()
+	inbox := nc.NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
 	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, true, nil)
@@ -3792,7 +3832,8 @@ func NewInbox() string {
 	return string(b[:])
 }
 
-func (nc *Conn) newInbox() string {
+// Create a new inbox that is prefix aware.
+func (nc *Conn) NewInbox() string {
 	if nc.Opts.InboxPrefix == _EMPTY_ {
 		return NewInbox()
 	}
@@ -3806,7 +3847,7 @@ func (nc *Conn) newInbox() string {
 
 // Function to init new response structures.
 func (nc *Conn) initNewResp() {
-	nc.respSubPrefix = fmt.Sprintf("%s.", nc.newInbox())
+	nc.respSubPrefix = fmt.Sprintf("%s.", nc.NewInbox())
 	nc.respSubLen = len(nc.respSubPrefix)
 	nc.respSub = fmt.Sprintf("%s*", nc.respSubPrefix)
 	nc.respMap = make(map[string]chan *Msg)
