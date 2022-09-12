@@ -32,7 +32,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -646,7 +645,21 @@ func (m *Msg) Equal(msg *Msg) bool {
 	if !bytes.Equal(m.Data, msg.Data) {
 		return false
 	}
-	return reflect.DeepEqual(m.Header, msg.Header)
+	if len(m.Header) != len(msg.Header) {
+		return false
+	}
+	for k, v := range m.Header {
+		val, ok := msg.Header[k]
+		if !ok || len(v) != len(val) {
+			return false
+		}
+		for i, hdr := range v {
+			if hdr != val[i] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
