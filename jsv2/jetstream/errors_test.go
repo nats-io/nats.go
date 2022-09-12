@@ -100,7 +100,7 @@ func TestJetStreamErrors(t *testing.T) {
 		if apierr.APIError().ErrorCode != expected {
 			t.Fatalf("Expected: %v, got: %v", expected, apierr.APIError().ErrorCode)
 		}
-		expectedMessage := "nats: API error 10039: jetstream not enabled for account"
+		expectedMessage := "nats: API error: code=503 err_code=10039 description=jetstream not enabled for account"
 		if apierr.Error() != expectedMessage {
 			t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 		}
@@ -131,7 +131,7 @@ func TestJetStreamErrors(t *testing.T) {
 		if aerr.ErrorCode != expected {
 			t.Fatalf("Expected: %v, got: %v", expected, aerr.ErrorCode)
 		}
-		expectedMessage = "nats: API error 10039: jetstream not enabled for account"
+		expectedMessage = "nats: API error: code=503 err_code=10039 description=jetstream not enabled for account"
 		if aerr.Error() != expectedMessage {
 			t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 		}
