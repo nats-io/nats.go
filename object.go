@@ -44,10 +44,10 @@ type ObjectStoreManager interface {
 	CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error)
 	// DeleteObjectStore will delete the underlying stream for the named object.
 	DeleteObjectStore(bucket string) error
-	// BucketNames is used to retrieve a list of bucket names
-	BucketNames(opts ...ObjectOpt) <-chan string
-	// BucketsInfo is used to retrieve a list of buckets
-	BucketsInfo(opts ...ObjectOpt) <-chan ObjectStore
+	// ObjectStoreNames is used to retrieve a list of bucket names
+	ObjectStoreNames(opts ...ObjectOpt) <-chan string
+	// ObjectStores is used to retrieve a list of buckets
+	ObjectStores(opts ...ObjectOpt) <-chan ObjectStore
 }
 
 // ObjectStore is a blob store capable of storing large objects efficiently in
@@ -1141,8 +1141,8 @@ func (o *objResult) Error() error {
 	return o.err
 }
 
-// BucketNames is used to retrieve a list of bucket names
-func (js *js) BucketNames(opts ...ObjectOpt) <-chan string {
+// ObjectStoreNames is used to retrieve a list of bucket names
+func (js *js) ObjectStoreNames(opts ...ObjectOpt) <-chan string {
 	var o objOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -1181,8 +1181,8 @@ func (js *js) BucketNames(opts ...ObjectOpt) <-chan string {
 	return ch
 }
 
-// BucketsInfo is used to retrieve a list of buckets
-func (js *js) BucketsInfo(opts ...ObjectOpt) <-chan ObjectStore {
+// ObjectStores is used to retrieve a list of buckets
+func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStore {
 	var o objOpts
 	for _, opt := range opts {
 		if opt != nil {

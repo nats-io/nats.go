@@ -811,14 +811,14 @@ func TestBucketNames(t *testing.T) {
 				expectOk(t, err)
 			}
 			names := make([]string, 0)
-			for name := range js.BucketNames() {
+			for name := range js.ObjectStoreNames() {
 				names = append(names, name)
 			}
 			if len(names) != test.bucketsNum {
 				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
 			}
 			infos := make([]nats.ObjectStore, 0)
-			for info := range js.BucketsInfo() {
+			for info := range js.ObjectStores() {
 				infos = append(infos, info)
 			}
 			if len(infos) != test.bucketsNum {
