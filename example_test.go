@@ -630,6 +630,11 @@ func ExampleSubOpt() {
 	js.Subscribe("foo", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.Durable("FOO"), nats.ConsumerReplicas(1))
+
+	// Force memory storage while subscribing.
+	js.Subscribe("foo", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.Durable("FOO"), nats.SetMemoryStorage())
 }
 
 func ExampleMaxWait() {

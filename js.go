@@ -1357,6 +1357,9 @@ func checkConfig(s, u *ConsumerConfig) error {
 	if u.Replicas > 0 && u.Replicas != s.Replicas {
 		return makeErr("replicas", u.Replicas, s.Replicas)
 	}
+	if u.MemoryStorage && !s.MemoryStorage {
+		return makeErr("memory storage", u.MemoryStorage, s.MemoryStorage)
+	}
 	return nil
 }
 
