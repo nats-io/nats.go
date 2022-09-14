@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -191,6 +192,10 @@ func TestAuthServers(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "Authorization") {
 		t.Fatalf("Wrong error, wanted Auth failure, got '%s'\n", err)
+	}
+
+	if !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
 	}
 
 	// Test that we can connect to a subsequent correct server.

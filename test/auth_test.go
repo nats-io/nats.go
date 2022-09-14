@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -41,6 +42,10 @@ func TestAuth(t *testing.T) {
 	// This test may be a bit too strict for the future, but for now makes
 	// sure that we correctly process the -ERR content on connect.
 	if strings.ToLower(err.Error()) != nats.ErrAuthorization.Error() {
+		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
+	}
+
+	if !errors.Is(err, nats.ErrAuthorization) {
 		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
 	}
 
