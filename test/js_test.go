@@ -1460,7 +1460,7 @@ func TestJetStreamManagement(t *testing.T) {
 		})
 
 		t.Run("with different Durable and Name set", func(t *testing.T) {
-			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Name: "abc", Durable: "123"}); err != nats.ErrConsumerNameMismtch {
+			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Name: "abc", Durable: "123"}); err != nats.ErrConsumerNameMismatch {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
 			}
 		})
