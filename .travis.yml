@@ -20,6 +20,6 @@ before_script:
   fi
 script:
 - go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
-- if [[ "$TRAVIS_GO_VERSION" =~ 1.18 ]]; then ./scripts/cov.sh TRAVIS; else go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off; go test -modfile=go_test_prev.mod -race -v -p=1 -run TestJetStreamManagementCompat ./... --failfast -vet=off; fi
+- if [[ "$TRAVIS_GO_VERSION" =~ 1.18 ]]; then ./scripts/cov.sh TRAVIS; else go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off; fi
 after_success:
 - if [[ "$TRAVIS_GO_VERSION" =~ 1.18 ]]; then $HOME/gopath/bin/goveralls -coverprofile=acc.out -service travis-ci; fi
