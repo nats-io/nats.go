@@ -122,9 +122,19 @@ const (
 	apiAccountInfo = "INFO"
 
 	// apiConsumerCreateT is used to create consumers.
-	apiConsumerCreateT = "CONSUMER.CREATE.%s"
+	// it accepts stream name and consumer name.
+	apiConsumerCreateT = "CONSUMER.CREATE.%s.%s"
+
+	// apiConsumerCreateT is used to create consumers.
+	// it accepts stream name, consumer name and filter subject
+	apiConsumerCreateWithFilterSubjectT = "CONSUMER.CREATE.%s.%s.%s"
+
+	// apiLegacyConsumerCreateT is used to create consumers.
+	// this is a legacy endpoint to support creating ephemerals before nats-server v2.9.0.
+	apiLegacyConsumerCreateT = "CONSUMER.CREATE.%s"
 
 	// apiDurableCreateT is used to create durable consumers.
+	// this is a legacy endpoint to support creating durable consumers before nats-server v2.9.0.
 	apiDurableCreateT = "CONSUMER.DURABLE.CREATE.%s.%s"
 
 	// apiConsumerInfoT is used to create consumers.
@@ -1031,6 +1041,7 @@ func (d nakDelay) configureAck(opts *ackOpts) error {
 // ConsumerConfig is the configuration of a JetStream consumer.
 type ConsumerConfig struct {
 	Durable         string          `json:"durable_name,omitempty"`
+	Name            string          `json:"name,omitempty"`
 	Description     string          `json:"description,omitempty"`
 	DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
 	OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
@@ -1621,95 +1632,59 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	// If we are creating or updating let's process that request.
 	if shouldCreate {
-		j, err := json.Marshal(ccreq)
+		info, err := js.upsertConsumer(stream, cfg.Durable, ccreq.Config)
 		if err != nil {
-			cleanUpSub()
-			return nil, err
-		}
-
-		var ccSubj string
-		if isDurable {
-			ccSubj = js.apiSubj(fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable))
-		} else {
-			ccSubj = js.apiSubj(fmt.Sprintf(apiConsumerCreateT, stream))
-		}
-
-		if js.opts.shouldTrace {
-			ctrace := js.opts.ctrace
-			if ctrace.RequestSent != nil {
-				ctrace.RequestSent(ccSubj, j)
+			var apiErr *APIError
+			if ok := errors.As(err, &apiErr); !ok {
+				cleanUpSub()
+				return nil, err
 			}
-		}
-		resp, err := nc.Request(ccSubj, j, js.opts.wait)
-		if err != nil {
-			cleanUpSub()
-			if err == ErrNoResponders {
-				err = ErrJetStreamNotEnabled
+			if consumer == _EMPTY_ ||
+				(apiErr.ErrorCode != JSErrCodeConsumerAlreadyExists && apiErr.ErrorCode != JSErrCodeConsumerNameExists) {
+				cleanUpSub()
+				if errors.Is(apiErr, ErrStreamNotFound) {
+					return nil, ErrStreamNotFound
+				}
+				return nil, err
 			}
-			return nil, err
-		}
-		if js.opts.shouldTrace {
-			ctrace := js.opts.ctrace
-			if ctrace.ResponseReceived != nil {
-				ctrace.ResponseReceived(ccSubj, resp.Data, resp.Header)
-			}
-		}
-
-		var cinfo consumerResponse
-		err = json.Unmarshal(resp.Data, &cinfo)
-		if err != nil {
-			cleanUpSub()
-			return nil, err
-		}
-		info = cinfo.ConsumerInfo
-
-		if cinfo.Error != nil {
 			// We will not be using this sub here if we were push based.
 			if !isPullMode {
 				cleanUpSub()
 			}
-			if consumer != _EMPTY_ &&
-				(cinfo.Error.ErrorCode == JSErrCodeConsumerAlreadyExists || cinfo.Error.ErrorCode == JSErrCodeConsumerNameExists) {
 
-				info, err = js.ConsumerInfo(stream, consumer)
-				if err != nil {
-					return nil, err
-				}
-				deliver, err = processConsInfo(info, o.cfg, isPullMode, subj, queue)
-				if err != nil {
-					return nil, err
-				}
+			info, err = js.ConsumerInfo(stream, consumer)
+			if err != nil {
+				return nil, err
+			}
+			deliver, err = processConsInfo(info, o.cfg, isPullMode, subj, queue)
+			if err != nil {
+				return nil, err
+			}
 
-				if !isPullMode {
-					// We can't reuse the channel, so if one was passed, we need to create a new one.
-					if isSync {
-						ch = make(chan *Msg, cap(ch))
-					} else if ch != nil {
-						// User provided (ChanSubscription), simply try to drain it.
-						for done := false; !done; {
-							select {
-							case <-ch:
-							default:
-								done = true
-							}
+			if !isPullMode {
+				// We can't reuse the channel, so if one was passed, we need to create a new one.
+				if isSync {
+					ch = make(chan *Msg, cap(ch))
+				} else if ch != nil {
+					// User provided (ChanSubscription), simply try to drain it.
+					for done := false; !done; {
+						select {
+						case <-ch:
+						default:
+							done = true
 						}
 					}
-					jsi.deliver = deliver
-					jsi.hbi = info.Config.Heartbeat
+				}
+				jsi.deliver = deliver
+				jsi.hbi = info.Config.Heartbeat
 
-					// Recreate the subscription here.
-					sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
-					if err != nil {
-						return nil, err
-					}
-					hasFC = info.Config.FlowControl
-					hasHeartbeats = info.Config.Heartbeat > 0
+				// Recreate the subscription here.
+				sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
+				if err != nil {
+					return nil, err
 				}
-			} else {
-				if errors.Is(cinfo.Error, ErrStreamNotFound) {
-					return nil, ErrStreamNotFound
-				}
-				return nil, cinfo.Error
+				hasFC = info.Config.FlowControl
+				hasHeartbeats = info.Config.Heartbeat > 0
 			}
 		} else {
 			// Since the library created the JS consumer, it will delete it on Unsubscribe()/Drain()
@@ -1960,7 +1935,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		cfg.DeliverPolicy = DeliverByStartSequencePolicy
 		cfg.OptStartSeq = sseq
 
-		ccSubj := fmt.Sprintf(apiConsumerCreateT, jsi.stream)
+		ccSubj := fmt.Sprintf(apiLegacyConsumerCreateT, jsi.stream)
 		j, err := json.Marshal(jsi.ccreq)
 		js := jsi.js
 		sub.mu.Unlock()

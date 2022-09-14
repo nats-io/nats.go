@@ -259,8 +259,21 @@ type consumerResponse struct {
 
 // AddConsumer will add a JetStream consumer.
 func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
-	if cfg != nil && cfg.Durable != _EMPTY_ {
-		consInfo, err := js.ConsumerInfo(stream, cfg.Durable)
+	if cfg == nil {
+		cfg = &ConsumerConfig{}
+	}
+	if cfg.Name != _EMPTY_ && !js.nc.serverMinVersion(2, 9, 0) {
+		return nil, fmt.Errorf("%w: %s", ErrRequireServerVersion, "consumer name requires at least server version 2.9.0")
+	}
+	if cfg.Name != _EMPTY_ && cfg.Durable != _EMPTY_ && cfg.Name != cfg.Durable {
+		return nil, ErrConsumerNameMismtch
+	}
+	consumerName := cfg.Name
+	if consumerName == _EMPTY_ {
+		consumerName = cfg.Durable
+	}
+	if consumerName != _EMPTY_ {
+		consInfo, err := js.ConsumerInfo(stream, consumerName)
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) && !errors.Is(err, ErrStreamNotFound) {
 			return nil, err
 		}
@@ -268,25 +281,35 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 		if consInfo != nil {
 			sameConfig := checkConfig(&consInfo.Config, cfg)
 			if sameConfig != nil {
-				return nil, fmt.Errorf("%w: creating consumer %q on stream %q", ErrConsumerNameAlreadyInUse, cfg.Durable, stream)
+				return nil, fmt.Errorf("%w: creating consumer %q on stream %q", ErrConsumerNameAlreadyInUse, consumerName, stream)
 			}
 		}
 	}
 
-	return js.upsertConsumer(stream, cfg, opts...)
+	return js.upsertConsumer(stream, consumerName, cfg, opts...)
 }
 
 func (js *js) UpdateConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
 	if cfg == nil {
 		return nil, ErrConsumerConfigRequired
 	}
-	if cfg.Durable == _EMPTY_ {
+	if cfg.Name != _EMPTY_ && !js.nc.serverMinVersion(2, 9, 0) {
+		return nil, fmt.Errorf("%w: %s", ErrRequireServerVersion, "consumer name requires at least server version 2.9.0")
+	}
+	if cfg.Name != _EMPTY_ && cfg.Durable != _EMPTY_ && cfg.Name != cfg.Durable {
+		return nil, ErrConsumerNameMismtch
+	}
+	consumerName := cfg.Name
+	if consumerName == _EMPTY_ {
+		consumerName = cfg.Durable
+	}
+	if consumerName == _EMPTY_ {
 		return nil, ErrConsumerNameRequired
 	}
-	return js.upsertConsumer(stream, cfg, opts...)
+	return js.upsertConsumer(stream, consumerName, cfg, opts...)
 }
 
-func (js *js) upsertConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
+func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
 	if err := checkStreamName(stream); err != nil {
 		return nil, err
 	}
@@ -304,13 +327,21 @@ func (js *js) upsertConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) 
 	}
 
 	var ccSubj string
-	if cfg != nil && cfg.Durable != _EMPTY_ {
-		if err := checkConsumerName(cfg.Durable); err != nil {
-			return nil, err
+	if consumerName == _EMPTY_ {
+		// if consumer name is empty, use the legacy ephemeral endpoint
+		ccSubj = fmt.Sprintf(apiLegacyConsumerCreateT, stream)
+	} else if err := checkConsumerName(consumerName); err != nil {
+		return nil, err
+	} else if js.nc.serverMinVersion(2, 9, 0) {
+		// if above server version 2.9.0, use the endpoints with consumer name
+		if cfg.FilterSubject == _EMPTY_ || cfg.FilterSubject == ">" {
+			ccSubj = fmt.Sprintf(apiConsumerCreateT, stream, consumerName)
+		} else {
+			ccSubj = fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject)
 		}
-		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable)
 	} else {
-		ccSubj = fmt.Sprintf(apiConsumerCreateT, stream)
+		// if consumer name is not empty and the server version is lower than 2.9.0, use the legacy DURABLE.CREATE endpoint
+		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
 	}
 
 	resp, err := js.apiRequestWithContext(o.ctx, js.apiSubj(ccSubj), req)

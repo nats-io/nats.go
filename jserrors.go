@@ -30,7 +30,7 @@ var (
 	// ErrStreamNotFound is an error returned when stream with given name does not exist.
 	ErrStreamNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNotFound, Description: "stream not found", Code: 404}}
 
-	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration
+	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration.
 	ErrStreamNameAlreadyInUse JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNameInUse, Description: "stream name already in use", Code: 400}}
 
 	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
@@ -59,7 +59,7 @@ var (
 	// ErrStreamNameRequired is returned when the provided stream name is empty.
 	ErrStreamNameRequired JetStreamError = &jsError{message: "stream name is required"}
 
-	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty,
+	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty.
 	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
 
 	// ErrConsumerConfigRequired is returned when empty consumer consuguration is supplied to add/update consumer.
@@ -98,8 +98,14 @@ var (
 	// ErrCantAckIfConsumerAckNone is returned when attempting to ack a message for consumer with AckNone policy set.
 	ErrCantAckIfConsumerAckNone JetStreamError = &jsError{message: "cannot acknowledge a message for a consumer with AckNone policy"}
 
-	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases
-	// Use ErrInvalidConsumerName instead
+	// ErrRequireServerVersion is returned when using a feature which requires a higher server version.
+	ErrRequireServerVersion JetStreamError = &jsError{message: "invalid server version"}
+
+	// ErrConsumerNameMismtch is returned user provides both consumer name and durable name and they are not equal.
+	ErrConsumerNameMismtch JetStreamError = &jsError{message: "consumer name and durable name do not match"}
+
+	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
+	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
 )
 
