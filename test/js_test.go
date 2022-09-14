@@ -1437,7 +1437,7 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
-		t.Run("ephemeral consumer without name", func(t *testing.T) {
+		t.Run("legacy ephemeral consumer without name", func(t *testing.T) {
 			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
