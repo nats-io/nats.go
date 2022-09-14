@@ -2485,6 +2485,14 @@ func ConsumerReplicas(replicas int) SubOpt {
 	})
 }
 
+// SetMemoryStorage sets the memory storage to true for a consumer.
+func SetMemoryStorage() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MemoryStorage = true
+		return nil
+	})
+}
+
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
