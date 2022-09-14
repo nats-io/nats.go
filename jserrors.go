@@ -102,7 +102,7 @@ var (
 	ErrRequireServerVersion JetStreamError = &jsError{message: "invalid server version"}
 
 	// ErrConsumerNameMismtch is returned user provides both consumer name and durable name and they are not equal.
-	ErrConsumerNameMismtch JetStreamError = &jsError{message: "consumer name and durable name do not match"}
+	ErrConsumerNameMismatch JetStreamError = &jsError{message: "consumer name and durable name do not match"}
 
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
