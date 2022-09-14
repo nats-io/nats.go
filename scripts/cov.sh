@@ -7,8 +7,9 @@ go test -modfile=go_test.mod --failfast -vet=off -v -covermode=atomic -coverprof
 go test -modfile=go_test.mod --failfast -vet=off -v -covermode=atomic -coverprofile=./cov/test.out -coverpkg=github.com/nats-io/nats.go ./test -tags=skip_no_race_tests
 go test -modfile=go_test.mod --failfast -vet=off -v -covermode=atomic -coverprofile=./cov/builtin.out -coverpkg=github.com/nats-io/nats.go/encoders/builtin ./test -run EncBuiltin -tags=skip_no_race_tests
 go test -modfile=go_test.mod --failfast -vet=off -v -covermode=atomic -coverprofile=./cov/protobuf.out -coverpkg=github.com/nats-io/nats.go/encoders/protobuf ./test -run EncProto -tags=skip_no_race_tests
-cd test (
-    go test -modfile=../go_test_prev.mod -race -v -p=1 -run TestJetStreamManagementServerCompat --failfast -vet=off
+(
+    cd test
+    go test -modfile=../go_test_prev.mod -race -v -p=1 -run TestJetStreamManagementServerCompat -vet=off
 )
 gocovmerge ./cov/*.out > acc.out
 rm -rf ./cov
