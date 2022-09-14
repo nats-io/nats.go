@@ -265,9 +265,6 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 	if cfg.Name != _EMPTY_ && !js.nc.serverMinVersion(2, 9, 0) {
 		return nil, fmt.Errorf("%w: %s", ErrRequireServerVersion, "consumer name requires at least server version 2.9.0")
 	}
-	if cfg.Name != _EMPTY_ && cfg.Durable != _EMPTY_ && cfg.Name != cfg.Durable {
-		return nil, ErrConsumerNameMismatch
-	}
 	consumerName := cfg.Name
 	if consumerName == _EMPTY_ {
 		consumerName = cfg.Durable
@@ -295,9 +292,6 @@ func (js *js) UpdateConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) 
 	}
 	if cfg.Name != _EMPTY_ && !js.nc.serverMinVersion(2, 9, 0) {
 		return nil, fmt.Errorf("%w: %s", ErrRequireServerVersion, "consumer name requires at least server version 2.9.0")
-	}
-	if cfg.Name != _EMPTY_ && cfg.Durable != _EMPTY_ && cfg.Name != cfg.Durable {
-		return nil, ErrConsumerNameMismatch
 	}
 	consumerName := cfg.Name
 	if consumerName == _EMPTY_ {
