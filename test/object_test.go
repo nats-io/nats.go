@@ -777,3 +777,53 @@ func TestObjectMaxBytes(t *testing.T) {
 		t.Fatalf("invalid object stream MaxSize %+v", info.Config.MaxBytes)
 	}
 }
+
+func TestBucketNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		bucketsNum int
+	}{
+		{
+			name:       "single page",
+			bucketsNum: 5,
+		},
+		{
+			name:       "multi page",
+			bucketsNum: 1025,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+			// create stream without the chunk subject, but with OBJ_ prefix
+			_, err := js.AddStream(&nats.StreamConfig{Name: "OBJ_FOO", Subjects: []string{"FOO.*"}})
+			expectOk(t, err)
+			// create stream with chunk subject, but without "OBJ_" prefix
+			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", Subjects: []string{"$O.ABC.C.>"}})
+			expectOk(t, err)
+			for i := 0; i < test.bucketsNum; i++ {
+				_, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: fmt.Sprintf("OBJS_%d", i), MaxBytes: 1024})
+				expectOk(t, err)
+			}
+			names := make([]string, 0)
+			for name := range js.ObjectStoreNames() {
+				names = append(names, name)
+			}
+			if len(names) != test.bucketsNum {
+				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
+			}
+			infos := make([]nats.ObjectStore, 0)
+			for info := range js.ObjectStores() {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.bucketsNum {
+				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.bucketsNum, len(infos))
+			}
+		})
+	}
+}

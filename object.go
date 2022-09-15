@@ -44,6 +44,10 @@ type ObjectStoreManager interface {
 	CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error)
 	// DeleteObjectStore will delete the underlying stream for the named object.
 	DeleteObjectStore(bucket string) error
+	// ObjectStoreNames is used to retrieve a list of bucket names
+	ObjectStoreNames(opts ...ObjectOpt) <-chan string
+	// ObjectStores is used to retrieve a list of buckets
+	ObjectStores(opts ...ObjectOpt) <-chan ObjectStore
 }
 
 // ObjectStore is a blob store capable of storing large objects efficiently in
@@ -1135,4 +1139,84 @@ func (o *objResult) Error() error {
 	o.Lock()
 	defer o.Unlock()
 	return o.err
+}
+
+// ObjectStoreNames is used to retrieve a list of bucket names
+func (js *js) ObjectStoreNames(opts ...ObjectOpt) <-chan string {
+	var o objOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureObject(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	ch := make(chan string)
+	var cancel context.CancelFunc
+	if o.ctx == nil {
+		o.ctx, cancel = context.WithTimeout(context.Background(), defaultRequestWait)
+	}
+	l := &streamLister{js: js}
+	l.js.opts.streamListSubject = fmt.Sprintf(objAllChunksPreTmpl, "*")
+	l.js.opts.ctx = o.ctx
+	go func() {
+		if cancel != nil {
+			defer cancel()
+		}
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				if !strings.HasPrefix(info.Config.Name, "OBJ_") {
+					continue
+				}
+				select {
+				case ch <- info.Config.Name:
+				case <-o.ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
+}
+
+// ObjectStores is used to retrieve a list of buckets
+func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStore {
+	var o objOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureObject(&o); err != nil {
+				return nil
+			}
+		}
+	}
+	ch := make(chan ObjectStore)
+	var cancel context.CancelFunc
+	if o.ctx == nil {
+		o.ctx, cancel = context.WithTimeout(context.Background(), defaultRequestWait)
+	}
+	l := &streamLister{js: js}
+	l.js.opts.streamListSubject = fmt.Sprintf(objAllChunksPreTmpl, "*")
+	l.js.opts.ctx = o.ctx
+	go func() {
+		if cancel != nil {
+			defer cancel()
+		}
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				if !strings.HasPrefix(info.Config.Name, "OBJ_") {
+					continue
+				}
+				select {
+				case ch <- &obs{name: strings.TrimPrefix(info.Config.Name, "OBJ_"), stream: info.Config.Name, js: js}:
+				case <-o.ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
 }

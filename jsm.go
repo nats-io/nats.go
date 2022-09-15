@@ -41,7 +41,11 @@ type JetStreamManager interface {
 	PurgeStream(name string, opts ...JSOpt) error
 
 	// StreamsInfo can be used to retrieve a list of StreamInfo objects.
+	// DEPRECATED: Use Streams() instead.
 	StreamsInfo(opts ...JSOpt) <-chan *StreamInfo
+
+	// Streams can be used to retrieve a list of StreamInfo objects.
+	Streams(opts ...JSOpt) <-chan *StreamInfo
 
 	// StreamNames is used to retrieve a list of Stream names.
 	StreamNames(opts ...JSOpt) <-chan string
@@ -78,7 +82,11 @@ type JetStreamManager interface {
 	ConsumerInfo(stream, name string, opts ...JSOpt) (*ConsumerInfo, error)
 
 	// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
+	// DEPRECATED: Use Consumers() instead.
 	ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo
+
+	// Consumers is used to retrieve a list of ConsumerInfo objects.
+	Consumers(stream string, opts ...JSOpt) <-chan *ConsumerInfo
 
 	// ConsumerNames is used to retrieve a list of Consumer names.
 	ConsumerNames(stream string, opts ...JSOpt) <-chan string
@@ -502,8 +510,8 @@ func (c *consumerLister) Err() error {
 	return c.err
 }
 
-// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
-func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
+// Consumers is used to retrieve a list of ConsumerInfo objects.
+func (jsc *js) Consumers(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
 	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
@@ -528,6 +536,12 @@ func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo 
 	}()
 
 	return ch
+}
+
+// ConsumersInfo is used to retrieve a list of ConsumerInfo objects.
+// DEPRECATED: Use Consumers() instead.
+func (jsc *js) ConsumersInfo(stream string, opts ...JSOpt) <-chan *ConsumerInfo {
+	return jsc.Consumers(stream, opts...)
 }
 
 type consumerNamesLister struct {
@@ -1258,8 +1272,8 @@ func (s *streamLister) Err() error {
 	return s.err
 }
 
-// StreamsInfo can be used to retrieve a list of StreamInfo objects.
-func (jsc *js) StreamsInfo(opts ...JSOpt) <-chan *StreamInfo {
+// Streams can be used to retrieve a list of StreamInfo objects.
+func (jsc *js) Streams(opts ...JSOpt) <-chan *StreamInfo {
 	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
 	if err != nil {
 		return nil
@@ -1284,6 +1298,12 @@ func (jsc *js) StreamsInfo(opts ...JSOpt) <-chan *StreamInfo {
 	}()
 
 	return ch
+}
+
+// StreamsInfo can be used to retrieve a list of StreamInfo objects.
+// DEPRECATED: Use Streams() instead.
+func (jsc *js) StreamsInfo(opts ...JSOpt) <-chan *StreamInfo {
+	return jsc.Streams(opts...)
 }
 
 type streamNamesLister struct {

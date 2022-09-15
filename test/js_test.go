@@ -424,7 +424,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Helper()
 		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
 			var infos []*nats.ConsumerInfo
-			for info := range js.ConsumersInfo("TEST") {
+			for info := range js.Consumers("TEST") {
 				infos = append(infos, info)
 			}
 			if len(infos) != expected {
@@ -1427,7 +1427,7 @@ func TestJetStreamManagement(t *testing.T) {
 
 	t.Run("list streams", func(t *testing.T) {
 		var infos []*nats.StreamInfo
-		for info := range js.StreamsInfo() {
+		for info := range js.Streams() {
 			infos = append(infos, info)
 		}
 		if len(infos) != 1 || infos[0].Config.Name != "foo" {
@@ -1437,20 +1437,20 @@ func TestJetStreamManagement(t *testing.T) {
 
 	t.Run("list consumers", func(t *testing.T) {
 		var infos []*nats.ConsumerInfo
-		for info := range js.ConsumersInfo("") {
+		for info := range js.Consumers("") {
 			infos = append(infos, info)
 		}
 		if len(infos) != 0 {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
-		for info := range js.ConsumersInfo("bad.stream.name") {
+		for info := range js.Consumers("bad.stream.name") {
 			infos = append(infos, info)
 		}
 		if len(infos) != 0 {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
 		infos = infos[:0]
-		for info := range js.ConsumersInfo("foo") {
+		for info := range js.Consumers("foo") {
 			infos = append(infos, info)
 		}
 		if len(infos) != 1 || infos[0].Stream != "foo" || infos[0].Config.Durable != "dlc" {
@@ -1682,6 +1682,14 @@ func TestStreamLister(t *testing.T) {
 				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.streamsNum, len(names))
 			}
 			infos := make([]*nats.StreamInfo, 0)
+			for info := range js.Streams() {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.streamsNum {
+				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.streamsNum, len(infos))
+			}
+			// test the deprecated StreamsInfo()
+			infos = make([]*nats.StreamInfo, 0)
 			for info := range js.StreamsInfo() {
 				infos = append(infos, info)
 			}
@@ -1751,7 +1759,7 @@ func TestStreamLister_FilterSubject(t *testing.T) {
 
 			// list streams
 			names = make([]string, 0)
-			for info := range js.StreamsInfo(nats.StreamListFilter(test.filter)) {
+			for info := range js.Streams(nats.StreamListFilter(test.filter)) {
 				names = append(names, info.Config.Name)
 			}
 			if !reflect.DeepEqual(names, test.expected) {
@@ -1797,6 +1805,15 @@ func TestConsumersLister(t *testing.T) {
 				t.Fatalf("Invalid number of consumer names; want: %d; got: %d", test.consumersNum, len(names))
 			}
 			infos := make([]*nats.ConsumerInfo, 0)
+			for info := range js.Consumers("foo") {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.consumersNum {
+				t.Fatalf("Invalid number of consumers; want: %d; got: %d", test.consumersNum, len(infos))
+			}
+
+			// test the deprecated ConsumersInfo()
+			infos = make([]*nats.ConsumerInfo, 0)
 			for info := range js.ConsumersInfo("foo") {
 				infos = append(infos, info)
 			}
@@ -4133,7 +4150,7 @@ func TestJetStream_Unsubscribe(t *testing.T) {
 		t.Helper()
 		checkFor(t, time.Second, 15*time.Millisecond, func() error {
 			var infos []*nats.ConsumerInfo
-			for info := range js.ConsumersInfo("foo") {
+			for info := range js.Consumers("foo") {
 				infos = append(infos, info)
 			}
 			if len(infos) != expected {
@@ -4270,7 +4287,7 @@ func TestJetStream_UnsubscribeCloseDrain(t *testing.T) {
 	fetchConsumers := func(t *testing.T, expected int) []*nats.ConsumerInfo {
 		t.Helper()
 		var infos []*nats.ConsumerInfo
-		for info := range jsm.ConsumersInfo("foo") {
+		for info := range jsm.Consumers("foo") {
 			infos = append(infos, info)
 		}
 		if len(infos) != expected {
