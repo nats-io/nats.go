@@ -391,6 +391,8 @@ func TestObjectMetadata(t *testing.T) {
 	// Simple with no Meta.
 	_, err = obs.PutString("A", "AAA")
 	expectOk(t, err)
+	_, err = obs.PutString("C", "CCC")
+	expectOk(t, err)
 
 	meta := &nats.ObjectMeta{Name: "A"}
 	meta.Description = "descA"
@@ -423,15 +425,25 @@ func TestObjectMetadata(t *testing.T) {
 
 	info, err = obs.GetInfo("B")
 	expectOk(t, err)
-
 	if info.Name != "B" || info.Description != "descB" || info.Headers == nil || info.Headers.Get("color") != "red" {
 		t.Fatalf("Update failed: %+v", info)
 	}
 
-	// delete the object to test updating against a deleted object
-	err = obs.Delete("B")
+	// Change meta name to existing object's name
+	meta = &nats.ObjectMeta{Name: "C"}
+
+	err = obs.UpdateMeta("B", meta)
+	expectErr(t, err, nats.ErrObjectAlreadyExists)
+
+	err = obs.Delete("C")
 	expectOk(t, err)
 	err = obs.UpdateMeta("B", meta)
+	expectOk(t, err)
+
+	// delete the object to test updating against a deleted object
+	err = obs.Delete("C")
+	expectOk(t, err)
+	err = obs.UpdateMeta("C", meta)
 	expectErr(t, err, nats.ErrUpdateMetaDeleted)
 
 	err = obs.UpdateMeta("X", meta)

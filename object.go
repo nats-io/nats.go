@@ -861,12 +861,12 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	// If the new name is different from the old, and it exists, error
 	// If there was an error that was not ErrObjectNotFound, error.
 	if name != meta.Name {
-		_, err = obs.GetInfo(meta.Name)
-		if err != ErrObjectNotFound {
-			if err == nil {
-				return ErrObjectAlreadyExists
-			}
+		existingInfo, err := obs.GetInfo(meta.Name)
+		if err != nil && !errors.Is(err, ErrObjectNotFound) {
 			return err
+		}
+		if err == nil && !existingInfo.Deleted {
+			return ErrObjectAlreadyExists
 		}
 	}
 
