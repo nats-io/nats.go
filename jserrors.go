@@ -98,9 +98,6 @@ var (
 	// ErrCantAckIfConsumerAckNone is returned when attempting to ack a message for consumer with AckNone policy set.
 	ErrCantAckIfConsumerAckNone JetStreamError = &jsError{message: "cannot acknowledge a message for a consumer with AckNone policy"}
 
-	// ErrRequireServerVersion is returned when using a feature which requires a higher server version.
-	ErrRequireServerVersion JetStreamError = &jsError{message: "invalid server version"}
-
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
