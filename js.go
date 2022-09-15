@@ -1357,6 +1357,9 @@ func checkConfig(s, u *ConsumerConfig) error {
 	if u.Replicas > 0 && u.Replicas != s.Replicas {
 		return makeErr("replicas", u.Replicas, s.Replicas)
 	}
+	if u.MemoryStorage && !s.MemoryStorage {
+		return makeErr("memory storage", u.MemoryStorage, s.MemoryStorage)
+	}
 	return nil
 }
 
@@ -2481,6 +2484,14 @@ func ConsumerReplicas(replicas int) SubOpt {
 			return fmt.Errorf("invalid ConsumerReplicas value (%v), needs to be greater than 0", replicas)
 		}
 		opts.cfg.Replicas = replicas
+		return nil
+	})
+}
+
+// ConsumerMemoryStorage sets the memory storage to true for a consumer.
+func ConsumerMemoryStorage() SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.MemoryStorage = true
 		return nil
 	})
 }

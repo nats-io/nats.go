@@ -1096,3 +1096,64 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 		t.Fatalf("Wrong header: %v", r.Header)
 	}
 }
+
+func TestJetStreamConsumerMemoryStorage(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	s := natsserver.RunServer(&opts)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&StreamConfig{Name: "STR", Subjects: []string{"foo"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	// Pull ephemeral consumer with memory storage.
+	sub, err := js.PullSubscribe("foo", "", ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
+	}
+
+	// Create a sync subscription with an in-memory ephemeral consumer.
+	sub, err = js.SubscribeSync("foo", ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
+	}
+
+	// Async subscription with an in-memory ephemeral consumer.
+	cb := func(msg *Msg) {}
+	sub, err = js.Subscribe("foo", cb, ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
+	}
+}
