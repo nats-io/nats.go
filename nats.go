@@ -2323,6 +2323,19 @@ func normalizeErr(line string) string {
 	return s
 }
 
+// natsProtoErr represents an -ERR protocol message sent by the server.
+type natsProtoErr struct {
+	description string
+}
+
+func (nerr *natsProtoErr) Error() string {
+	return fmt.Sprintf("nats: %s", nerr.description)
+}
+
+func (nerr *natsProtoErr) Is(err error) bool {
+	return strings.ToLower(nerr.Error()) == err.Error()
+}
+
 // Send a connect protocol message to the server, issue user/password if
 // applicable. Will wait for a flush to return from the server for error
 // processing.
@@ -2377,8 +2390,7 @@ func (nc *Conn) sendConnect() error {
 				// in doReconnect()).
 				nc.processAuthError(authErr)
 			}
-
-			return errors.New("nats: " + proto)
+			return &natsProtoErr{proto}
 		}
 
 		// Notify that we got an unexpected protocol.
