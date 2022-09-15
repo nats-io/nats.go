@@ -2488,8 +2488,8 @@ func ConsumerReplicas(replicas int) SubOpt {
 	})
 }
 
-// SetMemoryStorage sets the memory storage to true for a consumer.
-func SetMemoryStorage() SubOpt {
+// ConsumerMemoryStorage sets the memory storage to true for a consumer.
+func ConsumerMemoryStorage() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MemoryStorage = true
 		return nil

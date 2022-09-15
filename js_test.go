@@ -1097,7 +1097,7 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	}
 }
 
-func TestJetStreamSetMemoryStorage(t *testing.T) {
+func TestJetStreamConsumerMemoryStorage(t *testing.T) {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.JetStream = true
@@ -1112,7 +1112,7 @@ func TestJetStreamSetMemoryStorage(t *testing.T) {
 	}
 
 	// Pull ephemeral consumer with memory storage.
-	sub, err := js.PullSubscribe("foo", "", SetMemoryStorage())
+	sub, err := js.PullSubscribe("foo", "", ConsumerMemoryStorage())
 	if err != nil {
 		t.Fatalf("Error on subscribe: %v", err)
 	}
@@ -1127,7 +1127,7 @@ func TestJetStreamSetMemoryStorage(t *testing.T) {
 	}
 
 	// Create a sync subscription with an in-memory ephemeral consumer.
-	sub, err = js.SubscribeSync("foo", SetMemoryStorage())
+	sub, err = js.SubscribeSync("foo", ConsumerMemoryStorage())
 	if err != nil {
 		t.Fatalf("Error on subscribe: %v", err)
 	}
@@ -1143,7 +1143,7 @@ func TestJetStreamSetMemoryStorage(t *testing.T) {
 
 	// Async subscription with an in-memory ephemeral consumer.
 	cb := func(msg *Msg) {}
-	sub, err = js.Subscribe("foo", cb, SetMemoryStorage())
+	sub, err = js.Subscribe("foo", cb, ConsumerMemoryStorage())
 	if err != nil {
 		t.Fatalf("Error on subscribe: %v", err)
 	}
