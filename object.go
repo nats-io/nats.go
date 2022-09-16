@@ -431,11 +431,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 		// EOF Processing.
 		if readErr == io.EOF {
-			// Finalize sha.
-			sha := h.Sum(nil)
 			// Place meta info.
 			info.Size, info.Chunks = uint64(total), uint32(sent)
-			info.Digest = fmt.Sprintf(objDigestTmpl, base64.URLEncoding.EncodeToString(sha[:]))
+			info.Digest = GetObjectDigestValue(h)
 			break
 		}
 	}
@@ -488,6 +486,21 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	// return obs.GetInfo(info.Name)
 
 	return info, nil
+}
+
+// GetObjectDigestValue calculates the base64 value of hashed data
+func GetObjectDigestValue(data hash.Hash) string {
+	sha := data.Sum(nil)
+	return fmt.Sprintf(objDigestTmpl, base64.URLEncoding.EncodeToString(sha[:]))
+}
+
+// DecodeObjectDigest decodes base64 hash
+func DecodeObjectDigest(data string) ([]byte, error) {
+	digest := strings.SplitN(data, "=", 2)
+	if len(digest) != 2 {
+		return nil, ErrInvalidDigestFormat
+	}
+	return base64.URLEncoding.DecodeString(digest[1])
 }
 
 // ObjectResult impl.
@@ -1095,12 +1108,7 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	if err == io.EOF {
 		// Make sure the digest matches.
 		sha := o.digest.Sum(nil)
-		digest := strings.SplitN(o.info.Digest, "=", 2)
-		if len(digest) != 2 {
-			o.err = ErrInvalidDigestFormat
-			return 0, o.err
-		}
-		rsha, decodeErr := base64.URLEncoding.DecodeString(digest[1])
+		rsha, decodeErr := DecodeObjectDigest(o.info.Digest)
 		if decodeErr != nil {
 			o.err = decodeErr
 			return 0, o.err

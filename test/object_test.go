@@ -16,6 +16,7 @@ package test
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -835,6 +836,86 @@ func TestBucketNames(t *testing.T) {
 			}
 			if len(infos) != test.bucketsNum {
 				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.bucketsNum, len(infos))
+			}
+		})
+	}
+}
+
+func TestGetObjectDigestValue(t *testing.T) {
+	tests := []struct {
+		inputFile string
+		expected  string
+	}{
+		{
+			inputFile: "digester_test_bytes_000100.txt",
+			expected:  "SHA-256=IdgP4UYMGt47rgecOqFoLrd24AXukHf5-SVzqQ5Psg8=",
+		},
+		{
+			inputFile: "digester_test_bytes_001000.txt",
+			expected:  "SHA-256=DZj4RnBpuEukzFIY0ueZ-xjnHY4Rt9XWn4Dh8nkNfnI=",
+		},
+		{
+			inputFile: "digester_test_bytes_010000.txt",
+			expected:  "SHA-256=RgaJ-VSJtjNvgXcujCKIvaheiX_6GRCcfdRYnAcVy38=",
+		},
+		{
+			inputFile: "digester_test_bytes_100000.txt",
+			expected:  "SHA-256=yan7pwBVnC1yORqqgBfd64_qAw6q9fNA60_KRiMMooE=",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.inputFile, func(t *testing.T) {
+			data, err := ioutil.ReadFile(fmt.Sprintf("./testdata/%s", test.inputFile))
+			expectOk(t, err)
+			h := sha256.New()
+			h.Write(data)
+			if res := nats.GetObjectDigestValue(h); res != test.expected {
+				t.Fatalf("Invalid digest; want: %s; got: %s", test.expected, res)
+			}
+		})
+	}
+}
+
+func TestDecodeObjectDigest(t *testing.T) {
+	tests := []struct {
+		inputDigest  string
+		expectedFile string
+		withError    error
+	}{
+		{
+			expectedFile: "digester_test_bytes_000100.txt",
+			inputDigest:  "SHA-256=IdgP4UYMGt47rgecOqFoLrd24AXukHf5-SVzqQ5Psg8=",
+		},
+		{
+			expectedFile: "digester_test_bytes_001000.txt",
+			inputDigest:  "SHA-256=DZj4RnBpuEukzFIY0ueZ-xjnHY4Rt9XWn4Dh8nkNfnI=",
+		},
+		{
+			expectedFile: "digester_test_bytes_010000.txt",
+			inputDigest:  "SHA-256=RgaJ-VSJtjNvgXcujCKIvaheiX_6GRCcfdRYnAcVy38=",
+		},
+		{
+			expectedFile: "digester_test_bytes_100000.txt",
+			inputDigest:  "SHA-256=yan7pwBVnC1yORqqgBfd64_qAw6q9fNA60_KRiMMooE=",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expectedFile, func(t *testing.T) {
+			expected, err := ioutil.ReadFile(fmt.Sprintf("./testdata/%s", test.expectedFile))
+			h := sha256.New()
+			h.Write(expected)
+			expected = h.Sum(nil)
+			expectOk(t, err)
+			res, err := nats.DecodeObjectDigest(test.inputDigest)
+			if test.withError != nil {
+				expectErr(t, err, nats.ErrInvalidDigestFormat)
+				return
+			}
+			expectOk(t, err)
+			if !bytes.Equal(res[:], expected) {
+				t.Fatalf("Invalid decoded value; want: %s; got: %s", expected, res)
 			}
 		})
 	}
