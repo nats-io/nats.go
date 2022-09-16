@@ -1459,6 +1459,32 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
+		t.Run("legacy durable with jetstream context option", func(t *testing.T) {
+			jsLegacy, err := nc.JetStream(nats.UseLegacyDurableConsumers())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.DURABLE.CREATE.foo.dlc-4")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+			ci, err := jsLegacy.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc-4", AckPolicy: nats.AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg, err := sub.NextMsg(1 * time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !strings.Contains(string(msg.Data), `"durable_name":"dlc-4"`) {
+				t.Fatalf("create consumer message is not correct: %q", string(msg.Data))
+			}
+			if ci == nil || ci.Config.Durable != "dlc-4" || ci.Stream != "foo" {
+				t.Fatalf("ConsumerInfo is not correct %+v", ci)
+			}
+		})
+
 		t.Run("with invalid consumer name", func(t *testing.T) {
 			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidConsumerName {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
@@ -1562,7 +1588,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for info := range js.ConsumersInfo("foo") {
 			infos = append(infos, info)
 		}
-		if len(infos) != 5 || infos[0].Stream != "foo" {
+		if len(infos) != 6 || infos[0].Stream != "foo" {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
 	})
@@ -1574,7 +1600,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for name := range js.ConsumerNames("foo", nats.Context(ctx)) {
 			names = append(names, name)
 		}
-		if got, want := len(names), 5; got != want {
+		if got, want := len(names), 6; got != want {
 			t.Fatalf("Unexpected names, got=%d, want=%d", got, want)
 		}
 	})

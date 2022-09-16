@@ -320,16 +320,16 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		ccSubj = fmt.Sprintf(apiLegacyConsumerCreateT, stream)
 	} else if err := checkConsumerName(consumerName); err != nil {
 		return nil, err
-	} else if js.nc.serverMinVersion(2, 9, 0) {
+	} else if !js.nc.serverMinVersion(2, 9, 0) || (cfg.Durable != "" && js.opts.featureFlags.useDurableConsumerCreate) {
+		// if server version is lower than 2.9.0 or user set the useDurableConsumerCreate flag, use the legacy DURABLE.CREATE endpoint
+		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
+	} else {
 		// if above server version 2.9.0, use the endpoints with consumer name
 		if cfg.FilterSubject == _EMPTY_ || cfg.FilterSubject == ">" {
 			ccSubj = fmt.Sprintf(apiConsumerCreateT, stream, consumerName)
 		} else {
 			ccSubj = fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject)
 		}
-	} else {
-		// if consumer name is not empty and the server version is lower than 2.9.0, use the legacy DURABLE.CREATE endpoint
-		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
 	}
 
 	resp, err := js.apiRequestWithContext(o.ctx, js.apiSubj(ccSubj), req)

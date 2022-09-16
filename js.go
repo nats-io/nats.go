@@ -255,6 +255,9 @@ type jsOpts struct {
 	directGet bool
 	// For direct get next message
 	directNextFor string
+
+	// featureFlags are used to enable/disable specific JetStream features
+	featureFlags featureFlags
 }
 
 const (
@@ -292,6 +295,20 @@ type jsOptFn func(opts *jsOpts) error
 
 func (opt jsOptFn) configureJSContext(opts *jsOpts) error {
 	return opt(opts)
+}
+
+type featureFlags struct {
+	useDurableConsumerCreate bool
+}
+
+// UseLegacyDurableConsumers makes JetStream use the legacy (pre nats-server v2.9.0) subjects for consumer creation.
+// If this option is used when creating JetStremContext, $JS.API.CONSUMER.DURABLE.CREATE.<stream>.<consumer> will be used
+// to create a consumer with Durable provided, rather than $JS.API.CONSUMER.CREATE.<stream>.<consumer>.
+func UseLegacyDurableConsumers() JSOpt {
+	return jsOptFn(func(opts *jsOpts) error {
+		opts.featureFlags.useDurableConsumerCreate = true
+		return nil
+	})
 }
 
 // ClientTrace can be used to trace API interactions for the JetStream Context.
