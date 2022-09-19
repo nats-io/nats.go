@@ -35,6 +35,10 @@ type KeyValueManager interface {
 	CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error)
 	// DeleteKeyValue will delete this KeyValue store (JetStream stream).
 	DeleteKeyValue(bucket string) error
+	// KeyValueStoreNames is used to retrieve a list of key value store names
+	KeyValueStoreNames() <-chan string
+	// KeyValueStores is used to retrieve a list of key value stores
+	KeyValueStores() <-chan KeyValue
 }
 
 // Notice: Experimental Preview
@@ -325,16 +329,7 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 		return nil, ErrBadBucket
 	}
 
-	kv := &kvs{
-		name:   bucket,
-		stream: stream,
-		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
-		js:     js,
-		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx:  js.opts.pre != defaultAPIPrefix,
-		useDirect: si.Config.AllowDirect,
-	}
-	return kv, nil
+	return mapStreamToKVS(js, si), nil
 }
 
 // CreateKeyValue will create a KeyValue store with the following configuration.
@@ -431,17 +426,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 			return nil, err
 		}
 	}
-
-	kv := &kvs{
-		name:   cfg.Bucket,
-		stream: scfg.Name,
-		pre:    fmt.Sprintf(kvSubjectsPreTmpl, cfg.Bucket),
-		js:     js,
-		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx:  js.opts.pre != defaultAPIPrefix,
-		useDirect: si.Config.AllowDirect,
-	}
-	return kv, nil
+	return mapStreamToKVS(js, si), nil
 }
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
@@ -979,4 +964,74 @@ func (kv *kvs) Status() (KeyValueStatus, error) {
 	}
 
 	return &KeyValueBucketStatus{nfo: nfo, bucket: kv.name}, nil
+}
+
+// KeyValueStoreNames is used to retrieve a list of key value store names
+func (js *js) KeyValueStoreNames() <-chan string {
+	ch := make(chan string)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRequestWait)
+	l := &streamLister{js: js}
+	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
+	l.js.opts.ctx = ctx
+	go func() {
+		if cancel != nil {
+			defer cancel()
+		}
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				if !strings.HasPrefix(info.Config.Name, "KV_") {
+					continue
+				}
+				select {
+				case ch <- info.Config.Name:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return ch
+}
+
+// KeyValueStores is used to retrieve a list of key value stores
+func (js *js) KeyValueStores() <-chan KeyValue {
+	ch := make(chan KeyValue)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRequestWait)
+	l := &streamLister{js: js}
+	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
+	l.js.opts.ctx = ctx
+	go func() {
+		if cancel != nil {
+			defer cancel()
+		}
+		defer close(ch)
+		for l.Next() {
+			for _, info := range l.Page() {
+				if !strings.HasPrefix(info.Config.Name, "KV_") {
+					continue
+				}
+				select {
+				case ch <- mapStreamToKVS(js, info):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return ch
+}
+
+func mapStreamToKVS(js *js, info *StreamInfo) *kvs {
+	bucket := strings.TrimPrefix(info.Config.Name, "KV_")
+	return &kvs{
+		name:   bucket,
+		stream: info.Config.Name,
+		pre:    fmt.Sprintf(kvSubjectsPreTmpl, bucket),
+		js:     js,
+		// Determine if we need to use the JS prefix in front of Put and Delete operations
+		useJSPfx:  js.opts.pre != defaultAPIPrefix,
+		useDirect: info.Config.AllowDirect,
+	}
 }
