@@ -969,25 +969,16 @@ func (kv *kvs) Status() (KeyValueStatus, error) {
 // KeyValueStoreNames is used to retrieve a list of key value store names
 func (js *js) KeyValueStoreNames() <-chan string {
 	ch := make(chan string)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRequestWait)
 	l := &streamLister{js: js}
 	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
-	l.js.opts.ctx = ctx
 	go func() {
-		if cancel != nil {
-			defer cancel()
-		}
 		defer close(ch)
 		for l.Next() {
 			for _, info := range l.Page() {
 				if !strings.HasPrefix(info.Config.Name, "KV_") {
 					continue
 				}
-				select {
-				case ch <- info.Config.Name:
-				case <-ctx.Done():
-					return
-				}
+				ch <- info.Config.Name
 			}
 		}
 	}()
@@ -998,25 +989,16 @@ func (js *js) KeyValueStoreNames() <-chan string {
 // KeyValueStores is used to retrieve a list of key value stores
 func (js *js) KeyValueStores() <-chan KeyValue {
 	ch := make(chan KeyValue)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRequestWait)
 	l := &streamLister{js: js}
 	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
-	l.js.opts.ctx = ctx
 	go func() {
-		if cancel != nil {
-			defer cancel()
-		}
 		defer close(ch)
 		for l.Next() {
 			for _, info := range l.Page() {
 				if !strings.HasPrefix(info.Config.Name, "KV_") {
 					continue
 				}
-				select {
-				case ch <- mapStreamToKVS(js, info):
-				case <-ctx.Done():
-					return
-				}
+				ch <- mapStreamToKVS(js, info)
 			}
 		}
 	}()
