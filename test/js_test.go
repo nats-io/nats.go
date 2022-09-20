@@ -686,6 +686,14 @@ func TestJetStreamSubscribe(t *testing.T) {
 		t.Fatalf("Error on subscribe: %v", err)
 	}
 	sub.Unsubscribe()
+
+	// Pull consumer with AckNone policy
+	sub, err = js.PullSubscribe("bar", "", nats.AckNone())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	sub.Unsubscribe()
+
 	// Can't specify DeliverSubject for pull subscribers
 	_, err = js.PullSubscribe("bar", "foo", nats.DeliverSubject("baz"))
 	if err != nats.ErrPullSubscribeToPushConsumer {
