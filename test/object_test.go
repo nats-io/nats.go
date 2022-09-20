@@ -791,7 +791,7 @@ func TestObjectMaxBytes(t *testing.T) {
 	}
 }
 
-func TestBucketNames(t *testing.T) {
+func TestListObjectStores(t *testing.T) {
 	tests := []struct {
 		name       string
 		bucketsNum int

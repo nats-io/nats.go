@@ -813,3 +813,53 @@ func expectErr(t *testing.T, err error, expected ...error) {
 	}
 	t.Fatalf("Expected one of %+v, got '%v'", expected, err)
 }
+
+func TestListKeyValueStores(t *testing.T) {
+	tests := []struct {
+		name       string
+		bucketsNum int
+	}{
+		{
+			name:       "single page",
+			bucketsNum: 5,
+		},
+		{
+			name:       "multi page",
+			bucketsNum: 1025,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+			// create stream without the chunk subject, but with KV_ prefix
+			_, err := js.AddStream(&nats.StreamConfig{Name: "KV_FOO", Subjects: []string{"FOO.*"}})
+			expectOk(t, err)
+			// create stream with chunk subject, but without "KV_" prefix
+			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", Subjects: []string{"$KV.ABC.>"}})
+			expectOk(t, err)
+			for i := 0; i < test.bucketsNum; i++ {
+				_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: fmt.Sprintf("KVS_%d", i), MaxBytes: 1024})
+				expectOk(t, err)
+			}
+			names := make([]string, 0)
+			for name := range js.KeyValueStoreNames() {
+				names = append(names, name)
+			}
+			if len(names) != test.bucketsNum {
+				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
+			}
+			infos := make([]nats.KeyValue, 0)
+			for info := range js.KeyValueStores() {
+				infos = append(infos, info)
+			}
+			if len(infos) != test.bucketsNum {
+				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.bucketsNum, len(infos))
+			}
+		})
+	}
+}
