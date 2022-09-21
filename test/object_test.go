@@ -15,6 +15,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -302,12 +303,20 @@ func TestObjectDeleteMarkers(t *testing.T) {
 	if si.State.Msgs != 1 {
 		t.Fatalf("Expected 1 marker msg, got %d msgs", si.State.Msgs)
 	}
-	// Make sure we have a delete marker, this will be there to drive Watch functionality.
-	info, err := obs.GetInfo("A")
+	// For deleted object return error
+	_, err = obs.GetInfo("A")
+	expectErr(t, err, nats.ErrObjectNotFound)
+	_, err = obs.Get("A")
+	expectErr(t, err, nats.ErrObjectNotFound)
+
+	info, err := obs.GetInfo("A", nats.GetObjectInfoShowDeleted())
 	expectOk(t, err)
+	// Make sure we have a delete marker, this will be there to drive Watch functionality.
 	if !info.Deleted {
 		t.Fatalf("Expected info to be marked as deleted")
 	}
+	_, err = obs.Get("A", nats.GetObjectShowDeleted())
+	expectOk(t, err)
 }
 
 func TestObjectMultiWithDelete(t *testing.T) {
@@ -530,7 +539,7 @@ func TestObjectWatch(t *testing.T) {
 	expectOk(t, err)
 
 	// Update Meta
-	deletedInfo, err := obs.GetInfo("A")
+	deletedInfo, err := obs.GetInfo("A", nats.GetObjectInfoShowDeleted())
 	expectOk(t, err)
 	if !deletedInfo.Deleted {
 		t.Fatalf("Expected object to be deleted.")
@@ -661,7 +670,7 @@ func TestObjectLinks(t *testing.T) {
 	_, err = root.AddLink("ToDeletedStale", infoA)
 	expectOk(t, err) // TODO deal with this in the code somehow
 
-	infoA, err = root.GetInfo("A")
+	infoA, err = root.GetInfo("A", nats.GetObjectInfoShowDeleted())
 	expectOk(t, err)
 
 	_, err = root.AddLink("ToDeletedFresh", infoA)
@@ -748,28 +757,82 @@ func TestObjectList(t *testing.T) {
 	err = root.Delete("D")
 	expectOk(t, err)
 
-	lch, err := root.List()
-	expectOk(t, err)
+	t.Run("without deleted objects", func(t *testing.T) {
+		lch, err := root.List()
+		expectOk(t, err)
 
-	omap := make(map[string]struct{})
-	for _, info := range lch {
-		if _, ok := omap[info.Name]; ok {
-			t.Fatalf("Already saw %q", info.Name)
+		omap := make(map[string]struct{})
+		for _, info := range lch {
+			if _, ok := omap[info.Name]; ok {
+				t.Fatalf("Already saw %q", info.Name)
+			}
+			omap[info.Name] = struct{}{}
 		}
-		omap[info.Name] = struct{}{}
-	}
-	if len(omap) != 4 {
-		t.Fatalf("Expected 4 total objects, got %d", len(omap))
-	}
-	expected := map[string]struct{}{
-		"A": struct{}{},
-		"B": struct{}{},
-		"C": struct{}{},
-		"b": struct{}{},
-	}
-	if !reflect.DeepEqual(omap, expected) {
-		t.Fatalf("Expected %+v but got %+v", expected, omap)
-	}
+		if len(omap) != 4 {
+			t.Fatalf("Expected 4 total objects, got %d", len(omap))
+		}
+		expected := map[string]struct{}{
+			"A": struct{}{},
+			"B": struct{}{},
+			"C": struct{}{},
+			"b": struct{}{},
+		}
+		if !reflect.DeepEqual(omap, expected) {
+			t.Fatalf("Expected %+v but got %+v", expected, omap)
+		}
+	})
+
+	t.Run("with deleted objects", func(t *testing.T) {
+		lch, err := root.List(nats.ListObjectsShowDeleted())
+		expectOk(t, err)
+
+		res := make([]string, 0)
+		for _, info := range lch {
+			res = append(res, info.Name)
+		}
+		if len(res) != 5 {
+			t.Fatalf("Expected 5 total objects, got %d", len(res))
+		}
+		expected := []string{"A", "C", "B", "b", "D"}
+
+		if !reflect.DeepEqual(res, expected) {
+			t.Fatalf("Expected %+v but got %+v", expected, res)
+		}
+	})
+
+	t.Run("with context", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		lch, err := root.List(nats.Context(ctx))
+		expectOk(t, err)
+
+		omap := make(map[string]struct{})
+		for _, info := range lch {
+			if _, ok := omap[info.Name]; ok {
+				t.Fatalf("Already saw %q", info.Name)
+			}
+			omap[info.Name] = struct{}{}
+		}
+		if len(omap) != 4 {
+			t.Fatalf("Expected 4 total objects, got %d", len(omap))
+		}
+		expected := map[string]struct{}{
+			"A": struct{}{},
+			"B": struct{}{},
+			"C": struct{}{},
+			"b": struct{}{},
+		}
+		if !reflect.DeepEqual(omap, expected) {
+			t.Fatalf("Expected %+v but got %+v", expected, omap)
+		}
+	})
+
+	t.Run("context timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+		_, err := root.List(nats.Context(ctx))
+		expectErr(t, err, context.DeadlineExceeded)
+	})
 }
 
 func TestObjectMaxBytes(t *testing.T) {
