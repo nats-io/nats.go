@@ -43,7 +43,6 @@ type (
 		// DeleteMsg deletes a message from a stream.
 		// The message is marked as erased, but not overwritten
 		DeleteMsg(context.Context, uint64) error
-
 		// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
 		// As a result, this operation is slower than DeleteMsg()
 		SecureDeleteMsg(context.Context, uint64) error
