@@ -1256,6 +1256,9 @@ func (js *js) QueueSubscribeSync(subj, queue string, opts ...SubOpt) (*Subscript
 }
 
 // ChanSubscribe creates channel based Subscription.
+// Using ChanSubscribe without buffered capacity is not recommended since
+// it will be prone to dropping messages with a slow consumer error.  Make sure to give the channel enough
+// capacity to handle bursts in traffic, for example other Subscribe APIs use a default of 512k capacity in comparison.
 // See important note in Subscribe()
 func (js *js) ChanSubscribe(subj string, ch chan *Msg, opts ...SubOpt) (*Subscription, error) {
 	return js.subscribe(subj, _EMPTY_, nil, ch, false, false, opts)
