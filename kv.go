@@ -94,6 +94,9 @@ type KeyValueStatus interface {
 
 	// BackingStore indicates what technology is used for storage of the bucket
 	BackingStore() string
+
+	// Bytes returns the size in bytes of the bucket
+	Bytes() uint64
 }
 
 // KeyWatcher is what is returned when doing a watch.
@@ -955,6 +958,9 @@ func (s *KeyValueBucketStatus) BackingStore() string { return "JetStream" }
 
 // StreamInfo is the stream info retrieved to create the status
 func (s *KeyValueBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
+
+// Bytes is the size of the stream
+func (s *KeyValueBucketStatus) Bytes() uint64 { return s.nfo.State.Bytes }
 
 // Status retrieves the status and configuration of a bucket
 func (kv *kvs) Status() (KeyValueStatus, error) {
