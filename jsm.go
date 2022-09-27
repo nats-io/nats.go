@@ -186,7 +186,7 @@ type AccountInfo struct {
 	Tier
 	Domain string          `json:"domain"`
 	API    APIStats        `json:"api"`
-	Tiers  map[string]Tier `json:"tier"`
+	Tiers  map[string]Tier `json:"tiers"`
 }
 
 type Tier struct {
