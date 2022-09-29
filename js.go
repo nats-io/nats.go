@@ -2040,11 +2040,17 @@ func (sub *Subscription) activityCheck() {
 	sub.mu.Unlock()
 
 	if !active {
-		nc.mu.Lock()
-		if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
-			nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
+		if !jsi.ordered || nc.Status() != CONNECTED {
+			nc.mu.Lock()
+			if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
+				nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
+			}
+			nc.mu.Unlock()
+			return
 		}
-		nc.mu.Unlock()
+		sub.mu.Lock()
+		sub.resetOrderedConsumer(jsi.sseq + 1)
+		sub.mu.Unlock()
 	}
 }
 

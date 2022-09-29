@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	mrand "math/rand"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
@@ -50,6 +51,24 @@ func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
 		}
 	}
 	s.WaitForShutdown()
+}
+
+func restartBasicJSServer(t *testing.T, s *server.Server) *server.Server {
+	opts := natsserver.DefaultTestOptions
+	clientURL, err := url.Parse(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	port, err := strconv.Atoi(clientURL.Port())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	opts.Port = port
+	opts.JetStream = true
+	opts.StoreDir = s.JetStreamConfig().StoreDir
+	s.Shutdown()
+	s.WaitForShutdown()
+	return RunServerWithOptions(opts)
 }
 
 func TestJetStreamNotEnabled(t *testing.T) {
@@ -8124,5 +8143,61 @@ func TestJetStreamMsgAckShouldErrForConsumerAckNone(t *testing.T) {
 	}
 	if err := msg.Ack(); err != nats.ErrCantAckIfConsumerAckNone {
 		t.Fatalf("Expected error indicating that sub is AckNone, got %v", err)
+	}
+}
+
+func TestOrderedConsumerRecreateAfterReconnectSync(t *testing.T) {
+	s := RunBasicJetStreamServer()
+
+	// monitor for ErrConsumerNotActive error and suppress logging
+	hbMissed := make(chan struct{})
+	errHandler := func(c *nats.Conn, s *nats.Subscription, err error) {
+		if !errors.Is(err, nats.ErrConsumerNotActive) {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		hbMissed <- struct{}{}
+	}
+	nc, js := jsClient(t, s, nats.ErrorHandler(errHandler))
+	defer nc.Close()
+
+	if _, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := js.SubscribeSync("FOO.A", nats.OrderedConsumer(), nats.IdleHeartbeat(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := js.Publish("FOO.A", []byte("msg 1")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msg, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if string(msg.Data) != "msg 1" {
+		t.Fatalf("Invalid msg value; want: 'msg 1'; got: %q", string(msg.Data))
+	}
+
+	// restart the server
+	s = restartBasicJSServer(t, s)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	// wait until we miss heartbeat
+	select {
+	case <-hbMissed:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Did not receive consumer not active error")
+	}
+	if _, err := js.Publish("FOO.A", []byte("msg 2")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msg, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// make sure we pick up where we left off
+	if string(msg.Data) != "msg 2" {
+		t.Fatalf("Invalid msg value; want: 'msg 2'; got: %q", string(msg.Data))
 	}
 }
