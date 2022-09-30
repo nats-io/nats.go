@@ -89,18 +89,6 @@ func WithNoWait() ConsumerNextOpt {
 	}
 }
 
-// WithStreamHeartbeat sets the idle heartbeat duration for a pull subscription
-// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithNextHeartbeat(hb time.Duration) ConsumerNextOpt {
-	return func(req *pullRequest) error {
-		if hb <= 0 {
-			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", nats.ErrInvalidArg)
-		}
-		req.Heartbeat = hb
-		return nil
-	}
-}
-
 // WithBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
 func WithBatchSize(batch int) ConsumerStreamOpt {
