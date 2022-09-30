@@ -8146,7 +8146,7 @@ func TestJetStreamMsgAckShouldErrForConsumerAckNone(t *testing.T) {
 	}
 }
 
-func TestOrderedConsumerRecreateAfterReconnectSync(t *testing.T) {
+func TestOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	s := RunBasicJetStreamServer()
 
 	// monitor for ErrConsumerNotActive error and suppress logging

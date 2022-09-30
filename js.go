@@ -1966,22 +1966,23 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 
 		resp, err := nc.Request(js.apiSubj(ccSubj), j, js.opts.wait)
 		if err != nil {
-			if err == ErrNoResponders {
-				err = ErrJetStreamNotEnabled
+			if errors.Is(err, ErrNoResponders) || errors.Is(err, ErrTimeout) {
+				// if creating consumer failed, retry
+				return
 			}
-			pushErr(err)
+			pushErr(fmt.Errorf("%w: recreating ordered consumer", err))
 			return
 		}
 
 		var cinfo consumerResponse
 		err = json.Unmarshal(resp.Data, &cinfo)
 		if err != nil {
-			pushErr(err)
+			pushErr(fmt.Errorf("%w: recreating ordered consumer", err))
 			return
 		}
 
 		if cinfo.Error != nil {
-			pushErr(cinfo.Error)
+			pushErr(fmt.Errorf("%w: recreating ordered consumer", cinfo.Error))
 			return
 		}
 
