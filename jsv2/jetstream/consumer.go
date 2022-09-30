@@ -80,7 +80,6 @@ type (
 //
 // Available options:
 // WithNoWait() - when set to true, `Next()` request does not wait for a message if no message is available at the time of request
-// WithNextHeartbeat() - sets an idle heartbeat setting for a pull request
 func (p *pullConsumer) Next(ctx context.Context, opts ...ConsumerNextOpt) (JetStreamMsg, error) {
 	p.Lock()
 	if atomic.LoadUint32(&p.isStreaming) == 1 {
