@@ -293,7 +293,7 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 	testSyncConsumer()
 }
 
-func TestOrderedConsumerDeleteAssets(t *testing.T) {
+func TestJetStreamOrderedConsumerDeleteAssets(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 

@@ -1937,7 +1937,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		nc.mu.Unlock()
 
 		pushErr := func(err error) {
-			nc.handleConsumerSequenceMismatch(sub, err)
+			nc.handleConsumerSequenceMismatch(sub, fmt.Errorf("%w: recreating ordered consumer", err))
 			nc.unsubscribe(sub, 0, true)
 		}
 
@@ -1970,19 +1970,19 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 				// if creating consumer failed, retry
 				return
 			}
-			pushErr(fmt.Errorf("%w: recreating ordered consumer", err))
+			pushErr(err)
 			return
 		}
 
 		var cinfo consumerResponse
 		err = json.Unmarshal(resp.Data, &cinfo)
 		if err != nil {
-			pushErr(fmt.Errorf("%w: recreating ordered consumer", err))
+			pushErr(err)
 			return
 		}
 
 		if cinfo.Error != nil {
-			pushErr(fmt.Errorf("%w: recreating ordered consumer", cinfo.Error))
+			pushErr(cinfo.Error)
 			return
 		}
 
