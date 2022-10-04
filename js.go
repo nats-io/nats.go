@@ -1937,7 +1937,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		nc.mu.Unlock()
 
 		pushErr := func(err error) {
-			nc.handleConsumerSequenceMismatch(sub, err)
+			nc.handleConsumerSequenceMismatch(sub, fmt.Errorf("%w: recreating ordered consumer", err))
 			nc.unsubscribe(sub, 0, true)
 		}
 
@@ -1966,8 +1966,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 
 		resp, err := nc.Request(js.apiSubj(ccSubj), j, js.opts.wait)
 		if err != nil {
-			if err == ErrNoResponders {
-				err = ErrJetStreamNotEnabled
+			if errors.Is(err, ErrNoResponders) || errors.Is(err, ErrTimeout) {
+				// if creating consumer failed, retry
+				return
 			}
 			pushErr(err)
 			return
@@ -2040,11 +2041,17 @@ func (sub *Subscription) activityCheck() {
 	sub.mu.Unlock()
 
 	if !active {
-		nc.mu.Lock()
-		if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
-			nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
+		if !jsi.ordered || nc.Status() != CONNECTED {
+			nc.mu.Lock()
+			if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
+				nc.ach.push(func() { errCB(nc, sub, ErrConsumerNotActive) })
+			}
+			nc.mu.Unlock()
+			return
 		}
-		nc.mu.Unlock()
+		sub.mu.Lock()
+		sub.resetOrderedConsumer(jsi.sseq + 1)
+		sub.mu.Unlock()
 	}
 }
 

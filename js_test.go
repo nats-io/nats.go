@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -292,7 +293,7 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 	testSyncConsumer()
 }
 
-func TestJetStreamOrderedConsumerWithErrors(t *testing.T) {
+func TestJetStreamOrderedConsumerDeleteAssets(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -340,15 +341,9 @@ func TestJetStreamOrderedConsumerWithErrors(t *testing.T) {
 		}
 	}
 
-	type asset int
-	const (
-		deleteStream asset = iota
-		deleteConsumer
-	)
+	t.Run("remove stream, expect error", func(t *testing.T) {
+		createStream()
 
-	testSubError := func(a asset) {
-		t.Helper()
-		// Again here the IdleHeartbeat is not required, just overriding top shorten test time.
 		sub, err := js.SubscribeSync("a", OrderedConsumer(), IdleHeartbeat(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -358,37 +353,71 @@ func TestJetStreamOrderedConsumerWithErrors(t *testing.T) {
 		// Since we are sync we will be paused here due to flow control.
 		time.Sleep(100 * time.Millisecond)
 		// Now delete the asset and make sure we get an error.
-		switch a {
-		case deleteStream:
-			if err := js.DeleteStream("OBJECT"); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-		case deleteConsumer:
-			// We need to grab our consumer name.
-			ci, err := sub.ConsumerInfo()
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if err := js.DeleteConsumer("OBJECT", ci.Name); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+		if err := js.DeleteStream("OBJECT"); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
 		// Make sure we get an error.
 		select {
 		case err := <-errCh:
-			if err != ErrConsumerNotActive {
-				t.Fatalf("Got wrong error, wanted %v, got %v", ErrConsumerNotActive, err)
+			if !errors.Is(err, ErrStreamNotFound) {
+				t.Fatalf("Got wrong error, wanted %v, got %v", ErrStreamNotFound, err)
 			}
 		case <-time.After(time.Second):
 			t.Fatalf("Did not receive err message as expected")
 		}
-	}
+	})
 
-	createStream()
-	testSubError(deleteStream)
+	t.Run("remove consumer, expect it to be recreated", func(t *testing.T) {
+		createStream()
 
-	createStream()
-	testSubError(deleteConsumer)
+		createConsSub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.OBJECT")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer createConsSub.Unsubscribe()
+		// Again here the IdleHeartbeat is not required, just overriding top shorten test time.
+		sub, err := js.SubscribeSync("a", OrderedConsumer(), IdleHeartbeat(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		createConsMsg, err := createConsSub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !strings.Contains(string(createConsMsg.Data), `"stream_name":"OBJECT"`) {
+			t.Fatalf("Invalid message on create consumer subject: %q", string(createConsMsg.Data))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		ci, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		consName := ci.Name
+
+		if err := js.DeleteConsumer("OBJECT", consName); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		createConsMsg, err = createConsSub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !strings.Contains(string(createConsMsg.Data), `"stream_name":"OBJECT"`) {
+			t.Fatalf("Invalid message on create consumer subject: %q", string(createConsMsg.Data))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		ci, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		newConsName := ci.Name
+		if consName == newConsName {
+			t.Fatalf("Consumer should be recreated, but consumer name is the same")
+		}
+	})
 }
 
 func TestJetStreamOrderedConsumerWithAutoUnsub(t *testing.T) {
