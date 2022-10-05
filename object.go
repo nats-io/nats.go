@@ -46,8 +46,8 @@ type ObjectStoreManager interface {
 	DeleteObjectStore(bucket string) error
 	// ObjectStoreNames is used to retrieve a list of bucket names
 	ObjectStoreNames(opts ...ObjectOpt) <-chan string
-	// ObjectStores is used to retrieve a list of buckets
-	ObjectStores(opts ...ObjectOpt) <-chan ObjectStore
+	// ObjectStores is used to retrieve a list of bucket statuses
+	ObjectStores(opts ...ObjectOpt) <-chan ObjectStoreStatus
 }
 
 // ObjectStore is a blob store capable of storing large objects efficiently in
@@ -1314,8 +1314,8 @@ func (js *js) ObjectStoreNames(opts ...ObjectOpt) <-chan string {
 	return ch
 }
 
-// ObjectStores is used to retrieve a list of buckets
-func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStore {
+// ObjectStores is used to retrieve a list of bucket statuses
+func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStoreStatus {
 	var o objOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -1324,7 +1324,7 @@ func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStore {
 			}
 		}
 	}
-	ch := make(chan ObjectStore)
+	ch := make(chan ObjectStoreStatus)
 	var cancel context.CancelFunc
 	if o.ctx == nil {
 		o.ctx, cancel = context.WithTimeout(context.Background(), defaultRequestWait)
@@ -1343,7 +1343,10 @@ func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStore {
 					continue
 				}
 				select {
-				case ch <- &obs{name: strings.TrimPrefix(info.Config.Name, "OBJ_"), stream: info.Config.Name, js: js}:
+				case ch <- &ObjectBucketStatus{
+					nfo:    info,
+					bucket: strings.TrimPrefix(info.Config.Name, "OBJ_"),
+				}:
 				case <-o.ctx.Done():
 					return
 				}

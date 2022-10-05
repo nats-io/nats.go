@@ -893,7 +893,7 @@ func TestListObjectStores(t *testing.T) {
 			if len(names) != test.bucketsNum {
 				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
 			}
-			infos := make([]nats.ObjectStore, 0)
+			infos := make([]nats.ObjectStoreStatus, 0)
 			for info := range js.ObjectStores() {
 				infos = append(infos, info)
 			}

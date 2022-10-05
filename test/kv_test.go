@@ -853,7 +853,7 @@ func TestListKeyValueStores(t *testing.T) {
 			if len(names) != test.bucketsNum {
 				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
 			}
-			infos := make([]nats.KeyValue, 0)
+			infos := make([]nats.KeyValueStatus, 0)
 			for info := range js.KeyValueStores() {
 				infos = append(infos, info)
 			}
