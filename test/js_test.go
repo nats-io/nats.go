@@ -1291,7 +1291,7 @@ func TestJetStreamManagement(t *testing.T) {
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
 	t.Run("create stream", func(t *testing.T) {
-		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar"}})
+		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar"}, DiscardNewPerSubject: true})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -8199,5 +8199,92 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	// make sure we pick up where we left off
 	if string(msg.Data) != "msg 2" {
 		t.Fatalf("Invalid msg value; want: 'msg 2'; got: %q", string(msg.Data))
+	}
+}
+
+func TestJetStreamCreateStreamDiscardPolicy(t *testing.T) {
+	tests := []struct {
+		name                 string
+		discardPolicy        nats.DiscardPolicy
+		discardNewPerSubject bool
+		maxMsgsPerSubject    int64
+		withAPIError         bool
+	}{
+		{
+			name:                 "with discard policy 'new' and discard new per subject set",
+			discardPolicy:        nats.DiscardNew,
+			discardNewPerSubject: true,
+			maxMsgsPerSubject:    100,
+		},
+		{
+			name:                 "with discard policy 'new' and discard new per subject not set",
+			discardPolicy:        nats.DiscardNew,
+			discardNewPerSubject: false,
+			maxMsgsPerSubject:    100,
+		},
+		{
+			name:                 "with discard policy 'old' and discard new per subject set",
+			discardPolicy:        nats.DiscardOld,
+			discardNewPerSubject: true,
+			maxMsgsPerSubject:    100,
+			withAPIError:         true,
+		},
+		{
+			name:                 "with discard policy 'old' and discard new per subject not set",
+			discardPolicy:        nats.DiscardOld,
+			discardNewPerSubject: true,
+			maxMsgsPerSubject:    100,
+			withAPIError:         true,
+		},
+		{
+			name:                 "with discard policy 'new' and discard new per subject set and max msgs per subject not set",
+			discardPolicy:        nats.DiscardNew,
+			discardNewPerSubject: true,
+			withAPIError:         true,
+		},
+	}
+
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			streamName := fmt.Sprintf("FOO%d", i)
+
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name:                 streamName,
+				Discard:              test.discardPolicy,
+				DiscardNewPerSubject: test.discardNewPerSubject,
+				MaxMsgsPerSubject:    test.maxMsgsPerSubject,
+			})
+
+			if test.withAPIError {
+				var apiErr *nats.APIError
+				if err == nil {
+					t.Fatalf("Expected error, got nil")
+				}
+				if ok := errors.As(err, &apiErr); !ok {
+					t.Fatalf("Expected nats.APIError, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			info, err := js.StreamInfo(streamName)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if info.Config.Discard != test.discardPolicy {
+				t.Fatalf("Invalid value of discard policy; want: %s; got: %s", test.discardPolicy.String(), info.Config.Discard.String())
+			}
+			if info.Config.DiscardNewPerSubject != test.discardNewPerSubject {
+				t.Fatalf("Invalid value of discard_new_per_subject; want: %t; got: %t", test.discardNewPerSubject, info.Config.DiscardNewPerSubject)
+			}
+		})
 	}
 }
