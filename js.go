@@ -69,8 +69,8 @@ type JetStream interface {
 	// consumer with this name, and if found, will bind to it and not attempt to
 	// delete it. However, if not found, the library will send a request to
 	// create such durable JetStream consumer. Note that the library will delete
-	// the JetStream consumer after an Unsubscribe() or Drain() *only* if it
-	// created the durable consumer while subscribing. if the durable consumer
+	// the JetStream consumer after an Unsubscribe() or Drain() only if it
+	// created the durable consumer while subscribing. If the durable consumer
 	// already existed prior to subscribing it won't be deleted.
 	// * If Bind() option is provided, the library will attempt to lookup the
 	// consumer with the given name, and if successful, bind to it. If the lookup fails,
