@@ -287,9 +287,7 @@ func TestPullConsumerNext(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait())
-				cancel()
+				msg, err = c.NextNoWait()
 				if err != nil {
 					errs <- err
 					break
@@ -347,9 +345,7 @@ func TestPullConsumerNext(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			for {
-				nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-				msg, err = c.Next(nextCtx, WithNoWait())
-				cancel()
+				msg, err = c.NextNoWait()
 				if err != nil {
 					errs <- err
 					break
@@ -400,7 +396,7 @@ func TestPullConsumerNext(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {})
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -576,9 +572,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				for {
-					nextCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-					msg, err = c.Next(nextCtx, WithNoWait())
-					cancel()
+					msg, err = c.NextNoWait()
 					if err != nil {
 						errs <- err
 						break
@@ -645,7 +639,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -693,12 +687,12 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {})
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {})
 		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
 			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
 		}
@@ -731,7 +725,7 @@ func TestPullConsumerStream(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(testMsgs))
 		msgs := make([]JetStreamMsg, 0)
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -756,7 +750,7 @@ func TestPullConsumerStream(t *testing.T) {
 		wg.Add(len(testMsgs))
 		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -815,7 +809,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -873,7 +867,7 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {
 		}, WithBatchSize(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -914,7 +908,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -973,7 +967,7 @@ func TestPullConsumerStream(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Stream(ctx, func(_ JetStreamMsg, _ error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, _ error) {
 		}, WithExpiry(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1008,7 +1002,7 @@ func TestPullConsumerStream(t *testing.T) {
 		msgs := make([]JetStreamMsg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1058,7 +1052,7 @@ func TestPullConsumerStream(t *testing.T) {
 
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		err = c.Stream(ctx, func(_ JetStreamMsg, err error) {
+		err = c.Listen(ctx, func(_ JetStreamMsg, err error) {
 			if !errors.Is(err, ErrNoHeartbeat) {
 				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
 			}
@@ -1117,7 +1111,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			msgs := make([]JetStreamMsg, 0)
 			wg := &sync.WaitGroup{}
 			wg.Add(len(testMsgs))
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1167,7 +1161,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg := sync.WaitGroup{}
 			wg.Add(len(testMsgs))
 			msgs := make([]JetStreamMsg, 0)
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1192,7 +1186,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg.Add(len(testMsgs))
 			ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			err = c.Stream(ctx, func(msg JetStreamMsg, err error) {
+			err = c.Listen(ctx, func(msg JetStreamMsg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}

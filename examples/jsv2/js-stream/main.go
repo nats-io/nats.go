@@ -57,7 +57,7 @@ func main() {
 	}
 
 	go func() {
-		err := cons.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+		err := cons.Listen(ctx, func(msg jetstream.JetStreamMsg, err error) {
 			if err != nil {
 				log.Fatal(err)
 			}

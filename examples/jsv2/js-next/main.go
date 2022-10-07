@@ -55,7 +55,7 @@ func main() {
 
 	for {
 		nextCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		msg, err := cons.Next(nextCtx, jetstream.WithNextHeartbeat(1*time.Second))
+		msg, err := cons.Next(nextCtx)
 		if err != nil {
 			log.Fatal(err)
 		}
