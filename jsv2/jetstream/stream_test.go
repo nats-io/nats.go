@@ -971,13 +971,19 @@ func TestPurgeStream(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			seqs := make([]uint64, 0)
+		Loop:
 			for {
-				msg, err := c.NextNoWait()
+				msgs, err := c.FetchNoWait(1)
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+				var msg Msg
+				msg = <-msgs.Messages()
 				if msg == nil {
-					break
+					break Loop
+				}
+				if err := msgs.Error(); err != nil {
+					t.Fatalf("unexpected error during fetch: %v", err)
 				}
 				meta, err := msg.Metadata()
 				if err != nil {

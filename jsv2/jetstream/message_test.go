@@ -55,9 +55,18 @@ func TestMessageDetails(t *testing.T) {
 	if _, err := js.Publish(ctx, "FOO.1", []byte("msg"), WithMsgID("123")); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	msg, err := c.Next(ctx)
+	msgs, err := c.Fetch(1)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
+	}
+	var msg Msg
+
+	msg = <-msgs.Messages()
+	if msg == nil {
+		t.Fatalf("No messages available")
+	}
+	if err := msgs.Error(); err != nil {
+		t.Fatalf("unexpected error during fetch: %v", err)
 	}
 	if string(msg.Data()) != "msg" {
 		t.Fatalf("Invalid messge body; want: 'msg'; got: %q", string(msg.Data()))
@@ -176,9 +185,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {
@@ -206,9 +223,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		if err := msg.Ack(); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -227,9 +252,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {
@@ -257,9 +290,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 
 		if err := msg.DoubleAck(context.Background()); err == nil || !errors.Is(err, nats.ErrNoDeadlineContext) {
@@ -276,9 +317,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {
@@ -306,9 +355,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {
@@ -336,9 +393,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {
@@ -366,9 +431,17 @@ func TestAckVariants(t *testing.T) {
 		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msg, err := c.Next(ctx)
+		msgs, err := c.Fetch(1)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
+		}
+		var msg Msg
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
 		if err != nil {

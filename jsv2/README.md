@@ -5,8 +5,6 @@ This doc covers the basic usage of the `jetstream` package in `nats.go` client.
 - [JetStream Simplified Client](#jetstream-simplified-client)
   - [Overview](#overview)
   - [Basic usage](#basic-usage)
-  - [Context support](#context-support)
-  - [JetStream](#jetstream)
   - [Streams](#streams)
     - [Stream management (CRUD)](#stream-management-crud)
     - [Listing streams and stream names](#listing-streams-and-stream-names)
@@ -29,16 +27,15 @@ Key differences between `jetstream` and `nats` packages include:
 
 - Using smaller, simlpler interfaces to manage streams and consumers
 - Using more granular and predictable approach to consuming messages from a stream, instead of relying on often complicated and unpredictable `Subscribe()` method (and all of its flavors)
-- Allowing the usage of pull consumers to asynchronously receive incoming messages
+- Allowing the usage of pull consumers to continuously receive incoming messages
 - Separating JetStream context from core NATS
-- Simplifying timeout management by extensive use of `Context`
 
-`jetstream` package provides several for interacting with the API:
+`jetstream` package provides several ways of interacting with the API:
 
 - `JetStream` - top-level interface, used to create and manage streams, consumers and publishing messages
 - `Stream` - used to manage consumers for a specific stream, as well as performing stream-specific operations (purging, fetching and deleting messages by sequence number, fetching stream info)
 - `Consumer` - used to get information about a consumer as well as consuming messages
-- `JetStreamMsg` - used for message-specific operations - reading data, headers and metadata, as well as performing various types of acknowledgements
+- `Msg` - used for message-specific operations - reading data, headers and metadata, as well as performing various types of acknowledgements
 
 ## Basic usage
 
@@ -53,7 +50,7 @@ import (
 )
 
 func main() {
-    // In the `jetstream` package, almost all methods rely on `context.Context` for timeout/cancellation handling
+    // In the `jetstream` package, almost all API calls rely on `context.Context` for timeout/cancellation handling
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
     defer cancel()
     nc, _ := nats.Connect(nats.DefaultURL)
@@ -78,41 +75,38 @@ func main() {
         AckPolicy: jetstream.AckExplicitPolicy,
     })
 
-    // Get a single message from the consumer
-    msg, _ := c.Next(ctx)
-    if msg != nil {
+    // Get 10 messages from the consumer
+    msgs, _ := c.Fetch(10)
+    var msg jetstream.Msg
+    for msg := range msgs.Messages() {
         msg.Ack()
         fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
     }
+    if msgs.Error() {
+        fmt.Println("Error duting Fetch(): ", msgs.Error())
+    }
 
-    // Receive messages continuously
-    c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+    // Receive messages continuously in a callback
+    cons, _ := c.Consume(ctx, func(msg jetstream.Msg) {
         msg.Ack()
         fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
     })
+    defer cons.Stop()
+
+
+    // Iterate over messages continuously
+    it, _ := cons.Messages()
+    for i := 0; i < 10; i++ {
+        msg, err := it.Next()
+        if err != nil {
+            log.Fatal(err)
+        }
+        msg.Ack()
+        fmt.Println("Received a JetStream message: %s\n", string(msg.Data()))
+    }
+    it.Stop()
 }
 ```
-
-## Context support
-
-This version of JetStream API relies heavily on the use of `context.Context` in order to manage request timeouts and cancellation. Nearly all methods accept `Context` as first parameter.
-
-For example, in order to stop receiving messages on `Stream()`:
-
-```go
-ctx, cancel := context.WithCancel(context.Background())
-c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
-    msg.Ack()
-    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
-})
-
-if stopCondition {
-    // Calling cancel will unsubscribe the consumer from the stream. 
-    cancel()
-}
-```
-
-## JetStream
 
 ## Streams
 
@@ -157,7 +151,7 @@ for err != nil {
     }
 }
 if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+    fmt.Println("Unexpected error ocurred")
 }
 
 // list stream names
@@ -170,7 +164,7 @@ for err != nil {
     }
 }
 if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+    fmt.Println("Unexpected error ocurred")
 }
 ```
 
@@ -221,7 +215,7 @@ fmt.Println(cachedInfo.Config.Name)
 
 ## Consumers
 
-Currently, only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continous message receival (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
+Currently, only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continuous message retrieval (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
 
 ### Consumers management
 
@@ -332,63 +326,85 @@ if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
 
 ### Receiving messages from the consumer
 
-The `Consumer` interface covers 2 patterns for receiving incoming messages from Stream - Polling Consumer pattern and Event-Driven Consumer pattern.
+The `Consumer` interface covers allows fetching messages on demand, with pre-defined batch size or
+continuous push-like receiving of messages with callbacks or pseudo-iterator.
 
-#### __Polling consumer__
+#### __Single fetch__
 
-Polling consumer pattern allows fetching messages synchronously one by one. Using context, user can decide how long the consumer should wait for a message in case none is available on the stream at the time of call.
+This pattern pattern allows fetching a defined number of messages in a single RPC.
+
+- Using `Fetch`, consumer will return up to the provided number of messages. By default, `Fetch()` will wait 30 seconds before timing out (this behavior can be configured using `WithFetchTimeout()` option):
 
 ```go
+msgs, _ := c.Fetch(10)
+for msg := range msgs.Messages() {
+    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+}
+if msgs.Error() != nil {
+    // handle error
+}
+```
+
+Similarly, `FetchNoWait()` can be used in order to only return messages from the stream available at the time of sending request:
+
+```go
+// FetchNoWait will not wait for new messages if the whole batch is not available at the time of sending request.
+msgs, _ := c.FetchNoWait(10)
+for msg := range msgs.Messages() {
+    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+}
+if msgs.Error() != nil {
+    // handle error
+}
+```
+
+> __Warning__
+> Both `Fetch()` and `FetchNoWait()` have worse performance when used to continuously retrieve messages in comparison to `Messages()` or `Consume()` methods, as they do not perform any optimizations (pre-buffering) and new subscription is created for each execution.
+
+#### Continuous polling
+
+There are 2 ways to achieve push-like behavior using pull consumers in `jetstream` package.
+Both `Messages()` and `Consume()` methods perform exactly the same optimizations and can be used interchangeably.
+
+- Using `Messages()` to iterate over incoming messages:
+
+```go
+iter, _ := cons.Messages()
 for {
-    ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-    msg, _ := c.Next(ctx)
-    cancel()
-    // In case there are no messages, Next() returns nil
-    if msg == nil {
-        break
+    msg, err := iter.Next()
+    // Next can return error, e.g. when iterator is closed or no heartbeats were received
+    if err != nil {
+        //handle error
     }
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+    msg.Ack()
 }
+iter.Stop()
 ```
 
-`Next()` accepts options to customize its behavior:
-
-- `WithNoWait()` - whan used, `Next()` does not wait for the message to appear on the consumer fot the specified timeout duration, but rather return a message if it is available at the time of request (one-shot)
+It can also be configured to only store up to defined number of messages/bytes in the buffer.
 
 ```go
-msg, _ := c.Next(ctx, WithNoWait())
-if msg != nil {
-    fmt.Println(string(msg.Data()))
-}
+// a maximum of 10 messages or 1024 bytes will be stored in memory (whichever is encountered first)
+iter, _ := cons.Messages(WithMessagesMaxMessages(10), WithMessagesMaxBytes(1024))
 ```
 
-- `WithNextHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the request to the API, veryfing whether stream is alive for the duration on the request.
+- Using `Consume()` receive messages in a callback
 
 ```go
-msg, err := c.Next(ctx, WithNextHeartbeat(1*time.Second))
-if err != nil && errors.Is(err, jetstream.ErrNoHeartbeat) {
-    fmt.Println("something went wrong")
-}
-if msg != nil {
-    fmt.Println(string(msg.Data()))
-}
-```
-
-#### __Event-Driven consumer__
-
-Event-Driven consumer pattern allows for continuous, asynchronous processing of incoming messages. Its behavior is similar to how push consumers work, therefore it can be user as a drop-in replacement in most of the use cases (with the exception of ordered push consumers).
-
-```go
-c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+consContext, _ := c.Consume(func(msg jetstream.Msg) {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 })
+defer consContext.Stop()
 ```
 
-`Stream()` can be supplied with options to modify the behavior of a single pull request, however for most of the use cases is it using sensible defaults
+Similarly to `Messages()`, `Consume()` can be supplied with options to modify the behavior of a single pull request:
 
-- `WithBatchSize(int)` - the maximum amount of messages returned in a single pull request
-- `WithExpiry(time.Duration)` - maximum amount of time a request should wait for the full batch
-- `WithStreamHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the Stream operation, veryfing whether stream is alive
+- `WithConsumeMaxMessages(int)` - the maximum amount of messages returned in a single pull request
+- `WithConsumeMaxBytes(int)` - the maximum amount of bytes returned in a single pull request
+- `WithConsumeExpiry(time.Duration)` - maximum amount of time a single pull request should wait for the full batch
+- `WithConsumeHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the `Consume()` operation, veryfing whether stream/consumer is alive
+- `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a custom error handler on `Consume()`, allowing e.g. tracking missing heartbeats.
 
 ## Publishing on stream
 

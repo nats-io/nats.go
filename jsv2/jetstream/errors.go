@@ -20,7 +20,7 @@ import (
 
 type (
 	// JetStreamError is an error result that happens when using JetStream.
-	// In case of client-side error, `APIError()` returns nil
+	// In case of client-side error, [APIError] returns nil
 	JetStreamError interface {
 		APIError() *APIError
 		error
@@ -38,7 +38,7 @@ type (
 		Description string    `json:"description,omitempty"`
 	}
 
-	// ErrorCode represents `error_code` returned in response from JetStream API
+	// ErrorCode represents error_code returned in response from JetStream API
 	ErrorCode uint16
 )
 
@@ -114,6 +114,15 @@ var (
 	// ErrNoMessages is returned when no messages are currently available for a consumer.
 	ErrNoMessages = &jsError{message: "no messages"}
 
+	// ErrMaxBytesExceeded is returned when a message would exceed MaxBytes set on a pull request.
+	ErrMaxBytesExceeded = &jsError{message: "message size exceeds max bytes"}
+
+	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist
+	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
+
+	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
+	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "leadership change"}
+
 	// ErrHandlerRequired is returned when no handler func is provided in Stream()
 	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
 
@@ -121,7 +130,7 @@ var (
 	ErrEndOfData = errors.New("nats: end of data reached")
 
 	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
-	ErrNoHeartbeat = &jsError{message: "no heartbeat received, canceling subscription"}
+	ErrNoHeartbeat = &jsError{message: "no heartbeat received"}
 
 	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
 	ErrConsumerHasActiveSubscription = &jsError{message: "consumer has active subscription"}
@@ -143,6 +152,9 @@ var (
 
 	// ErrInvalidOption is returned when there is a collision between options
 	ErrInvalidOption = &jsError{message: "invalid jetstream option"}
+
+	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator
+	ErrMsgIteratorClosed = &jsError{message: "messages iterator closed"}
 )
 
 // Error prints the JetStream API error code and description

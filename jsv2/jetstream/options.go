@@ -16,8 +16,6 @@ package jetstream
 import (
 	"fmt"
 	"time"
-
-	"github.com/nats-io/nats.go"
 )
 
 // WithClientTrace enables request/response API calls tracing
@@ -57,7 +55,7 @@ func WithPurgeSubject(subject string) StreamPurgeOpt {
 }
 
 // WithPurgeSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
-// Can be combined with `WithSubject()` option, but not with `WithKeep()`
+// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeKeep]
 func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Keep != 0 {
@@ -69,7 +67,7 @@ func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 }
 
 // WithPurgeKeep sets the number of messages to be kept in the stream after purge.
-// Can be combined with `WithSubject()` option, but not with `WithSequence()`
+// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeSequence]
 func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Sequence != 0 {
@@ -80,37 +78,106 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithBatchSize limits the number of messages to be fetched from the stream in one request
+// WithConsumeMaxMessages limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithBatchSize(batch int) ConsumerListenOpt {
-	return func(cfg *pullRequest) error {
-		if batch < 0 {
-			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
+func WithConsumeMaxMessages(maxMessages int) ConsumeOpts {
+	return func(cfg *consumeOpts) error {
+		if maxMessages <= 0 {
+			return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 		}
-		cfg.Batch = batch
+		cfg.MaxMessages = maxMessages
 		return nil
 	}
 }
 
-// WithExpiry sets timeount on a single batch request, waiting until at least one message is available
-func WithExpiry(expires time.Duration) ConsumerListenOpt {
-	return func(cfg *pullRequest) error {
+// WithConsumeExpiry sets timeout on a single batch request, waiting until at least one message is available
+func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
+	return func(cfg *consumeOpts) error {
 		if expires < 0 {
-			return fmt.Errorf("%w: expires value must be positive", nats.ErrInvalidArg)
+			return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 		}
 		cfg.Expires = expires
 		return nil
 	}
 }
 
-// WithStreamHeartbeat sets the idle heartbeat duration for a pull subscription
+// WithConsumeMaxBytes sets max_bytes limit on a fetch request
+func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
+	return func(cfg *consumeOpts) error {
+		cfg.MaxBytes = maxBytes
+		return nil
+	}
+}
+
+// WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
+// If not provided, a default of 100 messages will be used
+func WithMessagesBatchSize(maxMessages int) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
+		if maxMessages <= 0 {
+			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
+		}
+		opts.MaxMessages = maxMessages
+		return nil
+	}
+}
+
+// WithMessagesHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithStreamHeartbeat(hb time.Duration) ConsumerListenOpt {
-	return func(req *pullRequest) error {
+func WithMessagesHeartbeat(hb time.Duration) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
 		if hb <= 0 {
-			return fmt.Errorf("idle_heartbeat value must be greater than 0")
+			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
+		}
+		opts.Heartbeat = hb
+		return nil
+	}
+}
+
+// WithMessagesMaxBytes sets max_bytes limit on a fetch request
+func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
+		opts.MaxBytes = maxBytes
+		return nil
+	}
+}
+
+// WithMessagesErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+func WithMessagesErrHandler(cb ConsumeErrHandler) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
+		opts.ErrHandler = cb
+		return nil
+	}
+}
+
+// WithConsumeHeartbeat sets the idle heartbeat duration for a pull subscription
+// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
+func WithConsumeHeartbeat(hb time.Duration) ConsumeOpts {
+	return func(req *consumeOpts) error {
+		if hb <= 0 {
+			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}
 		req.Heartbeat = hb
+		return nil
+	}
+}
+
+// WithConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+func WithConsumeErrHandler(cb ConsumeErrHandler) ConsumeOpts {
+	return func(opts *consumeOpts) error {
+		opts.ErrHandler = cb
+		return nil
+	}
+}
+
+// WithFetchTimeout sets custom timeout fir fetching predefined batch of messages
+func WithFetchTimeout(timeout time.Duration) FetchOpt {
+	return func(req *pullRequest) error {
+		if timeout <= 0 {
+			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
+		}
+		req.Expires = timeout
 		return nil
 	}
 }
@@ -199,7 +266,7 @@ func WithRetryAttempts(num int) PublishOpt {
 func WithStallWait(ttl time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if ttl <= 0 {
-			return fmt.Errorf("nats: stall wait should be more than 0")
+			return fmt.Errorf("%w: stall wait should be more than 0", ErrInvalidOption)
 		}
 		opts.stallWait = ttl
 		return nil

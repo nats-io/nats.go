@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,11 +27,11 @@ import (
 )
 
 type (
-	// JetStreamMsg contains methods to operate on a JetStream message
+	// Msg contains methods to operate on a JetStream message
 	// Metadata, Data, Headers, Subject and Reply can be used to retrieve the specific parts of the underlying message
 	// Ack, DoubleAck, Nak, InProgress and Term are various flavors of ack requests
-	JetStreamMsg interface {
-		// Metadata returns `MsgMetadata` for a JetStream message
+	Msg interface {
+		// Metadata returns [MsgMetadata] for a JetStream message
 		Metadata() (*MsgMetadata, error)
 		// Data returns the message body
 		Data() []byte
@@ -91,10 +93,12 @@ type (
 )
 
 const (
-	noResponders = "503"
-	noMessages   = "404"
-	reqTimeout   = "408"
-	controlMsg   = "100"
+	controlMsg       = "100"
+	badRequest       = "400"
+	noMessages       = "404"
+	reqTimeout       = "408"
+	maxBytesExceeded = "409"
+	noResponders     = "503"
 )
 
 const (
@@ -119,7 +123,7 @@ var (
 	ackTerm     ackType = []byte("+TERM")
 )
 
-// Metadata returns `MsgMetadata` for a JetStream message
+// Metadata returns [MsgMetadata] for a JetStream message
 func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	if err := m.checkReply(); err != nil {
 		return nil, err
@@ -254,7 +258,7 @@ func (m *jetStreamMsg) checkReply() error {
 }
 
 // Returns if the given message is a user message or not, and if
-// `checkSts` is true, returns appropriate error based on the
+// checkSts() is true, returns appropriate error based on the
 // content of the status (404, etc..)
 func checkMsg(msg *nats.Msg) (bool, error) {
 	// If payload or no header, consider this a user message
@@ -263,12 +267,15 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	}
 	// Look for status header
 	val := msg.Header.Get("Status")
+	descr := msg.Header.Get("Description")
 	// If not present, then this is considered a user message
 	if val == "" {
 		return true, nil
 	}
 
 	switch val {
+	case badRequest:
+		return false, ErrBadRequest
 	case noResponders:
 		return false, nats.ErrNoResponders
 	case noMessages:
@@ -278,15 +285,45 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		return false, nats.ErrTimeout
 	case controlMsg:
 		return false, nil
+	case maxBytesExceeded:
+		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
+			return false, ErrMaxBytesExceeded
+		}
+		if strings.Contains(strings.ToLower(descr), "consumer deleted") {
+			return false, ErrConsumerDeleted
+		}
+		if strings.Contains(strings.ToLower(descr), "leadership change") {
+			return false, ErrConsumerLeadershipChanged
+		}
 	}
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
 }
 
-// toJSMsg converts core `nats.Msg` to `jetStreamMsg`, exposing JetStream-specific operations
+func parsePending(msg *nats.Msg) (int, int, error) {
+	msgsLeftStr := msg.Header.Get("Nats-Pending-Messages")
+	var msgsLeft int
+	var err error
+	if msgsLeftStr != "" {
+		msgsLeft, err = strconv.Atoi(msgsLeftStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Messages")
+		}
+	}
+	bytesLeftStr := msg.Header.Get("Nats-Pending-Bytes")
+	var bytesLeft int
+	if bytesLeftStr != "" {
+		bytesLeft, err = strconv.Atoi(bytesLeftStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Bytes")
+		}
+	}
+	return msgsLeft, bytesLeft, nil
+}
+
+// toJSMsg converts core [nats.Msg] to [jetStreamMsg], exposing JetStream-specific operations
 func (js *jetStream) toJSMsg(msg *nats.Msg) *jetStreamMsg {
 	return &jetStreamMsg{
-		msg:   msg,
-		js:    js,
-		Mutex: sync.Mutex{},
+		msg: msg,
+		js:  js,
 	}
 }

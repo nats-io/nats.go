@@ -36,11 +36,36 @@ type (
 		// Returns *AccountInfo, containing details about the account associated with this JetStream connection
 		AccountInfo(ctx context.Context) (*AccountInfo, error)
 
+		StreamConsumerManager
+		StreamManager
+		Publisher
+	}
+
+	Publisher interface {
+		// Publish performs a synchronous publish to a stream and waits for ack from server
+		// It accepts subject name (which must be bound to a stream) and message data
+		Publish(context.Context, string, []byte, ...PublishOpt) (*PubAck, error)
+		// PublishMsg performs a synchronous publish to a stream and waits for ack from server
+		// It accepts subject name (which must be bound to a stream) and nats.Message
+		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*PubAck, error)
+		// PublishAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
+		// It accepts subject name (which must be bound to a stream) and message data
+		PublishAsync(context.Context, string, []byte, ...PublishOpt) (PubAckFuture, error)
+		// PublishMsgAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
+		// It accepts subject name (which must be bound to a stream) and nats.Message
+		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (PubAckFuture, error)
+		// PublishAsyncPending returns the number of async publishes outstanding for this context
+		PublishAsyncPending() int
+		// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd
+		PublishAsyncComplete() <-chan struct{}
+	}
+
+	StreamManager interface {
 		// CreateStream creates a new stream with given config and returns a hook to operate on it
 		CreateStream(context.Context, StreamConfig) (Stream, error)
 		// UpdateStream updates an existing stream
 		UpdateStream(context.Context, StreamConfig) (Stream, error)
-		// Stream returns a `Stream` hook for a given stream name
+		// Stream returns a [Stream] hook for a given stream name
 		Stream(context.Context, string) (Stream, error)
 		// DeleteStream removes a stream with given name
 		DeleteStream(context.Context, string) error
@@ -48,7 +73,9 @@ type (
 		ListStreams(context.Context) StreamInfoLister
 		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
 		StreamNames(context.Context) StreamNameLister
+	}
 
+	StreamConsumerManager interface {
 		// CreateConsumer creates a consumer on a given stream with given config
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
@@ -59,23 +86,6 @@ type (
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
 		DeleteConsumer(context.Context, string, string) error
-
-		// Publish performs a synchronous publish to a stream and waits for ack from server
-		// It accepts subject name (which must be bound to a stream) and message data
-		Publish(context.Context, string, []byte, ...PublishOpt) (*PubAck, error)
-		// PublishMsg performs a synchronous publish to a stream and waits for ack from server
-		// It accepts subject name (which must be bound to a stream) and nats.Message
-		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*PubAck, error)
-		// PublishAsync performs a asynchronous publish to a stream and returns `PubAckFuture` interface
-		// It accepts subject name (which must be bound to a stream) and message data
-		PublishAsync(context.Context, string, []byte, ...PublishOpt) (PubAckFuture, error)
-		// PublishMsgAsync performs a asynchronous publish to a stream and returns `PubAckFuture` interface
-		// It accepts subject name (which must be bound to a stream) and nats.Message
-		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (PubAckFuture, error)
-		// PublishAsyncPending returns the number of async publishes outstanding for this context
-		PublishAsyncPending() int
-		// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd
-		PublishAsyncComplete() <-chan struct{}
 	}
 
 	// AccountInfo contains info about the JetStream usage from the current account.
@@ -177,7 +187,7 @@ type (
 // New returns a enw JetStream instance
 //
 // Available options:
-// WithClientTrace() - enables request/response tracing
+// [WithClientTrace] - enables request/response tracing
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := jsOpts{apiPrefix: DefaultAPIPrefix}
 	for _, opt := range opts {
@@ -202,7 +212,7 @@ const (
 // NewWithAPIPrefix returns a new JetStream instance and sets the API prefix to be used in requests to JetStream API
 //
 // Available options:
-// WithClientTrace() - enables request/response tracing
+// [WithClientTrace] - enables request/response tracing
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := jsOpts{
 		publisherOpts: asyncPublisherOpts{
@@ -231,7 +241,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 // NewWithDomain returns a new JetStream instance and sets the domain name token used when sending JetStream requests
 //
 // Available options:
-// WithClientTrace() - enables request/response tracing
+// [WithClientTrace] - enables request/response tracing
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
 	var jsOpts jsOpts
 	for _, opt := range opts {
@@ -313,7 +323,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}, nil
 }
 
-// Stream returns a `Stream` hook for a given stream name
+// Stream returns a [Stream] hook for a given stream name
 func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if err := validateStreamName(name); err != nil {
 		return nil, err
@@ -452,7 +462,6 @@ func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 		errs:    make(chan error, 1),
 	}
 	go func() {
-		defer close(l.streams)
 		for {
 			page, err := l.streamInfos(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -477,17 +486,17 @@ func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 	return l
 }
 
-// Info returns a channel allowing retrieval of stream infos returned by `ListStreams()`
+// Info returns a channel allowing retrieval of stream infos returned by [ListStreams]
 func (s *streamLister) Info() <-chan *StreamInfo {
 	return s.streams
 }
 
-// Err returns an error channel which will be populated with error from `ListStreams()` or `StreamNames()` request
+// Err returns an error channel which will be populated with error from [ListStreams] or [StreamNames] request
 func (s *streamLister) Err() <-chan error {
 	return s.errs
 }
 
-// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
+// StreamNames returns a [StreamNameLister] enabling iterating over a channel of stream names
 func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 	l := &streamLister{
 		js:    js,
@@ -495,7 +504,6 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 		errs:  make(chan error, 1),
 	}
 	go func() {
-		defer close(l.names)
 		for {
 			page, err := l.streamNames(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -520,12 +528,12 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 	return l
 }
 
-// Name returns a channel allowing retrieval of stream names returned by `StreamNames()`
+// Name returns a channel allowing retrieval of stream names returned by [StreamNames]
 func (s *streamLister) Name() <-chan string {
 	return s.names
 }
 
-// infos fetches the next StreamInfo page
+// infos fetches the next [StreamInfo] page
 func (s *streamLister) streamInfos(ctx context.Context) ([]*StreamInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData

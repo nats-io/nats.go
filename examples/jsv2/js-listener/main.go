@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -37,37 +36,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cons, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumer", AckPolicy: jetstream.AckExplicitPolicy})
+	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumerListener", AckPolicy: jetstream.AckExplicitPolicy})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	wg := sync.WaitGroup{}
-	for i := 0; i <= 10; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-			log.Fatal(err)
-		}
-		wg.Add(1)
-	}
-
-	go func() {
-		err := cons.Listen(ctx, func(msg jetstream.JetStreamMsg, err error) {
-			if err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println(string(msg.Data()))
-			msg.Ack()
-			wg.Done()
-		})
+	l, err := cons.Listener(func(msg jetstream.Msg, err error) {
 		if err != nil {
 			log.Fatal(err)
 		}
-	}()
-	wg.Wait()
+		fmt.Println(string(msg.Data()))
+		msg.Ack()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer l.Stop()
+
 }
