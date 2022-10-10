@@ -600,6 +600,73 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 	})
 }
 
+func TestPullConsumerMessages(t *testing.T) {
+	testSubject := "FOO.123"
+	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
+	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+		for _, msg := range testMsgs {
+			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+	}
+
+	t.Run("no options", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]JetStreamMsg, 0)
+		it, err := c.Messages(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		for {
+			if err := it.Err(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg, ok := it.Next()
+			if !ok {
+				break
+			}
+			fmt.Println(string(msg.Data()))
+			msg.Ack()
+			msgs = append(msgs, msg)
+
+		}
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		for i, msg := range msgs {
+			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+		}
+	})
+}
+
 func TestPullConsumerStream(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
