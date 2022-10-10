@@ -41,16 +41,31 @@ type (
 		// Listen can be used to continuously receive messages and handle them with the provided callback function
 		Listen(context.Context, MessageHandler, ...ConsumerListenOpt) error
 
+		Messages(context.Context, ...ConsumerMessagesOpt) (Iter[JetStreamMsg], error)
+
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
 		// CachedInfo returns *ConsumerInfo cached on a consumer struct
 		CachedInfo() *ConsumerInfo
 	}
 
-	// ConsumerListenOpt represent additional options used in `Stream()` for pull consumers
+	// Iter supports iterating over a sequence of values of type `E`.
+	Iter[E any] interface {
+		// Next returns the next value in the iteration if there is one,
+		// and reports whether the returned value is valid.
+		// Once Next returns ok==false, the iteration is over,
+		// and all subsequent calls will return ok==false.
+		Next() (elem E, ok bool)
+		Err() error
+	}
+
+	// ConsumerListenOpt represent additional options used in `Listen()` for pull consumers
 	ConsumerListenOpt func(*pullRequest) error
 
-	// MessageHandler is a handler function used as callback in `Stream()`
+	// ConsumerMessagesOpt represent additional options used in `Messages()` for pull consumers
+	ConsumerMessagesOpt func(*pullRequest) error
+
+	// MessageHandler is a handler function used as callback in `Listen()`
 	MessageHandler func(msg JetStreamMsg, err error)
 
 	consumer struct {
@@ -75,7 +90,81 @@ type (
 		NoWait    bool          `json:"no_wait,omitempty"`
 		Heartbeat time.Duration `json:"idle_heartbeat,omitempty"`
 	}
+
+	messagesIter struct {
+		consumer  *pullConsumer
+		req       *pullRequest
+		msgs      chan (*jetStreamMsg)
+		errs      chan (error)
+		fetchErrs chan (error)
+	}
 )
+
+func (p *pullConsumer) Messages(ctx context.Context, opts ...ConsumerMessagesOpt) (Iter[JetStreamMsg], error) {
+	p.Lock()
+	defer p.Unlock()
+	if atomic.LoadUint32(&p.isListening) == 1 {
+		return nil, ErrConsumerHasActiveSubscription
+	}
+	defaultTimeout := 10 * time.Second
+	req := &pullRequest{
+		Batch:     100,
+		Expires:   defaultTimeout,
+		Heartbeat: 5 * time.Second,
+	}
+	for _, opt := range opts {
+		if err := opt(req); err != nil {
+			return nil, err
+		}
+	}
+	pending := make(chan *jetStreamMsg, 2*req.Batch)
+	p.heartbeat = make(chan struct{})
+	errs := make(chan error, 1)
+	fetchErrs := make(chan error)
+	atomic.StoreUint32(&p.isListening, 1)
+	return &messagesIter{
+		consumer:  p,
+		req:       req,
+		msgs:      pending,
+		errs:      errs,
+		fetchErrs: fetchErrs,
+	}, nil
+}
+
+func (it *messagesIter) Next() (JetStreamMsg, bool) {
+	if float64(len(it.msgs)) < 0.75*float64(it.req.Batch) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), it.req.Expires+10*time.Millisecond)
+			defer cancel()
+			err := it.consumer.fetch(ctx, *it.req, it.msgs)
+			if err != nil {
+				if errors.Is(err, ErrNoMessages) || errors.Is(err, nats.ErrTimeout) {
+					fmt.Printf("fetch err: %s", err)
+					it.fetchErrs <- ErrNoMessages
+					return
+				}
+				it.fetchErrs <- err
+			}
+		}()
+	}
+	select {
+	case msg := <-it.msgs:
+		return msg, true
+	case err := <-it.fetchErrs:
+		if errors.Is(err, ErrNoMessages) {
+			return nil, false
+		}
+		it.errs <- err
+		return nil, false
+	}
+}
+
+func (it *messagesIter) Err() error {
+	if len(it.errs) > 0 {
+		return <-it.errs
+	}
+	return nil
+}
 
 // Next fetches an individual message from a consumer.
 // Timeout for this operation is handled using `context.Deadline()`, so it should always be set to avoid getting stuck
@@ -133,6 +222,7 @@ func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (JetStreamMsg
 		if err != nil {
 			if errors.Is(err, ErrNoMessages) || errors.Is(err, nats.ErrTimeout) {
 				errs <- ErrNoMessages
+				return
 			}
 			errs <- err
 		}
