@@ -38,7 +38,7 @@ Key differences between `jetstream` and `nats` packages include:
 - `JetStream` - top-level interface, used to create and manage streams, consumers and publishing messages
 - `Stream` - used to manage consumers for a specific stream, as well as performing stream-specific operations (purging, fetching and deleting messages by sequence number, fetching stream info)
 - `Consumer` - used to get information about a consumer as well as consuming messages
-- `JetStreamMsg` - used for message-specific operations - reading data, headers and metadata, as well as performing various types of acknowledgements
+- `Msg` - used for message-specific operations - reading data, headers and metadata, as well as performing various types of acknowledgements
 
 ## Basic usage
 
@@ -86,7 +86,7 @@ func main() {
     }
 
     // Receive messages continuously
-    c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+    c.Subscribe(ctx, func(msg jetstream.Msg, err error) {
         msg.Ack()
         fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
     })
@@ -101,7 +101,7 @@ For example, in order to stop receiving messages on `Stream()`:
 
 ```go
 ctx, cancel := context.WithCancel(context.Background())
-c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+c.Subscribe(ctx, func(msg jetstream.Msg, err error) {
     msg.Ack()
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 })
@@ -379,7 +379,7 @@ if msg != nil {
 Event-Driven consumer pattern allows for continuous, asynchronous processing of incoming messages. Its behavior is similar to how push consumers work, therefore it can be user as a drop-in replacement in most of the use cases (with the exception of ordered push consumers).
 
 ```go
-c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
+c.Subscribe(ctx, func(msg jetstream.Msg, err error) {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 })
 ```
@@ -388,7 +388,7 @@ c.Stream(ctx, func(msg jetstream.JetStreamMsg, err error) {
 
 - `WithBatchSize(int)` - the maximum amount of messages returned in a single pull request
 - `WithExpiry(time.Duration)` - maximum amount of time a request should wait for the full batch
-- `WithStreamHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the Stream operation, veryfing whether stream is alive
+- `WithSubscribeHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the Stream operation, veryfing whether stream is alive
 
 ## Publishing on stream
 

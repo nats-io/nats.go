@@ -53,20 +53,19 @@ func main() {
 		}
 	}
 
+	// iterator with optional hints
+	iter, err := cons.Messages()
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
-		nextCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		msg, err := cons.Next(nextCtx)
+		msg, err := iter.Next()
 		if err != nil {
 			log.Fatal(err)
 		}
 		if msg == nil {
 			break
 		}
-		cancel()
-		if err := msg.Ack(); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(string(msg.Data()))
-		time.Sleep(1 * time.Second)
+		msg.Ack()
 	}
 }

@@ -38,12 +38,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	cons, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumer", AckPolicy: jetstream.AckExplicitPolicy})
+	cons, err := js.CreateConsumer(ctx, "TEST_STREAM", jetstream.ConsumerConfig{Durable: "TestConsumer", AckPolicy: jetstream.AckExplicitPolicy})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -57,17 +52,20 @@ func main() {
 	}
 
 	go func() {
-		err := cons.Listen(ctx, func(msg jetstream.JetStreamMsg, err error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		err := cons.Subscribe(ctx, func(msg jetstream.Msg, err error) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			fmt.Println(string(msg.Data()))
 			msg.Ack()
-			wg.Done()
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		// call cancel() when we want to unsubscribe and stop receiving messages
+		cancel()
+
 	}()
 	wg.Wait()
 }
