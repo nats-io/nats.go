@@ -32,16 +32,16 @@ type (
 	// Consumer contains methods for fetching/processing messages from a stream, as well as fetching consumer info
 	Consumer interface {
 		// Next is used to retrieve a single message from the stream.
-		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Listen()
-		Next(context.Context) (JetStreamMsg, error)
+		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Subscribe()
+		Next(context.Context) (Msg, error)
 		// NextNoWait is used to retrieve a single message from the stream.
 		// It returns a message immediately if it is available on a stream at the time of request and does not wait if there is none
-		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Listen()
-		NextNoWait() (JetStreamMsg, error)
-		// Listen can be used to continuously receive messages and handle them with the provided callback function
-		Listen(context.Context, MessageHandler, ...ConsumerListenOpt) error
+		// This method will always send a request with batch size set to 1, therefore it has much lower throughput in comparison to Subscribe()
+		NextNoWait() (Msg, error)
+		// Subscribe can be used to continuously receive messages and handle them with the provided callback function
+		Subscribe(context.Context, MessageHandler, ...ConsumerSubscribeOpt) error
 
-		Messages(context.Context, ...ConsumerMessagesOpt) (Iter[JetStreamMsg], error)
+		Messages(...ConsumerMessagesOpt) (MsgIterator, error)
 
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
@@ -50,23 +50,19 @@ type (
 	}
 
 	// Iter supports iterating over a sequence of values of type `E`.
-	Iter[E any] interface {
-		// Next returns the next value in the iteration if there is one,
-		// and reports whether the returned value is valid.
-		// Once Next returns ok==false, the iteration is over,
-		// and all subsequent calls will return ok==false.
-		Next() (elem E, ok bool)
-		Err() error
+	MsgIterator interface {
+		Next() (Msg, error)
+		Stop()
 	}
 
-	// ConsumerListenOpt represent additional options used in `Listen()` for pull consumers
-	ConsumerListenOpt func(*pullRequest) error
+	// ConsumerSubscribeOpt represent additional options used in `Subscribe()` for pull consumers
+	ConsumerSubscribeOpt func(*pullRequest) error
 
 	// ConsumerMessagesOpt represent additional options used in `Messages()` for pull consumers
 	ConsumerMessagesOpt func(*pullRequest) error
 
-	// MessageHandler is a handler function used as callback in `Listen()`
-	MessageHandler func(msg JetStreamMsg, err error)
+	// MessageHandler is a handler function used as callback in `Subscribe()`
+	MessageHandler func(msg Msg, err error)
 
 	consumer struct {
 		jetStream    *jetStream
@@ -79,8 +75,8 @@ type (
 	}
 	pullConsumer struct {
 		consumer
-		heartbeat   chan struct{}
-		isListening uint32
+		heartbeat    chan struct{}
+		isSubscribed uint32
 	}
 
 	pullRequest struct {
@@ -92,21 +88,24 @@ type (
 	}
 
 	messagesIter struct {
-		consumer  *pullConsumer
-		req       *pullRequest
-		msgs      chan (*jetStreamMsg)
-		errs      chan (error)
-		fetchErrs chan (error)
+		sync.Mutex
+		consumer *pullConsumer
+		req      *pullRequest
+		msgs     chan (*jetStreamMsg)
+		errs     chan (error)
+		done     chan (struct{})
+		closed   uint32
 	}
 )
 
-func (p *pullConsumer) Messages(ctx context.Context, opts ...ConsumerMessagesOpt) (Iter[JetStreamMsg], error) {
+func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error) {
 	p.Lock()
 	defer p.Unlock()
-	if atomic.LoadUint32(&p.isListening) == 1 {
+	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		return nil, ErrConsumerHasActiveSubscription
 	}
-	defaultTimeout := 10 * time.Second
+	atomic.StoreUint32(&p.isSubscribed, 1)
+	defaultTimeout := 30 * time.Second
 	req := &pullRequest{
 		Batch:     100,
 		Expires:   defaultTimeout,
@@ -118,59 +117,88 @@ func (p *pullConsumer) Messages(ctx context.Context, opts ...ConsumerMessagesOpt
 		}
 	}
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
-	p.heartbeat = make(chan struct{})
-	errs := make(chan error, 1)
-	fetchErrs := make(chan error)
-	atomic.StoreUint32(&p.isListening, 1)
-	return &messagesIter{
-		consumer:  p,
-		req:       req,
-		msgs:      pending,
-		errs:      errs,
-		fetchErrs: fetchErrs,
-	}, nil
+	p.heartbeat = make(chan struct{}, 100)
+	errs := make(chan error, 100)
+	done := make(chan (struct{}), 1)
+	it := &messagesIter{
+		consumer: p,
+		req:      req,
+		msgs:     pending,
+		errs:     errs,
+		done:     done,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			select {
+			case <-it.done:
+				cancel()
+				it.consumer.subscription.Unsubscribe()
+				return
+			case <-p.heartbeat:
+				continue
+			case <-time.After(2 * it.req.Heartbeat):
+				errs <- ErrNoHeartbeat
+				cancel()
+				it.Stop()
+				return
+			}
+		}
+
+	}()
+
+	go func() {
+		for {
+			select {
+			default:
+				if float64(len(it.msgs)) > 0.75*float64(it.req.Batch) {
+					continue
+				}
+				if err := it.consumer.fetch(ctx, *it.req, it.msgs); err != nil && !errors.Is(err, ErrNoMessages) && !errors.Is(err, nats.ErrTimeout) {
+					it.errs <- err
+				}
+			case <-it.done:
+				it.consumer.subscription.Unsubscribe()
+				return
+			}
+		}
+	}()
+
+	return it, nil
 }
 
-func (it *messagesIter) Next() (JetStreamMsg, bool) {
-	if float64(len(it.msgs)) < 0.75*float64(it.req.Batch) {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), it.req.Expires+10*time.Millisecond)
-			defer cancel()
-			err := it.consumer.fetch(ctx, *it.req, it.msgs)
-			if err != nil {
-				if errors.Is(err, ErrNoMessages) || errors.Is(err, nats.ErrTimeout) {
-					fmt.Printf("fetch err: %s", err)
-					it.fetchErrs <- ErrNoMessages
-					return
-				}
-				it.fetchErrs <- err
-			}
-		}()
+func (it *messagesIter) Next() (Msg, error) {
+	it.Lock()
+	defer it.Unlock()
+	if atomic.LoadUint32(&it.closed) == 1 {
+		return nil, ErrMsgIteratorClosed
 	}
 	select {
 	case msg := <-it.msgs:
-		return msg, true
-	case err := <-it.fetchErrs:
-		if errors.Is(err, ErrNoMessages) {
-			return nil, false
-		}
-		it.errs <- err
-		return nil, false
+		it.consumer.heartbeat <- struct{}{}
+		return msg, nil
+	case err := <-it.errs:
+		return nil, err
+	case <-it.done:
+		return nil, ErrMsgIteratorClosed
 	}
 }
 
-func (it *messagesIter) Err() error {
-	if len(it.errs) > 0 {
-		return <-it.errs
+func (it *messagesIter) Stop() {
+	if atomic.LoadUint32(&it.closed) == 1 {
+		return
 	}
-	return nil
+	close(it.done)
+	atomic.StoreUint32(&it.consumer.isSubscribed, 0)
+	atomic.StoreUint32(&it.closed, 1)
 }
 
 // Next fetches an individual message from a consumer.
 // Timeout for this operation is handled using `context.Deadline()`, so it should always be set to avoid getting stuck
-func (p *pullConsumer) Next(ctx context.Context) (JetStreamMsg, error) {
+func (p *pullConsumer) Next(ctx context.Context) (Msg, error) {
 	p.Lock()
-	if atomic.LoadUint32(&p.isListening) == 1 {
+	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
@@ -186,9 +214,9 @@ func (p *pullConsumer) Next(ctx context.Context) (JetStreamMsg, error) {
 	if timeout >= 20*time.Millisecond {
 		req.Expires = timeout - 10*time.Millisecond
 	}
-	// for longer pulls, set heartbeat vealue
+	// for longer pulls, set heartbeat value
 	if timeout >= 10*time.Second {
-		req.Heartbeat = 25 * time.Millisecond
+		req.Heartbeat = 5 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -198,9 +226,9 @@ func (p *pullConsumer) Next(ctx context.Context) (JetStreamMsg, error) {
 
 }
 
-func (p *pullConsumer) NextNoWait() (JetStreamMsg, error) {
+func (p *pullConsumer) NextNoWait() (Msg, error) {
 	p.Lock()
-	if atomic.LoadUint32(&p.isListening) == 1 {
+	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
@@ -213,7 +241,7 @@ func (p *pullConsumer) NextNoWait() (JetStreamMsg, error) {
 	return p.next(context.Background(), req)
 }
 
-func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (JetStreamMsg, error) {
+func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (Msg, error) {
 	msgChan := make(chan *jetStreamMsg, 1)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error)
@@ -260,15 +288,15 @@ func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (JetStreamMsg
 	}
 }
 
-// Listen continuously receives messages from a consumer and handles them with the provided callback function
+// Subscribe continuously receives messages from a consumer and handles them with the provided callback function
 // ctx is used to handle the whole operation, not individual messages batch, so to avoid cancellation, a context without Deadline should be provided
 //
 // Available options:
 // WithBatchSize() - sets a single batch request messages limit, default is set to 100
 // WithExpiry() - sets a timeout for individual batch request, default is set to 30 seconds
-// WithStreamHeartbeat() - sets an idle heartbeat setting for a pull request, no heartbeat is set by default
-func (p *pullConsumer) Listen(ctx context.Context, handler MessageHandler, opts ...ConsumerListenOpt) error {
-	if atomic.LoadUint32(&p.isListening) == 1 {
+// WithSubscribeHeartbeat() - sets an idle heartbeat setting for a pull request, no heartbeat is set by default
+func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, opts ...ConsumerSubscribeOpt) error {
+	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		return ErrConsumerHasActiveSubscription
 	}
 	if handler == nil {
@@ -289,7 +317,7 @@ func (p *pullConsumer) Listen(ctx context.Context, handler MessageHandler, opts 
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
 	p.heartbeat = make(chan struct{})
 	errs := make(chan error, 1)
-	atomic.StoreUint32(&p.isListening, 1)
+	atomic.StoreUint32(&p.isSubscribed, 1)
 	go func() {
 		for {
 			select {
@@ -322,14 +350,14 @@ func (p *pullConsumer) Listen(ctx context.Context, handler MessageHandler, opts 
 				p.subscription.Unsubscribe()
 				p.subscription = nil
 				p.Unlock()
-				atomic.StoreUint32(&p.isListening, 0)
+				atomic.StoreUint32(&p.isSubscribed, 0)
 				return
 			case <-ctx.Done():
 				p.Lock()
 				p.subscription.Unsubscribe()
 				p.subscription = nil
 				p.Unlock()
-				atomic.StoreUint32(&p.isListening, 0)
+				atomic.StoreUint32(&p.isSubscribed, 0)
 				return
 			}
 			continue

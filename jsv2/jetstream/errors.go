@@ -143,6 +143,9 @@ var (
 
 	// ErrInvalidOption is returned when there is a collision between options
 	ErrInvalidOption = &jsError{message: "invalid jetstream option"}
+
+	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator
+	ErrMsgIteratorClosed = &jsError{message: "messages iterator closed"}
 )
 
 // Error prints the JetStream API error code and description

@@ -25,10 +25,10 @@ import (
 )
 
 type (
-	// JetStreamMsg contains methods to operate on a JetStream message
+	// Msg contains methods to operate on a JetStream message
 	// Metadata, Data, Headers, Subject and Reply can be used to retrieve the specific parts of the underlying message
 	// Ack, DoubleAck, Nak, InProgress and Term are various flavors of ack requests
-	JetStreamMsg interface {
+	Msg interface {
 		// Metadata returns `MsgMetadata` for a JetStream message
 		Metadata() (*MsgMetadata, error)
 		// Data returns the message body

@@ -82,7 +82,7 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 
 // WithBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithBatchSize(batch int) ConsumerListenOpt {
+func WithBatchSize(batch int) ConsumerSubscribeOpt {
 	return func(cfg *pullRequest) error {
 		if batch < 0 {
 			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
@@ -93,7 +93,7 @@ func WithBatchSize(batch int) ConsumerListenOpt {
 }
 
 // WithExpiry sets timeount on a single batch request, waiting until at least one message is available
-func WithExpiry(expires time.Duration) ConsumerListenOpt {
+func WithExpiry(expires time.Duration) ConsumerSubscribeOpt {
 	return func(cfg *pullRequest) error {
 		if expires < 0 {
 			return fmt.Errorf("%w: expires value must be positive", nats.ErrInvalidArg)
@@ -103,9 +103,9 @@ func WithExpiry(expires time.Duration) ConsumerListenOpt {
 	}
 }
 
-// WithStreamHeartbeat sets the idle heartbeat duration for a pull subscription
+// WithSubscribeHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithStreamHeartbeat(hb time.Duration) ConsumerListenOpt {
+func WithSubscribeHeartbeat(hb time.Duration) ConsumerSubscribeOpt {
 	return func(req *pullRequest) error {
 		if hb <= 0 {
 			return fmt.Errorf("idle_heartbeat value must be greater than 0")
