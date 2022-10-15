@@ -1088,7 +1088,7 @@ type ConsumerConfig struct {
 	DeliverSubject string `json:"deliver_subject,omitempty"`
 	DeliverGroup   string `json:"deliver_group,omitempty"`
 
-	// Ephemeral inactivity threshold.
+	// Inactivity threshold.
 	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 
 	// Generally inherited by parent stream and other markers, now can be configured directly.
@@ -2465,8 +2465,12 @@ func MaxRequestMaxBytes(bytes int) SubOpt {
 	})
 }
 
-// InactiveThreshold indicates how long the server should keep an ephemeral
-// after detecting loss of interest.
+// InactiveThreshold indicates how long the server should keep a consumer
+// after detecting a lack of activity. In NATS Server 2.8.4 and earlier, this
+// option only applies to ephemeral consumers. In NATS Server 2.9.0 and later,
+// this option applies to both ephemeral and durable consumers, allowing durable
+// consumers to also be deleted automatically after the inactivity threshold has
+// passed.
 func InactiveThreshold(threshold time.Duration) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		if threshold < 0 {
