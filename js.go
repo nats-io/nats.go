@@ -2465,8 +2465,8 @@ func MaxRequestMaxBytes(bytes int) SubOpt {
 	})
 }
 
-// InactiveThreshold indicates how long the server should keep an consumer
-// after detecting a loss of interest. In NATS Server 2.8.4 and earlier, this
+// InactiveThreshold indicates how long the server should keep a consumer
+// after detecting a lack of activity. In NATS Server 2.8.4 and earlier, this
 // option only applies to ephemeral consumers. In NATS Server 2.9.0 and later,
 // this option applies to both ephemeral and durable consumers, allowing durable
 // consumers to also be deleted automatically after the inactivity threshold has
