@@ -37,7 +37,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
-func client(t *testing.T, s *server.Server, opts ...Option) *Conn {
+func client(t testing.TB, s *server.Server, opts ...Option) *Conn {
 	t.Helper()
 	nc, err := Connect(s.ClientURL(), opts...)
 	if err != nil {
@@ -46,7 +46,7 @@ func client(t *testing.T, s *server.Server, opts ...Option) *Conn {
 	return nc
 }
 
-func jsClient(t *testing.T, s *server.Server, opts ...Option) (*Conn, JetStreamContext) {
+func jsClient(t testing.TB, s *server.Server, opts ...Option) (*Conn, JetStreamContext) {
 	t.Helper()
 	nc := client(t, s, opts...)
 	js, err := nc.JetStream(MaxWait(10 * time.Second))
@@ -82,7 +82,7 @@ func createConfFile(t *testing.T, content []byte) string {
 	return fName
 }
 
-func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
+func shutdownJSServerAndRemoveStorage(t testing.TB, s *server.Server) {
 	t.Helper()
 	var sd string
 	if config := s.JetStreamConfig(); config != nil {
@@ -1228,5 +1228,85 @@ func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
 
 	if len(result.State.Subjects) != 0 {
 		t.Fatalf("expected 0 subjects details from StreamInfo, but got %d instead", len(result.State.Subjects))
+	}
+}
+
+func TestJetStreamRequest(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&StreamConfig{
+		Name:      "TEST",
+		Subjects:  []string{"test.*"},
+		Retention: WorkQueuePolicy,
+		Storage:   MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msgch := make(chan *Msg, 1)
+	errch := make(chan error, 1)
+
+	go func() {
+		// Send a request via the stream.
+		rep, err := js.Request("test.foo", nil, time.Second)
+		if err != nil {
+			errch <- err
+		} else {
+			msgch <- rep
+		}
+	}()
+
+	// Delay to late bind a susbcriber...
+	time.Sleep(200 * time.Millisecond)
+
+	// Subscribe to the subject.
+	_, err = js.Subscribe("test.foo", func(msg *Msg) {
+		msg.Respond([]byte("hello"))
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	select {
+	case rep := <-msgch:
+		t.Logf("msg data: %q", string(rep.Data))
+	case err := <-errch:
+		t.Fatalf("Unexpected error: %s", err)
+	}
+}
+
+func BenchmarkJetStreamRequest(b *testing.B) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(b, s)
+
+	nc, js := jsClient(b, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&StreamConfig{
+		Name:      "TEST",
+		Subjects:  []string{"test.*"},
+		Retention: WorkQueuePolicy,
+		Storage:   MemoryStorage,
+	})
+	if err != nil {
+		b.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Subscribe to the subject.
+	_, err = js.Subscribe("test.foo", func(msg *Msg) {
+		msg.Respond([]byte("hello"))
+	})
+	if err != nil {
+		b.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Send a request via the stream.
+	for i := 0; i < b.N; i++ {
+		js.Request("test.foo", nil, time.Second)
 	}
 }
