@@ -338,6 +338,10 @@ The `Consumer` interface covers 2 patterns for receiving incoming messages from 
 
 Polling consumer pattern allows fetching messages synchronously one by one. Using context, user can decide how long the consumer should wait for a message in case none is available on the stream at the time of call.
 
+There are several options to use the polling consumer pattern:
+
+- Using `Next()` or `NextNoWait()` methods directly on a consumer:
+
 ```go
 for {
     ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
@@ -351,27 +355,36 @@ for {
 }
 ```
 
-`Next()` accepts options to customize its behavior:
-
-- `WithNoWait()` - whan used, `Next()` does not wait for the message to appear on the consumer fot the specified timeout duration, but rather return a message if it is available at the time of request (one-shot)
+Similarly, `NextNoWait()` can be used in order to not wait for the message to appear on the consumer fot the specified timeout duration, but rather return a message if it is available at the time of request (one-shot)
 
 ```go
-msg, _ := c.Next(ctx, WithNoWait())
+msg, _ := c.NextNoWait()
 if msg != nil {
     fmt.Println(string(msg.Data()))
 }
 ```
 
-- `WithNextHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the request to the API, veryfing whether stream is alive for the duration on the request.
+> __Warning__
+> Both `Next()` and `NextNoWait()` have worse performance in comparison to `Messages()` or `Subscribe()` methods, as they always fetch messages one by one.
+
+- Using `Messages()` to iterate over incoming messages:
 
 ```go
-msg, err := c.Next(ctx, WithNextHeartbeat(1*time.Second))
-if err != nil && errors.Is(err, jetstream.ErrNoHeartbeat) {
-    fmt.Println("something went wrong")
+iter, _ := cons.Messages()
+for {
+    msg, _ := iter.Next()
+    if msg == nil {
+        break
+    }
+    msg.Ack()
 }
-if msg != nil {
-    fmt.Println(string(msg.Data()))
-}
+```
+
+TODO: add setting buffer size:
+Unlike `Next()`, `Messages()` will pre-buffer the messages to increase performance. The buffer size can be set using `WithMessagesBufferSize()` option.
+
+```go
+
 ```
 
 #### __Event-Driven consumer__
