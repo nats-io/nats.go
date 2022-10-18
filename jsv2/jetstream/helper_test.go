@@ -18,7 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -293,4 +295,22 @@ func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testi
 		}
 	}()
 	tfn(t, nodes...)
+}
+
+func restartBasicJSServer(t *testing.T, s *server.Server) *server.Server {
+	opts := natsserver.DefaultTestOptions
+	clientURL, err := url.Parse(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	port, err := strconv.Atoi(clientURL.Port())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	opts.Port = port
+	opts.JetStream = true
+	opts.StoreDir = s.JetStreamConfig().StoreDir
+	s.Shutdown()
+	s.WaitForShutdown()
+	return RunServerWithOptions(opts)
 }

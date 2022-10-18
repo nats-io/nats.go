@@ -103,6 +103,14 @@ func WithSubscribeExpiry(expires time.Duration) ConsumerSubscribeOpt {
 	}
 }
 
+// WithSubscribeMaxBytes sets max_bytes limit on a fetch request
+func WithSubscribeMaxBytes(maxBytes int) ConsumerSubscribeOpt {
+	return func(cfg *pullRequest) error {
+		cfg.MaxBytes = maxBytes
+		return nil
+	}
+}
+
 // WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
 func WithMessagesBatchSize(batch int) ConsumerMessagesOpt {
@@ -111,6 +119,26 @@ func WithMessagesBatchSize(batch int) ConsumerMessagesOpt {
 			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
 		}
 		cfg.Batch = batch
+		return nil
+	}
+}
+
+// WithMessagesHeartbeat sets the idle heartbeat duration for a pull subscription
+// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
+func WithMessagesHeartbeat(hb time.Duration) ConsumerMessagesOpt {
+	return func(req *pullRequest) error {
+		if hb <= 0 {
+			return fmt.Errorf("idle_heartbeat value must be greater than 0")
+		}
+		req.Heartbeat = hb
+		return nil
+	}
+}
+
+// WithMessagesMaxBytes sets max_bytes limit on a fetch request
+func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpt {
+	return func(cfg *pullRequest) error {
+		cfg.MaxBytes = maxBytes
 		return nil
 	}
 }
