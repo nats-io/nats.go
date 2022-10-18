@@ -381,7 +381,8 @@ for {
 ```
 
 TODO: add setting buffer size:
-Unlike `Next()`, `Messages()` will pre-buffer the messages to increase performance. The buffer size can be set using `WithMessagesBufferSize()` option.
+
+Unlike `Next()`, `Messages()` will pre-buffer the messages to increase performance. The buffer size can be set using `WithMessagesBatchSize()` option.
 
 ```go
 

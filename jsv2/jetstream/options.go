@@ -80,11 +80,11 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithBatchSize limits the number of messages to be fetched from the stream in one request
+// WithSubscribeBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithBatchSize(batch int) ConsumerSubscribeOpt {
+func WithSubscribeBatchSize(batch int) ConsumerSubscribeOpt {
 	return func(cfg *pullRequest) error {
-		if batch < 0 {
+		if batch <= 0 {
 			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
 		}
 		cfg.Batch = batch
@@ -92,13 +92,25 @@ func WithBatchSize(batch int) ConsumerSubscribeOpt {
 	}
 }
 
-// WithExpiry sets timeount on a single batch request, waiting until at least one message is available
-func WithExpiry(expires time.Duration) ConsumerSubscribeOpt {
+// WithSubscribeExpiry sets timeout on a single batch request, waiting until at least one message is available
+func WithSubscribeExpiry(expires time.Duration) ConsumerSubscribeOpt {
 	return func(cfg *pullRequest) error {
 		if expires < 0 {
 			return fmt.Errorf("%w: expires value must be positive", nats.ErrInvalidArg)
 		}
 		cfg.Expires = expires
+		return nil
+	}
+}
+
+// WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
+// If not provided, a default of 100 messages will be used
+func WithMessagesBatchSize(batch int) ConsumerMessagesOpt {
+	return func(cfg *pullRequest) error {
+		if batch <= 0 {
+			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
+		}
+		cfg.Batch = batch
 		return nil
 	}
 }
