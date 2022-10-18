@@ -75,8 +75,8 @@ type (
 	}
 	pullConsumer struct {
 		consumer
-		heartbeat    chan struct{}
 		isSubscribed uint32
+		fetchErrs    chan error
 	}
 
 	pullRequest struct {
@@ -92,7 +92,6 @@ type (
 		consumer *pullConsumer
 		req      *pullRequest
 		msgs     chan (*jetStreamMsg)
-		errs     chan (error)
 		done     chan (struct{})
 		closed   uint32
 	}
@@ -105,7 +104,7 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 		return nil, ErrConsumerHasActiveSubscription
 	}
 	atomic.StoreUint32(&p.isSubscribed, 1)
-	defaultTimeout := 30 * time.Second
+	defaultTimeout := 10 * time.Second
 	req := &pullRequest{
 		Batch:     100,
 		Expires:   defaultTimeout,
@@ -117,50 +116,30 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 		}
 	}
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
-	p.heartbeat = make(chan struct{}, 100)
-	errs := make(chan error, 100)
 	done := make(chan (struct{}), 1)
 	it := &messagesIter{
 		consumer: p,
 		req:      req,
 		msgs:     pending,
-		errs:     errs,
 		done:     done,
 	}
+	p.fetchErrs = make(chan error, 100)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		for {
-			select {
-			case <-it.done:
-				cancel()
-				it.consumer.subscription.Unsubscribe()
-				return
-			case <-p.heartbeat:
-				continue
-			case <-time.After(2 * it.req.Heartbeat):
-				errs <- ErrNoHeartbeat
-				cancel()
-				it.Stop()
-				return
-			}
-		}
-
+		<-it.done
+		cancel()
+		it.consumer.subscription.Unsubscribe()
+		it.consumer.subscription = nil
 	}()
 
 	go func() {
 		for {
-			select {
-			default:
-				if float64(len(it.msgs)) > 0.75*float64(it.req.Batch) {
-					continue
-				}
-				if err := it.consumer.fetch(ctx, *it.req, it.msgs); err != nil && !errors.Is(err, ErrNoMessages) && !errors.Is(err, nats.ErrTimeout) {
-					it.errs <- err
-				}
-			case <-it.done:
-				it.consumer.subscription.Unsubscribe()
-				return
+			if float64(len(it.msgs)) > 0.75*float64(it.req.Batch) {
+				continue
+			}
+			if err := it.consumer.fetch(ctx, *it.req, it.msgs); err != nil && !errors.Is(err, ErrNoMessages) && !errors.Is(err, nats.ErrTimeout) {
+				it.consumer.fetchErrs <- err
 			}
 		}
 	}()
@@ -176,9 +155,11 @@ func (it *messagesIter) Next() (Msg, error) {
 	}
 	select {
 	case msg := <-it.msgs:
-		it.consumer.heartbeat <- struct{}{}
 		return msg, nil
-	case err := <-it.errs:
+	case err := <-it.consumer.fetchErrs:
+		if errors.Is(err, ErrNoHeartbeat) {
+			it.Stop()
+		}
 		return nil, err
 	case <-it.done:
 		return nil, ErrMsgIteratorClosed
@@ -243,7 +224,6 @@ func (p *pullConsumer) NextNoWait() (Msg, error) {
 
 func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (Msg, error) {
 	msgChan := make(chan *jetStreamMsg, 1)
-	p.heartbeat = make(chan struct{})
 	errs := make(chan error)
 	go func() {
 		err := p.fetch(ctx, *req, msgChan)
@@ -265,16 +245,14 @@ func (p *pullConsumer) next(ctx context.Context, req *pullRequest) (Msg, error) 
 				if errors.Is(err, ErrNoMessages) {
 					return nil, nil
 				}
+				if errors.Is(err, ErrNoHeartbeat) {
+					p.Lock()
+					p.subscription.Unsubscribe()
+					p.subscription = nil
+					p.Unlock()
+				}
 				return nil, err
-			case <-p.heartbeat:
-			case <-time.After(2 * req.Heartbeat):
-				p.Lock()
-				p.subscription.Unsubscribe()
-				p.subscription = nil
-				p.Unlock()
-				return nil, ErrNoHeartbeat
 			}
-			continue
 		}
 		select {
 		case msg := <-msgChan:
@@ -315,8 +293,8 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	pending := make(chan *jetStreamMsg, 2*req.Batch)
-	p.heartbeat = make(chan struct{})
 	errs := make(chan error, 1)
+	p.fetchErrs = errs
 	atomic.StoreUint32(&p.isSubscribed, 1)
 	go func() {
 		for {
@@ -325,11 +303,9 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 				return
 			default:
 				if len(pending) < req.Batch {
-					fetchCtx, fetchCancel := context.WithTimeout(ctx, req.Expires+10*time.Millisecond)
-					if err := p.fetch(fetchCtx, *req, pending); err != nil && !errors.Is(err, ErrNoMessages) && !errors.Is(err, nats.ErrTimeout) {
-						errs <- err
+					if err := p.fetch(ctx, *req, pending); err != nil && !errors.Is(err, ErrNoMessages) && !errors.Is(err, nats.ErrTimeout) {
+						p.fetchErrs <- err
 					}
-					fetchCancel()
 				}
 			}
 		}
@@ -340,18 +316,17 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 			select {
 			case msg := <-pending:
 				handler(msg, nil)
-			case err := <-errs:
+			case err := <-p.fetchErrs:
 				handler(nil, err)
-			case <-p.heartbeat:
-			case <-time.After(2 * req.Heartbeat):
-				handler(nil, ErrNoHeartbeat)
-				cancel()
-				p.Lock()
-				p.subscription.Unsubscribe()
-				p.subscription = nil
-				p.Unlock()
-				atomic.StoreUint32(&p.isSubscribed, 0)
-				return
+				if errors.Is(err, ErrNoHeartbeat) {
+					cancel()
+					p.Lock()
+					p.subscription.Unsubscribe()
+					p.subscription = nil
+					p.Unlock()
+					atomic.StoreUint32(&p.isSubscribed, 0)
+					return
+				}
 			case <-ctx.Done():
 				p.Lock()
 				p.subscription.Unsubscribe()
@@ -394,20 +369,25 @@ func (c *pullConsumer) fetch(ctx context.Context, req pullRequest, target chan<-
 	if err := c.jetStream.conn.PublishRequest(subject, c.subscription.Subject, reqJSON); err != nil {
 		return err
 	}
+
+	hbTimer := time.AfterFunc(2*req.Heartbeat, func() {
+		c.fetchErrs <- ErrNoHeartbeat
+	})
+	defer func() {
+		hbTimer.Stop()
+	}()
 	var count int
 	for count < req.Batch {
 		msg, err := c.subscription.NextMsgWithContext(ctx)
 		if err != nil {
 			return err
 		}
+		hbTimer.Reset(2 * req.Heartbeat)
 		userMsg, err := checkMsg(msg)
 		if err != nil {
 			return err
 		}
 		if !userMsg {
-			if req.Heartbeat != 0 {
-				c.heartbeat <- struct{}{}
-			}
 			continue
 		}
 		target <- c.jetStream.toJSMsg(msg)
