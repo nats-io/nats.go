@@ -154,13 +154,44 @@ type StreamSource struct {
 	OptStartTime  *time.Time      `json:"opt_start_time,omitempty"`
 	FilterSubject string          `json:"filter_subject,omitempty"`
 	External      *ExternalStream `json:"external,omitempty"`
+	Domain        string          `json:"-"`
 }
 
 // ExternalStream allows you to qualify access to a stream source in another
 // account.
 type ExternalStream struct {
 	APIPrefix     string `json:"api"`
-	DeliverPrefix string `json:"deliver"`
+	DeliverPrefix string `json:"deliver,omitempty"`
+}
+
+// Helper for copying when we do not want to change user's version.
+func (ss *StreamSource) copy() *StreamSource {
+	nss := *ss
+	// Check pointers
+	if ss.OptStartTime != nil {
+		t := *ss.OptStartTime
+		nss.OptStartTime = &t
+	}
+	if ss.External != nil {
+		ext := *ss.External
+		nss.External = &ext
+	}
+	return &nss
+}
+
+// If we have a Domain, convert to the appropriate ext.APIPrefix.
+// This will change the stream source, so should be a copy passed in.
+func (ss *StreamSource) convertDomain() error {
+	if ss.Domain == _EMPTY_ {
+		return nil
+	}
+	if ss.External != nil {
+		// These should be mutually exclusive.
+		// TODO(dlc) - Make generic?
+		return errors.New("nats: domain and external are both set")
+	}
+	ss.External = &ExternalStream{APIPrefix: fmt.Sprintf(jsExtDomainT, ss.Domain)}
+	return nil
 }
 
 // apiResponse is a standard response from the JetStream JSON API
@@ -689,7 +720,31 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		defer cancel()
 	}
 
-	req, err := json.Marshal(cfg)
+	// In case we need to change anything, copy so we do not change the caller's version.
+	ncfg := *cfg
+
+	// If we have a mirror and an external domain, convert to ext.APIPrefix.
+	if cfg.Mirror != nil && cfg.Mirror.Domain != _EMPTY_ {
+		// Copy so we do not change the caller's version.
+		ncfg.Mirror = ncfg.Mirror.copy()
+		if err := ncfg.Mirror.convertDomain(); err != nil {
+			return nil, err
+		}
+	}
+	// Check sources for the same.
+	if len(ncfg.Sources) > 0 {
+		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
+		for i, ss := range ncfg.Sources {
+			if ss.Domain != _EMPTY_ {
+				ncfg.Sources[i] = ss.copy()
+				if err := ncfg.Sources[i].convertDomain(); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	req, err := json.Marshal(&ncfg)
 	if err != nil {
 		return nil, err
 	}
@@ -991,17 +1046,13 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 	}
 
 	var apiSubj string
-
-	doDirectGetLastBySubject := o.directGet && mreq.LastFor != _EMPTY_
-
-	if doDirectGetLastBySubject {
+	if o.directGet && mreq.LastFor != _EMPTY_ {
 		apiSubj = apiDirectMsgGetLastBySubjectT
 		dsSubj := js.apiSubj(fmt.Sprintf(apiSubj, name, mreq.LastFor))
 		r, err := js.apiRequestWithContext(o.ctx, dsSubj, nil)
 		if err != nil {
 			return nil, err
 		}
-
 		return convertDirectGetMsgResponseToMsg(name, r)
 	}
 
