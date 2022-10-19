@@ -15,10 +15,10 @@ package nats
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
-
-	"github.com/nats-io/nuid"
 )
 
 type Service interface {
@@ -26,113 +26,249 @@ type Service interface {
 	Name() string
 	Description() string
 	Version() string
-
-	// Stats
-	Stats() Stats
+	Stats() ServiceStats
 	Reset()
-
-	Close()
+	Stop()
 }
 
 // A request handler.
 // TODO (could make error more and return more info to user automatically?)
-type RequestHandler func(svc Service, req *Msg) error
+type ServiceHandler func(svc Service, req *Msg) error
 
 // Clients can request as well.
+type ServiceStats struct {
+	Name      string    `json:"name"`
+	ID        string    `json:"id"`
+	Version   string    `json:"version"`
+	Started   time.Time `json:"started"`
+	Endpoints []Stats   `json:"stats"`
+}
 type Stats struct {
-	ID           string
-	Started      time.Time
-	NumRequests  int
-	NumErrors    int
-	TotalLatency time.Duration
+	Name         string        `json:"name"`
+	NumRequests  int           `json:"numRequests"`
+	NumErrors    int           `json:"numErrors"`
+	TotalLatency time.Duration `json:"totalLatency"`
+	Data         interface{}   `json:"data"`
 }
 
 // We can fix this, as versions will be on separate subjects and use account mapping to roll requests to new versions etc.
 const QG = "svc"
 
-// When a request for info comes in we return json of this.
+// ServiceInfo is the basic information about a service type
 type ServiceInfo struct {
-	Name        string
-	Description string
-	Version     string
+	Name        string `json:"name"`
+	Id          string `json:"id"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
 }
 
-// Internal struct
-type service struct {
-	id          string
-	name        string
-	description string
-	version     string
-	stats       Stats
+func (s *ServiceInfo) Valid() error {
+	if s.Name == "" {
+		return errors.New("name is required")
+	}
+	return nil
+}
+
+type ServiceSchema struct {
+	Request  string `json:"request"`
+	Response string `json:"response"`
+}
+
+type Endpoint struct {
+	Subject string `json:"subject"`
+	Handler ServiceHandler
+}
+
+type InternalEndpoint struct {
+	Name    string
+	Handler MsgHandler
+}
+
+func (e *Endpoint) Valid() error {
+	s := strings.TrimSpace(e.Subject)
+	if len(s) == 0 {
+		return errors.New("subject is required")
+	}
+	if e.Handler == nil {
+		return errors.New("handler is required")
+	}
+	return nil
+}
+
+type ServiceConfig struct {
+	ServiceInfo
+	Schema        ServiceSchema `json:"schema"`
+	Endpoint      Endpoint      `json:"endpoint"`
+	StatusHandler func(Endpoint) interface{}
+}
+
+// ServiceApiPrefix is the root of all control subjects
+const ServiceApiPrefix = "$SRV"
+
+type ServiceVerb int64
+
+const (
+	SrvPing ServiceVerb = iota
+	SrvStatus
+	SrvInfo
+	SrvSchema
+)
+
+func (s ServiceVerb) String() string {
+	switch s {
+	case SrvPing:
+		return "PING"
+	case SrvStatus:
+		return "STATUS"
+	case SrvInfo:
+		return "INFO"
+	case SrvSchema:
+		return "SCHEMA"
+	default:
+		return ""
+	}
+}
+
+// ServiceImpl is the internal implementation of a Service
+type ServiceImpl struct {
+	ServiceConfig
 	// subs
-	reqSub *Subscription
-	// info
-	infoSub *Subscription
-	// stats
-	pingSub *Subscription
-
-	cb RequestHandler
+	reqSub   *Subscription
+	internal map[string]*Subscription
+	statuses map[string]*Stats
+	stats    *ServiceStats
 }
 
-// Add a microservice.
+// addInternalHandler generates control handlers for a specific verb
+// each request generates 3 subscriptions, on for the general verb
+// affecting all services written with the framework, one that handles
+// all services of a particular kind, and finally a specific service.
+func (svc *ServiceImpl) addInternalHandler(nc *Conn, verb ServiceVerb, handler MsgHandler) error {
+	name := fmt.Sprintf("%s-all", verb.String())
+	if err := svc._addInternalHandler(nc, verb, "", "", name, handler); err != nil {
+		return err
+	}
+	name = fmt.Sprintf("%s-kind", verb.String())
+	if err := svc._addInternalHandler(nc, verb, svc.Name(), "", name, handler); err != nil {
+		return err
+	}
+	return svc._addInternalHandler(nc, verb, svc.Name(), svc.ID(), verb.String(), handler)
+}
+
+// _addInternalHandler registers a control subject handler
+func (svc *ServiceImpl) _addInternalHandler(nc *Conn, verb ServiceVerb, kind string, id string, name string, handler MsgHandler) error {
+	subj, err := SvcControlSubject(verb, kind, id)
+	if err != nil {
+		svc.Stop()
+		return err
+	}
+
+	svc.internal[name], err = nc.Subscribe(subj, func(msg *Msg) {
+		start := time.Now()
+		stats := svc.statuses[name]
+		defer func() {
+			stats.NumRequests++
+			stats.TotalLatency += time.Since(start)
+		}()
+		handler(msg)
+	})
+	if err != nil {
+		svc.Stop()
+		return err
+	}
+
+	svc.statuses[name] = &Stats{
+		Name: name,
+	}
+	return nil
+}
+
+// AddService adds a microservice.
 // NOTE we can do an OpenAPI version as well, but looking at it it was very involved. So I think keep simple version and
 // also have a version that talkes full blown OpenAPI spec and we can pull these things out.
-func (nc *Conn) AddService(name, description, version, subject, reqSchema, respSchema string, reqHandler RequestHandler) (Service, error) {
+func (nc *Conn) AddService(config ServiceConfig) (Service, error) {
+	if err := config.ServiceInfo.Valid(); err != nil {
+		return nil, err
+	}
+	if err := config.Endpoint.Valid(); err != nil {
+		return nil, err
+	}
 
-	// NOTE WIP
-	svc := &service{id: nuid.Next(), name: name, description: description, version: version, cb: reqHandler}
+	svc := &ServiceImpl{ServiceConfig: config}
+	svc.internal = make(map[string]*Subscription)
+	svc.statuses = make(map[string]*Stats)
+	svc.statuses[""] = &Stats{
+		Name: config.Name,
+	}
+
+	svc.stats = &ServiceStats{
+		Name:    config.Name,
+		ID:      config.Id,
+		Version: config.Version,
+		Started: time.Now(),
+	}
 
 	// Setup internal subscriptions.
 	var err error
 
-	svc.reqSub, err = nc.QueueSubscribe(subject, QG, func(m *Msg) { svc.reqHandler(m) })
+	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *Msg) {
+		svc.reqHandler(m)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Construct info sub from main subject.
-	info := fmt.Sprintf("%s.INFO", subject)
-	svc.infoSub, err = nc.QueueSubscribe(info, QG, func(m *Msg) {
-		si := &ServiceInfo{
-			Name:        svc.name,
-			Description: svc.description,
-			Version:     svc.version,
+	infoHandler := func(m *Msg) {
+		response, _ := json.MarshalIndent(config.ServiceInfo, "", "  ")
+		m.Respond(response)
+	}
+
+	pingHandler := func(m *Msg) {
+		infoHandler(m)
+	}
+
+	statusHandler := func(m *Msg) {
+		response, _ := json.MarshalIndent(svc.Stats(), "", "  ")
+		m.Respond(response)
+	}
+
+	schemaHandler := func(m *Msg) {
+		response, _ := json.MarshalIndent(svc.ServiceConfig.Schema, "", "  ")
+		m.Respond(response)
+	}
+
+	if err := svc.addInternalHandler(nc, SrvInfo, infoHandler); err != nil {
+		return nil, err
+	}
+	if err := svc.addInternalHandler(nc, SrvPing, pingHandler); err != nil {
+		return nil, err
+	}
+	if err := svc.addInternalHandler(nc, SrvStatus, statusHandler); err != nil {
+		return nil, err
+	}
+
+	if svc.ServiceConfig.Schema.Request != "" || svc.ServiceConfig.Schema.Response != "" {
+		if err := svc.addInternalHandler(nc, SrvSchema, schemaHandler); err != nil {
+			return nil, err
 		}
-		response, _ := json.MarshalIndent(si, "", "  ")
-		m.Respond(response)
-	})
-	if err != nil {
-		svc.Close()
-		return nil, err
 	}
 
-	// Construct ping sub from main subject.
-	// These will be responded by all handlers.
-	ping := fmt.Sprintf("%s.PING", subject)
-	svc.infoSub, err = nc.Subscribe(ping, func(m *Msg) {
-		response, _ := json.MarshalIndent(svc.stats, "", "  ")
-		m.Respond(response)
-	})
-	if err != nil {
-		svc.Close()
-		return nil, err
-	}
-
-	svc.stats.ID = svc.id
+	svc.stats.ID = svc.ServiceInfo.Id
 	svc.stats.Started = time.Now()
 	return svc, nil
 }
 
 // reqHandler itself
-func (svc *service) reqHandler(req *Msg) {
+func (svc *ServiceImpl) reqHandler(req *Msg) {
 	start := time.Now()
+	stats := svc.statuses[""]
 	defer func() {
-		svc.stats.NumRequests++
-		svc.stats.TotalLatency += time.Since(start)
+		stats.NumRequests++
+		stats.TotalLatency += time.Since(start)
 	}()
 
-	if err := svc.cb(svc, req); err != nil {
-		svc.stats.NumErrors++
+	if err := svc.ServiceConfig.Endpoint.Handler(svc, req); err != nil {
+		stats.NumErrors++
 		req.Sub.mu.Lock()
 		nc := req.Sub.conn
 		req.Sub.mu.Unlock()
@@ -142,41 +278,74 @@ func (svc *service) reqHandler(req *Msg) {
 	}
 }
 
-func (svc *service) Close() {
+func (svc *ServiceImpl) Stop() {
 	if svc.reqSub != nil {
 		svc.reqSub.Drain()
 		svc.reqSub = nil
 	}
-	if svc.infoSub != nil {
-		svc.infoSub.Drain()
-		svc.infoSub = nil
+	var keys []string
+	for key, sub := range svc.internal {
+		keys = append(keys, key)
+		sub.Drain()
 	}
-	if svc.pingSub != nil {
-		svc.pingSub.Drain()
-		svc.pingSub = nil
+	for _, key := range keys {
+		delete(svc.internal, key)
 	}
 }
 
-func (svc *service) ID() string {
-	return svc.id
+func (svc *ServiceImpl) ID() string {
+	return svc.ServiceConfig.Id
 }
 
-func (svc *service) Name() string {
-	return svc.name
+func (svc *ServiceImpl) Name() string {
+	return svc.ServiceConfig.Name
 }
 
-func (svc *service) Description() string {
-	return svc.description
+func (svc *ServiceImpl) Description() string {
+	return svc.ServiceConfig.Description
 }
 
-func (svc *service) Version() string {
-	return svc.version
+func (svc *ServiceImpl) Version() string {
+	return svc.ServiceConfig.Version
 }
 
-func (svc *service) Stats() Stats {
-	return svc.stats
+func (svc *ServiceImpl) Stats() ServiceStats {
+	if svc.ServiceConfig.StatusHandler != nil {
+		stats := svc.statuses[""]
+		stats.Data = svc.ServiceConfig.StatusHandler(svc.Endpoint)
+	}
+	idx := 0
+	v := make([]Stats, len(svc.statuses))
+	for _, se := range svc.statuses {
+		v[idx] = *se
+		idx++
+	}
+	svc.stats.Endpoints = v
+	return *svc.stats
 }
 
-func (svc *service) Reset() {
-	svc.stats = Stats{}
+func (svc *ServiceImpl) Reset() {
+	for _, se := range svc.statuses {
+		se.NumRequests = 0
+		se.TotalLatency = 0
+		se.NumErrors = 0
+		se.Data = nil
+	}
+}
+
+// SvcControlSubject returns monitoring subjects used by the ServiceImpl
+func SvcControlSubject(verb ServiceVerb, kind, id string) (string, error) {
+	sverb := verb.String()
+	if sverb == "" {
+		return "", fmt.Errorf("unsupported ServiceImpl verb")
+	}
+	kind = strings.ToUpper(kind)
+	id = strings.ToUpper(id)
+	if kind == "" && id == "" {
+		return fmt.Sprintf("%s.%s", ServiceApiPrefix, sverb), nil
+	}
+	if id == "" {
+		return fmt.Sprintf("%s.%s.%s", ServiceApiPrefix, sverb, kind), nil
+	}
+	return fmt.Sprintf("%s.%s.%s.%s", ServiceApiPrefix, sverb, kind, id), nil
 }

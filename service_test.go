@@ -14,6 +14,7 @@
 package nats
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -34,7 +35,7 @@ func TestServiceBasics(t *testing.T) {
 	}
 	defer nc.Close()
 
-	// Stub service.
+	// Stub ServiceImpl.
 	doAdd := func(svc Service, req *Msg) error {
 		if rand.Intn(10) == 0 {
 			return fmt.Errorf("Unexpected Error!")
@@ -46,25 +47,31 @@ func TestServiceBasics(t *testing.T) {
 		return nil
 	}
 
-	// Create 10 service responders.
+	// Create 10 ServiceImpl responders.
 
 	var svcs []Service
 
-	// Create 5 service responders.
+	// Create 5 ServiceImpl responders.
+	config := ServiceConfig{
+		ServiceInfo: ServiceInfo{
+			Name:        "CoolAddService",
+			Version:     "v0.1",
+			Description: "Add things together",
+		},
+		Endpoint: Endpoint{
+			Subject: "svc.add",
+			Handler: doAdd,
+		},
+		Schema: ServiceSchema{Request: "", Response: ""},
+	}
+
 	for i := 0; i < 5; i++ {
-		svc, err := nc.AddService(
-			"CoolAddService",
-			"Add things together",
-			"v0.1",
-			"svc.add",
-			_EMPTY_, // TBD - request schema
-			_EMPTY_, // TBD - response schema
-			doAdd,
-		)
+		config.Id = fmt.Sprintf("%d", i)
+		svc, err := nc.AddService(config)
 		if err != nil {
-			t.Fatalf("Expected to create service, got %v", err)
+			t.Fatalf("Expected to create ServiceImpl, got %v", err)
 		}
-		defer svc.Close()
+		defer svc.Stop()
 		svcs = append(svcs, svc)
 	}
 
@@ -86,8 +93,12 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	// Make sure we can request info, 1 response.
-	// This could be exported as well as main service.
-	info, err := nc.Request("svc.add.INFO", nil, time.Second)
+	// This could be exported as well as main ServiceImpl.
+	subj, err := SvcControlSubject(SrvInfo, "CoolAddService", "")
+	if err != nil {
+		t.Fatalf("Failed to building info subject %v", err)
+	}
+	info, err := nc.Request(subj, nil, time.Second)
 	if err != nil {
 		t.Fatalf("Expected a response, got %v", err)
 	}
@@ -110,5 +121,19 @@ func TestServiceBasics(t *testing.T) {
 			break
 		}
 		fmt.Printf("Received ping response: %s\n", resp.Data)
+	}
+
+	subj, err = SvcControlSubject(SrvStatus, "CoolAddService", "")
+	if err != nil {
+		t.Fatalf("unexpected error from stats: %v", err)
+	}
+
+	r, err := nc.Request(subj, nil, time.Second)
+	status := ServiceStats{}
+	if err := json.Unmarshal(r.Data, &status); err != nil {
+		t.Fatalf("unexpected error from stats: %v", err)
+	}
+	if len(status.Endpoints) != 10 {
+		t.Fatal("expected 10 endpoints")
 	}
 }
