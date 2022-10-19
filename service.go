@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -131,6 +132,7 @@ func (s ServiceVerb) String() string {
 
 // ServiceImpl is the internal implementation of a Service
 type ServiceImpl struct {
+	sync.Mutex
 	ServiceConfig
 	// subs
 	reqSub   *Subscription
@@ -165,10 +167,12 @@ func (svc *ServiceImpl) _addInternalHandler(nc *Conn, verb ServiceVerb, kind str
 
 	svc.internal[name], err = nc.Subscribe(subj, func(msg *Msg) {
 		start := time.Now()
-		stats := svc.statuses[name]
 		defer func() {
+			svc.Lock()
+			stats := svc.statuses[name]
 			stats.NumRequests++
 			stats.TotalLatency += time.Since(start)
+			svc.Unlock()
 		}()
 		handler(msg)
 	})
@@ -261,14 +265,19 @@ func (nc *Conn) AddService(config ServiceConfig) (Service, error) {
 // reqHandler itself
 func (svc *ServiceImpl) reqHandler(req *Msg) {
 	start := time.Now()
-	stats := svc.statuses[""]
 	defer func() {
+		svc.Lock()
+		stats := svc.statuses[""]
 		stats.NumRequests++
 		stats.TotalLatency += time.Since(start)
+		svc.Unlock()
 	}()
 
 	if err := svc.ServiceConfig.Endpoint.Handler(svc, req); err != nil {
+		svc.Lock()
+		stats := svc.statuses[""]
 		stats.NumErrors++
+		svc.Unlock()
 		req.Sub.mu.Lock()
 		nc := req.Sub.conn
 		req.Sub.mu.Unlock()
@@ -310,6 +319,10 @@ func (svc *ServiceImpl) Version() string {
 }
 
 func (svc *ServiceImpl) Stats() ServiceStats {
+	svc.Lock()
+	defer func() {
+		svc.Unlock()
+	}()
 	if svc.ServiceConfig.StatusHandler != nil {
 		stats := svc.statuses[""]
 		stats.Data = svc.ServiceConfig.StatusHandler(svc.Endpoint)
