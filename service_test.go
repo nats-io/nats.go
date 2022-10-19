@@ -129,6 +129,9 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	r, err := nc.Request(subj, nil, time.Second)
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
 	status := ServiceStats{}
 	if err := json.Unmarshal(r.Data, &status); err != nil {
 		t.Fatalf("unexpected error from stats: %v", err)
