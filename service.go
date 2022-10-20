@@ -61,13 +61,14 @@ type ServiceInfo struct {
 	Id          string `json:"id"`
 	Description string `json:"description"`
 	Version     string `json:"version"`
+	Subject     string `json:"subject"`
 }
 
-func (s *ServiceInfo) Valid() error {
+func (s *ServiceConfig) Valid() error {
 	if s.Name == "" {
 		return errors.New("name is required")
 	}
-	return nil
+	return s.Endpoint.Valid()
 }
 
 type ServiceSchema struct {
@@ -97,7 +98,10 @@ func (e *Endpoint) Valid() error {
 }
 
 type ServiceConfig struct {
-	ServiceInfo
+	Name          string        `json:"name"`
+	Id            string        `json:"id"`
+	Description   string        `json:"description"`
+	Version       string        `json:"version"`
 	Schema        ServiceSchema `json:"schema"`
 	Endpoint      Endpoint      `json:"endpoint"`
 	StatusHandler func(Endpoint) interface{}
@@ -191,10 +195,7 @@ func (svc *ServiceImpl) _addInternalHandler(nc *Conn, verb ServiceVerb, kind str
 // NOTE we can do an OpenAPI version as well, but looking at it it was very involved. So I think keep simple version and
 // also have a version that talkes full blown OpenAPI spec and we can pull these things out.
 func (nc *Conn) AddService(config ServiceConfig) (Service, error) {
-	if err := config.ServiceInfo.Valid(); err != nil {
-		return nil, err
-	}
-	if err := config.Endpoint.Valid(); err != nil {
+	if err := config.Valid(); err != nil {
 		return nil, err
 	}
 
@@ -222,8 +223,16 @@ func (nc *Conn) AddService(config ServiceConfig) (Service, error) {
 		return nil, err
 	}
 
+	info := &ServiceInfo{
+		Name:        config.Name,
+		Id:          config.Id,
+		Description: config.Description,
+		Version:     config.Version,
+		Subject:     config.Endpoint.Subject,
+	}
+
 	infoHandler := func(m *Msg) {
-		response, _ := json.MarshalIndent(config.ServiceInfo, "", "  ")
+		response, _ := json.MarshalIndent(info, "", "  ")
 		m.Respond(response)
 	}
 
@@ -257,7 +266,7 @@ func (nc *Conn) AddService(config ServiceConfig) (Service, error) {
 		}
 	}
 
-	svc.stats.ID = svc.ServiceInfo.Id
+	svc.stats.ID = svc.Id
 	svc.stats.Started = time.Now()
 	return svc, nil
 }

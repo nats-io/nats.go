@@ -53,11 +53,9 @@ func TestServiceBasics(t *testing.T) {
 
 	// Create 5 ServiceImpl responders.
 	config := ServiceConfig{
-		ServiceInfo: ServiceInfo{
-			Name:        "CoolAddService",
-			Version:     "v0.1",
-			Description: "Add things together",
-		},
+		Name:        "CoolAddService",
+		Version:     "v0.1",
+		Description: "Add things together",
 		Endpoint: Endpoint{
 			Subject: "svc.add",
 			Handler: doAdd,
@@ -101,6 +99,11 @@ func TestServiceBasics(t *testing.T) {
 	info, err := nc.Request(subj, nil, time.Second)
 	if err != nil {
 		t.Fatalf("Expected a response, got %v", err)
+	}
+	inf := ServiceInfo{}
+	json.Unmarshal(info.Data, &inf)
+	if inf.Subject != "svc.add" {
+		t.Fatalf("expected service subject to be srv.add: %s", inf.Subject)
 	}
 	fmt.Printf("\ninfo response:\n%s\n\n", info.Data)
 
