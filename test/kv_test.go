@@ -863,3 +863,117 @@ func TestListKeyValueStores(t *testing.T) {
 		})
 	}
 }
+
+func TestKeyValueMirrorCrossDomains(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		server_name: HUB
+		listen: 127.0.0.1:-1
+		jetstream: { domain: HUB }
+		leafnodes { listen: 127.0.0.1:7422 }
+	}`))
+	defer os.Remove(conf)
+	s, _ := RunServerWithConfig(conf)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	lconf := createConfFile(t, []byte(`
+		server_name: LEAF
+		listen: 127.0.0.1:-1
+ 		jetstream: { domain:LEAF }
+ 		leafnodes {
+ 		 	remotes = [ { url: "leaf://127.0.0.1" } ]
+ 		}
+	}`))
+	defer os.Remove(lconf)
+	ln, _ := RunServerWithConfig(lconf)
+	defer shutdownJSServerAndRemoveStorage(t, ln)
+
+	// Create main KV on HUB
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	expectOk(t, err)
+
+	_, err = kv.PutString("name", "derek")
+	expectOk(t, err)
+	_, err = kv.PutString("age", "22")
+	expectOk(t, err)
+
+	lnc, ljs := jsClient(t, ln)
+	defer lnc.Close()
+
+	// Capture cfg so we can make sure it does not change.
+	// NOTE: We use different name to test all possibilities, etc, but in practice for truly nomadic applications
+	// this should be named the same, e.g. TEST.
+	cfg := &nats.KeyValueConfig{
+		Bucket: "MIRROR",
+		Mirror: &nats.StreamSource{
+			Name:   "TEST",
+			Domain: "HUB",
+		},
+	}
+	ccfg := *cfg
+
+	_, err = ljs.CreateKeyValue(cfg)
+	expectOk(t, err)
+
+	if !reflect.DeepEqual(cfg, &ccfg) {
+		t.Fatalf("Did not expect config to be altered: %+v vs %+v", cfg, ccfg)
+	}
+
+	si, err := ljs.StreamInfo("KV_MIRROR")
+	expectOk(t, err)
+
+	// Make sure mirror direct set.
+	if !si.Config.MirrorDirect {
+		t.Fatalf("Expected mirror direct to be set")
+	}
+
+	// Make sure we sync.
+	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		si, err := ljs.StreamInfo("KV_MIRROR")
+		expectOk(t, err)
+		if si.State.Msgs == 2 {
+			return nil
+		}
+		return fmt.Errorf("Did not get synched messages: %d", si.State.Msgs)
+	})
+
+	// Bind locally from leafnode and make sure both get and put work.
+	mkv, err := ljs.KeyValue("MIRROR")
+	expectOk(t, err)
+
+	_, err = mkv.PutString("name", "rip")
+	expectOk(t, err)
+
+	e, err := mkv.Get("name")
+	expectOk(t, err)
+	if string(e.Value()) != "rip" {
+		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "rip")
+	}
+
+	// Bind through leafnode connection but to origin KV.
+	rjs, err := lnc.JetStream(nats.Domain("HUB"))
+	expectOk(t, err)
+
+	rkv, err := rjs.KeyValue("TEST")
+	expectOk(t, err)
+
+	_, err = rkv.PutString("name", "ivan")
+	expectOk(t, err)
+
+	e, err = rkv.Get("name")
+	expectOk(t, err)
+	if string(e.Value()) != "ivan" {
+		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
+	}
+
+	// Shutdown cluster and test get still work.
+	shutdownJSServerAndRemoveStorage(t, s)
+
+	e, err = mkv.Get("name")
+	expectOk(t, err)
+	if string(e.Value()) != "ivan" {
+		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
+	}
+}

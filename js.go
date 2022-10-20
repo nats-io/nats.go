@@ -120,6 +120,9 @@ const (
 	// jsDomainT is used to create JetStream API prefix by specifying only Domain
 	jsDomainT = "$JS.%s.API."
 
+	// jsExtDomainT is used to create a StreamSource External APIPrefix
+	jsExtDomainT = "$JS.%s.API"
+
 	// apiAccountInfo is for obtaining general information about JetStream.
 	apiAccountInfo = "INFO"
 
