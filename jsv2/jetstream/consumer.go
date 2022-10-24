@@ -128,7 +128,6 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 	p.errs = make(chan error, 1)
 	p.pendingMsgs = 0
-	atomic.StoreUint32(&p.isSubscribed, 1)
 
 	msgs := make(chan *nats.Msg, 2*req.Batch)
 	if err := p.setupSubscription(msgs); err != nil {
@@ -398,7 +397,6 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 				if err := p.pull(ctx, *req, subject); err != nil {
 					p.errs <- err
 				}
-				atomic.AddInt64(&p.pendingMsgs, int64(req.Batch))
 				fetchComplete <- struct{}{}
 			}
 		}
@@ -407,7 +405,7 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 	go func() {
 		var fetchInProgress bool
 		for {
-			if atomic.LoadInt64(&p.pendingMsgs) <= int64(req.Batch)/2 && !fetchInProgress {
+			if p.pendingMsgs <= int64(req.Batch)/2 && !fetchInProgress {
 				fetchInProgress = true
 				fetchNext <- struct{}{}
 			}
@@ -422,18 +420,18 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 						handler(nil, err)
 						continue
 					}
-					if atomic.LoadInt64(&p.pendingMsgs) < int64(req.Batch) {
-						atomic.StoreInt64(&p.pendingMsgs, 0)
+					if p.pendingMsgs < int64(req.Batch) {
+						p.pendingMsgs = 0
 						continue
 					}
-					atomic.AddInt64(&p.pendingMsgs, -int64(req.Batch))
+					p.pendingMsgs -= int64(req.Batch)
 					continue
 				}
 				if !userMsg {
 					continue
 				}
 				handler(p.jetStream.toJSMsg(msg), nil)
-				atomic.AddInt64(&p.pendingMsgs, -1)
+				p.pendingMsgs--
 			case <-reconnected:
 				_, err := p.Info(ctx)
 				if err != nil {
@@ -442,13 +440,14 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 					handler(nil, err)
 					return
 				}
-				if atomic.LoadInt64(&p.pendingMsgs) < int64(req.Batch) {
-					atomic.StoreInt64(&p.pendingMsgs, 0)
+				if p.pendingMsgs < int64(req.Batch) {
+					p.pendingMsgs = 0
 					continue
 				}
-				atomic.AddInt64(&p.pendingMsgs, -int64(req.Batch))
+				p.pendingMsgs -= int64(req.Batch)
 			case <-fetchComplete:
 				fetchInProgress = false
+				p.pendingMsgs += int64(req.Batch)
 			case err := <-p.errs:
 				if errors.Is(err, ErrNoHeartbeat) {
 					cancel()
