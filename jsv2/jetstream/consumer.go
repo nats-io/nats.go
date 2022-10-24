@@ -78,7 +78,7 @@ type (
 	pullConsumer struct {
 		consumer
 		isSubscribed uint32
-		fetchErrs    chan error
+		errs         chan error
 		pendingMsgs  int64
 	}
 
@@ -100,6 +100,7 @@ type (
 		reconnected     chan struct{}
 		done            chan struct{}
 		closed          uint32
+		hbTimer         *time.Timer
 	}
 )
 
@@ -125,7 +126,7 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 		}
 	}
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
-	p.fetchErrs = make(chan error, 1)
+	p.errs = make(chan error, 1)
 	p.pendingMsgs = 0
 	atomic.StoreUint32(&p.isSubscribed, 1)
 
@@ -159,9 +160,10 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 	}()
 
 	if err := p.pull(ctx, *req, subject); err != nil {
-		p.fetchErrs <- err
+		p.errs <- err
 	}
 	atomic.StoreInt64(&p.pendingMsgs, int64(req.Batch))
+	it.hbTimer = scheduleHeartbeatCheck(req.Heartbeat, p.errs)
 	go func() {
 		for {
 			select {
@@ -169,7 +171,7 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpt) (MsgIterator, error
 				return
 			case <-it.fetchNext:
 				if err := p.pull(ctx, *req, subject); err != nil {
-					p.fetchErrs <- err
+					p.errs <- err
 				}
 				atomic.AddInt64(&p.pendingMsgs, int64(req.Batch))
 				it.fetchInProgress = false
@@ -199,6 +201,9 @@ func (it *messagesIter) Next() (Msg, error) {
 		}
 		select {
 		case msg := <-it.msgs:
+			if it.hbTimer != nil {
+				it.hbTimer.Reset(2 * it.req.Heartbeat)
+			}
 			userMsg, err := checkMsg(msg)
 			if err != nil {
 				if !errors.Is(err, nats.ErrTimeout) {
@@ -227,9 +232,11 @@ func (it *messagesIter) Next() (Msg, error) {
 				continue
 			}
 			atomic.AddInt64(&it.consumer.pendingMsgs, -int64(it.req.Batch))
-		case <-time.After(2 * it.req.Heartbeat):
-			it.Stop()
-			return nil, ErrNoHeartbeat
+		case err := <-it.consumer.errs:
+			if errors.Is(err, ErrNoHeartbeat) {
+				it.Stop()
+			}
+			return nil, err
 		}
 	}
 }
@@ -302,34 +309,15 @@ func (p *pullConsumer) fetch(ctx context.Context, req *pullRequest) ([]Msg, erro
 		return nil, err
 	}
 
+	errs := make(chan error, 1)
 	jsMsgs := make([]Msg, 0)
+	hbTimer := scheduleHeartbeatCheck(req.Heartbeat, p.errs)
 	for {
-		if req.Heartbeat != 0 {
-			select {
-			case msg := <-msgs:
-				userMsg, err := checkMsg(msg)
-				if err != nil {
-					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
-						return nil, err
-					}
-					return jsMsgs, nil
-				}
-				if !userMsg {
-					continue
-				}
-				jsMsgs = append(jsMsgs, p.jetStream.toJSMsg(msg))
-				if len(jsMsgs) == req.Batch {
-					return jsMsgs, nil
-				}
-				continue
-			case <-time.After(2 * req.Heartbeat):
-				return nil, ErrNoHeartbeat
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
 		select {
 		case msg := <-msgs:
+			if hbTimer != nil {
+				hbTimer.Reset(2 * req.Heartbeat)
+			}
 			userMsg, err := checkMsg(msg)
 			if err != nil {
 				if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
@@ -344,11 +332,12 @@ func (p *pullConsumer) fetch(ctx context.Context, req *pullRequest) ([]Msg, erro
 			if len(jsMsgs) == req.Batch {
 				return jsMsgs, nil
 			}
+		case err := <-errs:
+			return nil, err
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
-
 }
 
 // Subscribe continuously receives messages from a consumer and handles them with the provided callback function
@@ -378,7 +367,7 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 	}
 
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
-	p.fetchErrs = make(chan error, 1)
+	p.errs = make(chan error, 1)
 	p.pendingMsgs = 0
 	atomic.StoreUint32(&p.isSubscribed, 1)
 
@@ -398,6 +387,7 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 		}
 		reconnected <- struct{}{}
 	})
+	hbTimer := scheduleHeartbeatCheck(req.Heartbeat, p.errs)
 	go func() {
 		for {
 			select {
@@ -406,7 +396,7 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 				return
 			case <-fetchNext:
 				if err := p.pull(ctx, *req, subject); err != nil {
-					p.fetchErrs <- err
+					p.errs <- err
 				}
 				atomic.AddInt64(&p.pendingMsgs, int64(req.Batch))
 				fetchComplete <- struct{}{}
@@ -423,6 +413,9 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 			}
 			select {
 			case msg := <-msgs:
+				if hbTimer != nil {
+					hbTimer.Reset(2 * req.Heartbeat)
+				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
 					if !errors.Is(err, nats.ErrTimeout) {
@@ -456,11 +449,14 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 				atomic.AddInt64(&p.pendingMsgs, -int64(req.Batch))
 			case <-fetchComplete:
 				fetchInProgress = false
-			case <-time.After(2 * req.Heartbeat):
-				cancel()
-				p.cleanupSubscriptionAndRestoreConnHandler(reconnectHandler)
-				handler(nil, ErrNoHeartbeat)
-				return
+			case err := <-p.errs:
+				if errors.Is(err, ErrNoHeartbeat) {
+					cancel()
+					p.cleanupSubscriptionAndRestoreConnHandler(reconnectHandler)
+					handler(nil, err)
+					return
+				}
+				handler(nil, err)
 			case <-ctx.Done():
 				return
 			}
@@ -468,6 +464,15 @@ func (p *pullConsumer) Subscribe(ctx context.Context, handler MessageHandler, op
 	}()
 
 	return nil
+}
+
+func scheduleHeartbeatCheck(dur time.Duration, errCh chan error) *time.Timer {
+	if dur == 0 {
+		return nil
+	}
+	return time.AfterFunc(2*dur, func() {
+		errCh <- ErrNoHeartbeat
+	})
 }
 
 func (p *pullConsumer) cleanupSubscriptionAndRestoreConnHandler(reconnectHandler nats.ConnHandler) {
