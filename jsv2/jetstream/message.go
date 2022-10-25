@@ -91,10 +91,11 @@ type (
 )
 
 const (
-	noResponders = "503"
-	noMessages   = "404"
-	reqTimeout   = "408"
-	controlMsg   = "100"
+	noResponders     = "503"
+	noMessages       = "404"
+	reqTimeout       = "408"
+	maxBytesExceeded = "409"
+	controlMsg       = "100"
 )
 
 const (
@@ -278,6 +279,8 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		return false, nats.ErrTimeout
 	case controlMsg:
 		return false, nil
+	case maxBytesExceeded:
+		return false, ErrMaxBytesExceeded
 	}
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
 }

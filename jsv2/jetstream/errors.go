@@ -114,6 +114,9 @@ var (
 	// ErrNoMessages is returned when no messages are currently available for a consumer.
 	ErrNoMessages = &jsError{message: "no messages"}
 
+	// ErrMaxBytesExceeded is returned when a message would exceed MaxBytes set on a pull request.
+	ErrMaxBytesExceeded = &jsError{message: "message size exceeds max bytes"}
+
 	// ErrHandlerRequired is returned when no handler func is provided in Stream()
 	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
 

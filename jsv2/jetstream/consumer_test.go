@@ -391,7 +391,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Subscribe(ctx, func(_ Msg, _ error) {})
+		_, err = c.Subscribe(func(_ Msg, _ error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -675,6 +675,147 @@ func TestPullConsumerMessages(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("with max fitting 1 message", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// subscribe to next request subject to verify how many next requests were sent
+		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+
+		msgs := make([]Msg, 0)
+		it, err := c.Messages(WithMessagesMaxBytes(60))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		for i := 0; i < len(testMsgs); i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg == nil {
+				break
+			}
+			msg.Ack()
+			msgs = append(msgs, msg)
+
+		}
+		it.Stop()
+		time.Sleep(10 * time.Millisecond)
+		requestsNum, _, err := sub.Pending()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// with batch size set to 1, and 5 messages published on subject, there should be a total of 5 requests sent
+		if requestsNum != 5 {
+			t.Fatalf("Unexpected number of requests sent; want 5; got %d", requestsNum)
+		}
+
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		for i, msg := range msgs {
+			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+		}
+	})
+
+	t.Run("with custom max bytes", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// subscribe to next request subject to verify how many next requests were sent
+		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+
+		msgs := make([]Msg, 0)
+		it, err := c.Messages(WithMessagesMaxBytes(150))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		for i := 0; i < len(testMsgs); i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg == nil {
+				break
+			}
+			msg.Ack()
+			msgs = append(msgs, msg)
+
+		}
+		it.Stop()
+		time.Sleep(10 * time.Millisecond)
+		requestsNum, _, err := sub.Pending()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// with batch size set to 1, and 5 messages published on subject, there should be a total of 5 requests sent
+		if requestsNum != 3 {
+			t.Fatalf("Unexpected number of requests sent; want 3; got %d", requestsNum)
+		}
+
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		for i, msg := range msgs {
+			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+		}
+	})
+
 	t.Run("with batch size set to 1", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -770,7 +911,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Subscribe(ctx, func(msg Msg, err error) {})
+		_, err = c.Subscribe(func(msg Msg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1093,7 +1234,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1103,6 +1244,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 
 		publishTestMsgs(t, nc)
 		wg.Wait()
@@ -1141,12 +1283,13 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Subscribe(ctx, func(msg Msg, err error) {})
+		l, err := c.Subscribe(func(msg Msg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 
-		err = c.Subscribe(ctx, func(msg Msg, err error) {})
+		_, err = c.Subscribe(func(msg Msg, err error) {})
 		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
 			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
 		}
@@ -1167,6 +1310,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		defer nc.Close()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1179,7 +1323,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(testMsgs))
 		msgs := make([]Msg, 0)
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1187,9 +1331,6 @@ func TestPullConsumerSubscribe(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			msgs = append(msgs, msg)
-			if len(msgs) == 5 {
-				cancel()
-			}
 			wg.Done()
 		})
 		if err != nil {
@@ -1198,13 +1339,11 @@ func TestPullConsumerSubscribe(t *testing.T) {
 
 		publishTestMsgs(t, nc)
 		wg.Wait()
+		l.Stop()
 
-		<-ctx.Done()
 		time.Sleep(10 * time.Millisecond)
 		wg.Add(len(testMsgs))
-		ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err = c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1217,6 +1356,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 		publishTestMsgs(t, nc)
 		wg.Wait()
 		if len(msgs) != 2*len(testMsgs) {
@@ -1263,7 +1403,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1273,6 +1413,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 
 		publishTestMsgs(t, nc)
 		wg.Wait()
@@ -1321,7 +1462,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Subscribe(ctx, func(_ Msg, _ error) {
+		_, err = c.Subscribe(func(_ Msg, _ error) {
 		}, WithSubscribeBatchSize(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1362,7 +1503,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1372,6 +1513,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 
 		time.Sleep(60 * time.Millisecond)
 		publishTestMsgs(t, nc)
@@ -1421,7 +1563,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		err = c.Subscribe(ctx, func(_ Msg, _ error) {
+		_, err = c.Subscribe(func(_ Msg, _ error) {
 		}, WithSubscribeExpiry(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1456,7 +1598,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1466,6 +1608,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 
 		publishTestMsgs(t, nc)
 		wg.Wait()
@@ -1506,7 +1649,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		err = c.Subscribe(ctx, func(_ Msg, err error) {
+		l, err := c.Subscribe(func(_ Msg, err error) {
 			if !errors.Is(err, ErrNoHeartbeat) {
 				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
 			}
@@ -1515,6 +1658,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 		shutdownJSServerAndRemoveStorage(t, srv)
 		wg.Wait()
 	})
@@ -1547,7 +1691,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		wg.Add(2 * len(testMsgs))
 		msgs := make([]Msg, 0)
 		publishTestMsgs(t, nc)
-		err = c.Subscribe(ctx, func(msg Msg, err error) {
+		l, err := c.Subscribe(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1557,6 +1701,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer l.Stop()
 		time.Sleep(10 * time.Millisecond)
 		// restart the server
 		srv = restartBasicJSServer(t, srv)
@@ -1612,7 +1757,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			msgs := make([]Msg, 0)
 			wg := &sync.WaitGroup{}
 			wg.Add(len(testMsgs))
-			err = c.Subscribe(ctx, func(msg Msg, err error) {
+			l, err := c.Subscribe(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1622,6 +1767,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			defer l.Stop()
 
 			publishTestMsgs(t, nc)
 			wg.Wait()
@@ -1662,7 +1808,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg := sync.WaitGroup{}
 			wg.Add(len(testMsgs))
 			msgs := make([]Msg, 0)
-			err = c.Subscribe(ctx, func(msg Msg, err error) {
+			l, err := c.Subscribe(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1681,13 +1827,12 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 
 			publishTestMsgs(t, nc)
 			wg.Wait()
+			l.Stop()
 
-			<-ctx.Done()
 			time.Sleep(10 * time.Millisecond)
 			wg.Add(len(testMsgs))
-			ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			err = c.Subscribe(ctx, func(msg Msg, err error) {
+			l, err = c.Subscribe(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1700,6 +1845,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			defer l.Stop()
 			publishTestMsgs(t, nc)
 			wg.Wait()
 			if len(msgs) != 2*len(testMsgs) {
@@ -1713,66 +1859,4 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			}
 		})
 	})
-}
-
-func TestListenPerformance(t *testing.T) {
-	msgsCount := 100000
-
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	js, err := New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckNonePolicy, Durable: "asd"})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	for i := 0; i < msgsCount; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// sinfo, _ := s.Info(ctx)
-	// fmt.Println("pending: ", sinfo.State.Msgs)
-	// fmt.Println("maxmsgs: ", sinfo.Config.MaxMsgs)
-
-	// cinfo, err := c.Info(ctx)
-	// if err != nil {
-	//      t.Fatal(err)
-	// }
-	// fmt.Println("maxwaiting: ", cinfo.Config.MaxWaiting)
-	// // fmt.Println("maxmsgs: ", sinfo.Config.MaxMsgs)
-
-	wg := sync.WaitGroup{}
-	wg.Add(msgsCount)
-	now := time.Now()
-	err = c.Subscribe(ctx, func(msg Msg, err error) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		wg.Done()
-	}, WithSubscribeBatchSize(1000))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wg.Wait()
-	cancel()
-	since := time.Since(now)
-	fmt.Println("Result: ", since)
-
 }
