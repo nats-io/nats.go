@@ -288,8 +288,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 // toJSMsg converts core `nats.Msg` to `jetStreamMsg`, exposing JetStream-specific operations
 func (js *jetStream) toJSMsg(msg *nats.Msg) *jetStreamMsg {
 	return &jetStreamMsg{
-		msg:   msg,
-		js:    js,
-		Mutex: sync.Mutex{},
+		msg: msg,
+		js:  js,
 	}
 }

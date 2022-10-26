@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -37,35 +36,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	cons, err := js.CreateConsumer(ctx, "TEST_STREAM", jetstream.ConsumerConfig{Durable: "TestConsumer", AckPolicy: jetstream.AckExplicitPolicy})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	wg := sync.WaitGroup{}
-	for i := 0; i <= 10; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-			log.Fatal(err)
-		}
-		wg.Add(1)
+	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumerListener", AckPolicy: jetstream.AckExplicitPolicy})
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		err := cons.Subscribe(ctx, func(msg jetstream.Msg, err error) {
-			if err != nil {
-				log.Fatal(err)
-			}
-			msg.Ack()
-		})
+	l, err := cons.Listener(func(msg jetstream.Msg, err error) {
 		if err != nil {
 			log.Fatal(err)
 		}
+		fmt.Println(string(msg.Data()))
+		msg.Ack()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer l.Stop()
 
-		// call cancel() when we want to unsubscribe and stop receiving messages
-		cancel()
-
-	}()
-	wg.Wait()
 }

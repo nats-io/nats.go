@@ -31,10 +31,10 @@ type (
 		// FetchNoWait is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and immediately return up to a provided number of messages
 		FetchNoWait(batch int) ([]Msg, error)
-		// Subscribe can be used to continuously receive messages and handle them with the provided callback function
-		Subscribe(MessageHandler, ...ConsumerSubscribeOpt) (ConsumerListener, error)
-		// Messages returns MsgIterator allowing continously iterating over messages on a stream.
-		Messages(...ConsumerMessagesOpt) (MsgIterator, error)
+		// Listener can be used to continuously receive messages and handle them with the provided callback function
+		Listener(MessageHandler, ...ConsumerListenerOpts) (ConsumerListener, error)
+		// Reader returns ConsumerReader, allowing continously iterating over messages on a stream.
+		Reader(...ConsumerReaderOpts) (ConsumerReader, error)
 
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
@@ -102,13 +102,11 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	}
 
 	return &pullConsumer{
-		consumer: consumer{
-			jetStream: js,
-			stream:    stream,
-			name:      resp.Name,
-			durable:   cfg.Durable != "",
-			info:      resp.ConsumerInfo,
-		},
+		jetStream: js,
+		stream:    stream,
+		name:      resp.Name,
+		durable:   cfg.Durable != "",
+		info:      resp.ConsumerInfo,
 	}, nil
 }
 
@@ -131,13 +129,11 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 	}
 
 	return &pullConsumer{
-		consumer: consumer{
-			jetStream: js,
-			stream:    stream,
-			name:      name,
-			durable:   resp.Config.Durable != "",
-			info:      resp.ConsumerInfo,
-		},
+		jetStream: js,
+		stream:    stream,
+		name:      name,
+		durable:   resp.Config.Durable != "",
+		info:      resp.ConsumerInfo,
 	}, nil
 }
 
