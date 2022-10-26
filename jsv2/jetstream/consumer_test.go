@@ -391,7 +391,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Subscribe(func(_ Msg, _ error) {})
+		_, err = c.Listener(func(_ Msg, _ error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -570,7 +570,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages()
+		it, err := c.Reader()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -637,7 +637,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesBatchSize(2))
+		it, err := c.Reader(WithMessagesBatchSize(2))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -707,7 +707,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesMaxBytes(60))
+		it, err := c.Reader(WithMessagesMaxBytes(60))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -777,7 +777,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesMaxBytes(150))
+		it, err := c.Reader(WithMessagesMaxBytes(150))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -847,7 +847,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesBatchSize(1))
+		it, err := c.Reader(WithMessagesBatchSize(1))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -911,12 +911,12 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Subscribe(func(msg Msg, err error) {})
+		_, err = c.Listener(func(msg Msg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Messages()
+		_, err = c.Reader()
 		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
 			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
 		}
@@ -948,7 +948,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages()
+		it, err := c.Reader()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -970,7 +970,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		publishTestMsgs(t, nc)
-		it, err = c.Messages()
+		it, err = c.Reader()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1024,7 +1024,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Messages(WithMessagesBatchSize(-1))
+		_, err = c.Reader(WithMessagesBatchSize(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
 		}
@@ -1056,7 +1056,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesHeartbeat(10 * time.Millisecond))
+		it, err := c.Reader(WithMessagesHeartbeat(10 * time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1111,7 +1111,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		it, err := c.Messages(WithMessagesHeartbeat(10 * time.Millisecond))
+		it, err := c.Reader(WithMessagesHeartbeat(10 * time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1157,7 +1157,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		msgs := make([]Msg, 0)
-		it, err := c.Messages()
+		it, err := c.Reader()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1234,7 +1234,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1283,13 +1283,13 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		l, err := c.Subscribe(func(msg Msg, err error) {})
+		l, err := c.Listener(func(msg Msg, err error) {})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer l.Stop()
 
-		_, err = c.Subscribe(func(msg Msg, err error) {})
+		_, err = c.Listener(func(msg Msg, err error) {})
 		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
 			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
 		}
@@ -1323,7 +1323,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(testMsgs))
 		msgs := make([]Msg, 0)
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1343,7 +1343,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 
 		time.Sleep(10 * time.Millisecond)
 		wg.Add(len(testMsgs))
-		l, err = c.Subscribe(func(msg Msg, err error) {
+		l, err = c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1403,7 +1403,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1462,7 +1462,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Subscribe(func(_ Msg, _ error) {
+		_, err = c.Listener(func(_ Msg, _ error) {
 		}, WithSubscribeBatchSize(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1503,7 +1503,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1563,7 +1563,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Subscribe(func(_ Msg, _ error) {
+		_, err = c.Listener(func(_ Msg, _ error) {
 		}, WithSubscribeExpiry(-1))
 		if err == nil || !errors.Is(err, nats.ErrInvalidArg) {
 			t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
@@ -1598,7 +1598,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		msgs := make([]Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1649,7 +1649,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		l, err := c.Subscribe(func(_ Msg, err error) {
+		l, err := c.Listener(func(_ Msg, err error) {
 			if !errors.Is(err, ErrNoHeartbeat) {
 				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
 			}
@@ -1691,7 +1691,7 @@ func TestPullConsumerSubscribe(t *testing.T) {
 		wg.Add(2 * len(testMsgs))
 		msgs := make([]Msg, 0)
 		publishTestMsgs(t, nc)
-		l, err := c.Subscribe(func(msg Msg, err error) {
+		l, err := c.Listener(func(msg Msg, err error) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1757,7 +1757,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			msgs := make([]Msg, 0)
 			wg := &sync.WaitGroup{}
 			wg.Add(len(testMsgs))
-			l, err := c.Subscribe(func(msg Msg, err error) {
+			l, err := c.Listener(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1808,7 +1808,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			wg := sync.WaitGroup{}
 			wg.Add(len(testMsgs))
 			msgs := make([]Msg, 0)
-			l, err := c.Subscribe(func(msg Msg, err error) {
+			l, err := c.Listener(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1832,7 +1832,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			wg.Add(len(testMsgs))
 			defer cancel()
-			l, err = c.Subscribe(func(msg Msg, err error) {
+			l, err = c.Listener(func(msg Msg, err error) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
