@@ -1249,15 +1249,24 @@ func TestStreamNameBySubject(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	stream, err := js.StreamNameBySubject("test.*")
-	if err != nil {
-		t.Fatalf("lookup stream should succeed for %s", "test.*")
-	}
-	if stream != "TEST" {
-		t.Fatalf("returned stream should be 'TEST'")
-	}
+	for _, test := range []struct {
+		name       string
+		streamName string
+		err        error
+	}{
 
-	if _, err := js.StreamNameBySubject("bad"); err == nil {
-		t.Fatalf("error should be nil, no stream with name 'bad'")
+		{name: "valid wildcard lookup", streamName: "test.*", err: nil},
+		{name: "valid explicit lookup", streamName: "test.a", err: nil},
+		{name: "lookup on not existing stream", streamName: "not.existing", err: ErrNoMatchingStream},
+	} {
+
+		stream, err := js.StreamNameBySubject(test.streamName)
+		if err != test.err {
+			t.Fatalf("expected %v, got %v", test.err, err)
+		}
+
+		if stream != "TEST" && err == nil {
+			t.Fatalf("returned stream name should be 'TEST'")
+		}
 	}
 }
