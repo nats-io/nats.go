@@ -1230,3 +1230,34 @@ func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
 		t.Fatalf("expected 0 subjects details from StreamInfo, but got %d instead", len(result.State.Subjects))
 	}
 }
+
+func StreamNameBySubject(t *testing.T) {
+
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	_, err = js.AddStream(&StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	stream, err := js.StreamNameBySubject("test.*")
+	if err != nil {
+		t.Fatalf("lookup stream should succeed for %s", "test.*")
+	}
+	if stream != "TEST" {
+		t.Fatalf("returned stream should be 'TEST'")
+	}
+
+	if _, err := js.StreamNameBySubject("bad"); err == nil {
+		t.Fatalf("error should be nil, no stream with name 'bad'")
+	}
+}
