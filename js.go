@@ -2144,31 +2144,6 @@ type streamNamesResponse struct {
 	Streams []string `json:"streams"`
 }
 
-// StreamNameBySubject returns a stream name that matches the subject.
-func (js *js) StreamNameBySubject(subj string) (string, error) {
-	var slr streamNamesResponse
-	req := &streamRequest{subj}
-	j, err := json.Marshal(req)
-	if err != nil {
-		return _EMPTY_, err
-	}
-	resp, err := js.nc.Request(js.apiSubj(apiStreams), j, js.opts.wait)
-	if err != nil {
-		if err == ErrNoResponders {
-			err = ErrJetStreamNotEnabled
-		}
-		return _EMPTY_, err
-	}
-	if err := json.Unmarshal(resp.Data, &slr); err != nil {
-		return _EMPTY_, err
-	}
-
-	if slr.Error != nil || len(slr.Streams) != 1 {
-		return _EMPTY_, ErrNoMatchingStream
-	}
-	return slr.Streams[0], nil
-}
-
 type subOpts struct {
 	// For attaching.
 	stream, consumer string
