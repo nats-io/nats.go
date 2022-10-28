@@ -1232,7 +1232,6 @@ func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
 }
 
 func TestStreamNameBySubject(t *testing.T) {
-
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
