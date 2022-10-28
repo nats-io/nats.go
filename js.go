@@ -52,6 +52,8 @@ type JetStream interface {
 	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
 	PublishAsyncComplete() <-chan struct{}
 
+	Request(subj string, data []byte, timeout time.Duration, opts ...PubOpt) (*Msg, error)
+
 	// Subscribe creates an async Subscription for JetStream.
 	// The stream and consumer names can be provided with the nats.Bind() option.
 	// For creating an ephemeral (where the consumer name is picked by the server),
@@ -465,6 +467,7 @@ const (
 	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
 	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
 	MsgRollup              = "Nats-Rollup"
+	MsgReplyHdr            = "Nats-Reply"
 )
 
 // Headers for republished messages and direct gets.
@@ -580,6 +583,85 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 // Publish publishes a message to a stream from JetStream.
 func (js *js) Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error) {
 	return js.PublishMsg(&Msg{Subject: subj, Data: data}, opts...)
+}
+
+// Helper to setup and send new request style requests. Return the chan to receive the response.
+// TODO: could be refactored out of nc.createNewRequestAndSend to remove duplicate code
+func (js *js) createNewReplySub() (string, chan *Msg, string, error) {
+	js.nc.mu.Lock()
+	// Do setup for the new style if needed.
+	if js.nc.respMap == nil {
+		js.nc.initNewResp()
+	}
+	// Create new literal Inbox and map to a chan msg.
+	mch := make(chan *Msg, RequestChanLen)
+	respInbox := js.nc.newRespInbox()
+	token := respInbox[js.nc.respSubLen:]
+
+	js.nc.respMap[token] = mch
+	if js.nc.respMux == nil {
+		// Create the response subscription we will use for all new style responses.
+		// This will be on an _INBOX with an additional terminal token. The subscription
+		// will be on a wildcard.
+		s, err := js.nc.subscribeLocked(js.nc.respSub, _EMPTY_, js.nc.respHandler, nil, false, nil)
+		if err != nil {
+			js.nc.mu.Unlock()
+			return "", nil, token, err
+		}
+		js.nc.respScanf = strings.Replace(js.nc.respSub, "*", "%s", -1)
+		js.nc.respMux = s
+	}
+	js.nc.mu.Unlock()
+
+	return respInbox, mch, token, nil
+}
+
+// Request publishes a message to a stream and waits for a subscriber to reply.
+func (js *js) Request(subj string, data []byte, timeout time.Duration, opts ...PubOpt) (*Msg, error) {
+	// Allocate a new inbox subject and channel for receiving a message
+	// from the multiplexed inbox subscriber.
+	inbox, mch, token, err := js.createNewReplySub()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build a message, setting the reply header.
+	msg := NewMsg(subj)
+	msg.Data = data
+	msg.Header.Add(MsgReplyHdr, inbox)
+
+	// Publish to the stream. If this fails, delete the reply channel.
+	puback, err := js.PublishMsg(msg)
+	if err != nil {
+		js.nc.mu.Lock()
+		delete(js.nc.respMap, token)
+		js.nc.mu.Unlock()
+		return nil, err
+	}
+
+	// Get a timer and wait for the message. If there is a timeout or other
+	// error, the message will be deleted from the stream.
+	// TODO: make auto-delete configurable?
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
+
+	var ok bool
+
+	select {
+	case msg, ok = <-mch:
+		if !ok {
+			js.DeleteMsg(puback.Stream, puback.Sequence, Domain(puback.Domain))
+			return nil, ErrConnectionClosed
+		}
+	case <-t.C:
+		js.nc.mu.Lock()
+		delete(js.nc.respMap, token)
+		js.nc.mu.Unlock()
+		js.DeleteMsg(puback.Stream, puback.Sequence, Domain(puback.Domain))
+		return nil, ErrTimeout
+	}
+
+	return msg, nil
 }
 
 // PubAckFuture is a future for a PubAck.
