@@ -1529,7 +1529,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	// Find the stream mapped to the subject if not bound to a stream already.
 	if o.stream == _EMPTY_ {
-		stream, err = js.lookupStreamBySubject(subj)
+		stream, err = js.LookupStreamBySubject(subj)
 		if err != nil {
 			return nil, err
 		}
@@ -2144,7 +2144,8 @@ type streamNamesResponse struct {
 	Streams []string `json:"streams"`
 }
 
-func (js *js) lookupStreamBySubject(subj string) (string, error) {
+// LookupStreamBySubject returns a stream name that matches the subject.
+func (js *js) LookupStreamBySubject(subj string) (string, error) {
 	var slr streamNamesResponse
 	req := &streamRequest{subj}
 	j, err := json.Marshal(req)
