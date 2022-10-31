@@ -95,7 +95,7 @@ type JetStreamManager interface {
 	AccountInfo(opts ...JSOpt) (*AccountInfo, error)
 
 	// StreamNameBySubjec rteturns a stream matching given subject.
-	StreamNameBySubject(string) (string, error)
+	StreamNameBySubject(string, ...JSOpt) (string, error)
 }
 
 // StreamConfig will determine the properties for a stream.
@@ -1519,14 +1519,23 @@ func (jsc *js) StreamNames(opts ...JSOpt) <-chan string {
 }
 
 // StreamNameBySubject returns a stream name that matches the subject.
-func (jsc *js) StreamNameBySubject(subj string) (string, error) {
+func (jsc *js) StreamNameBySubject(subj string, opts ...JSOpt) (string, error) {
+	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
+	if err != nil {
+		return "", err
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+
 	var slr streamNamesResponse
 	req := &streamRequest{subj}
 	j, err := json.Marshal(req)
 	if err != nil {
 		return _EMPTY_, err
 	}
-	resp, err := jsc.nc.Request(jsc.apiSubj(apiStreams), j, jsc.opts.wait)
+
+	resp, err := jsc.apiRequestWithContext(o.ctx, jsc.apiSubj(apiStreams), j)
 	if err != nil {
 		if err == ErrNoResponders {
 			err = ErrJetStreamNotEnabled
