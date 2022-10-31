@@ -1529,7 +1529,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	// Find the stream mapped to the subject if not bound to a stream already.
 	if o.stream == _EMPTY_ {
-		stream, err = js.lookupStreamBySubject(subj)
+		stream, err = js.StreamNameBySubject(subj)
 		if err != nil {
 			return nil, err
 		}
@@ -2142,30 +2142,6 @@ type streamNamesResponse struct {
 	apiResponse
 	apiPaged
 	Streams []string `json:"streams"`
-}
-
-func (js *js) lookupStreamBySubject(subj string) (string, error) {
-	var slr streamNamesResponse
-	req := &streamRequest{subj}
-	j, err := json.Marshal(req)
-	if err != nil {
-		return _EMPTY_, err
-	}
-	resp, err := js.nc.Request(js.apiSubj(apiStreams), j, js.opts.wait)
-	if err != nil {
-		if err == ErrNoResponders {
-			err = ErrJetStreamNotEnabled
-		}
-		return _EMPTY_, err
-	}
-	if err := json.Unmarshal(resp.Data, &slr); err != nil {
-		return _EMPTY_, err
-	}
-
-	if slr.Error != nil || len(slr.Streams) != 1 {
-		return _EMPTY_, ErrNoMatchingStream
-	}
-	return slr.Streams[0], nil
 }
 
 type subOpts struct {

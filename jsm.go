@@ -93,6 +93,9 @@ type JetStreamManager interface {
 
 	// AccountInfo retrieves info about the JetStream usage from an account.
 	AccountInfo(opts ...JSOpt) (*AccountInfo, error)
+
+	// StreamNameBySubjec rteturns a stream matching given subject.
+	StreamNameBySubject(string, ...JSOpt) (string, error)
 }
 
 // StreamConfig will determine the properties for a stream.
@@ -1513,6 +1516,40 @@ func (jsc *js) StreamNames(opts ...JSOpt) <-chan string {
 	}()
 
 	return ch
+}
+
+// StreamNameBySubject returns a stream name that matches the subject.
+func (jsc *js) StreamNameBySubject(subj string, opts ...JSOpt) (string, error) {
+	o, cancel, err := getJSContextOpts(jsc.opts, opts...)
+	if err != nil {
+		return "", err
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+
+	var slr streamNamesResponse
+	req := &streamRequest{subj}
+	j, err := json.Marshal(req)
+	if err != nil {
+		return _EMPTY_, err
+	}
+
+	resp, err := jsc.apiRequestWithContext(o.ctx, jsc.apiSubj(apiStreams), j)
+	if err != nil {
+		if err == ErrNoResponders {
+			err = ErrJetStreamNotEnabled
+		}
+		return _EMPTY_, err
+	}
+	if err := json.Unmarshal(resp.Data, &slr); err != nil {
+		return _EMPTY_, err
+	}
+
+	if slr.Error != nil || len(slr.Streams) != 1 {
+		return _EMPTY_, ErrNoMatchingStream
+	}
+	return slr.Streams[0], nil
 }
 
 func getJSContextOpts(defs *jsOpts, opts ...JSOpt) (*jsOpts, context.CancelFunc, error) {
