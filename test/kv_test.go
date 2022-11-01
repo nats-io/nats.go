@@ -968,6 +968,11 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "rip")
 	}
 
+	// Also make sure we can create a watcher on the mirror KV.
+	watcher, err := mkv.WatchAll()
+	expectOk(t, err)
+	defer watcher.Stop()
+
 	// Bind through leafnode connection but to origin KV.
 	rjs, err := lnc.JetStream(nats.Domain("HUB"))
 	expectOk(t, err)
