@@ -665,7 +665,11 @@ func (kv *kvs) Delete(key string, opts ...DeleteOpt) error {
 	if kv.useJSPfx {
 		b.WriteString(kv.js.opts.pre)
 	}
-	b.WriteString(kv.pre)
+	if kv.putPre != _EMPTY_ {
+		b.WriteString(kv.putPre)
+	} else {
+		b.WriteString(kv.pre)
+	}
 	b.WriteString(key)
 
 	// DEL op marker. For watch functionality.

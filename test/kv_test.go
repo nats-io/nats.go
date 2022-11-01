@@ -898,6 +898,10 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	expectOk(t, err)
 	_, err = kv.PutString("age", "22")
 	expectOk(t, err)
+	_, err = kv.PutString("v", "v")
+	expectOk(t, err)
+	err = kv.Delete("v")
+	expectOk(t, err)
 
 	lnc, ljs := jsClient(t, ln)
 	defer lnc.Close()
@@ -933,7 +937,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
 		si, err := ljs.StreamInfo("KV_MIRROR")
 		expectOk(t, err)
-		if si.State.Msgs == 2 {
+		if si.State.Msgs == 3 {
 			return nil
 		}
 		return fmt.Errorf("Did not get synched messages: %d", si.State.Msgs)
@@ -946,7 +950,19 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	_, err = mkv.PutString("name", "rip")
 	expectOk(t, err)
 
-	e, err := mkv.Get("name")
+	_, err = mkv.PutString("v", "vv")
+	expectOk(t, err)
+	e, err := mkv.Get("v")
+	expectOk(t, err)
+	if e.Operation() != nats.KeyValuePut {
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+	}
+	err = mkv.Delete("v")
+	expectOk(t, err)
+	_, err = mkv.Get("v")
+	expectErr(t, err, nats.ErrKeyNotFound)
+
+	e, err = mkv.Get("name")
 	expectOk(t, err)
 	if string(e.Value()) != "rip" {
 		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "rip")
@@ -967,6 +983,17 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	if string(e.Value()) != "ivan" {
 		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
 	}
+	_, err = rkv.PutString("v", "vv")
+	expectOk(t, err)
+	e, err = mkv.Get("v")
+	expectOk(t, err)
+	if e.Operation() != nats.KeyValuePut {
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+	}
+	err = rkv.Delete("v")
+	expectOk(t, err)
+	_, err = rkv.Get("v")
+	expectErr(t, err, nats.ErrKeyNotFound)
 
 	// Shutdown cluster and test get still work.
 	shutdownJSServerAndRemoveStorage(t, s)
