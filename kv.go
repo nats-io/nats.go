@@ -1013,7 +1013,7 @@ func (js *js) KeyValueStoreNames() <-chan string {
 		defer close(ch)
 		for l.Next() {
 			for _, info := range l.Page() {
-				if !strings.HasPrefix(info.Config.Name, "KV_") {
+				if !strings.HasPrefix(info.Config.Name, kvBucketNamePre) {
 					continue
 				}
 				ch <- info.Config.Name
@@ -1033,10 +1033,10 @@ func (js *js) KeyValueStores() <-chan KeyValueStatus {
 		defer close(ch)
 		for l.Next() {
 			for _, info := range l.Page() {
-				if !strings.HasPrefix(info.Config.Name, "KV_") {
+				if !strings.HasPrefix(info.Config.Name, kvBucketNamePre) {
 					continue
 				}
-				ch <- &KeyValueBucketStatus{nfo: info, bucket: strings.TrimPrefix(info.Config.Name, "KV_")}
+				ch <- &KeyValueBucketStatus{nfo: info, bucket: strings.TrimPrefix(info.Config.Name, kvBucketNamePre)}
 			}
 		}
 	}()
