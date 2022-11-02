@@ -8288,3 +8288,32 @@ func TestJetStreamCreateStreamDiscardPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestJetStreamStreamInfoAlternates(t *testing.T) {
+	withJSCluster(t, "R3S", 3, func(t *testing.T, nodes ...*jsServer) {
+		nc, js := jsClient(t, nodes[0].Server)
+		defer nc.Close()
+
+		_, err := js.AddStream(&nats.StreamConfig{
+			Name:     "TEST",
+			Subjects: []string{"foo"},
+		})
+		expectOk(t, err)
+
+		// Create a mirror as well.
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name: "MIRROR",
+			Mirror: &nats.StreamSource{
+				Name: "TEST",
+			},
+		})
+		expectOk(t, err)
+
+		si, err := js.StreamInfo("TEST")
+		expectOk(t, err)
+
+		if len(si.Alternates) != 2 {
+			t.Fatalf("Expected 2 alternates, got %d", len(si.Alternates))
+		}
+	})
+}

@@ -867,12 +867,20 @@ func (js *js) StreamInfo(stream string, opts ...JSOpt) (*StreamInfo, error) {
 
 // StreamInfo shows config and current state for this stream.
 type StreamInfo struct {
-	Config  StreamConfig        `json:"config"`
-	Created time.Time           `json:"created"`
-	State   StreamState         `json:"state"`
-	Cluster *ClusterInfo        `json:"cluster,omitempty"`
-	Mirror  *StreamSourceInfo   `json:"mirror,omitempty"`
-	Sources []*StreamSourceInfo `json:"sources,omitempty"`
+	Config     StreamConfig        `json:"config"`
+	Created    time.Time           `json:"created"`
+	State      StreamState         `json:"state"`
+	Cluster    *ClusterInfo        `json:"cluster,omitempty"`
+	Mirror     *StreamSourceInfo   `json:"mirror,omitempty"`
+	Sources    []*StreamSourceInfo `json:"sources,omitempty"`
+	Alternates []*StreamAlternate  `json:"alternates,omitempty"`
+}
+
+// StreamAlternate is an alternate stream represented by a mirror.
+type StreamAlternate struct {
+	Name    string `json:"name"`
+	Domain  string `json:"domain,omitempty"`
+	Cluster string `json:"cluster"`
 }
 
 // StreamSourceInfo shows information about an upstream stream source.
