@@ -956,7 +956,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
-func TestPullSubsctibeConsumerDeleted(t *testing.T) {
+func TestPullSubscribeConsumerDeleted(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
