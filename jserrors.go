@@ -98,6 +98,9 @@ var (
 	// ErrCantAckIfConsumerAckNone is returned when attempting to ack a message for consumer with AckNone policy set.
 	ErrCantAckIfConsumerAckNone JetStreamError = &jsError{message: "cannot acknowledge a message for a consumer with AckNone policy"}
 
+	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist
+	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
+
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
