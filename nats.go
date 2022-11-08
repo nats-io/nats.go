@@ -3450,6 +3450,7 @@ const (
 	noResponders       = "503"
 	noMessagesSts      = "404"
 	reqTimeoutSts      = "408"
+	jetStream409Sts    = "409"
 	controlMsg         = "100"
 	statusLen          = 3 // e.g. 20x, 40x, 50x
 )

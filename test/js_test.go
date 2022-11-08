@@ -956,6 +956,63 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
+func TestPullSubsctibeConsumerDeleted(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := js.Publish("foo", []byte("msg")); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("delete consumer", func(t *testing.T) {
+		sub, err := js.PullSubscribe("foo", "cons")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = sub.Fetch(1, nats.MaxWait(10*time.Millisecond)); err != nil {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrTimeout, err)
+		}
+		time.AfterFunc(50*time.Millisecond, func() { js.DeleteConsumer("TEST", "cons") })
+		if _, err = sub.Fetch(1, nats.MaxWait(100*time.Millisecond)); !errors.Is(err, nats.ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrConsumerDeleted, err)
+		}
+	})
+
+	t.Run("delete stream", func(t *testing.T) {
+		sub, err := js.PullSubscribe("foo", "cons")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = sub.Fetch(1, nats.MaxWait(10*time.Millisecond)); err != nil {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrTimeout, err)
+		}
+		time.AfterFunc(50*time.Millisecond, func() { js.DeleteStream("TEST") })
+		if _, err = sub.Fetch(1, nats.MaxWait(100*time.Millisecond)); !errors.Is(err, nats.ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrConsumerDeleted, err)
+		}
+	})
+
+}
+
 func TestJetStreamAckPending_Pull(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
