@@ -44,7 +44,7 @@ var (
 
 	// Client errors
 
-	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
+	// ErrConsumerNameAlreadyInUse is an error returned when consumer with given name already exists.
 	ErrConsumerNameAlreadyInUse JetStreamError = &jsError{message: "consumer name already in use"}
 
 	// ErrConsumerNotActive is an error returned when consumer is not active.

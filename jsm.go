@@ -94,7 +94,7 @@ type JetStreamManager interface {
 	// AccountInfo retrieves info about the JetStream usage from an account.
 	AccountInfo(opts ...JSOpt) (*AccountInfo, error)
 
-	// StreamNameBySubjec rteturns a stream matching given subject.
+	// StreamNameBySubject returns a stream matching given subject.
 	StreamNameBySubject(string, ...JSOpt) (string, error)
 }
 
