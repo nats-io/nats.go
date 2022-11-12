@@ -26,6 +26,7 @@ import (
 // JetStreamManager manages JetStream Streams and Consumers.
 type JetStreamManager interface {
 	// AddStream creates a stream.
+	// What happens if stream exists?
 	AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error)
 
 	// UpdateStream updates a stream.
@@ -54,6 +55,7 @@ type JetStreamManager interface {
 	// Use options nats.DirectGet() or nats.DirectGetNext() to trigger retrieval
 	// directly from a distributed group of servers (leader and replicas).
 	// The stream must have been created/updated with the AllowDirect boolean.
+	// Mention nats.DirectGet() as well as any other relevant JSOpts?
 	GetMsg(name string, seq uint64, opts ...JSOpt) (*RawStreamMsg, error)
 
 	// GetLastMsg retrieves the last raw stream message stored in JetStream by subject.
@@ -63,6 +65,7 @@ type JetStreamManager interface {
 	GetLastMsg(name, subject string, opts ...JSOpt) (*RawStreamMsg, error)
 
 	// DeleteMsg deletes a message from a stream. The message is marked as erased, but its value is not overwritten.
+	// Common options?
 	DeleteMsg(name string, seq uint64, opts ...JSOpt) error
 
 	// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
@@ -70,6 +73,8 @@ type JetStreamManager interface {
 	SecureDeleteMsg(name string, seq uint64, opts ...JSOpt) error
 
 	// AddConsumer adds a consumer to a stream.
+	// AddConsumer vs. Subscribe can be confusing because there are a lot of options
+	// Link to clear set of 'blessed' consumers setups would be useful
 	AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error)
 
 	// UpdateConsumer updates an existing consumer.
@@ -102,35 +107,55 @@ type JetStreamManager interface {
 // There are sensible defaults for most. If no subjects are
 // given the name will be used as the only subject.
 type StreamConfig struct {
+	// Any illegal chars or things to avoid?
 	Name                 string          `json:"name"`
 	Description          string          `json:"description,omitempty"`
+	// wildcards ok?
 	Subjects             []string        `json:"subjects,omitempty"`
 	Retention            RetentionPolicy `json:"retention"`
+	// Guess: Limit the number of consumers?
+	// Durable only, or ephemeral too?
 	MaxConsumers         int             `json:"max_consumers"`
+	// Guess: number of messages after which RetentionPolicy kicks in
 	MaxMsgs              int64           `json:"max_msgs"`
+	// Guess: number of bytes after which DiscardPolicy kicks in (what is counted?)
 	MaxBytes             int64           `json:"max_bytes"`
+	// Guess: number of bytes after which DiscardPolicy kicks in (what is counted?)
 	Discard              DiscardPolicy   `json:"discard"`
+	// Guess: ?
 	DiscardNewPerSubject bool            `json:"discard_new_per_subject,omitempty"`
+	// Guess: ?
 	MaxAge               time.Duration   `json:"max_age"`
+	// Guess: triggers discard policy on a per-subject basis
 	MaxMsgsPerSubject    int64           `json:"max_msgs_per_subject"`
+	// Guess: max size of message data+metadata
 	MaxMsgSize           int32           `json:"max_msg_size,omitempty"`
 	Storage              StorageType     `json:"storage"`
 	Replicas             int             `json:"num_replicas"`
+	// Guess: ?
 	NoAck                bool            `json:"no_ack,omitempty"`
+	// Guess: ?
 	Template             string          `json:"template_owner,omitempty"`
+	// Guess: duplicate window, but not clear where this is applied
 	Duplicates           time.Duration   `json:"duplicate_window,omitempty"`
 	Placement            *Placement      `json:"placement,omitempty"`
 	Mirror               *StreamSource   `json:"mirror,omitempty"`
 	Sources              []*StreamSource `json:"sources,omitempty"`
+	// Guess: create a pre-sealed stream maybe useful for mirrors?
 	Sealed               bool            `json:"sealed,omitempty"`
+	// Guess: ?
 	DenyDelete           bool            `json:"deny_delete,omitempty"`
+	// Guess: ?
 	DenyPurge            bool            `json:"deny_purge,omitempty"`
+	// Guess: link to 'Rollup' high level explanier would help
 	AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
 
 	// Allow republish of the message after being sequenced and stored.
 	RePublish *RePublish `json:"republish,omitempty"`
 
 	// Allow higher performance, direct access to get individual messages. E.g. KeyValue
+	// Can regular streams use this too?
+	// Any consistency tradeoffs
 	AllowDirect bool `json:"allow_direct"`
 	// Allow higher performance and unified direct access for mirrors as well.
 	MirrorDirect bool `json:"mirror_direct"`
@@ -162,8 +187,11 @@ type StreamSource struct {
 
 // ExternalStream allows you to qualify access to a stream source in another
 // account.
+// Pointer to high level 'external accounts' feature doc
 type ExternalStream struct {
+	// Guess: magic string that points to a different account
 	APIPrefix     string `json:"api"`
+	// Guess: prefix to add to subjects delivered from an external stream
 	DeliverPrefix string `json:"deliver,omitempty"`
 }
 
@@ -233,20 +261,35 @@ type Tier struct {
 }
 
 // APIStats reports on API calls to JetStream for this account.
+// Returned with AccountInfo
 type APIStats struct {
 	Total  uint64 `json:"total"`
 	Errors uint64 `json:"errors"`
 }
 
 // AccountLimits includes the JetStream limits of the current account.
+// See: JSManager:AccountInfo()
 type AccountLimits struct {
+	// Guess: in-memory store limit for this account
+	// Is this limit on just data size or data+internal metadata and state?
 	MaxMemory            int64 `json:"max_memory"`
+	// Guess: on-disk store limit for this account
+	// Is this limit on just data size or data+internal metadata and state?
 	MaxStore             int64 `json:"max_storage"`
+	// Guess: number of streams hard limit
+	// What counts towards this? KV Buckets? ObjectStores? Anything else?
 	MaxStreams           int   `json:"max_streams"`
+	// Guess: max number of consumers
+	// Do all consumers count the same? Durable/ephemeral?
+	// What else does internally create a consumer which may triggert this limit?
 	MaxConsumers         int   `json:"max_consumers"`
+	// Guess: ? pointer to doc that explains ACK policies could help
 	MaxAckPending        int   `json:"max_ack_pending"`
+	// Guess: ?
 	MemoryMaxStreamBytes int64 `json:"memory_max_stream_bytes"`
+	// Guess: ?
 	StoreMaxStreamBytes  int64 `json:"storage_max_stream_bytes"`
+	// Guess: ?
 	MaxBytesRequired     bool  `json:"max_bytes_required"`
 }
 
@@ -877,6 +920,7 @@ type StreamInfo struct {
 }
 
 // StreamAlternate is an alternate stream represented by a mirror.
+// Guess: ?
 type StreamAlternate struct {
 	Name    string `json:"name"`
 	Domain  string `json:"domain,omitempty"`
@@ -909,6 +953,7 @@ type StreamState struct {
 
 // ClusterInfo shows information about the underlying set of servers
 // that make up the stream or consumer.
+// See: ConsumerInfo, StreamInfo
 type ClusterInfo struct {
 	Name     string      `json:"name,omitempty"`
 	Leader   string      `json:"leader,omitempty"`

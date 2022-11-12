@@ -126,6 +126,7 @@ const (
 )
 
 // APIError is included in all API responses if there was an error.
+// Seems internal
 type APIError struct {
 	Code        int       `json:"code"`
 	ErrorCode   ErrorCode `json:"err_code"`
@@ -133,16 +134,19 @@ type APIError struct {
 }
 
 // Error prints the JetStream API error code and description
+// Seems internal
 func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: %s", e.Description)
 }
 
 // APIError implements the JetStreamError interface.
+// Seems internal
 func (e *APIError) APIError() *APIError {
 	return e
 }
 
 // Is matches against an APIError.
+// Seems internal
 func (e *APIError) Is(err error) bool {
 	if e == nil {
 		return false

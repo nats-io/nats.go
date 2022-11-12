@@ -32,6 +32,7 @@ type KeyValueManager interface {
 	// KeyValue will lookup and bind to an existing KeyValue store.
 	KeyValue(bucket string) (KeyValue, error)
 	// CreateKeyValue will create a KeyValue store with the following configuration.
+	// What if it exists?
 	CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error)
 	// DeleteKeyValue will delete this KeyValue store (JetStream stream).
 	DeleteKeyValue(bucket string) error
@@ -63,6 +64,8 @@ type KeyValue interface {
 	Purge(key string, opts ...DeleteOpt) error
 	// Watch for any updates to keys that match the keys argument which could include wildcards.
 	// Watch will send a nil entry when it has received all initial values.
+	// Not clear on what 'initial values' are
+	// Could point to example use of KeyWatcher
 	Watch(keys string, opts ...WatchOpt) (KeyWatcher, error)
 	// WatchAll will invoke the callback for all updates.
 	WatchAll(opts ...WatchOpt) (KeyWatcher, error)
@@ -90,16 +93,20 @@ type KeyValueStatus interface {
 	History() int64
 
 	// TTL is how long the bucket keeps values for
+	// What value for 'forever?'
 	TTL() time.Duration
 
 	// BackingStore indicates what technology is used for storage of the bucket
+	// String retval, what are possible values?
 	BackingStore() string
 
 	// Bytes returns the size in bytes of the bucket
+	// Size of all values, or size of all keys+values, or size of all keys+values+history, etc.
 	Bytes() uint64
 }
 
 // KeyWatcher is what is returned when doing a watch.
+// Example how to use
 type KeyWatcher interface {
 	// Context returns watcher context optionally provided by nats.Context option.
 	Context() context.Context
@@ -174,6 +181,8 @@ type purgeOpts struct {
 // Note that if no option is specified, the default is 30 minutes. You can set
 // this option to a negative value to instruct to always remove the markers,
 // regardless of their age.
+// Multi-line comment gets squished in docs
+// What markers is this referring to?
 type DeleteMarkersOlderThan time.Duration
 
 func (ttl DeleteMarkersOlderThan) configurePurge(opts *purgeOpts) error {
@@ -206,6 +215,8 @@ func (opt deleteOptFn) configureDelete(opts *deleteOpts) error {
 }
 
 // LastRevision deletes if the latest revision matches.
+// Not a lot of context in docs. What is deleted?
+// Guess: this is an JSOpt that need to be passed for transactional CAS-like delete
 func LastRevision(revision uint64) DeleteOpt {
 	return deleteOptFn(func(opts *deleteOpts) error {
 		opts.revision = revision
@@ -222,12 +233,18 @@ func purge() DeleteOpt {
 }
 
 // KeyValueConfig is for configuring a KeyValue store.
+// Mostly self-explanatory, but some details wouldn't hurt
 type KeyValueConfig struct {
 	Bucket       string
 	Description  string
 	MaxValueSize int32
+	// Guess: how many previous version values to keep for each overwritten key
 	History      uint8
+	// Time before object is deleted.
+	// Does overwrite reset the TTL?
+	// 0 to keep forever
 	TTL          time.Duration
+	//Guess: Total max size of bucket? But what is included in this?
 	MaxBytes     int64
 	Storage      StorageType
 	Replicas     int
@@ -238,6 +255,7 @@ type KeyValueConfig struct {
 }
 
 // Used to watch all keys.
+// This comment is deprecated.
 const (
 	KeyValueMaxHistory = 64
 	AllKeys            = ">"
@@ -286,16 +304,27 @@ type KeyValueEntry interface {
 	Operation() KeyValueOp
 }
 
-// Errors
+// Errors of KeyValue API
+// (Most of these are self-explanatory, but some could use a clarification)
 var (
+	// Guess: bad config? missing config argument?
 	ErrKeyValueConfigRequired = errors.New("nats: config required")
+	// Guess: bind, Create, i.e. if i try to name a bucket "\r\n👽"
 	ErrInvalidBucketName      = errors.New("nats: invalid bucket name")
+	// Guess: Get for a key that does not exist?
+	// Could also be: trying to put/create with invalid key (e.g. "\r\n👽")
 	ErrInvalidKey             = errors.New("nats: invalid key")
+	// Guess bind/delete bucket that does not exist
 	ErrBucketNotFound         = errors.New("nats: bucket not found")
+	// Guess: ?
 	ErrBadBucket              = errors.New("nats: bucket not valid key-value store")
+	// Guess: Get, Update to key that does not exist
 	ErrKeyNotFound            = errors.New("nats: key not found")
+	// Guess: Get on key that was deleted
 	ErrKeyDeleted             = errors.New("nats: key was deleted")
+	// Guess: calling History on a key that has more than 64 revisions
 	ErrHistoryToLarge         = errors.New("nats: history limited to a max of 64")
+	// Guess: ?
 	ErrNoKeysFound            = errors.New("nats: no keys found")
 )
 
@@ -986,6 +1015,8 @@ func (s *KeyValueBucketStatus) History() int64 { return s.nfo.Config.MaxMsgsPerS
 func (s *KeyValueBucketStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
 
 // BackingStore indicates what technology is used for storage of the bucket
+// String retval, what are possible values?
+// How does this relate to Storage()
 func (s *KeyValueBucketStatus) BackingStore() string { return "JetStream" }
 
 // StreamInfo is the stream info retrieved to create the status

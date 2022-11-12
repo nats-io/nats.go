@@ -65,6 +65,7 @@ const (
 	LangString                = "go"
 )
 
+// Seems internal, they need to be exposed on the docs?
 const (
 	// STALE_CONNECTION is for detection and proper handling of stale connections.
 	STALE_CONNECTION = "stale connection"
@@ -89,55 +90,105 @@ const (
 )
 
 // Errors
+// Most of these are self-explanatory, but some could use a clarification
 var (
+	// Guess: ?
 	ErrConnectionClosed       = errors.New("nats: connection closed")
+	// Guess: when trying to do something with a client in draining state
 	ErrConnectionDraining     = errors.New("nats: connection draining")
+	// Guess: when drain can't drain within [ref to: DrainTimeout()]
 	ErrDrainTimeout           = errors.New("nats: draining connection timed out")
+	// Guess: ?
 	ErrConnectionReconnecting = errors.New("nats: connection reconnecting")
+	// Guess: when trying to connect to TLS server with non-TLS conection
 	ErrSecureConnRequired     = errors.New("nats: secure connection required")
+	// Guess: ? seems like a warning
 	ErrSecureConnWanted       = errors.New("nats: secure connection not available")
+	// Guess: Subscribe to stream that does not exist?
 	ErrBadSubscription        = errors.New("nats: invalid subscription")
+	// Guess: ?
 	ErrTypeSubscription       = errors.New("nats: invalid subscription type")
+	// Guess: Publish to a subject with characters not allowed
 	ErrBadSubject             = errors.New("nats: invalid subject")
+	// Guess: Queue that does not exist
 	ErrBadQueueName           = errors.New("nats: invalid queue name")
+	// Guess: ?
 	ErrSlowConsumer           = errors.New("nats: slow consumer, messages dropped")
+	// Guess: ? probably used in many different timeouts like Fetch, but could also be Connect, or Subscribe?
 	ErrTimeout                = errors.New("nats: timeout")
+	// Guess: one of the timeout parameters passed is negative or doesn't jive with the rest
 	ErrBadTimeout             = errors.New("nats: timeout invalid")
+	// Guess: wrong or missing credentials
 	ErrAuthorization          = errors.New("nats: authorization violation")
+	// Guess: token is valid but its lifetime is expired, so connection is rejected?
 	ErrAuthExpired            = errors.New("nats: authentication expired")
+	// Guess: valid auth, but lifetime expired
 	ErrAuthRevoked            = errors.New("nats: authentication revoked")
+	// Guess: valid auth, but lifetime expired
 	ErrAccountAuthExpired     = errors.New("nats: account authentication expired")
+	// Guess: none of the servers is listening? Maybe other cases too, like limit hit on connections?
 	ErrNoServers              = errors.New("nats: no servers available for connection")
+	// Seems internal
 	ErrJsonParse              = errors.New("nats: connect message, json parse error")
+	// Guess: ?
 	ErrChanArg                = errors.New("nats: argument needs to be a channel type")
+	// Guess: trying to send a message too large
 	ErrMaxPayload             = errors.New("nats: maximum payload exceeded")
+	// Guess: ?
 	ErrMaxMessages            = errors.New("nats: maximum messages delivered")
+	// Guess: ?
 	ErrSyncSubRequired        = errors.New("nats: illegal call on an async subscription")
+	// Guess: invalid config containing more than one tls config
 	ErrMultipleTLSConfigs     = errors.New("nats: multiple tls.Configs not allowed")
+	// Seems internal
 	ErrNoInfoReceived         = errors.New("nats: protocol exception, INFO not received")
+	// Seems internal
 	ErrReconnectBufExceeded   = errors.New("nats: outbound buffer limit exceeded")
+	// Seems internal
 	ErrInvalidConnection      = errors.New("nats: invalid connection")
+	// Seems internal
 	ErrInvalidMsg             = errors.New("nats: invalid message or message nil")
+	// Guess: ?
 	ErrInvalidArg             = errors.New("nats: invalid argument")
+	// Guess: ?
 	ErrInvalidContext         = errors.New("nats: invalid context")
+	// Guess: ?
 	ErrNoDeadlineContext      = errors.New("nats: context requires a deadline")
+	// Guess: ?
 	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
+	// Guess: ?
 	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
+	// Guess: ?
 	ErrUserButNoSigCB         = errors.New("nats: user callback defined without a signature handler")
+	// Guess: ?
 	ErrNkeyButNoSigCB         = errors.New("nats: nkey defined without a signature handler")
+	// Guess: ?
 	ErrNoUserCB               = errors.New("nats: user callback not defined")
+	// Guess: ?
 	ErrNkeyAndUser            = errors.New("nats: user callback and nkey defined")
+	// Guess: server does not support nkey auth, which the client is trying to use
 	ErrNkeysNotSupported      = errors.New("nats: nkeys not supported by the server")
+	// Seems internal
 	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
+	// Guess: ?
 	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
+	// Guess: ?
 	ErrMsgNotBound            = errors.New("nats: message is not bound to subscription/connection")
+	// Guess: trying to Reply() to a message that is not a request
 	ErrMsgNoReply             = errors.New("nats: message does not have a reply")
+	// Guess: ?
 	ErrClientIPNotSupported   = errors.New("nats: client IP not supported by this server")
+	// Guess: trying to use a client that is not connected and gave up trying to reconnect
 	ErrDisconnected           = errors.New("nats: server is disconnected")
+	// Guess: ?
 	ErrHeadersNotSupported    = errors.New("nats: headers not supported by this server")
+	// Guess: ?
 	ErrBadHeaderMsg           = errors.New("nats: message could not decode headers")
+	// Guess: request times out with no answer
 	ErrNoResponders           = errors.New("nats: no responders available for request")
+	// Server/cluster rejecting connection due to limit
 	ErrMaxConnectionsExceeded = errors.New("nats: server maximum connections exceeded")
+	// Guess: ?
 	ErrConnectionNotTLS       = errors.New("nats: connection is not tls")
 )
 
@@ -149,15 +200,25 @@ func init() {
 func GetDefaultOptions() Options {
 	return Options{
 		AllowReconnect:     true,
+		// Guess: number of internal retries to connect before it returns error
 		MaxReconnect:       DefaultMaxReconnect,
+		// Guess: pause between connect retries
 		ReconnectWait:      DefaultReconnectWait,
+		// Guess: jitter added or subtracted from next reconnect retry pause
 		ReconnectJitter:    DefaultReconnectJitter,
+		// Guess: set a different jitter for TLS (but why no different Wait for TLS?)
 		ReconnectJitterTLS: DefaultReconnectJitterTLS,
+		// Guess: no idea, could be 30 different timeouts in the system
 		Timeout:            DefaultTimeout,
+		// Guess: protocol is using ping, but who is it pinging? What happens if pings fail?
 		PingInterval:       DefaultPingInterval,
+		// Guess: ?, feels internal
 		MaxPingsOut:        DefaultMaxPingOut,
+		// Guess: ?, feels internal
 		SubChanLen:         DefaultMaxChanLen,
+		// Guess: ?, feels internal
 		ReconnectBufSize:   DefaultReconnectBufSize,
+		// Guess: time allowed to Drain() to complete, before it is interrupted forcefully
 		DrainTimeout:       DefaultDrainTimeout,
 	}
 }
@@ -170,6 +231,7 @@ var DefaultOptions = GetDefaultOptions()
 // Status represents the state of the connection.
 type Status int
 
+// Seems internal, they need to be exposed in the docs?
 const (
 	DISCONNECTED = Status(iota)
 	CONNECTED
@@ -202,10 +264,12 @@ func (s Status) String() string {
 
 // ConnHandler is used for asynchronous events such as
 // disconnected and closed connections.
+// Does it block client? What's a good use for it?
 type ConnHandler func(*Conn)
 
 // ConnErrHandler is used to process asynchronous events like
 // disconnected connection with the error (if any).
+// Does it block? What's a good use for it?
 type ConnErrHandler func(*Conn, error)
 
 // ErrHandler is used to process asynchronous errors encountered
@@ -223,6 +287,7 @@ type UserJWTHandler func() (string, error)
 type SignatureHandler func([]byte) ([]byte, error)
 
 // AuthTokenHandler is used to generate a new token.
+// Per client? Per request? per connection? Does it auto-renew expired tokens?
 type AuthTokenHandler func() string
 
 // ReconnectDelayHandler is used to get from the user the desired
@@ -249,6 +314,7 @@ type Option func(*Options) error
 
 // CustomDialer can be used to specify any dialer, not necessarily
 // a *net.Dialer.
+// Link to Golang net docs
 type CustomDialer interface {
 	Dial(network, address string) (net.Conn, error)
 }
@@ -492,6 +558,7 @@ const (
 // A Conn represents a bare connection to a nats-server.
 // It can send and receive []byte payloads.
 // The connection is safe to use in multiple Go routines concurrently.
+// Doc makes this sound internal, but it's actually the main "Client" object used **everywhere**
 type Conn struct {
 	// Keep all members for which we use atomic at the beginning of the
 	// struct and make sure they are all 64bits (or use padding if necessary).
@@ -609,16 +676,24 @@ type Subscription struct {
 // In case using JetStream, there are multiple ways to ack a Msg:
 //
 //	// Acknowledgement that a message has been processed.
+// Raises the watermark for this consumer
 //	msg.Ack()
 //
+//
 //	// Negatively acknowledges a message.
+// What are the consequences/effects of nacking a message?
 //	msg.Nak()
 //
 //	// Terminate a message so that it is not redelivered further.
+// To just this consumer, or terminates it for all consumers of the stream?
 //	msg.Term()
 //
 //	// Signal the server that the message is being worked on and reset redelivery timer.
 //	msg.InProgress()
+
+//This section on ACKS is useful, but kinda hard to find it under Msg.
+// I have been looking at the docs daily for over a year and never know it was here.
+// Complained multiple times in these notes there's no doc for ACK behavior. I guess some exists after all.
 type Msg struct {
 	Subject string
 	Reply   string
@@ -632,7 +707,7 @@ type Msg struct {
 	ackd    uint32
 }
 
-// Compares two msgs, ignores sub but checks all other public fields.
+// Compares two msgs, ignores subscription but checks all other public fields.
 func (m *Msg) Equal(msg *Msg) bool {
 	if m == msg {
 		return true
@@ -772,6 +847,8 @@ type MsgHandler func(msg *Msg)
 // Options start with the defaults but can be overridden.
 // To connect to a NATS Server's websocket port, use the `ws` or `wss` scheme, such as
 // `ws://localhost:8080`. Note that websocket schemes cannot be mixed with others (nats/tls).
+// This multi-line comment gets squished in the rendered docs.
+// Add example with multiple servers?
 func Connect(url string, options ...Option) (*Conn, error) {
 	opts := GetDefaultOptions()
 	opts.Servers = processUrlString(url)
@@ -795,8 +872,9 @@ func Name(name string) Option {
 	}
 }
 
-// InProcessServer is an Option that will try to establish a direction to a NATS server
+// InProcessServer is an Option that will try to establish a connection to a NATS server
 // running within the process instead of dialing via TCP.
+// How to start the in-process server?
 func InProcessServer(server InProcessConnProvider) Option {
 	return func(o *Options) error {
 		o.InProcessServer = server
@@ -902,6 +980,8 @@ func ReconnectWait(t time.Duration) Option {
 
 // MaxReconnects is an Option to set the maximum number of reconnect attempts.
 // Defaults to 60.
+// Is this just for the starting Connect or during the lifetime of the Conn?
+// what happens after the limit is reached?
 func MaxReconnects(max int) Option {
 	return func(o *Options) error {
 		o.MaxReconnect = max
@@ -1168,6 +1248,7 @@ func SetCustomDialer(dialer CustomDialer) Option {
 }
 
 // UseOldRequestStyle is an Option to force usage of the old Request style.
+// Mark deprecated?
 func UseOldRequestStyle() Option {
 	return func(o *Options) error {
 		o.UseOldRequestStyle = true
@@ -1249,6 +1330,8 @@ func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 }
 
 // SetDisconnectErrHandler will set the disconnect event handler.
+// Guess: sets a callback invoked every time there is a disconnection.
+// Does this block the internal retry loop
 func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 	if nc == nil {
 		return
@@ -1259,6 +1342,8 @@ func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 }
 
 // SetReconnectHandler will set the reconnect event handler.
+// Guess: invoked when attempting reconnection OR when successfully reconnected
+// Or maybe can be used to implement custom retry actions?
 func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 	if nc == nil {
 		return
@@ -1269,6 +1354,7 @@ func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 }
 
 // SetDiscoveredServersHandler will set the discovered servers handler.
+// Guess: callback invoked every time a new server is discovered
 func (nc *Conn) SetDiscoveredServersHandler(dscb ConnHandler) {
 	if nc == nil {
 		return
@@ -1279,6 +1365,8 @@ func (nc *Conn) SetDiscoveredServersHandler(dscb ConnHandler) {
 }
 
 // SetClosedHandler will set the closed event handler.
+// Guess: sets a callback that is invoked when Close() is invoked
+// Invoked synchronously?
 func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 	if nc == nil {
 		return
@@ -1289,6 +1377,9 @@ func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 }
 
 // SetErrorHandler will set the async error handler.
+// Guess: sets a callback that is invoked each time the connection encounters an error
+// Does it block the client?
+// What is an appropriate use of this?
 func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 	if nc == nil {
 		return
@@ -1919,6 +2010,9 @@ func (nc *Conn) waitForExits() {
 }
 
 // ConnectedUrl reports the connected server's URL
+// Is this verbatim what was used to connect?
+// Or maybe some more discovered?
+// Or maybe just the one currently connected?
 func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
 		return _EMPTY_
@@ -1949,6 +2043,7 @@ func (nc *Conn) ConnectedUrlRedacted() string {
 }
 
 // ConnectedAddr returns the connected server's IP
+// A seen by the client, or as known by the server? The two might differ, e.g. if a proxy is in between
 func (nc *Conn) ConnectedAddr() string {
 	if nc == nil {
 		return _EMPTY_
@@ -3386,6 +3481,8 @@ func (nc *Conn) kickFlusher() {
 // Publish publishes the data argument to the given subject. The data
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
+// Most common errors to guard against?
+// Note this is best effort pub/sub, for reliable/durable/ordered see js.Publish
 func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, nil, data)
 }
@@ -3536,6 +3633,9 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 // PublishRequest will perform a Publish() expecting a response on the
 // reply subject. Use Request() for automatically waiting for a response
 // inline.
+// Point to the recommended way to create a good reply string
+// Should be listening for replies before sending request
+// May receive none or multiple replies
 func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 	return nc.publish(subj, reply, nil, data)
 }
@@ -3742,8 +3842,10 @@ func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
 	return nc.request(msg.Subject, hdr, msg.Data, timeout)
 }
 
-// Request will send a request payload and deliver the response message,
-// or an error, including a timeout if no message was received properly.
+// Request will send a request payload, then wait and return the response message,
+// or an error, including a timeout if no response was received.
+// What happens to other responses, if multiple are received?
+// Do they accumulate somewhere which may eventually blow-up?
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	return nc.request(subj, nil, data, timeout)
 }
@@ -3826,6 +3928,7 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 }
 
 // InboxPrefix is the prefix for all inbox subjects.
+// Seems internal, they need to be exposed in the docs?
 const (
 	InboxPrefix    = "_INBOX."
 	inboxPrefixLen = len(InboxPrefix)
@@ -3837,6 +3940,7 @@ const (
 // NewInbox will return an inbox string which can be used for directed replies from
 // subscribers. These are guaranteed to be unique, but can be shared and subscribed
 // to by others.
+// Hide?
 func NewInbox() string {
 	var b [inboxPrefixLen + nuidSize]byte
 	pres := b[:inboxPrefixLen]
@@ -3847,6 +3951,9 @@ func NewInbox() string {
 }
 
 // Create a new inbox that is prefix aware.
+// What's an appropriate use for this?
+// Link to Prefix()?
+// Also seems deprecated by NewRespInbox?
 func (nc *Conn) NewInbox() string {
 	if nc.Opts.InboxPrefix == _EMPTY_ {
 		return NewInbox()
@@ -3889,6 +3996,8 @@ func (nc *Conn) newRespInbox() string {
 }
 
 // NewRespInbox is the new format used for _INBOX.
+// What is an _INBOX?
+// When should I use this?
 func (nc *Conn) NewRespInbox() string {
 	nc.mu.Lock()
 	s := nc.newRespInbox()
@@ -3917,6 +4026,11 @@ func (nc *Conn) respToken(respInbox string) string {
 // time.us.east and time.us.east.atlanta, while time.us.* would only match time.us.east
 // since it can't match more than one token.
 // Messages will be delivered to the associated MsgHandler.
+// Docs squish this into a single line
+// Link to general NATS core subscribe high level explanation would be useful
+// What kinds of errors?
+// Note it's for unreliable pub/sub, see js.Subscribe for reliable/ordered/...
+// Are messages delivered to handler one at the time, or in parallel on multiple goroutines?
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, _EMPTY_, cb, nil, false, nil)
 }
@@ -3934,6 +4048,7 @@ func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) 
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than QueueSubscribeSyncWithChan.
+// Should one of the two be marked deprecated? Which one is recommended?
 func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
 	return nc.subscribe(subj, group, nil, ch, false, nil)
 }
@@ -3952,6 +4067,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 // All subscribers with the same queue name will form the queue group and
 // only one member of the group will be selected to receive any given
 // message asynchronously.
+// Point to high level overview of 'Queue' feature
 func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
 	return nc.subscribe(subj, queue, cb, nil, false, nil)
 }
@@ -3960,6 +4076,7 @@ func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription
 // subject. All subscribers with the same queue name will form the queue
 // group and only one member of the group will be selected to receive any
 // given message synchronously using Subscription.NextMsg().
+// Point to high level overview of 'Queue' feature
 func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	return nc.subscribe(subj, queue, nil, mch, true, nil)
@@ -3971,6 +4088,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // which will be placed on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than ChanQueueSubscribe.
+// Point to high level overview of 'Queue' feature
 func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
 	return nc.subscribe(subj, queue, nil, ch, false, nil)
 }
@@ -4080,6 +4198,7 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 }
 
 // NumSubscriptions returns active number of subscriptions.
+// Just the ones i explicitly created with Subscribe(), or internal too?
 func (nc *Conn) NumSubscriptions() int {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -4122,6 +4241,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 type SubscriptionType int
 
 // The different types of subscription types.
+// Seems internal, they need to be exposed in the docs?
 const (
 	AsyncSubscription = SubscriptionType(iota)
 	SyncSubscription
@@ -4548,6 +4668,7 @@ func (s *Subscription) ClearMaxPending() error {
 }
 
 // Pending Limits
+// Seems internal, they need to be exposed in the docs?
 const (
 	// DefaultSubPendingMsgsLimit will be 512k msgs.
 	DefaultSubPendingMsgsLimit = 512 * 1024
@@ -4763,12 +4884,15 @@ func (nc *Conn) RTT() (time.Duration, error) {
 
 // Flush will perform a round trip to the server and return when it
 // receives the internal reply.
+// Description references round-trip which to a user may not mean much.
+// When is appropriate to manually flush?
 func (nc *Conn) Flush() error {
 	return nc.FlushTimeout(10 * time.Second)
 }
 
 // Buffered will return the number of bytes buffered to be sent to the server.
 // FIXME(dlc) take into account disconnected state.
+// What's a good/proper use of this?
 func (nc *Conn) Buffered() (int, error) {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -5121,9 +5245,8 @@ func (nc *Conn) getServers(implicitOnly bool) []string {
 }
 
 // Servers returns the list of known server urls, including additional
-// servers discovered after a connection has been established.  If
-// authentication is enabled, use UserInfo or Token when connecting with
-// these urls.
+// servers discovered after a connection has been established.
+// These URLs don't include authentication information (user:pass, token).
 func (nc *Conn) Servers() []string {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -5176,7 +5299,7 @@ func (nc *Conn) isDrainingPubs() bool {
 	return nc.status == DRAINING_PUBS
 }
 
-// Stats will return a race safe copy of the Statistics section for the connection.
+// Stats will return a race snapshot of the Statistics of the connection.
 func (nc *Conn) Stats() Statistics {
 	// Stats are updated either under connection's mu or with atomic operations
 	// for inbound stats in processMsg().
@@ -5209,6 +5332,7 @@ func (nc *Conn) HeadersSupported() bool {
 }
 
 // AuthRequired will return if the connected server requires authorization.
+// Wouldn't a server requiring auth kick me out in the first place?
 func (nc *Conn) AuthRequired() bool {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -5216,6 +5340,7 @@ func (nc *Conn) AuthRequired() bool {
 }
 
 // TLSRequired will return if the connected server requires TLS connections.
+// Is this internal? Wouldn't a server just kick me out if TLS is required?
 func (nc *Conn) TLSRequired() bool {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -5229,6 +5354,8 @@ func (nc *Conn) TLSRequired() bool {
 // right away.
 // ErrConnectionClosed is returned if the connection is closed prior to
 // the call.
+// > 'all registered asynchronous subscriptions'
+// What kind of subscriptions? nc.Subscribe? probably not, but not sure
 func (nc *Conn) Barrier(f func()) error {
 	nc.mu.Lock()
 	if nc.isClosed() {

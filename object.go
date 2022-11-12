@@ -58,6 +58,7 @@ type ObjectStoreManager interface {
 // This functionality is EXPERIMENTAL and may be changed in later releases.
 type ObjectStore interface {
 	// Put will place the contents from the reader into a new object.
+	// Fails if object exists?
 	Put(obj *ObjectMeta, reader io.Reader, opts ...ObjectOpt) (*ObjectInfo, error)
 	// Get will pull the named object from the object store.
 	Get(name string, opts ...GetObjectOpt) (ObjectResult, error)
@@ -73,6 +74,7 @@ type ObjectStore interface {
 	GetString(name string, opts ...GetObjectOpt) (string, error)
 
 	// PutFile is convenience function to put a file into this object store.
+	// What key is used? basename? absname? as-is path?
 	PutFile(file string, opts ...ObjectOpt) (*ObjectInfo, error)
 	// GetFile is a convenience function to pull an object from this object store and place it in a file.
 	GetFile(name, file string, opts ...GetObjectOpt) error
@@ -92,6 +94,7 @@ type ObjectStore interface {
 	AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, error)
 
 	// Seal will seal the object store, no further modifications will be allowed.
+	// Does delete work on sealed?
 	Seal() error
 
 	// Watch for changes in the underlying store and receive meta information updates.
@@ -126,24 +129,44 @@ type ObjectWatcher interface {
 	Stop() error
 }
 
+// Errors of ObjectStore API
+// Most of these are self-explanatory, but some could use a clarification
 var (
+	// Guess: missing required config parameters for Create()
 	ErrObjectConfigRequired = errors.New("nats: object-store config required")
+	// Guess: corrupted bucket
 	ErrBadObjectMeta        = errors.New("nats: object-store meta information invalid")
+	// Guess: Get or Delete if object key does not exist or was deleted
 	ErrObjectNotFound       = errors.New("nats: object not found")
+	// Guess: illegal characters in bucket name during Create
 	ErrInvalidStoreName     = errors.New("nats: invalid object-store name")
+	// Guess: ?
 	ErrDigestMismatch       = errors.New("nats: received a corrupt object, digests do not match")
+	// Guess: ?
 	ErrInvalidDigestFormat  = errors.New("nats: object digest hash has invalid format")
+	// Guess: ?
 	ErrNoObjectsFound       = errors.New("nats: no objects found")
+	// Guess: Create() for object that already exists
 	ErrObjectAlreadyExists  = errors.New("nats: an object already exists with that name")
+	// Guess: empty key for object Put/Create or bucket create/lookup
 	ErrNameRequired         = errors.New("nats: name is required")
+	// Guess: Server v2.6.2 is the first one supporting ObjectStore API
 	ErrNeeds262             = errors.New("nats: object-store requires at least server version 2.6.2")
+	// Guess: ?
 	ErrLinkNotAllowed       = errors.New("nats: link cannot be set when putting the object in bucket")
+	// Guess: ?
 	ErrObjectRequired       = errors.New("nats: object required")
+	// Guess: trying to create link to deleted object
 	ErrNoLinkToDeleted      = errors.New("nats: not allowed to link to a deleted object")
+	// Guess: trying to create link to a link
 	ErrNoLinkToLink         = errors.New("nats: not allowed to link to another link")
+	// Guess: Calling Get() or other object operation on a link that points to a bucket
 	ErrCantGetBucket        = errors.New("nats: invalid Get, object is a link to a bucket")
+	// Guess: ?
 	ErrBucketRequired       = errors.New("nats: bucket required")
+	// Guess: ?
 	ErrBucketMalformed      = errors.New("nats: bucket malformed")
+	// Guess: trying to update metadata of deleted object or bucket
 	ErrUpdateMetaDeleted    = errors.New("nats: cannot update meta for a deleted object")
 )
 
@@ -151,7 +174,9 @@ var (
 type ObjectStoreConfig struct {
 	Bucket      string
 	Description string
+	// Guess: is it for objects or for the store itself?
 	TTL         time.Duration
+	// Guess: what is included in this?
 	MaxBytes    int64
 	Storage     StorageType
 	Replicas    int
@@ -174,6 +199,7 @@ type ObjectStoreStatus interface {
 	// Size is the combined size of all data in the bucket including metadata, in bytes
 	Size() uint64
 	// BackingStore provides details about the underlying storage
+	// String return, possible values?
 	BackingStore() string
 }
 
@@ -489,12 +515,14 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 }
 
 // GetObjectDigestValue calculates the base64 value of hashed data
+// Seems internal
 func GetObjectDigestValue(data hash.Hash) string {
 	sha := data.Sum(nil)
 	return fmt.Sprintf(objDigestTmpl, base64.URLEncoding.EncodeToString(sha[:]))
 }
 
 // DecodeObjectDigest decodes base64 hash
+// Seems internal
 func DecodeObjectDigest(data string) ([]byte, error) {
 	digest := strings.SplitN(data, "=", 2)
 	if len(digest) != 2 {

@@ -33,6 +33,7 @@ func (nc *Conn) RequestMsgWithContext(ctx context.Context, msg *Msg) (*Msg, erro
 
 // RequestWithContext takes a context, a subject and payload
 // in bytes and request expecting a single response.
+// See: Request(), takes an additional context argument which enables cancellation
 func (nc *Conn) RequestWithContext(ctx context.Context, subj string, data []byte) (*Msg, error) {
 	return nc.requestWithContext(ctx, subj, nil, data)
 }

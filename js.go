@@ -33,6 +33,9 @@ import (
 // JetStream allows persistent messaging through JetStream.
 type JetStream interface {
 	// Publish publishes a message to JetStream.
+	// Just using js.Publish does not persist messages!
+	// One has to first create a stream that captures those messages
+	// Link to commonly used PubOpt
 	Publish(subj string, data []byte, opts ...PubOpt) (*PubAck, error)
 
 	// PublishMsg publishes a Msg to JetStream.
@@ -60,6 +63,9 @@ type JetStream interface {
 	// stream the subscription is for. See important notes below for more details.
 	//
 	// IMPORTANT NOTES:
+	// This is quite intimidating to someone trying out JS for the first time.
+	// MAybe instead point to examples of 5 good ways of creating a consumer
+	// Explaining why each one is used/useful
 	// * If none of the options Bind() nor Durable() are specified, the library will
 	// send a request to the server to create an ephemeral JetStream consumer,
 	// which will be deleted after an Unsubscribe() or Drain(), or automatically
@@ -113,6 +119,9 @@ type JetStreamContext interface {
 }
 
 // Request API subjects for JetStream.
+// This comment ⬆️ end up rendered under near a different set of consts, so it's confusing.
+// Probably because nothing down here ⬇️ is exported
+// See: https://pkg.go.dev/github.com/nats-io/nats.go#pkg-constants
 const (
 	// defaultAPIPrefix is the default prefix for the JetStream API.
 	defaultAPIPrefix = "$JS.API."
@@ -272,6 +281,8 @@ const (
 
 // JetStream returns a JetStreamContext for messaging and stream management.
 // Errors are only returned if inconsistent options are provided.
+// Seems to imply this is a client-only initialization which does not contact the server.
+// Not even to ask if JS is enabled. Is that right?
 func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 	js := &js{
 		nc: nc,
@@ -291,6 +302,10 @@ func (nc *Conn) JetStream(opts ...JSOpt) (JetStreamContext, error) {
 }
 
 // JSOpt configures a JetStreamContext.
+// JSOpts are hard to find in the doc, because their concrete type is not JSOpt.
+// Maybe list the most important here?
+// Alternatively, each call should say which JSOpts are accpeted/honored
+// Example: `MaxWait` in docs not clearly identified as Opt by its type. Hard to find on the page with ctrl-f. Which API actually accept it, etc.
 type JSOpt interface {
 	configureJSContext(opts *jsOpts) error
 }
@@ -309,6 +324,7 @@ type featureFlags struct {
 // UseLegacyDurableConsumers makes JetStream use the legacy (pre nats-server v2.9.0) subjects for consumer creation.
 // If this option is used when creating JetStremContext, $JS.API.CONSUMER.DURABLE.CREATE.<stream>.<consumer> will be used
 // to create a consumer with Durable provided, rather than $JS.API.CONSUMER.CREATE.<stream>.<consumer>.
+// Mark as deprecated?
 func UseLegacyDurableConsumers() JSOpt {
 	return jsOptFn(func(opts *jsOpts) error {
 		opts.featureFlags.useDurableConsumerCreate = true
@@ -317,6 +333,7 @@ func UseLegacyDurableConsumers() JSOpt {
 }
 
 // ClientTrace can be used to trace API interactions for the JetStream Context.
+// Not referenced anywhere in the docs, internal?
 type ClientTrace struct {
 	RequestSent      func(subj string, payload []byte)
 	ResponseReceived func(subj string, payload []byte, hdr Header)
@@ -329,6 +346,8 @@ func (ct ClientTrace) configureJSContext(js *jsOpts) error {
 }
 
 // Domain changes the domain part of JetStream API prefix.
+// What is a good use of this?
+// e.g. can i use it to have 2 streams with the same name in the same account?
 func Domain(domain string) JSOpt {
 	if domain == _EMPTY_ {
 		return APIPrefix(_EMPTY_)
@@ -354,6 +373,8 @@ func (s *StreamInfoRequest) configureJSContext(js *jsOpts) error {
 }
 
 // APIPrefix changes the default prefix used for the JetStream API.
+// What is the prefix used for?
+// In what cases should an application be using this?
 func APIPrefix(pre string) JSOpt {
 	return jsOptFn(func(js *jsOpts) error {
 		if pre == _EMPTY_ {
@@ -372,6 +393,9 @@ func APIPrefix(pre string) JSOpt {
 // DirectGet is an option that can be used to make GetMsg() or GetLastMsg()
 // retrieve message directly from a group of servers (leader and replicas)
 // if the stream was created with the AllowDirect option.
+// As opposed to getting it from where else?
+// Is this a speed optimization?
+// Are there any consistency tradeoffs?
 func DirectGet() JSOpt {
 	return jsOptFn(func(js *jsOpts) error {
 		js.directGet = true
@@ -458,6 +482,10 @@ type PubAck struct {
 }
 
 // Headers for published messages.
+// Should users be setting these headers manually?
+// Maybe clearly flag as _internal_ headers to avoid at all costs?
+// Otherwise just hide them
+// Header for deduplication should maybe appear here?
 const (
 	MsgIdHdr               = "Nats-Msg-Id"
 	ExpectedStreamHdr      = "Nats-Expected-Stream"
@@ -468,6 +496,8 @@ const (
 )
 
 // Headers for republished messages and direct gets.
+// This seems internal. Could mark as such, and explain how they are used
+// (could come be useful for debugging)
 const (
 	JSStream       = "Nats-Stream"
 	JSSequence     = "Nats-Sequence"
@@ -477,9 +507,11 @@ const (
 )
 
 // MsgSize is a header that will be part of a consumer's delivered message if HeadersOnly requested.
+// Guess: additional header attached to messages delivered in 'HeadersOnly' mode.
 const MsgSize = "Nats-Msg-Size"
 
 // Rollups, can be subject only or all messages.
+// Same as the rest, of headers.
 const (
 	MsgRollupSubject = "sub"
 	MsgRollupAll     = "all"
@@ -803,6 +835,7 @@ func PublishAsyncErrHandler(cb MsgErrHandler) JSOpt {
 }
 
 // PublishAsyncMaxPending sets the maximum outstanding async publishes that can be inflight at one time.
+// Does this interact with the ACK window, or it's independent?
 func PublishAsyncMaxPending(max int) JSOpt {
 	return jsOptFn(func(js *jsOpts) error {
 		if max < 1 {
@@ -980,6 +1013,10 @@ type ackOpts struct {
 }
 
 // AckOpt are the options that can be passed when acknowledge a message.
+// This comment appears twice in the docs because it's duplicated to the command below.
+// Simple inline example: msg.Ack(Foo(...), Bar(...))
+// List of AckOpt options are not easy to find in the docs
+// This is used for Nacks too
 type AckOpt interface {
 	configureAck(opts *ackOpts) error
 }
@@ -998,6 +1035,7 @@ func (ttl MaxWait) configurePull(opts *pullOpts) error {
 }
 
 // AckWait sets the maximum amount of time we will wait for an ack.
+// Guess: when publishing a message
 type AckWait time.Duration
 
 func (ttl AckWait) configurePublish(opts *pubOpts) error {
@@ -1047,6 +1085,9 @@ func (ctx ContextOpt) configureAck(opts *ackOpts) error {
 
 // Context returns an option that can be used to configure a context for APIs
 // that are context aware such as those part of the JetStream interface.
+// Link to Golang context high level overview?
+// Makes JS blocking operations respond to context cancellations
+// Could be confused with NGS context (on-disk connection settings and credentials)
 func Context(ctx context.Context) ContextOpt {
 	return ContextOpt{ctx}
 }
@@ -1061,58 +1102,103 @@ func (d nakDelay) configureAck(opts *ackOpts) error {
 // Subscribe
 
 // ConsumerConfig is the configuration of a JetStream consumer.
+// A lot of these are self explanatory, but comment wouldn't hurt
 type ConsumerConfig struct {
+	// Guess: Name of durable consumer
+	// link to durable consumer high level explanation
 	Durable         string          `json:"durable_name,omitempty"`
+	// Guess: name mostly for debugging
+	// What uniqueness requirements?
 	Name            string          `json:"name,omitempty"`
+	// Guess: arbitrary description attached to this consumer, for application debugging
 	Description     string          `json:"description,omitempty"`
+	// Determines where in a stream the consumer starts
 	DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
+	// ?
 	OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
+	// ?
 	OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
+	// Guess: tells server which acks to expect from this consumer
+	// Guess: configures client-side auto-ack policy?
 	AckPolicy       AckPolicy       `json:"ack_policy"`
+	// Guess: something to do with timeout ACKing messages
 	AckWait         time.Duration   `json:"ack_wait,omitempty"`
+	// Guess: stop delivering after a fixed number of messages?
+	// Or maybe controls ack window?
 	MaxDeliver      int             `json:"max_deliver,omitempty"`
+	// Guess: not sure what this backoffs are applied to
 	BackOff         []time.Duration `json:"backoff,omitempty"`
+	// Guess: when subscribing to wildcard, pre-filters messages delivered to the application
+	// Is it a regex? does it accept wildcards?
 	FilterSubject   string          `json:"filter_subject,omitempty"`
+	// Link to high level explanation of 'Replay'
 	ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
+	// Guess: slows down deliveries to some max BPS, but how is calculated?
+  // Unit (BPS) does not appear in docs
 	RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
+	// Guess: ?
 	SampleFrequency string          `json:"sample_freq,omitempty"`
+	// Guess: ?
 	MaxWaiting      int             `json:"max_waiting,omitempty"`
+	// Guess: some kind of ack window, but unclear
 	MaxAckPending   int             `json:"max_ack_pending,omitempty"`
+	// Link to flow control high level explanation
 	FlowControl     bool            `json:"flow_control,omitempty"`
+	// What happens if low/high? Who is heartbeating who?
 	Heartbeat       time.Duration   `json:"idle_heartbeat,omitempty"`
+	// Guess: Receive headers only, message data is empty
+	// Which headers are set? Just application or internal ones too?
 	HeadersOnly     bool            `json:"headers_only,omitempty"`
 
 	// Pull based options.
+	// ?
 	MaxRequestBatch    int           `json:"max_batch,omitempty"`
+	// ?
 	MaxRequestExpires  time.Duration `json:"max_expires,omitempty"`
+	// ?
 	MaxRequestMaxBytes int           `json:"max_bytes,omitempty"`
 
 	// Push based consumers.
+	// Guess: remaps subject to some string before delivering to application?
 	DeliverSubject string `json:"deliver_subject,omitempty"`
+	// Guess: subscribe to group (link to 'group' delivery high level doc )
 	DeliverGroup   string `json:"deliver_group,omitempty"`
 
 	// Inactivity threshold.
+	// Guess: time before a server is flagged as non-responding
 	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 
 	// Generally inherited by parent stream and other markers, now can be configured directly.
+	// Guess: number of replicas storing state of a durable consumer
 	Replicas int `json:"num_replicas"`
 	// Force memory storage.
+	// Guess: do not persist durable consumer state on-disk, even if stream is backed by disk storage
 	MemoryStorage bool `json:"mem_storage,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
+// Mostly self-explanatory, but some could use a clarification
 type ConsumerInfo struct {
 	Stream         string         `json:"stream_name"`
 	Name           string         `json:"name"`
+	// Guess: timestamp when consumer was created in the server state
+	// But could also be the time AddConsumer was called, which for a durable consumer may be quite far apart from server
 	Created        time.Time      `json:"created"`
 	Config         ConsumerConfig `json:"config"`
+	// Guess: sequence of last delivered (or ACKed?) message
 	Delivered      SequenceInfo   `json:"delivered"`
+	// Guess: Earliest acked message sequence
 	AckFloor       SequenceInfo   `json:"ack_floor"`
+	// Guess: acks in flight or not yet confirmed received by server
 	NumAckPending  int            `json:"num_ack_pending"`
+	// Guess: count of messages that were not ACKed by client within ack time, and so were re-deliverd to the application
 	NumRedelivered int            `json:"num_redelivered"`
+	// Guess: ?
 	NumWaiting     int            `json:"num_waiting"`
+	// Guess: ?
 	NumPending     uint64         `json:"num_pending"`
 	Cluster        *ClusterInfo   `json:"cluster,omitempty"`
+	// Guess: ?
 	PushBound      bool           `json:"push_bound,omitempty"`
 }
 
@@ -1125,7 +1211,9 @@ type SequenceInfo struct {
 
 // SequencePair includes the consumer and stream sequence info from a JetStream consumer.
 type SequencePair struct {
+	// Guess: sequence number for stream/consumer pair
 	Consumer uint64 `json:"consumer_seq"`
+	// Guess: sequence number in the stream
 	Stream   uint64 `json:"stream_seq"`
 }
 
@@ -1229,6 +1317,10 @@ func (opt subOptFn) configureSubscribe(opts *subOpts) error {
 // * If Bind() option is provided, the library will attempt to lookup the
 // consumer with the given name, and if successful, bind to it. If the lookup fails,
 // then the Subscribe() call will return an error.
+// This can be quite intimidating. I'd point to a blessed set of example to correctly create various kinds of consumers.
+// I'd also highlight that Subscribe by default is not ordered.
+// Toy experiments will return messages in order, so one may expect that to hold true universally.
+// But that's not the case except for Ordered.
 func (js *js) Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error) {
 	if cb == nil {
 		return nil, ErrBadSubscription
@@ -1806,6 +1898,7 @@ type ErrConsumerSequenceMismatch struct {
 	LastConsumerSequence uint64
 }
 
+// No doc, internal?
 func (ecs *ErrConsumerSequenceMismatch) Error() string {
 	return fmt.Sprintf("nats: sequence mismatch for consumer at sequence %d (%d sequences behind), should restart consumer from stream sequence %d",
 		ecs.ConsumerSequence,
@@ -2169,6 +2262,7 @@ func OrderedConsumer() SubOpt {
 }
 
 // ManualAck disables auto ack functionality for async subscriptions.
+// This was not referenced in other docs/examples that do manual ACKs
 func ManualAck() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.mack = true
@@ -2380,6 +2474,7 @@ func Bind(stream, consumer string) SubOpt {
 }
 
 // EnableFlowControl enables flow control for a push based consumer.
+// How does it work / what does it do?
 func EnableFlowControl() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.FlowControl = true
@@ -2410,6 +2505,8 @@ func DeliverSubject(subject string) SubOpt {
 }
 
 // HeadersOnly() will instruct the consumer to only deliver headers and no payloads.
+// What headers may be attached to a message delivered in this mode?
+// Just the original application headers, or more internal stuff?
 func HeadersOnly() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.HeadersOnly = true
@@ -3074,10 +3171,12 @@ func parseNum(d string) (n int64) {
 }
 
 // AckPolicy determines how the consumer should acknowledge delivered messages.
+// Guess: tells the server how this consumer will behave. So influences both client and server behavior.
 type AckPolicy int
 
 const (
 	// AckNonePolicy requires no acks for delivered messages.
+	// Guess: consumer will not send acks, server assumes messages are received
 	AckNonePolicy AckPolicy = iota
 
 	// AckAllPolicy when acking a sequence number, this implicitly acks all
@@ -3085,6 +3184,7 @@ const (
 	AckAllPolicy
 
 	// AckExplicitPolicy requires ack or nack for all messages.
+	// Guess: tell server that each non-acked message should be re-delivered after some time
 	AckExplicitPolicy
 
 	// For configuration mismatch check
@@ -3095,6 +3195,7 @@ func jsonString(s string) string {
 	return "\"" + s + "\""
 }
 
+// Internal? If not, no doc
 func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
 	case jsonString("none"):
@@ -3110,6 +3211,7 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Internal? If not, no doc
 func (p AckPolicy) MarshalJSON() ([]byte, error) {
 	switch p {
 	case AckNonePolicy:
@@ -3215,6 +3317,7 @@ const (
 	deliverPolicyNotSet = 99
 )
 
+// Guess: ?
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
 	switch string(data) {
 	case jsonString("all"), jsonString("undefined"):
@@ -3234,6 +3337,7 @@ func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Guess: ?
 func (p DeliverPolicy) MarshalJSON() ([]byte, error) {
 	switch p {
 	case DeliverAllPolicy:

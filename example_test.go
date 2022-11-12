@@ -23,6 +23,9 @@ import (
 )
 
 // Shows different ways to create a Conn.
+// Add example with multiple servers?
+// Add example with token?
+// Add example with ws:// (maybe MQTT or other too?)
 func ExampleConnect() {
 	nc, _ := nats.Connect("demo.nats.io")
 	nc.Close()
@@ -45,6 +48,7 @@ func ExampleConnect() {
 }
 
 // This Example shows an asynchronous subscriber.
+// Add error handling
 func ExampleConn_Subscribe() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
@@ -55,6 +59,7 @@ func ExampleConn_Subscribe() {
 }
 
 // This Example shows a synchronous subscriber.
+// Distinguish 'no messages' timeout from other errors?
 func ExampleConn_SubscribeSync() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
@@ -90,6 +95,7 @@ func ExampleSubscription_Unsubscribe() {
 	sub.Unsubscribe()
 }
 
+// Maybe add error handling? so copy-pasters don't forget to do it?
 func ExampleConn_Publish() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
@@ -97,6 +103,7 @@ func ExampleConn_Publish() {
 	nc.Publish("foo", []byte("Hello World!"))
 }
 
+// Maybe add error handling? so copy-pasters don't forget to do it?
 func ExampleConn_PublishMsg() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
@@ -180,6 +187,7 @@ func ExampleConn_Close() {
 }
 
 // Shows how to wrap a Conn into an EncodedConn
+// Do something with the encoded connection that was not possible with the bare one
 func ExampleNewEncodedConn() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	c, _ := nats.NewEncodedConn(nc, "json")
@@ -674,14 +682,17 @@ func ExampleAckWait() {
 	})
 
 	// Wait for an ack response for 2 seconds.
+	// After which, Publish returns a timeoutError?
 	js.Publish("foo", []byte("Hello JS!"), nats.AckWait(2*time.Second))
 
 	// Create consumer on 'foo' subject that waits for an ack for 10s,
 	// after which the message will be delivered.
+	// Guess: If the consumer fails to ACK in 10s, message will be re-delivered
 	sub, _ := js.SubscribeSync("foo", nats.AckWait(10*time.Second))
 	msg, _ := sub.NextMsg(2 * time.Second)
 
 	// Wait for ack of ack for 2s.
+	// If AckSync is not successful in 2s, it will return a timeout error?
 	msg.AckSync(nats.AckWait(2 * time.Second))
 }
 
@@ -729,6 +740,9 @@ func ExampleMsg_Metadata() {
 }
 
 // AckOpt are the options that can be passed when acknowledge a message.
+// This example is 70 LOC and 69 are unrelated to AckOpt.
+// The bit that is relevant is hard to miss: msg.Ack(nats.Context(ctx))
+// And it's unclear what that does.
 func ExampleAckOpt() {
 	nc, err := nats.Connect("localhost")
 	if err != nil {

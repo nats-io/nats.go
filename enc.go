@@ -25,6 +25,9 @@ import (
 )
 
 // Encoder interface is for all register encoders
+// Guess: encoder turns arbitrary message structs into bytes
+// Encode on publisher side must match with Decode on consumer side.
+// Who/how handles encoding/decoding errors?
 type Encoder interface {
 	Encode(subject string, v interface{}) ([]byte, error)
 	Decode(subject string, data []byte, vPtr interface{}) error
@@ -51,6 +54,8 @@ func init() {
 // EncodedConn are the preferred way to interface with NATS. They wrap a bare connection to
 // a nats server and have an extendable encoder system that will encode and decode messages
 // from raw Go types.
+// Is nats.NewEncodedConn(nc, "json")? Maybe this is an old comment?
+
 type EncodedConn struct {
 	Conn *Conn
 	Enc  Encoder
@@ -58,6 +63,7 @@ type EncodedConn struct {
 
 // NewEncodedConn will wrap an existing Connection and utilize the appropriate registered
 // encoder.
+// What are some cases where this is appropriate/recommended?
 func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 	if c == nil {
 		return nil, errors.New("nats: Nil Connection")
@@ -73,6 +79,7 @@ func NewEncodedConn(c *Conn, encType string) (*EncodedConn, error) {
 }
 
 // RegisterEncoder will register the encType with the given Encoder. Useful for customization.
+// No examples on how to use this properly.
 func RegisterEncoder(encType string, enc Encoder) {
 	encLock.Lock()
 	defer encLock.Unlock()

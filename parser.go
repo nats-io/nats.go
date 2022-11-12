@@ -25,6 +25,7 @@ type msgArg struct {
 	size    int
 }
 
+// Appears in docs without a comment
 const MAX_CONTROL_LINE_SIZE = 4096
 
 type parseState struct {
@@ -39,6 +40,7 @@ type parseState struct {
 	scratch   [MAX_CONTROL_LINE_SIZE]byte
 }
 
+// Seems internal, they need to be exposed in the docs?
 const (
 	OP_START = iota
 	OP_PLUS
