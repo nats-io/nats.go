@@ -668,21 +668,28 @@ func TestCallbacksOrder(t *testing.T) {
 	defer s.Shutdown()
 
 	firstDisconnect := true
-	dtime1 := time.Time{}
-	dtime2 := time.Time{}
-	rtime := time.Time{}
-	atime1 := time.Time{}
-	atime2 := time.Time{}
-	ctime := time.Time{}
+	var connTime, dtime1, dtime2, rtime, atime1, atime2, ctime time.Time
 
 	cbErrors := make(chan error, 20)
 
+	connected := make(chan bool)
 	reconnected := make(chan bool)
 	closed := make(chan bool)
 	asyncErr := make(chan bool, 2)
 	recvCh := make(chan bool, 2)
 	recvCh1 := make(chan bool)
 	recvCh2 := make(chan bool)
+
+	connCh := func(nc *nats.Conn) {
+		if err := isRunningInAsyncCBDispatcher(); err != nil {
+			cbErrors <- err
+			connected <- true
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		connTime = time.Now()
+		connected <- true
+	}
 
 	dch := func(nc *nats.Conn) {
 		if err := isRunningInAsyncCBDispatcher(); err != nil {
@@ -738,6 +745,7 @@ func TestCallbacksOrder(t *testing.T) {
 	url = "nats://" + url + "," + nats.DefaultURL
 
 	nc, err := nats.Connect(url,
+		nats.ConnectHandler(connCh),
 		nats.DisconnectHandler(dch),
 		nats.ReconnectHandler(rch),
 		nats.ClosedHandler(cch),
@@ -750,6 +758,12 @@ func TestCallbacksOrder(t *testing.T) {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
 	defer nc.Close()
+
+	// Wait for notification on connection established
+	err = Wait(connected)
+	if err != nil {
+		t.Fatal("Did not get the connected callback")
+	}
 
 	ncp, err := nats.Connect(nats.DefaultURL,
 		nats.ReconnectWait(50*time.Millisecond))
@@ -771,8 +785,7 @@ func TestCallbacksOrder(t *testing.T) {
 		t.Fatal("Did not get the reconnected callback")
 	}
 
-	var sub1 *nats.Subscription
-	var sub2 *nats.Subscription
+	var sub1, sub2 *nats.Subscription
 
 	recv := func(m *nats.Msg) {
 		// Signal that one message is received
@@ -840,12 +853,12 @@ func TestCallbacksOrder(t *testing.T) {
 		t.Fatalf("%v", <-cbErrors)
 	}
 
-	if (dtime1 == time.Time{}) || (dtime2 == time.Time{}) || (rtime == time.Time{}) || (atime1 == time.Time{}) || (atime2 == time.Time{}) || (ctime == time.Time{}) {
+	if (connTime == time.Time{}) || (dtime1 == time.Time{}) || (dtime2 == time.Time{}) || (rtime == time.Time{}) || (atime1 == time.Time{}) || (atime2 == time.Time{}) || (ctime == time.Time{}) {
 		t.Fatalf("Some callbacks did not fire:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
 	}
 
-	if rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
-		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v", dtime1, rtime, atime1, atime2, dtime2, ctime)
+	if dtime1.Before(connTime) || rtime.Before(dtime1) || dtime2.Before(rtime) || atime2.Before(atime1) || ctime.Before(atime2) {
+		t.Fatalf("Wrong callback order:\n%v\n%v\n%v\n%v\n%v\n%v\n%v", connTime, dtime1, rtime, atime1, atime2, dtime2, ctime)
 	}
 
 	// Close the other connection
@@ -862,6 +875,82 @@ func TestCallbacksOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("The async callback dispatcher(s) should have stopped")
+}
+
+func TestConnectHandler(t *testing.T) {
+	t.Run("with RetryOnFailedConnect, connection established", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		connected := make(chan bool)
+		connHandler := func(*nats.Conn) {
+			connected <- true
+		}
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(connHandler),
+			nats.RetryOnFailedConnect(true))
+
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		if err = Wait(connected); err != nil {
+			t.Fatal("Timeout waiting for connect handler")
+		}
+	})
+	t.Run("with RetryOnFailedConnect, connection failed", func(t *testing.T) {
+		connected := make(chan bool)
+		connHandler := func(*nats.Conn) {
+			connected <- true
+		}
+		_, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(connHandler),
+			nats.RetryOnFailedConnect(true))
+
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		select {
+		case <-connected:
+			t.Fatalf("ConnectedCB invoked when no connection established")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	t.Run("no RetryOnFailedConnect, connection established", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		connected := make(chan bool)
+		connHandler := func(*nats.Conn) {
+			connected <- true
+		}
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(connHandler))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		if err = Wait(connected); err != nil {
+			t.Fatal("Timeout waiting for connect handler")
+		}
+	})
+	t.Run("no RetryOnFailedConnect, connection failed", func(t *testing.T) {
+		connected := make(chan bool)
+		connHandler := func(*nats.Conn) {
+			connected <- true
+		}
+		_, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(connHandler))
+
+		if err == nil {
+			t.Fatalf("Expected error on connect, got nil")
+		}
+		select {
+		case <-connected:
+			t.Fatalf("ConnectedCB invoked when no connection established")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
 }
 
 func TestFlushReleaseOnClose(t *testing.T) {
