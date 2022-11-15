@@ -375,6 +375,12 @@ type Options struct {
 	// DisconnectedCB will not be called if DisconnectedErrCB is set
 	DisconnectedErrCB ConnErrHandler
 
+	// ConnectedCB sets the connected handler called when the initial connection
+	// is established. It is not invoked on successful reconnects - for reconnections,
+	// use ReconnectedCB. ConnectedCB can be used in conjunction with RetryOnFailedConnect
+	// to detect whether the initial connect was successful.
+	ConnectedCB ConnHandler
+
 	// ReconnectedCB sets the reconnected handler called whenever
 	// the connection is successfully reconnected.
 	ReconnectedCB ConnHandler
@@ -999,6 +1005,14 @@ func DisconnectHandler(cb ConnHandler) Option {
 	}
 }
 
+// ConnectHandler is an Option to set the connected handler.
+func ConnectHandler(cb ConnHandler) Option {
+	return func(o *Options) error {
+		o.ConnectedCB = cb
+		return nil
+	}
+}
+
 // ReconnectHandler is an Option to set the reconnected handler.
 func ReconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
@@ -1367,12 +1381,17 @@ func (o Options) Connect() (*Conn, error) {
 	// Create reader/writer
 	nc.newReaderWriter()
 
-	if err := nc.connect(); err != nil {
+	connectionEstablished, err := nc.connect()
+	if err != nil {
 		return nil, err
 	}
 
 	// Spin up the async cb dispatcher on success
 	go nc.ach.asyncCBDispatcher()
+
+	if connectionEstablished && nc.Opts.ConnectedCB != nil {
+		nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
+	}
 
 	return nc, nil
 }
@@ -2114,9 +2133,10 @@ func (nc *Conn) processConnectInit() error {
 	return nil
 }
 
-// Main connect function. Will connect to the nats-server
-func (nc *Conn) connect() error {
+// Main connect function. Will connect to the nats-server.
+func (nc *Conn) connect() (bool, error) {
 	var err error
+	var connectionEstablished bool
 
 	// Create actual socket connection
 	// For first connect we walk all servers in the pool and try
@@ -2162,6 +2182,7 @@ func (nc *Conn) connect() error {
 	}
 
 	if err == nil {
+		connectionEstablished = true
 		nc.initc = false
 	} else if nc.Opts.RetryOnFailedConnect {
 		nc.setup()
@@ -2173,7 +2194,7 @@ func (nc *Conn) connect() error {
 		nc.current = nil
 	}
 
-	return err
+	return connectionEstablished, err
 }
 
 // This will check to see if the connection should be
