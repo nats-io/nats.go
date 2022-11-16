@@ -203,3 +203,26 @@ func TestKeyValueMirrorDirectGet(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyValueCreate(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	_, err = kv.Create("key", []byte("1"))
+	if err != nil {
+		t.Fatalf("Error creating key: %v", err)
+	}
+
+	_, err = kv.Create("key", []byte("1"))
+	if err != ErrKeyExists {
+		t.Fatalf("Expected ErrKeyExists, got: %v", err)
+	}
+}

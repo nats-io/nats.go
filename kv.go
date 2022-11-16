@@ -297,6 +297,7 @@ var (
 	ErrKeyDeleted             = errors.New("nats: key was deleted")
 	ErrHistoryToLarge         = errors.New("nats: history limited to a max of 64")
 	ErrNoKeysFound            = errors.New("nats: no keys found")
+	ErrKeyExists              = errors.New("nats: key exists")
 )
 
 const (
@@ -627,6 +628,14 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	// so we need to double check.
 	if e, err := kv.get(key, kvLatestRevision); err == ErrKeyDeleted {
 		return kv.Update(key, value, e.Revision())
+	}
+
+	// Check if the expected last subject sequence is not zero which implies
+	// the key already exists.
+	if aerr, ok := err.(*APIError); ok {
+		if aerr.ErrorCode == 10071 {
+			return 0, ErrKeyExists
+		}
 	}
 
 	return 0, err
