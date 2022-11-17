@@ -635,9 +635,9 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 
 	// Check if the expected last subject sequence is not zero which implies
 	// the key already exists.
-	var aerr *APIError
-	if errors.Is(err, ErrKeyExists) && errors.As(err, &aerr) {
-		return 0, fmt.Errorf("%w: %s", ErrKeyExists, aerr.Description)
+	if errors.Is(err, ErrKeyExists) {
+		jserr := ErrKeyExists.(*jsError)
+		return 0, fmt.Errorf("%w: %s", err, jserr.message)
 	}
 
 	return 0, err
