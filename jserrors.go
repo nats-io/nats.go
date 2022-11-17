@@ -123,6 +123,8 @@ const (
 	JSErrCodeMessageNotFound ErrorCode = 10037
 
 	JSErrCodeBadRequest ErrorCode = 10003
+
+	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
 
 // APIError is included in all API responses if there was an error.

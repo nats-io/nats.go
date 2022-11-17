@@ -297,7 +297,10 @@ var (
 	ErrKeyDeleted             = errors.New("nats: key was deleted")
 	ErrHistoryToLarge         = errors.New("nats: history limited to a max of 64")
 	ErrNoKeysFound            = errors.New("nats: no keys found")
-	ErrKeyExists              = errors.New("nats: key exists")
+)
+
+var (
+	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
 )
 
 const (
@@ -632,10 +635,9 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 
 	// Check if the expected last subject sequence is not zero which implies
 	// the key already exists.
-	if aerr, ok := err.(*APIError); ok {
-		if aerr.ErrorCode == 10071 {
-			return 0, ErrKeyExists
-		}
+	if errors.Is(err, ErrKeyExists) {
+		jserr := ErrKeyExists.(*jsError)
+		return 0, fmt.Errorf("%w: %s", err, jserr.message)
 	}
 
 	return 0, err
