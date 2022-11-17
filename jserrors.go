@@ -124,7 +124,7 @@ const (
 
 	JSErrCodeBadRequest ErrorCode = 10003
 
-	JSErrStreamWrongLastSequence ErrorCode = 10071
+	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
 
 // APIError is included in all API responses if there was an error.

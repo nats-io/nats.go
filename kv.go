@@ -299,12 +299,8 @@ var (
 	ErrNoKeysFound            = errors.New("nats: no keys found")
 )
 
-// KeyValueError is an error result for KeyValue operations which internally
-// are JetStreamError as well so this is just an alias.
-type KeyValueError = JetStreamError
-
 var (
-	ErrKeyExists KeyValueError = &jsError{apiErr: &APIError{ErrorCode: JSErrStreamWrongLastSequence, Description: "key exists", Code: 400}}
+	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
 )
 
 const (
@@ -635,6 +631,13 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	// so we need to double check.
 	if e, err := kv.get(key, kvLatestRevision); err == ErrKeyDeleted {
 		return kv.Update(key, value, e.Revision())
+	}
+
+	// Check if the expected last subject sequence is not zero which implies
+	// the key already exists.
+	var aerr *APIError
+	if errors.Is(err, ErrKeyExists) && errors.As(err, &aerr) {
+		return 0, fmt.Errorf("%w: %s", ErrKeyExists, aerr.Description)
 	}
 
 	return 0, err

@@ -223,7 +223,7 @@ func TestKeyValueCreate(t *testing.T) {
 	}
 
 	_, err = kv.Create("key", []byte("1"))
-	expected := "nats: wrong last sequence: 1"
+	expected := "nats: key exists: wrong last sequence: 1"
 	if err.Error() != expected {
 		t.Fatalf("Expected %q, got: %v", expected, err)
 	}
@@ -240,7 +240,7 @@ func TestKeyValueCreate(t *testing.T) {
 	if aerr.Code != ErrKeyExists.APIError().Code {
 		t.Fatalf("Unexpected error code, got: %v", aerr.Code)
 	}
-	var kerr KeyValueError
+	var kerr JetStreamError
 	if !errors.As(err, &kerr) {
 		t.Fatalf("Expected KeyValueError, got: %v", err)
 	}
