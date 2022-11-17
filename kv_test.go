@@ -14,6 +14,7 @@
 package nats
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -222,7 +223,28 @@ func TestKeyValueCreate(t *testing.T) {
 	}
 
 	_, err = kv.Create("key", []byte("1"))
-	if err != ErrKeyExists {
+	expected := "nats: wrong last sequence: 1"
+	if err.Error() != expected {
+		t.Fatalf("Expected %q, got: %v", expected, err)
+	}
+	if !errors.Is(err, ErrKeyExists) {
 		t.Fatalf("Expected ErrKeyExists, got: %v", err)
+	}
+	aerr := &APIError{}
+	if !errors.As(err, &aerr) {
+		t.Fatalf("Expected APIError, got: %v", err)
+	}
+	if aerr.ErrorCode != 10071 {
+		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
+	}
+	if aerr.Code != ErrKeyExists.APIError().Code {
+		t.Fatalf("Unexpected error code, got: %v", aerr.Code)
+	}
+	var kerr KeyValueError
+	if !errors.As(err, &kerr) {
+		t.Fatalf("Expected KeyValueError, got: %v", err)
+	}
+	if kerr.APIError().ErrorCode != 10071 {
+		t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
 	}
 }
