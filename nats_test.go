@@ -1610,10 +1610,14 @@ func TestExpiredAuthentication(t *testing.T) {
 		name          string
 		expectedProto string
 		expectedErr   error
+		ignoreAbort   bool
 	}{
-		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired},
-		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked},
-		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired},
+		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired, false},
+		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked, false},
+		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired, false},
+		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired, true},
+		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked, true},
+		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			l, e := net.Listen("tcp", "127.0.0.1:0")
@@ -1661,8 +1665,8 @@ func TestExpiredAuthentication(t *testing.T) {
 			errCh := make(chan error, 10)
 
 			url := fmt.Sprintf("nats://127.0.0.1:%d", addr.Port)
-			nc, err := Connect(url,
-				ReconnectWait(25*time.Millisecond),
+			opts := []Option{
+				ReconnectWait(25 * time.Millisecond),
 				ReconnectJitter(0, 0),
 				MaxReconnects(-1),
 				ErrorHandler(func(_ *Conn, _ *Subscription, e error) {
@@ -1674,12 +1678,36 @@ func TestExpiredAuthentication(t *testing.T) {
 				ClosedHandler(func(nc *Conn) {
 					ch <- true
 				}),
-			)
+			}
+			if test.ignoreAbort {
+				opts = append(opts, IgnoreAuthErrorAbort())
+			}
+			nc, err := Connect(url, opts...)
 			if err != nil {
 				t.Fatalf("Expected to connect, got %v", err)
 			}
 			defer nc.Close()
 
+			if test.ignoreAbort {
+				// We expect more than 3 errors, as the connect attempt should not be aborted after 2 failed attempts.
+				for i := 0; i < 4; i++ {
+					select {
+					case e := <-errCh:
+						if i == 0 && e != test.expectedErr {
+							t.Fatalf("Expected error %q, got %q", test.expectedErr, e)
+						} else if i > 0 && e != ErrAuthorization {
+							t.Fatalf("Expected error %q, got %q", ErrAuthorization, e)
+						}
+					case <-time.After(time.Second):
+						if i == 0 {
+							t.Fatalf("Missing %q error", test.expectedErr)
+						} else {
+							t.Fatalf("Missing %q error", ErrAuthorization)
+						}
+					}
+				}
+				return
+			}
 			// We should give up since we get the same error on both tries.
 			if err := WaitTime(ch, 2*time.Second); err != nil {
 				t.Fatal("Should have closed after multiple failed attempts.")
@@ -1795,7 +1823,7 @@ func TestNkeyAuth(t *testing.T) {
 
 	sopts := natsserver.DefaultTestOptions
 	sopts.Port = TEST_PORT
-	sopts.Nkeys = []*server.NkeyUser{&server.NkeyUser{Nkey: string(pub)}}
+	sopts.Nkeys = []*server.NkeyUser{{Nkey: string(pub)}}
 	ts := RunServerWithOptions(&sopts)
 	defer ts.Shutdown()
 
