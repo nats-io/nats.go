@@ -471,6 +471,10 @@ type Options struct {
 
 	// InboxPrefix allows the default _INBOX prefix to be customized
 	InboxPrefix string
+
+	// IgnoreAuthErrorAbort - if set to true, client opts out of the default connect behavior of aborting
+	// subsequent reconnect attempts if server returns the same auth error twice (regardless of reconnect policy).
+	IgnoreAuthErrorAbort bool
 }
 
 const (
@@ -1245,6 +1249,15 @@ func CustomInboxPrefix(p string) Option {
 			return fmt.Errorf("nats: invalid custom prefix")
 		}
 		o.InboxPrefix = p
+		return nil
+	}
+}
+
+// IgnoreAuthErrorAbort opts out of the default connect behavior of aborting
+// subsequent reconnect attempts if server returns the same auth error twice.
+func IgnoreAuthErrorAbort() Option {
+	return func(o *Options) error {
+		o.IgnoreAuthErrorAbort = true
 		return nil
 	}
 }
@@ -3153,8 +3166,8 @@ func (nc *Conn) processAuthError(err error) bool {
 		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
 	}
 	// We should give up if we tried twice on this server and got the
-	// same error.
-	if nc.current.lastErr == err {
+	// same error. This behavior can be modified using IgnoreAuthErrorAbort.
+	if nc.current.lastErr == err && !nc.Opts.IgnoreAuthErrorAbort {
 		nc.ar = true
 	} else {
 		nc.current.lastErr = err
