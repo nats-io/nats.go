@@ -24,23 +24,41 @@ import (
 
 // Shows different ways to create a Conn.
 func ExampleConnect() {
+	// Simple connect, no options
 	nc, _ := nats.Connect("demo.nats.io")
 	nc.Close()
 
+	// Connect with username/password
 	nc, _ = nats.Connect("nats://derek:secretpassword@demo.nats.io:4222")
 	nc.Close()
 
+	// Establish TLS connection
 	nc, _ = nats.Connect("tls://derek:secretpassword@demo.nats.io:4443")
 	nc.Close()
 
+	// Connect to multiple servers
+	nc, _ = nats.Connect("demo.nats.io,nats://127.0.0.1:1223,nats://127.0.0.1:1224")
+	nc.Close()
+
+	// Connect with Options
+	nc, _ = nats.Connect("demo.nats.io",
+		nats.MaxReconnects(10),
+		nats.ReconnectWait(5*time.Second),
+		nats.Timeout(1*time.Second))
+
+	nc.Close()
+}
+
+func ExampleOptions_Connect() {
 	opts := nats.Options{
+		Url:            "demo.nats.io",
 		AllowReconnect: true,
 		MaxReconnect:   10,
 		ReconnectWait:  5 * time.Second,
 		Timeout:        1 * time.Second,
 	}
 
-	nc, _ = opts.Connect()
+	nc, _ := opts.Connect()
 	nc.Close()
 }
 
