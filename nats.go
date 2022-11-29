@@ -303,6 +303,10 @@ type Options struct {
 	// transports.
 	TLSConfig *tls.Config
 
+	// SkipTLSWrapper does not upgrade the connection to TLS and is
+	// meant to be used if the custom dialer does handle TLS itself
+	SkipTLSWrapper bool
+
 	// AllowReconnect enables reconnection logic to be used when we
 	// encounter a disconnect from the current server.
 	AllowReconnect bool
@@ -1185,6 +1189,16 @@ func SetCustomDialer(dialer CustomDialer) Option {
 	}
 }
 
+// SetSkipTLSWrapper is an Option to be used with the CustomDialer which
+// will not wrap the connection with TLS. Use it if the CustomDialer did
+// already handle TLS
+func SetSkipTLSWrapper(skip bool) Option {
+	return func(o *Options) error {
+		o.SkipTLSWrapper = skip
+		return nil
+	}
+}
+
 // UseOldRequestStyle is an Option to force usage of the old Request style.
 func UseOldRequestStyle() Option {
 	return func(o *Options) error {
@@ -1894,6 +1908,10 @@ func (nc *Conn) createConn() (err error) {
 
 // makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() error {
+	if nc.Opts.SkipTLSWrapper {
+		// we do nothing when asked to skip the TLS wrapper
+		return nil
+	}
 	// Allow the user to configure their own tls.Config structure.
 	var tlsCopy *tls.Config
 	if nc.Opts.TLSConfig != nil {
