@@ -20,7 +20,7 @@ import (
 
 type (
 	// JetStreamError is an error result that happens when using JetStream.
-	// In case of client-side error, `APIError()` returns nil
+	// In case of client-side error, [APIError] returns nil
 	JetStreamError interface {
 		APIError() *APIError
 		error
@@ -38,7 +38,7 @@ type (
 		Description string    `json:"description,omitempty"`
 	}
 
-	// ErrorCode represents `error_code` returned in response from JetStream API
+	// ErrorCode represents error_code returned in response from JetStream API
 	ErrorCode uint16
 )
 

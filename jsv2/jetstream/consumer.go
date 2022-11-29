@@ -27,23 +27,23 @@ type (
 		// Fetch is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and wait until either all messages are retreived
 		// or context reaches its deadline.
-		Fetch(context.Context, int) ([]Msg, error)
+		Fetch(int, ...FetchOpt) (FetchResult, error)
 		// FetchNoWait is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and immediately return up to a provided number of messages
-		FetchNoWait(batch int) ([]Msg, error)
-		// Listener can be used to continuously receive messages and handle them with the provided callback function
-		Listener(MessageHandler, ...ConsumerListenerOpts) (ConsumerListener, error)
-		// Reader returns ConsumerReader, allowing continously iterating over messages on a stream.
-		Reader(...ConsumerReaderOpts) (ConsumerReader, error)
+		FetchNoWait(batch int) (FetchResult, error)
+		// Consume can be used to continuously receive messages and handle them with the provided callback function
+		Consume(MessageHandler, ...ConsumeOpts) (ConsumeContext, error)
+		// Messages returns [MessagesContext], allowing continously iterating over messages on a stream.
+		Messages(...ConsumerMessagesOpts) (MessagesContext, error)
 
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
-		// CachedInfo returns *ConsumerInfo cached on a consumer struct
+		// CachedInfo returns [*ConsumerInfo] cached on a consumer struct
 		CachedInfo() *ConsumerInfo
 	}
 )
 
-// Info returns ConsumerInfo for a given consumer
+// Info returns [ConsumerInfo] for a given consumer
 func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	infoSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, p.stream, p.name))
 	var resp consumerInfoResponse
@@ -62,10 +62,10 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	return resp.ConsumerInfo, nil
 }
 
-// CachedInfo returns ConsumerInfo fetched when initializing/updating a consumer
+// CachedInfo returns [ConsumerInfo] fetched when initializing/updating a consumer
 //
 // NOTE: The returned object might not be up to date with the most recent updates on the server
-// For up-to-date information, use `Info()`
+// For up-to-date information, use [Info]
 func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }

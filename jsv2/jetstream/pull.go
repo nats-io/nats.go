@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,26 +27,26 @@ import (
 )
 
 type (
-	// ConsumerReader supports iterating over a messages on a stream.
-	ConsumerReader interface {
+	// MessagesContext supports iterating over a messages on a stream.
+	MessagesContext interface {
 		// Next retreives nest message on a stream. It will block until the next message is available.
 		Next() (Msg, error)
 		// Stop closes the iterator and cancels subscription.
 		Stop()
 	}
 
-	ConsumerListener interface {
+	ConsumeContext interface {
 		Stop()
 	}
 
-	// MessageHandler is a handler function used as callback in `Listener()`
+	// MessageHandler is a handler function used as callback in [Consume]
 	MessageHandler func(msg Msg, err error)
 
-	// ConsumerListenerOpts represent additional options used in `Listener()` for pull consumers
-	ConsumerListenerOpts func(*pullRequest) error
+	// ConsumeOpts represent additional options used in [Consume] for pull consumers
+	ConsumeOpts func(*pullRequest) error
 
-	// ConsumerReaderOpts represent additional options used in `Messages()` for pull consumers
-	ConsumerReaderOpts func(*pullRequest) error
+	// ConsumerMessagesOpts represent additional options used in [Messages] for pull consumers
+	ConsumerMessagesOpts func(*pullRequest) error
 
 	pullConsumer struct {
 		sync.Mutex
@@ -87,23 +88,40 @@ type (
 		msgCount  int
 		byteCount int
 	}
+
+	FetchResult interface {
+		Messages() <-chan Msg
+		Error() <-chan error
+	}
+
+	fetchResult struct {
+		msgs chan Msg
+		err  chan error
+	}
+
+	FetchOpt func(*pullRequest) error
+)
+
+const (
+	DefaultBatchSize = 100
+	DefaultExpires   = 30 * time.Second
+	DefaultHeartbeat = 15 * time.Second
 )
 
 // Reader returns ConsumerReader, allowing continously iterating over messages on a stream.
 //
 // Available options:
-// WithReaderBatchSize() - sets a single batch request messages limit, default is set to 100.
-// WithReaderHeartbeat() - sets an idle heartbeat setting for a pull request, default value is 5 seconds.
-func (p *pullConsumer) Reader(opts ...ConsumerReaderOpts) (ConsumerReader, error) {
+// [WithReaderBatchSize] - sets a single batch request messages limit, default is set to 100.
+// [WithReaderHeartbeat] - sets an idle heartbeat setting for a pull request, default value is 5 seconds.
+func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpts) (MessagesContext, error) {
 	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		return nil, ErrConsumerHasActiveSubscription
 	}
 	atomic.StoreUint32(&p.isSubscribed, 1)
-	defaultTimeout := 10 * time.Second
 	req := &pullRequest{
-		Batch:     100,
-		Expires:   defaultTimeout,
-		Heartbeat: 5 * time.Second,
+		Batch:     DefaultBatchSize,
+		Expires:   DefaultExpires,
+		Heartbeat: DefaultHeartbeat,
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
@@ -164,7 +182,17 @@ func (s *pullSubscription) Next() (Msg, error) {
 				!s.fetchInProgress {
 
 			s.fetchInProgress = true
+			s.pending.msgCount += s.req.Batch
+			if s.req.MaxBytes > 0 {
+				s.pending.byteCount += s.req.MaxBytes
+			}
 			s.fetchNext <- struct{}{}
+		}
+		select {
+		case <-s.fetchComplete:
+			s.fetchInProgress = false
+
+		default:
 		}
 		select {
 		case msg := <-s.msgs:
@@ -176,12 +204,28 @@ func (s *pullSubscription) Next() (Msg, error) {
 				if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrMaxBytesExceeded) {
 					return nil, err
 				}
-				s.pending.msgCount -= s.req.Batch
+				msgsLeftStr := msg.Header.Get("Nats-Pending-Messages")
+				msgsLeft := s.req.Batch
+				if msgsLeftStr != "" {
+					msgsLeft, err = strconv.Atoi(msgsLeftStr)
+					if err != nil {
+						return nil, fmt.Errorf("nats: invalid format of Nats-Pending-Messages")
+					}
+				}
+				bytesLeftStr := msg.Header.Get("Nats-Pending-Bytes")
+				bytesLeft := s.req.MaxBytes
+				if bytesLeftStr != "" {
+					bytesLeft, err = strconv.Atoi(bytesLeftStr)
+					if err != nil {
+						return nil, fmt.Errorf("nats: invalid format of Nats-Pending-Bytes")
+					}
+				}
+				s.pending.msgCount -= msgsLeft
 				if s.pending.msgCount < 0 {
 					s.pending.msgCount = 0
 				}
 				if s.req.MaxBytes > 0 {
-					s.pending.byteCount -= s.req.MaxBytes
+					s.pending.byteCount -= bytesLeft
 					if s.pending.byteCount < 0 {
 						s.pending.byteCount = 0
 					}
@@ -213,12 +257,6 @@ func (s *pullSubscription) Next() (Msg, error) {
 					s.pending.byteCount = 0
 				}
 			}
-		case <-s.fetchComplete:
-			s.fetchInProgress = false
-			s.pending.msgCount += s.req.Batch
-			if s.req.MaxBytes > 0 {
-				s.pending.byteCount += s.req.MaxBytes
-			}
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.Stop()
@@ -238,38 +276,32 @@ func (s *pullSubscription) Stop() {
 }
 
 // Next fetches an individual message from a consumer.
-// Timeout for this operation is handled using `context.Deadline()`, so it should always be set to avoid getting stuck
-func (p *pullConsumer) Fetch(ctx context.Context, batch int) ([]Msg, error) {
+func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (FetchResult, error) {
 	p.Lock()
 	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		p.Unlock()
 		return nil, ErrConsumerHasActiveSubscription
 	}
-	timeout := 30 * time.Second
-	deadline, hasDeadline := ctx.Deadline()
-	if hasDeadline {
-		timeout = time.Until(deadline)
-	}
 	req := &pullRequest{
-		Batch: batch,
+		Batch:   batch,
+		Expires: DefaultExpires,
 	}
-	// Make expiry a little bit shorter than timeout
-	if timeout >= 20*time.Millisecond {
-		req.Expires = timeout - 10*time.Millisecond
+	for _, opt := range opts {
+		if err := opt(req); err != nil {
+			return nil, err
+		}
 	}
 	// for longer pulls, set heartbeat value
-	if timeout >= 10*time.Second {
+	if req.Expires >= 10*time.Second {
 		req.Heartbeat = 5 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	p.Unlock()
 
-	return p.fetch(ctx, req)
+	return p.fetch(req)
 
 }
 
-func (p *pullConsumer) FetchNoWait(batch int) ([]Msg, error) {
+func (p *pullConsumer) FetchNoWait(batch int) (FetchResult, error) {
 	p.Lock()
 	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		p.Unlock()
@@ -281,10 +313,14 @@ func (p *pullConsumer) FetchNoWait(batch int) ([]Msg, error) {
 	}
 	p.Unlock()
 
-	return p.fetch(context.Background(), req)
+	return p.fetch(req)
 }
 
-func (p *pullConsumer) fetch(ctx context.Context, req *pullRequest) ([]Msg, error) {
+func (p *pullConsumer) fetch(req *pullRequest) (FetchResult, error) {
+	res := &fetchResult{
+		msgs: make(chan Msg, req.Batch),
+		err:  make(chan error, 1),
+	}
 	msgs := make(chan *nats.Msg, 2*req.Batch)
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
@@ -301,49 +337,63 @@ func (p *pullConsumer) fetch(ctx context.Context, req *pullRequest) ([]Msg, erro
 	if err := sub.setupSubscription(); err != nil {
 		return nil, err
 	}
-	defer sub.subscription.Unsubscribe()
+
 	if err := sub.pull(*req, subject); err != nil {
 		return nil, err
 	}
 
-	errs := make(chan error, 1)
-	jsMsgs := make([]Msg, 0)
+	var received int
 	hbTimer := sub.scheduleHeartbeatCheck(req.Heartbeat)
-	for {
-		select {
-		case msg := <-msgs:
-			if hbTimer != nil {
-				hbTimer.Reset(2 * req.Heartbeat)
+	go func(res *fetchResult) {
+		defer sub.subscription.Unsubscribe()
+		for {
+			if received == req.Batch {
+				close(res.msgs)
+				return
 			}
-			userMsg, err := checkMsg(msg)
-			if err != nil {
-				if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
-					return nil, err
+			select {
+			case msg := <-msgs:
+				if hbTimer != nil {
+					hbTimer.Reset(2 * req.Heartbeat)
 				}
-				return jsMsgs, nil
+				userMsg, err := checkMsg(msg)
+				if err != nil {
+					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
+						res.err <- err
+						return
+					}
+					res.msgs <- nil
+					return
+				}
+				if !userMsg {
+					continue
+				}
+				res.msgs <- p.jetStream.toJSMsg(msg)
+				received++
+			case <-time.After(req.Expires + 5*time.Second):
+				res.err <- fmt.Errorf("fetch timed out")
+				return
 			}
-			if !userMsg {
-				continue
-			}
-			jsMsgs = append(jsMsgs, p.jetStream.toJSMsg(msg))
-			if len(jsMsgs) == req.Batch {
-				return jsMsgs, nil
-			}
-		case err := <-errs:
-			return nil, err
-		case <-ctx.Done():
-			return nil, ctx.Err()
 		}
-	}
+	}(res)
+	return res, nil
 }
 
-// Listener returns a ConsumerListener, allowing for processing incoming messages from a stream in a given callback function.
+func (fr *fetchResult) Messages() <-chan Msg {
+	return fr.msgs
+}
+
+func (fr *fetchResult) Error() <-chan error {
+	return fr.err
+}
+
+// Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
 //
 // Available options:
-// WithListenerBatchSize() - sets a single batch request messages limit, default is set to 100
-// WitListenerExpiry() - sets a timeout for individual batch request, default is set to 30 seconds
-// WithListenerHeartbeat() - sets an idle heartbeat setting for a pull request, default is set to 5s
-func (p *pullConsumer) Listener(handler MessageHandler, opts ...ConsumerListenerOpts) (ConsumerListener, error) {
+// [WithConsumeBatchSize] - sets a single batch request messages limit, default is set to 100
+// [WitConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
+// [WithConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
+func (p *pullConsumer) Consume(handler MessageHandler, opts ...ConsumeOpts) (ConsumeContext, error) {
 	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		return nil, ErrConsumerHasActiveSubscription
 	}
@@ -404,7 +454,16 @@ func (p *pullConsumer) Listener(handler MessageHandler, opts ...ConsumerListener
 					!sub.fetchInProgress {
 
 				sub.fetchInProgress = true
+				sub.pending.msgCount += req.Batch
+				if sub.req.MaxBytes != 0 {
+					sub.pending.byteCount += req.MaxBytes
+				}
 				sub.fetchNext <- struct{}{}
+			}
+			select {
+			case <-sub.fetchComplete:
+				sub.fetchInProgress = false
+			default:
 			}
 			select {
 			case msg := <-msgs:
@@ -413,13 +472,35 @@ func (p *pullConsumer) Listener(handler MessageHandler, opts ...ConsumerListener
 				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
-					if !errors.Is(err, nats.ErrTimeout) {
+					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrMaxBytesExceeded) {
 						handler(nil, err)
 						continue
 					}
-					sub.pending.msgCount -= req.Batch
+					msgsLeftStr := msg.Header.Get("Nats-Pending-Messages")
+					msgsLeft := req.Batch
+					if msgsLeftStr != "" {
+						msgsLeft, err = strconv.Atoi(msgsLeftStr)
+						if err != nil {
+							handler(nil, fmt.Errorf("nats: invalid format of Nats-Pending-Messages"))
+						}
+					}
+					bytesLeftStr := msg.Header.Get("Nats-Pending-Bytes")
+					bytesLeft := req.MaxBytes
+					if bytesLeftStr != "" {
+						bytesLeft, err = strconv.Atoi(bytesLeftStr)
+						if err != nil {
+							handler(nil, fmt.Errorf("nats: invalid format of Nats-Pending-Bytes"))
+						}
+					}
+					sub.pending.msgCount -= msgsLeft
 					if sub.pending.msgCount < 0 {
 						sub.pending.msgCount = 0
+					}
+					if sub.req.MaxBytes > 0 {
+						sub.pending.byteCount -= bytesLeft
+						if sub.pending.byteCount < 0 {
+							sub.pending.byteCount = 0
+						}
 					}
 					continue
 				}
@@ -428,6 +509,9 @@ func (p *pullConsumer) Listener(handler MessageHandler, opts ...ConsumerListener
 				}
 				handler(p.jetStream.toJSMsg(msg), nil)
 				sub.pending.msgCount--
+				if sub.req.MaxBytes != 0 {
+					sub.pending.byteCount -= msgSize(msg)
+				}
 			case <-sub.reconnected:
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				_, err := p.Info(ctx)
@@ -441,9 +525,10 @@ func (p *pullConsumer) Listener(handler MessageHandler, opts ...ConsumerListener
 				if sub.pending.msgCount < 0 {
 					sub.pending.msgCount = 0
 				}
-			case <-sub.fetchComplete:
-				sub.fetchInProgress = false
-				sub.pending.msgCount += req.Batch
+				sub.pending.byteCount -= req.MaxBytes
+				if sub.pending.byteCount < 0 {
+					sub.pending.byteCount = 0
+				}
 			case err := <-sub.errs:
 				if errors.Is(err, ErrNoHeartbeat) {
 					sub.cleanupSubscriptionAndRestoreConnHandler()
@@ -515,7 +600,7 @@ func msgSize(msg *nats.Msg) int {
 	return len(msg.Subject) + len(msg.Reply) + len(msg.Data)
 }
 
-// pull sends a pull request to the server and waits for messages using a subscription from `pullSubscription`.
+// pull sends a pull request to the server and waits for messages using a subscription from [pullSubscription].
 // Messages will be fetched up to given batch_size or until there are no more messages or timeout is returned
 func (s *pullSubscription) pull(req pullRequest, subject string) error {
 	if atomic.LoadUint32(&s.closed) == 1 {

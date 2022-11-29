@@ -16,8 +16,6 @@ package jetstream
 import (
 	"fmt"
 	"time"
-
-	"github.com/nats-io/nats.go"
 )
 
 // WithClientTrace enables request/response API calls tracing
@@ -57,7 +55,7 @@ func WithPurgeSubject(subject string) StreamPurgeOpt {
 }
 
 // WithPurgeSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
-// Can be combined with `WithSubject()` option, but not with `WithKeep()`
+// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeKeep]
 func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Keep != 0 {
@@ -69,7 +67,7 @@ func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 }
 
 // WithPurgeKeep sets the number of messages to be kept in the stream after purge.
-// Can be combined with `WithSubject()` option, but not with `WithSequence()`
+// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeSequence]
 func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Sequence != 0 {
@@ -80,31 +78,31 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithSubscribeBatchSize limits the number of messages to be fetched from the stream in one request
+// WithConsumeBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithSubscribeBatchSize(batch int) ConsumerListenerOpts {
+func WithConsumeBatchSize(batch int) ConsumeOpts {
 	return func(cfg *pullRequest) error {
 		if batch <= 0 {
-			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
+			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
 		}
 		cfg.Batch = batch
 		return nil
 	}
 }
 
-// WithSubscribeExpiry sets timeout on a single batch request, waiting until at least one message is available
-func WithSubscribeExpiry(expires time.Duration) ConsumerListenerOpts {
+// WithConsumeExpiry sets timeout on a single batch request, waiting until at least one message is available
+func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
 	return func(cfg *pullRequest) error {
 		if expires < 0 {
-			return fmt.Errorf("%w: expires value must be positive", nats.ErrInvalidArg)
+			return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 		}
 		cfg.Expires = expires
 		return nil
 	}
 }
 
-// WithSubscribeMaxBytes sets max_bytes limit on a fetch request
-func WithSubscribeMaxBytes(maxBytes int) ConsumerListenerOpts {
+// WithConsumeMaxBytes sets max_bytes limit on a fetch request
+func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
 	return func(cfg *pullRequest) error {
 		cfg.MaxBytes = maxBytes
 		return nil
@@ -113,10 +111,10 @@ func WithSubscribeMaxBytes(maxBytes int) ConsumerListenerOpts {
 
 // WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithMessagesBatchSize(batch int) ConsumerReaderOpts {
+func WithMessagesBatchSize(batch int) ConsumerMessagesOpts {
 	return func(cfg *pullRequest) error {
 		if batch <= 0 {
-			return fmt.Errorf("%w: batch size must be at least 1", nats.ErrInvalidArg)
+			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
 		}
 		cfg.Batch = batch
 		return nil
@@ -125,10 +123,10 @@ func WithMessagesBatchSize(batch int) ConsumerReaderOpts {
 
 // WithMessagesHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithMessagesHeartbeat(hb time.Duration) ConsumerReaderOpts {
+func WithMessagesHeartbeat(hb time.Duration) ConsumerMessagesOpts {
 	return func(req *pullRequest) error {
 		if hb <= 0 {
-			return fmt.Errorf("idle_heartbeat value must be greater than 0")
+			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}
 		req.Heartbeat = hb
 		return nil
@@ -136,21 +134,32 @@ func WithMessagesHeartbeat(hb time.Duration) ConsumerReaderOpts {
 }
 
 // WithMessagesMaxBytes sets max_bytes limit on a fetch request
-func WithMessagesMaxBytes(maxBytes int) ConsumerReaderOpts {
+func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
 	return func(cfg *pullRequest) error {
 		cfg.MaxBytes = maxBytes
 		return nil
 	}
 }
 
-// WithSubscribeHeartbeat sets the idle heartbeat duration for a pull subscription
+// WithConsumeHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithSubscribeHeartbeat(hb time.Duration) ConsumerListenerOpts {
+func WithConsumeHeartbeat(hb time.Duration) ConsumeOpts {
 	return func(req *pullRequest) error {
 		if hb <= 0 {
-			return fmt.Errorf("idle_heartbeat value must be greater than 0")
+			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}
 		req.Heartbeat = hb
+		return nil
+	}
+}
+
+// WithFetchTimeout sets custom timeout fir fetching predefined batch of messages
+func WithFetchTimeout(timeout time.Duration) FetchOpt {
+	return func(req *pullRequest) error {
+		if timeout <= 0 {
+			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
+		}
+		req.Expires = timeout
 		return nil
 	}
 }
@@ -239,7 +248,7 @@ func WithRetryAttempts(num int) PublishOpt {
 func WithStallWait(ttl time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if ttl <= 0 {
-			return fmt.Errorf("nats: stall wait should be more than 0")
+			return fmt.Errorf("%w: stall wait should be more than 0", ErrInvalidOption)
 		}
 		opts.stallWait = ttl
 		return nil

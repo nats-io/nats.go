@@ -218,8 +218,8 @@ func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 // Info fetches *StreamInfo from server
 //
 // Available options:
-// WithDeletedDetails() - use to display the information about messages deleted from a stream
-// WithSubjectFilter() - use to display the information about messages stored on given subjects
+// [WithDeletedDetails] - use to display the information about messages deleted from a stream
+// [WithSubjectFilter] - use to display the information about messages stored on given subjects
 func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error) {
 	var infoReq *streamInfoRequest
 	for _, opt := range opts {
@@ -259,7 +259,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 // CachedInfo returns *StreamInfo cached on a stream struct
 //
 // NOTE: The returned object might not be up to date with the most recent updates on the server
-// For up-to-date information, use `Info()`
+// For up-to-date information, use [Info]
 func (s *stream) CachedInfo() *StreamInfo {
 	return s.info
 }
@@ -267,9 +267,9 @@ func (s *stream) CachedInfo() *StreamInfo {
 // Purge removes messages from a stream
 //
 // Available options:
-// WithPurgeSubject() - can be used set a sprecific subject for which messages on a stream will be purged
-// WithPurgeSequence() - can be used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
-// WithPurgeKeep() - can be used to set the number of messages to be kept in the stream after purge.
+// [WithPurgeSubject] - can be used set a sprecific subject for which messages on a stream will be purged
+// [WithPurgeSequence] - can be used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// [WithPurgeKeep] - can be used to set the number of messages to be kept in the stream after purge.
 func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	var purgeReq StreamPurgeRequest
 	for _, opt := range opts {
