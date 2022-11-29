@@ -29,7 +29,7 @@ type (
 	// Metadata, Data, Headers, Subject and Reply can be used to retrieve the specific parts of the underlying message
 	// Ack, DoubleAck, Nak, InProgress and Term are various flavors of ack requests
 	Msg interface {
-		// Metadata returns `MsgMetadata` for a JetStream message
+		// Metadata returns [MsgMetadata] for a JetStream message
 		Metadata() (*MsgMetadata, error)
 		// Data returns the message body
 		Data() []byte
@@ -120,7 +120,7 @@ var (
 	ackTerm     ackType = []byte("+TERM")
 )
 
-// Metadata returns `MsgMetadata` for a JetStream message
+// Metadata returns [MsgMetadata] for a JetStream message
 func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	if err := m.checkReply(); err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (m *jetStreamMsg) checkReply() error {
 }
 
 // Returns if the given message is a user message or not, and if
-// `checkSts` is true, returns appropriate error based on the
+// checkSts() is true, returns appropriate error based on the
 // content of the status (404, etc..)
 func checkMsg(msg *nats.Msg) (bool, error) {
 	// If payload or no header, consider this a user message
@@ -285,7 +285,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
 }
 
-// toJSMsg converts core `nats.Msg` to `jetStreamMsg`, exposing JetStream-specific operations
+// toJSMsg converts core [nats.Msg] to [jetStreamMsg], exposing JetStream-specific operations
 func (js *jetStream) toJSMsg(msg *nats.Msg) *jetStreamMsg {
 	return &jetStreamMsg{
 		msg: msg,
