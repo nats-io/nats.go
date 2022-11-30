@@ -31,7 +31,7 @@ import (
 
 type (
 
-	// Service is an interface for sevice management.
+	// Service is an interface for service management.
 	// It exposes methods to stop/reset a service, as well as get information on a service.
 	Service interface {
 		ID() string

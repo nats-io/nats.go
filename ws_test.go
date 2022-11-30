@@ -868,6 +868,60 @@ func TestWSWithTLS(t *testing.T) {
 	}
 }
 
+type testSkipTLSDialer struct {
+	dialer  *net.Dialer
+	skipTLS bool
+}
+
+func (sd *testSkipTLSDialer) Dial(network, address string) (net.Conn, error) {
+	return sd.dialer.Dial(network, address)
+}
+
+func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
+	return sd.skipTLS
+}
+
+func TestWSWithTLSCustomDialer(t *testing.T) {
+	sopts := testWSGetDefaultOptions(t, true)
+	s := RunServerWithOptions(sopts)
+	defer s.Shutdown()
+
+	sd := &testSkipTLSDialer{
+		dialer: &net.Dialer{
+			Timeout: 2 * time.Second,
+		},
+		skipTLS: true,
+	}
+
+	// Connect with CustomDialer that fails since TLSHandshake is disabled.
+	copts := make([]Option, 0)
+	copts = append(copts, Secure(&tls.Config{InsecureSkipVerify: true}))
+	copts = append(copts, SetCustomDialer(sd))
+	_, err := Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
+	if err == nil {
+		t.Fatalf("Expected error on connect: %v", err)
+	}
+	if err.Error() != `invalid websocket connection` {
+		t.Logf("Expected invalid websocket connection: %v", err)
+	}
+
+	// Retry with the dialer.
+	copts = make([]Option, 0)
+	sd = &testSkipTLSDialer{
+		dialer: &net.Dialer{
+			Timeout: 2 * time.Second,
+		},
+		skipTLS: false,
+	}
+	copts = append(copts, Secure(&tls.Config{InsecureSkipVerify: true}))
+	copts = append(copts, SetCustomDialer(sd))
+	nc, err := Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc.Close()
+}
+
 func TestWSTlsNoConfig(t *testing.T) {
 	opts := GetDefaultOptions()
 	opts.Servers = []string{"wss://localhost:443"}

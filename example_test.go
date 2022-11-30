@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -42,6 +43,40 @@ func ExampleConnect() {
 
 	nc, _ = opts.Connect()
 	nc.Close()
+}
+
+type skipTLSDialer struct {
+	dialer  *net.Dialer
+	skipTLS bool
+}
+
+func (sd *skipTLSDialer) Dial(network, address string) (net.Conn, error) {
+	return sd.dialer.Dial(network, address)
+}
+
+func (sd *skipTLSDialer) SkipTLSHandshake() bool {
+	return sd.skipTLS
+}
+
+func ExampleCustomDialer() {
+	// Given the following CustomDialer implementation:
+	//
+	//  type skipTLSDialer struct {
+	//  	    dialer  *net.Dialer
+	//  	    skipTLS bool
+	//  }
+	//
+	//  func (sd *skipTLSDialer) Dial(network, address string) (net.Conn, error) {
+	//  	    return sd.dialer.Dial(network, address)
+	//  }
+	//
+	//  func (sd *skipTLSDialer) SkipTLSHandshake() bool {
+	//  	    return true
+	//  }
+	//
+	sd := &skipTLSDialer{dialer: &net.Dialer{Timeout: 2 * time.Second}, skipTLS: true}
+	nc, _ := nats.Connect("demo.nats.io", nats.SetCustomDialer(sd))
+	defer nc.Close()
 }
 
 // This Example shows an asynchronous subscriber.

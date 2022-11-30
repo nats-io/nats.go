@@ -247,8 +247,9 @@ type asyncCallbacksHandler struct {
 // Option is a function on the options for a connection.
 type Option func(*Options) error
 
-// CustomDialer can be used to specify any dialer, not necessarily
-// a *net.Dialer.
+// CustomDialer can be used to specify any dialer, not necessarily a
+// *net.Dialer.  A CustomDialer may also implement `SkipTLSHandshake() bool`
+// in order to skip the TLS handshake in case not required.
 type CustomDialer interface {
 	Dial(network, address string) (net.Conn, error)
 }
@@ -1892,8 +1893,19 @@ func (nc *Conn) createConn() (err error) {
 	return nil
 }
 
+type skipTLSDialer interface {
+	SkipTLSHandshake() bool
+}
+
 // makeTLSConn will wrap an existing Conn using TLS
 func (nc *Conn) makeTLSConn() error {
+	if nc.Opts.CustomDialer != nil {
+		// we do nothing when asked to skip the TLS wrapper
+		sd, ok := nc.Opts.CustomDialer.(skipTLSDialer)
+		if ok && sd.SkipTLSHandshake() {
+			return nil
+		}
+	}
 	// Allow the user to configure their own tls.Config structure.
 	var tlsCopy *tls.Config
 	if nc.Opts.TLSConfig != nil {
