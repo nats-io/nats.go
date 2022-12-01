@@ -19,8 +19,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
 	"net"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -198,7 +198,7 @@ func TestServerSecureConnections(t *testing.T) {
 	// Let's be more TLS correct and verify servername, endpoint etc.
 	// Now do more advanced checking, verifying servername and using rootCA.
 	// Setup our own TLSConfig using RootCA from our self signed cert.
-	rootPEM, err := ioutil.ReadFile("./configs/certs/ca.pem")
+	rootPEM, err := os.ReadFile("./configs/certs/ca.pem")
 	if err != nil || rootPEM == nil {
 		t.Fatalf("failed to read root certificate")
 	}

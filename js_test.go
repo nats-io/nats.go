@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"reflect"
@@ -69,13 +68,13 @@ func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
 
 func createConfFile(t *testing.T, content []byte) string {
 	t.Helper()
-	conf, err := ioutil.TempFile("", "")
+	conf, err := os.CreateTemp("", "")
 	if err != nil {
 		t.Fatalf("Error creating conf file: %v", err)
 	}
 	fName := conf.Name()
 	conf.Close()
-	if err := ioutil.WriteFile(fName, content, 0666); err != nil {
+	if err := os.WriteFile(fName, content, 0666); err != nil {
 		os.Remove(fName)
 		t.Fatalf("Error writing conf file: %v", err)
 	}

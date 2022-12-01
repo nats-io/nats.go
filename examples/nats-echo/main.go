@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -208,7 +208,7 @@ func lookupGeo() string {
 		log.Fatalf("Could not retrieve geo location data: %v", err)
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	g := geo{}
 	if err := json.Unmarshal(body, &g); err != nil {
 		log.Fatalf("Error unmarshalling geo: %v", err)

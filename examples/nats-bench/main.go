@@ -16,7 +16,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"sync"
@@ -145,7 +144,7 @@ func main() {
 
 	if len(*csvFile) > 0 {
 		csv := benchmark.CSV()
-		ioutil.WriteFile(*csvFile, []byte(csv), 0644)
+		os.WriteFile(*csvFile, []byte(csv), 0644)
 		fmt.Printf("Saved metric data in csv file %s\n", *csvFile)
 	}
 }

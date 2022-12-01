@@ -19,7 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -105,7 +105,7 @@ func TestObjectBasics(t *testing.T) {
 	}
 
 	// Check result.
-	copy, err := ioutil.ReadAll(result)
+	copy, err := io.ReadAll(result)
 	expectOk(t, err)
 	if !bytes.Equal(copy, blob) {
 		t.Fatalf("Result not the same")
@@ -143,7 +143,7 @@ func TestGetObjectDigestMismatch(t *testing.T) {
 	res, err := obs.Get("A")
 	expectOk(t, err)
 	// first read should be successful
-	data, err := ioutil.ReadAll(res)
+	data, err := io.ReadAll(res)
 	expectOk(t, err)
 	if string(data) != "abc" {
 		t.Fatalf("Expected result: 'abc'; got: %s", string(data))
@@ -158,7 +158,7 @@ func TestGetObjectDigestMismatch(t *testing.T) {
 
 	res, err = obs.Get("A")
 	expectOk(t, err)
-	_, err = ioutil.ReadAll(res)
+	_, err = io.ReadAll(res)
 	expectErr(t, err, nats.ErrDigestMismatch)
 	expectErr(t, res.Error(), nats.ErrDigestMismatch)
 }
@@ -205,16 +205,16 @@ func TestObjectFileBasics(t *testing.T) {
 	blob := make([]byte, 8*1024*1024+33)
 	rand.Read(blob)
 
-	tmpFile, err := ioutil.TempFile("", "objfile")
+	tmpFile, err := os.CreateTemp("", "objfile")
 	expectOk(t, err)
 	defer os.Remove(tmpFile.Name()) // clean up
-	err = ioutil.WriteFile(tmpFile.Name(), blob, 0600)
+	err = os.WriteFile(tmpFile.Name(), blob, 0600)
 	expectOk(t, err)
 
 	_, err = obs.PutFile(tmpFile.Name())
 	expectOk(t, err)
 
-	tmpResult, err := ioutil.TempFile("", "objfileresult")
+	tmpResult, err := os.CreateTemp("", "objfileresult")
 	expectOk(t, err)
 	defer os.Remove(tmpResult.Name()) // clean up
 
@@ -222,10 +222,10 @@ func TestObjectFileBasics(t *testing.T) {
 	expectOk(t, err)
 
 	// Make sure they are the same.
-	original, err := ioutil.ReadFile(tmpFile.Name())
+	original, err := os.ReadFile(tmpFile.Name())
 	expectOk(t, err)
 
-	restored, err := ioutil.ReadFile(tmpResult.Name())
+	restored, err := os.ReadFile(tmpResult.Name())
 	expectOk(t, err)
 
 	if !bytes.Equal(original, restored) {
@@ -244,7 +244,7 @@ func TestObjectMulti(t *testing.T) {
 	expectOk(t, err)
 
 	numFiles := 0
-	fis, _ := ioutil.ReadDir(".")
+	fis, _ := os.ReadDir(".")
 	for _, fi := range fis {
 		fn := fi.Name()
 		// Just grab clean test files.
@@ -268,10 +268,10 @@ func TestObjectMulti(t *testing.T) {
 	_, err = result.Info()
 	expectOk(t, err)
 
-	copy, err := ioutil.ReadAll(result)
+	copy, err := io.ReadAll(result)
 	expectOk(t, err)
 
-	orig, err := ioutil.ReadFile(path.Join(".", "object_test.go"))
+	orig, err := os.ReadFile(path.Join(".", "object_test.go"))
 	expectOk(t, err)
 
 	if !bytes.Equal(orig, copy) {
@@ -929,7 +929,7 @@ func TestGetObjectDigestValue(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.inputFile, func(t *testing.T) {
-			data, err := ioutil.ReadFile(fmt.Sprintf("./testdata/%s", test.inputFile))
+			data, err := os.ReadFile(fmt.Sprintf("./testdata/%s", test.inputFile))
 			expectOk(t, err)
 			h := sha256.New()
 			h.Write(data)
@@ -966,7 +966,7 @@ func TestDecodeObjectDigest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.expectedFile, func(t *testing.T) {
-			expected, err := ioutil.ReadFile(fmt.Sprintf("./testdata/%s", test.expectedFile))
+			expected, err := os.ReadFile(fmt.Sprintf("./testdata/%s", test.expectedFile))
 			h := sha256.New()
 			h.Write(expected)
 			expected = h.Sum(nil)
