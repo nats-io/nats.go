@@ -2580,6 +2580,11 @@ func checkMsg(msg *Msg, checkSts, isNoWait bool) (usrMsg bool, err error) {
 			err = ErrConsumerDeleted
 			break
 		}
+
+		if strings.Contains(strings.ToLower(string(msg.Header.Get(descrHdr))), "leadership change") {
+			err = ErrConsumerLeadershipChanged
+			break
+		}
 		fallthrough
 	default:
 		err = fmt.Errorf("nats: %s", msg.Header.Get(descrHdr))

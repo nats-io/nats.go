@@ -101,6 +101,9 @@ var (
 	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist
 	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
 
+	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
+	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "leadership changed"}
+
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
