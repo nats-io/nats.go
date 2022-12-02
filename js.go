@@ -2576,18 +2576,18 @@ func checkMsg(msg *Msg, checkSts, isNoWait bool) (usrMsg bool, err error) {
 			err = ErrTimeout
 		}
 	case jetStream409Sts:
+		// Create APIError out of inline status error to prevent casing issues during comparison.
+		err = &jsError{statusErr: &statusError{Code: 409, Description: msg.Header.Get(descrHdr)}}
 		if strings.Contains(strings.ToLower(string(msg.Header.Get(descrHdr))), "consumer deleted") {
 			err = ErrConsumerDeleted
 			break
 		}
-
-		if strings.Contains(strings.ToLower(string(msg.Header.Get(descrHdr))), "leadership change") {
-			err = ErrConsumerLeadershipChanged
-			break
-		}
 		fallthrough
 	default:
-		err = fmt.Errorf("nats: %s", msg.Header.Get(descrHdr))
+		// NOTE: Any error that makes it here will use the same case as the server,
+		// but the status error will be in lowercase.
+		code, _ := strconv.Atoi(msg.Header.Get(statusHdr))
+		err = &jsError{statusErr: &statusError{Code: code, Description: msg.Header.Get(descrHdr)}}
 	}
 	return
 }

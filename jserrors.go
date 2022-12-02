@@ -16,6 +16,7 @@ package nats
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -102,7 +103,7 @@ var (
 	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
 
 	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
-	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "Leadership Changed"}
+	ErrConsumerLeadershipChanged JetStreamError = &jsError{statusErr: &statusError{Code: 409, Description: "Leadership Change"}}
 
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
@@ -168,9 +169,33 @@ type JetStreamError interface {
 	error
 }
 
+type statusError struct {
+	Code        int    `json:"code"`
+	Description string `json:"description,omitempty"`
+}
+
+// Is matches against an status error.
+func (e *statusError) Is(err error) bool {
+	if e == nil {
+		return false
+	}
+	// Extract internal statusError to match against.
+	var serr *statusError
+	ok := errors.As(err, &serr)
+	if !ok {
+		return ok
+	}
+	return e.Code == serr.Code && strings.Contains(strings.ToLower(e.Description), strings.ToLower(serr.Description))
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("nats: %s", strings.ToLower(e.Description))
+}
+
 type jsError struct {
-	apiErr  *APIError
-	message string
+	apiErr    *APIError
+	statusErr *statusError
+	message   string
 }
 
 func (err *jsError) APIError() *APIError {
@@ -181,11 +206,17 @@ func (err *jsError) Error() string {
 	if err.apiErr != nil && err.apiErr.Description != "" {
 		return err.apiErr.Error()
 	}
+	if err.statusErr != nil {
+		return err.statusErr.Error()
+	}
 	return fmt.Sprintf("nats: %s", err.message)
 }
 
 func (err *jsError) Unwrap() error {
-	// Allow matching to embedded APIError in case there is one.
+	// Allow matching to embedded errors in case there is one.
+	if err.statusErr != nil {
+		return err.statusErr
+	}
 	if err.apiErr == nil {
 		return nil
 	}
