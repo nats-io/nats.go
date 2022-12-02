@@ -102,7 +102,7 @@ var (
 	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
 
 	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
-	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "leadership changed"}
+	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "Leadership Changed"}
 
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
