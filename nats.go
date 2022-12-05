@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
@@ -838,7 +837,7 @@ func RootCAs(file ...string) Option {
 	return func(o *Options) error {
 		pool := x509.NewCertPool()
 		for _, f := range file {
-			rootPEM, err := ioutil.ReadFile(f)
+			rootPEM, err := os.ReadFile(f)
 			if err != nil || rootPEM == nil {
 				return fmt.Errorf("nats: error loading or parsing rootCA file: %v", err)
 			}
@@ -5386,7 +5385,7 @@ func userFromFile(userFile string) (string, error) {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
 	}
 
-	contents, err := ioutil.ReadFile(path)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		return _EMPTY_, fmt.Errorf("nats: %v", err)
 	}
@@ -5435,7 +5434,7 @@ func expandPath(p string) (string, error) {
 }
 
 func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
-	contents, err := ioutil.ReadFile(seedFile)
+	contents, err := os.ReadFile(seedFile)
 	if err != nil {
 		return nil, fmt.Errorf("nats: %v", err)
 	}

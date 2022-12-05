@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	mrand "math/rand"
 	"net"
 	"net/url"
@@ -5049,7 +5048,7 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 		o := natsserver.DefaultTestOptions
 		o.JetStream = true
 		o.ServerName = fmt.Sprintf("NODE_%d", i)
-		tdir, err := ioutil.TempDir(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
+		tdir, err := os.MkdirTemp(os.TempDir(), fmt.Sprintf("%s_%s-", o.ServerName, clusterName))
 		if err != nil {
 			t.Fatal(err)
 		}
