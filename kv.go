@@ -25,9 +25,7 @@ import (
 	"time"
 )
 
-// Notice: Experimental Preview
-//
-// This functionality is EXPERIMENTAL and may be changed in later releases.
+// KeyValueManager is used to manage KeyValue stores.
 type KeyValueManager interface {
 	// KeyValue will lookup and bind to an existing KeyValue store.
 	KeyValue(bucket string) (KeyValue, error)
@@ -41,9 +39,7 @@ type KeyValueManager interface {
 	KeyValueStores() <-chan KeyValueStatus
 }
 
-// Notice: Experimental Preview
-//
-// This functionality is EXPERIMENTAL and may be changed in later releases.
+// KeyValue contains methods to operate on a KeyValue store.
 type KeyValue interface {
 	// Get returns the latest value for the key.
 	Get(key string) (entry KeyValueEntry, err error)
