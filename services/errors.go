@@ -15,11 +15,11 @@ package services
 
 import "fmt"
 
-type ServiceAPIError struct {
-	ErrorCode   int
+type ResponseError struct {
+	ErrorCode   string
 	Description string
 }
 
-func (e *ServiceAPIError) Error() string {
-	return fmt.Sprintf("%d %s", e.ErrorCode, e.Description)
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("%s %s", e.ErrorCode, e.Description)
 }
