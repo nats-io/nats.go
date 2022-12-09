@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -38,35 +39,42 @@ type (
 		Name() string
 		Description() string
 		Version() string
-		Stats() ServiceStats
+		Stats() Stats
 		Reset()
-		Stop()
+		Stop() error
 	}
 
-	// A request handler.
-	// TODO (could make error more and return more info to user automatically?)
-	ServiceHandler func(svc Service, req *nats.Msg) error
+	// RequestHandler is a function used as a Handler for a service
+	RequestHandler func(*nats.Msg)
+
+	ErrHandler func(Service, *Error)
+
+	DoneHandler func(Service)
 
 	// Clients can request as well.
-	ServiceStats struct {
-		Name      string    `json:"name"`
-		ID        string    `json:"id"`
-		Version   string    `json:"version"`
-		Started   time.Time `json:"started"`
-		Endpoints []Stats   `json:"stats"`
-	}
-
 	Stats struct {
-		Name           string        `json:"name"`
-		NumRequests    int           `json:"num_requests"`
-		NumErrors      int           `json:"num_errors"`
-		TotalLatency   time.Duration `json:"total_latency"`
-		AverageLatency time.Duration `json:"average_latency"`
-		Data           interface{}   `json:"data"`
+		Name      string          `json:"name"`
+		ID        string          `json:"id"`
+		Version   string          `json:"version"`
+		Endpoints []EndpointStats `json:"stats"`
 	}
 
-	// ServiceInfo is the basic information about a service type
-	ServiceInfo struct {
+	EndpointStats struct {
+		Name                  string        `json:"name"`
+		NumRequests           int           `json:"num_requests"`
+		NumErrors             int           `json:"num_errors"`
+		TotalProcessingTime   time.Duration `json:"total_processing_time"`
+		AverageProcessingTime time.Duration `json:"average_processing_time"`
+		Data                  interface{}   `json:"data"`
+	}
+
+	Ping struct {
+		Name string `json:"name"`
+		ID   string `json:"id"`
+	}
+
+	// Info is the basic information about a service type
+	Info struct {
 		Name        string `json:"name"`
 		ID          string `json:"id"`
 		Description string `json:"description"`
@@ -74,90 +82,109 @@ type (
 		Subject     string `json:"subject"`
 	}
 
-	ServiceSchema struct {
+	Schema struct {
 		Request  string `json:"request"`
 		Response string `json:"response"`
 	}
 
 	Endpoint struct {
 		Subject string `json:"subject"`
-		Handler ServiceHandler
+		Handler RequestHandler
 	}
 
-	InternalEndpoint struct {
-		Name    string
-		Handler nats.MsgHandler
+	Verb int64
+
+	Config struct {
+		Name         string   `json:"name"`
+		Version      string   `json:"version"`
+		Description  string   `json:"description"`
+		Schema       Schema   `json:"schema"`
+		Endpoint     Endpoint `json:"endpoint"`
+		StatsHandler func(Endpoint) interface{}
+		DoneHandler  DoneHandler
+		ErrorHandler ErrHandler
 	}
 
-	ServiceVerb int64
-
-	ServiceConfig struct {
-		Name          string        `json:"name"`
-		Description   string        `json:"description"`
-		Version       string        `json:"version"`
-		Schema        ServiceSchema `json:"schema"`
-		Endpoint      Endpoint      `json:"endpoint"`
-		StatusHandler func(Endpoint) interface{}
+	Error struct {
+		Subject     string
+		Description string
 	}
 
 	// service is the internal implementation of a Service
 	service struct {
 		sync.Mutex
-		ServiceConfig
-		id string
-		// subs
-		reqSub   *nats.Subscription
-		internal map[string]*nats.Subscription
-		statuses map[string]*Stats
-		stats    *ServiceStats
-		conn     *nats.Conn
+		Config
+		id            string
+		reqSub        *nats.Subscription
+		verbSubs      map[string]*nats.Subscription
+		endpointStats map[string]*EndpointStats
+		conn          *nats.Conn
+		natsHandlers  handlers
+		stopped       bool
+	}
+
+	handlers struct {
+		closed   nats.ConnHandler
+		asyncErr nats.ErrHandler
 	}
 )
 
 const (
-	// We can fix this, as versions will be on separate subjects and use account mapping to roll requests to new versions etc.
-	QG = "svc"
+	// Queue Group name used across all services
+	QG = "q"
 
-	// ServiceApiPrefix is the root of all control subjects
-	ServiceApiPrefix = "$SRV"
+	// APIPrefix is the root of all control subjects
+	APIPrefix = "$SRV"
+)
 
-	ServiceErrorHeader = "Nats-Service-Error"
+// Service Error headers
+const (
+	ErrorHeader     = "Nats-Service-Error"
+	ErrorCodeHeader = "Nats-Service-Error-Code"
 )
 
 const (
-	SrvPing ServiceVerb = iota
-	SrvStatus
-	SrvInfo
-	SrvSchema
+	PingVerb Verb = iota
+	StatsVerb
+	InfoVerb
+	SchemaVerb
 )
 
-func (s *ServiceConfig) Valid() error {
-	if s.Name == "" {
-		return errors.New("name is required")
+var (
+	serviceNameRegexp = regexp.MustCompile(`^[A-Za-z0-9\-_]+$`)
+)
+
+var (
+	ErrConfigValidation = errors.New("validation")
+	ErrVerbNotSupported = errors.New("unsupported verb")
+)
+
+func (s *Config) Valid() error {
+	if !serviceNameRegexp.MatchString(s.Name) {
+		return fmt.Errorf("%w: service name: name should not be empty and should consist of alphanumerical charactest, dashes and underscores", ErrConfigValidation)
 	}
 	return s.Endpoint.Valid()
 }
 
 func (e *Endpoint) Valid() error {
-	s := strings.TrimSpace(e.Subject)
-	if len(s) == 0 {
-		return errors.New("subject is required")
+	if e.Subject == "" {
+		return fmt.Errorf("%w: endpoint: subject is required", ErrConfigValidation)
 	}
 	if e.Handler == nil {
-		return errors.New("handler is required")
+		return fmt.Errorf("%w: endpoint: handler is required", ErrConfigValidation)
 	}
 	return nil
 }
 
-func (s ServiceVerb) String() string {
+func (s Verb) String() string {
 	switch s {
-	case SrvPing:
+	case PingVerb:
 		return "PING"
-	case SrvStatus:
-		return "STATUS"
-	case SrvInfo:
+	case StatsVerb:
+		return "STATS"
+	case InfoVerb:
 		return "INFO"
-	case SrvSchema:
+	case SchemaVerb:
 		return "SCHEMA"
 	default:
 		return ""
@@ -165,30 +192,26 @@ func (s ServiceVerb) String() string {
 }
 
 // Add adds a microservice.
-// NOTE we can do an OpenAPI version as well, but looking at it it was very involved. So I think keep simple version and
-// also have a version that talkes full blown OpenAPI spec and we can pull these things out.
-func Add(nc *nats.Conn, config ServiceConfig) (Service, error) {
+// It will enable internal common services (PING, STATS, INFO and SCHEMA) as well as
+// the actual service handler on the subject provided in config.Endpoint
+// A service name and Endpoint configuration are required to add a service.
+// Add returns a [Service] interface, allowing service menagement.
+// Each service is assigned a unique ID.
+func Add(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.Valid(); err != nil {
 		return nil, err
 	}
 
 	id := nuid.Next()
 	svc := &service{
-		ServiceConfig: config,
-		conn:          nc,
-		id:            id,
+		Config: config,
+		conn:   nc,
+		id:     id,
 	}
-	svc.internal = make(map[string]*nats.Subscription)
-	svc.statuses = make(map[string]*Stats)
-	svc.statuses[""] = &Stats{
+	svc.verbSubs = make(map[string]*nats.Subscription)
+	svc.endpointStats = make(map[string]*EndpointStats)
+	svc.endpointStats[""] = &EndpointStats{
 		Name: config.Name,
-	}
-
-	svc.stats = &ServiceStats{
-		Name:    config.Name,
-		ID:      id,
-		Version: config.Version,
-		Started: time.Now(),
 	}
 
 	// Setup internal subscriptions.
@@ -201,7 +224,7 @@ func Add(nc *nats.Conn, config ServiceConfig) (Service, error) {
 		return nil, err
 	}
 
-	info := &ServiceInfo{
+	info := &Info{
 		Name:        config.Name,
 		ID:          id,
 		Description: config.Description,
@@ -209,51 +232,98 @@ func Add(nc *nats.Conn, config ServiceConfig) (Service, error) {
 		Subject:     config.Endpoint.Subject,
 	}
 
+	ping := &Ping{
+		Name: config.Name,
+		ID:   id,
+	}
+
 	infoHandler := func(m *nats.Msg) {
-		response, _ := json.MarshalIndent(info, "", "  ")
+		response, _ := json.Marshal(info)
 		m.Respond(response)
 	}
 
 	pingHandler := func(m *nats.Msg) {
-		infoHandler(m)
+		response, _ := json.Marshal(ping)
+		m.Respond(response)
 	}
 
 	statusHandler := func(m *nats.Msg) {
-		response, _ := json.MarshalIndent(svc.Stats(), "", "  ")
+		response, _ := json.Marshal(svc.Stats())
 		m.Respond(response)
 	}
 
 	schemaHandler := func(m *nats.Msg) {
-		response, _ := json.MarshalIndent(svc.ServiceConfig.Schema, "", "  ")
+		response, _ := json.Marshal(svc.Config.Schema)
 		m.Respond(response)
 	}
 
-	if err := svc.addInternalHandlerGroup(nc, SrvInfo, infoHandler); err != nil {
+	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
 		return nil, err
 	}
-	if err := svc.addInternalHandlerGroup(nc, SrvPing, pingHandler); err != nil {
+	if err := svc.verbHandlers(nc, PingVerb, pingHandler); err != nil {
 		return nil, err
 	}
-	if err := svc.addInternalHandlerGroup(nc, SrvStatus, statusHandler); err != nil {
+	if err := svc.verbHandlers(nc, StatsVerb, statusHandler); err != nil {
 		return nil, err
 	}
 
-	if svc.ServiceConfig.Schema.Request != "" || svc.ServiceConfig.Schema.Response != "" {
-		if err := svc.addInternalHandlerGroup(nc, SrvSchema, schemaHandler); err != nil {
+	if svc.Config.Schema.Request != "" || svc.Config.Schema.Response != "" {
+		if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
 			return nil, err
 		}
 	}
 
-	svc.stats.ID = id
-	svc.stats.Started = time.Now()
+	svc.natsHandlers.closed = nc.Opts.ClosedCB
+	if nc.Opts.ClosedCB != nil {
+		nc.SetClosedHandler(func(c *nats.Conn) {
+			svc.Stop()
+			if config.DoneHandler != nil {
+				config.DoneHandler(svc)
+			}
+			svc.natsHandlers.closed(c)
+		})
+	} else {
+		nc.SetClosedHandler(func(c *nats.Conn) {
+			if err := svc.Stop(); err != nil {
+			}
+			if config.DoneHandler != nil {
+				config.DoneHandler(svc)
+			}
+		})
+	}
+
+	svc.natsHandlers.asyncErr = nc.Opts.AsyncErrorCB
+	if nc.Opts.AsyncErrorCB != nil {
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
+			if config.ErrorHandler != nil {
+				config.ErrorHandler(svc, &Error{
+					Description: err.Error(),
+					Subject:     s.Subject,
+				})
+			}
+			svc.Stop()
+			svc.natsHandlers.asyncErr(c, s, err)
+		})
+	} else {
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
+			if config.ErrorHandler != nil {
+				config.ErrorHandler(svc, &Error{
+					Description: err.Error(),
+					Subject:     s.Subject,
+				})
+			}
+			svc.Stop()
+		})
+	}
+
 	return svc, nil
 }
 
-// addInternalHandlerGroup generates control handlers for a specific verb
+// verbHandlers generates control handlers for a specific verb
 // each request generates 3 subscriptions, one for the general verb
 // affecting all services written with the framework, one that handles
 // all services of a particular kind, and finally a specific service.
-func (svc *service) addInternalHandlerGroup(nc *nats.Conn, verb ServiceVerb, handler nats.MsgHandler) error {
+func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler nats.MsgHandler) error {
 	name := fmt.Sprintf("%s-all", verb.String())
 	if err := svc.addInternalHandler(nc, verb, "", "", name, handler); err != nil {
 		return err
@@ -266,31 +336,30 @@ func (svc *service) addInternalHandlerGroup(nc *nats.Conn, verb ServiceVerb, han
 }
 
 // addInternalHandler registers a control subject handler
-func (svc *service) addInternalHandler(nc *nats.Conn, verb ServiceVerb, kind, id, name string, handler nats.MsgHandler) error {
-	subj, err := SvcControlSubject(verb, kind, id)
+func (svc *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler nats.MsgHandler) error {
+	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
 		svc.Stop()
 		return err
 	}
 
-	svc.internal[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
+	svc.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
 		start := time.Now()
-		defer func() {
-			svc.Lock()
-			stats := svc.statuses[name]
-			stats.NumRequests++
-			stats.TotalLatency += time.Since(start)
-			stats.AverageLatency = stats.TotalLatency / time.Duration(stats.NumRequests)
-			svc.Unlock()
-		}()
 		handler(msg)
+
+		svc.Lock()
+		stats := svc.endpointStats[name]
+		stats.NumRequests++
+		stats.TotalProcessingTime += time.Since(start)
+		stats.AverageProcessingTime = stats.TotalProcessingTime / time.Duration(stats.NumRequests)
+		svc.Unlock()
 	})
 	if err != nil {
 		svc.Stop()
 		return err
 	}
 
-	svc.statuses[name] = &Stats{
+	svc.endpointStats[name] = &EndpointStats{
 		Name: name,
 	}
 	return nil
@@ -299,48 +368,48 @@ func (svc *service) addInternalHandler(nc *nats.Conn, verb ServiceVerb, kind, id
 // reqHandler itself
 func (svc *service) reqHandler(req *nats.Msg) {
 	start := time.Now()
-	defer func() {
-		svc.Lock()
-		stats := svc.statuses[""]
-		stats.NumRequests++
-		stats.TotalLatency += time.Since(start)
-		stats.AverageLatency = stats.TotalLatency / time.Duration(stats.NumRequests)
-		svc.Unlock()
-	}()
+	svc.Config.Endpoint.Handler(req)
+	svc.Lock()
+	stats := svc.endpointStats[""]
+	stats.NumRequests++
+	stats.TotalProcessingTime += time.Since(start)
+	stats.AverageProcessingTime = stats.TotalProcessingTime / time.Duration(stats.NumRequests)
 
-	if err := svc.ServiceConfig.Endpoint.Handler(svc, req); err != nil {
-		hdr := make(nats.Header)
-		apiErr := &ServiceAPIError{}
-		if ok := errors.As(err, &apiErr); !ok {
-			hdr[ServiceErrorHeader] = []string{fmt.Sprintf("%d %s", 500, err.Error())}
-		} else {
-			hdr[ServiceErrorHeader] = []string{apiErr.Error()}
-		}
-		svc.Lock()
-		stats := svc.statuses[""]
+	if req.Header.Get(ErrorHeader) != "" {
+		stats := svc.endpointStats[""]
 		stats.NumErrors++
-		svc.Unlock()
-
-		svc.conn.PublishMsg(&nats.Msg{
-			Subject: req.Reply,
-			Header:  hdr,
-		})
 	}
+	svc.Unlock()
 }
 
-func (svc *service) Stop() {
+func (svc *service) Stop() error {
+	if svc.stopped {
+		return nil
+	}
 	if svc.reqSub != nil {
-		svc.reqSub.Drain()
+		if err := svc.reqSub.Drain(); err != nil {
+			return fmt.Errorf("draining subsctioption for request handler: %w", err)
+		}
 		svc.reqSub = nil
 	}
 	var keys []string
-	for key, sub := range svc.internal {
+	for key, sub := range svc.verbSubs {
 		keys = append(keys, key)
-		sub.Drain()
+		if err := sub.Drain(); err != nil {
+			return fmt.Errorf("draining subsctioption for subject %q: %w", sub.Subject, err)
+		}
 	}
 	for _, key := range keys {
-		delete(svc.internal, key)
+		delete(svc.verbSubs, key)
 	}
+	restoreAsyncHandlers(svc.conn, svc.natsHandlers)
+	svc.stopped = true
+	return nil
+}
+
+func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
+	nc.SetClosedHandler(handlers.closed)
+	nc.SetErrorHandler(handlers.asyncErr)
 }
 
 func (svc *service) ID() string {
@@ -348,57 +417,70 @@ func (svc *service) ID() string {
 }
 
 func (svc *service) Name() string {
-	return svc.ServiceConfig.Name
+	return svc.Config.Name
 }
 
 func (svc *service) Description() string {
-	return svc.ServiceConfig.Description
+	return svc.Config.Description
 }
 
 func (svc *service) Version() string {
-	return svc.ServiceConfig.Version
+	return svc.Config.Version
 }
 
-func (svc *service) Stats() ServiceStats {
+func (svc *service) Stats() Stats {
 	svc.Lock()
 	defer func() {
 		svc.Unlock()
 	}()
-	if svc.ServiceConfig.StatusHandler != nil {
-		stats := svc.statuses[""]
-		stats.Data = svc.ServiceConfig.StatusHandler(svc.Endpoint)
+	if svc.Config.StatsHandler != nil {
+		stats := svc.endpointStats[""]
+		stats.Data = svc.Config.StatsHandler(svc.Endpoint)
 	}
 	idx := 0
-	v := make([]Stats, len(svc.statuses))
-	for _, se := range svc.statuses {
+	v := make([]EndpointStats, len(svc.endpointStats))
+	for _, se := range svc.endpointStats {
 		v[idx] = *se
 		idx++
 	}
-	svc.stats.Endpoints = v
-	return *svc.stats
+	return Stats{
+		Name:      svc.Name(),
+		ID:        svc.ID(),
+		Version:   svc.Version(),
+		Endpoints: v,
+	}
 }
 
 func (svc *service) Reset() {
-	for _, se := range svc.statuses {
+	for _, se := range svc.endpointStats {
 		se.NumRequests = 0
-		se.TotalLatency = 0
+		se.TotalProcessingTime = 0
 		se.NumErrors = 0
 		se.Data = nil
 	}
 }
 
-// SvcControlSubject returns monitoring subjects used by the ServiceImpl
-func SvcControlSubject(verb ServiceVerb, kind, id string) (string, error) {
-	sverb := verb.String()
-	if sverb == "" {
-		return "", fmt.Errorf("unsupported service verb")
+// ControlSubject returns monitoring subjects used by the Service
+func ControlSubject(verb Verb, kind, id string) (string, error) {
+	verbStr := verb.String()
+	if verbStr == "" {
+		return "", fmt.Errorf("%w: %q", ErrVerbNotSupported, verbStr)
 	}
 	kind = strings.ToUpper(kind)
 	if kind == "" && id == "" {
-		return fmt.Sprintf("%s.%s", ServiceApiPrefix, sverb), nil
+		return fmt.Sprintf("%s.%s", APIPrefix, verbStr), nil
 	}
 	if id == "" {
-		return fmt.Sprintf("%s.%s.%s", ServiceApiPrefix, sverb, kind), nil
+		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, kind), nil
 	}
-	return fmt.Sprintf("%s.%s.%s.%s", ServiceApiPrefix, sverb, kind, id), nil
+	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, kind, id), nil
+}
+
+func SendError(req *nats.Msg, err ResponseError) {
+	if req.Header == nil {
+		req.Header = nats.Header{}
+	}
+	req.Header.Add(ErrorHeader, err.Description)
+	req.Header.Add(ErrorCodeHeader, err.ErrorCode)
+	req.RespondMsg(req)
 }
