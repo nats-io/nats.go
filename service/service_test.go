@@ -56,7 +56,7 @@ func TestServiceBasics(t *testing.T) {
 		}
 	}
 
-	var svcs []Service
+	var svcs []*Service
 
 	// Create 5 service responders.
 	config := Config{
@@ -88,10 +88,10 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for _, svc := range svcs {
-		if svc.Name() != "CoolAddService" {
-			t.Fatalf("Expected %q, got %q", "CoolAddService", svc.Name())
+		if svc.Name != "CoolAddService" {
+			t.Fatalf("Expected %q, got %q", "CoolAddService", svc.Name)
 		}
-		if len(svc.Description()) == 0 || len(svc.Version()) == 0 {
+		if len(svc.Description) == 0 || len(svc.Version) == 0 {
 			t.Fatalf("Expected non empty description and version")
 		}
 	}
@@ -226,7 +226,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(s Service) {
+				DoneHandler: func(*Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -242,7 +242,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				ErrorHandler: func(s Service, err *NATSError) {
+				ErrorHandler: func(*Service, *NATSError) {
 					errService <- struct{}{}
 				},
 			},
@@ -258,7 +258,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(s Service) {
+				DoneHandler: func(*Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -280,7 +280,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(s Service) {
+				DoneHandler: func(*Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -356,7 +356,7 @@ func TestAddService(t *testing.T) {
 				return
 			}
 
-			pingSubject, err := ControlSubject(PingVerb, srv.Name(), srv.ID())
+			pingSubject, err := ControlSubject(PingVerb, srv.Name, srv.ID())
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
