@@ -195,7 +195,10 @@ func TestServiceBasics(t *testing.T) {
 
 func TestAddService(t *testing.T) {
 	testHandler := func(*Request) {}
-	var errNats, errService, closedNats, doneService chan struct{}
+	errNats := make(chan struct{})
+	errService := make(chan struct{})
+	closedNats := make(chan struct{})
+	doneService := make(chan struct{})
 
 	tests := []struct {
 		name              string
@@ -342,11 +345,6 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Expected to connect to server, got %v", err)
 			}
 			defer nc.Close()
-
-			errNats = make(chan struct{})
-			errService = make(chan struct{})
-			closedNats = make(chan struct{})
-			doneService = make(chan struct{})
 
 			srv, err := Add(nc, test.givenConfig)
 			if test.withError != nil {
@@ -505,17 +503,21 @@ func TestRequestRespond(t *testing.T) {
 			}
 			defer nc.Close()
 
+			respData := test.respondData
+			respError := test.withRespondError
+			errCode := test.errCode
+			errDesc := test.errDescription
 			// Stub service.
 			handler := func(req *Request) {
 				if errors.Is(test.withRespondError, ErrRespond) {
 					nc.Close()
 				}
-				if test.errCode == "" && test.errDescription == "" {
-					if resp, ok := test.respondData.([]byte); ok {
+				if errCode == "" && errDesc == "" {
+					if resp, ok := respData.([]byte); ok {
 						err := req.Respond(resp)
-						if test.withRespondError != nil {
-							if !errors.Is(err, test.withRespondError) {
-								t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+						if respError != nil {
+							if !errors.Is(err, respError) {
+								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
 							return
 						}
@@ -523,10 +525,10 @@ func TestRequestRespond(t *testing.T) {
 							t.Fatalf("Unexpected error when sending response: %v", err)
 						}
 					} else {
-						err := req.RespondJSON(test.respondData)
-						if test.withRespondError != nil {
-							if !errors.Is(err, test.withRespondError) {
-								t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+						err := req.RespondJSON(respData)
+						if respError != nil {
+							if !errors.Is(err, respError) {
+								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
 							return
 						}
@@ -537,10 +539,10 @@ func TestRequestRespond(t *testing.T) {
 					return
 				}
 
-				err := req.Error(test.errCode, test.errDescription)
-				if test.withRespondError != nil {
-					if !errors.Is(err, test.withRespondError) {
-						t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+				err := req.Error(errCode, errDesc)
+				if respError != nil {
+					if !errors.Is(err, respError) {
+						t.Fatalf("Expected error: %v; got: %v", respError, err)
 					}
 					return
 				}

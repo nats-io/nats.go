@@ -389,9 +389,11 @@ func (s *Service) reqHandler(req *Request) {
 
 // Stop drains the endpoint subscriptions and marks the service as stopped.
 func (s *Service) Stop() error {
+	s.m.Lock()
 	if s.stopped {
 		return nil
 	}
+	defer s.m.Unlock()
 	if s.reqSub != nil {
 		if err := s.reqSub.Drain(); err != nil {
 			return fmt.Errorf("draining subscription for request handler: %w", err)
@@ -429,9 +431,7 @@ func (s *Service) ID() string {
 // Stats returns statisctics for the service endpoint and all monitoring endpoints.
 func (s *Service) Stats() Stats {
 	s.m.Lock()
-	defer func() {
-		s.m.Unlock()
-	}()
+	defer s.m.Unlock()
 	if s.StatsHandler != nil {
 		stats := s.endpointStats[""]
 		stats.Data = s.StatsHandler(s.Endpoint)
@@ -452,6 +452,7 @@ func (s *Service) Stats() Stats {
 
 // Reset resets all statistics on a service instance.
 func (s *Service) Reset() {
+	s.m.Lock()
 	for _, se := range s.endpointStats {
 		se.NumRequests = 0
 		se.TotalProcessingTime = 0
@@ -460,10 +461,13 @@ func (s *Service) Reset() {
 		se.NumErrors = 0
 		se.Data = nil
 	}
+	s.m.Unlock()
 }
 
 // Stopped informs whether [Stop] was executed on the service.
 func (s *Service) Stopped() bool {
+	s.m.Lock()
+	defer s.m.Unlock()
 	return s.stopped
 }
 
