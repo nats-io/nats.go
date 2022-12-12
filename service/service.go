@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package services
+package service
 
 import (
 	"encoding/json"
@@ -35,23 +35,42 @@ type (
 	// Service is an interface for service management.
 	// It exposes methods to stop/reset a service, as well as get information on a service.
 	Service interface {
+		// ID returns the service instance's unique ID.
 		ID() string
+
+		// Name returns the name of the service.
+		// It can be shared between multiple service instances.
 		Name() string
+
+		// Description returns the service description.
 		Description() string
+
+		// Version returns the service version.
 		Version() string
+
+		// Stats returns statisctics for the service endpoint and all monitoring endpoints.
 		Stats() Stats
+
+		// Reset resets all statistics on a service instance.
 		Reset()
+
+		// Stop drains the endpoint subscriptions and marks the service as stopped.
 		Stop() error
 	}
 
-	// RequestHandler is a function used as a Handler for a service
-	RequestHandler func(*nats.Msg)
+	// ErrHandler is a function used to configure a custom error handler for a service,
+	ErrHandler func(Service, *NATSError)
 
-	ErrHandler func(Service, *Error)
-
+	// DoneHandler is a function used to configure a custom done handler for a service.
 	DoneHandler func(Service)
 
-	// Clients can request as well.
+	// StatsHandleris a function used to configure a custom STATS endpoint.
+	// It should return a value which can be serialized to JSON.
+	StatsHandler func(Endpoint) interface{}
+
+	// Stats is the type returned by STATS monitoring endpoint.
+	// It contains a slice of [EndpointStats], providing stats
+	// for both the service handler as well as all monitoring subjects.
 	Stats struct {
 		Name      string          `json:"name"`
 		ID        string          `json:"id"`
@@ -59,6 +78,8 @@ type (
 		Endpoints []EndpointStats `json:"stats"`
 	}
 
+	// EndpointStats are stats for a specific endpoint (either request handler or monitoring enpoints).
+	// It contains general statisctics for an endpoint, as well as a custom value returned by optional [StatsHandler].
 	EndpointStats struct {
 		Name                  string        `json:"name"`
 		NumRequests           int           `json:"num_requests"`
@@ -68,12 +89,13 @@ type (
 		Data                  interface{}   `json:"data"`
 	}
 
+	// Ping is the response type for PING monitoring endpoint.
 	Ping struct {
 		Name string `json:"name"`
 		ID   string `json:"id"`
 	}
 
-	// Info is the basic information about a service type
+	// Info is the basic information about a service type.
 	Info struct {
 		Name        string `json:"name"`
 		ID          string `json:"id"`
@@ -82,30 +104,38 @@ type (
 		Subject     string `json:"subject"`
 	}
 
+	// Schema can be used to configure a schema for a service.
+	// It is olso returned by the SCHEMA monitoring service (if set).
 	Schema struct {
 		Request  string `json:"request"`
 		Response string `json:"response"`
 	}
 
+	// Endpoint is used to configure a subject and handler for a service.
 	Endpoint struct {
 		Subject string `json:"subject"`
 		Handler RequestHandler
 	}
 
+	// Verb represents a name of the monitoring service.
 	Verb int64
 
+	// Config is a configuration of a service.
 	Config struct {
 		Name         string   `json:"name"`
 		Version      string   `json:"version"`
 		Description  string   `json:"description"`
 		Schema       Schema   `json:"schema"`
 		Endpoint     Endpoint `json:"endpoint"`
-		StatsHandler func(Endpoint) interface{}
+		StatsHandler StatsHandler
 		DoneHandler  DoneHandler
 		ErrorHandler ErrHandler
 	}
 
-	Error struct {
+	// NATSError represents an error returned by a NATS Subscription.
+	// It contains a subject on which the subscription failed, so that
+	// it can be linked with a specific service endpoint.
+	NATSError struct {
 		Subject     string
 		Description string
 	}
@@ -143,6 +173,7 @@ const (
 	ErrorCodeHeader = "Nats-Service-Error-Code"
 )
 
+// Verbs being used to set up a specific control subject.
 const (
 	PingVerb Verb = iota
 	StatsVerb
@@ -154,27 +185,14 @@ var (
 	serviceNameRegexp = regexp.MustCompile(`^[A-Za-z0-9\-_]+$`)
 )
 
+// Common errors returned by the Service framework.
 var (
+	// ErrConfigValidation is returned when service configuration is invalid
 	ErrConfigValidation = errors.New("validation")
+
+	// ErrVerbNotSupported is returned when invalid [Verb] is used (PING, SCHEMA, INFO, STATS)
 	ErrVerbNotSupported = errors.New("unsupported verb")
 )
-
-func (s *Config) Valid() error {
-	if !serviceNameRegexp.MatchString(s.Name) {
-		return fmt.Errorf("%w: service name: name should not be empty and should consist of alphanumerical charactest, dashes and underscores", ErrConfigValidation)
-	}
-	return s.Endpoint.Valid()
-}
-
-func (e *Endpoint) Valid() error {
-	if e.Subject == "" {
-		return fmt.Errorf("%w: endpoint: subject is required", ErrConfigValidation)
-	}
-	if e.Handler == nil {
-		return fmt.Errorf("%w: endpoint: handler is required", ErrConfigValidation)
-	}
-	return nil
-}
 
 func (s Verb) String() string {
 	switch s {
@@ -198,7 +216,7 @@ func (s Verb) String() string {
 // Add returns a [Service] interface, allowing service menagement.
 // Each service is assigned a unique ID.
 func Add(nc *nats.Conn, config Config) (Service, error) {
-	if err := config.Valid(); err != nil {
+	if err := config.valid(); err != nil {
 		return nil, err
 	}
 
@@ -218,7 +236,7 @@ func Add(nc *nats.Conn, config Config) (Service, error) {
 	var err error
 
 	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *nats.Msg) {
-		svc.reqHandler(m)
+		svc.reqHandler(&Request{Msg: m})
 	})
 	if err != nil {
 		return nil, err
@@ -277,18 +295,11 @@ func Add(nc *nats.Conn, config Config) (Service, error) {
 	if nc.Opts.ClosedCB != nil {
 		nc.SetClosedHandler(func(c *nats.Conn) {
 			svc.Stop()
-			if config.DoneHandler != nil {
-				config.DoneHandler(svc)
-			}
 			svc.natsHandlers.closed(c)
 		})
 	} else {
 		nc.SetClosedHandler(func(c *nats.Conn) {
-			if err := svc.Stop(); err != nil {
-			}
-			if config.DoneHandler != nil {
-				config.DoneHandler(svc)
-			}
+			svc.Stop()
 		})
 	}
 
@@ -296,7 +307,7 @@ func Add(nc *nats.Conn, config Config) (Service, error) {
 	if nc.Opts.AsyncErrorCB != nil {
 		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
 			if config.ErrorHandler != nil {
-				config.ErrorHandler(svc, &Error{
+				config.ErrorHandler(svc, &NATSError{
 					Description: err.Error(),
 					Subject:     s.Subject,
 				})
@@ -307,7 +318,7 @@ func Add(nc *nats.Conn, config Config) (Service, error) {
 	} else {
 		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
 			if config.ErrorHandler != nil {
-				config.ErrorHandler(svc, &Error{
+				config.ErrorHandler(svc, &NATSError{
 					Description: err.Error(),
 					Subject:     s.Subject,
 				})
@@ -319,10 +330,27 @@ func Add(nc *nats.Conn, config Config) (Service, error) {
 	return svc, nil
 }
 
-// verbHandlers generates control handlers for a specific verb
-// each request generates 3 subscriptions, one for the general verb
+func (s *Config) valid() error {
+	if !serviceNameRegexp.MatchString(s.Name) {
+		return fmt.Errorf("%w: service name: name should not be empty and should consist of alphanumerical charactest, dashes and underscores", ErrConfigValidation)
+	}
+	return s.Endpoint.valid()
+}
+
+func (e *Endpoint) valid() error {
+	if e.Subject == "" {
+		return fmt.Errorf("%w: endpoint: subject is required", ErrConfigValidation)
+	}
+	if e.Handler == nil {
+		return fmt.Errorf("%w: endpoint: handler is required", ErrConfigValidation)
+	}
+	return nil
+}
+
+// verbHandlers generates control handlers for a specific verb.
+// Each request generates 3 subscriptions, one for the general verb
 // affecting all services written with the framework, one that handles
-// all services of a particular kind, and finally a specific service.
+// all services of a particular kind, and finally a specific service instance.
 func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler nats.MsgHandler) error {
 	name := fmt.Sprintf("%s-all", verb.String())
 	if err := svc.addInternalHandler(nc, verb, "", "", name, handler); err != nil {
@@ -335,7 +363,7 @@ func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler nats.MsgHandl
 	return svc.addInternalHandler(nc, verb, svc.Name(), svc.ID(), verb.String(), handler)
 }
 
-// addInternalHandler registers a control subject handler
+// addInternalHandler registers a control subject handler.
 func (svc *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler nats.MsgHandler) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
@@ -366,7 +394,7 @@ func (svc *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name 
 }
 
 // reqHandler itself
-func (svc *service) reqHandler(req *nats.Msg) {
+func (svc *service) reqHandler(req *Request) {
 	start := time.Now()
 	svc.Config.Endpoint.Handler(req)
 	svc.Lock()
@@ -375,20 +403,21 @@ func (svc *service) reqHandler(req *nats.Msg) {
 	stats.TotalProcessingTime += time.Since(start)
 	stats.AverageProcessingTime = stats.TotalProcessingTime / time.Duration(stats.NumRequests)
 
-	if req.Header.Get(ErrorHeader) != "" {
+	if req.errResponse {
 		stats := svc.endpointStats[""]
 		stats.NumErrors++
 	}
 	svc.Unlock()
 }
 
+// Stop drains the endpoint subscriptions and marks the service as stopped.
 func (svc *service) Stop() error {
 	if svc.stopped {
 		return nil
 	}
 	if svc.reqSub != nil {
 		if err := svc.reqSub.Drain(); err != nil {
-			return fmt.Errorf("draining subsctioption for request handler: %w", err)
+			return fmt.Errorf("draining subscription for request handler: %w", err)
 		}
 		svc.reqSub = nil
 	}
@@ -396,7 +425,7 @@ func (svc *service) Stop() error {
 	for key, sub := range svc.verbSubs {
 		keys = append(keys, key)
 		if err := sub.Drain(); err != nil {
-			return fmt.Errorf("draining subsctioption for subject %q: %w", sub.Subject, err)
+			return fmt.Errorf("draining subscription for subject %q: %w", sub.Subject, err)
 		}
 	}
 	for _, key := range keys {
@@ -404,6 +433,9 @@ func (svc *service) Stop() error {
 	}
 	restoreAsyncHandlers(svc.conn, svc.natsHandlers)
 	svc.stopped = true
+	if svc.Config.DoneHandler != nil {
+		svc.Config.DoneHandler(svc)
+	}
 	return nil
 }
 
@@ -412,22 +444,28 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 	nc.SetErrorHandler(handlers.asyncErr)
 }
 
+// ID returns the service instance's unique ID.
 func (svc *service) ID() string {
 	return svc.id
 }
 
+// Name returns the name of the service.
+// It can be shared between multiple service instances.
 func (svc *service) Name() string {
 	return svc.Config.Name
 }
 
+// Description returns the service description.
 func (svc *service) Description() string {
 	return svc.Config.Description
 }
 
+// Version returns the service version.
 func (svc *service) Version() string {
 	return svc.Config.Version
 }
 
+// Stats returns statisctics for the service endpoint and all monitoring endpoints.
 func (svc *service) Stats() Stats {
 	svc.Lock()
 	defer func() {
@@ -451,36 +489,35 @@ func (svc *service) Stats() Stats {
 	}
 }
 
+// Reset resets all statistics on a service instance.
 func (svc *service) Reset() {
 	for _, se := range svc.endpointStats {
 		se.NumRequests = 0
 		se.TotalProcessingTime = 0
+		se.AverageProcessingTime = 0
+		se.Data = nil
 		se.NumErrors = 0
 		se.Data = nil
 	}
 }
 
-// ControlSubject returns monitoring subjects used by the Service
-func ControlSubject(verb Verb, kind, id string) (string, error) {
+// ControlSubject returns monitoring subjects used by the Service.
+// Providing a verb is mandatory (it should be one of Ping, Schema, Info or Stats).
+// Depending on whether kind and id are provided, ControlSubject will return one of the following:
+//   - verb only: subject used to monitor all available services
+//   - verb and kind: subject used to monitor services with the provided name
+//   - verb, name and id: subject used to monitor an instance of a service with the provided ID
+func ControlSubject(verb Verb, name, id string) (string, error) {
 	verbStr := verb.String()
 	if verbStr == "" {
 		return "", fmt.Errorf("%w: %q", ErrVerbNotSupported, verbStr)
 	}
-	kind = strings.ToUpper(kind)
-	if kind == "" && id == "" {
+	name = strings.ToUpper(name)
+	if name == "" && id == "" {
 		return fmt.Sprintf("%s.%s", APIPrefix, verbStr), nil
 	}
 	if id == "" {
-		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, kind), nil
+		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, name), nil
 	}
-	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, kind, id), nil
-}
-
-func SendError(req *nats.Msg, err ResponseError) {
-	if req.Header == nil {
-		req.Header = nats.Header{}
-	}
-	req.Header.Add(ErrorHeader, err.Description)
-	req.Header.Add(ErrorCodeHeader, err.ErrorCode)
-	req.RespondMsg(req)
+	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, name, id), nil
 }

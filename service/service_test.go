@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package services
+package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,16 +38,20 @@ func TestServiceBasics(t *testing.T) {
 	defer nc.Close()
 
 	// Stub service.
-	doAdd := func(req *nats.Msg) {
+	doAdd := func(req *Request) {
 		if rand.Intn(10) == 0 {
-			SendError(req, ResponseError{"500", "Unexpected error!"})
+			if err := req.Error("500", "Unexpected error!"); err != nil {
+				t.Fatalf("Unexpected error when sending error response: %v", err)
+			}
 			return
 		}
 		// Happy Path.
 		// Random delay between 5-10ms
 		time.Sleep(5*time.Millisecond + time.Duration(rand.Intn(5))*time.Millisecond)
 		if err := req.Respond([]byte("42")); err != nil {
-			SendError(req, ResponseError{"500", "Unexpected error!"})
+			if err := req.Error("500", "Unexpected error!"); err != nil {
+				t.Fatalf("Unexpected error when sending error response: %v", err)
+			}
 			return
 		}
 	}
@@ -178,10 +183,18 @@ func TestServiceBasics(t *testing.T) {
 	if requestsNum != 50 {
 		t.Fatalf("Expected a total fo 50 requests processed, got: %d", requestsNum)
 	}
+	// Reset stats for a service
+	svcs[0].Reset()
+	for _, e := range svcs[0].Stats().Endpoints {
+		emptyStats := EndpointStats{Name: e.Name}
+		if e != emptyStats {
+			t.Fatalf("Expected empty stats after reset; got: %+v", e)
+		}
+	}
 }
 
 func TestAddService(t *testing.T) {
-	testHandler := func(*nats.Msg) {}
+	testHandler := func(*Request) {}
 	var errNats, errService, closedNats, doneService chan struct{}
 
 	tests := []struct {
@@ -229,7 +242,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				ErrorHandler: func(s Service, err *Error) {
+				ErrorHandler: func(s Service, err *NATSError) {
 					errService <- struct{}{}
 				},
 			},
@@ -393,7 +406,9 @@ func TestAddService(t *testing.T) {
 				}
 			}
 
-			srv.Stop()
+			if err := srv.Stop(); err != nil {
+				t.Fatalf("Unexpected error when stopping the service: %v", err)
+			}
 			if test.natsClosedHandler != nil {
 				go nc.Opts.ClosedCB(nc)
 				select {
@@ -424,28 +439,58 @@ func TestAddService(t *testing.T) {
 	}
 }
 
-func TestServiceErrors(t *testing.T) {
+func TestRequestRespond(t *testing.T) {
+	type x struct {
+		A string `json:"a"`
+		B int    `json:"b"`
+	}
+
 	tests := []struct {
-		name            string
-		handlerResponse *ResponseError
-		expectedMessage string
-		expectedCode    string
+		name             string
+		respondData      interface{}
+		errDescription   string
+		errCode          string
+		expectedMessage  string
+		expectedCode     string
+		expectedResponse []byte
+		withRespondError error
 	}{
 		{
+			name:             "byte response",
+			respondData:      []byte("OK"),
+			expectedResponse: []byte("OK"),
+		},
+		{
+			name:             "byte response, connection closed",
+			respondData:      []byte("OK"),
+			withRespondError: ErrRespond,
+		},
+		{
+			name:             "struct response",
+			respondData:      x{"abc", 5},
+			expectedResponse: []byte(`{"a":"abc","b":5}`),
+		},
+		{
+			name:             "invalid response data",
+			respondData:      func() {},
+			withRespondError: ErrMarshalResponse,
+		},
+		{
 			name:            "generic error",
-			handlerResponse: &ResponseError{ErrorCode: "500", Description: "oops"},
+			errDescription:  "oops",
+			errCode:         "500",
 			expectedMessage: "oops",
 			expectedCode:    "500",
 		},
 		{
-			name:            "api error",
-			handlerResponse: &ResponseError{ErrorCode: "400", Description: "oops"},
-			expectedMessage: "oops",
-			expectedCode:    "400",
+			name:             "missing error code",
+			errDescription:   "oops",
+			withRespondError: ErrArgRequired,
 		},
 		{
-			name:            "no error",
-			handlerResponse: nil,
+			name:             "missing error description",
+			errCode:          "500",
+			withRespondError: ErrArgRequired,
 		},
 	}
 
@@ -461,13 +506,47 @@ func TestServiceErrors(t *testing.T) {
 			defer nc.Close()
 
 			// Stub service.
-			handler := func(req *nats.Msg) {
-				if test.handlerResponse == nil {
-					req.Respond([]byte("ok"))
+			handler := func(req *Request) {
+				if errors.Is(test.withRespondError, ErrRespond) {
+					nc.Close()
+				}
+				if test.errCode == "" && test.errDescription == "" {
+					if resp, ok := test.respondData.([]byte); ok {
+						err := req.Respond(resp)
+						if test.withRespondError != nil {
+							if !errors.Is(err, test.withRespondError) {
+								t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+							}
+							return
+						}
+						if err != nil {
+							t.Fatalf("Unexpected error when sending response: %v", err)
+						}
+					} else {
+						err := req.RespondJSON(test.respondData)
+						if test.withRespondError != nil {
+							if !errors.Is(err, test.withRespondError) {
+								t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+							}
+							return
+						}
+						if err != nil {
+							t.Fatalf("Unexpected error when sending response: %v", err)
+						}
+					}
 					return
 				}
 
-				SendError(req, *test.handlerResponse)
+				err := req.Error(test.errCode, test.errDescription)
+				if test.withRespondError != nil {
+					if !errors.Is(err, test.withRespondError) {
+						t.Fatalf("Expected error: %v; got: %v", test.withRespondError, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("Unexpected error when sending response: %v", err)
+				}
 			}
 
 			svc, err := Add(nc, Config{
@@ -483,18 +562,32 @@ func TestServiceErrors(t *testing.T) {
 			}
 			defer svc.Stop()
 
-			resp, err := nc.Request("svc.fail", nil, 1*time.Second)
+			resp, err := nc.Request("svc.fail", nil, 50*time.Millisecond)
+			if test.withRespondError != nil {
+				return
+			}
 			if err != nil {
-				t.Fatalf("request error")
+				t.Fatalf("request error: %v", err)
 			}
 
-			description := resp.Header.Get("Nats-Service-Error")
-			if description != test.expectedMessage {
-				t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
+			if test.errCode != "" {
+				description := resp.Header.Get("Nats-Service-Error")
+				if description != test.expectedMessage {
+					t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
+				}
+				code := resp.Header.Get("Nats-Service-Error-Code")
+				if code != test.expectedCode {
+					t.Fatalf("Invalid response code; want: %q; got: %q", test.expectedCode, code)
+				}
+				return
 			}
-			code := resp.Header.Get("Nats-Service-Error-Code")
-			if code != test.expectedCode {
-				t.Fatalf("Invalid response code; want: %q; got: %q", test.expectedCode, code)
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !bytes.Equal(bytes.TrimSpace(resp.Data), bytes.TrimSpace(test.expectedResponse)) {
+				t.Fatalf("Invalid response; want: %s; got: %s", string(test.expectedResponse), string(resp.Data))
 			}
 		})
 	}
