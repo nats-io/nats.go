@@ -1,4 +1,4 @@
-package service
+package micro
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func ExampleAdd() {
+func ExampleAddService() {
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
@@ -28,17 +28,17 @@ func ExampleAdd() {
 		},
 
 		// DoneHandler can be set to customize behavior on stopping a service.
-		DoneHandler: func(srv *Service) {
-			fmt.Printf("stopped service %q with ID %q\n", srv.Name, srv.ID())
+		DoneHandler: func(srv Service) {
+			fmt.Printf("stopped service %q with ID %q\n", srv.Name(), srv.ID())
 		},
 
 		// ErrorHandler can be used to customize behavior on service execution error.
-		ErrorHandler: func(srv *Service, err *NATSError) {
-			fmt.Printf("Service %q returned an error on subject %q: %s", srv.Name, err.Subject, err.Description)
+		ErrorHandler: func(srv Service, err *NATSError) {
+			fmt.Printf("Service %q returned an error on subject %q: %s", srv.Name(), err.Subject, err.Description)
 		},
 	}
 
-	srv, err := Add(nc, config)
+	srv, err := AddService(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func ExampleService_ID() {
 		},
 	}
 
-	srv, _ := Add(nc, config)
+	srv, _ := AddService(nc, config)
 
 	// unique service ID
 	id := srv.ID()
@@ -82,7 +82,7 @@ func ExampleService_Stats() {
 		},
 	}
 
-	srv, _ := Add(nc, config)
+	srv, _ := AddService(nc, config)
 
 	// stats of a service instance
 	stats := srv.Stats()
@@ -108,7 +108,7 @@ func ExampleService_Stop() {
 		},
 	}
 
-	srv, _ := Add(nc, config)
+	srv, _ := AddService(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -138,7 +138,7 @@ func ExampleService_Stopped() {
 		},
 	}
 
-	srv, _ := Add(nc, config)
+	srv, _ := AddService(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -166,7 +166,7 @@ func ExampleService_Reset() {
 		},
 	}
 
-	srv, _ := Add(nc, config)
+	srv, _ := AddService(nc, config)
 
 	// reset endpoint stats on this service
 	srv.Reset()

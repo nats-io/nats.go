@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package micro
 
 import (
 	"encoding/json"
@@ -31,10 +31,37 @@ import (
 // This functionality is EXPERIMENTAL and may be changed in later releases.
 
 type (
-	// Service represents a configured NATS service.
+	Service interface {
+		// ID returns the service instance's unique ID.
+		ID() string
+
+		// Name returns the name of the service.
+		// It can be shared between multiple service instances.
+		Name() string
+
+		// Description returns the service description.
+		Description() string
+
+		// Version returns the service version.
+		Version() string
+
+		// Stats returns statisctics for the service endpoint and all monitoring endpoints.
+		Stats() Stats
+
+		// Reset resets all statistics on a service instance.
+		Reset()
+
+		// Stop drains the endpoint subscriptions and marks the service as stopped.
+		Stop() error
+
+		// Stopped informs whether [Stop] was executed on the service.
+		Stopped() bool
+	}
+
+	// service represents a configured NATS service.
 	// It should be created using [Add] in order to configure the appropriate NATS subscriptions
 	// for request handler and monitoring.
-	Service struct {
+	service struct {
 		// Config contains a configuration of the service
 		Config
 
@@ -49,10 +76,10 @@ type (
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
-	ErrHandler func(*Service, *NATSError)
+	ErrHandler func(Service, *NATSError)
 
 	// DoneHandler is a function used to configure a custom done handler for a service.
-	DoneHandler func(*Service)
+	DoneHandler func(Service)
 
 	// StatsHandleris a function used to configure a custom STATS endpoint.
 	// It should return a value which can be serialized to JSON.
@@ -169,6 +196,9 @@ var (
 
 	// ErrVerbNotSupported is returned when invalid [Verb] is used (PING, SCHEMA, INFO, STATS)
 	ErrVerbNotSupported = errors.New("unsupported verb")
+
+	// ErrServiceNameRequired is returned when attempting to generate control subject with ID but empty name
+	ErrServiceNameRequired = errors.New("service name is required to generate ID control subject")
 )
 
 func (s Verb) String() string {
@@ -186,19 +216,19 @@ func (s Verb) String() string {
 	}
 }
 
-// Add adds a microservice.
+// AddService adds a microservice.
 // It will enable internal common services (PING, STATS, INFO and SCHEMA) as well as
 // the actual service handler on the subject provided in config.Endpoint
 // A service name and Endpoint configuration are required to add a service.
-// Add returns a [Service] interface, allowing service menagement.
+// AddService returns a [Service] interface, allowing service menagement.
 // Each service is assigned a unique ID.
-func Add(nc *nats.Conn, config Config) (*Service, error) {
+func AddService(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
 	}
 
 	id := nuid.Next()
-	svc := &Service{
+	svc := &service{
 		Config: config,
 		conn:   nc,
 		id:     id,
@@ -208,6 +238,8 @@ func Add(nc *nats.Conn, config Config) (*Service, error) {
 	svc.endpointStats[""] = &EndpointStats{
 		Name: config.Name,
 	}
+
+	svc.setupAsyncCallbacks()
 
 	// Setup internal subscriptions.
 	var err error
@@ -232,24 +264,40 @@ func Add(nc *nats.Conn, config Config) (*Service, error) {
 		ID:   id,
 	}
 
-	infoHandler := func(m *nats.Msg) {
+	infoHandler := func(req *Request) {
 		response, _ := json.Marshal(info)
-		m.Respond(response)
+		if err := req.Respond(response); err != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err)); err != nil && config.ErrorHandler != nil {
+				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+			}
+		}
 	}
 
-	pingHandler := func(m *nats.Msg) {
+	pingHandler := func(req *Request) {
 		response, _ := json.Marshal(ping)
-		m.Respond(response)
+		if err := req.Respond(response); err != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err)); err != nil && config.ErrorHandler != nil {
+				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+			}
+		}
 	}
 
-	statusHandler := func(m *nats.Msg) {
+	statsHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Stats())
-		m.Respond(response)
+		if err := req.Respond(response); err != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err)); err != nil && config.ErrorHandler != nil {
+				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+			}
+		}
 	}
 
-	schemaHandler := func(m *nats.Msg) {
+	schemaHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Schema)
-		m.Respond(response)
+		if err := req.Respond(response); err != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err)); err != nil && config.ErrorHandler != nil {
+				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+			}
+		}
 	}
 
 	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
@@ -258,7 +306,7 @@ func Add(nc *nats.Conn, config Config) (*Service, error) {
 	if err := svc.verbHandlers(nc, PingVerb, pingHandler); err != nil {
 		return nil, err
 	}
-	if err := svc.verbHandlers(nc, StatsVerb, statusHandler); err != nil {
+	if err := svc.verbHandlers(nc, StatsVerb, statsHandler); err != nil {
 		return nil, err
 	}
 
@@ -266,42 +314,6 @@ func Add(nc *nats.Conn, config Config) (*Service, error) {
 		if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
 			return nil, err
 		}
-	}
-
-	svc.natsHandlers.closed = nc.Opts.ClosedCB
-	if nc.Opts.ClosedCB != nil {
-		nc.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
-			svc.natsHandlers.closed(c)
-		})
-	} else {
-		nc.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
-		})
-	}
-
-	svc.natsHandlers.asyncErr = nc.Opts.AsyncErrorCB
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
-			if config.ErrorHandler != nil {
-				config.ErrorHandler(svc, &NATSError{
-					Description: err.Error(),
-					Subject:     s.Subject,
-				})
-			}
-			svc.Stop()
-			svc.natsHandlers.asyncErr(c, s, err)
-		})
-	} else {
-		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
-			if config.ErrorHandler != nil {
-				config.ErrorHandler(svc, &NATSError{
-					Description: err.Error(),
-					Subject:     s.Subject,
-				})
-			}
-			svc.Stop()
-		})
 	}
 
 	return svc, nil
@@ -324,24 +336,80 @@ func (e *Endpoint) valid() error {
 	return nil
 }
 
+func (svc *service) setupAsyncCallbacks() {
+	svc.natsHandlers.closed = svc.conn.Opts.ClosedCB
+	if svc.conn.Opts.ClosedCB != nil {
+		svc.conn.SetClosedHandler(func(c *nats.Conn) {
+			svc.Stop()
+			svc.natsHandlers.closed(c)
+		})
+	} else {
+		svc.conn.SetClosedHandler(func(c *nats.Conn) {
+			svc.Stop()
+		})
+	}
+
+	svc.natsHandlers.asyncErr = svc.conn.Opts.AsyncErrorCB
+	if svc.conn.Opts.AsyncErrorCB != nil {
+		svc.conn.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
+			if !svc.matchSubscriptionSubject(s.Subject) {
+				svc.natsHandlers.asyncErr(c, s, err)
+			}
+			if svc.Config.ErrorHandler != nil {
+				svc.Config.ErrorHandler(svc, &NATSError{
+					Subject:     s.Subject,
+					Description: err.Error(),
+				})
+			}
+			svc.Stop()
+			svc.natsHandlers.asyncErr(c, s, err)
+		})
+	} else {
+		svc.conn.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
+			if !svc.matchSubscriptionSubject(s.Subject) {
+				return
+			}
+			if svc.Config.ErrorHandler != nil {
+				svc.Config.ErrorHandler(svc, &NATSError{
+					Subject:     s.Subject,
+					Description: err.Error(),
+				})
+			}
+			svc.Stop()
+		})
+	}
+}
+
+func (svc *service) matchSubscriptionSubject(subj string) bool {
+	if svc.reqSub.Subject == subj {
+		return true
+	}
+	for _, verbSub := range svc.verbSubs {
+		if verbSub.Subject == subj {
+			return true
+		}
+	}
+	return false
+}
+
 // verbHandlers generates control handlers for a specific verb.
 // Each request generates 3 subscriptions, one for the general verb
 // affecting all services written with the framework, one that handles
 // all services of a particular kind, and finally a specific service instance.
-func (svc *Service) verbHandlers(nc *nats.Conn, verb Verb, handler nats.MsgHandler) error {
+func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler RequestHandler) error {
 	name := fmt.Sprintf("%s-all", verb.String())
 	if err := svc.addInternalHandler(nc, verb, "", "", name, handler); err != nil {
 		return err
 	}
 	name = fmt.Sprintf("%s-kind", verb.String())
-	if err := svc.addInternalHandler(nc, verb, svc.Name, "", name, handler); err != nil {
+	if err := svc.addInternalHandler(nc, verb, svc.Config.Name, "", name, handler); err != nil {
 		return err
 	}
-	return svc.addInternalHandler(nc, verb, svc.Name, svc.ID(), verb.String(), handler)
+	return svc.addInternalHandler(nc, verb, svc.Config.Name, svc.ID(), verb.String(), handler)
 }
 
 // addInternalHandler registers a control subject handler.
-func (s *Service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler nats.MsgHandler) error {
+func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler RequestHandler) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
 		s.Stop()
@@ -350,7 +418,7 @@ func (s *Service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 
 	s.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
 		start := time.Now()
-		handler(msg)
+		handler(&Request{Msg: msg})
 
 		s.m.Lock()
 		stats := s.endpointStats[name]
@@ -371,7 +439,7 @@ func (s *Service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 }
 
 // reqHandler itself
-func (s *Service) reqHandler(req *Request) {
+func (s *service) reqHandler(req *Request) {
 	start := time.Now()
 	s.Endpoint.Handler(req)
 	s.m.Lock()
@@ -388,7 +456,7 @@ func (s *Service) reqHandler(req *Request) {
 }
 
 // Stop drains the endpoint subscriptions and marks the service as stopped.
-func (s *Service) Stop() error {
+func (s *service) Stop() error {
 	s.m.Lock()
 	if s.stopped {
 		return nil
@@ -413,7 +481,7 @@ func (s *Service) Stop() error {
 	restoreAsyncHandlers(s.conn, s.natsHandlers)
 	s.stopped = true
 	if s.DoneHandler != nil {
-		s.DoneHandler(s)
+		go s.DoneHandler(s)
 	}
 	return nil
 }
@@ -424,12 +492,27 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 }
 
 // ID returns the service instance's unique ID.
-func (s *Service) ID() string {
+func (s *service) ID() string {
 	return s.id
 }
 
+// ID returns the service instance's unique ID.
+func (s *service) Name() string {
+	return s.Config.Name
+}
+
+// ID returns the service instance's unique ID.
+func (s *service) Version() string {
+	return s.Config.Version
+}
+
+// ID returns the service instance's unique ID.
+func (s *service) Description() string {
+	return s.Config.Description
+}
+
 // Stats returns statisctics for the service endpoint and all monitoring endpoints.
-func (s *Service) Stats() Stats {
+func (s *service) Stats() Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
 	if s.StatsHandler != nil {
@@ -443,15 +526,15 @@ func (s *Service) Stats() Stats {
 		idx++
 	}
 	return Stats{
-		Name:      s.Name,
+		Name:      s.Config.Name,
 		ID:        s.ID(),
-		Version:   s.Version,
+		Version:   s.Config.Version,
 		Endpoints: v,
 	}
 }
 
 // Reset resets all statistics on a service instance.
-func (s *Service) Reset() {
+func (s *service) Reset() {
 	s.m.Lock()
 	for _, se := range s.endpointStats {
 		se.NumRequests = 0
@@ -465,7 +548,7 @@ func (s *Service) Reset() {
 }
 
 // Stopped informs whether [Stop] was executed on the service.
-func (s *Service) Stopped() bool {
+func (s *service) Stopped() bool {
 	s.m.Lock()
 	defer s.m.Unlock()
 	return s.stopped
@@ -481,6 +564,9 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 	verbStr := verb.String()
 	if verbStr == "" {
 		return "", fmt.Errorf("%w: %q", ErrVerbNotSupported, verbStr)
+	}
+	if name == "" && id != "" {
+		return "", ErrServiceNameRequired
 	}
 	name = strings.ToUpper(name)
 	if name == "" && id == "" {

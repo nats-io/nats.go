@@ -1,4 +1,4 @@
-package service
+package micro
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ func Example() {
 	}
 	defer nc.Close()
 
-	// Service handler is a function which takes *service.Request as argument.
+	// Service handler is a function which takes Service.Request as argument.
 	// req.Respond or req.Error should be used to respond to the request.
 	incrementHandler := func(req *Request) {
 		val, err := strconv.Atoi(string(req.Data))
@@ -46,7 +46,7 @@ func Example() {
 	// Multiple instances of the servcice with the same name can be created.
 	// Requests to a service with the same name will be load-balanced.
 	for i := 0; i < 5; i++ {
-		svc, err := Add(nc, config)
+		svc, err := AddService(nc, config)
 		if err != nil {
 			log.Fatal(err)
 		}

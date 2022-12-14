@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package micro
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"reflect"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func TestServiceBasics(t *testing.T) {
 		}
 	}
 
-	var svcs []*Service
+	var svcs []Service
 
 	// Create 5 service responders.
 	config := Config{
@@ -71,7 +72,7 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		svc, err := Add(nc, config)
+		svc, err := AddService(nc, config)
 		if err != nil {
 			t.Fatalf("Expected to create Service, got %v", err)
 		}
@@ -88,10 +89,10 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for _, svc := range svcs {
-		if svc.Name != "CoolAddService" {
-			t.Fatalf("Expected %q, got %q", "CoolAddService", svc.Name)
+		if svc.Name() != "CoolAddService" {
+			t.Fatalf("Expected %q, got %q", "CoolAddService", svc.Name())
 		}
-		if len(svc.Description) == 0 || len(svc.Version) == 0 {
+		if len(svc.Description()) == 0 || len(svc.Version()) == 0 {
 			t.Fatalf("Expected non empty description and version")
 		}
 	}
@@ -205,6 +206,7 @@ func TestAddService(t *testing.T) {
 		givenConfig       Config
 		natsClosedHandler nats.ConnHandler
 		natsErrorHandler  nats.ErrHandler
+		asyncErrorSubject string
 		expectedPing      Ping
 		withError         error
 	}{
@@ -229,7 +231,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(*Service) {
+				DoneHandler: func(Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -245,13 +247,31 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				ErrorHandler: func(*Service, *NATSError) {
+				ErrorHandler: func(Service, *NATSError) {
 					errService <- struct{}{}
 				},
 			},
 			expectedPing: Ping{
 				Name: "test_service",
 			},
+			asyncErrorSubject: "test.sub",
+		},
+		{
+			name: "with error handler, no handlers on nats connection, error on monitoring subject",
+			givenConfig: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: testHandler,
+				},
+				ErrorHandler: func(Service, *NATSError) {
+					errService <- struct{}{}
+				},
+			},
+			expectedPing: Ping{
+				Name: "test_service",
+			},
+			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
 		{
 			name: "with done handler, append to nats handlers",
@@ -261,7 +281,30 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(*Service) {
+				DoneHandler: func(Service) {
+					doneService <- struct{}{}
+				},
+			},
+			natsClosedHandler: func(c *nats.Conn) {
+				closedNats <- struct{}{}
+			},
+			natsErrorHandler: func(*nats.Conn, *nats.Subscription, error) {
+				errNats <- struct{}{}
+			},
+			expectedPing: Ping{
+				Name: "test_service",
+			},
+			asyncErrorSubject: "test.sub",
+		},
+		{
+			name: "with error handler, append to nats handlers",
+			givenConfig: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: testHandler,
+				},
+				DoneHandler: func(Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -276,14 +319,14 @@ func TestAddService(t *testing.T) {
 			},
 		},
 		{
-			name: "with error handler, append to nats handlers",
+			name: "with error handler, append to nats handlers, error on monitoring subject",
 			givenConfig: Config{
 				Name: "test_service",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
-				DoneHandler: func(*Service) {
+				DoneHandler: func(Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -296,6 +339,7 @@ func TestAddService(t *testing.T) {
 			expectedPing: Ping{
 				Name: "test_service",
 			},
+			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
 		{
 			name: "validation error, invalid service name",
@@ -346,7 +390,7 @@ func TestAddService(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := Add(nc, test.givenConfig)
+			srv, err := AddService(nc, test.givenConfig)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -354,7 +398,7 @@ func TestAddService(t *testing.T) {
 				return
 			}
 
-			pingSubject, err := ControlSubject(PingVerb, srv.Name, srv.ID())
+			pingSubject, err := ControlSubject(PingVerb, srv.Name(), srv.ID())
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -389,7 +433,7 @@ func TestAddService(t *testing.T) {
 			}
 
 			if test.givenConfig.ErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: "test.sub"}, fmt.Errorf("oops"))
+				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, fmt.Errorf("oops"))
 				select {
 				case <-errService:
 				case <-time.After(1 * time.Second):
@@ -421,7 +465,7 @@ func TestAddService(t *testing.T) {
 				}
 			}
 			if test.natsErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: "test.sub"}, fmt.Errorf("oops"))
+				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, fmt.Errorf("oops"))
 				select {
 				case <-errService:
 					t.Fatalf("Expected to restore nats error handler")
@@ -431,6 +475,308 @@ func TestAddService(t *testing.T) {
 				case <-errNats:
 				case <-time.After(1 * time.Second):
 					t.Fatalf("Timeout on AsyncErrHandler")
+				}
+			}
+		})
+	}
+}
+
+func TestMonitoringHandlers(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	asyncErr := make(chan struct{})
+	errHandler := func(s Service, n *NATSError) {
+		asyncErr <- struct{}{}
+	}
+
+	config := Config{
+		Name: "test_service",
+		Endpoint: Endpoint{
+			Subject: "test.sub",
+			Handler: func(*Request) {},
+		},
+		Schema: Schema{
+			Request: "some_schema",
+		},
+		ErrorHandler: errHandler,
+	}
+	srv, err := AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer func() {
+		srv.Stop()
+		if !srv.Stopped() {
+			t.Fatalf("Expected service to be stopped")
+		}
+	}()
+
+	tests := []struct {
+		name             string
+		subject          string
+		withError        bool
+		expectedResponse interface{}
+	}{
+		{
+			name:    "PING all",
+			subject: "$SRV.PING",
+			expectedResponse: Ping{
+				Name: "test_service",
+				ID:   srv.ID(),
+			},
+		},
+		{
+			name:    "PING name",
+			subject: "$SRV.PING.TEST_SERVICE",
+			expectedResponse: Ping{
+				Name: "test_service",
+				ID:   srv.ID(),
+			},
+		},
+		{
+			name:    "PING ID",
+			subject: fmt.Sprintf("$SRV.PING.TEST_SERVICE.%s", srv.ID()),
+			expectedResponse: Ping{
+				Name: "test_service",
+				ID:   srv.ID(),
+			},
+		},
+		{
+			name:    "INFO all",
+			subject: "$SRV.INFO",
+			expectedResponse: Info{
+				Name:    "test_service",
+				ID:      srv.ID(),
+				Subject: "test.sub",
+			},
+		},
+		{
+			name:    "INFO name",
+			subject: "$SRV.INFO.TEST_SERVICE",
+			expectedResponse: Info{
+				Name:    "test_service",
+				ID:      srv.ID(),
+				Subject: "test.sub",
+			},
+		},
+		{
+			name:    "INFO ID",
+			subject: fmt.Sprintf("$SRV.INFO.TEST_SERVICE.%s", srv.ID()),
+			expectedResponse: Info{
+				Name:    "test_service",
+				ID:      srv.ID(),
+				Subject: "test.sub",
+			},
+		},
+		{
+			name:    "SCHEMA all",
+			subject: "$SRV.SCHEMA",
+			expectedResponse: Schema{
+				Request: "some_schema",
+			},
+		},
+		{
+			name:    "SCHEMA name",
+			subject: "$SRV.SCHEMA.TEST_SERVICE",
+			expectedResponse: Schema{
+				Request: "some_schema",
+			},
+		},
+		{
+			name:    "SCHEMA ID",
+			subject: fmt.Sprintf("$SRV.SCHEMA.TEST_SERVICE.%s", srv.ID()),
+			expectedResponse: Schema{
+				Request: "some_schema",
+			},
+		},
+		{
+			name:      "PING error",
+			subject:   "$SRV.PING",
+			withError: true,
+		},
+		{
+			name:      "INFO error",
+			subject:   "$SRV.INFO",
+			withError: true,
+		},
+		{
+			name:      "STATS error",
+			subject:   "$SRV.STATS",
+			withError: true,
+		},
+		{
+			name:      "SCHEMA error",
+			subject:   "$SRV.SCHEMA",
+			withError: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.withError {
+				// use publish instead of request, so Respond will fail inside the handler
+				if err := nc.Publish(test.subject, nil); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				select {
+				case <-asyncErr:
+					return
+				case <-time.After(1 * time.Second):
+					t.Fatalf("Timeout waiting for async error")
+				}
+				return
+			}
+
+			resp, err := nc.Request(test.subject, nil, 1*time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			respMap := make(map[string]interface{})
+			if err := json.Unmarshal(resp.Data, &respMap); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			expectedResponseJSON, err := json.Marshal(test.expectedResponse)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			expectedRespMap := make(map[string]interface{})
+			if err := json.Unmarshal(expectedResponseJSON, &expectedRespMap); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(respMap, expectedRespMap) {
+				t.Fatalf("Invalid response; want: %+v; got: %+v", expectedRespMap, respMap)
+			}
+		})
+	}
+}
+
+func TestServiceStats(t *testing.T) {
+	tests := []struct {
+		name                 string
+		config               Config
+		expectedEndpointsLen int
+		expectedStats        map[string]interface{}
+	}{
+		{
+			name: "without schema or stats handler",
+			config: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: func(*Request) {},
+				},
+			},
+			expectedEndpointsLen: 10,
+		},
+		{
+			name: "with stats handler",
+			config: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: func(*Request) {},
+				},
+				StatsHandler: func(e Endpoint) interface{} {
+					return map[string]interface{}{
+						"key": "val",
+					}
+				},
+			},
+			expectedEndpointsLen: 10,
+			expectedStats: map[string]interface{}{
+				"key": "val",
+			},
+		},
+		{
+			name: "with schema",
+			config: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: func(*Request) {},
+				},
+				Schema: Schema{
+					Request: "some_schema",
+				},
+			},
+			expectedEndpointsLen: 13,
+		},
+		{
+			name: "with schema and stats handler",
+			config: Config{
+				Name: "test_service",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: func(*Request) {},
+				},
+				Schema: Schema{
+					Request: "some_schema",
+				},
+				StatsHandler: func(e Endpoint) interface{} {
+					return map[string]interface{}{
+						"key": "val",
+					}
+				},
+			},
+			expectedEndpointsLen: 13,
+			expectedStats: map[string]interface{}{
+				"key": "val",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunServerOnPort(-1)
+			defer s.Shutdown()
+
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Expected to connect to server, got %v", err)
+			}
+			defer nc.Close()
+
+			srv, err := AddService(nc, test.config)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer srv.Stop()
+
+			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.TEST_SERVICE.%s", srv.ID()), nil, 1*time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			var stats Stats
+			if err := json.Unmarshal(resp.Data, &stats); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if len(stats.Endpoints) != test.expectedEndpointsLen {
+				t.Errorf("Unexpected endpoint count; want: %d; got: %d", test.expectedEndpointsLen, len(stats.Endpoints))
+			}
+			if stats.Name != srv.Name() {
+				t.Errorf("Unexpected service name; want: %s; got: %s", srv.Name(), stats.Name)
+			}
+			if stats.ID != srv.ID() {
+				t.Errorf("Unexpected service name; want: %s; got: %s", srv.ID(), stats.ID)
+			}
+			if test.expectedStats != nil {
+				for _, e := range stats.Endpoints {
+					if e.Name != "test_service" {
+						continue
+					}
+					if val, ok := e.Data.(map[string]interface{}); !ok || !reflect.DeepEqual(val, test.expectedStats) {
+						t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, val)
+					}
 				}
 			}
 		})
@@ -551,7 +897,7 @@ func TestRequestRespond(t *testing.T) {
 				}
 			}
 
-			svc, err := Add(nc, Config{
+			svc, err := AddService(nc, Config{
 				Name:        "CoolService",
 				Description: "Erroring service",
 				Endpoint: Endpoint{
@@ -603,4 +949,64 @@ func RunServerOnPort(port int) *server.Server {
 
 func RunServerWithOptions(opts *server.Options) *server.Server {
 	return natsserver.RunServer(opts)
+}
+
+func TestControlSubject(t *testing.T) {
+	tests := []struct {
+		name            string
+		verb            Verb
+		srvName         string
+		id              string
+		expectedSubject string
+		withError       error
+	}{
+		{
+			name:            "PING ALL",
+			verb:            PingVerb,
+			expectedSubject: "$SRV.PING",
+		},
+		{
+			name:            "PING name",
+			verb:            PingVerb,
+			srvName:         "test",
+			expectedSubject: "$SRV.PING.TEST",
+		},
+		{
+			name:            "PING id",
+			verb:            PingVerb,
+			srvName:         "test",
+			id:              "123",
+			expectedSubject: "$SRV.PING.TEST.123",
+		},
+		{
+			name:      "invalid verb",
+			verb:      Verb(100),
+			withError: ErrVerbNotSupported,
+		},
+		{
+			name:      "name not provided",
+			verb:      PingVerb,
+			srvName:   "",
+			id:        "123",
+			withError: ErrServiceNameRequired,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			res, err := ControlSubject(test.verb, test.srvName, test.id)
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if res != test.expectedSubject {
+				t.Errorf("Invalid subject; want: %q; got: %q", test.expectedSubject, res)
+			}
+		})
+	}
 }
