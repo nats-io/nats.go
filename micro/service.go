@@ -331,8 +331,8 @@ func (e *Endpoint) valid() error {
 }
 
 func (svc *service) setupAsyncCallbacks() {
-	svc.natsHandlers.closed = svc.conn.Opts.ClosedCB
-	if svc.conn.Opts.ClosedCB != nil {
+	svc.natsHandlers.closed = svc.conn.ClosedHandler()
+	if svc.natsHandlers.closed != nil {
 		svc.conn.SetClosedHandler(func(c *nats.Conn) {
 			svc.Stop()
 			svc.natsHandlers.closed(c)
@@ -343,8 +343,8 @@ func (svc *service) setupAsyncCallbacks() {
 		})
 	}
 
-	svc.natsHandlers.asyncErr = svc.conn.Opts.AsyncErrorCB
-	if svc.conn.Opts.AsyncErrorCB != nil {
+	svc.natsHandlers.asyncErr = svc.conn.ErrorHandler()
+	if svc.natsHandlers.asyncErr != nil {
 		svc.conn.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
 			if !svc.matchSubscriptionSubject(s.Subject) {
 				svc.natsHandlers.asyncErr(c, s, err)
