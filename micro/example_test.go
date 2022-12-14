@@ -29,12 +29,14 @@ func ExampleAddService() {
 
 		// DoneHandler can be set to customize behavior on stopping a service.
 		DoneHandler: func(srv Service) {
-			fmt.Printf("stopped service %q with ID %q\n", srv.Name(), srv.ID())
+			info := srv.Info()
+			fmt.Printf("stopped service %q with ID %q\n", info.Name, info.ID)
 		},
 
 		// ErrorHandler can be used to customize behavior on service execution error.
 		ErrorHandler: func(srv Service, err *NATSError) {
-			fmt.Printf("Service %q returned an error on subject %q: %s", srv.Name(), err.Subject, err.Description)
+			info := srv.Info()
+			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
 		},
 	}
 
@@ -45,7 +47,7 @@ func ExampleAddService() {
 	defer srv.Stop()
 }
 
-func ExampleService_ID() {
+func ExampleService_Info() {
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
@@ -62,9 +64,14 @@ func ExampleService_ID() {
 
 	srv, _ := AddService(nc, config)
 
-	// unique service ID
-	id := srv.ID()
-	fmt.Println(id)
+	// service info
+	info := srv.Info()
+
+	fmt.Println(info.ID)
+	fmt.Println(info.Name)
+	fmt.Println(info.Description)
+	fmt.Println(info.Version)
+	fmt.Println(info.Subject)
 }
 
 func ExampleService_Stats() {
@@ -75,7 +82,8 @@ func ExampleService_Stats() {
 	defer nc.Close()
 
 	config := Config{
-		Name: "EchoService",
+		Name:    "EchoService",
+		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
 			Handler: func(*Request) {},
@@ -87,9 +95,8 @@ func ExampleService_Stats() {
 	// stats of a service instance
 	stats := srv.Stats()
 
-	for _, e := range stats.Endpoints {
-		fmt.Println(e.AverageProcessingTime)
-	}
+	fmt.Println(stats.AverageProcessingTime)
+	fmt.Println(stats.TotalProcessingTime)
 
 }
 
@@ -101,7 +108,8 @@ func ExampleService_Stop() {
 	defer nc.Close()
 
 	config := Config{
-		Name: "EchoService",
+		Name:    "EchoService",
+		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
 			Handler: func(*Request) {},
@@ -131,7 +139,8 @@ func ExampleService_Stopped() {
 	defer nc.Close()
 
 	config := Config{
-		Name: "EchoService",
+		Name:    "EchoService",
+		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
 			Handler: func(*Request) {},
@@ -159,7 +168,8 @@ func ExampleService_Reset() {
 	defer nc.Close()
 
 	config := Config{
-		Name: "EchoService",
+		Name:    "EchoService",
+		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
 			Handler: func(*Request) {},
@@ -171,11 +181,11 @@ func ExampleService_Reset() {
 	// reset endpoint stats on this service
 	srv.Reset()
 
-	empty := EndpointStats{Name: "EchoService"}
-	for _, e := range srv.Stats().Endpoints {
-		if e != empty {
-			log.Fatal("Expected endpoint stats to be empty")
-		}
+	empty := Stats{
+		ServiceIdentity: srv.Info().ServiceIdentity,
+	}
+	if srv.Stats() != empty {
+		log.Fatal("Expected endpoint stats to be empty")
 	}
 }
 

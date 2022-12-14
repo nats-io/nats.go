@@ -34,7 +34,7 @@ func Example() {
 
 	config := Config{
 		Name:        "IncrementService",
-		Version:     "v0.1.0",
+		Version:     "0.1.0",
 		Description: "Increment numbers",
 		Endpoint: Endpoint{
 			// service handler

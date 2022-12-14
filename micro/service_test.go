@@ -62,7 +62,7 @@ func TestServiceBasics(t *testing.T) {
 	// Create 5 service responders.
 	config := Config{
 		Name:        "CoolAddService",
-		Version:     "v0.1",
+		Version:     "0.1.0",
 		Description: "Add things together",
 		Endpoint: Endpoint{
 			Subject: "svc.add",
@@ -89,10 +89,11 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for _, svc := range svcs {
-		if svc.Name() != "CoolAddService" {
-			t.Fatalf("Expected %q, got %q", "CoolAddService", svc.Name())
+		info := svc.Info()
+		if info.Name != "CoolAddService" {
+			t.Fatalf("Expected %q, got %q", "CoolAddService", info.Name)
 		}
-		if len(svc.Description()) == 0 || len(svc.Version()) == 0 {
+		if len(info.Description) == 0 || len(info.Version) == 0 {
 			t.Fatalf("Expected non empty description and version")
 		}
 	}
@@ -166,14 +167,7 @@ func TestServiceBasics(t *testing.T) {
 		if err := json.Unmarshal(resp.Data, &srvStats); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if len(srvStats.Endpoints) != 10 {
-			t.Fatalf("Expected 10 endpoints on a serivce, got: %d", len(srvStats.Endpoints))
-		}
-		for _, e := range srvStats.Endpoints {
-			if e.Name == "CoolAddService" {
-				requestsNum += e.NumRequests
-			}
-		}
+		requestsNum += srvStats.NumRequests
 		stats = append(stats, srvStats)
 	}
 	if len(stats) != 5 {
@@ -186,12 +180,14 @@ func TestServiceBasics(t *testing.T) {
 	}
 	// Reset stats for a service
 	svcs[0].Reset()
-	for _, e := range svcs[0].Stats().Endpoints {
-		emptyStats := EndpointStats{Name: e.Name}
-		if e != emptyStats {
-			t.Fatalf("Expected empty stats after reset; got: %+v", e)
-		}
+	emptyStats := Stats{
+		ServiceIdentity: svcs[0].Info().ServiceIdentity,
 	}
+
+	if svcs[0].Stats() != emptyStats {
+		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
+	}
+
 }
 
 func TestAddService(t *testing.T) {
@@ -213,20 +209,23 @@ func TestAddService(t *testing.T) {
 		{
 			name: "minimal config",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
 				},
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 		},
 		{
 			name: "with done handler, no handlers on nats connection",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -236,13 +235,15 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 		},
 		{
 			name: "with error handler, no handlers on nats connection",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -252,14 +253,16 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 			asyncErrorSubject: "test.sub",
 		},
 		{
 			name: "with error handler, no handlers on nats connection, error on monitoring subject",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -269,14 +272,16 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
 		{
 			name: "with done handler, append to nats handlers",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -292,14 +297,16 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 			asyncErrorSubject: "test.sub",
 		},
 		{
 			name: "with error handler, append to nats handlers",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -315,13 +322,15 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 		},
 		{
 			name: "with error handler, append to nats handlers, error on monitoring subject",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -337,14 +346,28 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 			},
 			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
 		{
 			name: "validation error, invalid service name",
 			givenConfig: Config{
-				Name: "test_service!",
+				Name:    "test_service!",
+				Version: "0.1.0",
+				Endpoint: Endpoint{
+					Subject: "test.sub",
+					Handler: testHandler,
+				},
+			},
+			withError: ErrConfigValidation,
+		},
+		{
+			name: "validation error, invalid version",
+			givenConfig: Config{
+				Name:    "test_service!",
+				Version: "abc",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
 					Handler: testHandler,
@@ -355,7 +378,8 @@ func TestAddService(t *testing.T) {
 		{
 			name: "validation error, empty subject",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "",
 					Handler: testHandler,
@@ -366,7 +390,8 @@ func TestAddService(t *testing.T) {
 		{
 			name: "validation error, no handler",
 			givenConfig: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test_subject",
 					Handler: nil,
@@ -397,8 +422,12 @@ func TestAddService(t *testing.T) {
 				}
 				return
 			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
-			pingSubject, err := ControlSubject(PingVerb, srv.Name(), srv.ID())
+			info := srv.Info()
+			pingSubject, err := ControlSubject(PingVerb, info.Name, info.ID)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -411,7 +440,7 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			test.expectedPing.ID = srv.ID()
+			test.expectedPing.ID = info.ID
 			if test.expectedPing != ping {
 				t.Fatalf("Invalid ping response; want: %+v; got: %+v", test.expectedPing, ping)
 			}
@@ -497,7 +526,8 @@ func TestMonitoringHandlers(t *testing.T) {
 	}
 
 	config := Config{
-		Name: "test_service",
+		Name:    "test_service",
+		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "test.sub",
 			Handler: func(*Request) {},
@@ -518,6 +548,8 @@ func TestMonitoringHandlers(t *testing.T) {
 		}
 	}()
 
+	info := srv.Info()
+
 	tests := []struct {
 		name             string
 		subject          string
@@ -528,32 +560,38 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "PING all",
 			subject: "$SRV.PING",
 			expectedResponse: Ping{
-				Name: "test_service",
-				ID:   srv.ID(),
+				Name:    "test_service",
+				Version: "0.1.0",
+				ID:      info.ID,
 			},
 		},
 		{
 			name:    "PING name",
 			subject: "$SRV.PING.TEST_SERVICE",
 			expectedResponse: Ping{
-				Name: "test_service",
-				ID:   srv.ID(),
+				Name:    "test_service",
+				Version: "0.1.0",
+				ID:      info.ID,
 			},
 		},
 		{
 			name:    "PING ID",
-			subject: fmt.Sprintf("$SRV.PING.TEST_SERVICE.%s", srv.ID()),
+			subject: fmt.Sprintf("$SRV.PING.TEST_SERVICE.%s", info.ID),
 			expectedResponse: Ping{
-				Name: "test_service",
-				ID:   srv.ID(),
+				Name:    "test_service",
+				Version: "0.1.0",
+				ID:      info.ID,
 			},
 		},
 		{
 			name:    "INFO all",
 			subject: "$SRV.INFO",
 			expectedResponse: Info{
-				Name:    "test_service",
-				ID:      srv.ID(),
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 				Subject: "test.sub",
 			},
 		},
@@ -561,17 +599,23 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "INFO name",
 			subject: "$SRV.INFO.TEST_SERVICE",
 			expectedResponse: Info{
-				Name:    "test_service",
-				ID:      srv.ID(),
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 				Subject: "test.sub",
 			},
 		},
 		{
 			name:    "INFO ID",
-			subject: fmt.Sprintf("$SRV.INFO.TEST_SERVICE.%s", srv.ID()),
+			subject: fmt.Sprintf("$SRV.INFO.TEST_SERVICE.%s", info.ID),
 			expectedResponse: Info{
-				Name:    "test_service",
-				ID:      srv.ID(),
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 				Subject: "test.sub",
 			},
 		},
@@ -591,7 +635,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "SCHEMA ID",
-			subject: fmt.Sprintf("$SRV.SCHEMA.TEST_SERVICE.%s", srv.ID()),
+			subject: fmt.Sprintf("$SRV.SCHEMA.TEST_SERVICE.%s", info.ID),
 			expectedResponse: Schema{
 				Request: "some_schema",
 			},
@@ -659,30 +703,36 @@ func TestMonitoringHandlers(t *testing.T) {
 }
 
 func TestServiceStats(t *testing.T) {
+	handler := func(r *Request) {
+		if bytes.Equal(r.Data, []byte("err")) {
+			r.Error("400", "bad request")
+		}
+		r.Respond([]byte("ok"))
+	}
 	tests := []struct {
-		name                 string
-		config               Config
-		expectedEndpointsLen int
-		expectedStats        map[string]interface{}
+		name          string
+		config        Config
+		expectedStats map[string]interface{}
 	}{
 		{
 			name: "without schema or stats handler",
 			config: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
-					Handler: func(*Request) {},
+					Handler: handler,
 				},
 			},
-			expectedEndpointsLen: 10,
 		},
 		{
 			name: "with stats handler",
 			config: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
-					Handler: func(*Request) {},
+					Handler: handler,
 				},
 				StatsHandler: func(e Endpoint) interface{} {
 					return map[string]interface{}{
@@ -690,7 +740,6 @@ func TestServiceStats(t *testing.T) {
 					}
 				},
 			},
-			expectedEndpointsLen: 10,
 			expectedStats: map[string]interface{}{
 				"key": "val",
 			},
@@ -698,24 +747,25 @@ func TestServiceStats(t *testing.T) {
 		{
 			name: "with schema",
 			config: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
-					Handler: func(*Request) {},
+					Handler: handler,
 				},
 				Schema: Schema{
 					Request: "some_schema",
 				},
 			},
-			expectedEndpointsLen: 13,
 		},
 		{
 			name: "with schema and stats handler",
 			config: Config{
-				Name: "test_service",
+				Name:    "test_service",
+				Version: "0.1.0",
 				Endpoint: Endpoint{
 					Subject: "test.sub",
-					Handler: func(*Request) {},
+					Handler: handler,
 				},
 				Schema: Schema{
 					Request: "some_schema",
@@ -726,7 +776,6 @@ func TestServiceStats(t *testing.T) {
 					}
 				},
 			},
-			expectedEndpointsLen: 13,
 			expectedStats: map[string]interface{}{
 				"key": "val",
 			},
@@ -749,8 +798,17 @@ func TestServiceStats(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer srv.Stop()
+			for i := 0; i < 10; i++ {
+				if _, err := nc.Request(srv.Info().Subject, []byte("msg"), time.Second); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			if _, err := nc.Request(srv.Info().Subject, []byte("err"), time.Second); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
-			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.TEST_SERVICE.%s", srv.ID()), nil, 1*time.Second)
+			info := srv.Info()
+			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.TEST_SERVICE.%s", info.ID), nil, 1*time.Second)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -760,23 +818,21 @@ func TestServiceStats(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if len(stats.Endpoints) != test.expectedEndpointsLen {
-				t.Errorf("Unexpected endpoint count; want: %d; got: %d", test.expectedEndpointsLen, len(stats.Endpoints))
+			if stats.Name != info.Name {
+				t.Errorf("Unexpected service name; want: %s; got: %s", info.Name, stats.Name)
 			}
-			if stats.Name != srv.Name() {
-				t.Errorf("Unexpected service name; want: %s; got: %s", srv.Name(), stats.Name)
+			if stats.ID != info.ID {
+				t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
 			}
-			if stats.ID != srv.ID() {
-				t.Errorf("Unexpected service name; want: %s; got: %s", srv.ID(), stats.ID)
+			if stats.NumRequests != 11 {
+				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.NumRequests)
+			}
+			if stats.NumErrors != 1 {
+				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.NumErrors)
 			}
 			if test.expectedStats != nil {
-				for _, e := range stats.Endpoints {
-					if e.Name != "test_service" {
-						continue
-					}
-					if val, ok := e.Data.(map[string]interface{}); !ok || !reflect.DeepEqual(val, test.expectedStats) {
-						t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, val)
-					}
+				if val, ok := stats.Data.(map[string]interface{}); !ok || !reflect.DeepEqual(val, test.expectedStats) {
+					t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, val)
 				}
 			}
 		})
@@ -899,6 +955,7 @@ func TestRequestRespond(t *testing.T) {
 
 			svc, err := AddService(nc, Config{
 				Name:        "CoolService",
+				Version:     "0.1.0",
 				Description: "Erroring service",
 				Endpoint: Endpoint{
 					Subject: "svc.fail",
