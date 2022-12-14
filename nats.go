@@ -1285,6 +1285,16 @@ func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 	nc.Opts.DisconnectedErrCB = dcb
 }
 
+// DisconnectErrHandler will return the disconnect event handler.
+func (nc *Conn) DisconnectErrHandler() ConnErrHandler {
+	if nc == nil {
+		return nil
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.Opts.DisconnectedErrCB
+}
+
 // SetReconnectHandler will set the reconnect event handler.
 func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 	if nc == nil {
@@ -1293,6 +1303,16 @@ func (nc *Conn) SetReconnectHandler(rcb ConnHandler) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.ReconnectedCB = rcb
+}
+
+// ReconnectHandler will return the reconnect event handler.
+func (nc *Conn) ReconnectHandler() ConnHandler {
+	if nc == nil {
+		return nil
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.Opts.ReconnectedCB
 }
 
 // SetDiscoveredServersHandler will set the discovered servers handler.
@@ -1305,6 +1325,16 @@ func (nc *Conn) SetDiscoveredServersHandler(dscb ConnHandler) {
 	nc.Opts.DiscoveredServersCB = dscb
 }
 
+// DiscoveredServersHandler will return the discovered servers handler.
+func (nc *Conn) DiscoveredServersHandler() ConnHandler {
+	if nc == nil {
+		return nil
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.Opts.DiscoveredServersCB
+}
+
 // SetClosedHandler will set the closed event handler.
 func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 	if nc == nil {
@@ -1315,6 +1345,16 @@ func (nc *Conn) SetClosedHandler(cb ConnHandler) {
 	nc.Opts.ClosedCB = cb
 }
 
+// ClosedHandler will return the closed event handler.
+func (nc *Conn) ClosedHandler() ConnHandler {
+	if nc == nil {
+		return nil
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.Opts.ClosedCB
+}
+
 // SetErrorHandler will set the async error handler.
 func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 	if nc == nil {
@@ -1323,6 +1363,16 @@ func (nc *Conn) SetErrorHandler(cb ErrHandler) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	nc.Opts.AsyncErrorCB = cb
+}
+
+// ErrorHandler will return the async error handler.
+func (nc *Conn) ErrorHandler() ErrHandler {
+	if nc == nil {
+		return nil
+	}
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	return nc.Opts.AsyncErrorCB
 }
 
 // Process the url string argument to Connect.
