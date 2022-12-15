@@ -24,11 +24,15 @@ import (
 type (
 	Request struct {
 		*nats.Msg
-		errResponse bool
 	}
 
 	// RequestHandler is a function used as a Handler for a service.
-	RequestHandler func(*Request)
+	// It takes a request, which contains the data (payload and headers) of the request,
+	// as well as exposes methods to respond to the request.
+	//
+	// RequestHandler returns an error - if returned, the request will be accounted form in stats (in num_requests),
+	// and last_error will be set with the value.
+	RequestHandler func(*Request) error
 )
 
 var (
@@ -71,6 +75,5 @@ func (r *Request) Error(code, description string, data []byte) error {
 		},
 	}
 	response.Data = data
-	r.errResponse = true
 	return r.RespondMsg(response)
 }

@@ -39,12 +39,14 @@ func TestServiceBasics(t *testing.T) {
 	defer nc.Close()
 
 	// Stub service.
-	doAdd := func(req *Request) {
+	doAdd := func(req *Request) error {
 		if rand.Intn(10) == 0 {
-			if err := req.Error("500", "Unexpected error!", nil); err != nil {
+			if err := req.Error("400", "client error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
-			return
+
+			// for client-side errors, return nil to avoid tracking the errors in stats
+			return nil
 		}
 		// Happy Path.
 		// Random delay between 5-10ms
@@ -53,8 +55,9 @@ func TestServiceBasics(t *testing.T) {
 			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
-			return
+			return err
 		}
+		return nil
 	}
 
 	var svcs []Service
@@ -191,7 +194,7 @@ func TestServiceBasics(t *testing.T) {
 }
 
 func TestAddService(t *testing.T) {
-	testHandler := func(*Request) {}
+	testHandler := func(*Request) error { return nil }
 	errNats := make(chan struct{})
 	errService := make(chan struct{})
 	closedNats := make(chan struct{})
@@ -530,7 +533,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "test.sub",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 		Schema: Schema{
 			Request: "some_schema",
@@ -703,11 +706,19 @@ func TestMonitoringHandlers(t *testing.T) {
 }
 
 func TestServiceStats(t *testing.T) {
-	handler := func(r *Request) {
+	handler := func(r *Request) error {
 		if bytes.Equal(r.Data, []byte("err")) {
+			r.Error("500", "oops", nil)
+			return fmt.Errorf("oops")
+		}
+
+		// client errors (validation etc.) should not be accounted for in stats
+		if bytes.Equal(r.Data, []byte("client_err")) {
 			r.Error("400", "bad request", nil)
+			return nil
 		}
 		r.Respond([]byte("ok"))
+		return nil
 	}
 	tests := []struct {
 		name          string
@@ -803,6 +814,9 @@ func TestServiceStats(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
+			if _, err := nc.Request(srv.Info().Subject, []byte("client_err"), time.Second); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			if _, err := nc.Request(srv.Info().Subject, []byte("err"), time.Second); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -824,11 +838,11 @@ func TestServiceStats(t *testing.T) {
 			if stats.ID != info.ID {
 				t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
 			}
-			if stats.NumRequests != 11 {
-				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.NumRequests)
+			if stats.NumRequests != 12 {
+				t.Errorf("Unexpected num_requests; want: 12; got: %d", stats.NumRequests)
 			}
 			if stats.NumErrors != 1 {
-				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.NumErrors)
+				t.Errorf("Unexpected num_requests; want: 1; got: %d", stats.NumErrors)
 			}
 			if test.expectedStats != nil {
 				if val, ok := stats.Data.(map[string]interface{}); !ok || !reflect.DeepEqual(val, test.expectedStats) {
@@ -920,7 +934,7 @@ func TestRequestRespond(t *testing.T) {
 			errDesc := test.errDescription
 			errData := test.errData
 			// Stub service.
-			handler := func(req *Request) {
+			handler := func(req *Request) error {
 				if errors.Is(test.withRespondError, ErrRespond) {
 					nc.Close()
 				}
@@ -931,7 +945,7 @@ func TestRequestRespond(t *testing.T) {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
-							return
+							return nil
 						}
 						if err != nil {
 							t.Fatalf("Unexpected error when sending response: %v", err)
@@ -942,13 +956,13 @@ func TestRequestRespond(t *testing.T) {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
-							return
+							return nil
 						}
 						if err != nil {
 							t.Fatalf("Unexpected error when sending response: %v", err)
 						}
 					}
-					return
+					return nil
 				}
 
 				err := req.Error(errCode, errDesc, errData)
@@ -956,11 +970,12 @@ func TestRequestRespond(t *testing.T) {
 					if !errors.Is(err, respError) {
 						t.Fatalf("Expected error: %v; got: %v", respError, err)
 					}
-					return
+					return nil
 				}
 				if err != nil {
 					t.Fatalf("Unexpected error when sending response: %v", err)
 				}
+				return nil
 			}
 
 			svc, err := AddService(nc, Config{

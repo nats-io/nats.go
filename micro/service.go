@@ -71,7 +71,8 @@ type (
 		ServiceIdentity
 		NumRequests           int           `json:"num_requests"`
 		NumErrors             int           `json:"num_errors"`
-		TotalProcessingTime   time.Duration `json:"total_processing_time"`
+		LastError             error         `json:"last_error"`
+		ProcessingTime        time.Duration `json:"processing_time"`
 		AverageProcessingTime time.Duration `json:"average_processing_time"`
 		Started               string        `json:"started"`
 		Data                  interface{}   `json:"data,omitempty"`
@@ -263,40 +264,44 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Version: config.Version,
 	}
 
-	infoHandler := func(req *Request) {
+	infoHandler := func(req *Request) error {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
+		return nil
 	}
 
-	pingHandler := func(req *Request) {
+	pingHandler := func(req *Request) error {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
+		return nil
 	}
 
-	statsHandler := func(req *Request) {
+	statsHandler := func(req *Request) error {
 		response, _ := json.Marshal(svc.Stats())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
+		return nil
 	}
 
-	schemaHandler := func(req *Request) {
+	schemaHandler := func(req *Request) error {
 		response, _ := json.Marshal(svc.Schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
+		return nil
 	}
 
 	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
@@ -456,15 +461,16 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 // reqHandler itself
 func (s *service) reqHandler(req *Request) {
 	start := time.Now()
-	s.Endpoint.Handler(req)
+	err := s.Endpoint.Handler(req)
 	s.m.Lock()
 	s.stats.NumRequests++
-	s.stats.TotalProcessingTime += time.Since(start)
-	avgProcessingTime := s.stats.TotalProcessingTime.Nanoseconds() / int64(s.stats.NumRequests)
+	s.stats.ProcessingTime += time.Since(start)
+	avgProcessingTime := s.stats.ProcessingTime.Nanoseconds() / int64(s.stats.NumRequests)
 	s.stats.AverageProcessingTime = time.Duration(avgProcessingTime)
 
-	if req.errResponse {
+	if err != nil {
 		s.stats.NumErrors++
+		s.stats.LastError = err
 	}
 	s.m.Unlock()
 }
@@ -535,7 +541,7 @@ func (s *service) Stats() Stats {
 		},
 		NumRequests:           s.stats.NumRequests,
 		NumErrors:             s.stats.NumErrors,
-		TotalProcessingTime:   s.stats.TotalProcessingTime,
+		ProcessingTime:        s.stats.ProcessingTime,
 		AverageProcessingTime: s.stats.AverageProcessingTime,
 		Started:               s.stats.Started,
 		Data:                  s.stats.Data,

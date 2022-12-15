@@ -27,8 +27,9 @@ func ExampleAddService() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req *Request) {
+	echoHandler := func(req *Request) error {
 		req.Respond(req.Data)
+		return nil
 	}
 
 	config := Config{
@@ -71,7 +72,7 @@ func ExampleService_Info() {
 		Name: "EchoService",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 	}
 
@@ -99,7 +100,7 @@ func ExampleService_Stats() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 	}
 
@@ -109,7 +110,7 @@ func ExampleService_Stats() {
 	stats := srv.Stats()
 
 	fmt.Println(stats.AverageProcessingTime)
-	fmt.Println(stats.TotalProcessingTime)
+	fmt.Println(stats.ProcessingTime)
 
 }
 
@@ -125,7 +126,7 @@ func ExampleService_Stop() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 	}
 
@@ -156,7 +157,7 @@ func ExampleService_Stopped() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 	}
 
@@ -185,7 +186,7 @@ func ExampleService_Reset() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(*Request) error { return nil },
 		},
 	}
 
@@ -252,12 +253,13 @@ func ExampleRequest_RespondJSON() {
 }
 
 func ExampleRequest_Error() {
-	handler := func(req *Request) {
+	handler := func(req *Request) error {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
 		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {
-			log.Fatal(err)
+			return err
 		}
+		return nil
 	}
 
 	fmt.Printf("%T", handler)
