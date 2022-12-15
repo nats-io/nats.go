@@ -37,7 +37,7 @@ func Example() {
 	incrementHandler := func(req *Request) {
 		val, err := strconv.Atoi(string(req.Data))
 		if err != nil {
-			req.Error("400", "request data should be a number")
+			req.Error("400", "request data should be a number", nil)
 			return
 		}
 

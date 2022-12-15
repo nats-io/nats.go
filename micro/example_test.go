@@ -255,7 +255,7 @@ func ExampleRequest_Error() {
 	handler := func(req *Request) {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
-		if err := req.Error("400", "bad request"); err != nil {
+		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {
 			log.Fatal(err)
 		}
 	}

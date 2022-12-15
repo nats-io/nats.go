@@ -56,7 +56,8 @@ func (r *Request) RespondJSON(response interface{}) error {
 
 // Error prepares and publishes error response from a handler.
 // A response error should be set containing an error code and description.
-func (r *Request) Error(code, description string) error {
+// Optionally, data can be set as response payload.
+func (r *Request) Error(code, description string, data []byte) error {
 	if code == "" {
 		return fmt.Errorf("%w: error code", ErrArgRequired)
 	}
@@ -69,6 +70,7 @@ func (r *Request) Error(code, description string) error {
 			ErrorCodeHeader: []string{code},
 		},
 	}
+	response.Data = data
 	r.errResponse = true
 	return r.RespondMsg(response)
 }

@@ -266,7 +266,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	infoHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
-			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err)); err != nil && config.ErrorHandler != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
@@ -275,7 +275,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	pingHandler := func(req *Request) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
-			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err)); err != nil && config.ErrorHandler != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
@@ -284,7 +284,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	statsHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Stats())
 		if err := req.Respond(response); err != nil {
-			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err)); err != nil && config.ErrorHandler != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
@@ -293,7 +293,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	schemaHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Schema)
 		if err := req.Respond(response); err != nil {
-			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err)); err != nil && config.ErrorHandler != nil {
+			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}

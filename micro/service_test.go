@@ -41,7 +41,7 @@ func TestServiceBasics(t *testing.T) {
 	// Stub service.
 	doAdd := func(req *Request) {
 		if rand.Intn(10) == 0 {
-			if err := req.Error("500", "Unexpected error!"); err != nil {
+			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
 			return
@@ -50,7 +50,7 @@ func TestServiceBasics(t *testing.T) {
 		// Random delay between 5-10ms
 		time.Sleep(5*time.Millisecond + time.Duration(rand.Intn(5))*time.Millisecond)
 		if err := req.Respond([]byte("42")); err != nil {
-			if err := req.Error("500", "Unexpected error!"); err != nil {
+			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
 			return
@@ -705,7 +705,7 @@ func TestMonitoringHandlers(t *testing.T) {
 func TestServiceStats(t *testing.T) {
 	handler := func(r *Request) {
 		if bytes.Equal(r.Data, []byte("err")) {
-			r.Error("400", "bad request")
+			r.Error("400", "bad request", nil)
 		}
 		r.Respond([]byte("ok"))
 	}
@@ -850,6 +850,7 @@ func TestRequestRespond(t *testing.T) {
 		respondData      interface{}
 		errDescription   string
 		errCode          string
+		errData          []byte
 		expectedMessage  string
 		expectedCode     string
 		expectedResponse []byte
@@ -877,6 +878,14 @@ func TestRequestRespond(t *testing.T) {
 		},
 		{
 			name:            "generic error",
+			errDescription:  "oops",
+			errCode:         "500",
+			errData:         []byte("error!"),
+			expectedMessage: "oops",
+			expectedCode:    "500",
+		},
+		{
+			name:            "error without response payload",
 			errDescription:  "oops",
 			errCode:         "500",
 			expectedMessage: "oops",
@@ -909,6 +918,7 @@ func TestRequestRespond(t *testing.T) {
 			respError := test.withRespondError
 			errCode := test.errCode
 			errDesc := test.errDescription
+			errData := test.errData
 			// Stub service.
 			handler := func(req *Request) {
 				if errors.Is(test.withRespondError, ErrRespond) {
@@ -941,7 +951,7 @@ func TestRequestRespond(t *testing.T) {
 					return
 				}
 
-				err := req.Error(errCode, errDesc)
+				err := req.Error(errCode, errDesc, errData)
 				if respError != nil {
 					if !errors.Is(err, respError) {
 						t.Fatalf("Expected error: %v; got: %v", respError, err)
@@ -983,6 +993,9 @@ func TestRequestRespond(t *testing.T) {
 				code := resp.Header.Get("Nats-Service-Error-Code")
 				if code != test.expectedCode {
 					t.Fatalf("Invalid response code; want: %q; got: %q", test.expectedCode, code)
+				}
+				if !bytes.Equal(resp.Data, test.errData) {
+					t.Fatalf("Invalid response payload; want: %q; got: %q", string(test.errData), resp.Data)
 				}
 				return
 			}
