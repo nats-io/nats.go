@@ -48,23 +48,6 @@ type (
 		Stopped() bool
 	}
 
-	// service represents a configured NATS service.
-	// It should be created using [Add] in order to configure the appropriate NATS subscriptions
-	// for request handler and monitoring.
-	service struct {
-		// Config contains a configuration of the service
-		Config
-
-		m            sync.Mutex
-		id           string
-		reqSub       *nats.Subscription
-		verbSubs     map[string]*nats.Subscription
-		stats        *Stats
-		conn         *nats.Conn
-		natsHandlers handlers
-		stopped      bool
-	}
-
 	// ErrHandler is a function used to configure a custom error handler for a service,
 	ErrHandler func(Service, *NATSError)
 
@@ -83,10 +66,7 @@ type (
 	}
 
 	// Stats is the type returned by STATS monitoring endpoint.
-	// It contains a slice of [EndpointStats], providing stats
-	// for both the service handler as well as all monitoring subjects.
-	// EndpointStats are stats for a specific endpoint (either request handler or monitoring enpoints).
-	// It contains general statisctics for an endpoint, as well as a custom value returned by optional [StatsHandler].
+	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
 	Stats struct {
 		ServiceIdentity
 		NumRequests           int           `json:"num_requests"`
@@ -149,9 +129,32 @@ type (
 		Description string
 	}
 
+	// service represents a configured NATS service.
+	// It should be created using [Add] in order to configure the appropriate NATS subscriptions
+	// for request handler and monitoring.
+	service struct {
+		// Config contains a configuration of the service
+		Config
+
+		m            sync.Mutex
+		id           string
+		reqSub       *nats.Subscription
+		verbSubs     map[string]*nats.Subscription
+		stats        *Stats
+		conn         *nats.Conn
+		natsHandlers handlers
+		stopped      bool
+
+		asyncDispatcher asyncCallbacksHandler
+	}
+
 	handlers struct {
 		closed   nats.ConnHandler
 		asyncErr nats.ErrHandler
+	}
+
+	asyncCallbacksHandler struct {
+		cbQueue chan func()
 	}
 )
 
@@ -226,6 +229,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Config: config,
 		conn:   nc,
 		id:     id,
+		asyncDispatcher: asyncCallbacksHandler{
+			cbQueue: make(chan func(), 100),
+		},
 	}
 	svc.verbSubs = make(map[string]*nats.Subscription)
 	svc.stats = &Stats{
@@ -238,6 +244,8 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 
 	svc.setupAsyncCallbacks()
 
+	go svc.asyncDispatcher.asyncCBDispatcher()
+
 	// Setup internal subscriptions.
 	var err error
 
@@ -245,6 +253,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		svc.reqHandler(&Request{Msg: m})
 	})
 	if err != nil {
+		svc.asyncDispatcher.close()
 		return nil, err
 	}
 
@@ -258,7 +267,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err)); err != nil && config.ErrorHandler != nil {
-				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
 	}
@@ -267,7 +276,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err)); err != nil && config.ErrorHandler != nil {
-				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
 	}
@@ -276,7 +285,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		response, _ := json.Marshal(svc.Stats())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err)); err != nil && config.ErrorHandler != nil {
-				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
 	}
@@ -285,29 +294,53 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		response, _ := json.Marshal(svc.Schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err)); err != nil && config.ErrorHandler != nil {
-				go config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()})
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
 			}
 		}
 	}
 
 	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
+		svc.asyncDispatcher.close()
 		return nil, err
 	}
 	if err := svc.verbHandlers(nc, PingVerb, pingHandler); err != nil {
+		svc.asyncDispatcher.close()
 		return nil, err
 	}
 	if err := svc.verbHandlers(nc, StatsVerb, statsHandler); err != nil {
+		svc.asyncDispatcher.close()
 		return nil, err
 	}
 
 	if svc.Schema.Request != "" || svc.Schema.Response != "" {
 		if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
+			svc.asyncDispatcher.close()
 			return nil, err
 		}
 	}
 	svc.stats.Started = time.Now().Format(time.RFC3339)
 
 	return svc, nil
+}
+
+// dispatch is responsible for calling any async callbacks
+func (ac *asyncCallbacksHandler) asyncCBDispatcher() {
+	for {
+		f := <-ac.cbQueue
+		if f == nil {
+			return
+		}
+		f()
+	}
+}
+
+// dispatch is responsible for calling any async callbacks
+func (ac *asyncCallbacksHandler) push(f func()) {
+	ac.cbQueue <- f
+}
+
+func (ac *asyncCallbacksHandler) close() {
+	close(ac.cbQueue)
 }
 
 func (s *Config) valid() error {
@@ -462,7 +495,8 @@ func (s *service) Stop() error {
 	restoreAsyncHandlers(s.conn, s.natsHandlers)
 	s.stopped = true
 	if s.DoneHandler != nil {
-		go s.DoneHandler(s)
+		s.asyncDispatcher.push(func() { s.DoneHandler(s) })
+		s.asyncDispatcher.close()
 	}
 	return nil
 }
@@ -483,11 +517,6 @@ func (s *service) Info() Info {
 		Description: s.Config.Description,
 		Subject:     s.Config.Endpoint.Subject,
 	}
-}
-
-// ID returns the service instance's unique ID.
-func (s *service) Description() string {
-	return s.Config.Description
 }
 
 // Stats returns statisctics for the service endpoint and all monitoring endpoints.
@@ -551,4 +580,8 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, name), nil
 	}
 	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, name, id), nil
+}
+
+func (e *NATSError) Error() string {
+	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }
