@@ -234,13 +234,14 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			cbQueue: make(chan func(), 100),
 		},
 	}
+	svcIdentity := ServiceIdentity{
+		Name:    config.Name,
+		ID:      id,
+		Version: config.Version,
+	}
 	svc.verbSubs = make(map[string]*nats.Subscription)
 	svc.stats = &Stats{
-		ServiceIdentity: ServiceIdentity{
-			Name:    config.Name,
-			ID:      id,
-			Version: config.Version,
-		},
+		ServiceIdentity: svcIdentity,
 	}
 
 	svc.setupAsyncCallbacks()
@@ -258,11 +259,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
-	ping := &Ping{
-		Name:    config.Name,
-		ID:      id,
-		Version: config.Version,
-	}
+	ping := Ping(svcIdentity)
 
 	infoHandler := func(req *Request) error {
 		response, _ := json.Marshal(svc.Info())
@@ -294,8 +291,12 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil
 	}
 
+	schema := SchemaResp{
+		ServiceIdentity: svcIdentity,
+		Schema:          config.Schema,
+	}
 	schemaHandler := func(req *Request) error {
-		response, _ := json.Marshal(svc.Schema)
+		response, _ := json.Marshal(schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
 				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
@@ -317,11 +318,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
-	if svc.Schema.Request != "" || svc.Schema.Response != "" {
-		if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
-			svc.asyncDispatcher.close()
-			return nil, err
-		}
+	if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
+		svc.asyncDispatcher.close()
+		return nil, err
 	}
 	svc.stats.Started = time.Now().Format(time.RFC3339)
 

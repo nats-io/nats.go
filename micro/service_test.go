@@ -625,22 +625,43 @@ func TestMonitoringHandlers(t *testing.T) {
 		{
 			name:    "SCHEMA all",
 			subject: "$SRV.SCHEMA",
-			expectedResponse: Schema{
-				Request: "some_schema",
+			expectedResponse: SchemaResp{
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
+				Schema: Schema{
+					Request: "some_schema",
+				},
 			},
 		},
 		{
 			name:    "SCHEMA name",
 			subject: "$SRV.SCHEMA.TEST_SERVICE",
-			expectedResponse: Schema{
-				Request: "some_schema",
+			expectedResponse: SchemaResp{
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
+				Schema: Schema{
+					Request: "some_schema",
+				},
 			},
 		},
 		{
 			name:    "SCHEMA ID",
 			subject: fmt.Sprintf("$SRV.SCHEMA.TEST_SERVICE.%s", info.ID),
-			expectedResponse: Schema{
-				Request: "some_schema",
+			expectedResponse: SchemaResp{
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
+				Schema: Schema{
+					Request: "some_schema",
+				},
 			},
 		},
 		{
