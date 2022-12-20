@@ -1528,13 +1528,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	}
 
 	// Find the stream mapped to the subject if not bound to a stream already.
-	if o.stream == _EMPTY_ {
+	if stream == _EMPTY_ {
 		stream, err = js.StreamNameBySubject(subj)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		stream = o.stream
 	}
 
 	// With an explicit durable name, we can lookup the consumer first
