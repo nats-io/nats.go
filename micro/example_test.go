@@ -16,6 +16,7 @@ package micro
 import (
 	"fmt"
 	"log"
+	"reflect"
 
 	"github.com/nats-io/nats.go"
 )
@@ -198,7 +199,7 @@ func ExampleService_Reset() {
 	empty := Stats{
 		ServiceIdentity: srv.Info().ServiceIdentity,
 	}
-	if srv.Stats() != empty {
+	if !reflect.DeepEqual(srv.Stats(), empty) {
 		log.Fatal("Expected endpoint stats to be empty")
 	}
 }

@@ -69,13 +69,13 @@ type (
 	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
 	Stats struct {
 		ServiceIdentity
-		NumRequests           int           `json:"num_requests"`
-		NumErrors             int           `json:"num_errors"`
-		LastError             error         `json:"last_error"`
-		ProcessingTime        time.Duration `json:"processing_time"`
-		AverageProcessingTime time.Duration `json:"average_processing_time"`
-		Started               string        `json:"started"`
-		Data                  interface{}   `json:"data,omitempty"`
+		NumRequests           int             `json:"num_requests"`
+		NumErrors             int             `json:"num_errors"`
+		LastError             string          `json:"last_error"`
+		ProcessingTime        time.Duration   `json:"processing_time"`
+		AverageProcessingTime time.Duration   `json:"average_processing_time"`
+		Started               string          `json:"started"`
+		Data                  json.RawMessage `json:"data,omitempty"`
 	}
 
 	// Ping is the response type for PING monitoring endpoint.
@@ -91,7 +91,7 @@ type (
 	// SchemaResp is the response value for SCHEMA requests.
 	SchemaResp struct {
 		ServiceIdentity
-		Schema
+		Schema Schema `json:"schema"`
 	}
 
 	// Schema can be used to configure a schema for a service.
@@ -469,7 +469,7 @@ func (s *service) reqHandler(req *Request) {
 
 	if err != nil {
 		s.stats.NumErrors++
-		s.stats.LastError = err
+		s.stats.LastError = err.Error()
 	}
 	s.m.Unlock()
 }
@@ -529,7 +529,7 @@ func (s *service) Stats() Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
 	if s.StatsHandler != nil {
-		s.stats.Data = s.StatsHandler(s.Endpoint)
+		s.stats.Data, _ = json.Marshal(s.StatsHandler(s.Endpoint))
 	}
 	info := s.Info()
 	return Stats{

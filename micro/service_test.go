@@ -187,7 +187,7 @@ func TestServiceBasics(t *testing.T) {
 		ServiceIdentity: svcs[0].Info().ServiceIdentity,
 	}
 
-	if svcs[0].Stats() != emptyStats {
+	if !reflect.DeepEqual(svcs[0].Stats(), emptyStats) {
 		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
 	}
 
@@ -866,8 +866,12 @@ func TestServiceStats(t *testing.T) {
 				t.Errorf("Unexpected num_requests; want: 1; got: %d", stats.NumErrors)
 			}
 			if test.expectedStats != nil {
-				if val, ok := stats.Data.(map[string]interface{}); !ok || !reflect.DeepEqual(val, test.expectedStats) {
-					t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, val)
+				var data map[string]interface{}
+				if err := json.Unmarshal(stats.Data, &data); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if !reflect.DeepEqual(data, test.expectedStats) {
+					t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, data)
 				}
 			}
 		})
