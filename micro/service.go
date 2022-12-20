@@ -217,7 +217,7 @@ func (s Verb) String() string {
 // AddService adds a microservice.
 // It will enable internal common services (PING, STATS, INFO and SCHEMA) as well as
 // the actual service handler on the subject provided in config.Endpoint
-// A service name and Endpoint configuration are required to add a service.
+// A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service menagement.
 // Each service is assigned a unique ID.
 func AddService(nc *nats.Conn, config Config) (Service, error) {
