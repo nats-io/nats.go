@@ -220,8 +220,8 @@ func ExampleControlSubject() {
 
 	// Output:
 	// $SRV.PING
-	// $SRV.PING.COOLSERVICE
-	// $SRV.PING.COOLSERVICE.123
+	// $SRV.PING.CoolService
+	// $SRV.PING.CoolService.123
 }
 
 func ExampleRequest_Respond() {

@@ -570,7 +570,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "PING name",
-			subject: "$SRV.PING.TEST_SERVICE",
+			subject: "$SRV.PING.test_service",
 			expectedResponse: Ping{
 				Name:    "test_service",
 				Version: "0.1.0",
@@ -579,7 +579,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "PING ID",
-			subject: fmt.Sprintf("$SRV.PING.TEST_SERVICE.%s", info.ID),
+			subject: fmt.Sprintf("$SRV.PING.test_service.%s", info.ID),
 			expectedResponse: Ping{
 				Name:    "test_service",
 				Version: "0.1.0",
@@ -600,7 +600,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "INFO name",
-			subject: "$SRV.INFO.TEST_SERVICE",
+			subject: "$SRV.INFO.test_service",
 			expectedResponse: Info{
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
@@ -612,7 +612,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "INFO ID",
-			subject: fmt.Sprintf("$SRV.INFO.TEST_SERVICE.%s", info.ID),
+			subject: fmt.Sprintf("$SRV.INFO.test_service.%s", info.ID),
 			expectedResponse: Info{
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
@@ -638,7 +638,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "SCHEMA name",
-			subject: "$SRV.SCHEMA.TEST_SERVICE",
+			subject: "$SRV.SCHEMA.test_service",
 			expectedResponse: SchemaResp{
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
@@ -652,7 +652,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "SCHEMA ID",
-			subject: fmt.Sprintf("$SRV.SCHEMA.TEST_SERVICE.%s", info.ID),
+			subject: fmt.Sprintf("$SRV.SCHEMA.test_service.%s", info.ID),
 			expectedResponse: SchemaResp{
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
@@ -843,7 +843,7 @@ func TestServiceStats(t *testing.T) {
 			}
 
 			info := srv.Info()
-			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.TEST_SERVICE.%s", info.ID), nil, 1*time.Second)
+			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1079,14 +1079,14 @@ func TestControlSubject(t *testing.T) {
 			name:            "PING name",
 			verb:            PingVerb,
 			srvName:         "test",
-			expectedSubject: "$SRV.PING.TEST",
+			expectedSubject: "$SRV.PING.test",
 		},
 		{
 			name:            "PING id",
 			verb:            PingVerb,
 			srvName:         "test",
 			id:              "123",
-			expectedSubject: "$SRV.PING.TEST.123",
+			expectedSubject: "$SRV.PING.test.123",
 		},
 		{
 			name:      "invalid verb",

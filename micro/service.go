@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -392,7 +391,11 @@ func (svc *service) setupAsyncCallbacks() {
 					Description: err.Error(),
 				})
 			}
+			svc.m.Lock()
+			svc.stats.NumErrors++
+			svc.stats.LastError = err.Error()
 			svc.Stop()
+			svc.m.Unlock()
 			svc.natsHandlers.asyncErr(c, s, err)
 		})
 	} else {
@@ -406,7 +409,11 @@ func (svc *service) setupAsyncCallbacks() {
 					Description: err.Error(),
 				})
 			}
+			svc.m.Lock()
+			svc.stats.NumErrors++
+			svc.stats.LastError = err.Error()
 			svc.Stop()
+			svc.m.Unlock()
 		})
 	}
 }
@@ -577,7 +584,6 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 	if name == "" && id != "" {
 		return "", ErrServiceNameRequired
 	}
-	name = strings.ToUpper(name)
 	if name == "" && id == "" {
 		return fmt.Sprintf("%s.%s", APIPrefix, verbStr), nil
 	}
