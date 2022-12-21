@@ -39,14 +39,12 @@ func TestServiceBasics(t *testing.T) {
 	defer nc.Close()
 
 	// Stub service.
-	doAdd := func(req *Request) error {
+	doAdd := func(req *Request) {
 		if rand.Intn(10) == 0 {
-			if err := req.Error("400", "client error!", nil); err != nil {
+			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
-
-			// for client-side errors, return nil to avoid tracking the errors in stats
-			return nil
+			return
 		}
 		// Happy Path.
 		// Random delay between 5-10ms
@@ -55,9 +53,8 @@ func TestServiceBasics(t *testing.T) {
 			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
 			}
-			return err
+			return
 		}
-		return nil
 	}
 
 	var svcs []Service
@@ -194,7 +191,7 @@ func TestServiceBasics(t *testing.T) {
 }
 
 func TestAddService(t *testing.T) {
-	testHandler := func(*Request) error { return nil }
+	testHandler := func(*Request) {}
 	errNats := make(chan struct{})
 	errService := make(chan struct{})
 	closedNats := make(chan struct{})
@@ -533,7 +530,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "test.sub",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 		Schema: Schema{
 			Request: "some_schema",
@@ -727,19 +724,8 @@ func TestMonitoringHandlers(t *testing.T) {
 }
 
 func TestServiceStats(t *testing.T) {
-	handler := func(r *Request) error {
-		if bytes.Equal(r.Data, []byte("err")) {
-			r.Error("500", "oops", nil)
-			return fmt.Errorf("oops")
-		}
-
-		// client errors (validation etc.) should not be accounted for in stats
-		if bytes.Equal(r.Data, []byte("client_err")) {
-			r.Error("400", "bad request", nil)
-			return nil
-		}
+	handler := func(r *Request) {
 		r.Respond([]byte("ok"))
-		return nil
 	}
 	tests := []struct {
 		name          string
@@ -835,12 +821,13 @@ func TestServiceStats(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
-			if _, err := nc.Request(srv.Info().Subject, []byte("client_err"), time.Second); err != nil {
+
+			// Malformed request, missing reply subjtct
+			// This should be reflected in errors
+			if err := nc.Publish(srv.Info().Subject, []byte("err")); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			if _, err := nc.Request(srv.Info().Subject, []byte("err"), time.Second); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			time.Sleep(10 * time.Millisecond)
 
 			info := srv.Info()
 			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
@@ -859,11 +846,11 @@ func TestServiceStats(t *testing.T) {
 			if stats.ID != info.ID {
 				t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
 			}
-			if stats.NumRequests != 12 {
-				t.Errorf("Unexpected num_requests; want: 12; got: %d", stats.NumRequests)
+			if stats.NumRequests != 11 {
+				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.NumRequests)
 			}
 			if stats.NumErrors != 1 {
-				t.Errorf("Unexpected num_requests; want: 1; got: %d", stats.NumErrors)
+				t.Errorf("Unexpected num_errors; want: 1; got: %d", stats.NumErrors)
 			}
 			if test.expectedStats != nil {
 				var data map[string]interface{}
@@ -887,6 +874,7 @@ func TestRequestRespond(t *testing.T) {
 	tests := []struct {
 		name             string
 		respondData      interface{}
+		respondHeaders   Headers
 		errDescription   string
 		errCode          string
 		errData          []byte
@@ -897,6 +885,12 @@ func TestRequestRespond(t *testing.T) {
 	}{
 		{
 			name:             "byte response",
+			respondData:      []byte("OK"),
+			expectedResponse: []byte("OK"),
+		},
+		{
+			name:             "byte response, with headers",
+			respondHeaders:   Headers{"key": []string{"value"}},
 			respondData:      []byte("OK"),
 			expectedResponse: []byte("OK"),
 		},
@@ -917,6 +911,15 @@ func TestRequestRespond(t *testing.T) {
 		},
 		{
 			name:            "generic error",
+			errDescription:  "oops",
+			errCode:         "500",
+			errData:         []byte("error!"),
+			expectedMessage: "oops",
+			expectedCode:    "500",
+		},
+		{
+			name:            "generic error, with headers",
+			respondHeaders:  Headers{"key": []string{"value"}},
 			errDescription:  "oops",
 			errCode:         "500",
 			errData:         []byte("error!"),
@@ -958,57 +961,58 @@ func TestRequestRespond(t *testing.T) {
 			errCode := test.errCode
 			errDesc := test.errDescription
 			errData := test.errData
-			// Stub service.
-			handler := func(req *Request) error {
+			handler := func(req *Request) {
 				if errors.Is(test.withRespondError, ErrRespond) {
 					nc.Close()
 				}
+				if val := req.Headers().Get("key"); val != "value" {
+					t.Fatalf("Expected headers in the request")
+				}
 				if errCode == "" && errDesc == "" {
 					if resp, ok := respData.([]byte); ok {
-						err := req.Respond(resp)
+						err := req.Respond(resp, WithHeaders(test.respondHeaders))
 						if respError != nil {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
-							return nil
+							return
 						}
 						if err != nil {
 							t.Fatalf("Unexpected error when sending response: %v", err)
 						}
 					} else {
-						err := req.RespondJSON(respData)
+						err := req.RespondJSON(respData, WithHeaders(test.respondHeaders))
 						if respError != nil {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
 							}
-							return nil
+							return
 						}
 						if err != nil {
 							t.Fatalf("Unexpected error when sending response: %v", err)
 						}
 					}
-					return nil
+					return
 				}
 
-				err := req.Error(errCode, errDesc, errData)
+				err := req.Error(errCode, errDesc, errData, WithHeaders(test.respondHeaders))
 				if respError != nil {
 					if !errors.Is(err, respError) {
 						t.Fatalf("Expected error: %v; got: %v", respError, err)
 					}
-					return nil
+					return
 				}
 				if err != nil {
 					t.Fatalf("Unexpected error when sending response: %v", err)
 				}
-				return nil
 			}
 
 			svc, err := AddService(nc, Config{
 				Name:        "CoolService",
 				Version:     "0.1.0",
-				Description: "Erroring service",
+				Description: "test service",
 				Endpoint: Endpoint{
-					Subject: "svc.fail",
+					Subject: "svc.test",
 					Handler: handler,
 				},
 			})
@@ -1017,7 +1021,11 @@ func TestRequestRespond(t *testing.T) {
 			}
 			defer svc.Stop()
 
-			resp, err := nc.Request("svc.fail", nil, 50*time.Millisecond)
+			resp, err := nc.RequestMsg(&nats.Msg{
+				Subject: svc.Info().Subject,
+				Data:    nil,
+				Header:  nats.Header{"key": []string{"value"}},
+			}, 50*time.Millisecond)
 			if test.withRespondError != nil {
 				return
 			}
@@ -1030,12 +1038,15 @@ func TestRequestRespond(t *testing.T) {
 				if description != test.expectedMessage {
 					t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
 				}
-				code := resp.Header.Get("Nats-Service-Error-Code")
-				if code != test.expectedCode {
-					t.Fatalf("Invalid response code; want: %q; got: %q", test.expectedCode, code)
+				expectedHeaders := Headers{
+					"Nats-Service-Error-Code": []string{resp.Header.Get("Nats-Service-Error-Code")},
+					"Nats-Service-Error":      []string{resp.Header.Get("Nats-Service-Error")},
 				}
-				if !bytes.Equal(resp.Data, test.errData) {
-					t.Fatalf("Invalid response payload; want: %q; got: %q", string(test.errData), resp.Data)
+				for k, v := range test.respondHeaders {
+					expectedHeaders[k] = v
+				}
+				if !reflect.DeepEqual(expectedHeaders, Headers(resp.Header)) {
+					t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
 				}
 				return
 			}
@@ -1046,6 +1057,10 @@ func TestRequestRespond(t *testing.T) {
 
 			if !bytes.Equal(bytes.TrimSpace(resp.Data), bytes.TrimSpace(test.expectedResponse)) {
 				t.Fatalf("Invalid response; want: %s; got: %s", string(test.expectedResponse), string(resp.Data))
+			}
+
+			if !reflect.DeepEqual(test.respondHeaders, Headers(resp.Header)) {
+				t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
 			}
 		})
 	}

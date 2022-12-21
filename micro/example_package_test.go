@@ -34,16 +34,15 @@ func Example() {
 
 	// Service handler is a function which takes Service.Request as argument.
 	// req.Respond or req.Error should be used to respond to the request.
-	incrementHandler := func(req *Request) error {
-		val, err := strconv.Atoi(string(req.Data))
+	incrementHandler := func(req *Request) {
+		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
 			req.Error("400", "request data should be a number", nil)
-			return nil
+			return
 		}
 
 		responseData := val + 1
 		req.Respond([]byte(strconv.Itoa(responseData)))
-		return nil
 	}
 
 	config := Config{
