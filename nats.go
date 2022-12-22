@@ -958,7 +958,7 @@ func MaxPingsOutstanding(max int) Option {
 }
 
 // ReconnectBufSize sets the buffer size of messages kept while busy reconnecting.
-// Defaults to 8388608 bytes (8MB).
+// Defaults to 8388608 bytes (8MB).  It can be disabled by setting it to -1.
 func ReconnectBufSize(size int) Option {
 	return func(o *Options) error {
 		o.ReconnectBufSize = size
