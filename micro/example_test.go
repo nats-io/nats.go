@@ -28,9 +28,8 @@ func ExampleAddService() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req *Request) error {
-		req.Respond(req.Data)
-		return nil
+	echoHandler := func(req *Request) {
+		req.Respond(req.Data())
 	}
 
 	config := Config{
@@ -73,7 +72,7 @@ func ExampleService_Info() {
 		Name: "EchoService",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 	}
 
@@ -101,7 +100,7 @@ func ExampleService_Stats() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 	}
 
@@ -127,7 +126,7 @@ func ExampleService_Stop() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 	}
 
@@ -158,7 +157,7 @@ func ExampleService_Stopped() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 	}
 
@@ -187,7 +186,7 @@ func ExampleService_Reset() {
 		Version: "0.1.0",
 		Endpoint: Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) error { return nil },
+			Handler: func(*Request) {},
 		},
 	}
 
@@ -220,14 +219,14 @@ func ExampleControlSubject() {
 
 	// Output:
 	// $SRV.PING
-	// $SRV.PING.COOLSERVICE
-	// $SRV.PING.COOLSERVICE.123
+	// $SRV.PING.CoolService
+	// $SRV.PING.CoolService.123
 }
 
 func ExampleRequest_Respond() {
 	handler := func(req *Request) {
 		// respond to the request
-		if err := req.Respond(req.Data); err != nil {
+		if err := req.Respond(req.Data()); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -254,13 +253,12 @@ func ExampleRequest_RespondJSON() {
 }
 
 func ExampleRequest_Error() {
-	handler := func(req *Request) error {
+	handler := func(req *Request) {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
 		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {
-			return err
+			log.Fatal(err)
 		}
-		return nil
 	}
 
 	fmt.Printf("%T", handler)

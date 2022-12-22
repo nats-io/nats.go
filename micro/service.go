@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -252,7 +251,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	var err error
 
 	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *nats.Msg) {
-		svc.reqHandler(&Request{Msg: m})
+		svc.reqHandler(&Request{msg: m})
 	})
 	if err != nil {
 		svc.asyncDispatcher.close()
@@ -261,48 +260,44 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 
 	ping := Ping(svcIdentity)
 
-	infoHandler := func(req *Request) error {
+	infoHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
 			}
 		}
-		return nil
 	}
 
-	pingHandler := func(req *Request) error {
+	pingHandler := func(req *Request) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
 			}
 		}
-		return nil
 	}
 
-	statsHandler := func(req *Request) error {
+	statsHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Stats())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
 			}
 		}
-		return nil
 	}
 
 	schema := SchemaResp{
 		ServiceIdentity: svcIdentity,
 		Schema:          config.Schema,
 	}
-	schemaHandler := func(req *Request) error {
+	schemaHandler := func(req *Request) {
 		response, _ := json.Marshal(schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
 			}
 		}
-		return nil
 	}
 
 	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
@@ -368,6 +363,8 @@ func (e *Endpoint) valid() error {
 }
 
 func (svc *service) setupAsyncCallbacks() {
+	svc.m.Lock()
+	defer svc.m.Unlock()
 	svc.natsHandlers.closed = svc.conn.ClosedHandler()
 	if svc.natsHandlers.closed != nil {
 		svc.conn.SetClosedHandler(func(c *nats.Conn) {
@@ -392,6 +389,10 @@ func (svc *service) setupAsyncCallbacks() {
 					Description: err.Error(),
 				})
 			}
+			svc.m.Lock()
+			svc.stats.NumErrors++
+			svc.stats.LastError = err.Error()
+			svc.m.Unlock()
 			svc.Stop()
 			svc.natsHandlers.asyncErr(c, s, err)
 		})
@@ -406,6 +407,10 @@ func (svc *service) setupAsyncCallbacks() {
 					Description: err.Error(),
 				})
 			}
+			svc.m.Lock()
+			svc.stats.NumErrors++
+			svc.stats.LastError = err.Error()
+			svc.m.Unlock()
 			svc.Stop()
 		})
 	}
@@ -448,7 +453,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 	}
 
 	s.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
-		handler(&Request{Msg: msg})
+		handler(&Request{msg: msg})
 	})
 	if err != nil {
 		s.Stop()
@@ -457,19 +462,19 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 	return nil
 }
 
-// reqHandler itself
+// reqHandller invokes the service request handler and modifies service stats
 func (s *service) reqHandler(req *Request) {
 	start := time.Now()
-	err := s.Endpoint.Handler(req)
+	s.Endpoint.Handler(req)
 	s.m.Lock()
 	s.stats.NumRequests++
 	s.stats.ProcessingTime += time.Since(start)
 	avgProcessingTime := s.stats.ProcessingTime.Nanoseconds() / int64(s.stats.NumRequests)
 	s.stats.AverageProcessingTime = time.Duration(avgProcessingTime)
 
-	if err != nil {
+	if req.respondError != nil {
 		s.stats.NumErrors++
-		s.stats.LastError = err.Error()
+		s.stats.LastError = req.respondError.Error()
 	}
 	s.m.Unlock()
 }
@@ -577,7 +582,6 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 	if name == "" && id != "" {
 		return "", ErrServiceNameRequired
 	}
-	name = strings.ToUpper(name)
 	if name == "" && id == "" {
 		return fmt.Sprintf("%s.%s", APIPrefix, verbStr), nil
 	}
