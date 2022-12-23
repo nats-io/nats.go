@@ -441,7 +441,8 @@ func TestAddService(t *testing.T) {
 			}
 
 			test.expectedPing.ID = info.ID
-			if test.expectedPing != ping {
+			//if test.expectedPing != ping {
+			if !reflect.DeepEqual(test.expectedPing, ping) {
 				t.Fatalf("Invalid ping response; want: %+v; got: %+v", test.expectedPing, ping)
 			}
 

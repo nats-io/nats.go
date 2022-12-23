@@ -57,11 +57,15 @@ type (
 	// It should return a value which can be serialized to JSON.
 	StatsHandler func(Endpoint) interface{}
 
+	// Metadata allows to add optional metadatas to ServiceIdentity
+	Metadata map[string]interface{}
+
 	// ServiceIdentity contains fields helping to identidy a service instance.
 	ServiceIdentity struct {
-		Name    string `json:"name"`
-		ID      string `json:"id"`
-		Version string `json:"version"`
+		Name    string   `json:"name"`
+		ID      string   `json:"id"`
+		Version string   `json:"version"`
+		Meta    Metadata `json:"meta,omitempty"`
 	}
 
 	// Stats is the type returned by STATS monitoring endpoint.
@@ -116,6 +120,7 @@ type (
 		Description  string   `json:"description"`
 		Schema       Schema   `json:"schema"`
 		Endpoint     Endpoint `json:"endpoint"`
+		Meta         Metadata `json:"meta,omitempty"`
 		StatsHandler StatsHandler
 		DoneHandler  DoneHandler
 		ErrorHandler ErrHandler
@@ -237,6 +242,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Name:    config.Name,
 		ID:      id,
 		Version: config.Version,
+		Meta:    config.Meta,
 	}
 	svc.verbSubs = make(map[string]*nats.Subscription)
 	svc.stats = &Stats{
@@ -523,6 +529,7 @@ func (s *service) Info() Info {
 			Name:    s.Config.Name,
 			ID:      s.id,
 			Version: s.Config.Version,
+			Meta:    s.Config.Meta,
 		},
 		Description: s.Config.Description,
 		Subject:     s.Config.Endpoint.Subject,
@@ -542,6 +549,7 @@ func (s *service) Stats() Stats {
 			Name:    info.Name,
 			ID:      info.ID,
 			Version: info.Version,
+			Meta:    s.Config.Meta,
 		},
 		NumRequests:           s.stats.NumRequests,
 		NumErrors:             s.stats.NumErrors,
