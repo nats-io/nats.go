@@ -34,7 +34,7 @@ type (
 		// Info returns the service info.
 		Info() Info
 
-		// Stats returns statisctics for the service endpoint and all monitoring endpoints.
+		// Stats returns statistics for the service endpoint and all monitoring endpoints.
 		Stats() Stats
 
 		// Reset resets all statistics on a service instance.
@@ -57,7 +57,7 @@ type (
 	// It should return a value which can be serialized to JSON.
 	StatsHandler func(Endpoint) interface{}
 
-	// ServiceIdentity contains fields helping to identidy a service instance.
+	// ServiceIdentity contains fields helping to identity a service instance.
 	ServiceIdentity struct {
 		Name    string `json:"name"`
 		ID      string `json:"id"`
@@ -217,7 +217,7 @@ func (s Verb) String() string {
 // It will enable internal common services (PING, STATS, INFO and SCHEMA) as well as
 // the actual service handler on the subject provided in config.Endpoint
 // A service name, version and Endpoint configuration are required to add a service.
-// AddService returns a [Service] interface, allowing service menagement.
+// AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
 func AddService(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
@@ -462,7 +462,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 	return nil
 }
 
-// reqHandller invokes the service request handler and modifies service stats
+// reqHandler invokes the service request handler and modifies service stats
 func (s *service) reqHandler(req *Request) {
 	start := time.Now()
 	s.Endpoint.Handler(req)
@@ -529,7 +529,7 @@ func (s *service) Info() Info {
 	}
 }
 
-// Stats returns statisctics for the service endpoint and all monitoring endpoints.
+// Stats returns statistics for the service endpoint and all monitoring endpoints.
 func (s *service) Stats() Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
