@@ -181,6 +181,7 @@ func TestServiceBasics(t *testing.T) {
 	// Reset stats for a service
 	svcs[0].Reset()
 	emptyStats := Stats{
+		Type:            StatsResponseType,
 		ServiceIdentity: svcs[0].Info().ServiceIdentity,
 	}
 
@@ -217,8 +218,11 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 		},
 		{
@@ -235,8 +239,11 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 		},
 		{
@@ -253,8 +260,11 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 			asyncErrorSubject: "test.sub",
 		},
@@ -272,8 +282,11 @@ func TestAddService(t *testing.T) {
 				},
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
@@ -297,8 +310,11 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 			asyncErrorSubject: "test.sub",
 		},
@@ -322,8 +338,11 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 		},
 		{
@@ -346,8 +365,11 @@ func TestAddService(t *testing.T) {
 				errNats <- struct{}{}
 			},
 			expectedPing: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+				},
 			},
 			asyncErrorSubject: "$SVC.PING.TEST_SERVICE",
 		},
@@ -560,33 +582,43 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "PING all",
 			subject: "$SRV.PING",
 			expectedResponse: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
-				ID:      info.ID,
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 			},
 		},
 		{
 			name:    "PING name",
 			subject: "$SRV.PING.test_service",
 			expectedResponse: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
-				ID:      info.ID,
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 			},
 		},
 		{
 			name:    "PING ID",
 			subject: fmt.Sprintf("$SRV.PING.test_service.%s", info.ID),
 			expectedResponse: Ping{
-				Name:    "test_service",
-				Version: "0.1.0",
-				ID:      info.ID,
+				Type: PingResponseType,
+				ServiceIdentity: ServiceIdentity{
+					Name:    "test_service",
+					Version: "0.1.0",
+					ID:      info.ID,
+				},
 			},
 		},
 		{
 			name:    "INFO all",
 			subject: "$SRV.INFO",
 			expectedResponse: Info{
+				Type: InfoResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
@@ -599,6 +631,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "INFO name",
 			subject: "$SRV.INFO.test_service",
 			expectedResponse: Info{
+				Type: InfoResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
@@ -611,6 +644,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "INFO ID",
 			subject: fmt.Sprintf("$SRV.INFO.test_service.%s", info.ID),
 			expectedResponse: Info{
+				Type: InfoResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
@@ -623,6 +657,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "SCHEMA all",
 			subject: "$SRV.SCHEMA",
 			expectedResponse: SchemaResp{
+				Type: SchemaResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
@@ -637,6 +672,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "SCHEMA name",
 			subject: "$SRV.SCHEMA.test_service",
 			expectedResponse: SchemaResp{
+				Type: SchemaResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
@@ -651,6 +687,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			name:    "SCHEMA ID",
 			subject: fmt.Sprintf("$SRV.SCHEMA.test_service.%s", info.ID),
 			expectedResponse: SchemaResp{
+				Type: SchemaResponseType,
 				ServiceIdentity: ServiceIdentity{
 					Name:    "test_service",
 					Version: "0.1.0",
