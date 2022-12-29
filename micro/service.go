@@ -53,7 +53,7 @@ type (
 	// DoneHandler is a function used to configure a custom done handler for a service.
 	DoneHandler func(Service)
 
-	// StatsHandleris a function used to configure a custom STATS endpoint.
+	// StatsHandler is a function used to configure a custom STATS endpoint.
 	// It should return a value which can be serialized to JSON.
 	StatsHandler func(Endpoint) interface{}
 
@@ -68,6 +68,7 @@ type (
 	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
 	Stats struct {
 		ServiceIdentity
+		Type                  string          `json:"type"`
 		NumRequests           int             `json:"num_requests"`
 		NumErrors             int             `json:"num_errors"`
 		LastError             string          `json:"last_error"`
@@ -78,11 +79,15 @@ type (
 	}
 
 	// Ping is the response type for PING monitoring endpoint.
-	Ping ServiceIdentity
+	Ping struct {
+		ServiceIdentity
+		Type string `json:"type"`
+	}
 
 	// Info is the basic information about a service type.
 	Info struct {
 		ServiceIdentity
+		Type        string `json:"type"`
 		Description string `json:"description"`
 		Subject     string `json:"subject"`
 	}
@@ -90,6 +95,7 @@ type (
 	// SchemaResp is the response value for SCHEMA requests.
 	SchemaResp struct {
 		ServiceIdentity
+		Type   string `json:"type"`
 		Schema Schema `json:"schema"`
 	}
 
@@ -180,6 +186,13 @@ const (
 	SchemaVerb
 )
 
+const (
+	InfoResponseType   = "io.nats.micro.v1.info_response"
+	PingResponseType   = "io.nats.micro.v1.ping_response"
+	StatsResponseType  = "io.nats.micro.v1.stats_response"
+	SchemaResponseType = "io.nats.micro.v1.schema_response"
+)
+
 var (
 	// this regular expression is suggested regexp for semver validation: https://semver.org/
 	semVerRegexp      = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
@@ -258,7 +271,10 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
-	ping := Ping(svcIdentity)
+	ping := Ping{
+		ServiceIdentity: svcIdentity,
+		Type:            PingResponseType,
+	}
 
 	infoHandler := func(req *Request) {
 		response, _ := json.Marshal(svc.Info())
@@ -290,6 +306,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	schema := SchemaResp{
 		ServiceIdentity: svcIdentity,
 		Schema:          config.Schema,
+		Type:            SchemaResponseType,
 	}
 	schemaHandler := func(req *Request) {
 		response, _ := json.Marshal(schema)
@@ -516,7 +533,7 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 	nc.SetErrorHandler(handlers.asyncErr)
 }
 
-// ID returns the service instance's unique ID.
+// Info returns information about the service
 func (s *service) Info() Info {
 	return Info{
 		ServiceIdentity: ServiceIdentity{
@@ -524,6 +541,7 @@ func (s *service) Info() Info {
 			ID:      s.id,
 			Version: s.Config.Version,
 		},
+		Type:        InfoResponseType,
 		Description: s.Config.Description,
 		Subject:     s.Config.Endpoint.Subject,
 	}
@@ -543,6 +561,7 @@ func (s *service) Stats() Stats {
 			ID:      info.ID,
 			Version: info.Version,
 		},
+		Type:                  StatsResponseType,
 		NumRequests:           s.stats.NumRequests,
 		NumErrors:             s.stats.NumErrors,
 		ProcessingTime:        s.stats.ProcessingTime,
