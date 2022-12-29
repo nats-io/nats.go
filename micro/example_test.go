@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro
+package micro_test
 
 import (
 	"fmt"
@@ -19,6 +19,7 @@ import (
 	"reflect"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/micro"
 )
 
 func ExampleAddService() {
@@ -28,33 +29,33 @@ func ExampleAddService() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req *Request) {
+	echoHandler := func(req micro.Request) {
 		req.Respond(req.Data())
 	}
 
-	config := Config{
+	config := micro.Config{
 		Name:        "EchoService",
 		Version:     "v1.0.0",
 		Description: "Send back what you receive",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
 			Handler: echoHandler,
 		},
 
 		// DoneHandler can be set to customize behavior on stopping a service.
-		DoneHandler: func(srv Service) {
+		DoneHandler: func(srv micro.Service) {
 			info := srv.Info()
 			fmt.Printf("stopped service %q with ID %q\n", info.Name, info.ID)
 		},
 
 		// ErrorHandler can be used to customize behavior on service execution error.
-		ErrorHandler: func(srv Service, err *NATSError) {
+		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
 			info := srv.Info()
 			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
 		},
 	}
 
-	srv, err := AddService(nc, config)
+	srv, err := micro.AddService(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,15 +69,15 @@ func ExampleService_Info() {
 	}
 	defer nc.Close()
 
-	config := Config{
+	config := micro.Config{
 		Name: "EchoService",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(micro.Request) {},
 		},
 	}
 
-	srv, _ := AddService(nc, config)
+	srv, _ := micro.AddService(nc, config)
 
 	// service info
 	info := srv.Info()
@@ -95,16 +96,16 @@ func ExampleService_Stats() {
 	}
 	defer nc.Close()
 
-	config := Config{
+	config := micro.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(micro.Request) {},
 		},
 	}
 
-	srv, _ := AddService(nc, config)
+	srv, _ := micro.AddService(nc, config)
 
 	// stats of a service instance
 	stats := srv.Stats()
@@ -121,16 +122,16 @@ func ExampleService_Stop() {
 	}
 	defer nc.Close()
 
-	config := Config{
+	config := micro.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(micro.Request) {},
 		},
 	}
 
-	srv, _ := AddService(nc, config)
+	srv, _ := micro.AddService(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -152,16 +153,16 @@ func ExampleService_Stopped() {
 	}
 	defer nc.Close()
 
-	config := Config{
+	config := micro.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(micro.Request) {},
 		},
 	}
 
-	srv, _ := AddService(nc, config)
+	srv, _ := micro.AddService(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -181,21 +182,21 @@ func ExampleService_Reset() {
 	}
 	defer nc.Close()
 
-	config := Config{
+	config := micro.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(*Request) {},
+			Handler: func(micro.Request) {},
 		},
 	}
 
-	srv, _ := AddService(nc, config)
+	srv, _ := micro.AddService(nc, config)
 
 	// reset endpoint stats on this service
 	srv.Reset()
 
-	empty := Stats{
+	empty := micro.Stats{
 		ServiceIdentity: srv.Info().ServiceIdentity,
 	}
 	if !reflect.DeepEqual(srv.Stats(), empty) {
@@ -206,15 +207,15 @@ func ExampleService_Reset() {
 func ExampleControlSubject() {
 
 	// subject used to get PING from all services
-	subjectPINGAll, _ := ControlSubject(PingVerb, "", "")
+	subjectPINGAll, _ := micro.ControlSubject(micro.PingVerb, "", "")
 	fmt.Println(subjectPINGAll)
 
 	// subject used to get PING from services with provided name
-	subjectPINGName, _ := ControlSubject(PingVerb, "CoolService", "")
+	subjectPINGName, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "")
 	fmt.Println(subjectPINGName)
 
 	// subject used to get PING from a service with provided name and ID
-	subjectPINGInstance, _ := ControlSubject(PingVerb, "CoolService", "123")
+	subjectPINGInstance, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "123")
 	fmt.Println(subjectPINGInstance)
 
 	// Output:
@@ -224,7 +225,7 @@ func ExampleControlSubject() {
 }
 
 func ExampleRequest_Respond() {
-	handler := func(req *Request) {
+	handler := func(req micro.Request) {
 		// respond to the request
 		if err := req.Respond(req.Data()); err != nil {
 			log.Fatal(err)
@@ -240,7 +241,7 @@ func ExampleRequest_RespondJSON() {
 		Y int `json:"y"`
 	}
 
-	handler := func(req *Request) {
+	handler := func(req micro.Request) {
 		resp := Point{5, 10}
 		// respond to the request
 		// response will be serialized to {"x":5,"y":10}
@@ -253,7 +254,7 @@ func ExampleRequest_RespondJSON() {
 }
 
 func ExampleRequest_Error() {
-	handler := func(req *Request) {
+	handler := func(req micro.Request) {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
 		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {

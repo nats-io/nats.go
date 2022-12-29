@@ -264,7 +264,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	var err error
 
 	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *nats.Msg) {
-		svc.reqHandler(&Request{msg: m})
+		svc.reqHandler(&request{msg: m})
 	})
 	if err != nil {
 		svc.asyncDispatcher.close()
@@ -276,29 +276,29 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Type:            PingResponseType,
 	}
 
-	infoHandler := func(req *Request) {
+	infoHandler := func(req Request) {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
 
-	pingHandler := func(req *Request) {
+	pingHandler := func(req Request) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
 
-	statsHandler := func(req *Request) {
+	statsHandler := func(req Request) {
 		response, _ := json.Marshal(svc.Stats())
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
@@ -308,11 +308,11 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Schema:          config.Schema,
 		Type:            SchemaResponseType,
 	}
-	schemaHandler := func(req *Request) {
+	schemaHandler := func(req Request) {
 		response, _ := json.Marshal(schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.msg.Subject, err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
@@ -470,7 +470,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 	}
 
 	s.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
-		handler(&Request{msg: msg})
+		handler(&request{msg: msg})
 	})
 	if err != nil {
 		s.Stop()
@@ -480,7 +480,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 }
 
 // reqHandler invokes the service request handler and modifies service stats
-func (s *service) reqHandler(req *Request) {
+func (s *service) reqHandler(req *request) {
 	start := time.Now()
 	s.Endpoint.Handler(req)
 	s.m.Lock()

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro
+package micro_test
 
 import (
 	"fmt"
@@ -20,13 +20,11 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/micro"
 )
 
 func Example() {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(s.ClientURL())
+	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,7 +32,7 @@ func Example() {
 
 	// Service handler is a function which takes Service.Request as argument.
 	// req.Respond or req.Error should be used to respond to the request.
-	incrementHandler := func(req *Request) {
+	incrementHandler := func(req micro.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
 			req.Error("400", "request data should be a number", nil)
@@ -45,11 +43,11 @@ func Example() {
 		req.Respond([]byte(strconv.Itoa(responseData)))
 	}
 
-	config := Config{
+	config := micro.Config{
 		Name:        "IncrementService",
 		Version:     "0.1.0",
 		Description: "Increment numbers",
-		Endpoint: Endpoint{
+		Endpoint: micro.Endpoint{
 			// service handler
 			Handler: incrementHandler,
 			// a unique subject serving as a service endpoint
@@ -59,7 +57,7 @@ func Example() {
 	// Multiple instances of the servcice with the same name can be created.
 	// Requests to a service with the same name will be load-balanced.
 	for i := 0; i < 5; i++ {
-		svc, err := AddService(nc, config)
+		svc, err := micro.AddService(nc, config)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -76,8 +74,4 @@ func Example() {
 		log.Fatal(err)
 	}
 	fmt.Println(responseVal)
-
-	//
-	// Output: 4
-	//
 }
