@@ -68,7 +68,7 @@ func TestServiceBasics(t *testing.T) {
 		Description: "Add things together",
 		Endpoint: micro.Endpoint{
 			Subject: "svc.add",
-			Handler: doAdd,
+			Handler: micro.HandlerFunc(doAdd),
 		},
 		Schema: micro.Schema{Request: "", Response: ""},
 	}
@@ -216,7 +216,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 			},
 			expectedPing: micro.Ping{
@@ -234,7 +234,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				DoneHandler: func(micro.Service) {
 					doneService <- struct{}{}
@@ -255,7 +255,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				ErrorHandler: func(micro.Service, *micro.NATSError) {
 					errService <- struct{}{}
@@ -277,7 +277,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				ErrorHandler: func(micro.Service, *micro.NATSError) {
 					errService <- struct{}{}
@@ -299,7 +299,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				DoneHandler: func(micro.Service) {
 					doneService <- struct{}{}
@@ -327,7 +327,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				DoneHandler: func(micro.Service) {
 					doneService <- struct{}{}
@@ -354,7 +354,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 				DoneHandler: func(micro.Service) {
 					doneService <- struct{}{}
@@ -382,7 +382,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 			},
 			withError: micro.ErrConfigValidation,
@@ -394,7 +394,7 @@ func TestAddService(t *testing.T) {
 				Version: "abc",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 			},
 			withError: micro.ErrConfigValidation,
@@ -406,7 +406,7 @@ func TestAddService(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "",
-					Handler: testHandler,
+					Handler: micro.HandlerFunc(testHandler),
 				},
 			},
 			withError: micro.ErrConfigValidation,
@@ -554,7 +554,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "test.sub",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 		Schema: micro.Schema{
 			Request: "some_schema",
@@ -778,7 +778,7 @@ func TestServiceStats(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: handler,
+					Handler: micro.HandlerFunc(handler),
 				},
 			},
 		},
@@ -789,7 +789,7 @@ func TestServiceStats(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: handler,
+					Handler: micro.HandlerFunc(handler),
 				},
 				StatsHandler: func(e micro.Endpoint) interface{} {
 					return map[string]interface{}{
@@ -808,7 +808,7 @@ func TestServiceStats(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: handler,
+					Handler: micro.HandlerFunc(handler),
 				},
 				Schema: micro.Schema{
 					Request: "some_schema",
@@ -822,7 +822,7 @@ func TestServiceStats(t *testing.T) {
 				Version: "0.1.0",
 				Endpoint: micro.Endpoint{
 					Subject: "test.sub",
-					Handler: handler,
+					Handler: micro.HandlerFunc(handler),
 				},
 				Schema: micro.Schema{
 					Request: "some_schema",
@@ -1052,7 +1052,7 @@ func TestRequestRespond(t *testing.T) {
 				Description: "test service",
 				Endpoint: micro.Endpoint{
 					Subject: "svc.test",
-					Handler: handler,
+					Handler: micro.HandlerFunc(handler),
 				},
 			})
 			if err != nil {

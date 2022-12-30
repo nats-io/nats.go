@@ -35,11 +35,11 @@ func ExampleAddService() {
 
 	config := micro.Config{
 		Name:        "EchoService",
-		Version:     "v1.0.0",
+		Version:     "1.0.0",
 		Description: "Send back what you receive",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: echoHandler,
+			Handler: micro.HandlerFunc(echoHandler),
 		},
 
 		// DoneHandler can be set to customize behavior on stopping a service.
@@ -73,7 +73,7 @@ func ExampleService_Info() {
 		Name: "EchoService",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 	}
 
@@ -101,7 +101,7 @@ func ExampleService_Stats() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 	}
 
@@ -127,7 +127,7 @@ func ExampleService_Stop() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 	}
 
@@ -158,7 +158,7 @@ func ExampleService_Stopped() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 	}
 
@@ -187,7 +187,7 @@ func ExampleService_Reset() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: func(micro.Request) {},
+			Handler: micro.HandlerFunc(func(micro.Request) {}),
 		},
 	}
 

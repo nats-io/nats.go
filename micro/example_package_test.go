@@ -30,8 +30,8 @@ func Example() {
 	}
 	defer nc.Close()
 
-	// Service handler is a function which takes Service.Request as argument.
-	// req.Respond or req.Error should be used to respond to the request.
+	// service handler - in this case, HandlerFunc is used,
+	// which is a built-in implementation of Handler interface
 	incrementHandler := func(req micro.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
@@ -49,7 +49,7 @@ func Example() {
 		Description: "Increment numbers",
 		Endpoint: micro.Endpoint{
 			// service handler
-			Handler: incrementHandler,
+			Handler: micro.HandlerFunc(incrementHandler),
 			// a unique subject serving as a service endpoint
 			Subject: "numbers.increment",
 		},

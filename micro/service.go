@@ -109,7 +109,7 @@ type (
 	// Endpoint is used to configure a subject and handler for a service.
 	Endpoint struct {
 		Subject string `json:"subject"`
-		Handler RequestHandler
+		Handler Handler
 	}
 
 	// Verb represents a name of the monitoring service.
@@ -449,7 +449,7 @@ func (svc *service) matchSubscriptionSubject(subj string) bool {
 // Each request generates 3 subscriptions, one for the general verb
 // affecting all services written with the framework, one that handles
 // all services of a particular kind, and finally a specific service instance.
-func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler RequestHandler) error {
+func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler HandlerFunc) error {
 	name := fmt.Sprintf("%s-all", verb.String())
 	if err := svc.addInternalHandler(nc, verb, "", "", name, handler); err != nil {
 		return err
@@ -462,7 +462,7 @@ func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler RequestHandle
 }
 
 // addInternalHandler registers a control subject handler.
-func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler RequestHandler) error {
+func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
 		s.Stop()
@@ -482,7 +482,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 // reqHandler invokes the service request handler and modifies service stats
 func (s *service) reqHandler(req *request) {
 	start := time.Now()
-	s.Endpoint.Handler(req)
+	s.Endpoint.Handler.Handle(req)
 	s.m.Lock()
 	s.stats.NumRequests++
 	s.stats.ProcessingTime += time.Since(start)

@@ -22,6 +22,16 @@ import (
 )
 
 type (
+	// Handler is used to respond to service requests.
+	Handler interface {
+		Handle(Request)
+	}
+
+	// HandlerFunc is a function implementing [Handler].
+	// It allows using a function as a reqeust hadnler, without having to implement Handle
+	// on a separate type.
+	HandlerFunc func(Request)
+
 	// Request represents service request available in the service handler.
 	// It exposes methods to respond to the request, as well as
 	// getting the request data and headers.
@@ -49,11 +59,11 @@ type (
 		Subject() string
 	}
 
-	// RequestHandler is a function used as a Handler for a service.
-	RequestHandler func(Request)
-
 	// Headers is a wrapper around [*nats.Header]
 	Headers nats.Header
+
+	// RespondOpt is a function used to configure [Request.Respond] and [Request.RespondJSON] methods.
+	RespondOpt func(*nats.Msg)
 
 	// request is a default implementation of Request interface
 	request struct {
@@ -68,8 +78,9 @@ var (
 	ErrArgRequired     = errors.New("argument required")
 )
 
-// RespondOpt is a function used to configure [Request.Respond] and [Request.RespondJSON] methods.
-type RespondOpt func(*nats.Msg)
+func (fn HandlerFunc) Handle(req Request) {
+	fn(req)
+}
 
 // Respond sends the response for the request.
 // Additional headers can be passed using [WithHeaders] option.
