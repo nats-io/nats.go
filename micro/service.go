@@ -74,7 +74,7 @@ type (
 		LastError             string          `json:"last_error"`
 		ProcessingTime        time.Duration   `json:"processing_time"`
 		AverageProcessingTime time.Duration   `json:"average_processing_time"`
-		Started               string          `json:"started"`
+		Started               time.Time       `json:"started"`
 		Data                  json.RawMessage `json:"data,omitempty"`
 	}
 
@@ -334,7 +334,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
-	svc.stats.Started = time.Now().Format(time.RFC3339)
+	svc.stats.Started = time.Now().UTC()
 
 	return svc, nil
 }
