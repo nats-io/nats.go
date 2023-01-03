@@ -22,19 +22,54 @@ import (
 )
 
 type (
+	// Handler is used to respond to service requests.
+	Handler interface {
+		Handle(Request)
+	}
+
+	// HandlerFunc is a function implementing [Handler].
+	// It allows using a function as a request handler, without having to implement Handle
+	// on a separate type.
+	HandlerFunc func(Request)
+
 	// Request represents service request available in the service handler.
 	// It exposes methods to respond to the request, as well as
 	// getting the request data and headers.
-	Request struct {
-		msg          *nats.Msg
-		respondError error
-	}
+	Request interface {
+		// Respond sends the response for the request.
+		// Additional headers can be passed using [WithHeaders] option.
+		Respond([]byte, ...RespondOpt) error
 
-	// RequestHandler is a function used as a Handler for a service.
-	RequestHandler func(*Request)
+		// RespondJSON marshals the given response value and responds to the request.
+		// Additional headers can be passed using [WithHeaders] option.
+		RespondJSON(interface{}, ...RespondOpt) error
+
+		// Error prepares and publishes error response from a handler.
+		// A response error should be set containing an error code and description.
+		// Optionally, data can be set as response payload.
+		Error(code, description string, data []byte, opts ...RespondOpt) error
+
+		// Data returns request data.
+		Data() []byte
+
+		// Headers returns request headers.
+		Headers() Headers
+
+		// Subject returns underlying NATS message subject.
+		Subject() string
+	}
 
 	// Headers is a wrapper around [*nats.Header]
 	Headers nats.Header
+
+	// RespondOpt is a function used to configure [Request.Respond] and [Request.RespondJSON] methods.
+	RespondOpt func(*nats.Msg)
+
+	// request is a default implementation of Request interface
+	request struct {
+		msg          *nats.Msg
+		respondError error
+	}
 )
 
 var (
@@ -43,10 +78,13 @@ var (
 	ErrArgRequired     = errors.New("argument required")
 )
 
-// RespondOpt is a
-type RespondOpt func(*nats.Msg)
+func (fn HandlerFunc) Handle(req Request) {
+	fn(req)
+}
 
-func (r *Request) Respond(response []byte, opts ...RespondOpt) error {
+// Respond sends the response for the request.
+// Additional headers can be passed using [WithHeaders] option.
+func (r *request) Respond(response []byte, opts ...RespondOpt) error {
 	respMsg := &nats.Msg{
 		Data: response,
 	}
@@ -62,7 +100,9 @@ func (r *Request) Respond(response []byte, opts ...RespondOpt) error {
 	return nil
 }
 
-func (r *Request) RespondJSON(response interface{}, opts ...RespondOpt) error {
+// RespondJSON marshals the given response value and responds to the request.
+// Additional headers can be passed using [WithHeaders] option.
+func (r *request) RespondJSON(response interface{}, opts ...RespondOpt) error {
 	resp, err := json.Marshal(response)
 	if err != nil {
 		return ErrMarshalResponse
@@ -73,7 +113,7 @@ func (r *Request) RespondJSON(response interface{}, opts ...RespondOpt) error {
 // Error prepares and publishes error response from a handler.
 // A response error should be set containing an error code and description.
 // Optionally, data can be set as response payload.
-func (r *Request) Error(code, description string, data []byte, opts ...RespondOpt) error {
+func (r *request) Error(code, description string, data []byte, opts ...RespondOpt) error {
 	if code == "" {
 		return fmt.Errorf("%w: error code", ErrArgRequired)
 	}
@@ -98,6 +138,7 @@ func (r *Request) Error(code, description string, data []byte, opts ...RespondOp
 	return nil
 }
 
+// WithHeaders can be used to configure response with custom headers.
 func WithHeaders(headers Headers) RespondOpt {
 	return func(m *nats.Msg) {
 		if m.Header == nil {
@@ -111,12 +152,19 @@ func WithHeaders(headers Headers) RespondOpt {
 	}
 }
 
-func (r *Request) Data() []byte {
+// Data returns request data.
+func (r *request) Data() []byte {
 	return r.msg.Data
 }
 
-func (r *Request) Headers() Headers {
+// Headers returns request headers.
+func (r *request) Headers() Headers {
 	return Headers(r.msg.Header)
+}
+
+// Subject returns underlying NATS message subject.
+func (r *request) Subject() string {
+	return r.msg.Subject
 }
 
 // Get gets the first value associated with the given key.
