@@ -28,7 +28,7 @@ type (
 	}
 
 	// HandlerFunc is a function implementing [Handler].
-	// It allows using a function as a reqeust hadnler, without having to implement Handle
+	// It allows using a function as a request handler, without having to implement Handle
 	// on a separate type.
 	HandlerFunc func(Request)
 
