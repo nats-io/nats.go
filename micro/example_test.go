@@ -37,9 +37,12 @@ func ExampleAddService() {
 		Name:        "EchoService",
 		Version:     "1.0.0",
 		Description: "Send back what you receive",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(echoHandler),
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(echoHandler),
+			},
 		},
 
 		// DoneHandler can be set to customize behavior on stopping a service.
@@ -70,10 +73,13 @@ func ExampleService_Info() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name: "EchoService",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+		Name:        "EchoService",
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			},
 		},
 	}
 
@@ -86,7 +92,7 @@ func ExampleService_Info() {
 	fmt.Println(info.Name)
 	fmt.Println(info.Description)
 	fmt.Println(info.Version)
-	fmt.Println(info.Subject)
+	fmt.Println(info.RootSubject)
 }
 
 func ExampleService_Stats() {
@@ -97,11 +103,14 @@ func ExampleService_Stats() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:    "EchoService",
-		Version: "0.1.0",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+		Name:        "EchoService",
+		Version:     "0.1.0",
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			},
 		},
 	}
 
@@ -110,8 +119,8 @@ func ExampleService_Stats() {
 	// stats of a service instance
 	stats := srv.Stats()
 
-	fmt.Println(stats.AverageProcessingTime)
-	fmt.Println(stats.ProcessingTime)
+	fmt.Println(stats.Endpoints["Echo"].AverageProcessingTime)
+	fmt.Println(stats.Endpoints["Echo"].ProcessingTime)
 
 }
 
@@ -123,11 +132,14 @@ func ExampleService_Stop() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:    "EchoService",
-		Version: "0.1.0",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+		Name:        "EchoService",
+		Version:     "0.1.0",
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			},
 		},
 	}
 
@@ -154,11 +166,14 @@ func ExampleService_Stopped() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:    "EchoService",
-		Version: "0.1.0",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+		Name:        "EchoService",
+		Version:     "0.1.0",
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			},
 		},
 	}
 
@@ -183,11 +198,14 @@ func ExampleService_Reset() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:    "EchoService",
-		Version: "0.1.0",
-		Endpoint: micro.Endpoint{
-			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+		Name:        "EchoService",
+		Version:     "0.1.0",
+		RootSubject: "svc",
+		Endpoints: map[string]micro.Endpoint{
+			"Echo": {
+				Subject: "echo",
+				Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			},
 		},
 	}
 

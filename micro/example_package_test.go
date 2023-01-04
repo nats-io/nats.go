@@ -30,7 +30,7 @@ func Example() {
 	}
 	defer nc.Close()
 
-	// service handler - in this case, HandlerFunc is used,
+	// endpoint handler - in this case, HandlerFunc is used,
 	// which is a built-in implementation of Handler interface
 	incrementHandler := func(req micro.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
@@ -43,15 +43,34 @@ func Example() {
 		req.Respond([]byte(strconv.Itoa(responseData)))
 	}
 
+	// second endpoint
+	multiply := func(req micro.Request) {
+		val, err := strconv.Atoi(string(req.Data()))
+		if err != nil {
+			req.Error("400", "request data should be a number", nil)
+			return
+		}
+
+		responseData := val * 2
+		req.Respond([]byte(strconv.Itoa(responseData)))
+	}
+
 	config := micro.Config{
 		Name:        "IncrementService",
 		Version:     "0.1.0",
 		Description: "Increment numbers",
-		Endpoint: micro.Endpoint{
-			// service handler
-			Handler: micro.HandlerFunc(incrementHandler),
-			// a unique subject serving as a service endpoint
-			Subject: "numbers.increment",
+		RootSubject: "numbers",
+		Endpoints: map[string]micro.Endpoint{
+			"Increment": {
+				// service handler
+				Handler: micro.HandlerFunc(incrementHandler),
+				// a unique subject serving as a service endpoint
+				Subject: "increment",
+			},
+			"Multiply": {
+				Handler: micro.HandlerFunc(multiply),
+				Subject: "multiply",
+			},
 		},
 	}
 	// Multiple instances of the servcice with the same name can be created.

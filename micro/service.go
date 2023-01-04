@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,11 +65,15 @@ type (
 		Version string `json:"version"`
 	}
 
-	// Stats is the type returned by STATS monitoring endpoint.
-	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
 	Stats struct {
 		ServiceIdentity
-		Type                  string          `json:"type"`
+		Type      string                    `json:"type"`
+		Endpoints map[string]*EndpointStats `json:"endpoints"`
+	}
+
+	// Stats is the type returned by STATS monitoring endpoint.
+	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
+	EndpointStats struct {
 		NumRequests           int             `json:"num_requests"`
 		NumErrors             int             `json:"num_errors"`
 		LastError             string          `json:"last_error"`
@@ -89,7 +94,7 @@ type (
 		ServiceIdentity
 		Type        string `json:"type"`
 		Description string `json:"description"`
-		Subject     string `json:"subject"`
+		RootSubject string `json:"root_subject"`
 	}
 
 	// SchemaResp is the response value for SCHEMA requests.
@@ -117,13 +122,34 @@ type (
 
 	// Config is a configuration of a service.
 	Config struct {
-		Name         string   `json:"name"`
-		Version      string   `json:"version"`
-		Description  string   `json:"description"`
-		Schema       Schema   `json:"schema"`
-		Endpoint     Endpoint `json:"endpoint"`
+		// Name represents the name of the service.
+		Name string `json:"name"`
+
+		// RootSubject is the root subject of the service.
+		// All endpoints will be prefixed with root subject.
+		RootSubject string `json:"root_subject"`
+
+		// Version is a SemVer compatible version string.
+		Version string `json:"version"`
+
+		// Description of the service.
+		Description string `json:"description"`
+
+		// Service schema
+		Schema Schema `json:"schema"`
+
+		// Endpoints is a collenction of service endpoints.
+		// Map key serves as endpoint name.
+		Endpoints map[string]Endpoint `json:"endpoint"`
+
+		// StatsHandler is a user-defined custom function
+		// used to calculate additional service stats.
 		StatsHandler StatsHandler
-		DoneHandler  DoneHandler
+
+		// DoneHandler is invoked when all service subscription are stopped.
+		DoneHandler DoneHandler
+
+		// ErrorHandler is invoked on any nats-related service error.
 		ErrorHandler ErrHandler
 	}
 
@@ -144,7 +170,7 @@ type (
 
 		m            sync.Mutex
 		id           string
-		reqSub       *nats.Subscription
+		endpointSubs map[string]*nats.Subscription
 		verbSubs     map[string]*nats.Subscription
 		stats        *Stats
 		conn         *nats.Conn
@@ -245,37 +271,43 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		asyncDispatcher: asyncCallbacksHandler{
 			cbQueue: make(chan func(), 100),
 		},
+		endpointSubs: make(map[string]*nats.Subscription),
+		verbSubs:     make(map[string]*nats.Subscription),
 	}
 	svcIdentity := ServiceIdentity{
 		Name:    config.Name,
 		ID:      id,
 		Version: config.Version,
 	}
-	svc.verbSubs = make(map[string]*nats.Subscription)
 	svc.stats = &Stats{
 		ServiceIdentity: svcIdentity,
+		Endpoints:       make(map[string]*EndpointStats),
 	}
 
 	svc.setupAsyncCallbacks()
 
 	go svc.asyncDispatcher.asyncCBDispatcher()
 
+	for name, endpoint := range config.Endpoints {
+		sub, err := nc.QueueSubscribe(
+			fmt.Sprintf("%s.%s", config.RootSubject, endpoint.Subject),
+			QG,
+			func(m *nats.Msg) {
+				svc.reqHandler(name, &request{msg: m})
+			},
+		)
+		if err != nil {
+			svc.Stop()
+			svc.asyncDispatcher.close()
+			return nil, err
+		}
+		svc.endpointSubs[name] = sub
+		svc.stats.Endpoints[name] = &EndpointStats{
+			Started: time.Now().UTC(),
+		}
+	}
+
 	// Setup internal subscriptions.
-	var err error
-
-	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *nats.Msg) {
-		svc.reqHandler(&request{msg: m})
-	})
-	if err != nil {
-		svc.asyncDispatcher.close()
-		return nil, err
-	}
-
-	ping := Ping{
-		ServiceIdentity: svcIdentity,
-		Type:            PingResponseType,
-	}
-
 	infoHandler := func(req Request) {
 		response, _ := json.Marshal(svc.Info())
 		if err := req.Respond(response); err != nil {
@@ -285,6 +317,10 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		}
 	}
 
+	ping := Ping{
+		ServiceIdentity: svcIdentity,
+		Type:            PingResponseType,
+	}
 	pingHandler := func(req Request) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
@@ -334,7 +370,6 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
-	svc.stats.Started = time.Now().UTC()
 
 	return svc, nil
 }
@@ -359,14 +394,28 @@ func (ac *asyncCallbacksHandler) close() {
 	close(ac.cbQueue)
 }
 
-func (s *Config) valid() error {
-	if !serviceNameRegexp.MatchString(s.Name) {
+func (c *Config) valid() error {
+	if !serviceNameRegexp.MatchString(c.Name) {
 		return fmt.Errorf("%w: service name: name should not be empty and should consist of alphanumerical charactest, dashes and underscores", ErrConfigValidation)
 	}
-	if !semVerRegexp.MatchString(s.Version) {
+	if !semVerRegexp.MatchString(c.Version) {
 		return fmt.Errorf("%w: version: version should not be empty should match the SemVer format", ErrConfigValidation)
 	}
-	return s.Endpoint.valid()
+	if len(c.Endpoints) == 0 {
+		return fmt.Errorf("%w: endpoints: service should have at least one endpoint configured", ErrConfigValidation)
+	}
+	if c.RootSubject == "" {
+		return fmt.Errorf("%w: root subject: cannot be empty", ErrConfigValidation)
+	}
+	for name, endpoint := range c.Endpoints {
+		if name == "" {
+			return fmt.Errorf("%w: endpoint name cannot be empty", ErrConfigValidation)
+		}
+		if err := endpoint.valid(); err != nil {
+			return fmt.Errorf("%w: endpoint %q: %s", ErrConfigValidation, name, err)
+		}
+	}
+	return nil
 }
 
 func (e *Endpoint) valid() error {
@@ -407,8 +456,14 @@ func (svc *service) setupAsyncCallbacks() {
 				})
 			}
 			svc.m.Lock()
-			svc.stats.NumErrors++
-			svc.stats.LastError = err.Error()
+			for name, endpointSub := range svc.endpointSubs {
+				if endpointSub.Subject == s.Subject {
+					endpointStats := svc.stats.Endpoints[name]
+					endpointStats.NumErrors++
+					endpointStats.LastError = err.Error()
+					svc.stats.Endpoints[name] = endpointStats
+				}
+			}
 			svc.m.Unlock()
 			svc.Stop()
 			svc.natsHandlers.asyncErr(c, s, err)
@@ -425,8 +480,13 @@ func (svc *service) setupAsyncCallbacks() {
 				})
 			}
 			svc.m.Lock()
-			svc.stats.NumErrors++
-			svc.stats.LastError = err.Error()
+			for name, endpointSub := range svc.endpointSubs {
+				if endpointSub.Subject == s.Subject {
+					endpointStats := svc.stats.Endpoints[name]
+					endpointStats.NumErrors++
+					endpointStats.LastError = err.Error()
+				}
+			}
 			svc.m.Unlock()
 			svc.Stop()
 		})
@@ -434,7 +494,7 @@ func (svc *service) setupAsyncCallbacks() {
 }
 
 func (svc *service) matchSubscriptionSubject(subj string) bool {
-	if svc.reqSub.Subject == subj {
+	if strings.HasPrefix(subj, svc.RootSubject) {
 		return true
 	}
 	for _, verbSub := range svc.verbSubs {
@@ -480,18 +540,23 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 }
 
 // reqHandler invokes the service request handler and modifies service stats
-func (s *service) reqHandler(req *request) {
+func (s *service) reqHandler(endpointName string, req *request) {
+	endpoint, ok := s.Endpoints[endpointName]
+	if !ok {
+		return
+	}
 	start := time.Now()
-	s.Endpoint.Handler.Handle(req)
+	endpoint.Handler.Handle(req)
 	s.m.Lock()
-	s.stats.NumRequests++
-	s.stats.ProcessingTime += time.Since(start)
-	avgProcessingTime := s.stats.ProcessingTime.Nanoseconds() / int64(s.stats.NumRequests)
-	s.stats.AverageProcessingTime = time.Duration(avgProcessingTime)
+	stats := s.stats.Endpoints[endpointName]
+	stats.NumRequests++
+	stats.ProcessingTime += time.Since(start)
+	avgProcessingTime := stats.ProcessingTime.Nanoseconds() / int64(stats.NumRequests)
+	stats.AverageProcessingTime = time.Duration(avgProcessingTime)
 
 	if req.respondError != nil {
-		s.stats.NumErrors++
-		s.stats.LastError = req.respondError.Error()
+		stats.NumErrors++
+		stats.LastError = req.respondError.Error()
 	}
 	s.m.Unlock()
 }
@@ -499,15 +564,15 @@ func (s *service) reqHandler(req *request) {
 // Stop drains the endpoint subscriptions and marks the service as stopped.
 func (s *service) Stop() error {
 	s.m.Lock()
+	defer s.m.Unlock()
 	if s.stopped {
 		return nil
 	}
-	defer s.m.Unlock()
-	if s.reqSub != nil {
-		if err := s.reqSub.Drain(); err != nil {
+	for name, sub := range s.endpointSubs {
+		if err := sub.Drain(); err != nil {
 			return fmt.Errorf("draining subscription for request handler: %w", err)
 		}
-		s.reqSub = nil
+		delete(s.endpointSubs, name)
 	}
 	var keys []string
 	for key, sub := range s.verbSubs {
@@ -543,7 +608,7 @@ func (s *service) Info() Info {
 		},
 		Type:        InfoResponseType,
 		Description: s.Config.Description,
-		Subject:     s.Config.Endpoint.Subject,
+		RootSubject: s.Config.RootSubject,
 	}
 }
 
@@ -551,24 +616,32 @@ func (s *service) Info() Info {
 func (s *service) Stats() Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
-	if s.StatsHandler != nil {
-		s.stats.Data, _ = json.Marshal(s.StatsHandler(s.Endpoint))
-	}
 	info := s.Info()
-	return Stats{
+	stats := Stats{
 		ServiceIdentity: ServiceIdentity{
 			Name:    info.Name,
 			ID:      info.ID,
 			Version: info.Version,
 		},
-		Type:                  StatsResponseType,
-		NumRequests:           s.stats.NumRequests,
-		NumErrors:             s.stats.NumErrors,
-		ProcessingTime:        s.stats.ProcessingTime,
-		AverageProcessingTime: s.stats.AverageProcessingTime,
-		Started:               s.stats.Started,
-		Data:                  s.stats.Data,
+		Endpoints: make(map[string]*EndpointStats),
 	}
+	for name, endpoint := range s.Endpoints {
+		currentStats := s.stats.Endpoints[name]
+		endpointStats := &EndpointStats{
+			NumRequests:           currentStats.NumRequests,
+			NumErrors:             currentStats.NumErrors,
+			LastError:             currentStats.LastError,
+			ProcessingTime:        currentStats.ProcessingTime,
+			AverageProcessingTime: currentStats.AverageProcessingTime,
+			Started:               currentStats.Started,
+		}
+		if s.StatsHandler != nil {
+			data, _ := json.Marshal(s.StatsHandler(endpoint))
+			endpointStats.Data = data
+		}
+		stats.Endpoints[name] = endpointStats
+	}
+	return stats
 }
 
 // Reset resets all statistics on a service instance.
@@ -576,6 +649,10 @@ func (s *service) Reset() {
 	s.m.Lock()
 	s.stats = &Stats{
 		ServiceIdentity: s.Info().ServiceIdentity,
+		Endpoints:       make(map[string]*EndpointStats),
+	}
+	for name := range s.Endpoints {
+		s.stats.Endpoints[name] = &EndpointStats{}
 	}
 	s.m.Unlock()
 }

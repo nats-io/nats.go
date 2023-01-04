@@ -30,11 +30,14 @@ func ExampleHandler() {
 	rec := rectangle{10, 5}
 
 	config := micro.Config{
-		Name:    "RectangleAreaService",
-		Version: "0.1.0",
-		Endpoint: micro.Endpoint{
-			Handler: rec,
-			Subject: "rectangle.area",
+		Name:        "RectangleAreaService",
+		Version:     "0.1.0",
+		RootSubject: "area",
+		Endpoints: map[string]micro.Endpoint{
+			"Rectangle": {
+				Subject: "rec",
+				Handler: rec,
+			},
 		},
 	}
 	svc, err := micro.AddService(nc, config)
