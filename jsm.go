@@ -310,7 +310,7 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 		consumerName = cfg.Durable
 	}
 	if consumerName != _EMPTY_ {
-		consInfo, err := js.ConsumerInfo(stream, consumerName)
+		consInfo, err := js.ConsumerInfo(stream, consumerName, opts...)
 		if err != nil && !errors.Is(err, ErrConsumerNotFound) && !errors.Is(err, ErrStreamNotFound) {
 			return nil, err
 		}
