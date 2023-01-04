@@ -215,6 +215,38 @@ func (nc *Conn) FlushWithContext(ctx context.Context) error {
 	return err
 }
 
+// RequestMsgWithContext will create an Inbox and perform a Request
+// using the provided cancellation context with the Inbox reply
+// for the data v. A response will be decoded into the vPtr last parameter.
+// The encoded data v will be written to Msg before sending to the underlying connection.
+// The resulting raw message is returned to inspect its headers.
+func (c *EncodedConn) RequestMsgWithContext(ctx context.Context, m *Msg, v interface{}, vPtr interface{}) (*Msg, error) {
+	if ctx == nil {
+		return nil, ErrInvalidContext
+	}
+
+	var err error
+	m.Data, err = c.Enc.Encode(m.Subject, v)
+	if err != nil {
+		return nil, err
+	}
+	m, err = c.Conn.RequestMsgWithContext(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	if reflect.TypeOf(vPtr) == emptyMsgType {
+		mPtr := vPtr.(*Msg)
+		*mPtr = *m
+	} else {
+		err := c.Enc.Decode(m.Subject, m.Data, vPtr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return m, nil
+}
+
 // RequestWithContext will create an Inbox and perform a Request
 // using the provided cancellation context with the Inbox reply
 // for the data v. A response will be decoded into the vPtr last parameter.
