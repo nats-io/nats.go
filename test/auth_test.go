@@ -16,6 +16,7 @@ package test
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -362,5 +363,17 @@ func TestPermViolation(t *testing.T) {
 	// Make sure connection has not been closed
 	if nc.IsClosed() {
 		t.Fatal("Connection should be not be closed")
+	}
+}
+
+func TestConnectMissingCreds(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	// Using TEST-NET sample address from RFC 5737.
+	testnetaddr := "nats://192.0.2.2:4222"
+	_, err := nats.Connect(fmt.Sprintf("%s,%s", s.ClientURL(), testnetaddr), nats.UserCredentials("missing"), nats.DontRandomize())
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Expected not exists error, got: %v", err)
 	}
 }
