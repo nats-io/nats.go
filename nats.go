@@ -839,7 +839,7 @@ func RootCAs(file ...string) Option {
 		for _, f := range file {
 			rootPEM, err := os.ReadFile(f)
 			if err != nil || rootPEM == nil {
-				return fmt.Errorf("nats: error loading or parsing rootCA file: %v", err)
+				return fmt.Errorf("nats: error loading or parsing rootCA file: %w", err)
 			}
 			ok := pool.AppendCertsFromPEM(rootPEM)
 			if !ok {
@@ -861,11 +861,11 @@ func ClientCert(certFile, keyFile string) Option {
 	return func(o *Options) error {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
-			return fmt.Errorf("nats: error loading client certificate: %v", err)
+			return fmt.Errorf("nats: error loading client certificate: %w", err)
 		}
 		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 		if err != nil {
-			return fmt.Errorf("nats: error parsing client certificate: %v", err)
+			return fmt.Errorf("nats: error parsing client certificate: %w", err)
 		}
 		if o.TLSConfig == nil {
 			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -1113,7 +1113,7 @@ func UserJWTAndSeed(jwt string, seed string) Option {
 	sigCB := func(nonce []byte) ([]byte, error) {
 		kp, err := nkeys.FromSeed([]byte(seed))
 		if err != nil {
-			return nil, fmt.Errorf("unable to extract key pair from seed: %v", err)
+			return nil, fmt.Errorf("unable to extract key pair from seed: %w", err)
 		}
 		// Wipe our key on exit.
 		defer kp.Wipe()
@@ -2388,7 +2388,7 @@ func (nc *Conn) connectProto() (string, error) {
 		}
 		sigraw, err := o.SignatureCB([]byte(nc.info.Nonce))
 		if err != nil {
-			return _EMPTY_, fmt.Errorf("error signing nonce: %v", err)
+			return _EMPTY_, fmt.Errorf("error signing nonce: %w", err)
 		}
 		sig = base64.RawURLEncoding.EncodeToString(sigraw)
 	}
@@ -5503,7 +5503,7 @@ func nkeyPairFromSeedFile(seedFile string) (nkeys.KeyPair, error) {
 func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
 	kp, err := nkeyPairFromSeedFile(seedFile)
 	if err != nil {
-		return nil, fmt.Errorf("unable to extract key pair from file %q: %v", seedFile, err)
+		return nil, fmt.Errorf("unable to extract key pair from file %q: %w", seedFile, err)
 	}
 	// Wipe our key on exit.
 	defer kp.Wipe()
