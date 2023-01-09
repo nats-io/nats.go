@@ -1,4 +1,4 @@
-// Copyright 2022 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -29,22 +29,11 @@ func ExampleAddService() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
-		req.Respond(req.Data())
-	}
-
 	config := micro.Config{
 		Name:        "EchoService",
 		Version:     "1.0.0",
 		Description: "Send back what you receive",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(echoHandler),
-			},
-		},
-
 		// DoneHandler can be set to customize behavior on stopping a service.
 		DoneHandler: func(srv micro.Service) {
 			info := srv.Info()
@@ -65,6 +54,67 @@ func ExampleAddService() {
 	defer srv.Stop()
 }
 
+func ExampleService_AddEndpoint() {
+	nc, err := nats.Connect("127.0.0.1:4222")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	echoHandler := func(req micro.Request) {
+		req.Respond(req.Data())
+	}
+
+	config := micro.Config{
+		Name:        "EchoService",
+		Version:     "1.0.0",
+		RootSubject: "svc",
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	endpoint, err := srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Endpoints can be stopped individually or all at once using srv.Stop()
+	defer endpoint.Stop()
+}
+
+func ExampleService_AddGroup() {
+	nc, err := nats.Connect("127.0.0.1:4222")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	echoHandler := func(req micro.Request) {
+		req.Respond(req.Data())
+	}
+
+	config := micro.Config{
+		Name:        "EchoService",
+		Version:     "1.0.0",
+		RootSubject: "svc",
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	v1 := srv.AddGroup("v1")
+
+	// endpoint will be registered under "v1.Echo" subject
+	_, err = v1.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func ExampleService_Info() {
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
@@ -75,12 +125,6 @@ func ExampleService_Info() {
 	config := micro.Config{
 		Name:        "EchoService",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(func(r micro.Request) {}),
-			},
-		},
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -106,21 +150,15 @@ func ExampleService_Stats() {
 		Name:        "EchoService",
 		Version:     "0.1.0",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(func(r micro.Request) {}),
-			},
-		},
 	}
 
 	srv, _ := micro.AddService(nc, config)
-
+	srv.AddEndpoint("Echo", micro.HandlerFunc(func(r micro.Request) {}))
 	// stats of a service instance
 	stats := srv.Stats()
 
-	fmt.Println(stats.Endpoints["Echo"].AverageProcessingTime)
-	fmt.Println(stats.Endpoints["Echo"].ProcessingTime)
+	fmt.Println(stats.Endpoints[0].AverageProcessingTime)
+	fmt.Println(stats.Endpoints[0].ProcessingTime)
 
 }
 
@@ -135,12 +173,6 @@ func ExampleService_Stop() {
 		Name:        "EchoService",
 		Version:     "0.1.0",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(func(r micro.Request) {}),
-			},
-		},
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -169,12 +201,6 @@ func ExampleService_Stopped() {
 		Name:        "EchoService",
 		Version:     "0.1.0",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(func(r micro.Request) {}),
-			},
-		},
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -201,12 +227,6 @@ func ExampleService_Reset() {
 		Name:        "EchoService",
 		Version:     "0.1.0",
 		RootSubject: "svc",
-		Endpoints: map[string]micro.Endpoint{
-			"Echo": {
-				Subject: "echo",
-				Handler: micro.HandlerFunc(func(r micro.Request) {}),
-			},
-		},
 	}
 
 	srv, _ := micro.AddService(nc, config)

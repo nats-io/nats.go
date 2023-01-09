@@ -1,4 +1,4 @@
-// Copyright 2022 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -31,14 +31,26 @@ import (
 // This functionality is EXPERIMENTAL and may be changed in later releases.
 
 type (
+
+	// Service exposes methods to operate on a service instance.
 	Service interface {
+		// AddEndpoint registers endpoint with given name on a specific service.
+		// If service has root subject, the endpoint will be registered on {root_subject}.{name} subject.
+		// Otherwise, the endpoint subject is the same as endpoint name.
+		AddEndpoint(string, Handler) (Endpoint, error)
+
+		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
+		// A group can be used to register endpoints with given prefix.
+		// Root subject will be prepended to the prefix (if available).
+		AddGroup(string) Group
+
 		// Info returns the service info.
 		Info() Info
 
 		// Stats returns statistics for the service endpoint and all monitoring endpoints.
 		Stats() Stats
 
-		// Reset resets all statistics on a service instance.
+		// Reset resets all statistics (for all endpoints) on a service instance.
 		Reset()
 
 		// Stop drains the endpoint subscriptions and marks the service as stopped.
@@ -46,6 +58,19 @@ type (
 
 		// Stopped informs whether [Stop] was executed on the service.
 		Stopped() bool
+	}
+
+	// Group allows for grouping endpoints on a service.
+	//
+	// Endpoints created using AddEndpoint will be grouped under common prefix (group name)
+	// New groups can also be derived from a group using AddGroup.
+	Group interface {
+		// AddGroup creates a new group, prefixed by this group's prefix.
+		AddGroup(string) Group
+
+		// AddEndpoint registers new endpoints on a service.
+		// The endpoint's subject will be prefixed with the group prefix.
+		AddEndpoint(string, Handler) (Endpoint, error)
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -65,21 +90,24 @@ type (
 		Version string `json:"version"`
 	}
 
+	// Stats is the type returned by STATS monitoring endpoint.
+	// It contains stats of all registered endpoints.
 	Stats struct {
 		ServiceIdentity
-		Type      string                    `json:"type"`
-		Endpoints map[string]*EndpointStats `json:"endpoints"`
+		Type      string           `json:"type"`
+		Started   time.Time        `json:"started"`
+		Endpoints []*EndpointStats `json:"endpoints"`
 	}
 
-	// Stats is the type returned by STATS monitoring endpoint.
-	// It contains stats for a specific endpoint (either request handler or monitoring enpoints).
+	// EndpointStats contains stats for a specific endpoint.
 	EndpointStats struct {
+		Name                  string          `json:"name"`
+		Subject               string          `json:"subject"`
 		NumRequests           int             `json:"num_requests"`
 		NumErrors             int             `json:"num_errors"`
 		LastError             string          `json:"last_error"`
 		ProcessingTime        time.Duration   `json:"processing_time"`
 		AverageProcessingTime time.Duration   `json:"average_processing_time"`
-		Started               time.Time       `json:"started"`
 		Data                  json.RawMessage `json:"data,omitempty"`
 	}
 
@@ -92,9 +120,10 @@ type (
 	// Info is the basic information about a service type.
 	Info struct {
 		ServiceIdentity
-		Type        string `json:"type"`
-		Description string `json:"description"`
-		RootSubject string `json:"root_subject"`
+		Type        string   `json:"type"`
+		Description string   `json:"description"`
+		RootSubject string   `json:"root_subject"`
+		Endpoints   []string `json:"endpoints"`
 	}
 
 	// SchemaResp is the response value for SCHEMA requests.
@@ -111,10 +140,26 @@ type (
 		Response string `json:"response"`
 	}
 
-	// Endpoint is used to configure a subject and handler for a service.
-	Endpoint struct {
-		Subject string `json:"subject"`
-		Handler Handler
+	// Endpoint manages a service endpoint.
+	// There is not need to call Stop on each endpoint on cleanup.
+	// Instead, Service.Stop will stop all endpoints registered on a service.
+	Endpoint interface {
+		Stop() error
+		Subject() string
+	}
+
+	endpoint struct {
+		service *service
+		subject string
+		handler Handler
+
+		stats        EndpointStats
+		subscription *nats.Subscription
+	}
+
+	group struct {
+		service *service
+		prefix  string
 	}
 
 	// Verb represents a name of the monitoring service.
@@ -125,7 +170,7 @@ type (
 		// Name represents the name of the service.
 		Name string `json:"name"`
 
-		// RootSubject is the root subject of the service.
+		// RootSubject is the optional root subject of the service.
 		// All endpoints will be prefixed with root subject.
 		RootSubject string `json:"root_subject"`
 
@@ -137,10 +182,6 @@ type (
 
 		// Service schema
 		Schema Schema `json:"schema"`
-
-		// Endpoints is a collenction of service endpoints.
-		// Map key serves as endpoint name.
-		Endpoints map[string]Endpoint `json:"endpoint"`
 
 		// StatsHandler is a user-defined custom function
 		// used to calculate additional service stats.
@@ -170,10 +211,10 @@ type (
 
 		m            sync.Mutex
 		id           string
-		endpointSubs map[string]*nats.Subscription
+		endpoints    []*endpoint
 		verbSubs     map[string]*nats.Subscription
-		stats        *Stats
-		conn         *nats.Conn
+		started      time.Time
+		nc           *nats.Conn
 		natsHandlers handlers
 		stopped      bool
 
@@ -253,8 +294,8 @@ func (s Verb) String() string {
 }
 
 // AddService adds a microservice.
-// It will enable internal common services (PING, STATS, INFO and SCHEMA) as well as
-// the actual service handler on the subject provided in config.Endpoint
+// It will enable internal common services (PING, STATS, INFO and SCHEMA).
+// Request handlers have to be registered separately using Service.AddEndpoint.
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
@@ -266,46 +307,23 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	id := nuid.Next()
 	svc := &service{
 		Config: config,
-		conn:   nc,
+		nc:     nc,
 		id:     id,
 		asyncDispatcher: asyncCallbacksHandler{
 			cbQueue: make(chan func(), 100),
 		},
-		endpointSubs: make(map[string]*nats.Subscription),
-		verbSubs:     make(map[string]*nats.Subscription),
+		verbSubs:  make(map[string]*nats.Subscription),
+		endpoints: make([]*endpoint, 0),
 	}
 	svcIdentity := ServiceIdentity{
 		Name:    config.Name,
 		ID:      id,
 		Version: config.Version,
 	}
-	svc.stats = &Stats{
-		ServiceIdentity: svcIdentity,
-		Endpoints:       make(map[string]*EndpointStats),
-	}
 
 	svc.setupAsyncCallbacks()
 
 	go svc.asyncDispatcher.asyncCBDispatcher()
-
-	for name, endpoint := range config.Endpoints {
-		sub, err := nc.QueueSubscribe(
-			fmt.Sprintf("%s.%s", config.RootSubject, endpoint.Subject),
-			QG,
-			func(m *nats.Msg) {
-				svc.reqHandler(name, &request{msg: m})
-			},
-		)
-		if err != nil {
-			svc.Stop()
-			svc.asyncDispatcher.close()
-			return nil, err
-		}
-		svc.endpointSubs[name] = sub
-		svc.stats.Endpoints[name] = &EndpointStats{
-			Started: time.Now().UTC(),
-		}
-	}
 
 	// Setup internal subscriptions.
 	infoHandler := func(req Request) {
@@ -371,7 +389,51 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
+	svc.started = time.Now().UTC()
 	return svc, nil
+}
+
+func (s *service) AddEndpoint(name string, handler Handler) (Endpoint, error) {
+	subject := name
+	if s.RootSubject != "" {
+		subject = fmt.Sprintf("%s.%s", s.RootSubject, name)
+	}
+	return addEndpoint(s, name, subject, handler)
+}
+
+func addEndpoint(s *service, name, subject string, handler Handler) (Endpoint, error) {
+	endpoint := &endpoint{
+		service: s,
+		subject: subject,
+		handler: handler,
+	}
+	sub, err := s.nc.QueueSubscribe(
+		subject,
+		QG,
+		func(m *nats.Msg) {
+			s.reqHandler(endpoint, &request{msg: m})
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	endpoint.subscription = sub
+	s.endpoints = append(s.endpoints, endpoint)
+	endpoint.stats = EndpointStats{
+		Name:    name,
+		Subject: subject,
+	}
+	return endpoint, nil
+}
+
+func (s *service) AddGroup(name string) Group {
+	if s.RootSubject != "" {
+		name = fmt.Sprintf("%s.%s", s.RootSubject, name)
+	}
+	return &group{
+		service: s,
+		prefix:  name,
+	}
 }
 
 // dispatch is responsible for calling any async callbacks
@@ -401,94 +463,67 @@ func (c *Config) valid() error {
 	if !semVerRegexp.MatchString(c.Version) {
 		return fmt.Errorf("%w: version: version should not be empty should match the SemVer format", ErrConfigValidation)
 	}
-	if len(c.Endpoints) == 0 {
-		return fmt.Errorf("%w: endpoints: service should have at least one endpoint configured", ErrConfigValidation)
-	}
-	if c.RootSubject == "" {
-		return fmt.Errorf("%w: root subject: cannot be empty", ErrConfigValidation)
-	}
-	for name, endpoint := range c.Endpoints {
-		if name == "" {
-			return fmt.Errorf("%w: endpoint name cannot be empty", ErrConfigValidation)
-		}
-		if err := endpoint.valid(); err != nil {
-			return fmt.Errorf("%w: endpoint %q: %s", ErrConfigValidation, name, err)
-		}
-	}
 	return nil
 }
 
-func (e *Endpoint) valid() error {
-	if e.Subject == "" {
-		return fmt.Errorf("%w: endpoint: subject is required", ErrConfigValidation)
-	}
-	if e.Handler == nil {
-		return fmt.Errorf("%w: endpoint: handler is required", ErrConfigValidation)
-	}
-	return nil
-}
-
-func (svc *service) setupAsyncCallbacks() {
-	svc.m.Lock()
-	defer svc.m.Unlock()
-	svc.natsHandlers.closed = svc.conn.ClosedHandler()
-	if svc.natsHandlers.closed != nil {
-		svc.conn.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
-			svc.natsHandlers.closed(c)
+func (s *service) setupAsyncCallbacks() {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.natsHandlers.closed = s.nc.ClosedHandler()
+	if s.natsHandlers.closed != nil {
+		s.nc.SetClosedHandler(func(c *nats.Conn) {
+			s.Stop()
+			s.natsHandlers.closed(c)
 		})
 	} else {
-		svc.conn.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
+		s.nc.SetClosedHandler(func(c *nats.Conn) {
+			s.Stop()
 		})
 	}
 
-	svc.natsHandlers.asyncErr = svc.conn.ErrorHandler()
-	if svc.natsHandlers.asyncErr != nil {
-		svc.conn.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
-			if !svc.matchSubscriptionSubject(s.Subject) {
-				svc.natsHandlers.asyncErr(c, s, err)
+	s.natsHandlers.asyncErr = s.nc.ErrorHandler()
+	if s.natsHandlers.asyncErr != nil {
+		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+			if !s.matchSubscriptionSubject(sub.Subject) {
+				s.natsHandlers.asyncErr(c, sub, err)
 			}
-			if svc.Config.ErrorHandler != nil {
-				svc.Config.ErrorHandler(svc, &NATSError{
-					Subject:     s.Subject,
+			if s.Config.ErrorHandler != nil {
+				s.Config.ErrorHandler(s, &NATSError{
+					Subject:     sub.Subject,
 					Description: err.Error(),
 				})
 			}
-			svc.m.Lock()
-			for name, endpointSub := range svc.endpointSubs {
-				if endpointSub.Subject == s.Subject {
-					endpointStats := svc.stats.Endpoints[name]
-					endpointStats.NumErrors++
-					endpointStats.LastError = err.Error()
-					svc.stats.Endpoints[name] = endpointStats
+			s.m.Lock()
+			for _, endpoint := range s.endpoints {
+				if endpoint.Subject() == sub.Subject {
+					endpoint.stats.NumErrors++
+					endpoint.stats.LastError = err.Error()
 				}
 			}
-			svc.m.Unlock()
-			svc.Stop()
-			svc.natsHandlers.asyncErr(c, s, err)
+			s.m.Unlock()
+			s.Stop()
+			s.natsHandlers.asyncErr(c, sub, err)
 		})
 	} else {
-		svc.conn.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
-			if !svc.matchSubscriptionSubject(s.Subject) {
+		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+			if !s.matchSubscriptionSubject(sub.Subject) {
 				return
 			}
-			if svc.Config.ErrorHandler != nil {
-				svc.Config.ErrorHandler(svc, &NATSError{
-					Subject:     s.Subject,
+			if s.Config.ErrorHandler != nil {
+				s.Config.ErrorHandler(s, &NATSError{
+					Subject:     sub.Subject,
 					Description: err.Error(),
 				})
 			}
-			svc.m.Lock()
-			for name, endpointSub := range svc.endpointSubs {
-				if endpointSub.Subject == s.Subject {
-					endpointStats := svc.stats.Endpoints[name]
-					endpointStats.NumErrors++
-					endpointStats.LastError = err.Error()
+			s.m.Lock()
+			for _, endpoint := range s.endpoints {
+				if endpoint.subject == sub.Subject {
+					endpoint.stats.NumErrors++
+					endpoint.stats.LastError = err.Error()
 				}
 			}
-			svc.m.Unlock()
-			svc.Stop()
+			s.m.Unlock()
+			s.Stop()
 		})
 	}
 }
@@ -540,23 +575,18 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 }
 
 // reqHandler invokes the service request handler and modifies service stats
-func (s *service) reqHandler(endpointName string, req *request) {
-	endpoint, ok := s.Endpoints[endpointName]
-	if !ok {
-		return
-	}
+func (s *service) reqHandler(endpoint *endpoint, req *request) {
 	start := time.Now()
-	endpoint.Handler.Handle(req)
+	endpoint.handler.Handle(req)
 	s.m.Lock()
-	stats := s.stats.Endpoints[endpointName]
-	stats.NumRequests++
-	stats.ProcessingTime += time.Since(start)
-	avgProcessingTime := stats.ProcessingTime.Nanoseconds() / int64(stats.NumRequests)
-	stats.AverageProcessingTime = time.Duration(avgProcessingTime)
+	endpoint.stats.NumRequests++
+	endpoint.stats.ProcessingTime += time.Since(start)
+	avgProcessingTime := endpoint.stats.ProcessingTime.Nanoseconds() / int64(endpoint.stats.NumRequests)
+	endpoint.stats.AverageProcessingTime = time.Duration(avgProcessingTime)
 
 	if req.respondError != nil {
-		stats.NumErrors++
-		stats.LastError = req.respondError.Error()
+		endpoint.stats.NumErrors++
+		endpoint.stats.LastError = req.respondError.Error()
 	}
 	s.m.Unlock()
 }
@@ -568,11 +598,10 @@ func (s *service) Stop() error {
 	if s.stopped {
 		return nil
 	}
-	for name, sub := range s.endpointSubs {
-		if err := sub.Drain(); err != nil {
-			return fmt.Errorf("draining subscription for request handler: %w", err)
+	for _, e := range s.endpoints {
+		if err := e.Stop(); err != nil {
+			return err
 		}
-		delete(s.endpointSubs, name)
 	}
 	var keys []string
 	for key, sub := range s.verbSubs {
@@ -584,7 +613,7 @@ func (s *service) Stop() error {
 	for _, key := range keys {
 		delete(s.verbSubs, key)
 	}
-	restoreAsyncHandlers(s.conn, s.natsHandlers)
+	restoreAsyncHandlers(s.nc, s.natsHandlers)
 	s.stopped = true
 	if s.DoneHandler != nil {
 		s.asyncDispatcher.push(func() { s.DoneHandler(s) })
@@ -600,6 +629,10 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 
 // Info returns information about the service
 func (s *service) Info() Info {
+	endpoints := make([]string, 0, len(s.endpoints))
+	for _, e := range s.endpoints {
+		endpoints = append(endpoints, e.subject)
+	}
 	return Info{
 		ServiceIdentity: ServiceIdentity{
 			Name:    s.Config.Name,
@@ -609,6 +642,7 @@ func (s *service) Info() Info {
 		Type:        InfoResponseType,
 		Description: s.Config.Description,
 		RootSubject: s.Config.RootSubject,
+		Endpoints:   endpoints,
 	}
 }
 
@@ -623,23 +657,21 @@ func (s *service) Stats() Stats {
 			ID:      info.ID,
 			Version: info.Version,
 		},
-		Endpoints: make(map[string]*EndpointStats),
+		Endpoints: make([]*EndpointStats, 0),
 	}
-	for name, endpoint := range s.Endpoints {
-		currentStats := s.stats.Endpoints[name]
+	for _, endpoint := range s.endpoints {
 		endpointStats := &EndpointStats{
-			NumRequests:           currentStats.NumRequests,
-			NumErrors:             currentStats.NumErrors,
-			LastError:             currentStats.LastError,
-			ProcessingTime:        currentStats.ProcessingTime,
-			AverageProcessingTime: currentStats.AverageProcessingTime,
-			Started:               currentStats.Started,
+			NumRequests:           endpoint.stats.NumRequests,
+			NumErrors:             endpoint.stats.NumErrors,
+			LastError:             endpoint.stats.LastError,
+			ProcessingTime:        endpoint.stats.ProcessingTime,
+			AverageProcessingTime: endpoint.stats.AverageProcessingTime,
 		}
 		if s.StatsHandler != nil {
 			data, _ := json.Marshal(s.StatsHandler(endpoint))
 			endpointStats.Data = data
 		}
-		stats.Endpoints[name] = endpointStats
+		stats.Endpoints = append(stats.Endpoints, endpointStats)
 	}
 	return stats
 }
@@ -647,12 +679,8 @@ func (s *service) Stats() Stats {
 // Reset resets all statistics on a service instance.
 func (s *service) Reset() {
 	s.m.Lock()
-	s.stats = &Stats{
-		ServiceIdentity: s.Info().ServiceIdentity,
-		Endpoints:       make(map[string]*EndpointStats),
-	}
-	for name := range s.Endpoints {
-		s.stats.Endpoints[name] = &EndpointStats{}
+	for _, endpoint := range s.endpoints {
+		endpoint.reset()
 	}
 	s.m.Unlock()
 }
@@ -662,6 +690,45 @@ func (s *service) Stopped() bool {
 	s.m.Lock()
 	defer s.m.Unlock()
 	return s.stopped
+}
+
+func (e *NATSError) Error() string {
+	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
+}
+
+func (g *group) AddEndpoint(name string, handler Handler) (Endpoint, error) {
+	subject := fmt.Sprintf("%s.%s", g.prefix, name)
+	return addEndpoint(g.service, name, subject, handler)
+}
+
+func (g *group) AddGroup(name string) Group {
+	return &group{
+		service: g.service,
+		prefix:  fmt.Sprintf("%s.%s", g.prefix, name),
+	}
+}
+
+func (e *endpoint) Subject() string {
+	return e.subject
+}
+
+func (e *endpoint) Stop() error {
+	if err := e.subscription.Drain(); err != nil {
+		return fmt.Errorf("draining subscription for request handler: %w", err)
+	}
+	for i, endpoint := range e.service.endpoints {
+		if endpoint.subject == e.subject {
+			e.service.endpoints = append(e.service.endpoints[:i], e.service.endpoints[i+1:]...)
+		}
+	}
+	return nil
+}
+
+func (e *endpoint) reset() {
+	e.stats = EndpointStats{
+		Name:    e.stats.Name,
+		Subject: e.stats.Subject,
+	}
 }
 
 // ControlSubject returns monitoring subjects used by the Service.
@@ -685,8 +752,4 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, name), nil
 	}
 	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, name, id), nil
-}
-
-func (e *NATSError) Error() string {
-	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }

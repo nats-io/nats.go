@@ -1,4 +1,4 @@
-// Copyright 2022 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -60,31 +60,32 @@ func Example() {
 		Version:     "0.1.0",
 		Description: "Increment numbers",
 		RootSubject: "numbers",
-		Endpoints: map[string]micro.Endpoint{
-			"Increment": {
-				// service handler
-				Handler: micro.HandlerFunc(incrementHandler),
-				// a unique subject serving as a service endpoint
-				Subject: "increment",
-			},
-			"Multiply": {
-				Handler: micro.HandlerFunc(multiply),
-				Subject: "multiply",
-			},
-		},
 	}
-	// Multiple instances of the servcice with the same name can be created.
-	// Requests to a service with the same name will be load-balanced.
-	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer svc.Stop()
+	svc, err := micro.AddService(nc, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer svc.Stop()
+
+	// register endpoints on a service
+	_, err = svc.AddEndpoint("Increment", micro.HandlerFunc(incrementHandler))
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = svc.AddEndpoint("Multiply", micro.HandlerFunc(multiply))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// add a group
+	v1 := svc.AddGroup("v1")
+	_, err = v1.AddEndpoint("Increment", micro.HandlerFunc(incrementHandler))
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// send a request to a service
-	resp, err := nc.Request("numbers.increment", []byte("3"), 1*time.Second)
+	resp, err := nc.Request("numbers.v1.increment", []byte("3"), 1*time.Second)
 	if err != nil {
 		log.Fatal(err)
 	}
