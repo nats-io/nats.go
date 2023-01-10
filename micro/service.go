@@ -531,6 +531,8 @@ func (s *service) setupAsyncCallbacks() {
 }
 
 func (s *service) matchSubscriptionSubject(subj string) (*Endpoint, bool) {
+	s.m.Lock()
+	defer s.m.Unlock()
 	for _, verbSub := range s.verbSubs {
 		if verbSub.Subject == subj {
 			return nil, true
@@ -702,6 +704,7 @@ func (s *service) Reset() {
 	for _, endpoint := range s.endpoints {
 		endpoint.reset()
 	}
+	s.started = time.Now().UTC()
 	s.m.Unlock()
 }
 
