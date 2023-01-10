@@ -29,11 +29,14 @@ func ExampleAddService() {
 	}
 	defer nc.Close()
 
+	echoHandler := func(req micro.Request) {
+		req.Respond(req.Data())
+	}
+
 	config := micro.Config{
 		Name:        "EchoService",
 		Version:     "1.0.0",
 		Description: "Send back what you receive",
-		RootSubject: "svc",
 		// DoneHandler can be set to customize behavior on stopping a service.
 		DoneHandler: func(srv micro.Service) {
 			info := srv.Info()
@@ -44,6 +47,12 @@ func ExampleAddService() {
 		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
 			info := srv.Info()
 			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
+		},
+
+		// optional base handler
+		Endpoint: &micro.EndpointConfig{
+			Subject: "echo",
+			Handler: micro.HandlerFunc(echoHandler),
 		},
 	}
 
@@ -66,9 +75,8 @@ func ExampleService_AddEndpoint() {
 	}
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "1.0.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "1.0.0",
 	}
 
 	srv, err := micro.AddService(nc, config)
@@ -76,12 +84,10 @@ func ExampleService_AddEndpoint() {
 		log.Fatal(err)
 	}
 
-	endpoint, err := srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	err = srv.AddEndpoint("Echo", "echo", micro.HandlerFunc(echoHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Endpoints can be stopped individually or all at once using srv.Stop()
-	defer endpoint.Stop()
 }
 
 func ExampleService_AddGroup() {
@@ -96,9 +102,8 @@ func ExampleService_AddGroup() {
 	}
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "1.0.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "1.0.0",
 	}
 
 	srv, err := micro.AddService(nc, config)
@@ -108,8 +113,8 @@ func ExampleService_AddGroup() {
 
 	v1 := srv.AddGroup("v1")
 
-	// endpoint will be registered under "v1.Echo" subject
-	_, err = v1.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	// endpoint will be registered under "v1.echo" subject
+	err = v1.AddEndpoint("Echo", "echo", micro.HandlerFunc(echoHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,8 +128,7 @@ func ExampleService_Info() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:        "EchoService",
-		RootSubject: "svc",
+		Name: "EchoService",
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -136,7 +140,7 @@ func ExampleService_Info() {
 	fmt.Println(info.Name)
 	fmt.Println(info.Description)
 	fmt.Println(info.Version)
-	fmt.Println(info.RootSubject)
+	fmt.Println(info.Subjects)
 }
 
 func ExampleService_Stats() {
@@ -147,13 +151,15 @@ func ExampleService_Stats() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "0.1.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "echo",
+			Handler: micro.HandlerFunc(func(r micro.Request) {}),
+		},
 	}
 
 	srv, _ := micro.AddService(nc, config)
-	srv.AddEndpoint("Echo", micro.HandlerFunc(func(r micro.Request) {}))
 	// stats of a service instance
 	stats := srv.Stats()
 
@@ -170,9 +176,8 @@ func ExampleService_Stop() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "0.1.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "0.1.0",
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -198,9 +203,8 @@ func ExampleService_Stopped() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "0.1.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "0.1.0",
 	}
 
 	srv, _ := micro.AddService(nc, config)
@@ -224,9 +228,8 @@ func ExampleService_Reset() {
 	defer nc.Close()
 
 	config := micro.Config{
-		Name:        "EchoService",
-		Version:     "0.1.0",
-		RootSubject: "svc",
+		Name:    "EchoService",
+		Version: "0.1.0",
 	}
 
 	srv, _ := micro.AddService(nc, config)

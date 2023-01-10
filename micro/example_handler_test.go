@@ -43,17 +43,16 @@ func ExampleHandler() {
 	rec := rectangle{10, 5}
 
 	config := micro.Config{
-		Name:        "RectangleAreaService",
-		Version:     "0.1.0",
-		RootSubject: "area",
+		Name:    "RectangleAreaService",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "area.rectangle",
+			Handler: rec,
+		},
 	}
 	svc, err := micro.AddService(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer svc.Stop()
-	_, err = svc.AddEndpoint("Rectangle", rec)
-	if err != nil {
-		log.Fatal(err)
-	}
 }

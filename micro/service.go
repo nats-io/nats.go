@@ -34,14 +34,11 @@ type (
 
 	// Service exposes methods to operate on a service instance.
 	Service interface {
-		// AddEndpoint registers endpoint with given name on a specific service.
-		// If service has root subject, the endpoint will be registered on {root_subject}.{name} subject.
-		// Otherwise, the endpoint subject is the same as endpoint name.
-		AddEndpoint(string, Handler) (Endpoint, error)
+		// AddEndpoint registers endpoint with given name on a specific subject.
+		AddEndpoint(name, subject string, handler Handler) error
 
 		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
 		// A group can be used to register endpoints with given prefix.
-		// Root subject will be prepended to the prefix (if available).
 		AddGroup(string) Group
 
 		// Info returns the service info.
@@ -70,7 +67,7 @@ type (
 
 		// AddEndpoint registers new endpoints on a service.
 		// The endpoint's subject will be prefixed with the group prefix.
-		AddEndpoint(string, Handler) (Endpoint, error)
+		AddEndpoint(name, subject string, handler Handler) error
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -81,7 +78,7 @@ type (
 
 	// StatsHandler is a function used to configure a custom STATS endpoint.
 	// It should return a value which can be serialized to JSON.
-	StatsHandler func(Endpoint) interface{}
+	StatsHandler func(*Endpoint) interface{}
 
 	// ServiceIdentity contains fields helping to identity a service instance.
 	ServiceIdentity struct {
@@ -122,8 +119,7 @@ type (
 		ServiceIdentity
 		Type        string   `json:"type"`
 		Description string   `json:"description"`
-		RootSubject string   `json:"root_subject"`
-		Endpoints   []string `json:"endpoints"`
+		Subjects    []string `json:"subjects"`
 	}
 
 	// SchemaResp is the response value for SCHEMA requests.
@@ -141,17 +137,9 @@ type (
 	}
 
 	// Endpoint manages a service endpoint.
-	// There is not need to call Stop on each endpoint on cleanup.
-	// Instead, Service.Stop will stop all endpoints registered on a service.
-	Endpoint interface {
-		Stop() error
-		Subject() string
-	}
-
-	endpoint struct {
+	Endpoint struct {
+		EndpointConfig
 		service *service
-		subject string
-		handler Handler
 
 		stats        EndpointStats
 		subscription *nats.Subscription
@@ -170,9 +158,10 @@ type (
 		// Name represents the name of the service.
 		Name string `json:"name"`
 
-		// RootSubject is the optional root subject of the service.
-		// All endpoints will be prefixed with root subject.
-		RootSubject string `json:"root_subject"`
+		// Endpoint is an optional endpoint configuration.
+		// More complex, multi-endpoint services can be configured using
+		// Service.AddGroup and Service.AddEndpoint methods.
+		Endpoint *EndpointConfig `json:"endpoint"`
 
 		// Version is a SemVer compatible version string.
 		Version string `json:"version"`
@@ -194,6 +183,11 @@ type (
 		ErrorHandler ErrHandler
 	}
 
+	EndpointConfig struct {
+		Subject string
+		Handler Handler
+	}
+
 	// NATSError represents an error returned by a NATS Subscription.
 	// It contains a subject on which the subscription failed, so that
 	// it can be linked with a specific service endpoint.
@@ -211,7 +205,7 @@ type (
 
 		m            sync.Mutex
 		id           string
-		endpoints    []*endpoint
+		endpoints    []*Endpoint
 		verbSubs     map[string]*nats.Subscription
 		started      time.Time
 		nc           *nats.Conn
@@ -262,8 +256,9 @@ const (
 
 var (
 	// this regular expression is suggested regexp for semver validation: https://semver.org/
-	semVerRegexp      = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
-	serviceNameRegexp = regexp.MustCompile(`^[A-Za-z0-9\-_]+$`)
+	semVerRegexp  = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
+	nameRegexp    = regexp.MustCompile(`^[A-Za-z0-9\-_]+$`)
+	subjectRegexp = regexp.MustCompile(`^[^ >]+[>]?$`)
 )
 
 // Common errors returned by the Service framework.
@@ -313,7 +308,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			cbQueue: make(chan func(), 100),
 		},
 		verbSubs:  make(map[string]*nats.Subscription),
-		endpoints: make([]*endpoint, 0),
+		endpoints: make([]*Endpoint, 0),
 	}
 	svcIdentity := ServiceIdentity{
 		Name:    config.Name,
@@ -324,6 +319,13 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	svc.setupAsyncCallbacks()
 
 	go svc.asyncDispatcher.asyncCBDispatcher()
+
+	if config.Endpoint != nil {
+		if err := addEndpoint(svc, "default", config.Endpoint.Subject, config.Endpoint.Handler); err != nil {
+			svc.asyncDispatcher.close()
+			return nil, err
+		}
+	}
 
 	// Setup internal subscriptions.
 	infoHandler := func(req Request) {
@@ -393,19 +395,23 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	return svc, nil
 }
 
-func (s *service) AddEndpoint(name string, handler Handler) (Endpoint, error) {
-	subject := name
-	if s.RootSubject != "" {
-		subject = fmt.Sprintf("%s.%s", s.RootSubject, name)
-	}
+func (s *service) AddEndpoint(name, subject string, handler Handler) error {
 	return addEndpoint(s, name, subject, handler)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler) (Endpoint, error) {
-	endpoint := &endpoint{
+func addEndpoint(s *service, name, subject string, handler Handler) error {
+	if !nameRegexp.MatchString(name) {
+		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
+	}
+	if !subjectRegexp.MatchString(subject) {
+		return fmt.Errorf("%w: invalid endpoint subject", ErrConfigValidation)
+	}
+	endpoint := &Endpoint{
 		service: s,
-		subject: subject,
-		handler: handler,
+		EndpointConfig: EndpointConfig{
+			Subject: subject,
+			Handler: handler,
+		},
 	}
 	sub, err := s.nc.QueueSubscribe(
 		subject,
@@ -415,7 +421,7 @@ func addEndpoint(s *service, name, subject string, handler Handler) (Endpoint, e
 		},
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
@@ -423,13 +429,10 @@ func addEndpoint(s *service, name, subject string, handler Handler) (Endpoint, e
 		Name:    name,
 		Subject: subject,
 	}
-	return endpoint, nil
+	return nil
 }
 
 func (s *service) AddGroup(name string) Group {
-	if s.RootSubject != "" {
-		name = fmt.Sprintf("%s.%s", s.RootSubject, name)
-	}
 	return &group{
 		service: s,
 		prefix:  name,
@@ -457,7 +460,7 @@ func (ac *asyncCallbacksHandler) close() {
 }
 
 func (c *Config) valid() error {
-	if !serviceNameRegexp.MatchString(c.Name) {
+	if !nameRegexp.MatchString(c.Name) {
 		return fmt.Errorf("%w: service name: name should not be empty and should consist of alphanumerical charactest, dashes and underscores", ErrConfigValidation)
 	}
 	if !semVerRegexp.MatchString(c.Version) {
@@ -484,29 +487,9 @@ func (s *service) setupAsyncCallbacks() {
 	s.natsHandlers.asyncErr = s.nc.ErrorHandler()
 	if s.natsHandlers.asyncErr != nil {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			if !s.matchSubscriptionSubject(sub.Subject) {
+			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
+			if !match {
 				s.natsHandlers.asyncErr(c, sub, err)
-			}
-			if s.Config.ErrorHandler != nil {
-				s.Config.ErrorHandler(s, &NATSError{
-					Subject:     sub.Subject,
-					Description: err.Error(),
-				})
-			}
-			s.m.Lock()
-			for _, endpoint := range s.endpoints {
-				if endpoint.Subject() == sub.Subject {
-					endpoint.stats.NumErrors++
-					endpoint.stats.LastError = err.Error()
-				}
-			}
-			s.m.Unlock()
-			s.Stop()
-			s.natsHandlers.asyncErr(c, sub, err)
-		})
-	} else {
-		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			if !s.matchSubscriptionSubject(sub.Subject) {
 				return
 			}
 			if s.Config.ErrorHandler != nil {
@@ -516,11 +499,30 @@ func (s *service) setupAsyncCallbacks() {
 				})
 			}
 			s.m.Lock()
-			for _, endpoint := range s.endpoints {
-				if endpoint.subject == sub.Subject {
-					endpoint.stats.NumErrors++
-					endpoint.stats.LastError = err.Error()
-				}
+			if endpoint != nil {
+				endpoint.stats.NumErrors++
+				endpoint.stats.LastError = err.Error()
+			}
+			s.m.Unlock()
+			s.Stop()
+			s.natsHandlers.asyncErr(c, sub, err)
+		})
+	} else {
+		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
+			if !match {
+				return
+			}
+			if s.Config.ErrorHandler != nil {
+				s.Config.ErrorHandler(s, &NATSError{
+					Subject:     sub.Subject,
+					Description: err.Error(),
+				})
+			}
+			s.m.Lock()
+			if endpoint != nil {
+				endpoint.stats.NumErrors++
+				endpoint.stats.LastError = err.Error()
 			}
 			s.m.Unlock()
 			s.Stop()
@@ -528,16 +530,35 @@ func (s *service) setupAsyncCallbacks() {
 	}
 }
 
-func (svc *service) matchSubscriptionSubject(subj string) bool {
-	if strings.HasPrefix(subj, svc.RootSubject) {
-		return true
-	}
-	for _, verbSub := range svc.verbSubs {
+func (s *service) matchSubscriptionSubject(subj string) (*Endpoint, bool) {
+	for _, verbSub := range s.verbSubs {
 		if verbSub.Subject == subj {
-			return true
+			return nil, true
 		}
 	}
-	return false
+	for _, e := range s.endpoints {
+		if matchEndpointSubject(e.Subject, subj) {
+			return e, true
+		}
+	}
+	return nil, false
+}
+
+func matchEndpointSubject(endpointSubject, literalSubject string) bool {
+	subjectTokens := strings.Split(literalSubject, ".")
+	endpointTokens := strings.Split(endpointSubject, ".")
+	if len(endpointTokens) > len(subjectTokens) {
+		return false
+	}
+	for i, et := range endpointTokens {
+		if i == len(endpointTokens)-1 && et == ">" {
+			return true
+		}
+		if et != subjectTokens[i] && et != "*" {
+			return false
+		}
+	}
+	return true
 }
 
 // verbHandlers generates control handlers for a specific verb.
@@ -575,9 +596,9 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 }
 
 // reqHandler invokes the service request handler and modifies service stats
-func (s *service) reqHandler(endpoint *endpoint, req *request) {
+func (s *service) reqHandler(endpoint *Endpoint, req *request) {
 	start := time.Now()
-	endpoint.handler.Handle(req)
+	endpoint.Handler.Handle(req)
 	s.m.Lock()
 	endpoint.stats.NumRequests++
 	endpoint.stats.ProcessingTime += time.Since(start)
@@ -599,7 +620,7 @@ func (s *service) Stop() error {
 		return nil
 	}
 	for _, e := range s.endpoints {
-		if err := e.Stop(); err != nil {
+		if err := e.stop(); err != nil {
 			return err
 		}
 	}
@@ -631,7 +652,7 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 func (s *service) Info() Info {
 	endpoints := make([]string, 0, len(s.endpoints))
 	for _, e := range s.endpoints {
-		endpoints = append(endpoints, e.subject)
+		endpoints = append(endpoints, e.Subject)
 	}
 	return Info{
 		ServiceIdentity: ServiceIdentity{
@@ -641,8 +662,7 @@ func (s *service) Info() Info {
 		},
 		Type:        InfoResponseType,
 		Description: s.Config.Description,
-		RootSubject: s.Config.RootSubject,
-		Endpoints:   endpoints,
+		Subjects:    endpoints,
 	}
 }
 
@@ -696,8 +716,8 @@ func (e *NATSError) Error() string {
 	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }
 
-func (g *group) AddEndpoint(name string, handler Handler) (Endpoint, error) {
-	subject := fmt.Sprintf("%s.%s", g.prefix, name)
+func (g *group) AddEndpoint(name, subject string, handler Handler) error {
+	subject = fmt.Sprintf("%s.%s", g.prefix, subject)
 	return addEndpoint(g.service, name, subject, handler)
 }
 
@@ -708,23 +728,19 @@ func (g *group) AddGroup(name string) Group {
 	}
 }
 
-func (e *endpoint) Subject() string {
-	return e.subject
-}
-
-func (e *endpoint) Stop() error {
+func (e *Endpoint) stop() error {
 	if err := e.subscription.Drain(); err != nil {
 		return fmt.Errorf("draining subscription for request handler: %w", err)
 	}
 	for i, endpoint := range e.service.endpoints {
-		if endpoint.subject == e.subject {
+		if endpoint.Subject == e.Subject {
 			e.service.endpoints = append(e.service.endpoints[:i], e.service.endpoints[i+1:]...)
 		}
 	}
 	return nil
 }
 
-func (e *endpoint) reset() {
+func (e *Endpoint) reset() {
 	e.stats = EndpointStats{
 		Name:    e.stats.Name,
 		Subject: e.stats.Subject,
