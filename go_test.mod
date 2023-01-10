@@ -8,6 +8,7 @@ require (
 	github.com/nats-io/nkeys v0.3.0
 	github.com/nats-io/nuid v1.0.1
 	google.golang.org/protobuf v1.23.0
+	golang.org/x/exp v0.0.0-20230108222341-4b8118a2686a
 )
 
 require (
