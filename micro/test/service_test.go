@@ -15,6 +15,7 @@ package micro_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,8 @@ import (
 )
 
 func TestServiceBasics(t *testing.T) {
+	ctx := context.Background()
+
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
 
@@ -41,7 +44,7 @@ func TestServiceBasics(t *testing.T) {
 	defer nc.Close()
 
 	// Stub service.
-	doAdd := func(req micro.Request) {
+	doAdd := func(ctx context.Context, req micro.Request) {
 		if rand.Intn(10) == 0 {
 			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
@@ -74,11 +77,11 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
+		svc, err := micro.AddService(ctx, nc, config)
 		if err != nil {
 			t.Fatalf("Expected to create Service, got %v", err)
 		}
-		defer svc.Stop()
+		defer svc.Stop(ctx)
 		svcs = append(svcs, svc)
 	}
 
@@ -91,7 +94,7 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for _, svc := range svcs {
-		info := svc.Info()
+		info := svc.Info(ctx)
 		if info.Name != "CoolAddService" {
 			t.Fatalf("Expected %q, got %q", "CoolAddService", info.Name)
 		}
@@ -181,24 +184,25 @@ func TestServiceBasics(t *testing.T) {
 		t.Fatalf("Expected a total fo 50 requests processed, got: %d", requestsNum)
 	}
 	// Reset stats for a service
-	svcs[0].Reset()
+	svcs[0].Reset(ctx)
 	emptyStats := micro.Stats{
 		Type:            micro.StatsResponseType,
-		ServiceIdentity: svcs[0].Info().ServiceIdentity,
+		ServiceIdentity: svcs[0].Info(ctx).ServiceIdentity,
 	}
 
-	if !reflect.DeepEqual(svcs[0].Stats(), emptyStats) {
-		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
+	if !reflect.DeepEqual(svcs[0].Stats(ctx), emptyStats) {
+		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats(ctx))
 	}
 
 }
 
 func TestAddService(t *testing.T) {
-	testHandler := func(micro.Request) {}
+	testHandler := func(context.Context, micro.Request) {}
 	errNats := make(chan struct{})
 	errService := make(chan struct{})
 	closedNats := make(chan struct{})
 	doneService := make(chan struct{})
+	ctx := context.Background()
 
 	tests := []struct {
 		name              string
@@ -236,7 +240,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(context.Context, micro.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -257,7 +261,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				ErrorHandler: func(micro.Service, *micro.NATSError) {
+				ErrorHandler: func(context.Context, micro.Service, *micro.NATSError) {
 					errService <- struct{}{}
 				},
 			},
@@ -279,7 +283,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				ErrorHandler: func(micro.Service, *micro.NATSError) {
+				ErrorHandler: func(context.Context, micro.Service, *micro.NATSError) {
 					errService <- struct{}{}
 				},
 			},
@@ -301,7 +305,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(context.Context, micro.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -329,7 +333,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(context.Context, micro.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -356,7 +360,7 @@ func TestAddService(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(testHandler),
 				},
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(context.Context, micro.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -439,7 +443,7 @@ func TestAddService(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := micro.AddService(nc, test.givenConfig)
+			srv, err := micro.AddService(ctx, nc, test.givenConfig)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -450,7 +454,7 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			info := srv.Info()
+			info := srv.Info(ctx)
 			pingSubject, err := micro.ControlSubject(micro.PingVerb, info.Name, info.ID)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -501,7 +505,7 @@ func TestAddService(t *testing.T) {
 				}
 			}
 
-			if err := srv.Stop(); err != nil {
+			if err := srv.Stop(ctx); err != nil {
 				t.Fatalf("Unexpected error when stopping the service: %v", err)
 			}
 			if test.natsClosedHandler != nil {
@@ -535,6 +539,7 @@ func TestAddService(t *testing.T) {
 }
 
 func TestMonitoringHandlers(t *testing.T) {
+	ctx := context.Background()
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
 
@@ -545,7 +550,7 @@ func TestMonitoringHandlers(t *testing.T) {
 	defer nc.Close()
 
 	asyncErr := make(chan struct{})
-	errHandler := func(s micro.Service, n *micro.NATSError) {
+	errHandler := func(ctx context.Context, s micro.Service, n *micro.NATSError) {
 		asyncErr <- struct{}{}
 	}
 
@@ -554,25 +559,25 @@ func TestMonitoringHandlers(t *testing.T) {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "test.sub",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 		Schema: micro.Schema{
 			Request: "some_schema",
 		},
 		ErrorHandler: errHandler,
 	}
-	srv, err := micro.AddService(nc, config)
+	srv, err := micro.AddService(ctx, nc, config)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer func() {
-		srv.Stop()
-		if !srv.Stopped() {
+		srv.Stop(ctx)
+		if !srv.Stopped(ctx) {
 			t.Fatalf("Expected service to be stopped")
 		}
 	}()
 
-	info := srv.Info()
+	info := srv.Info(ctx)
 
 	tests := []struct {
 		name             string
@@ -763,7 +768,7 @@ func TestMonitoringHandlers(t *testing.T) {
 }
 
 func TestServiceStats(t *testing.T) {
-	handler := func(r micro.Request) {
+	handler := func(ctx context.Context, r micro.Request) {
 		r.Respond([]byte("ok"))
 	}
 	tests := []struct {
@@ -791,7 +796,7 @@ func TestServiceStats(t *testing.T) {
 					Subject: "test.sub",
 					Handler: micro.HandlerFunc(handler),
 				},
-				StatsHandler: func(e micro.Endpoint) interface{} {
+				StatsHandler: func(ctx context.Context, e micro.Endpoint) interface{} {
 					return map[string]interface{}{
 						"key": "val",
 					}
@@ -827,7 +832,7 @@ func TestServiceStats(t *testing.T) {
 				Schema: micro.Schema{
 					Request: "some_schema",
 				},
-				StatsHandler: func(e micro.Endpoint) interface{} {
+				StatsHandler: func(ctx context.Context, e micro.Endpoint) interface{} {
 					return map[string]interface{}{
 						"key": "val",
 					}
@@ -841,6 +846,7 @@ func TestServiceStats(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			s := RunServerOnPort(-1)
 			defer s.Shutdown()
 
@@ -850,25 +856,25 @@ func TestServiceStats(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := micro.AddService(nc, test.config)
+			srv, err := micro.AddService(ctx, nc, test.config)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			defer srv.Stop()
+			defer srv.Stop(ctx)
 			for i := 0; i < 10; i++ {
-				if _, err := nc.Request(srv.Info().Subject, []byte("msg"), time.Second); err != nil {
+				if _, err := nc.Request(srv.Info(ctx).Subject, []byte("msg"), time.Second); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
 
 			// Malformed request, missing reply subjtct
 			// This should be reflected in errors
-			if err := nc.Publish(srv.Info().Subject, []byte("err")); err != nil {
+			if err := nc.Publish(srv.Info(ctx).Subject, []byte("err")); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			time.Sleep(10 * time.Millisecond)
 
-			info := srv.Info()
+			info := srv.Info(ctx)
 			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -986,6 +992,7 @@ func TestRequestRespond(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
 			s := RunServerOnPort(-1)
 			defer s.Shutdown()
 
@@ -1000,7 +1007,7 @@ func TestRequestRespond(t *testing.T) {
 			errCode := test.errCode
 			errDesc := test.errDescription
 			errData := test.errData
-			handler := func(req micro.Request) {
+			handler := func(ctx context.Context, req micro.Request) {
 				if errors.Is(test.withRespondError, micro.ErrRespond) {
 					nc.Close()
 				}
@@ -1046,7 +1053,7 @@ func TestRequestRespond(t *testing.T) {
 				}
 			}
 
-			svc, err := micro.AddService(nc, micro.Config{
+			svc, err := micro.AddService(ctx, nc, micro.Config{
 				Name:        "CoolService",
 				Version:     "0.1.0",
 				Description: "test service",
@@ -1058,10 +1065,10 @@ func TestRequestRespond(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			defer svc.Stop()
+			defer svc.Stop(ctx)
 
 			resp, err := nc.RequestMsg(&nats.Msg{
-				Subject: svc.Info().Subject,
+				Subject: svc.Info(ctx).Subject,
 				Data:    nil,
 				Header:  nats.Header{"key": []string{"value"}},
 			}, 50*time.Millisecond)

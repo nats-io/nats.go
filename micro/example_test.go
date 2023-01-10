@@ -14,22 +14,26 @@
 package micro_test
 
 import (
-	"fmt"
-	"log"
+	"context"
+	"os"
 	"reflect"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
+	"golang.org/x/exp/slog"
 )
 
 func ExampleAddService() {
+	ctx := exampleCtx()
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger := slog.FromContext(ctx)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(ctx context.Context, req micro.Request) {
 		req.Respond(req.Data())
 	}
 
@@ -43,29 +47,47 @@ func ExampleAddService() {
 		},
 
 		// DoneHandler can be set to customize behavior on stopping a service.
-		DoneHandler: func(srv micro.Service) {
-			info := srv.Info()
-			fmt.Printf("stopped service %q with ID %q\n", info.Name, info.ID)
+		DoneHandler: func(ctx context.Context, srv micro.Service) {
+			info := srv.Info(ctx)
+			logger := slog.FromContext(ctx)
+			logger.Info(
+				"stopped service",
+				slog.String("name", info.Name),
+				slog.String("id", info.ID),
+			)
 		},
 
 		// ErrorHandler can be used to customize behavior on service execution error.
-		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
-			info := srv.Info()
-			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
+		ErrorHandler: func(ctx context.Context, srv micro.Service, err *micro.NATSError) {
+			info := srv.Info(ctx)
+			logger := slog.FromContext(ctx)
+			logger.Error(
+				"service error",
+				err,
+				slog.String("name", info.Name),
+				slog.String("subject", err.Subject),
+				slog.String("description", err.Description),
+			)
 		},
 	}
 
-	srv, err := micro.AddService(nc, config)
+	logger := slog.FromContext(ctx)
+	srv, err := micro.AddService(ctx, nc, config)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to add service", err)
+		os.Exit(1)
 	}
-	defer srv.Stop()
+	defer srv.Stop(ctx)
 }
 
 func ExampleService_Info() {
+	ctx := exampleCtx()
+	logger := slog.FromContext(ctx)
+
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
@@ -73,26 +95,33 @@ func ExampleService_Info() {
 		Name: "EchoService",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := micro.AddService(ctx, nc, config)
 
 	// service info
-	info := srv.Info()
+	info := srv.Info(ctx)
 
-	fmt.Println(info.ID)
-	fmt.Println(info.Name)
-	fmt.Println(info.Description)
-	fmt.Println(info.Version)
-	fmt.Println(info.Subject)
+	logger.Info(
+		"service",
+		slog.String("name", info.Name),
+		slog.String("id", info.ID),
+		slog.String("version", info.Version),
+		slog.String("description", info.Description),
+		slog.String("subject", info.Subject),
+	)
 }
 
 func ExampleService_Stats() {
+	ctx := exampleCtx()
+	logger := slog.FromContext(ctx)
+
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
@@ -101,24 +130,30 @@ func ExampleService_Stats() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := micro.AddService(ctx, nc, config)
 
 	// stats of a service instance
-	stats := srv.Stats()
+	stats := srv.Stats(ctx)
 
-	fmt.Println(stats.AverageProcessingTime)
-	fmt.Println(stats.ProcessingTime)
-
+	logger.Info(
+		"stats",
+		slog.Duration("averageProcessingTime", stats.AverageProcessingTime),
+		slog.Duration("processingTime", stats.ProcessingTime),
+	)
 }
 
 func ExampleService_Stop() {
+	ctx := exampleCtx()
+	logger := slog.FromContext(ctx)
+
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
@@ -127,29 +162,35 @@ func ExampleService_Stop() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := micro.AddService(ctx, nc, config)
 
 	// stop a service
-	err = srv.Stop()
+	err = srv.Stop(ctx)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to stop service", err)
+		os.Exit(1)
 	}
 
 	// stop is idempotent so multiple executions will not return an error
-	err = srv.Stop()
+	err = srv.Stop(ctx)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to stop service", err)
+		os.Exit(1)
 	}
 }
 
 func ExampleService_Stopped() {
+	ctx := exampleCtx()
+	logger := slog.FromContext(ctx)
+
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
@@ -158,27 +199,31 @@ func ExampleService_Stopped() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := micro.AddService(ctx, nc, config)
 
 	// stop a service
-	err = srv.Stop()
+	err = srv.Stop(ctx)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to stop service", err)
+		os.Exit(1)
 	}
 
-	if srv.Stopped() {
-		fmt.Println("service stopped")
+	if srv.Stopped(ctx) {
+		logger.Info("service stopped")
 	}
 }
 
 func ExampleService_Reset() {
+	ctx := exampleCtx()
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger := slog.FromContext(ctx)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
@@ -187,36 +232,44 @@ func ExampleService_Reset() {
 		Version: "0.1.0",
 		Endpoint: micro.Endpoint{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(micro.Request) {}),
+			Handler: micro.HandlerFunc(func(context.Context, micro.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := micro.AddService(ctx, nc, config)
 
 	// reset endpoint stats on this service
-	srv.Reset()
+	srv.Reset(ctx)
 
 	empty := micro.Stats{
-		ServiceIdentity: srv.Info().ServiceIdentity,
+		ServiceIdentity: srv.Info(ctx).ServiceIdentity,
 	}
-	if !reflect.DeepEqual(srv.Stats(), empty) {
-		log.Fatal("Expected endpoint stats to be empty")
+	if !reflect.DeepEqual(srv.Stats(ctx), empty) {
+		logger := slog.FromContext(ctx)
+		logger.Error("Expected endpoint stats to be empty", err)
+		os.Exit(1)
 	}
 }
 
 func ExampleControlSubject() {
+	ctx := exampleCtx()
 
 	// subject used to get PING from all services
 	subjectPINGAll, _ := micro.ControlSubject(micro.PingVerb, "", "")
-	fmt.Println(subjectPINGAll)
 
 	// subject used to get PING from services with provided name
 	subjectPINGName, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "")
-	fmt.Println(subjectPINGName)
 
 	// subject used to get PING from a service with provided name and ID
 	subjectPINGInstance, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "123")
-	fmt.Println(subjectPINGInstance)
+
+	logger := slog.FromContext(ctx)
+	logger.Info(
+		"subjects",
+		slog.String("PINGAll", subjectPINGAll),
+		slog.String("PINGName", subjectPINGName),
+		slog.String("PINGInstance", subjectPINGInstance),
+	)
 
 	// Output:
 	// $SRV.PING
@@ -225,42 +278,63 @@ func ExampleControlSubject() {
 }
 
 func ExampleRequest_Respond() {
-	handler := func(req micro.Request) {
+	ctx := exampleCtx()
+
+	handler := func(ctx context.Context, req micro.Request) {
 		// respond to the request
 		if err := req.Respond(req.Data()); err != nil {
-			log.Fatal(err)
+			logger := slog.FromContext(ctx)
+			logger.Error("failed to respond to request", err)
+			os.Exit(1)
 		}
 	}
 
-	fmt.Printf("%T", handler)
+	logger := slog.FromContext(ctx)
+	logger.Info("handler",
+		slog.String("type", reflect.TypeOf(handler).String()),
+	)
 }
 
 func ExampleRequest_RespondJSON() {
+	ctx := exampleCtx()
+
 	type Point struct {
 		X int `json:"x"`
 		Y int `json:"y"`
 	}
 
-	handler := func(req micro.Request) {
+	handler := func(ctx context.Context, req micro.Request) {
 		resp := Point{5, 10}
 		// respond to the request
 		// response will be serialized to {"x":5,"y":10}
 		if err := req.RespondJSON(resp); err != nil {
-			log.Fatal(err)
+			logger := slog.FromContext(ctx)
+			logger.Error("failed to respond to request", err)
+			os.Exit(1)
 		}
 	}
 
-	fmt.Printf("%T", handler)
+	logger := slog.FromContext(ctx)
+	logger.Info("handler",
+		slog.String("type", reflect.TypeOf(handler).String()),
+	)
 }
 
 func ExampleRequest_Error() {
-	handler := func(req micro.Request) {
+	ctx := exampleCtx()
+
+	handler := func(ctx context.Context, req micro.Request) {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
 		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {
-			log.Fatal(err)
+			logger := slog.FromContext(ctx)
+			logger.Error("failed to respond to request", err)
+			os.Exit(1)
 		}
 	}
 
-	fmt.Printf("%T", handler)
+	logger := slog.FromContext(ctx)
+	logger.Info("handler",
+		slog.String("type", reflect.TypeOf(handler).String()),
+	)
 }

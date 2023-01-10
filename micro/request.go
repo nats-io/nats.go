@@ -14,6 +14,7 @@
 package micro
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,13 +25,13 @@ import (
 type (
 	// Handler is used to respond to service requests.
 	Handler interface {
-		Handle(Request)
+		Handle(context.Context, Request)
 	}
 
 	// HandlerFunc is a function implementing [Handler].
 	// It allows using a function as a request handler, without having to implement Handle
 	// on a separate type.
-	HandlerFunc func(Request)
+	HandlerFunc func(context.Context, Request)
 
 	// Request represents service request available in the service handler.
 	// It exposes methods to respond to the request, as well as
@@ -78,8 +79,8 @@ var (
 	ErrArgRequired     = errors.New("argument required")
 )
 
-func (fn HandlerFunc) Handle(req Request) {
-	fn(req)
+func (fn HandlerFunc) Handle(ctx context.Context, req Request) {
+	fn(ctx, req)
 }
 
 // Respond sends the response for the request.

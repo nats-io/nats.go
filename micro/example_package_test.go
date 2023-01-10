@@ -14,25 +14,31 @@
 package micro_test
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
+	"golang.org/x/exp/slog"
 )
 
 func Example() {
+	ctx := exampleCtx()
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
-		log.Fatal(err)
+		logger := slog.FromContext(ctx)
+		logger.Error("failed to connect to NATS", err)
+		os.Exit(1)
 	}
 	defer nc.Close()
 
 	// service handler - in this case, HandlerFunc is used,
 	// which is a built-in implementation of Handler interface
-	incrementHandler := func(req micro.Request) {
+	incrementHandler := func(ctx context.Context, req micro.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
 			req.Error("400", "request data should be a number", nil)
@@ -57,11 +63,11 @@ func Example() {
 	// Multiple instances of the servcice with the same name can be created.
 	// Requests to a service with the same name will be load-balanced.
 	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
+		svc, err := micro.AddService(ctx, nc, config)
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer svc.Stop()
+		defer svc.Stop(ctx)
 	}
 
 	// send a request to a service

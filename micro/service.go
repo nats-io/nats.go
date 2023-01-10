@@ -14,6 +14,7 @@
 package micro
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,30 +33,30 @@ import (
 type (
 	Service interface {
 		// Info returns the service info.
-		Info() Info
+		Info(ctx context.Context) Info
 
 		// Stats returns statistics for the service endpoint and all monitoring endpoints.
-		Stats() Stats
+		Stats(ctx context.Context) Stats
 
 		// Reset resets all statistics on a service instance.
-		Reset()
+		Reset(ctx context.Context)
 
 		// Stop drains the endpoint subscriptions and marks the service as stopped.
-		Stop() error
+		Stop(ctx context.Context) error
 
 		// Stopped informs whether [Stop] was executed on the service.
-		Stopped() bool
+		Stopped(ctx context.Context) bool
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
-	ErrHandler func(Service, *NATSError)
+	ErrHandler func(context.Context, Service, *NATSError)
 
 	// DoneHandler is a function used to configure a custom done handler for a service.
-	DoneHandler func(Service)
+	DoneHandler func(context.Context, Service)
 
 	// StatsHandler is a function used to configure a custom STATS endpoint.
 	// It should return a value which can be serialized to JSON.
-	StatsHandler func(Endpoint) interface{}
+	StatsHandler func(context.Context, Endpoint) interface{}
 
 	// ServiceIdentity contains fields helping to identity a service instance.
 	ServiceIdentity struct {
@@ -232,7 +233,7 @@ func (s Verb) String() string {
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
-func AddService(nc *nats.Conn, config Config) (Service, error) {
+func AddService(ctx context.Context, nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
 	}
@@ -264,7 +265,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	var err error
 
 	svc.reqSub, err = nc.QueueSubscribe(config.Endpoint.Subject, QG, func(m *nats.Msg) {
-		svc.reqHandler(&request{msg: m})
+		svc.reqHandler(ctx, &request{msg: m})
 	})
 	if err != nil {
 		svc.asyncDispatcher.close()
@@ -276,29 +277,29 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Type:            PingResponseType,
 	}
 
-	infoHandler := func(req Request) {
-		response, _ := json.Marshal(svc.Info())
+	infoHandler := func(ctx context.Context, req Request) {
+		response, _ := json.Marshal(svc.Info(ctx))
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling INFO request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(ctx, svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
 
-	pingHandler := func(req Request) {
+	pingHandler := func(ctx context.Context, req Request) {
 		response, _ := json.Marshal(ping)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling PING request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(ctx, svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
 
-	statsHandler := func(req Request) {
-		response, _ := json.Marshal(svc.Stats())
+	statsHandler := func(ctx context.Context, req Request) {
+		response, _ := json.Marshal(svc.Stats(ctx))
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling STATS request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(ctx, svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
@@ -308,29 +309,29 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		Schema:          config.Schema,
 		Type:            SchemaResponseType,
 	}
-	schemaHandler := func(req Request) {
+	schemaHandler := func(ctx context.Context, req Request) {
 		response, _ := json.Marshal(schema)
 		if err := req.Respond(response); err != nil {
 			if err := req.Error("500", fmt.Sprintf("Error handling SCHEMA request: %s", err), nil); err != nil && config.ErrorHandler != nil {
-				svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
+				svc.asyncDispatcher.push(func() { config.ErrorHandler(ctx, svc, &NATSError{req.Subject(), err.Error()}) })
 			}
 		}
 	}
 
-	if err := svc.verbHandlers(nc, InfoVerb, infoHandler); err != nil {
+	if err := svc.verbHandlers(ctx, nc, InfoVerb, infoHandler); err != nil {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
-	if err := svc.verbHandlers(nc, PingVerb, pingHandler); err != nil {
+	if err := svc.verbHandlers(ctx, nc, PingVerb, pingHandler); err != nil {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
-	if err := svc.verbHandlers(nc, StatsVerb, statsHandler); err != nil {
+	if err := svc.verbHandlers(ctx, nc, StatsVerb, statsHandler); err != nil {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
 
-	if err := svc.verbHandlers(nc, SchemaVerb, schemaHandler); err != nil {
+	if err := svc.verbHandlers(ctx, nc, SchemaVerb, schemaHandler); err != nil {
 		svc.asyncDispatcher.close()
 		return nil, err
 	}
@@ -380,17 +381,18 @@ func (e *Endpoint) valid() error {
 }
 
 func (svc *service) setupAsyncCallbacks() {
+	ctx := context.Background()
 	svc.m.Lock()
 	defer svc.m.Unlock()
 	svc.natsHandlers.closed = svc.conn.ClosedHandler()
 	if svc.natsHandlers.closed != nil {
 		svc.conn.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
+			svc.Stop(ctx)
 			svc.natsHandlers.closed(c)
 		})
 	} else {
 		svc.conn.SetClosedHandler(func(c *nats.Conn) {
-			svc.Stop()
+			svc.Stop(ctx)
 		})
 	}
 
@@ -401,7 +403,7 @@ func (svc *service) setupAsyncCallbacks() {
 				svc.natsHandlers.asyncErr(c, s, err)
 			}
 			if svc.Config.ErrorHandler != nil {
-				svc.Config.ErrorHandler(svc, &NATSError{
+				svc.Config.ErrorHandler(ctx, svc, &NATSError{
 					Subject:     s.Subject,
 					Description: err.Error(),
 				})
@@ -410,7 +412,7 @@ func (svc *service) setupAsyncCallbacks() {
 			svc.stats.NumErrors++
 			svc.stats.LastError = err.Error()
 			svc.m.Unlock()
-			svc.Stop()
+			svc.Stop(ctx)
 			svc.natsHandlers.asyncErr(c, s, err)
 		})
 	} else {
@@ -419,7 +421,7 @@ func (svc *service) setupAsyncCallbacks() {
 				return
 			}
 			if svc.Config.ErrorHandler != nil {
-				svc.Config.ErrorHandler(svc, &NATSError{
+				svc.Config.ErrorHandler(ctx, svc, &NATSError{
 					Subject:     s.Subject,
 					Description: err.Error(),
 				})
@@ -428,7 +430,7 @@ func (svc *service) setupAsyncCallbacks() {
 			svc.stats.NumErrors++
 			svc.stats.LastError = err.Error()
 			svc.m.Unlock()
-			svc.Stop()
+			svc.Stop(ctx)
 		})
 	}
 }
@@ -449,40 +451,40 @@ func (svc *service) matchSubscriptionSubject(subj string) bool {
 // Each request generates 3 subscriptions, one for the general verb
 // affecting all services written with the framework, one that handles
 // all services of a particular kind, and finally a specific service instance.
-func (svc *service) verbHandlers(nc *nats.Conn, verb Verb, handler HandlerFunc) error {
+func (svc *service) verbHandlers(ctx context.Context, nc *nats.Conn, verb Verb, handler HandlerFunc) error {
 	name := fmt.Sprintf("%s-all", verb.String())
-	if err := svc.addInternalHandler(nc, verb, "", "", name, handler); err != nil {
+	if err := svc.addInternalHandler(ctx, nc, verb, "", "", name, handler); err != nil {
 		return err
 	}
 	name = fmt.Sprintf("%s-kind", verb.String())
-	if err := svc.addInternalHandler(nc, verb, svc.Config.Name, "", name, handler); err != nil {
+	if err := svc.addInternalHandler(ctx, nc, verb, svc.Config.Name, "", name, handler); err != nil {
 		return err
 	}
-	return svc.addInternalHandler(nc, verb, svc.Config.Name, svc.id, verb.String(), handler)
+	return svc.addInternalHandler(ctx, nc, verb, svc.Config.Name, svc.id, verb.String(), handler)
 }
 
 // addInternalHandler registers a control subject handler.
-func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
+func (s *service) addInternalHandler(ctx context.Context, nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
-		s.Stop()
+		s.Stop(ctx)
 		return err
 	}
 
 	s.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
-		handler(&request{msg: msg})
+		handler(ctx, &request{msg: msg})
 	})
 	if err != nil {
-		s.Stop()
+		s.Stop(ctx)
 		return err
 	}
 	return nil
 }
 
 // reqHandler invokes the service request handler and modifies service stats
-func (s *service) reqHandler(req *request) {
+func (s *service) reqHandler(ctx context.Context, req *request) {
 	start := time.Now()
-	s.Endpoint.Handler.Handle(req)
+	s.Endpoint.Handler.Handle(ctx, req)
 	s.m.Lock()
 	s.stats.NumRequests++
 	s.stats.ProcessingTime += time.Since(start)
@@ -497,7 +499,7 @@ func (s *service) reqHandler(req *request) {
 }
 
 // Stop drains the endpoint subscriptions and marks the service as stopped.
-func (s *service) Stop() error {
+func (s *service) Stop(ctx context.Context) error {
 	s.m.Lock()
 	if s.stopped {
 		return nil
@@ -522,7 +524,7 @@ func (s *service) Stop() error {
 	restoreAsyncHandlers(s.conn, s.natsHandlers)
 	s.stopped = true
 	if s.DoneHandler != nil {
-		s.asyncDispatcher.push(func() { s.DoneHandler(s) })
+		s.asyncDispatcher.push(func() { s.DoneHandler(ctx, s) })
 		s.asyncDispatcher.close()
 	}
 	return nil
@@ -534,7 +536,7 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 }
 
 // Info returns information about the service
-func (s *service) Info() Info {
+func (s *service) Info(ctx context.Context) Info {
 	return Info{
 		ServiceIdentity: ServiceIdentity{
 			Name:    s.Config.Name,
@@ -548,13 +550,13 @@ func (s *service) Info() Info {
 }
 
 // Stats returns statistics for the service endpoint and all monitoring endpoints.
-func (s *service) Stats() Stats {
+func (s *service) Stats(ctx context.Context) Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
 	if s.StatsHandler != nil {
-		s.stats.Data, _ = json.Marshal(s.StatsHandler(s.Endpoint))
+		s.stats.Data, _ = json.Marshal(s.StatsHandler(ctx, s.Endpoint))
 	}
-	info := s.Info()
+	info := s.Info(ctx)
 	return Stats{
 		ServiceIdentity: ServiceIdentity{
 			Name:    info.Name,
@@ -572,16 +574,16 @@ func (s *service) Stats() Stats {
 }
 
 // Reset resets all statistics on a service instance.
-func (s *service) Reset() {
+func (s *service) Reset(ctx context.Context) {
 	s.m.Lock()
 	s.stats = &Stats{
-		ServiceIdentity: s.Info().ServiceIdentity,
+		ServiceIdentity: s.Info(ctx).ServiceIdentity,
 	}
 	s.m.Unlock()
 }
 
 // Stopped informs whether [Stop] was executed on the service.
-func (s *service) Stopped() bool {
+func (s *service) Stopped(context.Context) bool {
 	s.m.Lock()
 	defer s.m.Unlock()
 	return s.stopped
