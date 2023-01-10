@@ -319,6 +319,8 @@ func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*C
 			sameConfig := checkConfig(&consInfo.Config, cfg)
 			if sameConfig != nil {
 				return nil, fmt.Errorf("%w: creating consumer %q on stream %q", ErrConsumerNameAlreadyInUse, consumerName, stream)
+			} else {
+				return consInfo, nil
 			}
 		}
 	}
