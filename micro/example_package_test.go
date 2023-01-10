@@ -81,17 +81,17 @@ func Example() {
 	numbers := svc.AddGroup("numbers")
 
 	// register endpoints in a group
-	err = numbers.AddEndpoint("Increment", "increment", micro.HandlerFunc(incrementHandler))
+	err = numbers.AddEndpoint("Increment", micro.HandlerFunc(incrementHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = numbers.AddEndpoint("Multiply", "multiply", micro.HandlerFunc(multiplyHandler))
+	err = numbers.AddEndpoint("Multiply", micro.HandlerFunc(multiplyHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// send a request to a service
-	resp, err := nc.Request("numbers.increment", []byte("3"), 1*time.Second)
+	resp, err := nc.Request("numbers.Increment", []byte("3"), 1*time.Second)
 	if err != nil {
 		log.Fatal(err)
 	}

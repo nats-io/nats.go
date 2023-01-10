@@ -35,7 +35,7 @@ type (
 	// Service exposes methods to operate on a service instance.
 	Service interface {
 		// AddEndpoint registers endpoint with given name on a specific subject.
-		AddEndpoint(name, subject string, handler Handler) error
+		AddEndpoint(string, Handler, ...EndpointOpt) error
 
 		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
 		// A group can be used to register endpoints with given prefix.
@@ -67,7 +67,13 @@ type (
 
 		// AddEndpoint registers new endpoints on a service.
 		// The endpoint's subject will be prefixed with the group prefix.
-		AddEndpoint(name, subject string, handler Handler) error
+		AddEndpoint(string, Handler, ...EndpointOpt) error
+	}
+
+	EndpointOpt func(*endpointOpts) error
+
+	endpointOpts struct {
+		subject string
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -395,7 +401,17 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	return svc, nil
 }
 
-func (s *service) AddEndpoint(name, subject string, handler Handler) error {
+func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) error {
+	var options endpointOpts
+	for _, opt := range opts {
+		if err := opt(&options); err != nil {
+			return err
+		}
+	}
+	subject := name
+	if options.subject != "" {
+		subject = options.subject
+	}
 	return addEndpoint(s, name, subject, handler)
 }
 
@@ -719,7 +735,17 @@ func (e *NATSError) Error() string {
 	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }
 
-func (g *group) AddEndpoint(name, subject string, handler Handler) error {
+func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) error {
+	var options endpointOpts
+	for _, opt := range opts {
+		if err := opt(&options); err != nil {
+			return err
+		}
+	}
+	subject := name
+	if options.subject != "" {
+		subject = options.subject
+	}
 	subject = fmt.Sprintf("%s.%s", g.prefix, subject)
 	return addEndpoint(g.service, name, subject, handler)
 }
@@ -771,4 +797,11 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, name), nil
 	}
 	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, name, id), nil
+}
+
+func WithEndpointSubject(subject string) EndpointOpt {
+	return func(e *endpointOpts) error {
+		e.subject = subject
+		return nil
+	}
 }

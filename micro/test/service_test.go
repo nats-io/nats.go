@@ -289,7 +289,7 @@ func TestAddService(t *testing.T) {
 					Version: "0.1.0",
 				},
 			},
-			asyncErrorSubject: "test.func",
+			asyncErrorSubject: "func",
 		},
 		{
 			name: "with error handler, no handlers on nats connection, error on monitoring subject",
@@ -438,7 +438,7 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for _, endpoint := range test.endpoints {
-				if err := srv.AddEndpoint(endpoint, fmt.Sprintf("test.%s", endpoint), micro.HandlerFunc(testHandler)); err != nil {
+				if err := srv.AddEndpoint(endpoint, micro.HandlerFunc(testHandler)); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
@@ -686,12 +686,12 @@ func TestGroups(t *testing.T) {
 				for _, g := range test.groups[1:] {
 					group = group.AddGroup(g)
 				}
-				err = group.AddEndpoint(test.endpointName, test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+				err = group.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			} else {
-				err = srv.AddEndpoint(test.endpointName, test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+				err = srv.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1012,7 +1012,7 @@ func TestServiceStats(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			if err := srv.AddEndpoint("func", "test.func", micro.HandlerFunc(handler)); err != nil {
+			if err := srv.AddEndpoint("func", micro.HandlerFunc(handler), micro.WithEndpointSubject("test.func")); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer srv.Stop()

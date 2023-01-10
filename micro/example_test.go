@@ -84,7 +84,36 @@ func ExampleService_AddEndpoint() {
 		log.Fatal(err)
 	}
 
-	err = srv.AddEndpoint("Echo", "echo", micro.HandlerFunc(echoHandler))
+	// endpoint will be registered under "Echo" subject
+	err = srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func ExampleWithEndpointSubject() {
+	nc, err := nats.Connect("127.0.0.1:4222")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	echoHandler := func(req micro.Request) {
+		req.Respond(req.Data())
+	}
+
+	config := micro.Config{
+		Name:    "EchoService",
+		Version: "1.0.0",
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// endpoint will be registered under "service.echo" subject
+	err = srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler), micro.WithEndpointSubject("service.echo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -113,8 +142,8 @@ func ExampleService_AddGroup() {
 
 	v1 := srv.AddGroup("v1")
 
-	// endpoint will be registered under "v1.echo" subject
-	err = v1.AddEndpoint("Echo", "echo", micro.HandlerFunc(echoHandler))
+	// endpoint will be registered under "v1.Echo" subject
+	err = v1.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
