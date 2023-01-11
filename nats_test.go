@@ -2967,3 +2967,46 @@ func TestServerListWithTrailingComma(t *testing.T) {
 		t.Fatalf("There should be only 1 URL in the list, got %v", l)
 	}
 }
+
+func BenchmarkHeaderDecode(b *testing.B) {
+	benchmarks := []struct {
+		name   string
+		header Header
+	}{
+		{"Small - 25", Header{
+			"Msg-ID": []string{"123"}},
+		},
+		{"Medium - 141", Header{
+			"CorrelationID": []string{"123"},
+			"Msg-ID":        []string{"456"},
+			"X-NATS-Keys":   []string{"A", "B", "C"},
+			"X-Test-Keys":   []string{"D", "E", "F"},
+		}},
+		{"Large - 368", Header{
+			"CorrelationID":     []string{"123"},
+			"Msg-ID":            []string{"456"},
+			"X-NATS-Keys":       []string{"A", "B", "C"},
+			"X-Test-Keys":       []string{"D", "E", "F"},
+			"X-A-Long-Header-1": []string{strings.Repeat("A", 100)},
+			"X-A-Long-Header-2": []string{strings.Repeat("A", 100)},
+		}},
+	}
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			m := NewMsg("foo")
+			m.Header = bm.header
+			hdr, err := m.headerBytes()
+			if err != nil {
+				b.Fatalf("Unexpected error: %v", err)
+			}
+
+			for i := 0; i < b.N; i++ {
+				if _, err := decodeHeadersMsg(hdr); err != nil {
+					b.Fatalf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
