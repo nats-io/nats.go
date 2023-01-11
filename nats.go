@@ -3559,7 +3559,8 @@ const (
 
 // decodeHeadersMsg will decode and headers.
 func decodeHeadersMsg(data []byte) (Header, error) {
-	tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
+	br := bufio.NewReaderSize(bytes.NewReader(data), 128)
+	tp := textproto.NewReader(br)
 	l, err := tp.ReadLine()
 	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
