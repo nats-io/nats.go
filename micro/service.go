@@ -746,14 +746,26 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	if options.subject != "" {
 		subject = options.subject
 	}
-	subject = fmt.Sprintf("%s.%s", g.prefix, subject)
-	return addEndpoint(g.service, name, subject, handler)
+	endpointSubject := fmt.Sprintf("%s.%s", g.prefix, subject)
+	if g.prefix == "" {
+		endpointSubject = subject
+	}
+	return addEndpoint(g.service, name, endpointSubject, handler)
 }
 
 func (g *group) AddGroup(name string) Group {
+	parts := make([]string, 0, 2)
+	if g.prefix != "" {
+		parts = append(parts, g.prefix)
+	}
+	if name != "" {
+		parts = append(parts, name)
+	}
+	prefix := strings.Join(parts, ".")
+
 	return &group{
 		service: g.service,
-		prefix:  fmt.Sprintf("%s.%s", g.prefix, name),
+		prefix:  prefix,
 	}
 }
 

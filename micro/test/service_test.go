@@ -654,6 +654,18 @@ func TestGroups(t *testing.T) {
 			expectedSubject: "g1.foo",
 		},
 		{
+			name:            "single empty group",
+			endpointName:    "foo",
+			groups:          []string{""},
+			expectedSubject: "foo",
+		},
+		{
+			name:            "empty groups",
+			endpointName:    "foo",
+			groups:          []string{"", "g1", ""},
+			expectedSubject: "g1.foo",
+		},
+		{
 			name:            "multiple groups",
 			endpointName:    "foo",
 			groups:          []string{"g1", "g2", "g3"},
