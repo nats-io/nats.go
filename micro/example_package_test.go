@@ -30,8 +30,13 @@ func Example() {
 	}
 	defer nc.Close()
 
-	// service handler - in this case, HandlerFunc is used,
+	// endpoint handler - in this case, HandlerFunc is used,
 	// which is a built-in implementation of Handler interface
+	echoHandler := func(req micro.Request) {
+		req.Respond(req.Data())
+	}
+
+	// second endpoint
 	incrementHandler := func(req micro.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
@@ -43,29 +48,50 @@ func Example() {
 		req.Respond([]byte(strconv.Itoa(responseData)))
 	}
 
+	// third endpoint
+	multiplyHandler := func(req micro.Request) {
+		val, err := strconv.Atoi(string(req.Data()))
+		if err != nil {
+			req.Error("400", "request data should be a number", nil)
+			return
+		}
+
+		responseData := val * 2
+		req.Respond([]byte(strconv.Itoa(responseData)))
+	}
+
 	config := micro.Config{
 		Name:        "IncrementService",
 		Version:     "0.1.0",
 		Description: "Increment numbers",
-		Endpoint: micro.Endpoint{
-			// service handler
-			Handler: micro.HandlerFunc(incrementHandler),
-			// a unique subject serving as a service endpoint
-			Subject: "numbers.increment",
+
+		// base handler - for simple services with single endpoints this is sufficient
+		Endpoint: &micro.EndpointConfig{
+			Subject: "echo",
+			Handler: micro.HandlerFunc(echoHandler),
 		},
 	}
-	// Multiple instances of the servcice with the same name can be created.
-	// Requests to a service with the same name will be load-balanced.
-	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer svc.Stop()
+	svc, err := micro.AddService(nc, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer svc.Stop()
+
+	// add a group to aggregate endpoints under common prefix
+	numbers := svc.AddGroup("numbers")
+
+	// register endpoints in a group
+	err = numbers.AddEndpoint("Increment", micro.HandlerFunc(incrementHandler))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = numbers.AddEndpoint("Multiply", micro.HandlerFunc(multiplyHandler))
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// send a request to a service
-	resp, err := nc.Request("numbers.increment", []byte("3"), 1*time.Second)
+	resp, err := nc.Request("numbers.Increment", []byte("3"), 1*time.Second)
 	if err != nil {
 		log.Fatal(err)
 	}
