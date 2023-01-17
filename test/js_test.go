@@ -6797,6 +6797,32 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	if err == nil || err.Error() != expectedErr {
 		t.Errorf("Expected %v, got: %v", expectedErr, err)
 	}
+
+	nc, js = jsClient(t, s, nats.CustomInboxPrefix("_BOX"))
+	defer nc.Close()
+
+	paf, err = js.PublishAsync("foo", []byte("Hello JS with Custom Inbox"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	select {
+	case <-paf.Ok():
+		t.Fatalf("Did not expect to get PubAck")
+	case err := <-paf.Err():
+		if err != nats.ErrNoResponders {
+			t.Fatalf("Expected a ErrNoResponders error, got %v", err)
+		}
+		m := paf.Msg()
+		if m == nil {
+			t.Fatalf("Expected to be able to retrieve the message")
+		}
+		if m.Subject != "foo" || string(m.Data) != "Hello JS with Custom Inbox" {
+			t.Fatalf("Wrong message: %+v", m)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive an error in time")
+	}
 }
 
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
