@@ -652,7 +652,11 @@ func (js *js) newAsyncReply() string {
 		for i := 0; i < aReplyTokensize; i++ {
 			b[i] = rdigits[int(b[i]%base)]
 		}
-		js.rpre = fmt.Sprintf("%s%s.", InboxPrefix, b[:aReplyTokensize])
+		inboxPrefix := InboxPrefix
+		if js.nc.Opts.InboxPrefix != _EMPTY_ {
+			inboxPrefix = js.nc.Opts.InboxPrefix + "."
+		}
+		js.rpre = fmt.Sprintf("%s%s.", inboxPrefix, b[:aReplyTokensize])
 		sub, err := js.nc.Subscribe(fmt.Sprintf("%s*", js.rpre), js.handleAsyncReply)
 		if err != nil {
 			js.mu.Unlock()
