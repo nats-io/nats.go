@@ -984,6 +984,56 @@ func TestMonitoringHandlers(t *testing.T) {
 	}
 }
 
+func TestServiceNilSchema(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	config := micro.Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+		APIURL:  "http://someapi.com/v1",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "test.func",
+			Handler: micro.HandlerFunc(func(r micro.Request) {}),
+		},
+	}
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer func() {
+		srv.Stop()
+		if !srv.Stopped() {
+			t.Fatalf("Expected service to be stopped")
+		}
+	}()
+
+	resp, err := nc.Request("$SRV.SCHEMA.test_service", nil, 1*time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	schema := micro.SchemaResp{}
+	err = json.Unmarshal(resp.Data, &schema)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if schema.Endpoints[0].Schema.Response != "" {
+		t.Fatalf("Invalid schema response: %#v", schema)
+	}
+
+	if schema.Endpoints[0].Schema.Response != "" {
+		t.Fatalf("Invalid schema response: %#v", schema)
+	}
+}
+
 func TestServiceStats(t *testing.T) {
 	handler := func(r micro.Request) {
 		r.Respond([]byte("ok"))

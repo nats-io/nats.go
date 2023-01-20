@@ -756,13 +756,16 @@ func (s *service) Stopped() bool {
 func (s *service) schema() SchemaResp {
 	endpoints := make([]EndpointSchema, 0, len(s.endpoints))
 	for _, e := range s.endpoints {
+		schema := Schema{}
+		if e.Schema != nil {
+			schema.Request = e.Schema.Request
+			schema.Response = e.Schema.Response
+		}
+
 		endpoints = append(endpoints, EndpointSchema{
 			Name:    e.stats.Name,
 			Subject: e.stats.Subject,
-			Schema: Schema{
-				Request:  e.Schema.Request,
-				Response: e.Schema.Response,
-			},
+			Schema:  schema,
 		})
 	}
 
