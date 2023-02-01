@@ -127,7 +127,7 @@ type StreamConfig struct {
 	DenyPurge            bool            `json:"deny_purge,omitempty"`
 	AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
 
-	// Allow applying a subject transform to incoming messages before doing anything else
+	// Allow applying a subject transform to incoming messages before doing anything else.
 	SubjectTransform *SubjectTransformConfig `json:"subject_transform,omitempty"`
 
 	// Allow republish of the message after being sequenced and stored.
