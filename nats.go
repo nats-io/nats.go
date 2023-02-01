@@ -1,4 +1,4 @@
-// Copyright 2012-2022 The NATS Authors
+// Copyright 2012-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -139,10 +139,6 @@ var (
 	ErrMaxConnectionsExceeded = errors.New("nats: server maximum connections exceeded")
 	ErrConnectionNotTLS       = errors.New("nats: connection is not tls")
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 // GetDefaultOptions returns default configuration options for the client.
 func GetDefaultOptions() Options {
