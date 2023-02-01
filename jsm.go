@@ -139,7 +139,7 @@ type StreamConfig struct {
 	MirrorDirect bool `json:"mirror_direct"`
 }
 
-// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received
+// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received.
 type SubjectTransformConfig struct {
 	Source      string `json:"src,omitempty"`
 	Destination string `json:"dest"`
