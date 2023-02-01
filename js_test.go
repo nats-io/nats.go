@@ -1276,9 +1276,7 @@ func TestJetStreamTransform(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	var err error
-
-	_, err = js.AddStream(&StreamConfig{
+	_, err := js.AddStream(&StreamConfig{
 		Name:             "ORIGIN",
 		Subjects:         []string{"test"},
 		SubjectTransform: &SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
@@ -1313,7 +1311,6 @@ func TestJetStreamTransform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-
 	if m.Subject != "fromtest.transformed.test" {
 		t.Fatalf("the subject of the message doesn't match the expected fromtest.transformed.test: %s", m.Subject)
 	}
