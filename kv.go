@@ -424,7 +424,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 			}
 
 			if ss.External == nil || sourceBucketName != cfg.Bucket {
-				ss.FilterSubject = fmt.Sprintf("$KV.%s.>", sourceBucketName)
+				ss.FilterSubject = fmt.Sprintf(kvSubjectsTmpl, sourceBucketName)
 				ss.SubjectTransformDest = fmt.Sprintf("$KV.%s.>", cfg.Bucket)
 			}
 			scfg.Sources = append(scfg.Sources, ss)
