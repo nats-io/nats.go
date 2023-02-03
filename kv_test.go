@@ -289,7 +289,7 @@ func TestKeyValueSourcing(t *testing.T) {
 	}
 
 	// Wait half a second to make sure it has time to populate the stream from it's sources
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	if _, err := kvC.Get("keyA"); err != nil {
 		t.Fatalf("Got error getting keyA from C: %v", err)

@@ -1294,7 +1294,7 @@ func TestJetStreamTransform(t *testing.T) {
 	_, err = js.AddStream(&StreamConfig{
 		Subjects: []string{},
 		Name:     "SOURCING",
-		Sources:  []*StreamSource{{Name: "ORIGIN", FilterSubject: ">", SubjectTransformDest: "fromtest.>"}},
+		Sources:  []*StreamSource{{Name: "ORIGIN", SubjectTransformDest: "fromtest.>"}},
 		Storage:  MemoryStorage,
 	})
 	if err != nil {
@@ -1302,7 +1302,7 @@ func TestJetStreamTransform(t *testing.T) {
 	}
 
 	// Create a sync subscription with an in-memory ephemeral consumer.
-	sub, err := js.SubscribeSync(">", ConsumerMemoryStorage(), BindStream("SOURCING"))
+	sub, err := js.SubscribeSync("fromtest.>", ConsumerMemoryStorage(), BindStream("SOURCING"))
 	if err != nil {
 		t.Fatalf("Error on subscribe: %v", err)
 	}
