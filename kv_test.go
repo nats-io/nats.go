@@ -289,7 +289,22 @@ func TestKeyValueSourcing(t *testing.T) {
 	}
 
 	// Wait half a second to make sure it has time to populate the stream from it's sources
-	time.Sleep(20 * time.Millisecond)
+	i := 0
+	for {
+		status, err := kvC.Status()
+		if err != nil {
+			t.Fatalf("Error getting bucket status: %v", err)
+		}
+		if status.Values() == 2 {
+			break
+		} else {
+			i++
+			if i > 3 {
+				t.Fatalf("Error sourcing bucket does not contain the expected number of values")
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	if _, err := kvC.Get("keyA"); err != nil {
 		t.Fatalf("Got error getting keyA from C: %v", err)
