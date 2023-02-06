@@ -1901,7 +1901,7 @@ func (nc *Conn) createConn() (err error) {
 	hosts := []string{}
 	u := nc.current.url
 
-	if net.ParseIP(u.Hostname()) == nil {
+	if !nc.ws && net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
 		for _, addr := range addrs {
 			hosts = append(hosts, net.JoinHostPort(addr, u.Port()))
