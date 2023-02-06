@@ -1276,3 +1276,51 @@ func TestStreamNameBySubject(t *testing.T) {
 		}
 	}
 }
+
+func TestJetStreamTransform(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&StreamConfig{
+		Name:             "ORIGIN",
+		Subjects:         []string{"test"},
+		SubjectTransform: &SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+		Storage:          MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	err = nc.Publish("test", []byte("1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&StreamConfig{
+		Subjects: []string{},
+		Name:     "SOURCING",
+		Sources:  []*StreamSource{{Name: "ORIGIN", SubjectTransformDest: "fromtest.>"}},
+		Storage:  MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create a sync subscription with an in-memory ephemeral consumer.
+	sub, err := js.SubscribeSync("fromtest.>", ConsumerMemoryStorage(), BindStream("SOURCING"))
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	m, err := sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if m.Subject != "fromtest.transformed.test" {
+		t.Fatalf("the subject of the message doesn't match the expected fromtest.transformed.test: %s", m.Subject)
+	}
+
+}
