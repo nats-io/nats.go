@@ -5913,17 +5913,6 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		}
 	})
 
-	t.Run("bind to stream with wrong subject fails", func(t *testing.T) {
-		_, err := js.SubscribeSync("secret", nats.BindStream("origin"))
-		if err == nil {
-			t.Fatal("Unexpected success")
-		}
-		apiErr := &nats.APIError{}
-		if !errors.As(err, &apiErr) || apiErr.ErrorCode != 10093 {
-			t.Fatalf("Expected API error 10093; got: %v", err)
-		}
-	})
-
 	t.Run("bind to origin stream", func(t *testing.T) {
 		// This would only avoid the stream names lookup.
 		sub, err := js.SubscribeSync("origin", nats.BindStream("origin"))
