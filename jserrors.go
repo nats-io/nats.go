@@ -129,7 +129,8 @@ const (
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
 
-	JSErrCodeBadRequest ErrorCode = 10003
+	JSErrCodeBadRequest   ErrorCode = 10003
+	JSStreamInvalidConfig ErrorCode = 10052
 
 	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
