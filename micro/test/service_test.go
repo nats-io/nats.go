@@ -1316,6 +1316,7 @@ func TestRequestRespond(t *testing.T) {
 			handler := func(req micro.Request) {
 				if errors.Is(test.withRespondError, micro.ErrRespond) {
 					nc.Close()
+					return
 				}
 				if val := req.Headers().Get("key"); val != "value" {
 					t.Fatalf("Expected headers in the request")
