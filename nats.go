@@ -475,6 +475,9 @@ type Options struct {
 	// IgnoreAuthErrorAbort - if set to true, client opts out of the default connect behavior of aborting
 	// subsequent reconnect attempts if server returns the same auth error twice (regardless of reconnect policy).
 	IgnoreAuthErrorAbort bool
+
+	// SkipHostLookup skips the DNS lookup for the server hostname.
+	SkipHostLookup bool
 }
 
 const (
@@ -1268,6 +1271,14 @@ func IgnoreAuthErrorAbort() Option {
 	}
 }
 
+// SkipHostLookup is an Option to skip the host lookup when connecting to a server.
+func SkipHostLookup() Option {
+	return func(o *Options) error {
+		o.SkipHostLookup = true
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -1901,7 +1912,7 @@ func (nc *Conn) createConn() (err error) {
 	hosts := []string{}
 	u := nc.current.url
 
-	if !nc.ws && net.ParseIP(u.Hostname()) == nil {
+	if !nc.Opts.SkipHostLookup && net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
 		for _, addr := range addrs {
 			hosts = append(hosts, net.JoinHostPort(addr, u.Port()))
