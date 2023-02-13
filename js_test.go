@@ -116,6 +116,7 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 
 	// Create a sample asset.
 	msg := make([]byte, 1024*1024)
+	//lint:ignore SA1019 crypto/rand.Read is recommended after Go 1.20 but fine for this test.
 	rand.Read(msg)
 	msg = []byte(base64.StdEncoding.EncodeToString(msg))
 	mlen, sum := len(msg), sha256.Sum256(msg)
