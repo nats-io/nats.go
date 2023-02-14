@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -953,6 +953,250 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if ci, err := js.ConsumerInfo("TEST", name); err == nil {
 		t.Fatalf("Expected no consumer to exist, got %+v", ci)
 	}
+}
+
+func TestPullSubscribeFetchChan(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("basic fetch", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		res, err := sub.FetchChan(10)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			for i := 0; i < 5; i++ {
+				js.Publish("foo", []byte("msg"))
+			}
+		}()
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if len(msgs) != 10 {
+			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+		}
+	})
+
+	t.Run("fetch with context", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		res, err := sub.FetchChan(10, nats.Context(ctx))
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			for i := 0; i < 5; i++ {
+				js.Publish("foo", []byte("msg"))
+			}
+		}()
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if len(msgs) != 10 {
+			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+		}
+	})
+
+	t.Run("fetch subset of messages", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 10; i++ {
+			js.Publish("foo", []byte("msg"))
+		}
+		res, err := sub.FetchChan(5)
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+		}
+	})
+
+	t.Run("context timeout, no error", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		res, err := sub.FetchChan(10, nats.Context(ctx))
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+		}
+	})
+
+	t.Run("request expired", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		res, err := sub.FetchChan(10, nats.MaxWait(50*time.Millisecond))
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+		}
+	})
+
+	t.Run("cancel context during fetch", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		res, err := sub.FetchChan(10, nats.Context(ctx))
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+		}()
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() == nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Expected error: %s; got: %s", nats.ErrConsumerDeleted, err)
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+		}
+	})
+
+	t.Run("remove durable consumer during fetch", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		res, err := sub.FetchChan(10)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			js.DeleteConsumer("TEST", "cons")
+		}()
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() == nil && !errors.Is(err, nats.ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %s; got: %s", nats.ErrConsumerDeleted, err)
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+		}
+	})
+
+	t.Run("validation errors", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		// negative batch size
+		_, err = sub.FetchChan(-1)
+		if !errors.Is(err, nats.ErrInvalidArg) {
+			t.Errorf("Expected error: %s; got: %s", nats.ErrInvalidArg, err)
+		}
+
+		syncSub, err := js.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		// invalid subscription type
+		_, err = syncSub.FetchChan(10)
+		if !errors.Is(err, nats.ErrTypeSubscription) {
+			t.Errorf("Expected error: %s; got: %s", nats.ErrTypeSubscription, err)
+		}
+
+		// both context and max wait set
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		_, err = sub.FetchChan(10, nats.Context(ctx), nats.MaxWait(2*time.Second))
+		if !errors.Is(err, nats.ErrContextAndTimeout) {
+			t.Errorf("Expected error: %s; got: %s", nats.ErrContextAndTimeout, err)
+		}
+
+		// passing context.Background() to fetch
+		_, err = sub.FetchChan(10, nats.Context(context.Background()))
+		if !errors.Is(err, nats.ErrNoDeadlineContext) {
+			t.Errorf("Expected error: %s; got: %s", nats.ErrNoDeadlineContext, err)
+		}
+	})
 }
 
 func TestPullSubscribeConsumerDeleted(t *testing.T) {
