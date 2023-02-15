@@ -2770,13 +2770,13 @@ type MessageBatch interface {
 	Error() error
 
 	// Done signals end of execution.
-	Done() bool
+	Done() <-chan struct{}
 }
 
 type messageBatch struct {
 	msgs chan *Msg
 	err  error
-	done bool
+	done chan struct{}
 }
 
 func (mb *messageBatch) Messages() <-chan *Msg {
@@ -2787,7 +2787,7 @@ func (mb *messageBatch) Error() error {
 	return mb.err
 }
 
-func (mb *messageBatch) Done() bool {
+func (mb *messageBatch) Done() <-chan struct{} {
 	return mb.done
 }
 
@@ -2882,6 +2882,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 
 	result := &messageBatch{
 		msgs: make(chan *Msg, batch),
+		done: make(chan struct{}, 1),
 	}
 	var msg *Msg
 	for pmc && len(result.msgs) < batch {
@@ -2906,7 +2907,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	}
 	if len(result.msgs) == batch || result.err != nil {
 		close(result.msgs)
-		result.done = true
+		result.done <- struct{}{}
 		return result, nil
 	}
 
@@ -2928,7 +2929,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		close(result.msgs)
-		result.done = true
+		result.done <- struct{}{}
 		result.err = err
 		return result, nil
 	}
@@ -2937,7 +2938,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			return nil, err
 		}
 		close(result.msgs)
-		result.done = true
+		result.done <- struct{}{}
 		result.err = err
 		return result, nil
 	}
@@ -2971,7 +2972,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			result.err = o.checkCtxErr(err)
 		}
 		close(result.msgs)
-		result.done = true
+		result.done <- struct{}{}
 	}()
 	return result, nil
 }

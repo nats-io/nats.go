@@ -1019,6 +1019,7 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 		started.Add(3)
 		errs := make(chan error, 3)
 		go func() {
+			var err error
 			r1, err = sub.FetchBatch(10)
 			if err != nil {
 				errs <- err
@@ -1026,6 +1027,7 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 			started.Done()
 		}()
 		go func() {
+			var err error
 			r2, err = sub.FetchBatch(10)
 			if err != nil {
 				errs <- err
@@ -1033,6 +1035,7 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 			started.Done()
 		}()
 		go func() {
+			var err error
 			r3, err = sub.FetchBatch(10)
 			if err != nil {
 				errs <- err
@@ -1062,6 +1065,21 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 				t.Fatalf("Timeout waiting for incoming messages")
 			}
 		}
+		select {
+		case <-r1.Done():
+		case <-time.After(1 * time.Second):
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r1")
+		}
+		select {
+		case <-r2.Done():
+		case <-time.After(1 * time.Second):
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r2")
+		}
+		select {
+		case <-r3.Done():
+		case <-time.After(1 * time.Second):
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r3")
+		}
 		if r1.Error() != nil {
 			t.Fatalf("Unexpected error: %s", r1.Error())
 		}
@@ -1070,15 +1088,6 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 		}
 		if r3.Error() != nil {
 			t.Fatalf("Unexpected error: %s", r3.Error())
-		}
-		if !r1.Done() {
-			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r1")
-		}
-		if !r2.Done() {
-			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r2")
-		}
-		if !r3.Done() {
-			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r3")
 		}
 		if msgsReceived != 30 {
 			t.Fatalf("Expected %d messages; got: %d", 30, msgsReceived)
