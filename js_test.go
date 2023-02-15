@@ -1,4 +1,4 @@
-// Copyright 2012-2022 The NATS Authors
+// Copyright 2012-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -116,7 +116,6 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 
 	// Create a sample asset.
 	msg := make([]byte, 1024*1024)
-	//lint:ignore SA1019 crypto/rand.Read is recommended after Go 1.20 but fine for this test.
 	rand.Read(msg)
 	msg = []byte(base64.StdEncoding.EncodeToString(msg))
 	mlen, sum := len(msg), sha256.Sum256(msg)
