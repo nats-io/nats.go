@@ -955,7 +955,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
-func TestPullSubscribeFetchChan(t *testing.T) {
+func TestPullSubscribeFetchBatch(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -981,7 +981,10 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 				t.Fatalf("Unexpected error: %s", err)
 			}
 		}
-		res, err := sub.FetchChan(10)
+		res, err := sub.FetchBatch(10)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			for i := 0; i < 5; i++ {
@@ -993,10 +996,120 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 			msgs = append(msgs, msg)
 		}
 		if res.Error() != nil {
-			t.Fatalf("Unexpected error: %s", err)
+			t.Fatalf("Unexpected error: %s", res.Error())
 		}
 		if len(msgs) != 10 {
 			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+		}
+	})
+
+	t.Run("multiple concurrent fetches", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 50; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		var r1, r2, r3 nats.MessageBatch
+		started := &sync.WaitGroup{}
+		started.Add(3)
+		errs := make(chan error, 3)
+		go func() {
+			r1, err = sub.FetchBatch(10)
+			if err != nil {
+				errs <- err
+			}
+			started.Done()
+		}()
+		go func() {
+			r2, err = sub.FetchBatch(10)
+			if err != nil {
+				errs <- err
+			}
+			started.Done()
+		}()
+		go func() {
+			r3, err = sub.FetchBatch(10)
+			if err != nil {
+				errs <- err
+			}
+			started.Done()
+		}()
+		// wait until batch results are available
+		started.Wait()
+
+		// check if any FetchBatch call returned an error
+		select {
+		case err := <-errs:
+			t.Fatalf("Error initializing fetch: %s", err)
+		default:
+		}
+
+		var msgsReceived int
+		for msgsReceived < 30 {
+			select {
+			case <-r1.Messages():
+				msgsReceived++
+			case <-r2.Messages():
+				msgsReceived++
+			case <-r3.Messages():
+				msgsReceived++
+			case <-time.After(1 * time.Second):
+				t.Fatalf("Timeout waiting for incoming messages")
+			}
+		}
+		if r1.Error() != nil {
+			t.Fatalf("Unexpected error: %s", r1.Error())
+		}
+		if r2.Error() != nil {
+			t.Fatalf("Unexpected error: %s", r2.Error())
+		}
+		if r3.Error() != nil {
+			t.Fatalf("Unexpected error: %s", r3.Error())
+		}
+		if !r1.Done() {
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r1")
+		}
+		if !r2.Done() {
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r2")
+		}
+		if !r3.Done() {
+			t.Fatalf("FetchBatch result channel should be closed after receiving all messages on r3")
+		}
+		if msgsReceived != 30 {
+			t.Fatalf("Expected %d messages; got: %d", 30, msgsReceived)
+		}
+	})
+
+	t.Run("deliver all, then consume", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 5; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		res, err := sub.FetchBatch(5)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", res.Error())
+		}
+		if len(msgs) != 5 {
+			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
 		}
 	})
 
@@ -1013,7 +1126,10 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
-		res, err := sub.FetchChan(10, nats.Context(ctx))
+		res, err := sub.FetchBatch(10, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			for i := 0; i < 5; i++ {
@@ -1025,7 +1141,7 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 			msgs = append(msgs, msg)
 		}
 		if res.Error() != nil {
-			t.Fatalf("Unexpected error: %s", err)
+			t.Fatalf("Unexpected error: %s", res.Error())
 		}
 		if len(msgs) != 10 {
 			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
@@ -1041,13 +1157,13 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			js.Publish("foo", []byte("msg"))
 		}
-		res, err := sub.FetchChan(5)
+		res, err := sub.FetchBatch(5)
 		msgs := make([]*nats.Msg, 0)
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
 		}
 		if res.Error() != nil {
-			t.Fatalf("Unexpected error: %s", err)
+			t.Fatalf("Unexpected error: %s", res.Error())
 		}
 		if len(msgs) != 5 {
 			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
@@ -1067,13 +1183,16 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
-		res, err := sub.FetchChan(10, nats.Context(ctx))
+		res, err := sub.FetchBatch(10, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		msgs := make([]*nats.Msg, 0)
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
 		}
 		if res.Error() != nil {
-			t.Fatalf("Unexpected error: %s", err)
+			t.Fatalf("Unexpected error: %s", res.Error())
 		}
 		if len(msgs) != 5 {
 			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
@@ -1091,13 +1210,16 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 				t.Fatalf("Unexpected error: %s", err)
 			}
 		}
-		res, err := sub.FetchChan(10, nats.MaxWait(50*time.Millisecond))
+		res, err := sub.FetchBatch(10, nats.MaxWait(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		msgs := make([]*nats.Msg, 0)
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
 		}
 		if res.Error() != nil {
-			t.Fatalf("Unexpected error: %s", err)
+			t.Fatalf("Unexpected error: %s", res.Error())
 		}
 		if len(msgs) != 5 {
 			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
@@ -1116,7 +1238,7 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		res, err := sub.FetchChan(10, nats.Context(ctx))
+		res, err := sub.FetchBatch(10, nats.Context(ctx))
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			cancel()
@@ -1125,8 +1247,8 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
 		}
-		if res.Error() == nil && !errors.Is(err, context.Canceled) {
-			t.Fatalf("Expected error: %s; got: %s", nats.ErrConsumerDeleted, err)
+		if res.Error() == nil || !errors.Is(res.Error(), context.Canceled) {
+			t.Fatalf("Expected error: %s; got: %s", nats.ErrConsumerDeleted, res.Error())
 		}
 		if len(msgs) != 5 {
 			t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
@@ -1144,7 +1266,10 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 				t.Fatalf("Unexpected error: %s", err)
 			}
 		}
-		res, err := sub.FetchChan(10)
+		res, err := sub.FetchBatch(10)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			js.DeleteConsumer("TEST", "cons")
@@ -1153,7 +1278,7 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
 		}
-		if res.Error() == nil && !errors.Is(err, nats.ErrConsumerDeleted) {
+		if res.Error() == nil || !errors.Is(res.Error(), nats.ErrConsumerDeleted) {
 			t.Fatalf("Expected error: %s; got: %s", nats.ErrConsumerDeleted, err)
 		}
 		if len(msgs) != 5 {
@@ -1168,7 +1293,7 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 			t.Fatalf("Unexpected error: %s", err)
 		}
 		// negative batch size
-		_, err = sub.FetchChan(-1)
+		_, err = sub.FetchBatch(-1)
 		if !errors.Is(err, nats.ErrInvalidArg) {
 			t.Errorf("Expected error: %s; got: %s", nats.ErrInvalidArg, err)
 		}
@@ -1178,7 +1303,7 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 			t.Fatalf("Unexpected error: %s", err)
 		}
 		// invalid subscription type
-		_, err = syncSub.FetchChan(10)
+		_, err = syncSub.FetchBatch(10)
 		if !errors.Is(err, nats.ErrTypeSubscription) {
 			t.Errorf("Expected error: %s; got: %s", nats.ErrTypeSubscription, err)
 		}
@@ -1186,13 +1311,13 @@ func TestPullSubscribeFetchChan(t *testing.T) {
 		// both context and max wait set
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
-		_, err = sub.FetchChan(10, nats.Context(ctx), nats.MaxWait(2*time.Second))
+		_, err = sub.FetchBatch(10, nats.Context(ctx), nats.MaxWait(2*time.Second))
 		if !errors.Is(err, nats.ErrContextAndTimeout) {
 			t.Errorf("Expected error: %s; got: %s", nats.ErrContextAndTimeout, err)
 		}
 
 		// passing context.Background() to fetch
-		_, err = sub.FetchChan(10, nats.Context(context.Background()))
+		_, err = sub.FetchBatch(10, nats.Context(context.Background()))
 		if !errors.Is(err, nats.ErrNoDeadlineContext) {
 			t.Errorf("Expected error: %s; got: %s", nats.ErrNoDeadlineContext, err)
 		}

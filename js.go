@@ -2761,26 +2761,38 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 	return msgs, nil
 }
 
-type FetchResult interface {
+// MessageBatch provides methods to retrieve messages consumed using [Subscribe.FetchBatch].
+type MessageBatch interface {
+	// Messages returns a channel on which messages will be published.
 	Messages() <-chan *Msg
+
+	// Error returns an error encountered when fetching messages.
 	Error() error
+
+	// Done signals end of execution.
+	Done() bool
 }
 
-type fetchResult struct {
+type messageBatch struct {
 	msgs chan *Msg
 	err  error
+	done bool
 }
 
-func (fr *fetchResult) Messages() <-chan *Msg {
-	return fr.msgs
+func (mb *messageBatch) Messages() <-chan *Msg {
+	return mb.msgs
 }
 
-func (fr *fetchResult) Error() error {
-	return fr.err
+func (mb *messageBatch) Error() error {
+	return mb.err
 }
 
-// FetchChan pulls a batch of messages from a stream for a pull consumer.
-// Unlike [Subscription.Fetch], it is non blocking and returns [FetchResult],
+func (mb *messageBatch) Done() bool {
+	return mb.done
+}
+
+// FetchBatch pulls a batch of messages from a stream for a pull consumer.
+// Unlike [Subscription.Fetch], it is non blocking and returns [MessageBatch],
 // allowing to retrieve incoming messages from a channel.
 // The returned channel is always close - it is safe to iterate over it using range.
 //
@@ -2788,8 +2800,8 @@ func (fr *fetchResult) Error() error {
 // or [nats.Context] (with deadline set).
 //
 // This method will not return error in case of pull request expiry (even if there are no messages).
-// Any other error encountered when receiving messages will cause FetchChan to stop receiving new messages.
-func (sub *Subscription) FetchChan(batch int, opts ...PullOpt) (FetchResult, error) {
+// Any other error encountered when receiving messages will cause FetchBatch to stop receiving new messages.
+func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, error) {
 	if sub == nil {
 		return nil, ErrBadSubscription
 	}
@@ -2867,7 +2879,7 @@ func (sub *Subscription) FetchChan(batch int, opts ...PullOpt) (FetchResult, err
 	default:
 	}
 
-	result := &fetchResult{
+	result := &messageBatch{
 		msgs: make(chan *Msg, batch),
 	}
 	var msg *Msg
@@ -2893,6 +2905,7 @@ func (sub *Subscription) FetchChan(batch int, opts ...PullOpt) (FetchResult, err
 	}
 	if len(result.msgs) == batch || result.err != nil {
 		close(result.msgs)
+		result.done = true
 		return result, nil
 	}
 
@@ -2914,11 +2927,16 @@ func (sub *Subscription) FetchChan(batch int, opts ...PullOpt) (FetchResult, err
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		close(result.msgs)
+		result.done = true
 		result.err = err
 		return result, nil
 	}
 	if err := nc.PublishRequest(nms, rply, reqJSON); err != nil {
+		if len(result.msgs) == 0 {
+			return nil, err
+		}
 		close(result.msgs)
+		result.done = true
 		result.err = err
 		return result, nil
 	}
@@ -2952,6 +2970,7 @@ func (sub *Subscription) FetchChan(batch int, opts ...PullOpt) (FetchResult, err
 			result.err = o.checkCtxErr(err)
 		}
 		close(result.msgs)
+		result.done = true
 	}()
 	return result, nil
 }
