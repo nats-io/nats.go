@@ -1158,6 +1158,9 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 			js.Publish("foo", []byte("msg"))
 		}
 		res, err := sub.FetchBatch(5)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		msgs := make([]*nats.Msg, 0)
 		for msg := range res.Messages() {
 			msgs = append(msgs, msg)
@@ -1239,6 +1242,9 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		res, err := sub.FetchBatch(10, nats.Context(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
 		go func() {
 			time.Sleep(10 * time.Millisecond)
 			cancel()
