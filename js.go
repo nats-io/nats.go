@@ -2794,7 +2794,8 @@ func (mb *messageBatch) Done() bool {
 // FetchBatch pulls a batch of messages from a stream for a pull consumer.
 // Unlike [Subscription.Fetch], it is non blocking and returns [MessageBatch],
 // allowing to retrieve incoming messages from a channel.
-// The returned channel is always close - it is safe to iterate over it using range.
+// The returned channel is always closed after all messages for a batch have been 
+// delivered by the server - it is safe to iterate over it using range.
 //
 // To avoid using default JetStream timeout as fetch expiry time, use [nats.MaxWait]
 // or [nats.Context] (with deadline set).
