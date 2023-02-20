@@ -375,8 +375,12 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		ccSubj = fmt.Sprintf(apiLegacyConsumerCreateT, stream)
 	} else if err := checkConsumerName(consumerName); err != nil {
 		return nil, err
-	} else if !js.nc.serverMinVersion(2, 9, 0) || (cfg.Durable != "" && js.opts.featureFlags.useDurableConsumerCreate) {
+	} else if !js.nc.serverMinVersion(2, 9, 0) ||
+		(cfg.Durable != "" && js.opts.featureFlags.useDurableConsumerCreate) {
 		// if server version is lower than 2.9.0 or user set the useDurableConsumerCreate flag, use the legacy DURABLE.CREATE endpoint
+		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
+	} else if cfg.FilterSubjects != nil {
+		// if multiple filter subjects are used, we must use legacy DURABLE.CREATE endpoint
 		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
 	} else {
 		// if above server version 2.9.0, use the endpoints with consumer name
@@ -407,6 +411,11 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 			return nil, ErrConsumerNotFound
 		}
 		return nil, info.Error
+	}
+
+	// check whether multiple filter subjects (if used) are reflected in the returned ConsumerInfo
+	if cfg.FilterSubjects != nil && info.Config.FilterSubjects == nil {
+		return nil, ErrConsumerMultipleFilterSubjectsNotSupported
 	}
 	return info.ConsumerInfo, nil
 }

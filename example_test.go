@@ -670,6 +670,11 @@ func ExampleSubOpt() {
 	js.Subscribe("foo", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.Durable("FOO"), nats.ConsumerMemoryStorage())
+
+	// Use multiple subject filters.
+	js.Subscribe("", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.Durable("FOO"), nats.ConsumerFilterSubjects("foo", "bar"), nats.BindStream("test_stream"))
 }
 
 func ExampleMaxWait() {

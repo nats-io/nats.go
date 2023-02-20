@@ -1077,6 +1077,7 @@ type ConsumerConfig struct {
 	MaxDeliver      int             `json:"max_deliver,omitempty"`
 	BackOff         []time.Duration `json:"backoff,omitempty"`
 	FilterSubject   string          `json:"filter_subject,omitempty"`
+	FilterSubjects  []string        `json:"filter_subjects,omitempty"`
 	ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
 	RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
 	SampleFrequency string          `json:"sample_freq,omitempty"`
@@ -2477,6 +2478,16 @@ func ConsumerReplicas(replicas int) SubOpt {
 func ConsumerMemoryStorage() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MemoryStorage = true
+		return nil
+	})
+}
+
+// ConsumerFilterSubjects can be used to set multiple subject filters on the consumer.
+// It has to be used in conjunction with [nats.BindStream] and
+// with empty 'subject' parameter.
+func ConsumerFilterSubjects(subjects ...string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.FilterSubjects = subjects
 		return nil
 	})
 }
