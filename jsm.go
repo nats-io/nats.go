@@ -137,6 +137,9 @@ type StreamConfig struct {
 	AllowDirect bool `json:"allow_direct"`
 	// Allow higher performance and unified direct access for mirrors as well.
 	MirrorDirect bool `json:"mirror_direct"`
+
+	// Metadata is additional metadata for the Stream.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received.

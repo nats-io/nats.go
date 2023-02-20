@@ -1103,6 +1103,9 @@ type ConsumerConfig struct {
 	Replicas int `json:"num_replicas"`
 	// Force memory storage.
 	MemoryStorage bool `json:"mem_storage,omitempty"`
+
+	// Metadata is additional metadata for the Consumer.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -2488,6 +2491,14 @@ func ConsumerMemoryStorage() SubOpt {
 func ConsumerFilterSubjects(subjects ...string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.FilterSubjects = subjects
+		return nil
+	})
+}
+
+// ConsumerMetadata can be used to set metadata on the consumer.
+func ConsumerMetadata(metadata map[string]string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.Metadata = metadata
 		return nil
 	})
 }

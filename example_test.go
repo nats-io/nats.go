@@ -675,6 +675,13 @@ func ExampleSubOpt() {
 	js.Subscribe("", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.Durable("FOO"), nats.ConsumerFilterSubjects("foo", "bar"), nats.BindStream("test_stream"))
+
+	// Set consumer metadata.
+	js.Subscribe("foo", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.Durable("FOO"), nats.ConsumerMetadata(map[string]string{
+		"one": "two",
+	}))
 }
 
 func ExampleMaxWait() {
