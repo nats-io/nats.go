@@ -62,6 +62,10 @@ var (
 	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty.
 	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
 
+	// ErrConsumerMultipleFilterSubjectsNotSupported is returned when the connected nats-server version does not support setting
+	// multiple filter subjects with filter_subjects field.
+	ErrConsumerMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "multiple consumer filter subjects not supported by nats-server"}
+
 	// ErrConsumerConfigRequired is returned when empty consumer consuguration is supplied to add/update consumer.
 	ErrConsumerConfigRequired JetStreamError = &jsError{message: "consumer configuration is required"}
 

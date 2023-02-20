@@ -1885,7 +1885,7 @@ func TestJetStreamManagement(t *testing.T) {
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
 	t.Run("create stream", func(t *testing.T) {
-		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar"}})
+		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar", "baz"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -2109,6 +2109,32 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
+		t.Run("consumer with multiple filter subjects", func(t *testing.T) {
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.DURABLE.CREATE.foo.dlc-5")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+				Durable:        "dlc-5",
+				AckPolicy:      nats.AckExplicitPolicy,
+				FilterSubjects: []string{"foo", "bar"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg, err := sub.NextMsg(1 * time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !strings.Contains(string(msg.Data), `"durable_name":"dlc-5"`) {
+				t.Fatalf("create consumer message is not correct: %q", string(msg.Data))
+			}
+			if ci == nil || ci.Config.Durable != "dlc-5" || !reflect.DeepEqual(ci.Config.FilterSubjects, []string{"foo", "bar"}) {
+				t.Fatalf("ConsumerInfo is not correct %+v", ci)
+			}
+		})
+
 		t.Run("with invalid consumer name", func(t *testing.T) {
 			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidConsumerName {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
@@ -2215,7 +2241,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for info := range js.Consumers("foo") {
 			infos = append(infos, info)
 		}
-		if len(infos) != 6 || infos[0].Stream != "foo" {
+		if len(infos) != 7 || infos[0].Stream != "foo" {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
 	})
@@ -2227,7 +2253,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for name := range js.ConsumerNames("foo", nats.Context(ctx)) {
 			names = append(names, name)
 		}
-		if got, want := len(names), 6; got != want {
+		if got, want := len(names), 7; got != want {
 			t.Fatalf("Unexpected names, got=%d, want=%d", got, want)
 		}
 	})
@@ -5382,6 +5408,50 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 	if len(recvd) >= int(rl) {
 		t.Errorf("Expected applied rate limit to push consumer, got %v msgs in %v", recvd, duration)
 	}
+}
+
+func TestJetStreamSubscribe_FilterSubjects(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo", "bar", "baz"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		js.Publish("foo", []byte("msg"))
+	}
+	for i := 0; i < 5; i++ {
+		js.Publish("bar", []byte("msg"))
+	}
+	for i := 0; i < 5; i++ {
+		js.Publish("baz", []byte("msg"))
+	}
+
+	sub, err := js.SubscribeSync("", nats.BindStream("TEST"), nats.ConsumerFilterSubjects("foo", "baz"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		msg, err := sub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if msg.Subject != "foo" && msg.Subject != "baz" {
+			t.Fatalf("Unexpected message subject: %s", msg.Subject)
+		}
+	}
+
 }
 
 func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
