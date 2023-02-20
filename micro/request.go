@@ -14,6 +14,7 @@
 package micro
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,6 +81,14 @@ var (
 
 func (fn HandlerFunc) Handle(req Request) {
 	fn(req)
+}
+
+// ContextHandler is a helper function used to utilize [context.Context]
+// in request handlers.
+func ContextHandler(ctx context.Context, handler func(context.Context, Request)) Handler {
+	return HandlerFunc(func(req Request) {
+		handler(ctx, req)
+	})
 }
 
 // Respond sends the response for the request.

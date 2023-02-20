@@ -14,6 +14,7 @@
 package micro_test
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"reflect"
@@ -311,6 +312,37 @@ func ExampleService_Reset() {
 	if !reflect.DeepEqual(srv.Stats(), empty) {
 		log.Fatal("Expected endpoint stats to be empty")
 	}
+}
+
+func ExampleContextHandler() {
+	nc, err := nats.Connect("127.0.0.1:4222")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	handler := func(ctx context.Context, req micro.Request) {
+		select {
+		case <-ctx.Done():
+			req.Error("400", "context canceled", nil)
+		default:
+			req.Respond([]byte("ok"))
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	config := micro.Config{
+		Name:    "EchoService",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "echo",
+			Handler: micro.ContextHandler(ctx, handler),
+		},
+	}
+
+	srv, _ := micro.AddService(nc, config)
+	defer srv.Stop()
 }
 
 func ExampleControlSubject() {
