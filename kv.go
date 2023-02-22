@@ -453,7 +453,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 				// To compare, make the server's stream info discard
 				// policy same than ours.
 				si.Config.Discard = scfg.Discard
-				// Allso need to set allow direct for v2.9.x+
+				// Also need to set allow direct for v2.9.x+
 				si.Config.AllowDirect = scfg.AllowDirect
 				if reflect.DeepEqual(&si.Config, scfg) {
 					si, err = js.UpdateStream(scfg)
