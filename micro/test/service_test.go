@@ -15,6 +15,7 @@ package micro_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -982,6 +983,69 @@ func TestMonitoringHandlers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContextHandler(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type key string
+	ctx = context.WithValue(ctx, key("key"), []byte("val"))
+
+	handler := func(ctx context.Context, req micro.Request) {
+		select {
+		case <-ctx.Done():
+			req.Error("400", "context canceled", nil)
+		default:
+			v := ctx.Value(key("key"))
+			req.Respond(v.([]byte))
+		}
+	}
+	config := micro.Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+		APIURL:  "http://someapi.com/v1",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "test.func",
+			Handler: micro.ContextHandler(ctx, handler),
+			Schema: &micro.Schema{
+				Request:  "request_schema",
+				Response: "response_schema",
+			},
+		},
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer srv.Stop()
+
+	resp, err := nc.Request("test.func", nil, 1*time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if string(resp.Data) != "val" {
+		t.Fatalf("Invalid response; want: %q; got: %q", "val", string(resp.Data))
+	}
+	cancel()
+	resp, err = nc.Request("test.func", nil, 1*time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if resp.Header.Get(micro.ErrorCodeHeader) != "400" {
+		t.Fatalf("Expected error response after canceling context; got: %q", string(resp.Data))
+	}
+
 }
 
 func TestServiceNilSchema(t *testing.T) {
