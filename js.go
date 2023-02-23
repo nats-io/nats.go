@@ -1989,6 +1989,11 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		}
 
 		if cinfo.Error != nil {
+			if cinfo.Error.ErrorCode == JSErrCodeInsufficientResourcesErr {
+				// retry for insufficient resources, as it may mean that client is connected to a running
+				// server in cluster while the server hosting R1 JetStream resources is restarting
+				return
+			}
 			pushErr(cinfo.Error)
 			return
 		}
