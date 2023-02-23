@@ -421,19 +421,20 @@ func checkStreamName(stream string) error {
 	if stream == _EMPTY_ {
 		return ErrStreamNameRequired
 	}
-	if strings.Contains(stream, ".") {
+	if strings.ContainsAny(stream, ". ") {
 		return ErrInvalidStreamName
 	}
 	return nil
 }
 
-// Check that the durable name exists and is valid, that is, that it does not contain any "."
+// Check that the consumer name is not empty and is valid (does not contain "." and " ").
+// Additional consumer name validation is done in nats-server.
 // Returns ErrConsumerNameRequired if consumer name is empty, ErrInvalidConsumerName is invalid, otherwise nil
 func checkConsumerName(consumer string) error {
 	if consumer == _EMPTY_ {
 		return ErrConsumerNameRequired
 	}
-	if strings.Contains(consumer, ".") {
+	if strings.ContainsAny(consumer, ". ") {
 		return ErrInvalidConsumerName
 	}
 	return nil

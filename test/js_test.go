@@ -1781,6 +1781,9 @@ func TestJetStreamManagement(t *testing.T) {
 		if _, err := js.AddStream(&nats.StreamConfig{Name: "bad.stream.name"}); err != nats.ErrInvalidStreamName {
 			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
 		}
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "bad stream name"}); err != nats.ErrInvalidStreamName {
+			t.Fatalf("Expected %v, got %v", nats.ErrInvalidStreamName, err)
+		}
 	})
 
 	t.Run("bad stream info", func(t *testing.T) {
@@ -1954,6 +1957,9 @@ func TestJetStreamManagement(t *testing.T) {
 
 		t.Run("with invalid consumer name", func(t *testing.T) {
 			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidConsumerName {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
+			}
+			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test durable"}); err != nats.ErrInvalidConsumerName {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
 			}
 		})
