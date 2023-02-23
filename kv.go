@@ -446,11 +446,15 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		// and we are now moving to a v2.7.2+. If that is the case
 		// and the only difference is the discard policy, then update
 		// the stream.
+		// The same logic applies for KVs created pre 2.9.x and
+		// the AllowDirect setting.
 		if err == ErrStreamNameAlreadyInUse {
 			if si, _ = js.StreamInfo(scfg.Name); si != nil {
 				// To compare, make the server's stream info discard
 				// policy same than ours.
 				si.Config.Discard = scfg.Discard
+				// Also need to set allow direct for v2.9.x+
+				si.Config.AllowDirect = scfg.AllowDirect
 				if reflect.DeepEqual(&si.Config, scfg) {
 					si, err = js.UpdateStream(scfg)
 				}
