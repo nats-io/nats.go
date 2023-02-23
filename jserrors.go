@@ -80,10 +80,10 @@ var (
 	// ErrNotJSMessage is returned when attempting to get metadata from non JetStream message .
 	ErrNotJSMessage JetStreamError = &jsError{message: "not a jetstream message"}
 
-	// ErrInvalidStreamName is returned when the provided stream name is invalid (contains '.').
+	// ErrInvalidStreamName is returned when the provided stream name is invalid (contains '.' or ' ').
 	ErrInvalidStreamName JetStreamError = &jsError{message: "invalid stream name"}
 
-	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.').
+	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.' or ' ').
 	ErrInvalidConsumerName JetStreamError = &jsError{message: "invalid consumer name"}
 
 	// ErrNoMatchingStream is returned when stream lookup by subject is unsuccessful.
