@@ -127,9 +127,6 @@ type StreamConfig struct {
 	DenyPurge            bool            `json:"deny_purge,omitempty"`
 	AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
 
-	// Allow applying a subject transform to incoming messages before doing anything else.
-	SubjectTransform *SubjectTransformConfig `json:"subject_transform,omitempty"`
-
 	// Allow republish of the message after being sequenced and stored.
 	RePublish *RePublish `json:"republish,omitempty"`
 
@@ -137,12 +134,6 @@ type StreamConfig struct {
 	AllowDirect bool `json:"allow_direct"`
 	// Allow higher performance and unified direct access for mirrors as well.
 	MirrorDirect bool `json:"mirror_direct"`
-}
-
-// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received.
-type SubjectTransformConfig struct {
-	Source      string `json:"src,omitempty"`
-	Destination string `json:"dest"`
 }
 
 // RePublish is for republishing messages once committed to a stream. The original
@@ -161,13 +152,12 @@ type Placement struct {
 
 // StreamSource dictates how streams can source from other streams.
 type StreamSource struct {
-	Name                 string          `json:"name"`
-	OptStartSeq          uint64          `json:"opt_start_seq,omitempty"`
-	OptStartTime         *time.Time      `json:"opt_start_time,omitempty"`
-	FilterSubject        string          `json:"filter_subject,omitempty"`
-	SubjectTransformDest string          `json:"subject_transform_dest,omitempty"`
-	External             *ExternalStream `json:"external,omitempty"`
-	Domain               string          `json:"-"`
+	Name          string          `json:"name"`
+	OptStartSeq   uint64          `json:"opt_start_seq,omitempty"`
+	OptStartTime  *time.Time      `json:"opt_start_time,omitempty"`
+	FilterSubject string          `json:"filter_subject,omitempty"`
+	External      *ExternalStream `json:"external,omitempty"`
+	Domain        string          `json:"-"`
 }
 
 // ExternalStream allows you to qualify access to a stream source in another
@@ -898,13 +888,11 @@ type StreamAlternate struct {
 
 // StreamSourceInfo shows information about an upstream stream source.
 type StreamSourceInfo struct {
-	Name                 string          `json:"name"`
-	Lag                  uint64          `json:"lag"`
-	Active               time.Duration   `json:"active"`
-	External             *ExternalStream `json:"external"`
-	Error                *APIError       `json:"error"`
-	FilterSubject        string          `json:"filter_subject,omitempty"`
-	SubjectTransformDest string          `json:"subject_transform_dest,omitempty"`
+	Name     string          `json:"name"`
+	Lag      uint64          `json:"lag"`
+	Active   time.Duration   `json:"active"`
+	External *ExternalStream `json:"external"`
+	Error    *APIError       `json:"error"`
 }
 
 // StreamState is information about the given stream.
