@@ -5411,45 +5411,65 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 }
 
 func TestJetStreamSubscribe_FilterSubjects(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	var err error
-
-	// Create the stream using our client API.
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo", "bar", "baz"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	for i := 0; i < 5; i++ {
-		js.Publish("foo", []byte("msg"))
-	}
-	for i := 0; i < 5; i++ {
-		js.Publish("bar", []byte("msg"))
-	}
-	for i := 0; i < 5; i++ {
-		js.Publish("baz", []byte("msg"))
+	tests := []struct {
+		name    string
+		durable string
+	}{
+		{
+			name: "ephemeral consumer",
+		},
+		{
+			name:    "durable consumer",
+			durable: "cons",
+		},
 	}
 
-	sub, err := js.SubscribeSync("", nats.BindStream("TEST"), nats.ConsumerFilterSubjects("foo", "baz"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
 
-	for i := 0; i < 10; i++ {
-		msg, err := sub.NextMsg(500 * time.Millisecond)
-		if err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if msg.Subject != "foo" && msg.Subject != "baz" {
-			t.Fatalf("Unexpected message subject: %s", msg.Subject)
-		}
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			var err error
+
+			_, err = js.AddStream(&nats.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo", "bar", "baz"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for i := 0; i < 5; i++ {
+				js.Publish("foo", []byte("msg"))
+			}
+			for i := 0; i < 5; i++ {
+				js.Publish("bar", []byte("msg"))
+			}
+			for i := 0; i < 5; i++ {
+				js.Publish("baz", []byte("msg"))
+			}
+
+			opts := []nats.SubOpt{nats.BindStream("TEST"), nats.ConsumerFilterSubjects("foo", "baz")}
+			if test.durable != "" {
+				opts = append(opts, nats.Durable(test.durable))
+			}
+			sub, err := js.SubscribeSync("", opts...)
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+
+			for i := 0; i < 10; i++ {
+				msg, err := sub.NextMsg(500 * time.Millisecond)
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+				if msg.Subject != "foo" && msg.Subject != "baz" {
+					t.Fatalf("Unexpected message subject: %s", msg.Subject)
+				}
+			}
+		})
 	}
 
 }
