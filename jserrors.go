@@ -63,7 +63,8 @@ var (
 	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
 
 	// ErrConsumerMultipleFilterSubjectsNotSupported is returned when the connected nats-server version does not support setting
-	// multiple filter subjects with filter_subjects field.
+	// multiple filter subjects with filter_subjects field. If this error is returned when executing AddConsumer(), the consumer with invalid
+	// configuration was already created in the server.
 	ErrConsumerMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "multiple consumer filter subjects not supported by nats-server"}
 
 	// ErrConsumerConfigRequired is returned when empty consumer consuguration is supplied to add/update consumer.
