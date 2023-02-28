@@ -511,6 +511,7 @@ func TestSelectNextServer(t *testing.T) {
 	opts := GetDefaultOptions()
 	opts.Servers = testServers
 	opts.NoRandomize = true
+	opts.MaxReconnect = 60
 	nc := &Conn{Opts: opts}
 	if err := nc.setupServerPool(); err != nil {
 		t.Fatalf("Problem setting up Server Pool: %v\n", err)
@@ -1609,14 +1610,14 @@ func TestExpiredAuthentication(t *testing.T) {
 		name          string
 		expectedProto string
 		expectedErr   error
-		ignoreAbort   bool
+		withAuthAbort bool
 	}{
-		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired, false},
-		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked, false},
-		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired, false},
 		{"expired users credentials", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired, true},
 		{"revoked users credentials", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked, true},
 		{"expired account", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired, true},
+		{"expired users credentials, abort connection", AUTHENTICATION_EXPIRED_ERR, ErrAuthExpired, false},
+		{"revoked users credentials, abort connection", AUTHENTICATION_REVOKED_ERR, ErrAuthRevoked, false},
+		{"expired account, abort connection", ACCOUNT_AUTHENTICATION_EXPIRED_ERR, ErrAccountAuthExpired, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			l, e := net.Listen("tcp", "127.0.0.1:0")
@@ -1678,8 +1679,8 @@ func TestExpiredAuthentication(t *testing.T) {
 					ch <- true
 				}),
 			}
-			if test.ignoreAbort {
-				opts = append(opts, IgnoreAuthErrorAbort())
+			if test.withAuthAbort {
+				opts = append(opts, AbortOnAuthErrors())
 			}
 			nc, err := Connect(url, opts...)
 			if err != nil {
@@ -1687,7 +1688,7 @@ func TestExpiredAuthentication(t *testing.T) {
 			}
 			defer nc.Close()
 
-			if test.ignoreAbort {
+			if !test.withAuthAbort {
 				// We expect more than 3 errors, as the connect attempt should not be aborted after 2 failed attempts.
 				for i := 0; i < 4; i++ {
 					select {
@@ -2171,7 +2172,7 @@ func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	}
 }
 
-func TestAuthErrorOnReconnect(t *testing.T) {
+func TestAuthErrorOnReconnectWithAuthErrorAbort(t *testing.T) {
 	// This is a bit of an artificial test, but it is to demonstrate
 	// that if the client is disconnected from a server (not due to an auth error),
 	// it will still correctly stop the reconnection logic if it gets twice an
@@ -2199,6 +2200,7 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 		MaxReconnects(-1),
 		DontRandomize(),
 		ErrorHandler(func(_ *Conn, _ *Subscription, _ error) {}),
+		AbortOnAuthErrors(),
 		DisconnectErrHandler(func(_ *Conn, e error) {
 			dch <- true
 		}),
@@ -2945,6 +2947,49 @@ func TestInProcessConn(t *testing.T) {
 	// The server should respond to a request.
 	if _, err := nc.RTT(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultReconnectBackoffHandler(t *testing.T) {
+	tests := []struct {
+		name          string
+		attempts      int
+		jitter        time.Duration
+		expectedRange []time.Duration
+	}{
+		{
+			name:          "4 attempts, no jitter",
+			attempts:      4,
+			expectedRange: []time.Duration{80 * time.Millisecond},
+		},
+		{
+			name:          "1 attempt, no jitter, return base value",
+			attempts:      1,
+			expectedRange: []time.Duration{10 * time.Millisecond},
+		},
+		{
+			name:          "100 attempts, no jitter, return max",
+			attempts:      100,
+			expectedRange: []time.Duration{2 * time.Minute},
+		},
+		{
+			name:          "4 attempts, with jitter",
+			attempts:      4,
+			jitter:        20 * time.Millisecond,
+			expectedRange: []time.Duration{80 * time.Millisecond, 99 * time.Millisecond},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cb := DefaultReconnectBackoffHandler(test.jitter)
+			res := cb(test.attempts)
+			if test.jitter == 0 {
+				if res != test.expectedRange[0] {
+					t.Fatalf("Invalid result; want: %s; got: %s", test.expectedRange[0], res)
+				}
+			}
+		})
 	}
 }
 

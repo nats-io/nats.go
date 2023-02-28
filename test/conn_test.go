@@ -2564,6 +2564,7 @@ func TestRetryOnFailedConnect(t *testing.T) {
 		nats.RetryOnFailedConnect(true),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(15*time.Millisecond),
+		nats.AbortOnAuthErrors(),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			ch <- true
 		}),

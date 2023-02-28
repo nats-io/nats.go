@@ -8629,7 +8629,7 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 		}
 		hbMissed <- struct{}{}
 	}
-	nc, js := jsClient(t, s, nats.ErrorHandler(errHandler))
+	nc, js := jsClient(t, s, nats.ErrorHandler(errHandler), nats.ReconnectWait(500*time.Millisecond))
 	defer nc.Close()
 
 	if _, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}}); err != nil {

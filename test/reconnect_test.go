@@ -30,15 +30,6 @@ func startReconnectServer(t *testing.T) *server.Server {
 	return RunServerOnPort(22222)
 }
 
-func TestReconnectTotalTime(t *testing.T) {
-	opts := nats.GetDefaultOptions()
-	totalReconnectTime := time.Duration(opts.MaxReconnect) * opts.ReconnectWait
-	if totalReconnectTime < (2 * time.Minute) {
-		t.Fatalf("Total reconnect time should be at least 2 mins: Currently %v\n",
-			totalReconnectTime)
-	}
-}
-
 func TestDefaultReconnectJitter(t *testing.T) {
 	opts := nats.GetDefaultOptions()
 	if opts.ReconnectJitter != nats.DefaultReconnectJitter {
@@ -123,7 +114,6 @@ var reconnectOpts = nats.Options{
 	Url:            "nats://127.0.0.1:22222",
 	AllowReconnect: true,
 	MaxReconnect:   10,
-	ReconnectWait:  100 * time.Millisecond,
 	Timeout:        nats.DefaultTimeout,
 }
 
