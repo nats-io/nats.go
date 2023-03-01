@@ -107,6 +107,24 @@ func (c *EncodedConn) PublishRequest(subject, reply string, v interface{}) error
 	return c.Conn.publish(subject, reply, nil, b)
 }
 
+// PublishMsg publishes combination of Msg structure with data argument.
+// Msg includes the Subject, an optional Reply and Header, Data will be ignored.
+// The data argument will be encoded using the associated encoder.
+func (c *EncodedConn) PublishMsg(m *Msg, v interface{}) error {
+	if m == nil {
+		return ErrInvalidMsg
+	}
+	b, err := c.Enc.Encode(m.Subject, v)
+	if err != nil {
+		return err
+	}
+	hdr, err := m.headerBytes()
+	if err != nil {
+		return err
+	}
+	return c.Conn.publish(m.Subject, m.Reply, hdr, b)
+}
+
 // Request will create an Inbox and perform a Request() call
 // with the Inbox reply for the data v. A response will be
 // decoded into the vPtr Response.
@@ -142,6 +160,7 @@ func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, t
 //
 //	handler := func(m *Msg)
 //	handler := func(p *person)
+//	handler := func(m *Msg, p *person)
 //	handler := func(subject string, o *obj)
 //	handler := func(subject, reply string, o *obj)
 //
@@ -152,17 +171,49 @@ func (c *EncodedConn) Request(subject string, v interface{}, vPtr interface{}, t
 // subject and the reply subject.
 type Handler interface{}
 
+type argInfoType int
+
+const (
+	argInfoInvalid argInfoType = iota
+	argInfoRawMsg
+	argInfoEncoded
+	argInfoRawMsgAndEncoded
+	argInfoSubjectAndEncoded
+	argInfoSubjectReplyAndEncoded
+)
+
 // Dissect the cb Handler's signature
-func argInfo(cb Handler) (reflect.Type, int) {
+func argInfo(cb Handler) (argInfoType, reflect.Type) {
 	cbType := reflect.TypeOf(cb)
 	if cbType.Kind() != reflect.Func {
 		panic("nats: Handler needs to be a func")
 	}
 	numArgs := cbType.NumIn()
 	if numArgs == 0 {
-		return nil, numArgs
+		return argInfoInvalid, nil
 	}
-	return cbType.In(numArgs - 1), numArgs
+	argType := cbType.In(numArgs - 1)
+	switch numArgs {
+	case 1:
+		// raw msg or encoded
+		if argType == emptyMsgType {
+			return argInfoRawMsg, nil
+		} else {
+			return argInfoEncoded, argType
+		}
+	case 2:
+		// (subject, encoded) or (raw msg, encoded)
+		if cbType.In(0) == emptyMsgType {
+			return argInfoRawMsgAndEncoded, argType
+		} else {
+			return argInfoSubjectAndEncoded, argType
+		}
+	case 3:
+		// (subject, reply, encoded)
+		return argInfoSubjectReplyAndEncoded, argType
+	default:
+		return argInfoInvalid, nil
+	}
 }
 
 var emptyMsgType = reflect.TypeOf(&Msg{})
@@ -186,17 +237,16 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 	if cb == nil {
 		return nil, errors.New("nats: Handler required for EncodedConn Subscription")
 	}
-	argType, numArgs := argInfo(cb)
-	if argType == nil {
-		return nil, errors.New("nats: Handler requires at least one argument")
+	info, argType := argInfo(cb)
+	if info == argInfoInvalid {
+		return nil, errors.New("nats: Handler requires one to three arguments")
 	}
 
 	cbValue := reflect.ValueOf(cb)
-	wantsRaw := (argType == emptyMsgType)
 
 	natsCB := func(m *Msg) {
 		var oV []reflect.Value
-		if wantsRaw {
+		if info == argInfoRawMsg {
 			oV = []reflect.Value{reflect.ValueOf(m)}
 		} else {
 			var oPtr reflect.Value
@@ -218,13 +268,19 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 			}
 
 			// Callback Arity
-			switch numArgs {
-			case 1:
+			switch info {
+			case argInfoEncoded:
 				oV = []reflect.Value{oPtr}
-			case 2:
+
+			case argInfoRawMsgAndEncoded:
+				rawM := reflect.ValueOf(m)
+				oV = []reflect.Value{rawM, oPtr}
+
+			case argInfoSubjectAndEncoded:
 				subV := reflect.ValueOf(m.Subject)
 				oV = []reflect.Value{subV, oPtr}
-			case 3:
+
+			case argInfoSubjectReplyAndEncoded:
 				subV := reflect.ValueOf(m.Subject)
 				replyV := reflect.ValueOf(m.Reply)
 				oV = []reflect.Value{subV, replyV, oPtr}

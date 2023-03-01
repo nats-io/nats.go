@@ -222,6 +222,28 @@ func TestRequest(t *testing.T) {
 		t.Fatal("Did not get message")
 	}
 
+	if _, err := c.Subscribe("bar", func(m *Msg, p *testdata.Person) {
+		if p.Name != sentName {
+			t.Fatalf("Got wrong name: %v instead of %v", p.Name, sentName)
+		}
+		if m.Header.Get("hello") != "world" {
+			t.Fatalf("Got wrong header: %v instead of 'world'", m.Header.Get("hello"))
+		}
+		dch <- true
+	}); err != nil {
+		t.Fatalf("Unable to create subscription: %v", err)
+	}
+
+	msg := NewMsg("bar")
+	msg.Header.Add("hello", "world")
+	if err := c.PublishMsg(msg, &testdata.Person{Name: sentName}); err != nil {
+		t.Fatalf("Unable to publish: %v", err)
+	}
+
+	if err := Wait(dch); err != nil {
+		t.Fatal("Did not get message")
+	}
+
 	response := &testdata.Person{}
 	if err := c.Request("foo", &testdata.Person{Name: sentName}, response, 2*time.Second); err != nil {
 		t.Fatalf("Unable to publish: %v", err)
