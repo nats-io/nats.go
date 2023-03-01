@@ -1206,7 +1206,10 @@ func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
 	// Publish on enough subjects to exercise the pagination
 	payload := make([]byte, 10)
 	for i := 0; i < 100001; i++ {
-		nc.Publish(fmt.Sprintf("test.%d", i), payload)
+		_, err := js.Publish(fmt.Sprintf("test.%d", i), payload)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 	}
 
 	// Check that passing a filter returns the subject details
