@@ -2192,7 +2192,7 @@ func Description(description string) SubOpt {
 }
 
 // Durable defines the consumer name for JetStream durable subscribers.
-// This function will return ErrInvalidConsumerName in the name contains
+// This function will return ErrInvalidConsumerName if the name contains
 // any dot ".".
 func Durable(consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
