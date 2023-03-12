@@ -74,8 +74,9 @@ type (
 	EndpointOpt func(*endpointOpts) error
 
 	endpointOpts struct {
-		subject string
-		schema  *Schema
+		subject  string
+		schema   *Schema
+		metadata map[string]string
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -90,9 +91,10 @@ type (
 
 	// ServiceIdentity contains fields helping to identity a service instance.
 	ServiceIdentity struct {
-		Name    string `json:"name"`
-		ID      string `json:"id"`
-		Version string `json:"version"`
+		Name     string            `json:"name"`
+		ID       string            `json:"id"`
+		Version  string            `json:"version"`
+		Metadata map[string]string `json:"metadata"`
 	}
 
 	// Stats is the type returned by STATS monitoring endpoint.
@@ -139,9 +141,10 @@ type (
 	}
 
 	EndpointSchema struct {
-		Name    string `json:"name"`
-		Subject string `json:"subject"`
-		Schema  Schema `json:"schema,omitempty"`
+		Name     string            `json:"name"`
+		Subject  string            `json:"subject"`
+		Metadata map[string]string `json:"metadata"`
+		Schema   Schema            `json:"schema,omitempty"`
 	}
 
 	// Schema can be used to configure a schema for a service.
@@ -187,6 +190,9 @@ type (
 		// APIURL is an optional url pointing to API specification.
 		APIURL string `json:"api_url"`
 
+		// Metadata annotates the service
+		Metadata map[string]string `json:"metadata,omitempty"`
+
 		// StatsHandler is a user-defined custom function.
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
@@ -207,6 +213,9 @@ type (
 
 		// Schema is an optional request/response endpoint schema.
 		Schema *Schema
+
+		// Metadata annotates the service
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// NATSError represents an error returned by a NATS Subscription.
@@ -331,11 +340,6 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		verbSubs:  make(map[string]*nats.Subscription),
 		endpoints: make([]*Endpoint, 0),
 	}
-	svcIdentity := ServiceIdentity{
-		Name:    config.Name,
-		ID:      id,
-		Version: config.Version,
-	}
 
 	svc.setupAsyncCallbacks()
 
@@ -345,6 +349,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		opts := []EndpointOpt{WithEndpointSubject(config.Endpoint.Subject)}
 		if config.Endpoint.Schema != nil {
 			opts = append(opts, WithEndpointSchema(config.Endpoint.Schema))
+		}
+		if config.Endpoint.Metadata != nil {
+			opts = append(opts, WithEndpointMetadata(config.Endpoint.Metadata))
 		}
 		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
 			svc.asyncDispatcher.close()
@@ -363,7 +370,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	}
 
 	ping := Ping{
-		ServiceIdentity: svcIdentity,
+		ServiceIdentity: svc.serviceIdentity(),
 		Type:            PingResponseType,
 	}
 	pingHandler := func(req Request) {
@@ -426,10 +433,10 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 	if options.subject != "" {
 		subject = options.subject
 	}
-	return addEndpoint(s, name, subject, handler, options.schema)
+	return addEndpoint(s, name, subject, handler, options.schema, options.metadata)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler, schema *Schema) error {
+func addEndpoint(s *service, name, subject string, handler Handler, schema *Schema, metadata map[string]string) error {
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
 	}
@@ -439,9 +446,10 @@ func addEndpoint(s *service, name, subject string, handler Handler, schema *Sche
 	endpoint := &Endpoint{
 		service: s,
 		EndpointConfig: EndpointConfig{
-			Subject: subject,
-			Handler: handler,
-			Schema:  schema,
+			Subject:  subject,
+			Handler:  handler,
+			Schema:   schema,
+			Metadata: metadata,
 		},
 	}
 	sub, err := s.nc.QueueSubscribe(
@@ -684,21 +692,27 @@ func restoreAsyncHandlers(nc *nats.Conn, handlers handlers) {
 	nc.SetErrorHandler(handlers.asyncErr)
 }
 
+func (s *service) serviceIdentity() ServiceIdentity {
+	return ServiceIdentity{
+		Name:     s.Config.Name,
+		ID:       s.id,
+		Version:  s.Config.Version,
+		Metadata: s.Config.Metadata,
+	}
+}
+
 // Info returns information about the service
 func (s *service) Info() Info {
 	endpoints := make([]string, 0, len(s.endpoints))
 	for _, e := range s.endpoints {
 		endpoints = append(endpoints, e.Subject)
 	}
+
 	return Info{
-		ServiceIdentity: ServiceIdentity{
-			Name:    s.Config.Name,
-			ID:      s.id,
-			Version: s.Config.Version,
-		},
-		Type:        InfoResponseType,
-		Description: s.Config.Description,
-		Subjects:    endpoints,
+		ServiceIdentity: s.serviceIdentity(),
+		Type:            InfoResponseType,
+		Description:     s.Config.Description,
+		Subjects:        endpoints,
 	}
 }
 
@@ -706,16 +720,12 @@ func (s *service) Info() Info {
 func (s *service) Stats() Stats {
 	s.m.Lock()
 	defer s.m.Unlock()
-	info := s.Info()
+
 	stats := Stats{
-		ServiceIdentity: ServiceIdentity{
-			Name:    info.Name,
-			ID:      info.ID,
-			Version: info.Version,
-		},
-		Endpoints: make([]*EndpointStats, 0),
-		Type:      StatsResponseType,
-		Started:   s.started,
+		ServiceIdentity: s.serviceIdentity(),
+		Endpoints:       make([]*EndpointStats, 0),
+		Type:            StatsResponseType,
+		Started:         s.started,
 	}
 	for _, endpoint := range s.endpoints {
 		endpointStats := &EndpointStats{
@@ -763,14 +773,15 @@ func (s *service) schema() SchemaResp {
 		}
 
 		endpoints = append(endpoints, EndpointSchema{
-			Name:    e.stats.Name,
-			Subject: e.stats.Subject,
-			Schema:  schema,
+			Name:     e.stats.Name,
+			Subject:  e.stats.Subject,
+			Metadata: e.EndpointConfig.Metadata,
+			Schema:   schema,
 		})
 	}
 
 	return SchemaResp{
-		ServiceIdentity: s.Info().ServiceIdentity,
+		ServiceIdentity: s.serviceIdentity(),
 		Type:            SchemaResponseType,
 		APIURL:          s.APIURL,
 		Endpoints:       endpoints,
@@ -796,7 +807,7 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	if g.prefix == "" {
 		endpointSubject = subject
 	}
-	return addEndpoint(g.service, name, endpointSubject, handler, options.schema)
+	return addEndpoint(g.service, name, endpointSubject, handler, options.schema, options.metadata)
 }
 
 func (g *group) AddGroup(name string) Group {
@@ -872,6 +883,13 @@ func WithEndpointSubject(subject string) EndpointOpt {
 func WithEndpointSchema(schema *Schema) EndpointOpt {
 	return func(e *endpointOpts) error {
 		e.schema = schema
+		return nil
+	}
+}
+
+func WithEndpointMetadata(metadata map[string]string) EndpointOpt {
+	return func(e *endpointOpts) error {
+		e.metadata = metadata
 		return nil
 	}
 }
