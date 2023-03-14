@@ -1159,8 +1159,9 @@ func TestServiceStats(t *testing.T) {
 				Version: "0.1.0",
 				APIURL:  "http://someapi.com/v1",
 				Endpoint: &micro.EndpointConfig{
-					Subject: "test.func",
-					Handler: micro.HandlerFunc(handler),
+					Subject:  "test.func",
+					Handler:  micro.HandlerFunc(handler),
+					Metadata: map[string]string{"test": "value"},
 					Schema: &micro.Schema{
 						Request:  "some_request",
 						Response: "some_response",
@@ -1277,6 +1278,11 @@ func TestServiceStats(t *testing.T) {
 			}
 			if stats.Type != micro.StatsResponseType {
 				t.Errorf("Invalid response type; want: %s; got: %s", micro.StatsResponseType, stats.Type)
+			}
+			if test.config.Endpoint != nil && test.config.Endpoint.Metadata != nil {
+				if !reflect.DeepEqual(test.config.Endpoint.Metadata, stats.Endpoints[0].Metadata) {
+					t.Errorf("invalid endpoint metadata: %v", stats.Endpoints[0].Metadata)
+				}
 			}
 
 			if test.expectedStats != nil {
