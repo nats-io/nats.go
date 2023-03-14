@@ -67,6 +67,7 @@ func TestServiceBasics(t *testing.T) {
 		Name:        "CoolAddService",
 		Version:     "0.1.0",
 		Description: "Add things together",
+		Metadata:    map[string]string{"basic": "metadata"},
 		Endpoint: &micro.EndpointConfig{
 			Subject: "svc.add",
 			Handler: micro.HandlerFunc(doAdd),
@@ -97,6 +98,9 @@ func TestServiceBasics(t *testing.T) {
 		}
 		if len(info.Description) == 0 || len(info.Version) == 0 {
 			t.Fatalf("Expected non empty description and version")
+		}
+		if !reflect.DeepEqual(info.Metadata, map[string]string{"basic": "metadata"}) {
+			t.Fatalf("invalid metadata: %v", info.Metadata)
 		}
 	}
 
@@ -206,14 +210,16 @@ func TestAddService(t *testing.T) {
 		{
 			name: "minimal config",
 			givenConfig: micro.Config{
-				Name:    "test_service",
-				Version: "0.1.0",
+				Name:     "test_service",
+				Version:  "0.1.0",
+				Metadata: map[string]string{"basic": "metadata"},
 			},
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{"basic": "metadata"},
 				},
 			},
 		},
@@ -223,8 +229,9 @@ func TestAddService(t *testing.T) {
 				Name:    "test_service",
 				Version: "0.1.0",
 				Endpoint: &micro.EndpointConfig{
-					Subject: "test",
-					Handler: micro.HandlerFunc(testHandler),
+					Subject:  "test",
+					Handler:  micro.HandlerFunc(testHandler),
+					Metadata: map[string]string{"basic": "endpoint_metadata"},
 				},
 			},
 			expectedPing: micro.Ping{
@@ -476,7 +483,7 @@ func TestAddService(t *testing.T) {
 			}
 
 			test.expectedPing.ID = info.ID
-			if test.expectedPing != ping {
+			if !reflect.DeepEqual(test.expectedPing, ping) {
 				t.Fatalf("Invalid ping response; want: %+v; got: %+v", test.expectedPing, ping)
 			}
 
@@ -752,8 +759,9 @@ func TestMonitoringHandlers(t *testing.T) {
 		APIURL:       "http://someapi.com/v1",
 		ErrorHandler: errHandler,
 		Endpoint: &micro.EndpointConfig{
-			Subject: "test.func",
-			Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			Subject:  "test.func",
+			Handler:  micro.HandlerFunc(func(r micro.Request) {}),
+			Metadata: map[string]string{"basic": "schema"},
 			Schema: &micro.Schema{
 				Request:  "request_schema",
 				Response: "response_schema",
@@ -867,8 +875,9 @@ func TestMonitoringHandlers(t *testing.T) {
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
 					{
-						Name:    "default",
-						Subject: "test.func",
+						Name:     "default",
+						Subject:  "test.func",
+						Metadata: map[string]string{"basic": "schema"},
 						Schema: micro.Schema{
 							Request:  "request_schema",
 							Response: "response_schema",
@@ -890,8 +899,9 @@ func TestMonitoringHandlers(t *testing.T) {
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
 					{
-						Name:    "default",
-						Subject: "test.func",
+						Name:     "default",
+						Subject:  "test.func",
+						Metadata: map[string]string{"basic": "schema"},
 						Schema: micro.Schema{
 							Request:  "request_schema",
 							Response: "response_schema",
@@ -913,8 +923,9 @@ func TestMonitoringHandlers(t *testing.T) {
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
 					{
-						Name:    "default",
-						Subject: "test.func",
+						Name:     "default",
+						Subject:  "test.func",
+						Metadata: map[string]string{"basic": "schema"},
 						Schema: micro.Schema{
 							Request:  "request_schema",
 							Response: "response_schema",
