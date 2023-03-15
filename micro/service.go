@@ -108,14 +108,15 @@ type (
 
 	// EndpointStats contains stats for a specific endpoint.
 	EndpointStats struct {
-		Name                  string          `json:"name"`
-		Subject               string          `json:"subject"`
-		NumRequests           int             `json:"num_requests"`
-		NumErrors             int             `json:"num_errors"`
-		LastError             string          `json:"last_error"`
-		ProcessingTime        time.Duration   `json:"processing_time"`
-		AverageProcessingTime time.Duration   `json:"average_processing_time"`
-		Data                  json.RawMessage `json:"data,omitempty"`
+		Name                  string            `json:"name"`
+		Subject               string            `json:"subject"`
+		Metadata              map[string]string `json:"metadata"`
+		NumRequests           int               `json:"num_requests"`
+		NumErrors             int               `json:"num_errors"`
+		LastError             string            `json:"last_error"`
+		ProcessingTime        time.Duration     `json:"processing_time"`
+		AverageProcessingTime time.Duration     `json:"average_processing_time"`
+		Data                  json.RawMessage   `json:"data,omitempty"`
 	}
 
 	// Ping is the response type for PING monitoring endpoint.
@@ -465,8 +466,9 @@ func addEndpoint(s *service, name, subject string, handler Handler, schema *Sche
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
 	endpoint.stats = EndpointStats{
-		Name:    name,
-		Subject: subject,
+		Name:     name,
+		Subject:  subject,
+		Metadata: endpoint.Metadata,
 	}
 	return nil
 }
@@ -731,6 +733,7 @@ func (s *service) Stats() Stats {
 		endpointStats := &EndpointStats{
 			Name:                  endpoint.stats.Name,
 			Subject:               endpoint.stats.Subject,
+			Metadata:              endpoint.stats.Metadata,
 			NumRequests:           endpoint.stats.NumRequests,
 			NumErrors:             endpoint.stats.NumErrors,
 			LastError:             endpoint.stats.LastError,
@@ -845,8 +848,9 @@ func (e *Endpoint) stop() error {
 
 func (e *Endpoint) reset() {
 	e.stats = EndpointStats{
-		Name:    e.stats.Name,
-		Subject: e.stats.Subject,
+		Name:     e.stats.Name,
+		Subject:  e.stats.Subject,
+		Metadata: e.stats.Metadata,
 	}
 }
 
