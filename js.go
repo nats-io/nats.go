@@ -1610,6 +1610,8 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if isPullMode {
 		nms = fmt.Sprintf(js.apiSubj(apiRequestNextT), stream, consumer)
 		deliver = nc.NewInbox()
+		// for pull consumers, create a wildcard subscription to differentiate pull requests
+		deliver += ".*"
 	}
 
 	// In case this has a context, then create a child context that
@@ -2629,7 +2631,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 
 	nc := sub.conn
 	nms := sub.jsi.nms
-	rply := sub.jsi.deliver
+	rply, reqID := newFetchInbox(jsi.deliver)
 	js := sub.jsi.js
 	pmc := len(sub.mch) > 0
 
@@ -2751,10 +2753,18 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 					// wait this time.
 					noWait = false
 					err = sendReq()
-				} else if err == ErrTimeout && len(msgs) == 0 {
+				} else if err == ErrTimeout {
 					// If we get a 408, we will bail if we already collected some
-					// messages, otherwise ignore and go back calling NextMsg.
-					err = nil
+					// messages, otherwise ignore and go back calling nextMsg.
+					if len(msgs) == 0 {
+						err = nil
+						continue
+					}
+					subjectParts := strings.Split(msg.Subject, ".")
+					// ignore timeout message from server if it comes from a different pull request
+					if reqID != "" && subjectParts[len(subjectParts)-1] != reqID {
+						err = nil
+					}
 				}
 			}
 		}
@@ -2764,6 +2774,20 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		return nil, o.checkCtxErr(err)
 	}
 	return msgs, nil
+}
+
+// newFetchInbox returns subject used as reply subject when sending pull requests
+// as well as request ID. For non-wildcard subject, request ID is empty and
+// passed subject is not transformed
+func newFetchInbox(subj string) (string, string) {
+	if !strings.HasSuffix(subj, ".*") {
+		return subj, ""
+	}
+	reqID := nuid.Next()
+	var sb strings.Builder
+	sb.WriteString(subj[:len(subj)-1])
+	sb.WriteString(reqID)
+	return sb.String(), reqID
 }
 
 // MessageBatch provides methods to retrieve messages consumed using [Subscribe.FetchBatch].
@@ -2835,7 +2859,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 
 	nc := sub.conn
 	nms := sub.jsi.nms
-	rply := sub.jsi.deliver
+	rply, reqID := newFetchInbox(sub.jsi.deliver)
 	js := sub.jsi.js
 	pmc := len(sub.mch) > 0
 
@@ -2964,6 +2988,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			usrMsg, err = checkMsg(msg, true, false)
 			if err != nil {
 				if err == ErrTimeout {
+					subjectParts := strings.Split(msg.Subject, ".")
+					if reqID != "" && subjectParts[len(subjectParts)-1] != reqID {
+						// ignore timeout message from server if it comes from a different pull request
+						continue
+					}
 					err = nil
 				}
 				break
