@@ -2760,9 +2760,8 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 						err = nil
 						continue
 					}
-					subjectParts := strings.Split(msg.Subject, ".")
 					// ignore timeout message from server if it comes from a different pull request
-					if reqID != "" && subjectParts[len(subjectParts)-1] != reqID {
+					if reqID != "" && !subjectMatchesReqID(msg.Subject, reqID) {
 						err = nil
 					}
 				}
@@ -2788,6 +2787,14 @@ func newFetchInbox(subj string) (string, string) {
 	sb.WriteString(subj[:len(subj)-1])
 	sb.WriteString(reqID)
 	return sb.String(), reqID
+}
+
+func subjectMatchesReqID(subject, reqID string) bool {
+	subjectParts := strings.Split(subject, ".")
+	if len(subjectParts) < 2 {
+		return false
+	}
+	return subjectParts[len(subjectParts)-1] == reqID
 }
 
 // MessageBatch provides methods to retrieve messages consumed using [Subscribe.FetchBatch].
@@ -2988,8 +2995,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			usrMsg, err = checkMsg(msg, true, false)
 			if err != nil {
 				if err == ErrTimeout {
-					subjectParts := strings.Split(msg.Subject, ".")
-					if reqID != "" && subjectParts[len(subjectParts)-1] != reqID {
+					if reqID != "" && !subjectMatchesReqID(msg.Subject, reqID) {
 						// ignore timeout message from server if it comes from a different pull request
 						continue
 					}
