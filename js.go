@@ -2631,7 +2631,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 
 	nc := sub.conn
 	nms := sub.jsi.nms
-	rply, reqID := newFetchInbox(jsi.deliver)
+	rply, _ := newFetchInbox(jsi.deliver)
 	js := sub.jsi.js
 	pmc := len(sub.mch) > 0
 
@@ -2753,17 +2753,10 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 					// wait this time.
 					noWait = false
 					err = sendReq()
-				} else if err == ErrTimeout {
+				} else if err == ErrTimeout && len(msgs) == 0 {
 					// If we get a 408, we will bail if we already collected some
 					// messages, otherwise ignore and go back calling nextMsg.
-					if len(msgs) == 0 {
-						err = nil
-						continue
-					}
-					// ignore timeout message from server if it comes from a different pull request
-					if reqID != "" && !subjectMatchesReqID(msg.Subject, reqID) {
-						err = nil
-					}
+					err = nil
 				}
 			}
 		}
