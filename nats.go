@@ -3028,6 +3028,7 @@ func (nc *Conn) processMsg(data []byte) {
 	// Copy them into string
 	subj := string(nc.ps.ma.subject)
 	reply := string(nc.ps.ma.reply)
+	fmt.Println("MSG", sub.Subject, subj, reply, string(data))
 
 	// Doing message create outside of the sub's lock to reduce contention.
 	// It's possible that we end-up not using the message, but that's ok.

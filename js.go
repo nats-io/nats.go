@@ -2745,6 +2745,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 				var usrMsg bool
 
 				usrMsg, err = checkMsg(msg, true, noWait)
+				fmt.Printf("inbox=%v, err=%v, msgs=%v, header=%v\n", rply, err, len(msgs), msg.Header)
 				if err == nil && usrMsg {
 					msgs = append(msgs, msg)
 				} else if noWait && (err == errNoMessages || err == errRequestsPending) && len(msgs) == 0 {
