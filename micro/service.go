@@ -325,7 +325,7 @@ func (s Verb) String() string {
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
-func AddService(nc *nats.Conn, config Config) (_ Service, err error) {
+func AddService(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
 	}
@@ -346,11 +346,6 @@ func AddService(nc *nats.Conn, config Config) (_ Service, err error) {
 	// custom callbacks, the events are queued and invoked by the same
 	// goroutine, starting now.
 	go svc.asyncDispatcher.run()
-	defer func() {
-		if err != nil {
-			svc.asyncDispatcher.close()
-		}
-	}()
 	svc.wrapConnectionEventCallbacks()
 
 	if config.Endpoint != nil {
@@ -362,6 +357,7 @@ func AddService(nc *nats.Conn, config Config) (_ Service, err error) {
 			opts = append(opts, WithEndpointMetadata(config.Endpoint.Metadata))
 		}
 		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
+			svc.asyncDispatcher.close()
 			return nil, err
 		}
 	}
@@ -391,6 +387,7 @@ func AddService(nc *nats.Conn, config Config) (_ Service, err error) {
 	} {
 		handler := handleVerb(verb, source)
 		if err := svc.addVerbHandlers(nc, verb, handler); err != nil {
+			svc.asyncDispatcher.close()
 			return nil, err
 		}
 	}
