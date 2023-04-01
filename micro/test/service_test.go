@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
 
@@ -237,8 +238,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -256,8 +258,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -274,8 +277,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -292,8 +296,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 			asyncErrorSubject: "func",
@@ -311,8 +316,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 			asyncErrorSubject: "$SRV.PING.test_service",
@@ -336,8 +342,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 			asyncErrorSubject: "test.sub",
@@ -361,8 +368,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -385,8 +393,9 @@ func TestAddService(t *testing.T) {
 			expectedPing: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
+					Name:     "test_service",
+					Version:  "0.1.0",
+					Metadata: map[string]string{},
 				},
 			},
 			asyncErrorSubject: "$SRV.PING.TEST_SERVICE",
@@ -793,9 +802,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -805,9 +815,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -817,9 +828,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Ping{
 				Type: micro.PingResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 			},
 		},
@@ -829,9 +841,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Info{
 				Type: micro.InfoResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				Subjects: []string{"test.func"},
 			},
@@ -842,9 +855,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Info{
 				Type: micro.InfoResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				Subjects: []string{"test.func"},
 			},
@@ -855,9 +869,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.Info{
 				Type: micro.InfoResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				Subjects: []string{"test.func"},
 			},
@@ -868,9 +883,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.SchemaResp{
 				Type: micro.SchemaResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
@@ -892,9 +908,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.SchemaResp{
 				Type: micro.SchemaResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
@@ -916,9 +933,10 @@ func TestMonitoringHandlers(t *testing.T) {
 			expectedResponse: micro.SchemaResp{
 				Type: micro.SchemaResponseType,
 				ServiceIdentity: micro.ServiceIdentity{
-					Name:    "test_service",
-					Version: "0.1.0",
-					ID:      info.ID,
+					Name:     "test_service",
+					Version:  "0.1.0",
+					ID:       info.ID,
+					Metadata: map[string]string{},
 				},
 				APIURL: "http://someapi.com/v1",
 				Endpoints: []micro.EndpointSchema{
@@ -1457,6 +1475,11 @@ func TestRequestRespond(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer svc.Stop()
+
+			nfo := svc.Info()
+			if nfo.Metadata == nil {
+				t.Fatalf("Produced nil metadata")
+			}
 
 			resp, err := nc.RequestMsg(&nats.Msg{
 				Subject: "test.func",

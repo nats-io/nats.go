@@ -330,6 +330,10 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
+	if config.Metadata == nil {
+		config.Metadata = map[string]string{}
+	}
+
 	id := nuid.Next()
 	svc := &service{
 		Config: config,
@@ -434,6 +438,7 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 	if options.subject != "" {
 		subject = options.subject
 	}
+
 	return addEndpoint(s, name, subject, handler, options.schema, options.metadata)
 }
 
