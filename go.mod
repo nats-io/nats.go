@@ -1,6 +1,6 @@
 module github.com/nats-io/nats.go
 
-go 1.19
+go 1.20
 
 require (
 	github.com/nats-io/nkeys v0.4.4
