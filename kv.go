@@ -283,6 +283,32 @@ type KeyValueEntry interface {
 }
 
 // Errors
+
+// KVError allows wrapping APIError.
+// Some KV errors originate in the API and have a non-nil
+// APIError. E.g.:
+// KVError{apiError: ErrStreamNotFound, message: ErrBucketNotFound}
+type KVError struct {
+	apiErr  *APIError
+	message string
+}
+
+func (err *KVError) APIError() *APIError {
+	return err.apiErr
+}
+
+func (err *KVError) Error() string {
+	return fmt.Sprintf("nats: %s", err.message)
+}
+
+func (err *KVError) Unwrap() error {
+	// Allow matching to embedded APIError in case there is one.
+	if err.apiErr == nil {
+		return nil
+	}
+	return err.apiErr
+}
+
 var (
 	ErrKeyValueConfigRequired = errors.New("nats: config required")
 	ErrInvalidBucketName      = errors.New("nats: invalid bucket name")
