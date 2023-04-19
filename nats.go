@@ -795,6 +795,59 @@ func Connect(url string, options ...Option) (*Conn, error) {
 }
 
 // Options that can be passed to Connect.
+func BuildOpts(opts Options) Option {
+	return func(o *Options) error {
+		o.Url = opts.Url
+		o.InProcessServer = opts.InProcessServer
+		o.Servers = opts.Servers
+		o.NoRandomize = opts.NoRandomize
+		o.NoEcho = opts.NoEcho
+		o.Name = opts.Name
+		o.Verbose = opts.Verbose
+		o.Pedantic = opts.Pedantic
+		o.Secure = opts.Secure
+		o.TLSConfig = opts.TLSConfig
+		o.AllowReconnect = opts.AllowReconnect
+		o.MaxReconnect = opts.MaxReconnect
+		o.ReconnectWait = opts.ReconnectWait
+		o.CustomReconnectDelayCB = opts.CustomReconnectDelayCB
+		o.ReconnectJitter = opts.ReconnectJitter
+		o.ReconnectJitterTLS = opts.ReconnectJitterTLS
+		o.Timeout = opts.Timeout
+		o.DrainTimeout = opts.DrainTimeout
+		o.FlusherTimeout = opts.FlusherTimeout
+		o.PingInterval = opts.PingInterval
+		o.MaxPingsOut = opts.MaxPingsOut
+		o.ClosedCB = opts.ClosedCB
+		o.DisconnectedCB = opts.DisconnectedCB
+		o.DisconnectedErrCB = opts.DisconnectedErrCB
+		o.ConnectedCB = opts.ConnectedCB
+		o.ReconnectedCB = opts.ReconnectedCB
+		o.DiscoveredServersCB = opts.DiscoveredServersCB
+		o.AsyncErrorCB = opts.AsyncErrorCB
+		o.ReconnectBufSize = opts.ReconnectBufSize
+		o.SubChanLen = opts.SubChanLen
+		o.UserJWT = opts.UserJWT
+		o.Nkey = opts.Nkey
+		o.SignatureCB = opts.SignatureCB
+		o.User = opts.User
+		o.Password = opts.Password
+		o.Token = opts.Token
+		o.TokenHandler = opts.TokenHandler
+		o.Dialer = opts.Dialer
+		o.CustomDialer = opts.CustomDialer
+		o.UseOldRequestStyle = opts.UseOldRequestStyle
+		o.NoCallbacksAfterClientClose = opts.NoCallbacksAfterClientClose
+		o.LameDuckModeHandler = opts.LameDuckModeHandler
+		o.RetryOnFailedConnect = opts.RetryOnFailedConnect
+		o.Compression = opts.Compression
+		o.ProxyPath = opts.ProxyPath
+		o.InboxPrefix = opts.InboxPrefix
+		o.IgnoreAuthErrorAbort = opts.IgnoreAuthErrorAbort
+		o.SkipHostLookup = opts.SkipHostLookup
+		return nil
+	}
+}
 
 // Name is an Option to set the client name.
 func Name(name string) Option {
