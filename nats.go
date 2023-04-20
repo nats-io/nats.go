@@ -795,7 +795,7 @@ func Connect(url string, options ...Option) (*Conn, error) {
 }
 
 // Options that can be passed to Connect.
-func BuildOpts(opts Options) Option {
+func ConnectOptions(opts Options) Option {
 	return func(o *Options) error {
 		o.Url = opts.Url
 		o.InProcessServer = opts.InProcessServer
