@@ -16,6 +16,7 @@ package test
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -112,12 +113,12 @@ func RunServerOnPort(port int) *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = port
 	opts.Cluster.Name = "testing"
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
 // RunServerWithOptions will run a server with the given options.
-func RunServerWithOptions(opts server.Options) *server.Server {
-	return natsserver.RunServer(&opts)
+func RunServerWithOptions(opts *server.Options) *server.Server {
+	return natsserver.RunServer(opts)
 }
 
 // RunServerWithConfig will run a server with the given configuration file.
@@ -129,7 +130,7 @@ func RunBasicJetStreamServer() *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.JetStream = true
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
 func createConfFile(t *testing.T, content []byte) string {
@@ -145,4 +146,17 @@ func createConfFile(t *testing.T, content []byte) string {
 		t.Fatalf("Error writing conf file: %v", err)
 	}
 	return fName
+}
+
+type testSkipTLSDialer struct {
+	dialer  *net.Dialer
+	skipTLS bool
+}
+
+func (sd *testSkipTLSDialer) Dial(network, address string) (net.Conn, error) {
+	return sd.dialer.Dial(network, address)
+}
+
+func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
+	return sd.skipTLS
 }

@@ -196,7 +196,7 @@ func TestNoHeaderSupport(t *testing.T) {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.NoHeaderSupport = true
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	nc, err := nats.Connect(s.ClientURL())

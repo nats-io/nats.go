@@ -2272,7 +2272,7 @@ func TestConnectWithSimplifiedURLs(t *testing.T) {
 	opts.Username = ""
 	opts.Password = ""
 	// and restart the server
-	s = RunServerWithOptions(*opts)
+	s = RunServerWithOptions(opts)
 	defer s.Shutdown()
 
 	// Test again against a server that wants TLS and check
@@ -2316,7 +2316,7 @@ func TestGetClientID(t *testing.T) {
 	optsA.Cluster.Port = -1
 	optsA.Cluster.Name = "test"
 
-	srvA := RunServerWithOptions(optsA)
+	srvA := RunServerWithOptions(&optsA)
 	defer srvA.Shutdown()
 
 	ch := make(chan bool, 1)
@@ -2347,7 +2347,7 @@ func TestGetClientID(t *testing.T) {
 	optsB.Cluster.Name = "test"
 
 	optsB.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", srvA.ClusterAddr().Port))
-	srvB := RunServerWithOptions(optsB)
+	srvB := RunServerWithOptions(&optsB)
 	defer srvB.Shutdown()
 
 	// Wait for the discovered callback to fire
@@ -2580,7 +2580,7 @@ func TestRetryOnFailedConnect(t *testing.T) {
 	o.Port = 4222
 	o.Username = "user"
 	o.Password = "password"
-	s := RunServerWithOptions(o)
+	s := RunServerWithOptions(&o)
 	defer s.Shutdown()
 
 	select {
@@ -2610,7 +2610,7 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	}
 	opts.TLSTimeout = 0.0001
 
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	ch := make(chan bool, 1)
@@ -2633,7 +2633,7 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	// Replace tls timeout to a reasonable value.
 	s.Shutdown()
 	opts.TLSTimeout = 2.0
-	s = RunServerWithOptions(opts)
+	s = RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	select {
