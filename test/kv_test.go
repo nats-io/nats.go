@@ -15,6 +15,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -1143,5 +1144,239 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	expectOk(t, err)
 	if string(e.Value()) != "ivan" {
 		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
+	}
+}
+
+// Need access to internals for testing.
+// func TestKeyValueDiscardOldToDiscardNew(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	checkDiscard := func(expected nats.DiscardPolicy) nats.KeyValue {
+// 		t.Helper()
+// 		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 1})
+// 		if err != nil {
+// 			t.Fatalf("Error creating store: %v", err)
+// 		}
+// 		si, err := js.StreamInfo("KV_TEST")
+// 		if err != nil {
+// 			t.Fatalf("Error getting stream info: %v", err)
+// 		}
+// 		if si.Config.Discard != expected {
+// 			t.Fatalf("Expected discard policy %v, got %+v", expected, si)
+// 		}
+// 		return kv
+// 	}
+
+// 	// We are going to go from 2.7.1->2.7.2->2.7.1 and 2.7.2 again.
+// 	for i := 0; i < 2; i++ {
+// 		// Change the server version in the connection to
+// 		// create as-if we were connecting to a v2.7.1 server.
+// 		nc.mu.Lock()
+// 		nc.info.Version = "2.7.1"
+// 		nc.mu.Unlock()
+
+// 		kv := checkDiscard(nats.DiscardOld)
+// 		if i == 0 {
+// 			if _, err := kv.PutString("foo", "value"); err != nil {
+// 				t.Fatalf("Error adding key: %v", err)
+// 			}
+// 		}
+
+// 		// Now change version to 2.7.2
+// 		nc.mu.Lock()
+// 		nc.info.Version = "2.7.2"
+// 		nc.mu.Unlock()
+
+// 		kv = checkDiscard(nats.DiscardNew)
+// 		// Make sure the key still exists
+// 		if e, err := kv.Get("foo"); err != nil || string(e.Value()) != "value" {
+// 			t.Fatalf("Error getting key: err=%v e=%+v", err, e)
+// 		}
+// 	}
+// }
+
+// Need access to internals for testing.
+// func TestKeyValueNonDirectGet(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	kvi, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+// 	if err != nil {
+// 		t.Fatalf("Error creating store: %v", err)
+// 	}
+// 	si, err := js.StreamInfo("KV_TEST")
+// 	if err != nil {
+// 		t.Fatalf("Error getting stream info: %v", err)
+// 	}
+// 	if !si.Config.AllowDirect {
+// 		t.Fatal("Expected allow direct to be set, it was not")
+// 	}
+
+// 	kv := kvi.(*kvs)
+// 	if !kv.useDirect {
+// 		t.Fatal("useDirect should have been true, it was not")
+// 	}
+// 	kv.useDirect = false
+
+// 	if _, err := kv.PutString("key1", "val1"); err != nil {
+// 		t.Fatalf("Error putting key: %v", err)
+// 	}
+// 	if _, err := kv.PutString("key2", "val2"); err != nil {
+// 		t.Fatalf("Error putting key: %v", err)
+// 	}
+// 	if v, err := kv.Get("key2"); err != nil || string(v.Value()) != "val2" {
+// 		t.Fatalf("Error on get: v=%+v err=%v", v, err)
+// 	}
+// 	if v, err := kv.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
+// 		t.Fatalf("Error on get revisiong: v=%+v err=%v", v, err)
+// 	}
+// 	if v, err := kv.GetRevision("key1", 2); err == nil {
+// 		t.Fatalf("Expected error, got %+v", v)
+// 	}
+// }
+
+// func TestKeyValueRePublish(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
+// 		Bucket: "TEST_UPDATE",
+// 	}); err != nil {
+// 		t.Fatalf("Error creating store: %v", err)
+// 	}
+// 	// This is expected to fail since server does not support as of now
+// 	// the update of RePublish.
+// 	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
+// 		Bucket:    "TEST_UPDATE",
+// 		RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
+// 	}); err == nil {
+// 		t.Fatal("Expected failure, did not get one")
+// 	}
+
+// 	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+// 		Bucket:    "TEST",
+// 		RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("Error creating store: %v", err)
+// 	}
+// 	si, err := js.StreamInfo("KV_TEST")
+// 	if err != nil {
+// 		t.Fatalf("Error getting stream info: %v", err)
+// 	}
+// 	if si.Config.RePublish == nil {
+// 		t.Fatal("Expected republish to be set, it was not")
+// 	}
+
+// 	sub, err := nc.SubscribeSync("bar.>")
+// 	if err != nil {
+// 		t.Fatalf("Error on sub: %v", err)
+// 	}
+// 	if _, err := kv.Put("foo", []byte("value")); err != nil {
+// 		t.Fatalf("Error on put: %v", err)
+// 	}
+// 	msg, err := sub.NextMsg(time.Second)
+// 	if err != nil {
+// 		t.Fatalf("Error on next: %v", err)
+// 	}
+// 	if v := string(msg.Data); v != "value" {
+// 		t.Fatalf("Unexpected value: %s", v)
+// 	}
+// 	// The message should also have a header with the actual subject
+// 	expected := fmt.Sprintf(kvSubjectsPreTmpl, "TEST") + "foo"
+// 	if v := msg.Header.Get(nats.JSSubject); v != expected {
+// 		t.Fatalf("Expected subject header %q, got %q", expected, v)
+// 	}
+// }
+
+func TestKeyValueMirrorDirectGet(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:         "MIRROR",
+		Mirror:       &nats.StreamSource{Name: "KV_TEST"},
+		MirrorDirect: true,
+	})
+	if err != nil {
+		t.Fatalf("Error creating mirror: %v", err)
+	}
+
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("KEY.%d", i)
+		if _, err := kv.PutString(key, "42"); err != nil {
+			t.Fatalf("Error adding key: %v", err)
+		}
+	}
+
+	// Make sure all gets work.
+	for i := 0; i < 100; i++ {
+		if _, err := kv.Get("KEY.22"); err != nil {
+			t.Fatalf("Got error getting key: %v", err)
+		}
+	}
+}
+
+func TestKeyValueCreate(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	_, err = kv.Create("key", []byte("1"))
+	if err != nil {
+		t.Fatalf("Error creating key: %v", err)
+	}
+
+	_, err = kv.Create("key", []byte("1"))
+	expected := "nats: wrong last sequence: 1: key exists"
+	if err.Error() != expected {
+		t.Fatalf("Expected %q, got: %v", expected, err)
+	}
+	if !errors.Is(err, nats.ErrKeyExists) {
+		t.Fatalf("Expected ErrKeyExists, got: %v", err)
+	}
+	aerr := &nats.APIError{}
+	if !errors.As(err, &aerr) {
+		t.Fatalf("Expected APIError, got: %v", err)
+	}
+	if aerr.Description != "wrong last sequence: 1" {
+		t.Fatalf("Unexpected APIError message, got: %v", aerr.Description)
+	}
+	if aerr.ErrorCode != 10071 {
+		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
+	}
+	if aerr.Code != nats.ErrKeyExists.APIError().Code {
+		t.Fatalf("Unexpected error code, got: %v", aerr.Code)
+	}
+	var kerr nats.JetStreamError
+	if !errors.As(err, &kerr) {
+		t.Fatalf("Expected KeyValueError, got: %v", err)
+	}
+	if kerr.APIError().ErrorCode != 10071 {
+		t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
 	}
 }

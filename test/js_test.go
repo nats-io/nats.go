@@ -31,10 +31,9 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
+	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
-
-	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
 func shutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
@@ -67,7 +66,7 @@ func restartBasicJSServer(t *testing.T, s *server.Server) *server.Server {
 	opts.StoreDir = s.JetStreamConfig().StoreDir
 	s.Shutdown()
 	s.WaitForShutdown()
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
 func TestJetStreamNotEnabled(t *testing.T) {
@@ -476,13 +475,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	initialPending, err := sub.InitialConsumerPending()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if initialPending != 0 {
-		t.Fatalf("Expected no initial pending, got %d", initialPending)
-	}
 	sub.Unsubscribe()
 
 	// Check that Queue subscribe with HB or FC fails.
@@ -570,20 +562,12 @@ func TestJetStreamSubscribe(t *testing.T) {
 			done <- true
 		}
 	})
-
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	expectConsumers(t, 3)
 	defer sub3.Unsubscribe()
 
-	initialPending, err = sub3.InitialConsumerPending()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if initialPending != 10 {
-		t.Fatalf("Expected initial pending of 10, got %d", initialPending)
-	}
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -970,409 +954,6 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
-func TestJetStreamSubscribe_SkipConsumerLookup(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-	_, err := js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.AddConsumer("TEST", &nats.ConsumerConfig{
-		Name:           "cons",
-		DeliverSubject: "_INBOX.foo",
-		AckPolicy:      nats.AckExplicitPolicy,
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// for checking whether subscribe looks up the consumer
-	infoSub, err := nc.SubscribeSync("$JS.API.CONSUMER.INFO.TEST.*")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer infoSub.Unsubscribe()
-
-	// for checking whether subscribe creates the consumer
-	createConsSub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.>")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer createConsSub.Unsubscribe()
-	t.Run("use Bind to skip consumer lookup and create", func(t *testing.T) {
-		sub, err := js.SubscribeSync("", nats.Bind("TEST", "cons"), nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer sub.Unsubscribe()
-		// we should get timeout waiting for msg on CONSUMER.INFO
-		if msg, err := infoSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer lookup; got message on %q", msg.Subject)
-		}
-
-		// we should get timeout waiting for msg on CONSUMER.CREATE
-		if msg, err := createConsSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer create; got message on %q", msg.Subject)
-		}
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if _, err := sub.NextMsg(100 * time.Millisecond); err != nil {
-			t.Fatalf("Expected to receive msg; got: %s", err)
-		}
-	})
-	t.Run("use Durable, skip consumer lookup but overwrite the consumer", func(t *testing.T) {
-		sub, err := js.SubscribeSync("foo", nats.Durable("cons"), nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		// we should get timeout waiting for msg on CONSUMER.INFO
-		if msg, err := infoSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer lookup; got message on %q", msg.Subject)
-		}
-
-		// we should get msg on CONSUMER.CREATE
-		if _, err := createConsSub.NextMsg(50 * time.Millisecond); err != nil {
-			t.Fatalf("Expected consumer create; got: %s", err)
-		}
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if _, err := sub.NextMsg(100 * time.Millisecond); err != nil {
-			t.Fatalf("Expected to receive msg; got: %s", err)
-		}
-	})
-	t.Run("create new consumer with Durable, skip lookup", func(t *testing.T) {
-		sub, err := js.SubscribeSync("foo", nats.Durable("pp"), nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo1"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer sub.Unsubscribe()
-		// we should get timeout waiting for msg on CONSUMER.INFO
-		if msg, err := infoSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer lookup; got message on %q", msg.Subject)
-		}
-
-		// we should get msg on CONSUMER.CREATE
-		if _, err := createConsSub.NextMsg(50 * time.Millisecond); err != nil {
-			t.Fatalf("Expected consumer create; got: %s", err)
-		}
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if _, err := sub.NextMsg(100 * time.Millisecond); err != nil {
-			t.Fatalf("Expected to receive msg; got: %s", err)
-		}
-	})
-	t.Run("create new consumer with ConsumerName, skip lookup", func(t *testing.T) {
-		sub, err := js.SubscribeSync("foo", nats.ConsumerName("pp"), nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo1"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer sub.Unsubscribe()
-		// we should get timeout waiting for msg on CONSUMER.INFO
-		if msg, err := infoSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer lookup; got message on %q", msg.Subject)
-		}
-
-		// we should get msg on CONSUMER.CREATE
-		if _, err := createConsSub.NextMsg(50 * time.Millisecond); err != nil {
-			t.Fatalf("Expected consumer create; got: %s", err)
-		}
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if _, err := sub.NextMsg(100 * time.Millisecond); err != nil {
-			t.Fatalf("Expected to receive msg; got: %s", err)
-		}
-	})
-
-	t.Run("create ephemeral consumer, SkipConsumerLookup has no effect", func(t *testing.T) {
-		sub, err := js.SubscribeSync("foo", nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo2"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer sub.Unsubscribe()
-		// we should get timeout waiting for msg on CONSUMER.INFO
-		if msg, err := infoSub.NextMsg(50 * time.Millisecond); err == nil {
-			t.Fatalf("Expected to skip consumer lookup; got message on %q", msg.Subject)
-		}
-
-		// we should get msg on CONSUMER.CREATE
-		if _, err := createConsSub.NextMsg(50 * time.Millisecond); err != nil {
-			t.Fatalf("Expected consumer create; got: %s", err)
-		}
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if _, err := sub.NextMsg(100 * time.Millisecond); err != nil {
-			t.Fatalf("Expected to receive msg; got: %s", err)
-		}
-	})
-	t.Run("attempt to update ack policy of existing consumer", func(t *testing.T) {
-		_, err := js.SubscribeSync("foo", nats.Durable("cons"), nats.SkipConsumerLookup(), nats.DeliverSubject("_INBOX.foo"), nats.AckAll())
-		if err == nil || !strings.Contains(err.Error(), "ack policy can not be updated") {
-			t.Fatalf("Expected update consumer error, got: %v", err)
-		}
-	})
-}
-
-func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	_, err := js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	sub, err := js.PullSubscribe("foo", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	defer sub.Unsubscribe()
-	for i := 0; i < 5; i++ {
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-	}
-
-	// fetch 5 messages, should finish immediately
-	msgs, err := sub.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	if len(msgs) != 5 {
-		t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
-	}
-	now := time.Now()
-	// no messages available, should time out normally
-	_, err = sub.Fetch(5, nats.PullHeartbeat(50*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	elapsed := time.Since(now)
-	if elapsed < 300*time.Millisecond {
-		t.Fatalf("Expected timeout after 300ms; got: %v", elapsed)
-	}
-	if !errors.Is(err, nats.ErrTimeout) {
-		t.Fatalf("Expected timeout error; got: %v", err)
-	}
-
-	// delete consumer to verify heartbeats are not sent anymore
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	_, err = sub.Fetch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(1*time.Second))
-	if !errors.Is(err, nats.ErrNoHeartbeat) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
-	}
-
-	// heartbeat value too large
-	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected invalid arg error; got: %v", err)
-	}
-
-	// heartbeat value invalid
-	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected invalid arg error; got: %v", err)
-	}
-
-	// set short timeout on JetStream context
-	js, err = nc.JetStream(nats.MaxWait(100 * time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	sub1, err := js.PullSubscribe("foo", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	defer sub.Unsubscribe()
-
-	// should produce invalid arg error based on default timeout from JetStream context
-	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected invalid arg error; got: %v", err)
-	}
-
-	// overwrite default timeout with context timeout, fetch available messages
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	msgs, err = sub1.Fetch(10, nats.PullHeartbeat(100*time.Millisecond), nats.Context(ctx))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	if len(msgs) != 5 {
-		t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
-	}
-	for _, msg := range msgs {
-		msg.Ack()
-	}
-
-	// overwrite default timeout with max wait, should time out because no messages are available
-	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	if !errors.Is(err, nats.ErrTimeout) {
-		t.Fatalf("Expected timeout error; got: %v", err)
-	}
-}
-
-func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	_, err := js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	sub, err := js.PullSubscribe("foo", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	defer sub.Unsubscribe()
-	for i := 0; i < 5; i++ {
-		if _, err := js.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-	}
-
-	// fetch 5 messages, should finish immediately
-	msgs, err := sub.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	var i int
-	for msg := range msgs.Messages() {
-		i++
-		msg.Ack()
-	}
-	if i != 5 {
-		t.Fatalf("Expected %d messages; got: %d", 5, i)
-	}
-	if msgs.Error() != nil {
-		t.Fatalf("Unexpected error: %s", msgs.Error())
-	}
-	now := time.Now()
-	// no messages available, should time out normally
-	msgs, err = sub.FetchBatch(5, nats.PullHeartbeat(50*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	i = 0
-	for msg := range msgs.Messages() {
-		i++
-		msg.Ack()
-	}
-	elapsed := time.Since(now)
-	if i != 0 {
-		t.Fatalf("Expected %d messages; got: %d", 0, i)
-	}
-	if msgs.Error() != nil {
-		t.Fatalf("Unexpected error: %s", msgs.Error())
-	}
-	if elapsed < 290*time.Millisecond {
-		t.Fatalf("Expected timeout after 300ms; got: %v", elapsed)
-	}
-
-	// delete consumer to verify heartbeats are not sent anymore
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	now = time.Now()
-	msgs, err = sub.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(1*time.Second))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	for msg := range msgs.Messages() {
-		msg.Ack()
-	}
-	elapsed = time.Since(now)
-	if elapsed < 200*time.Millisecond || elapsed > 300*time.Millisecond {
-		t.Fatalf("Expected timeout after 200ms and before 300ms; got: %v", elapsed)
-	}
-	if !errors.Is(msgs.Error(), nats.ErrNoHeartbeat) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
-	}
-
-	// heartbeat value too large
-	_, err = sub.FetchBatch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
-	}
-
-	// heartbeat value invalid
-	_, err = sub.FetchBatch(5, nats.PullHeartbeat(-1))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
-	}
-
-	// set short timeout on JetStream context
-	js, err = nc.JetStream(nats.MaxWait(100 * time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	sub1, err := js.PullSubscribe("foo", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	defer sub.Unsubscribe()
-
-	// should produce invalid arg error based on default timeout from JetStream context
-	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
-	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected invalid arg error; got: %v", err)
-	}
-
-	// overwrite default timeout with context timeout, fetch available messages
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	msgs, err = sub1.FetchBatch(10, nats.PullHeartbeat(100*time.Millisecond), nats.Context(ctx))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	for msg := range msgs.Messages() {
-		msg.Ack()
-	}
-
-	// overwrite default timeout with max wait, should time out because no messages are available
-	msgs, err = sub1.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(300*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	<-msgs.Done()
-	if msgs.Error() != nil {
-		t.Fatalf("Unexpected error: %s", msgs.Error())
-	}
-}
-
 func TestPullSubscribeFetchBatch(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -1673,7 +1254,7 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 			t.Fatalf("Unexpected error: %s", err)
 		}
 		go func() {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 			cancel()
 		}()
 		msgs := make([]*nats.Msg, 0)
@@ -2148,45 +1729,13 @@ func TestJetStreamManagement(t *testing.T) {
 
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
-
 	t.Run("create stream", func(t *testing.T) {
-		consLimits := nats.StreamConsumerLimits{
-			MaxAckPending:     100,
-			InactiveThreshold: 10 * time.Second,
-		}
-		cfg := &nats.StreamConfig{
-			Name:        "foo",
-			Subjects:    []string{"foo", "bar", "baz"},
-			Compression: nats.S2Compression,
-			ConsumerLimits: nats.StreamConsumerLimits{
-				MaxAckPending:     100,
-				InactiveThreshold: 10 * time.Second,
-			},
-			FirstSeq: 22,
-			Metadata: map[string]string{
-				"foo": "bar",
-				"baz": "quux",
-			},
-		}
-
-		si, err := js.AddStream(cfg)
+		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if si == nil || si.Config.Name != "foo" {
 			t.Fatalf("StreamInfo is not correct %+v", si)
-		}
-		if !reflect.DeepEqual(si.Config.Metadata, map[string]string{"foo": "bar", "baz": "quux"}) {
-			t.Fatalf("Metadata is not correct %+v", si.Config.Metadata)
-		}
-		if si.Config.Compression != nats.S2Compression {
-			t.Fatalf("Compression is not correct %+v", si.Config.Compression)
-		}
-		if si.Config.FirstSeq != 22 {
-			t.Fatalf("FirstSeq is not correct %+v", si.Config.FirstSeq)
-		}
-		if si.Config.ConsumerLimits != consLimits {
-			t.Fatalf("ConsumerLimits is not correct %+v", si.Config.ConsumerLimits)
 		}
 	})
 
@@ -2272,14 +1821,7 @@ func TestJetStreamManagement(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer sub.Unsubscribe()
-			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
-				Durable:   "dlc",
-				AckPolicy: nats.AckExplicitPolicy,
-				Metadata: map[string]string{
-					"foo": "bar",
-					"baz": "quux",
-				},
-			})
+			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2292,9 +1834,6 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 			if ci == nil || ci.Name != "dlc" || ci.Stream != "foo" {
 				t.Fatalf("ConsumerInfo is not correct %+v", ci)
-			}
-			if !reflect.DeepEqual(ci.Config.Metadata, map[string]string{"foo": "bar", "baz": "quux"}) {
-				t.Fatalf("Metadata is not correct %+v", ci.Config.Metadata)
 			}
 		})
 		t.Run("with name set", func(t *testing.T) {
@@ -2415,82 +1954,6 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
-		t.Run("durable consumer with multiple filter subjects", func(t *testing.T) {
-			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.dlc-5")
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer sub.Unsubscribe()
-			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
-				Durable:        "dlc-5",
-				AckPolicy:      nats.AckExplicitPolicy,
-				FilterSubjects: []string{"foo", "bar"},
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			msg, err := sub.NextMsg(1 * time.Second)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if !strings.Contains(string(msg.Data), `"durable_name":"dlc-5"`) {
-				t.Fatalf("create consumer message is not correct: %q", string(msg.Data))
-			}
-			if ci == nil || ci.Config.Durable != "dlc-5" || !reflect.DeepEqual(ci.Config.FilterSubjects, []string{"foo", "bar"}) {
-				t.Fatalf("ConsumerInfo is not correct %+v", ci)
-			}
-		})
-
-		t.Run("ephemeral consumer with multiple filter subjects", func(t *testing.T) {
-			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer sub.Unsubscribe()
-			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
-				AckPolicy:      nats.AckExplicitPolicy,
-				FilterSubjects: []string{"foo", "bar"},
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			_, err = sub.NextMsg(1 * time.Second)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if ci == nil || !reflect.DeepEqual(ci.Config.FilterSubjects, []string{"foo", "bar"}) {
-				t.Fatalf("ConsumerInfo is not correct %+v", ci)
-			}
-		})
-
-		t.Run("multiple filter subjects errors", func(t *testing.T) {
-			// both filter subject and filter subjects provided
-			_, err := js.AddConsumer("foo", &nats.ConsumerConfig{
-				AckPolicy:      nats.AckExplicitPolicy,
-				FilterSubjects: []string{"foo", "bar"},
-				FilterSubject:  "baz",
-			})
-			if !errors.Is(err, nats.ErrDuplicateFilterSubjects) {
-				t.Fatalf("Expected: %v; got: %v", nats.ErrDuplicateFilterSubjects, err)
-			}
-			// overlapping filter subjects
-			_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
-				AckPolicy:      nats.AckExplicitPolicy,
-				FilterSubjects: []string{"foo.*", "foo.A"},
-			})
-			if !errors.Is(err, nats.ErrOverlappingFilterSubjects) {
-				t.Fatalf("Expected: %v; got: %v", nats.ErrOverlappingFilterSubjects, err)
-			}
-			// empty filter subject in filter subjects
-			_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
-				AckPolicy:      nats.AckExplicitPolicy,
-				FilterSubjects: []string{"foo", ""},
-			})
-			if !errors.Is(err, nats.ErrEmptyFilter) {
-				t.Fatalf("Expected: %v; got: %v", nats.ErrEmptyFilter, err)
-			}
-		})
-
 		t.Run("with invalid consumer name", func(t *testing.T) {
 			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidConsumerName {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
@@ -2597,7 +2060,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for info := range js.Consumers("foo") {
 			infos = append(infos, info)
 		}
-		if len(infos) != 8 || infos[0].Stream != "foo" {
+		if len(infos) != 6 || infos[0].Stream != "foo" {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
 	})
@@ -2609,7 +2072,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for name := range js.ConsumerNames("foo", nats.Context(ctx)) {
 			names = append(names, name)
 		}
-		if got, want := len(names), 8; got != want {
+		if got, want := len(names), 6; got != want {
 			t.Fatalf("Unexpected names, got=%d, want=%d", got, want)
 		}
 	})
@@ -2791,120 +2254,6 @@ func TestJetStreamManagement(t *testing.T) {
 			t.Errorf("Expected some API error, got: %v", info.API.Errors)
 		}
 	})
-}
-
-func TestStreamConfigMatches(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, js := jsClient(t, srv)
-	defer nc.Close()
-
-	cfg := nats.StreamConfig{
-		Name:                 "stream",
-		Description:          "desc",
-		Subjects:             []string{"foo.*"},
-		Retention:            nats.WorkQueuePolicy,
-		MaxConsumers:         10,
-		MaxMsgs:              100,
-		MaxBytes:             1000,
-		Discard:              nats.DiscardNew,
-		DiscardNewPerSubject: true,
-		MaxAge:               100 * time.Second,
-		MaxMsgsPerSubject:    1000,
-		MaxMsgSize:           10000,
-		Storage:              nats.MemoryStorage,
-		Replicas:             1,
-		NoAck:                true,
-		Duplicates:           10 * time.Second,
-		Sealed:               false,
-		DenyDelete:           true,
-		DenyPurge:            false,
-		AllowRollup:          true,
-		Compression:          nats.S2Compression,
-		FirstSeq:             5,
-		SubjectTransform:     &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
-		RePublish: &nats.RePublish{
-			Source:      ">",
-			Destination: "RP.>",
-			HeadersOnly: true,
-		},
-		AllowDirect: true,
-		ConsumerLimits: nats.StreamConsumerLimits{
-			InactiveThreshold: 10 * time.Second,
-			MaxAckPending:     500,
-		},
-		Metadata: map[string]string{
-			"foo": "bar",
-		},
-	}
-
-	s, err := js.AddStream(&cfg)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(s.Config, cfg) {
-		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
-	}
-
-	cfgMirror := nats.StreamConfig{
-		Name:              "mirror",
-		MaxConsumers:      10,
-		MaxMsgs:           100,
-		MaxBytes:          1000,
-		MaxAge:            100 * time.Second,
-		MaxMsgsPerSubject: 1000,
-		MaxMsgSize:        10000,
-		Replicas:          1,
-		Duplicates:        10 * time.Second,
-		Mirror: &nats.StreamSource{
-			Name:        "stream",
-			OptStartSeq: 10,
-			SubjectTransforms: []nats.SubjectTransformConfig{
-				{Source: ">", Destination: "transformed.>"},
-			},
-		},
-		MirrorDirect:     true,
-		SubjectTransform: &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
-	}
-
-	s, err = js.AddStream(&cfgMirror)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(s.Config, cfgMirror) {
-		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
-	}
-
-	cfgSourcing := nats.StreamConfig{
-		Name:              "sourcing",
-		Subjects:          []string{"BAR"},
-		MaxConsumers:      10,
-		MaxMsgs:           100,
-		MaxBytes:          1000,
-		MaxAge:            100 * time.Second,
-		MaxMsgsPerSubject: 1000,
-		MaxMsgSize:        10000,
-		Replicas:          1,
-		Duplicates:        10 * time.Second,
-		Sources: []*nats.StreamSource{
-			{
-				Name:        "stream",
-				OptStartSeq: 10,
-				SubjectTransforms: []nats.SubjectTransformConfig{
-					{Source: ">", Destination: "transformed.>"},
-				},
-			},
-		},
-		SubjectTransform: &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
-	}
-
-	s, err = js.AddStream(&cfgSourcing)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(s.Config, cfgSourcing) {
-		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
-	}
 }
 
 func TestStreamLister(t *testing.T) {
@@ -3208,7 +2557,7 @@ func TestAccountInfo(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
 			}
 			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", MaxBytes: 1024})
 			if err != nil {
@@ -3230,7 +2579,7 @@ func TestAccountInfo(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
 			}
 		})
 	}
@@ -4590,7 +3939,7 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 		t.Fatalf("Error on next msg: %v", err)
 	}
 	if string(msg.Data) != "bar msg 2" {
-		t.Fatalf("Unexpected last message: %q", msg.Data)
+		t.Fatalf("Unexepcted last message: %q", msg.Data)
 	}
 }
 
@@ -4651,11 +4000,12 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			}
 
 			<-ctx.Done()
+			sub.Drain()
+
 			if got != totalMsgs {
 				t.Fatalf("Expected %d, got %d", totalMsgs, got)
 			}
 
-			// check if consumer is configured properly
 			ci, err := js.ConsumerInfo("TEST", test.name)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -4663,9 +4013,6 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			if ci.Config.AckPolicy != test.expected {
 				t.Fatalf("Expected %v, got %v", test.expected, ci.Config.AckPolicy)
 			}
-
-			// drain the subscription. This will remove the consumer
-			sub.Drain()
 		})
 	}
 
@@ -5882,70 +5229,6 @@ func TestJetStreamSubscribe_RateLimit(t *testing.T) {
 	}
 }
 
-func TestJetStreamSubscribe_FilterSubjects(t *testing.T) {
-	tests := []struct {
-		name    string
-		durable string
-	}{
-		{
-			name: "ephemeral consumer",
-		},
-		{
-			name:    "durable consumer",
-			durable: "cons",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := RunBasicJetStreamServer()
-			defer shutdownJSServerAndRemoveStorage(t, s)
-
-			nc, js := jsClient(t, s)
-			defer nc.Close()
-
-			var err error
-
-			_, err = js.AddStream(&nats.StreamConfig{
-				Name:     "TEST",
-				Subjects: []string{"foo", "bar", "baz"},
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			for i := 0; i < 5; i++ {
-				js.Publish("foo", []byte("msg"))
-			}
-			for i := 0; i < 5; i++ {
-				js.Publish("bar", []byte("msg"))
-			}
-			for i := 0; i < 5; i++ {
-				js.Publish("baz", []byte("msg"))
-			}
-
-			opts := []nats.SubOpt{nats.BindStream("TEST"), nats.ConsumerFilterSubjects("foo", "baz")}
-			if test.durable != "" {
-				opts = append(opts, nats.Durable(test.durable))
-			}
-			sub, err := js.SubscribeSync("", opts...)
-			if err != nil {
-				t.Fatalf("Unexpected error: %s", err)
-			}
-
-			for i := 0; i < 10; i++ {
-				msg, err := sub.NextMsg(500 * time.Millisecond)
-				if err != nil {
-					t.Fatalf("Unexpected error: %s", err)
-				}
-				if msg.Subject != "foo" && msg.Subject != "baz" {
-					t.Fatalf("Unexpected message subject: %s", msg.Subject)
-				}
-			}
-		})
-	}
-
-}
-
 func TestJetStreamSubscribe_ConfigCantChange(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -6134,21 +5417,18 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 	nodes := make([]*jsServer, size)
 	opts := make([]*server.Options, 0)
 
-	var activeListeners []net.Listener
-	getAddr := func(t *testing.T) (string, string, int) {
+	getAddr := func() (string, string, int) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
+			panic(err)
 		}
+		defer l.Close()
 
 		addr := l.Addr()
 		host := addr.(*net.TCPAddr).IP.String()
 		port := addr.(*net.TCPAddr).Port
+		l.Close()
 		time.Sleep(100 * time.Millisecond)
-
-		// we cannot close the listener immediately to avoid duplicate port binding
-		// the returned net.Listener has to be closed after all ports are drawn
-		activeListeners = append(activeListeners, l)
 		return addr.String(), host, port
 	}
 
@@ -6165,21 +5445,17 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 
 		if size > 1 {
 			o.Cluster.Name = clusterName
-			_, host1, port1 := getAddr(t)
+			_, host1, port1 := getAddr()
 			o.Host = host1
 			o.Port = port1
 
-			addr2, host2, port2 := getAddr(t)
+			addr2, host2, port2 := getAddr()
 			o.Cluster.Host = host2
 			o.Cluster.Port = port2
 			o.Tags = []string{o.ServerName}
 			routes = append(routes, fmt.Sprintf("nats://%s", addr2))
 		}
 		opts = append(opts, &o)
-	}
-	// close all connections used to randomize ports
-	for _, l := range activeListeners {
-		l.Close()
 	}
 
 	if size > 1 {
@@ -6214,7 +5490,7 @@ func withJSServer(t *testing.T, tfn func(t *testing.T, srvs ...*jsServer)) {
 	opts.JetStream = true
 	opts.LameDuckDuration = 3 * time.Second
 	opts.LameDuckGracePeriod = 2 * time.Second
-	s := &jsServer{Server: RunServerWithOptions(opts), myopts: &opts}
+	s := &jsServer{Server: RunServerWithOptions(&opts), myopts: &opts}
 	defer shutdownJSServerAndRemoveStorage(t, s.Server)
 	tfn(t, s)
 }
@@ -6475,6 +5751,17 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		}
 	})
 
+	t.Run("bind to stream with wrong subject fails", func(t *testing.T) {
+		_, err := js.SubscribeSync("secret", nats.BindStream("origin"))
+		if err == nil {
+			t.Fatal("Unexpected success")
+		}
+		apiErr := &nats.APIError{}
+		if !errors.As(err, &apiErr) || apiErr.ErrorCode != 10093 {
+			t.Fatalf("Expected API error 10093; got: %v", err)
+		}
+	})
+
 	t.Run("bind to origin stream", func(t *testing.T) {
 		// This would only avoid the stream names lookup.
 		sub, err := js.SubscribeSync("origin", nats.BindStream("origin"))
@@ -6628,78 +5915,103 @@ func testJetStreamMirror_Source(t *testing.T, nodes ...*jsServer) {
 		}
 	})
 
-	t.Run("bind to stream with subject not in stream", func(t *testing.T) {
-		// The Stream does not have a subject called 'nothing' but client is still able
-		// to bind to the origin stream even though it cannot consume messages.
-		// After updating the stream with the subject this consumer will be able to
-		// match and receive messages.
-		sub, err := js.SubscribeSync("nothing", nats.BindStream("origin"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = sub.NextMsg(1 * time.Second)
-		if !errors.Is(err, nats.ErrTimeout) {
-			t.Fatal("Expected timeout error")
-		}
-
-		info, err := sub.ConsumerInfo()
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := info.Stream
-		expected := "origin"
-		if got != expected {
-			t.Fatalf("Expected %v, got %v", expected, got)
-		}
-
-		got = info.Config.FilterSubject
-		expected = "nothing"
-		if got != expected {
-			t.Fatalf("Expected %v, got %v", expected, got)
-		}
-
-		t.Run("can consume after stream update", func(t *testing.T) {
-			_, err = js.UpdateStream(&nats.StreamConfig{
-				Name: "origin",
-				Placement: &nats.Placement{
-					Tags: []string{"NODE_0"},
-				},
-				Storage:  nats.MemoryStorage,
+	// Commenting out this test until we figure out what was the intent.
+	// Since v2.8.0, this test would fail with a "detected cycle" error,
+	// I guess because "m1" already sources "origin", so creating a
+	// stream with both as a source is bad.
+	/*
+		t.Run("create sourced stream from origin", func(t *testing.T) {
+			sources := make([]*nats.StreamSource, 0)
+			sources = append(sources, &nats.StreamSource{Name: "origin"})
+			sources = append(sources, &nats.StreamSource{Name: "m1"})
+			streamName := "s2"
+			_, err = js.AddStream(&nats.StreamConfig{
+				Name:     streamName,
+				Sources:  sources,
+				Storage:  nats.FileStorage,
 				Replicas: 1,
-				Subjects: []string{"origin", "nothing"},
 			})
-			js.Publish("nothing", []byte("hello world"))
-
-			msg, err := sub.NextMsg(1 * time.Second)
 			if err != nil {
-				t.Error(err)
+				t.Fatalf("Unexpected error creating stream: %v", err)
 			}
-			got = msg.Subject
-			expected = "nothing"
+
+			msgs := make([]*nats.RawStreamMsg, 0)
+
+			// Stored message sequences start at 1
+			startSequence := 1
+			expectedTotal := totalMsgs * 2
+
+		GetNextMsg:
+			for i := startSequence; i < expectedTotal+1; i++ {
+				var (
+					err     error
+					seq     = uint64(i)
+					msg     *nats.RawStreamMsg
+					timeout = time.Now().Add(5 * time.Second)
+				)
+
+			Retry:
+				for time.Now().Before(timeout) {
+					msg, err = js.GetMsg(streamName, seq)
+					if err != nil {
+						time.Sleep(100 * time.Millisecond)
+						continue Retry
+					}
+					msgs = append(msgs, msg)
+					continue GetNextMsg
+				}
+				if err != nil {
+					t.Fatalf("Unexpected error fetching seq=%v: %v", seq, err)
+				}
+			}
+
+			got := len(msgs)
+			if got < expectedTotal {
+				t.Errorf("Expected %v, got: %v", expectedTotal, got)
+			}
+
+			si, err := js.StreamInfo(streamName)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			got = int(si.State.Msgs)
+			if got != expectedTotal {
+				t.Errorf("Expected %v, got: %v", expectedTotal, got)
+			}
+
+			got = len(si.Sources)
+			expected := 2
 			if got != expected {
-				t.Fatalf("Expected %v, got %v", expected, got)
+				t.Errorf("Expected %v, got: %v", expected, got)
 			}
 
-		})
-	})
+			t.Run("consume from sourced stream", func(t *testing.T) {
+				sub, err := js.SubscribeSync("origin", nats.BindStream(streamName))
+				if err != nil {
+					t.Fatal(err)
+				}
 
-	t.Run("create sourced stream with a cycle", func(t *testing.T) {
-		// Since v2.8.0, this test would fail with a "detected cycle" error.
-		sources := make([]*nats.StreamSource, 0)
-		sources = append(sources, &nats.StreamSource{Name: "origin"})
-		sources = append(sources, &nats.StreamSource{Name: "m1"})
-		streamName := "s2"
-		_, err = js.AddStream(&nats.StreamConfig{
-			Name:     streamName,
-			Sources:  sources,
-			Storage:  nats.FileStorage,
-			Replicas: 1,
+				mmsgs := make([]*nats.Msg, 0)
+				for i := 0; i < totalMsgs; i++ {
+					msg, err := sub.NextMsg(2 * time.Second)
+					if err != nil {
+						t.Error(err)
+					}
+					meta, err := msg.Metadata()
+					if err != nil {
+						t.Error(err)
+					}
+					if meta.Stream != streamName {
+						t.Errorf("Expected m1, got: %v", meta.Stream)
+					}
+					mmsgs = append(mmsgs, msg)
+				}
+				if len(mmsgs) != totalMsgs {
+					t.Errorf("Expected to consume %v msgs, got: %v", totalMsgs, len(mmsgs))
+				}
+			})
 		})
-		var aerr *nats.APIError
-		if ok := errors.As(err, &aerr); !ok || aerr.ErrorCode != nats.JSStreamInvalidConfig {
-			t.Fatalf("Expected nats.APIError, got %v", err)
-		}
-	})
+	*/
 }
 
 func TestJetStream_ClusterMultipleSubscribe(t *testing.T) {
@@ -7016,7 +6328,7 @@ func testJetStream_ClusterMultipleFetchPullSubscribe(t *testing.T, subject strin
 		gotNoMessages bool
 		count         = 0
 	)
-	queues.Range(func(k, v any) bool {
+	queues.Range(func(k, v interface{}) bool {
 		msgs := v.([]*nats.Msg)
 		count += len(msgs)
 
@@ -7902,61 +7214,6 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 }
 
-func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	// Now create a stream and expect a PubAck from <-OK().
-	if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}}); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	errs := make(chan error, 1)
-	done := make(chan struct{}, 1)
-	acks := make(chan nats.PubAckFuture, 100)
-	go func() {
-		for i := 0; i < 100; i++ {
-			if ack, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
-				errs <- err
-				return
-			} else {
-				acks <- ack
-			}
-		}
-		close(acks)
-		done <- struct{}{}
-	}()
-	select {
-	case <-done:
-	case err := <-errs:
-		t.Fatalf("Unexpected error during publish: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatalf("Did not receive completion signal")
-	}
-	s.Shutdown()
-	time.Sleep(100 * time.Millisecond)
-	if pending := js.PublishAsyncPending(); pending != 0 {
-		t.Fatalf("Expected no pending messages after server shutdown; got: %d", pending)
-	}
-	s = RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	for ack := range acks {
-		select {
-		case <-ack.Ok():
-		case err := <-ack.Err():
-			if !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrNoResponders) {
-				t.Fatalf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Did not receive completion signal")
-		}
-	}
-}
-
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	// Comment out below to run this benchmark.
 	t.SkipNow()
@@ -8378,7 +7635,7 @@ func TestJetStreamDomain(t *testing.T) {
 	}
 }
 
-// Test that we properly enforce per subject msg limits.
+// Test that we properly enfore per subject msg limits.
 func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
 	const subjectMax = 5
 	msc := nats.StreamConfig{
@@ -9364,7 +8621,7 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	s := RunBasicJetStreamServer()
 
 	// monitor for ErrConsumerNotActive error and suppress logging
-	hbMissed := make(chan struct{}, 10)
+	hbMissed := make(chan struct{})
 	errHandler := func(c *nats.Conn, s *nats.Subscription, err error) {
 		if !errors.Is(err, nats.ErrConsumerNotActive) {
 			t.Fatalf("Unexpected error: %v", err)
@@ -9532,7 +8789,581 @@ func TestJetStreamStreamInfoAlternates(t *testing.T) {
 	})
 }
 
-func TestJetStreamSubscribeConsumerName(t *testing.T) {
+// // Need access to internals for loss testing.
+// func TestJetStreamOrderedConsumer(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	var err error
+// 	_, err = js.AddStream(&nats.StreamConfig{
+// 		Name:     "OBJECT",
+// 		Subjects: []string{"a"},
+// 		Storage:  nats.MemoryStorage,
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	// Create a sample asset.
+// 	msg := make([]byte, 1024*1024)
+// 	rand.Read(msg)
+// 	msg = []byte(base64.StdEncoding.EncodeToString(msg))
+// 	mlen, sum := len(msg), sha256.Sum256(msg)
+
+// 	// Now send into the stream as chunks.
+// 	const chunkSize = 1024
+// 	for i := 0; i < mlen; i += chunkSize {
+// 		var chunk []byte
+// 		if mlen-i <= chunkSize {
+// 			chunk = msg[i:]
+// 		} else {
+// 			chunk = msg[i : i+chunkSize]
+// 		}
+// 		msg := nats.NewMsg("a")
+// 		msg.Data = chunk
+// 		msg.Header.Set("data", "true")
+// 		js.PublishMsgAsync(msg)
+// 	}
+// 	js.PublishAsync("a", nil) // eof
+
+// 	select {
+// 	case <-js.PublishAsyncComplete():
+// 	case <-time.After(time.Second):
+// 		t.Fatalf("Did not receive completion signal")
+// 	}
+
+// 	// Do some tests on simple misconfigurations first.
+// 	// For ordered delivery a couple of things need to be set properly.
+// 	// Can't be nats.Durable or have ack policy that is not ack none or max deliver set.
+// 	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.Durable("dlc"))
+// 	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+// 		t.Fatalf("Expected an error, got %v", err)
+// 	}
+
+// 	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.AckExplicit())
+// 	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+// 		t.Fatalf("Expected an error, got %v", err)
+// 	}
+
+// 	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.MaxDeliver(10))
+// 	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+// 		t.Fatalf("Expected an error, got %v", err)
+// 	}
+
+// 	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.DeliverSubject("some.subject"))
+// 	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+// 		t.Fatalf("Expected an error, got %v", err)
+// 	}
+
+// 	si, err := js.StreamInfo("OBJECT")
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	testConsumer := func() {
+// 		t.Helper()
+// 		var received uint32
+// 		var rmsg []byte
+// 		done := make(chan bool, 1)
+
+// 		cb := func(m *nats.Msg) {
+// 			// Check for eof
+// 			if len(m.Data) == 0 {
+// 				done <- true
+// 				return
+// 			}
+// 			atomic.AddUint32(&received, 1)
+// 			rmsg = append(rmsg, m.Data...)
+// 		}
+// 		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
+// 		sub, err := js.Subscribe("a", cb, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond))
+// 		if err != nil {
+// 			t.Fatalf("Unexpected error: %v", err)
+// 		}
+// 		defer sub.Unsubscribe()
+
+// 		select {
+// 		case <-done:
+// 			if rsum := sha256.Sum256(rmsg); rsum != sum {
+// 				t.Fatalf("Objects do not match")
+// 			}
+// 		case <-time.After(5 * time.Second):
+// 			t.Fatalf("Did not receive all chunks, only %d of %d total", atomic.LoadUint32(&received), si.State.Msgs-1)
+// 		}
+// 	}
+
+// 	testSyncConsumer := func() {
+// 		t.Helper()
+// 		var received int
+// 		var rmsg []byte
+
+// 		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
+// 		sub, err := js.SubscribeSync("a", nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond))
+// 		if err != nil {
+// 			t.Fatalf("Unexpected error: %v", err)
+// 		}
+// 		defer sub.Unsubscribe()
+
+// 		var done bool
+// 		expires := time.Now().Add(5 * time.Second)
+// 		for time.Now().Before(expires) {
+// 			m, err := sub.NextMsg(time.Second)
+// 			if err != nil {
+// 				t.Fatalf("Unexpected error: %v", err)
+// 			}
+// 			if len(m.Data) == 0 {
+// 				done = true
+// 				break
+// 			}
+// 			received++
+// 			rmsg = append(rmsg, m.Data...)
+// 		}
+// 		if !done {
+// 			t.Fatalf("Did not receive all chunks, only %d of %d total", received, si.State.Msgs-1)
+// 		}
+// 		if rsum := sha256.Sum256(rmsg); rsum != sum {
+// 			t.Fatalf("Objects do not match")
+// 		}
+// 	}
+
+// 	// Now run normal test.
+// 	testConsumer()
+// 	testSyncConsumer()
+
+// 	// Now introduce some loss.
+// 	singleLoss := func(m *nats.Msg) *nats.Msg {
+// 		if mrand.Intn(100) <= 10 && m.Header.Get("data") != nats._EMPTY_ {
+// 			nc.removeMsgFilter("a")
+// 			return nil
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("a", singleLoss)
+// 	testConsumer()
+// 	nc.addMsgFilter("a", singleLoss)
+// 	testSyncConsumer()
+
+// 	multiLoss := func(m *nats.Msg) *nats.Msg {
+// 		if rand.Intn(100) <= 10 && m.Header.Get("data") != _EMPTY_ {
+// 			return nil
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("a", multiLoss)
+// 	testConsumer()
+// 	testSyncConsumer()
+
+// 	firstOnly := func(m *nats.Msg) *nats.Msg {
+// 		if meta, err := m.Metadata(); err == nil {
+// 			if meta.Sequence.Consumer == 1 {
+// 				nc.removeMsgFilter("a")
+// 				return nil
+// 			}
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("a", firstOnly)
+// 	testConsumer()
+// 	nc.addMsgFilter("a", firstOnly)
+// 	testSyncConsumer()
+
+// 	lastOnly := func(m *nats.Msg) *nats.Msg {
+// 		if meta, err := m.Metadata(); err == nil {
+// 			if meta.Sequence.Stream >= si.State.LastSeq-1 {
+// 				nc.removeMsgFilter("a")
+// 				return nil
+// 			}
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("a", lastOnly)
+// 	testConsumer()
+// 	nc.addMsgFilter("a", lastOnly)
+// 	testSyncConsumer()
+// }
+
+func TestJetStreamOrderedConsumerDeleteAssets(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// For capturing errors.
+	errCh := make(chan error, 1)
+	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		errCh <- err
+	})
+
+	// Create a sample asset.
+	mlen := 128 * 1024
+	msg := make([]byte, mlen)
+
+	createStream := func() {
+		t.Helper()
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "OBJECT",
+			Subjects: []string{"a"},
+			Storage:  nats.MemoryStorage,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Now send into the stream as chunks.
+		const chunkSize = 256
+		for i := 0; i < mlen; i += chunkSize {
+			var chunk []byte
+			if mlen-i <= chunkSize {
+				chunk = msg[i:]
+			} else {
+				chunk = msg[i : i+chunkSize]
+			}
+			js.PublishAsync("a", chunk)
+		}
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+	}
+
+	t.Run("remove stream, expect error", func(t *testing.T) {
+		createStream()
+
+		sub, err := js.SubscribeSync("a", nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		// Since we are sync we will be paused here due to flow control.
+		time.Sleep(100 * time.Millisecond)
+		// Now delete the asset and make sure we get an error.
+		if err := js.DeleteStream("OBJECT"); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Make sure we get an error.
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, nats.ErrStreamNotFound) {
+				t.Fatalf("Got wrong error, wanted %v, got %v", nats.ErrStreamNotFound, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive err message as expected")
+		}
+	})
+
+	t.Run("remove consumer, expect it to be recreated", func(t *testing.T) {
+		createStream()
+
+		createConsSub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.OBJECT")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer createConsSub.Unsubscribe()
+		// Again here the IdleHeartbeat is not required, just overriding top shorten test time.
+		sub, err := js.SubscribeSync("a", nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		createConsMsg, err := createConsSub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !strings.Contains(string(createConsMsg.Data), `"stream_name":"OBJECT"`) {
+			t.Fatalf("Invalid message on create consumer subject: %q", string(createConsMsg.Data))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		ci, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		consName := ci.Name
+
+		if err := js.DeleteConsumer("OBJECT", consName); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		createConsMsg, err = createConsSub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !strings.Contains(string(createConsMsg.Data), `"stream_name":"OBJECT"`) {
+			t.Fatalf("Invalid message on create consumer subject: %q", string(createConsMsg.Data))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		ci, err = sub.ConsumerInfo()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		newConsName := ci.Name
+		if consName == newConsName {
+			t.Fatalf("Consumer should be recreated, but consumer name is the same")
+		}
+	})
+}
+
+// Need access to internals for testing.
+// func TestJetStreamOrderedConsumerWithAutoUnsub(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	var err error
+
+// 	_, err = js.AddStream(&nats.StreamConfig{
+// 		Name:     "OBJECT",
+// 		Subjects: []string{"a"},
+// 		Storage:  nats.MemoryStorage,
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	count := int32(0)
+// 	sub, err := js.Subscribe("a", func(m *nats.Msg) {
+// 		atomic.AddInt32(&count, 1)
+// 	}, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond))
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	// Ask to auto-unsub after 10 messages.
+// 	sub.AutoUnsubscribe(10)
+
+// 	// Set a message filter that will drop 1 message
+// 	dm := 0
+// 	singleLoss := func(m *nats.Msg) *nats.Msg {
+// 		if m.Header.Get("data") != _EMPTY_ {
+// 			dm++
+// 			if dm == 5 {
+// 				nc.removeMsgFilter("a")
+// 				return nil
+// 			}
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("a", singleLoss)
+
+// 	// Now produce 20 messages
+// 	for i := 0; i < 20; i++ {
+// 		msg := NewMsg("a")
+// 		msg.Data = []byte(fmt.Sprintf("msg_%d", i+1))
+// 		msg.Header.Set("data", "true")
+// 		js.PublishMsgAsync(msg)
+// 	}
+
+// 	select {
+// 	case <-js.PublishAsyncComplete():
+// 	case <-time.After(time.Second):
+// 		t.Fatalf("Did not receive completion signal")
+// 	}
+
+// 	// Wait for the subscription to be marked as invalid
+// 	deadline := time.Now().Add(time.Second)
+// 	ok := false
+// 	for time.Now().Before(deadline) {
+// 		if !sub.IsValid() {
+// 			ok = true
+// 			break
+// 		}
+// 	}
+// 	if !ok {
+// 		t.Fatalf("Subscription still valid")
+// 	}
+
+// 	// Wait a bit to make sure we are not receiving more than expected,
+// 	// and give a chance for the server to process the auto-unsub
+// 	// protocol.
+// 	time.Sleep(500 * time.Millisecond)
+
+// 	if n := atomic.LoadInt32(&count); n != 10 {
+// 		t.Fatalf("Sub should have received only 10 messages, got %v", n)
+// 	}
+
+// 	// Now capture the in msgs count for the connection
+// 	inMsgs := nc.Stats().InMsgs
+
+// 	// Send one more message and this count should not increase if the
+// 	// server had properly processed the auto-unsub after the
+// 	// reset of the ordered consumer. Use a different connection
+// 	// to send.
+// 	nc2, js2 := jsClient(t, s)
+// 	defer nc2.Close()
+
+// 	js2.Publish("a", []byte("should not be received"))
+
+// 	newInMsgs := nc.Stats().InMsgs
+// 	if inMsgs != newInMsgs {
+// 		t.Fatal("Seems that AUTO-UNSUB was not properly handled")
+// 	}
+// }
+
+// We want to make sure we do the right thing with lots of concurrent queue nats.Durable consumer requests.
+// One should win and the others should share the delivery subject with the first one who wins.
+func TestJetStreamConcurrentQueueDurablePushConsumers(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// Create stream.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Now create 10 nats.Durables concurrently.
+	subs := make(chan *nats.Subscription, 10)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sub, _ := js.QueueSubscribeSync("foo", "bar")
+			subs <- sub
+		}()
+	}
+	// Wait for all the consumers.
+	wg.Wait()
+	close(subs)
+
+	si, err := js.StreamInfo("TEST")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if si.State.Consumers != 1 {
+		t.Fatalf("Expected exactly one consumer, got %d", si.State.Consumers)
+	}
+
+	// Now send some messages and make sure they are distributed.
+	total := 1000
+	for i := 0; i < total; i++ {
+		js.Publish("foo", []byte("Hello"))
+	}
+
+	timeout := time.Now().Add(2 * time.Second)
+	got := 0
+	for time.Now().Before(timeout) {
+		got = 0
+		for sub := range subs {
+			pending, _, _ := sub.Pending()
+			// If a single sub has the total, then probably something is not right.
+			if pending == total {
+				t.Fatalf("A single member should not have gotten all messages")
+			}
+			got += pending
+		}
+		if got == total {
+			// We are done!
+			return
+		}
+	}
+	t.Fatalf("Expected %v messages, got only %v", total, got)
+}
+
+// Need access to internals for testing.
+// func TestJetStreamSubscribeReconnect(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	rch := make(chan struct{}, 1)
+// 	nc, err := nats.Connect(s.ClientURL(),
+// 		nats.ReconnectWait(50*time.Millisecond),
+// 		nats.ReconnectHandler(func(_ *nats.Conn) {
+// 			select {
+// 			case rch <- struct{}{}:
+// 			default:
+// 			}
+// 		}))
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+// 	defer nc.Close()
+
+// 	js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	// Create the stream using our client API.
+// 	_, err = js.AddStream(&nats.StreamConfig{
+// 		Name:     "TEST",
+// 		Subjects: []string{"foo"},
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	sub, err := js.SubscribeSync("foo", nats.Durable("bar"))
+// 	if err != nil {
+// 		t.Fatalf("Error on subscribe: %v", err)
+// 	}
+
+// 	sendAndReceive := func(msgContent string) {
+// 		t.Helper()
+// 		var ok bool
+// 		var err error
+// 		for i := 0; i < 5; i++ {
+// 			if _, err = js.Publish("foo", []byte(msgContent)); err != nil {
+// 				time.Sleep(250 * time.Millisecond)
+// 				continue
+// 			}
+// 			ok = true
+// 			break
+// 		}
+// 		if !ok {
+// 			t.Fatalf("Error on publish: %v", err)
+// 		}
+// 		msg, err := sub.NextMsg(time.Second)
+// 		if err != nil {
+// 			t.Fatal("Did not get message")
+// 		}
+// 		if string(msg.Data) != msgContent {
+// 			t.Fatalf("Unexpected content: %q", msg.Data)
+// 		}
+// 		if err := msg.AckSync(); err != nil {
+// 			t.Fatalf("Error on ack: %v", err)
+// 		}
+// 	}
+
+// 	sendAndReceive("msg1")
+
+// 	// Cause a disconnect...
+// 	nc.mu.Lock()
+// 	nc.conn.Close()
+// 	nc.mu.Unlock()
+
+// 	// Wait for reconnect
+// 	select {
+// 	case <-rch:
+// 	case <-time.After(time.Second):
+// 		t.Fatal("Did not reconnect")
+// 	}
+
+// 	// Make sure we can send and receive the msg
+// 	sendAndReceive("msg2")
+// }
+
+func TestJetStreamAckTokens(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -9544,82 +9375,526 @@ func TestJetStreamSubscribeConsumerName(t *testing.T) {
 	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
-		Subjects: []string{"foo", "bar", "baz", "foo.*"},
+		Subjects: []string{"foo"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = js.Publish("foo", []byte("first"))
+
+	sub, err := js.SubscribeSync("foo")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Error on subscribe: %v", err)
 	}
 
-	// Lookup the stream for testing.
-	_, err = js.StreamInfo("TEST")
+	now := time.Now()
+	for _, test := range []struct {
+		name     string
+		expected *nats.MsgMetadata
+		str      string
+		end      string
+		err      bool
+	}{
+		{
+			"valid token size but not js ack",
+			nil,
+			"1.2.3.4.5.6.7.8.9",
+			"",
+			true,
+		},
+		{
+			"valid token size but not js ack",
+			nil,
+			"1.2.3.4.5.6.7.8.9.10.11.12",
+			"",
+			true,
+		},
+		{
+			"invalid token size",
+			nil,
+			"$JS.ACK.3.4.5.6.7.8",
+			"",
+			true,
+		},
+		{
+			"invalid token size",
+			nil,
+			"$JS.ACK.3.4.5.6.7.8.9.10",
+			"",
+			true,
+		},
+		{
+			"v1 style",
+			&nats.MsgMetadata{
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: nats.SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"",
+			"",
+			false,
+		},
+		{
+			"v2 style no domain with hash",
+			&nats.MsgMetadata{
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: nats.SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"_.ACCHASH.",
+			".abcde",
+			false,
+		},
+		{
+			"v2 style with domain and hash",
+			&nats.MsgMetadata{
+				Domain:       "HUB",
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: nats.SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"HUB.ACCHASH.",
+			".abcde",
+			false,
+		},
+		{
+			"more than 12 tokens",
+			&nats.MsgMetadata{
+				Domain:       "HUB",
+				Stream:       "TEST",
+				Consumer:     "cons",
+				NumDelivered: 1,
+				Sequence: nats.SequencePair{
+					Stream:   2,
+					Consumer: 3,
+				},
+				Timestamp:  now,
+				NumPending: 4,
+			},
+			"HUB.ACCHASH.",
+			".abcde.ghijk.lmnop",
+			false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			msg := nats.NewMsg("foo")
+			msg.Sub = sub
+			if test.err {
+				msg.Reply = test.str
+			} else {
+				msg.Reply = fmt.Sprintf("$JS.ACK.%sTEST.cons.1.2.3.%v.4%s", test.str, now.UnixNano(), test.end)
+			}
+
+			meta, err := msg.Metadata()
+			if test.err {
+				if err == nil || meta != nil {
+					t.Fatalf("Expected error for content: %q, got meta=%+v err=%v", test.str, meta, err)
+				}
+				// Expected error, we are done
+				return
+			}
+			if err != nil {
+				t.Fatalf("Expected: %+v with reply: %q, got error %v", test.expected, msg.Reply, err)
+			}
+			if meta.Timestamp.UnixNano() != now.UnixNano() {
+				t.Fatalf("Timestamp is bad: %v vs %v", now.UnixNano(), meta.Timestamp.UnixNano())
+			}
+			meta.Timestamp = time.Time{}
+			test.expected.Timestamp = time.Time{}
+			if !reflect.DeepEqual(test.expected, meta) {
+				t.Fatalf("Expected %+v, got %+v", test.expected, meta)
+			}
+		})
+	}
+}
+
+// Need access to internals for testing.
+// func TestJetStreamFlowControlStalled(t *testing.T) {
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	var err error
+
+// 	_, err = js.AddStream(&nats.StreamConfig{
+// 		Name:     "TEST",
+// 		Subjects: []string{"a"},
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("Unexpected error: %v", err)
+// 	}
+
+// 	if _, err := js.SubscribeSync("a",
+// 		nats.DeliverSubject("ds"),
+// 		nats.Durable("dur"),
+// 		nats.IdleHeartbeat(200*time.Millisecond),
+// 		nats.EnableFlowControl()); err != nil {
+// 		t.Fatalf("Error on subscribe: %v", err)
+// 	}
+
+// 	// Drop all incoming FC control messages.
+// 	fcLoss := func(m *nats.Msg) *nats.Msg {
+// 		if _, ctrlType := isJSControlMessage(m); ctrlType == jsCtrlFC {
+// 			return nil
+// 		}
+// 		return m
+// 	}
+// 	nc.addMsgFilter("ds", fcLoss)
+
+// 	// Have a subscription on the FC subject to make sure that the library
+// 	// respond to the requests for un-stall
+// 	checkSub, err := nc.SubscribeSync("$JS.FC.>")
+// 	if err != nil {
+// 		t.Fatalf("Error on sub: %v", err)
+// 	}
+
+// 	// Publish bunch of messages.
+// 	payload := make([]byte, 100*1024)
+// 	for i := 0; i < 250; i++ {
+// 		nc.Publish("a", payload)
+// 	}
+
+// 	// Now wait that we respond to a stalled FC
+// 	if _, err := checkSub.NextMsg(2 * time.Second); err != nil {
+// 		t.Fatal("Library did not send FC")
+// 	}
+// }
+
+func TestJetStreamTracing(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
-		t.Fatalf("stream lookup failed: %v", err)
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctr := 0
+	js, err := nc.JetStream(&nats.ClientTrace{
+		RequestSent: func(subj string, payload []byte) {
+			ctr++
+			if subj != "$JS.API.STREAM.CREATE.X" {
+				t.Fatalf("Expected sent trace to %s: got: %s", "$JS.API.STREAM.CREATE.X", subj)
+			}
+		},
+		ResponseReceived: func(subj string, payload []byte, hdr nats.Header) {
+			ctr++
+			if subj != "$JS.API.STREAM.CREATE.X" {
+				t.Fatalf("Expected received trace to %s: got: %s", "$JS.API.STREAM.CREATE.X", subj)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	sub, err := js.SubscribeSync("foo", nats.ConsumerName("my-ephemeral"))
+	_, err = js.AddStream(&nats.StreamConfig{Name: "X"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("add stream failed: %s", err)
 	}
-	cinfo, err := sub.ConsumerInfo()
+	if ctr != 2 {
+		t.Fatalf("did not receive all trace events: %d", ctr)
+	}
+}
+
+func TestJetStreamExpiredPullRequests(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	got := cinfo.Config.Name
-	expected := "my-ephemeral"
-	if got != expected {
-		t.Fatalf("Expected: %v, got: %v", expected, got)
-	}
-	// Confirm that this is a durable.
-	got = cinfo.Config.Durable
-	expected = ""
-	if got != expected {
-		t.Fatalf("Expected: %v, got: %v", expected, got)
-	}
-	_, err = sub.NextMsg(1 * time.Second)
-	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// ConsumerName will be ignored in case a durable name has been set.
-	sub, err = js.SubscribeSync("foo", nats.Durable("durable"), nats.ConsumerName("custom-name"))
+	sub, err := js.PullSubscribe("foo", "bar", nats.PullMaxWaiting(2))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Error on subscribe: %v", err)
 	}
-	cinfo, err = sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
+	// Make sure that we reject batch < 1
+	if _, err := sub.Fetch(0); err == nil {
+		t.Fatal("Expected error, did not get one")
 	}
-	got = cinfo.Config.Name
-	expected = "durable"
-	if got != expected {
-		t.Fatalf("Expected: %v, got: %v", expected, got)
-	}
-	got = cinfo.Config.Durable
-	expected = "durable"
-	if got != expected {
-		t.Fatalf("Expected: %v, got: %v", expected, got)
-	}
-	_, err = sub.NextMsg(1 * time.Second)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := sub.Fetch(-1); err == nil {
+		t.Fatal("Expected error, did not get one")
 	}
 
-	// Default Ephemeral name should be short like in the server.
-	sub, err = js.SubscribeSync("foo", nats.ConsumerName(""))
-	if err != nil {
-		t.Fatal(err)
+	// Send 2 fetch requests
+	for i := 0; i < 2; i++ {
+		if _, err = sub.Fetch(1, nats.MaxWait(15*time.Millisecond)); err == nil {
+			t.Fatalf("Expected error, got none")
+		}
 	}
-	cinfo, err = sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
+	// Wait before the above expire
+	time.Sleep(50 * time.Millisecond)
+	batches := []int{1, 10}
+	for _, bsz := range batches {
+		start := time.Now()
+		_, err = sub.Fetch(bsz, nats.MaxWait(250*time.Millisecond))
+		dur := time.Since(start)
+		if err == nil || dur < 50*time.Millisecond {
+			t.Fatalf("Expected error and wait for 250ms, got err=%v and dur=%v", err, dur)
+		}
 	}
-	expectedSize := 8
-	result := len(cinfo.Config.Name)
-	if result != expectedSize {
-		t.Fatalf("Expected: %v, got: %v", expectedSize, result)
+}
+
+// Need access to internals for testing.
+// func TestJetStreamClusterPlacement(t *testing.T) {
+// 	// There used to be a test here that would not work because it would require
+// 	// all servers in the cluster to know about each other tags. So we will simply
+// 	// verify that if a stream is configured with placement and tags, the proper
+// 	// "stream create" request is sent.
+// 	s := RunBasicJetStreamServer()
+// 	defer shutdownJSServerAndRemoveStorage(t, s)
+
+// 	nc, js := jsClient(t, s)
+// 	defer nc.Close()
+
+// 	sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API."+apiStreamCreateT, "TEST"))
+// 	if err != nil {
+// 		t.Fatalf("Error on sub: %v", err)
+// 	}
+// 	js.AddStream(&nats.StreamConfig{
+// 		Name: "TEST",
+// 		Placement: &nats.Placement{
+// 			Tags: []string{"my_tag"},
+// 		},
+// 	})
+// 	msg, err := sub.NextMsg(time.Second)
+// 	if err != nil {
+// 		t.Fatalf("Error getting stream create request: %v", err)
+// 	}
+// 	var req nats.StreamConfig
+// 	if err := json.Unmarshal(msg.Data, &req); err != nil {
+// 		t.Fatalf("Unmarshal error: %v", err)
+// 	}
+// 	if req.Placement == nil {
+// 		t.Fatal("Expected placement, did not get it")
+// 	}
+// 	if n := len(req.Placement.Tags); n != 1 {
+// 		t.Fatalf("Expected 1 tag, got %v", n)
+// 	}
+// 	if v := req.Placement.Tags[0]; v != "my_tag" {
+// 		t.Fatalf("Unexpected tag: %q", v)
+// 	}
+// }
+
+func TestJetStreamStreamInfoWithSubjectDetails(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Publish on enough subjects to exercise the pagination
+	payload := make([]byte, 10)
+	for i := 0; i < 100001; i++ {
+		_, err := js.Publish(fmt.Sprintf("test.%d", i), payload)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	// Check that passing a filter returns the subject details
+	result, err := js.StreamInfo("TEST", &nats.StreamInfoRequest{SubjectsFilter: ">"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.State.Subjects) != 100001 {
+		t.Fatalf("expected 100001 subjects in the stream, but got %d instead", len(result.State.Subjects))
+	}
+
+	// Check that passing no filter does not return any subject details
+	result, err = js.StreamInfo("TEST")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.State.Subjects) != 0 {
+		t.Fatalf("expected 0 subjects details from StreamInfo, but got %d instead", len(result.State.Subjects))
+	}
+}
+
+func TestStreamNameBySubject(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		streamName string
+		err        error
+	}{
+
+		{name: "valid wildcard lookup", streamName: "test.*", err: nil},
+		{name: "valid explicit lookup", streamName: "test.a", err: nil},
+		{name: "lookup on not existing stream", streamName: "not.existing", err: nats.ErrNoMatchingStream},
+	} {
+
+		stream, err := js.StreamNameBySubject(test.streamName)
+		if err != test.err {
+			t.Fatalf("expected %v, got %v", test.err, err)
+		}
+
+		if stream != "TEST" && err == nil {
+			t.Fatalf("returned stream name should be 'TEST'")
+		}
+	}
+}
+
+func TestJetStreamSyncSubscribeWithMaxAckPending(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	opts.JetStreamLimits.MaxAckPending = 123
+	s := natsserver.RunServer(&opts)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&nats.StreamConfig{Name: "MAX_ACK_PENDING", Subjects: []string{"foo"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	// By default, the sync subscription will be created with a MaxAckPending equal
+	// to the internal sync queue len, which is 64K. So that should error out
+	// and make sure we get the actual limit
+
+	checkSub := func(pull bool) {
+		var sub *nats.Subscription
+		var err error
+		if pull {
+			_, err = js.PullSubscribe("foo", "bar")
+		} else {
+			_, err = js.SubscribeSync("foo")
+		}
+		if err == nil || !strings.Contains(err.Error(), "system limit of 123") {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// But it should work if we use MaxAckPending() with lower value
+		if pull {
+			sub, err = js.PullSubscribe("foo", "bar", nats.MaxAckPending(64))
+		} else {
+			sub, err = js.SubscribeSync("foo", nats.MaxAckPending(64))
+		}
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		sub.Unsubscribe()
+	}
+	checkSub(false)
+	checkSub(true)
+}
+
+func TestJetStreamConsumerMemoryStorage(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1
+	opts.JetStream = true
+	s := natsserver.RunServer(&opts)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	if _, err := js.AddStream(&nats.StreamConfig{Name: "STR", Subjects: []string{"foo"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+
+	// Pull ephemeral consumer with memory storage.
+	sub, err := js.PullSubscribe("foo", "", nats.ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
+	}
+
+	// Create a sync subscription with an in-memory ephemeral consumer.
+	sub, err = js.SubscribeSync("foo", nats.ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
+	}
+
+	// Async subscription with an in-memory ephemeral consumer.
+	cb := func(msg *nats.Msg) {}
+	sub, err = js.Subscribe("foo", cb, nats.ConsumerMemoryStorage())
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+
+	consInfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Error getting consumer info: %v", err)
+	}
+
+	if !consInfo.Config.MemoryStorage {
+		t.Fatalf("Expected memory storage to be %v, got %+v", true, consInfo.Config.MemoryStorage)
 	}
 }

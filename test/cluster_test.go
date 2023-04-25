@@ -177,10 +177,10 @@ func TestAuthServers(t *testing.T) {
 	opts.Password = "foo"
 
 	opts.Port = 1222
-	as1 := RunServerWithOptions(opts)
+	as1 := RunServerWithOptions(&opts)
 	defer as1.Shutdown()
 	opts.Port = 1224
-	as2 := RunServerWithOptions(opts)
+	as2 := RunServerWithOptions(&opts)
 	defer as2.Shutdown()
 
 	pservers := strings.Join(plainServers, ",")
