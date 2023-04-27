@@ -123,6 +123,8 @@ type watchOpts struct {
 	includeHistory bool
 	// retrieve only the meta data of the entry
 	metaOnly bool
+	// watch as part of a queue group
+	queueGroup string
 }
 
 type watchOptFn func(opts *watchOpts) error
@@ -151,6 +153,20 @@ func IgnoreDeletes() WatchOpt {
 func MetaOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.metaOnly = true
+		return nil
+	})
+}
+
+// QueueGroup instructs the key watcher to subscribe to events as part of a queue group.
+// Note that this will create a durable consumer and events will be distributed across
+// subscribers.
+//
+// If you do not want to leave the durable consumer make sure to explicitly stop the
+// watcher by calling `watcher.Stop()` or pass it a context that will automatically
+// unsubscribe when cancelled.
+func QueueGroup(group string) WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.queueGroup = group
 		return nil
 	})
 }
@@ -871,6 +887,8 @@ func (kv *kvs) WatchAll(opts ...WatchOpt) (KeyWatcher, error) {
 // keys needs to be a valid NATS subject.
 func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	var o watchOpts
+	// Explicitly set queue group to empty as initial value.
+	o.queueGroup = _EMPTY_
 	for _, opt := range opts {
 		if opt != nil {
 			if err := opt.configureWatcher(&o); err != nil {
@@ -952,7 +970,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	// update() callback.
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	sub, err := kv.js.Subscribe(keys, update, subOpts...)
+	sub, err := kv.js.QueueSubscribe(keys, o.queueGroup, update, subOpts...)
 	if err != nil {
 		return nil, err
 	}
