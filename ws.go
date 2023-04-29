@@ -449,8 +449,12 @@ func (w *websocketWriter) Write(p []byte) (int, error) {
 			} else {
 				w.compressor.Reset(buf)
 			}
-			w.compressor.Write(p)
-			w.compressor.Close()
+			if n, err = w.compressor.Write(p); err != nil {
+				return n, err
+			}
+			if err = w.compressor.Flush(); err != nil {
+				return n, err
+			}
 			b := buf.Bytes()
 			p = b[:len(b)-4]
 		}
@@ -693,6 +697,9 @@ func (nc *Conn) wsEnqueueCloseMsgLocked(status int, payload string) {
 	wr.cm = frame
 	wr.cmDone = true
 	nc.bw.flush()
+	if c := wr.compressor; c != nil {
+		c.Close()
+	}
 }
 
 func (nc *Conn) wsEnqueueControlMsg(needsLock bool, frameType wsOpCode, payload []byte) {
