@@ -1295,6 +1295,7 @@ func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
+	fmt.Printf("is zero: %t\n", dcb == nil)
 	nc.Opts.DisconnectedErrCB = dcb
 }
 
@@ -2793,7 +2794,10 @@ func (ac *asyncCallbacksHandler) asyncCBDispatcher() {
 			ac.tail = nil
 		}
 		ac.mu.Unlock()
+		fmt.Println("Unlocking")
 
+		fmt.Printf("acb: %+v'\n", cur)
+		fmt.Printf("f: %t\n", cur.f == nil)
 		// This signals that the dispatcher has been closed and all
 		// previous callbacks have been dispatched.
 		if cur.f == nil {
@@ -3567,7 +3571,8 @@ const (
 // DecodeHeadersMsg will decode and headers.
 func DecodeHeadersMsg(data []byte) (Header, error) {
 	br := bufio.NewReaderSize(bytes.NewReader(data), 128)
-	tp := textproto.NewReader(br)	l, err := tp.ReadLine()
+	tp := textproto.NewReader(br)
+	l, err := tp.ReadLine()
 	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
@@ -5025,10 +5030,10 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
 		if nc.conn != nil {
-			if nc.Opts.DisconnectedErrCB != nil {
-				nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
-			} else if nc.Opts.DisconnectedCB != nil {
-				nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+			if disconnectedErrCB := nc.Opts.DisconnectedErrCB; disconnectedErrCB != nil {
+				nc.ach.push(func() { disconnectedErrCB(nc, err) })
+			} else if disconnectedCB := nc.Opts.DisconnectedCB; disconnectedCB != nil {
+				nc.ach.push(func() { disconnectedCB(nc) })
 			}
 		}
 		if nc.Opts.ClosedCB != nil {

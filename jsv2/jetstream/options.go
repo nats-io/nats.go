@@ -78,21 +78,21 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithConsumeBatchSize limits the number of messages to be fetched from the stream in one request
+// WithConsumeMaxMessages limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithConsumeBatchSize(batch int) ConsumeOpts {
-	return func(cfg *pullRequest) error {
-		if batch <= 0 {
-			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
+func WithConsumeMaxMessages(maxMessages int) ConsumeOpts {
+	return func(cfg *pullRequestOpts) error {
+		if maxMessages <= 0 {
+			return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 		}
-		cfg.Batch = batch
+		cfg.MaxMessages = maxMessages
 		return nil
 	}
 }
 
 // WithConsumeExpiry sets timeout on a single batch request, waiting until at least one message is available
 func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
-	return func(cfg *pullRequest) error {
+	return func(cfg *pullRequestOpts) error {
 		if expires < 0 {
 			return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 		}
@@ -103,7 +103,7 @@ func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
 
 // WithConsumeMaxBytes sets max_bytes limit on a fetch request
 func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
-	return func(cfg *pullRequest) error {
+	return func(cfg *pullRequestOpts) error {
 		cfg.MaxBytes = maxBytes
 		return nil
 	}
@@ -144,7 +144,7 @@ func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
 // WithConsumeHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
 func WithConsumeHeartbeat(hb time.Duration) ConsumeOpts {
-	return func(req *pullRequest) error {
+	return func(req *pullRequestOpts) error {
 		if hb <= 0 {
 			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}

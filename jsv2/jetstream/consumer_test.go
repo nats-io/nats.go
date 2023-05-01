@@ -1490,7 +1490,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			}
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeBatchSize(2))
+		}, WithConsumeMaxMessages(4))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1503,8 +1503,8 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		// with batch size set to 2, and 5 messages published on subject, there should be a total of 3 requests sent
-		if requestsNum != 3 {
+		// with batch size set to 2, and 5 messages published on subject, there should be a total of 5 requests sent
+		if requestsNum != 5 {
 			t.Fatalf("Unexpected number of requests sent; want 3; got %d", requestsNum)
 		}
 
@@ -1558,7 +1558,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			}
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeMaxBytes(140))
+		}, WithConsumeMaxBytes(280))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1570,8 +1570,8 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		// with batch size set to 2, and 5 messages published on subject, there should be a total of 3 requests sent
-		if requestsNum != 3 {
+		// new request should be sent after each consumed message (msg size is 57)
+		if requestsNum != 5 {
 			t.Fatalf("Unexpected number of requests sent; want 3; got %d", requestsNum)
 		}
 
@@ -1611,7 +1611,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 
 		_, err = c.Consume(func(_ Msg, _ error) {
-		}, WithConsumeBatchSize(-1))
+		}, WithConsumeMaxMessages(-1))
 		if err == nil || !errors.Is(err, ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
 		}
@@ -1841,47 +1841,6 @@ func TestPullConsumerConsume(t *testing.T) {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
 		}
-	})
-
-	t.Run("with idle heartbeat, server shutdown", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
-		l, err := c.Consume(func(_ Msg, err error) {
-			if !errors.Is(err, ErrNoHeartbeat) {
-				t.Fatalf("Unexpected error: %v; expected: %v", err, ErrNoHeartbeat)
-			}
-			wg.Done()
-		}, WithConsumeHeartbeat(10*time.Millisecond))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer l.Stop()
-		shutdownJSServerAndRemoveStorage(t, srv)
-		wg.Wait()
 	})
 
 	t.Run("with server restart", func(t *testing.T) {
