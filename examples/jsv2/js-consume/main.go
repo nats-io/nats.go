@@ -17,6 +17,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -76,7 +79,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for {
-	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
 
 }

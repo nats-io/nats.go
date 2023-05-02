@@ -70,6 +70,9 @@ func main() {
 	it, err := cons.Messages(jetstream.WithMessagesErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
 		fmt.Println("ERROR: ", err)
 	}))
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
 		msg, err := it.Next()
 		if err != nil {

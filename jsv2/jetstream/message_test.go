@@ -59,9 +59,8 @@ func TestMessageDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	var msg Msg
 
-	msg = <-msgs.Messages()
+	msg := <-msgs.Messages()
 	if msg == nil {
 		t.Fatalf("No messages available")
 	}
@@ -189,8 +188,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -227,8 +225,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -256,8 +253,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -294,8 +290,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -321,8 +316,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -359,8 +353,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -397,8 +390,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}
@@ -435,8 +427,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		var msg Msg
-		msg = <-msgs.Messages()
+		msg := <-msgs.Messages()
 		if msg == nil {
 			t.Fatalf("No messages available")
 		}

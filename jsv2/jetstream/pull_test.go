@@ -382,13 +382,11 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			received := make([]Msg, 0)
 			var i int
 			for msg := range msgs.Messages() {
 				if string(msg.Data()) != testMsgs[i] {
 					t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 				}
-				received = append(received, msg)
 				i++
 			}
 			if msgs.Error() != nil {

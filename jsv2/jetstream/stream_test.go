@@ -977,8 +977,7 @@ func TestPurgeStream(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				var msg Msg
-				msg = <-msgs.Messages()
+				msg := <-msgs.Messages()
 				if msg == nil {
 					break Loop
 				}

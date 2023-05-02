@@ -33,7 +33,7 @@ type (
 		FetchNoWait(batch int) (MessageBatch, error)
 		// Consume can be used to continuously receive messages and handle them with the provided callback function
 		Consume(MessageHandler, ...ConsumeOpts) (ConsumeContext, error)
-		// Messages returns [MessagesContext], allowing continously iterating over messages on a stream.
+		// Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
 		Messages(...ConsumerMessagesOpts) (MessagesContext, error)
 
 		// Info returns Consumer details
@@ -241,7 +241,7 @@ func compareConsumerConfig(s, u *ConsumerConfig) error {
 		return makeErr("deliver group", u.DeliverSubject, s.DeliverSubject)
 	}
 	if u.InactiveThreshold != s.InactiveThreshold {
-		return makeErr("inactive threshhold", u.InactiveThreshold.String(), s.InactiveThreshold.String())
+		return makeErr("inactive threshold", u.InactiveThreshold.String(), s.InactiveThreshold.String())
 	}
 	if u.Replicas != s.Replicas {
 		return makeErr("replicas", u.Replicas, s.Replicas)
