@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jsv2/jetstream"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 
 	nc, err := nats.Connect("127.0.0.1:4222")
@@ -36,26 +36,47 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumerListener", AckPolicy: jetstream.AckExplicitPolicy})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	l, err := cons.Listener(func(msg jetstream.Msg, err error) {
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(string(msg.Data()))
-		msg.Ack()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST_STREAM",
+		Subjects: []string{"FOO.*"},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer l.Stop()
 
+	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "TestConsumerMessages",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	go endlessPublish(ctx, nc, js)
+
+	it, err := cons.Messages(jetstream.PullMaxMessages(1))
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		msg, err := it.Next()
+		if err != nil {
+			fmt.Println("next err: ", err)
+		}
+		fmt.Println(string(msg.Data()))
+		msg.Ack()
+	}
+}
+
+func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {
+	var i int
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if nc.Status() != nats.CONNECTED {
+			continue
+		}
+		if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
+			fmt.Println("pub error: ", err)
+		}
+		i++
+	}
 }

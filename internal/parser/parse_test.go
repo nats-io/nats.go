@@ -18,6 +18,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -79,26 +80,25 @@ func TestParseNum(t *testing.T) {
 	}
 }
 
-// TODO: Add this test once CI uses go 1.18
-// func FuzzParseNum(f *testing.F) {
-// 	testcases := []string{"191817", " ", "-123", "abc"}
-// 	for _, tc := range testcases {
-// 		f.Add(tc)
-// 	}
+func FuzzParseNum(f *testing.F) {
+	testcases := []string{"191817", " ", "-123", "abc"}
+	for _, tc := range testcases {
+		f.Add(tc)
+	}
 
-// 	f.Fuzz(func(t *testing.T, given string) {
-// 		given = strings.TrimLeft(given, "+")
-// 		res := ParseNum(given)
-// 		parsed, err := strconv.ParseUint(given, 10, 64)
-// 		if err != nil && !errors.Is(err, strconv.ErrRange) {
-// 			if res != 0 {
-// 				t.Errorf("given: %s; expected: -1; got: %d; err: %v", given, res, err)
-// 			}
-// 		} else if err == nil && res != parsed {
-// 			t.Errorf("given: %s; expected: %d; got: %d", given, parsed, res)
-// 		}
-// 	})
-// }
+	f.Fuzz(func(t *testing.T, given string) {
+		given = strings.TrimLeft(given, "+")
+		res := ParseNum(given)
+		parsed, err := strconv.ParseUint(given, 10, 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			if res != 0 {
+				t.Errorf("given: %s; expected: -1; got: %d; err: %v", given, res, err)
+			}
+		} else if err == nil && res != parsed {
+			t.Errorf("given: %s; expected: %d; got: %d", given, parsed, res)
+		}
+	})
+}
 
 func TestGetMetadataFields(t *testing.T) {
 	tests := []struct {

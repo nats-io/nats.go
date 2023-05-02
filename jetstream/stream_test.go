@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -25,7 +25,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func TestCreateConsumer(t *testing.T) {
+func TestAddConsumer(t *testing.T) {
 	tests := []struct {
 		name           string
 		consumerConfig ConsumerConfig
@@ -43,13 +43,13 @@ func TestCreateConsumer(t *testing.T) {
 			shouldCreate:   true,
 		},
 		{
-			name:           "consumer already exists, idempotent operation",
-			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
+			name:           "consumer already exists, update",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test consumer"},
 		},
 		{
-			name:           "consumer already exists, config mismatch",
-			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test"},
-			withError:      ErrConsumerNameAlreadyInUse,
+			name:           "consumer already exists, illegal update",
+			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckNonePolicy},
+			withError:      ErrConsumerCreate,
 		},
 		{
 			name:           "invalid durable name",
@@ -81,12 +81,12 @@ func TestCreateConsumer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var sub *nats.Subscription
-			if test.consumerConfig.Durable != "" {
-				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.consumerConfig.Durable))
+			if test.consumerConfig.FilterSubject != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
 			} else {
-				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
 			}
-			c, err := s.CreateConsumer(ctx, test.consumerConfig)
+			c, err := s.AddConsumer(ctx, test.consumerConfig)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -104,114 +104,6 @@ func TestCreateConsumer(t *testing.T) {
 			_, err = s.Consumer(ctx, c.CachedInfo().Name)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
-			}
-		})
-	}
-}
-
-func TestCreateConsumer_WithCluster(t *testing.T) {
-	name := "cluster"
-	stream := StreamConfig{
-		Name:     name,
-		Replicas: 1,
-		Subjects: []string{"FOO.*"},
-	}
-	t.Run("consumer name conflict", func(t *testing.T) {
-		withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
-			nc, err := nats.Connect(srvs[0].ClientURL())
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			js, err := New(nc)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer nc.Close()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s, err := js.Stream(ctx, stream.Name)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "test"})
-			if err == nil || !errors.Is(err, ErrConsumerNameAlreadyInUse) {
-				t.Fatalf("Expected error: %v; got %v", ErrConsumerNameAlreadyInUse, err)
-			}
-		})
-	})
-}
-
-func TestUpdateConsumer(t *testing.T) {
-	tests := []struct {
-		name      string
-		durable   string
-		withError error
-	}{
-		{
-			name:    "update consumer",
-			durable: "dur",
-		},
-		{
-			name:      "consumer does not exist",
-			durable:   "abc",
-			withError: ErrConsumerNotFound,
-		},
-		{
-			name:      "invalid durable name",
-			durable:   "dur.123",
-			withError: ErrInvalidConsumerName,
-		},
-	}
-
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	js, err := New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			c, err := s.UpdateConsumer(ctx, ConsumerConfig{Durable: test.durable, AckPolicy: AckAllPolicy, Description: test.name})
-			if test.withError != nil {
-				if err == nil || !errors.Is(err, test.withError) {
-					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			c, err = s.Consumer(ctx, c.CachedInfo().Name)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if c.CachedInfo().Config.Description != test.name {
-				t.Fatalf("Invalid consumer description after update; want: %s; got: %s", test.name, c.CachedInfo().Config.Description)
 			}
 		})
 	}
@@ -258,7 +150,7 @@ func TestConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	_, err = s.AddConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -323,7 +215,7 @@ func TestDeleteConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.CreateConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	_, err = s.AddConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -794,7 +686,7 @@ func TestListConsumers(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+				_, err = s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -857,7 +749,7 @@ func TestConsumerNames(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+				_, err = s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -963,7 +855,7 @@ func TestPurgeStream(t *testing.T) {
 				}
 				return
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -977,8 +869,7 @@ func TestPurgeStream(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				var msg Msg
-				msg = <-msgs.Messages()
+				msg := <-msgs.Messages()
 				if msg == nil {
 					break Loop
 				}

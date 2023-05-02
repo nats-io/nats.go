@@ -46,7 +46,7 @@ import (
     "time"
 
     "github.com/nats-io/nats.go"
-    "github.com/nats-io/nats.go/jsv2/jetstream"
+    "github.com/nats-io/nats.go/jetstream"
 )
 
 func main() {

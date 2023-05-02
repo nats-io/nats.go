@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,6 +17,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -45,7 +48,7 @@ func main() {
 	}
 
 	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:   "TestConsumerListener",
+		Durable:   "TestConsumerConsume",
 		AckPolicy: jetstream.AckExplicitPolicy,
 	})
 	if err != nil {
@@ -53,15 +56,21 @@ func main() {
 	}
 	go endlessPublish(ctx, nc, js)
 
-	for {
-		msg, err := cons.Next()
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		fmt.Println(string(msg.Data()))
 		msg.Ack()
+	}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
+		fmt.Println(err)
+	}))
+	if err != nil {
+		log.Fatal(err)
 	}
+	defer cc.Stop()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
 }
 
 func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {

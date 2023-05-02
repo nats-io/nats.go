@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -45,10 +45,11 @@ const (
 	apiAccountInfo = "INFO"
 
 	// apiConsumerCreateT is used to create consumers.
-	apiConsumerCreateT = "CONSUMER.CREATE.%s"
+	apiConsumerCreateT = "CONSUMER.CREATE.%s.%s"
 
-	// apiDurableCreateT is used to create durable consumers.
-	apiDurableCreateT = "CONSUMER.DURABLE.CREATE.%s.%s"
+	// apiConsumerCreateT is used to create consumers.
+	// it accepts stream name, consumer name and filter subject
+	apiConsumerCreateWithFilterSubjectT = "CONSUMER.CREATE.%s.%s.%s"
 
 	// apiConsumerInfoT is used to create consumers.
 	apiConsumerInfoT = "CONSUMER.INFO.%s.%s"

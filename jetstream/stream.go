@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 )
 
 type (
@@ -49,18 +50,26 @@ type (
 	}
 
 	streamConsumerManager interface {
-		// CreateConsumer creates a consumer on a given stream with given config
-		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
-		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		CreateConsumer(context.Context, ConsumerConfig) (Consumer, error)
-		// UpdateConsumer updates an existing consumer
-		UpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
+		// AddConsumer creates a consumer on a given stream with given config.
+		// If consumer already exists, it will be updated (if possible).
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		AddConsumer(context.Context, ConsumerConfig) (Consumer, error)
+
+		// OrderedConsumer returns an OrderedConsumer instance.
+		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
+		// for in order delivery of messages. Underlying consumer is re-created when necessary,
+		// without additional client code.
+		OrderedConsumer(context.Context, OrderedConsumerConfig) (Consumer, error)
+
 		// Consumer returns a Consumer interface for an existing consumer
 		Consumer(context.Context, string) (Consumer, error)
+
 		// DeleteConsumer removes a consumer
 		DeleteConsumer(context.Context, string) error
+
 		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister
+
 		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
@@ -180,31 +189,23 @@ type (
 	}
 )
 
-func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	if cfg.Durable != "" {
-		c, err := s.Consumer(ctx, cfg.Durable)
-		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
-			return nil, err
-		}
-		if c != nil {
-			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
-			}
-			return c, nil
-		}
-	}
+func (s *stream) AddConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
 
-func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	if cfg.Durable == "" {
-		return nil, ErrConsumerNameRequired
+func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
+	oc := &orderedConsumer{
+		jetStream:  s.jetStream,
+		cfg:        &cfg,
+		stream:     s.name,
+		namePrefix: nuid.Next(),
+		doReset:    make(chan struct{}, 1),
 	}
-	_, err := s.Consumer(ctx, cfg.Durable)
-	if err != nil {
-		return nil, err
+	if cfg.OptStartSeq != 0 {
+		oc.cursor.streamSeq = cfg.OptStartSeq - 1
 	}
-	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
+
+	return oc, nil
 }
 
 func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {

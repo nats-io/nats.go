@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -49,6 +49,7 @@ const (
 	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
 
+	JSErrCodeConsumerCreate        ErrorCode = 10012
 	JSErrCodeConsumerNotFound      ErrorCode = 10014
 	JSErrCodeConsumerNameExists    ErrorCode = 10013
 	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
@@ -81,6 +82,9 @@ var (
 
 	// ErrBadRequest is returned when invalid request is sent to JetStream API.
 	ErrBadRequest JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBadRequest, Description: "bad request", Code: 400}}
+
+	// ErrConsumerCreate is returned when nats-server reports error when creating consumer (e.g. illegal update).
+	ErrConsumerCreate JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerCreate, Description: "could not create consumer", Code: 500}}
 
 	// Client errors
 
@@ -155,6 +159,9 @@ var (
 
 	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator
 	ErrMsgIteratorClosed = &jsError{message: "messages iterator closed"}
+
+	ErrOrderedConsumerReset    = &jsError{message: "recreating ordered consumer"}
+	ErrOrderedSequenceMismatch = &jsError{message: "sequence mismatch"}
 )
 
 // Error prints the JetStream API error code and description
