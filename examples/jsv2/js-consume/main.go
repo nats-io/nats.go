@@ -24,42 +24,59 @@ import (
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 
-	nc, err := nats.Connect("127.0.0.1:4222")
+	nc, err := nats.Connect("nats://127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer nc.Flush()
 
 	js, err := jetstream.New(nc)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST_STREAM", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST_STREAM",
+		Subjects: []string{"FOO.*"},
+		Replicas: 3,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "TestConsumerReader", AckPolicy: jetstream.AckExplicitPolicy})
+	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "TestConsumerListener",
+		AckPolicy: jetstream.AckExplicitPolicy,
+		Replicas:  3,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	reader, err := cons.Reader()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for i := 0; i < 10; i++ {
-		msg, err := reader.Next()
-		if err != nil {
-			log.Fatal(err)
+	go func() {
+		var i int
+		for {
+			time.Sleep(100 * time.Millisecond)
+			if nc.Status() != nats.CONNECTED {
+				continue
+			}
+			if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
+				fmt.Println("pub error: ", err)
+			}
+			i++
 		}
+	}()
+
+	_, err = cons.Consume(func(msg jetstream.Msg) {
 		fmt.Println(string(msg.Data()))
 		msg.Ack()
+	}, jetstream.WithConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
+		fmt.Println("ERROR: ", err)
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
 	}
 
-	reader.Stop()
 }
