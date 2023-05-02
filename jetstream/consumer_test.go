@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -43,7 +43,7 @@ func TestConsumerInfo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{
+		c, err := s.AddConsumer(ctx, ConsumerConfig{
 			Durable:     "cons",
 			AckPolicy:   AckExplicitPolicy,
 			Description: "test consumer",
@@ -65,7 +65,7 @@ func TestConsumerInfo(t *testing.T) {
 		}
 
 		// update consumer and see if info is updated
-		_, err = s.UpdateConsumer(ctx, ConsumerConfig{
+		_, err = s.AddConsumer(ctx, ConsumerConfig{
 			Durable:     "cons",
 			AckPolicy:   AckExplicitPolicy,
 			Description: "updated consumer",
@@ -139,7 +139,7 @@ func TestConsumerCachedInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.CreateConsumer(ctx, ConsumerConfig{
+	c, err := s.AddConsumer(ctx, ConsumerConfig{
 		Durable:     "cons",
 		AckPolicy:   AckExplicitPolicy,
 		Description: "test consumer",
@@ -158,7 +158,7 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 
 	// update consumer and see if info is updated
-	_, err = s.UpdateConsumer(ctx, ConsumerConfig{
+	_, err = s.AddConsumer(ctx, ConsumerConfig{
 		Durable:     "cons",
 		AckPolicy:   AckExplicitPolicy,
 		Description: "updated consumer",

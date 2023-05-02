@@ -5,4 +5,6 @@ issues:
     - linters:
       - errcheck
       text: "Unsubscribe"
-      path: jsv2/jetstream/consumer.go
+    - linters:
+      - errcheck
+      text: "msg.Ack"

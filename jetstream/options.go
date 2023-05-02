@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,6 +17,16 @@ import (
 	"fmt"
 	"time"
 )
+
+type pullOptFunc func(*consumeOpts) error
+
+func (fn pullOptFunc) configureConsume(opts *consumeOpts) error {
+	return fn(opts)
+}
+
+func (fn pullOptFunc) configureMessages(opts *consumeOpts) error {
+	return fn(opts)
+}
 
 // WithClientTrace enables request/response API calls tracing
 // ClientTrace is used to provide handlers for each event
@@ -78,101 +88,126 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithConsumeMaxMessages limits the number of messages to be fetched from the stream in one request
+// PullMaxMessages limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithConsumeMaxMessages(maxMessages int) ConsumeOpts {
-	return func(cfg *consumeOpts) error {
-		if maxMessages <= 0 {
-			return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
-		}
-		cfg.MaxMessages = maxMessages
-		return nil
+type PullMaxMessages int
+
+func (max PullMaxMessages) configureConsume(opts *consumeOpts) error {
+	if max <= 0 {
+		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 	}
+	opts.MaxMessages = int(max)
+	return nil
 }
 
-// WithConsumeExpiry sets timeout on a single batch request, waiting until at least one message is available
-func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
-	return func(cfg *consumeOpts) error {
-		if expires < 0 {
-			return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
-		}
-		cfg.Expires = expires
-		return nil
+func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
+	if max <= 0 {
+		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 	}
+	opts.MaxMessages = int(max)
+	return nil
 }
 
-// WithConsumeMaxBytes sets max_bytes limit on a fetch request
-func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
-	return func(cfg *consumeOpts) error {
-		cfg.MaxBytes = maxBytes
-		return nil
+// PullExpiry sets timeout on a single batch request, waiting until at least one message is available
+type PullExpiry time.Duration
+
+func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
+	if exp < 0 {
+		return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 	}
+	opts.Expires = time.Duration(exp)
+	return nil
 }
 
-// WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
-// If not provided, a default of 100 messages will be used
-func WithMessagesBatchSize(maxMessages int) ConsumerMessagesOpts {
-	return func(opts *consumeOpts) error {
-		if maxMessages <= 0 {
-			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
-		}
-		opts.MaxMessages = maxMessages
-		return nil
+func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
+	if exp < 0 {
+		return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 	}
+	opts.Expires = time.Duration(exp)
+	return nil
 }
 
-// WithMessagesHeartbeat sets the idle heartbeat duration for a pull subscription
-// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithMessagesHeartbeat(hb time.Duration) ConsumerMessagesOpts {
-	return func(opts *consumeOpts) error {
-		if hb <= 0 {
-			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
-		}
-		opts.Heartbeat = hb
-		return nil
+// PullMaxBytes sets max_bytes limit on a fetch request
+type PullMaxBytes int
+
+func (max PullMaxBytes) configureConsume(opts *consumeOpts) error {
+	if max <= 0 {
+		return fmt.Errorf("%w: max bytes must be greater then 0", ErrInvalidOption)
 	}
+	opts.MaxBytes = int(max)
+	return nil
 }
 
-// WithMessagesMaxBytes sets max_bytes limit on a fetch request
-func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
-	return func(opts *consumeOpts) error {
-		opts.MaxBytes = maxBytes
-		return nil
+func (max PullMaxBytes) configureMessages(opts *consumeOpts) error {
+	if max <= 0 {
+		return fmt.Errorf("%w: max bytes must be greater then 0", ErrInvalidOption)
 	}
+	opts.MaxBytes = int(max)
+	return nil
 }
 
-// WithMessagesErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// PullThresholdMessages sets the message count on which Consume will trigger
+// new pull request to the server. Defaults to 50% of MaxMessages.
+type PullThresholdMessages int
+
+func (t PullThresholdMessages) configureConsume(opts *consumeOpts) error {
+	opts.ThresholdMessages = int(t)
+	return nil
+}
+
+// PullThresholdBytes sets the byte count on which Consume will trigger
+// new pull request to the server. Defaults to 50% of MaxBytes (if set).
+type PullThresholBytes int
+
+func (t PullThresholBytes) configureConsume(opts *consumeOpts) error {
+	opts.ThresholdBytes = int(t)
+	return nil
+}
+
+// PullHeartbeat sets the idle heartbeat duration for a pull subscription
+// If a client does not receive a heartbeat message from a stream for more
+// than the idle heartbeat setting, the subscription will be removed
+// and error will be passed to the message handler
+type PullHeartbeat time.Duration
+
+func (hb PullHeartbeat) configureConsume(opts *consumeOpts) error {
+	hbTime := time.Duration(hb)
+	if hbTime < 1*time.Second || hbTime > 30*time.Second {
+		return fmt.Errorf("%w: idle_heartbeat value must be within 1s-30s range", ErrInvalidOption)
+	}
+	opts.Heartbeat = hbTime
+	return nil
+}
+
+func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
+	hbTime := time.Duration(hb)
+	if hbTime < 1*time.Second || hbTime > 30*time.Second {
+		return fmt.Errorf("%w: idle_heartbeat value must be within 1s-30s range", ErrInvalidOption)
+	}
+	opts.Heartbeat = hbTime
+	return nil
+}
+
+// ConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
 // It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
-func WithMessagesErrHandler(cb ConsumeErrHandler) ConsumerMessagesOpts {
-	return func(opts *consumeOpts) error {
-		opts.ErrHandler = cb
+func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {
+	return pullOptFunc(func(cfg *consumeOpts) error {
+		cfg.ErrHandler = cb
 		return nil
-	}
+	})
 }
 
-// WithConsumeHeartbeat sets the idle heartbeat duration for a pull subscription
-// If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
-func WithConsumeHeartbeat(hb time.Duration) ConsumeOpts {
-	return func(req *consumeOpts) error {
-		if hb <= 0 {
-			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
-		}
-		req.Heartbeat = hb
-		return nil
-	}
-}
-
-// WithConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// ConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
 // It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
-func WithConsumeErrHandler(cb ConsumeErrHandler) ConsumeOpts {
-	return func(opts *consumeOpts) error {
-		opts.ErrHandler = cb
+func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
+	return pullOptFunc(func(cfg *consumeOpts) error {
+		cfg.ReportMissingHeartbeats = hbErr
 		return nil
-	}
+	})
 }
 
-// WithFetchTimeout sets custom timeout fir fetching predefined batch of messages
-func WithFetchTimeout(timeout time.Duration) FetchOpt {
+// FetchMaxWait sets custom timeout fir fetching predefined batch of messages
+func FetchMaxWait(timeout time.Duration) FetchOpt {
 	return func(req *pullRequest) error {
 		if timeout <= 0 {
 			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)

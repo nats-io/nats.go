@@ -1,3 +1,16 @@
+// Copyright 2020-2023 The NATS Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package jetstream
 
 import (
@@ -42,7 +55,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -53,20 +66,15 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		received := make([]Msg, 0)
 		var i int
 		for msg := range msgs.Messages() {
-			if msg == nil {
-				if len(testMsgs) != len(received) {
-					t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), len(received))
-				}
-				return
-			}
 			if string(msg.Data()) != testMsgs[i] {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
-			received = append(received, msg)
 			i++
+		}
+		if len(testMsgs) != i {
+			t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), i)
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
@@ -93,7 +101,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -161,7 +169,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -198,7 +206,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -225,46 +233,6 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 	})
 
-	t.Run("with active streaming", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Consume(func(_ Msg) {})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		_, err = c.Fetch(5)
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-
-		_, err = c.FetchNoWait(5)
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-	})
-
 	t.Run("with timeout", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -285,12 +253,12 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		msgs, err := c.Fetch(5, WithFetchTimeout(50*time.Millisecond))
+		msgs, err := c.Fetch(5, FetchMaxWait(50*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -321,19 +289,210 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Fetch(5, WithFetchTimeout(-50*time.Millisecond))
+		_, err = c.Fetch(5, FetchMaxWait(-50*time.Millisecond))
 		if !errors.Is(err, ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
 		}
 	})
 }
 
-func TestPullConsumerNext_WithCluster(t *testing.T) {
+func TestPullConsumerFetchBytes(t *testing.T) {
+	testSubject := "FOO.123"
+	msg := [10]byte{}
+	publishTestMsgs := func(t *testing.T, nc *nats.Conn, count int) {
+		for i := 0; i < count; i++ {
+			if err := nc.Publish(testSubject, msg[:]); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+	}
+
+	t.Run("no options, exact byte count received", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(300)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 5 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+
+	t.Run("no options, last msg does not fit max bytes", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(250)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 4 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+	t.Run("no options, single msg is too large", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(30)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 0 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+
+	t.Run("timeout waiting for messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(1000, FetchMaxWait(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 5 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+}
+
+func TestPullConsumerFetch_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
 	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
@@ -371,7 +530,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -382,13 +541,11 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			received := make([]Msg, 0)
 			var i int
 			for msg := range msgs.Messages() {
 				if string(msg.Data()) != testMsgs[i] {
 					t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 				}
-				received = append(received, msg)
 				i++
 			}
 			if msgs.Error() != nil {
@@ -416,7 +573,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -466,7 +623,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -528,18 +685,13 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		// subscribe to next request subject to verify how many next requests were sent
-		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
-		if err != nil {
-			t.Fatalf("Error on subscribe: %v", err)
-		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesBatchSize(4))
+		it, err := c.Messages(PullMaxMessages(3))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -559,15 +711,6 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 		it.Stop()
 		time.Sleep(10 * time.Millisecond)
-		requestsNum, _, err := sub.Pending()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		// with batch size set to 4, and 5 messages published on subject, there should be a total of 5 requests sent
-		if requestsNum < 5 {
-			t.Fatalf("Unexpected number of requests sent; want at least 5; got %d", requestsNum)
-		}
-
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 		}
@@ -598,7 +741,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -609,7 +752,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesMaxBytes(240))
+		it, err := c.Messages(PullMaxBytes(60))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -668,7 +811,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -679,7 +822,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesMaxBytes(500))
+		it, err := c.Messages(PullMaxBytes(150))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -737,7 +880,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -748,7 +891,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesBatchSize(1))
+		it, err := c.Messages(PullMaxMessages(1))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -787,42 +930,6 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 	})
 
-	t.Run("attempt iteration with active subscription twice on the same consumer", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Consume(func(msg Msg) {})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Messages()
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-	})
-
 	t.Run("create iterator, stop, then create again", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -843,7 +950,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -920,12 +1027,12 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = c.Messages(WithMessagesBatchSize(-1))
+		_, err = c.Messages(PullMaxMessages(-1))
 		if err == nil || !errors.Is(err, ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
 		}
@@ -951,13 +1058,17 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		msgs := make([]Msg, 0)
-		it, err := c.Messages(WithMessagesHeartbeat(10 * time.Millisecond))
+		// use custom function to bypass validation in test
+		it, err := c.Messages(pullOptFunc(func(o *consumeOpts) error {
+			o.Heartbeat = 10 * time.Millisecond
+			return nil
+		}))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1006,7 +1117,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1043,7 +1154,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			if len(msgs) != 2*len(testMsgs) {
 				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 			}
-		case <-errs:
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %s", err)
 		}
 	})
@@ -1080,7 +1191,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1129,20 +1240,41 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		l, err := c.Consume(func(msg Msg) {})
+		wg := sync.WaitGroup{}
+		msgs1, msgs2 := make([]Msg, 0), make([]Msg, 0)
+		l1, err := c.Consume(func(msg Msg) {
+			msgs1 = append(msgs1, msg)
+			wg.Done()
+			msg.Ack()
+		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer l.Stop()
+		defer l1.Stop()
+		l2, err := c.Consume(func(msg Msg) {
+			msgs2 = append(msgs2, msg)
+			wg.Done()
+			msg.Ack()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l2.Stop()
 
-		_, err = c.Consume(func(msg Msg) {})
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		if len(msgs1)+len(msgs2) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs1)+len(msgs2))
+		}
+		if len(msgs1) == 0 || len(msgs2) == 0 {
+			t.Fatalf("Received no messages on one of the subscriptions")
 		}
 	})
 
@@ -1166,7 +1298,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1235,14 +1367,9 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
-		}
-		// subscribe to next request subject to verify how many next requests were sent
-		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
-		if err != nil {
-			t.Fatalf("Error on subscribe: %v", err)
 		}
 
 		msgs := make([]Msg, 0)
@@ -1251,7 +1378,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		l, err := c.Consume(func(msg Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeMaxMessages(4))
+		}, PullMaxMessages(4))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1259,15 +1386,56 @@ func TestPullConsumerConsume(t *testing.T) {
 
 		publishTestMsgs(t, nc)
 		wg.Wait()
-		requestsNum, _, err := sub.Pending()
+
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		for i, msg := range msgs {
+			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+		}
+	})
+
+	t.Run("fetch messages one by one", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		// with batch size set to 2, and 5 messages published on subject, there should be a total of 5 requests sent
-		if requestsNum != 5 {
-			t.Fatalf("Unexpected number of requests sent; want 3; got %d", requestsNum)
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		l, err := c.Consume(func(msg Msg) {
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, PullMaxMessages(1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l.Stop()
+
+		publishTestMsgs(t, nc)
+		wg.Wait()
 
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -1299,7 +1467,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1316,7 +1484,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		l, err := c.Consume(func(msg Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeMaxBytes(280))
+		}, PullMaxBytes(150))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1329,7 +1497,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 
 		// new request should be sent after each consumed message (msg size is 57)
-		if requestsNum < 5 {
+		if requestsNum < 3 {
 			t.Fatalf("Unexpected number of requests sent; want at least 5; got %d", requestsNum)
 		}
 
@@ -1363,13 +1531,13 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		_, err = c.Consume(func(_ Msg) {
-		}, WithConsumeMaxMessages(-1))
+		}, PullMaxMessages(-1))
 		if err == nil || !errors.Is(err, ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
 		}
@@ -1395,15 +1563,9 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		// subscribe to next request subject to verify how many next requests were sent
-		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
-		if err != nil {
-			t.Fatalf("Error on subscribe: %v", err)
 		}
 
 		msgs := make([]Msg, 0)
@@ -1412,25 +1574,15 @@ func TestPullConsumerConsume(t *testing.T) {
 		l, err := c.Consume(func(msg Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeExpiry(50*time.Millisecond), WithConsumeHeartbeat(20*time.Millisecond))
+		}, PullExpiry(2*time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer l.Stop()
 
-		time.Sleep(60 * time.Millisecond)
 		publishTestMsgs(t, nc)
 		wg.Wait()
 
-		requestsNum, _, err := sub.Pending()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		// with expiry set to 50ms, and 60ms wait before messages are published, there should be a total of 2 requests sent to the server
-		if requestsNum < 2 {
-			t.Fatalf("Unexpected number of requests sent; want at least 2; got %d", requestsNum)
-		}
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 		}
@@ -1461,7 +1613,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1472,7 +1624,9 @@ func TestPullConsumerConsume(t *testing.T) {
 		l, err := c.Consume(func(msg Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeExpiry(50*time.Millisecond), WithConsumeHeartbeat(20*time.Millisecond), WithConsumeErrHandler(func(consumeCtx ConsumeContext, err error) {
+		}, pullOptFunc(func(o *consumeOpts) error {
+			o.Expires = 50 * time.Millisecond
+			return nil
 		}))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1516,13 +1670,13 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		_, err = c.Consume(func(_ Msg) {
-		}, WithConsumeExpiry(-1))
+		}, PullExpiry(-1))
 		if err == nil || !errors.Is(err, ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
 		}
@@ -1548,7 +1702,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1559,7 +1713,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		l, err := c.Consume(func(msg Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, WithConsumeHeartbeat(10*time.Millisecond))
+		}, PullMaxBytes(1*time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1596,7 +1750,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1623,7 +1777,7 @@ func TestPullConsumerConsume(t *testing.T) {
 	})
 }
 
-func TestPullConsumerStream_WithCluster(t *testing.T) {
+func TestPullConsumerConsume_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
 	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
@@ -1660,7 +1814,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1708,7 +1862,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
