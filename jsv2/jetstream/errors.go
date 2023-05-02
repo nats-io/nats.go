@@ -117,6 +117,12 @@ var (
 	// ErrMaxBytesExceeded is returned when a message would exceed MaxBytes set on a pull request.
 	ErrMaxBytesExceeded = &jsError{message: "message size exceeds max bytes"}
 
+	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist
+	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
+
+	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
+	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "leadership change"}
+
 	// ErrHandlerRequired is returned when no handler func is provided in Stream()
 	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
 
@@ -124,7 +130,7 @@ var (
 	ErrEndOfData = errors.New("nats: end of data reached")
 
 	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
-	ErrNoHeartbeat = &jsError{message: "no heartbeat received, canceling subscription"}
+	ErrNoHeartbeat = &jsError{message: "no heartbeat received"}
 
 	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
 	ErrConsumerHasActiveSubscription = &jsError{message: "consumer has active subscription"}

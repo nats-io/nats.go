@@ -27,10 +27,10 @@ type (
 		// Fetch is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and wait until either all messages are retreived
 		// or context reaches its deadline.
-		Fetch(int, ...FetchOpt) (FetchResult, error)
+		Fetch(int, ...FetchOpt) (MessageBatch, error)
 		// FetchNoWait is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and immediately return up to a provided number of messages
-		FetchNoWait(batch int) (FetchResult, error)
+		FetchNoWait(batch int) (MessageBatch, error)
 		// Consume can be used to continuously receive messages and handle them with the provided callback function
 		Consume(MessageHandler, ...ConsumeOpts) (ConsumeContext, error)
 		// Messages returns [MessagesContext], allowing continously iterating over messages on a stream.

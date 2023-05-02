@@ -1295,7 +1295,6 @@ func (nc *Conn) SetDisconnectErrHandler(dcb ConnErrHandler) {
 	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
-	fmt.Printf("is zero: %t\n", dcb == nil)
 	nc.Opts.DisconnectedErrCB = dcb
 }
 
@@ -2794,10 +2793,7 @@ func (ac *asyncCallbacksHandler) asyncCBDispatcher() {
 			ac.tail = nil
 		}
 		ac.mu.Unlock()
-		fmt.Println("Unlocking")
 
-		fmt.Printf("acb: %+v'\n", cur)
-		fmt.Printf("f: %t\n", cur.f == nil)
 		// This signals that the dispatcher has been closed and all
 		// previous callbacks have been dispatched.
 		if cur.f == nil {

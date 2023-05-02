@@ -2586,12 +2586,12 @@ func checkMsg(msg *Msg, checkSts, isNoWait bool) (usrMsg bool, err error) {
 			err = ErrTimeout
 		}
 	case jetStream409Sts:
-		if strings.Contains(strings.ToLower(string(msg.Header.Get(descrHdr))), "consumer deleted") {
+		if strings.Contains(strings.ToLower(msg.Header.Get(descrHdr)), "consumer deleted") {
 			err = ErrConsumerDeleted
 			break
 		}
 
-		if strings.Contains(strings.ToLower(string(msg.Header.Get(descrHdr))), "leadership change") {
+		if strings.Contains(strings.ToLower(msg.Header.Get(descrHdr)), "leadership change") {
 			err = ErrConsumerLeadershipChanged
 			break
 		}

@@ -380,7 +380,6 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 		errs:      make(chan error, 1),
 	}
 	go func() {
-		defer close(l.consumers)
 		for {
 			page, err := l.consumerInfos(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -389,10 +388,13 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 			}
 			for _, info := range page {
 				select {
-				case l.consumers <- info:
 				case <-ctx.Done():
 					l.errs <- ctx.Err()
 					return
+				default:
+				}
+				if info != nil {
+					l.consumers <- info
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
@@ -421,7 +423,6 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 		errs:  make(chan error, 1),
 	}
 	go func() {
-		defer close(l.names)
 		for {
 			page, err := l.consumerNames(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {

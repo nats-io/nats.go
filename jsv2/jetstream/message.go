@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,11 +93,12 @@ type (
 )
 
 const (
-	noResponders     = "503"
+	controlMsg       = "100"
+	badRequest       = "400"
 	noMessages       = "404"
 	reqTimeout       = "408"
 	maxBytesExceeded = "409"
-	controlMsg       = "100"
+	noResponders     = "503"
 )
 
 const (
@@ -264,12 +267,15 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	}
 	// Look for status header
 	val := msg.Header.Get("Status")
+	descr := msg.Header.Get("Description")
 	// If not present, then this is considered a user message
 	if val == "" {
 		return true, nil
 	}
 
 	switch val {
+	case badRequest:
+		return false, ErrBadRequest
 	case noResponders:
 		return false, nats.ErrNoResponders
 	case noMessages:
@@ -280,9 +286,38 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	case controlMsg:
 		return false, nil
 	case maxBytesExceeded:
-		return false, ErrMaxBytesExceeded
+		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
+			return false, ErrMaxBytesExceeded
+		}
+		if strings.Contains(strings.ToLower(descr), "consumer deleted") {
+			return false, ErrConsumerDeleted
+		}
+		if strings.Contains(strings.ToLower(descr), "leadership change") {
+			return false, ErrConsumerLeadershipChanged
+		}
 	}
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
+}
+
+func parsePending(msg *nats.Msg) (int, int, error) {
+	msgsLeftStr := msg.Header.Get("Nats-Pending-Messages")
+	var msgsLeft int
+	var err error
+	if msgsLeftStr != "" {
+		msgsLeft, err = strconv.Atoi(msgsLeftStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Messages")
+		}
+	}
+	bytesLeftStr := msg.Header.Get("Nats-Pending-Bytes")
+	var bytesLeft int
+	if bytesLeftStr != "" {
+		bytesLeft, err = strconv.Atoi(bytesLeftStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Bytes")
+		}
+	}
+	return msgsLeft, bytesLeft, nil
 }
 
 // toJSMsg converts core [nats.Msg] to [jetStreamMsg], exposing JetStream-specific operations

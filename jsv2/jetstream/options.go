@@ -81,7 +81,7 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 // WithConsumeMaxMessages limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
 func WithConsumeMaxMessages(maxMessages int) ConsumeOpts {
-	return func(cfg *pullRequestOpts) error {
+	return func(cfg *consumeOpts) error {
 		if maxMessages <= 0 {
 			return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 		}
@@ -92,7 +92,7 @@ func WithConsumeMaxMessages(maxMessages int) ConsumeOpts {
 
 // WithConsumeExpiry sets timeout on a single batch request, waiting until at least one message is available
 func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
-	return func(cfg *pullRequestOpts) error {
+	return func(cfg *consumeOpts) error {
 		if expires < 0 {
 			return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
 		}
@@ -103,7 +103,7 @@ func WithConsumeExpiry(expires time.Duration) ConsumeOpts {
 
 // WithConsumeMaxBytes sets max_bytes limit on a fetch request
 func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
-	return func(cfg *pullRequestOpts) error {
+	return func(cfg *consumeOpts) error {
 		cfg.MaxBytes = maxBytes
 		return nil
 	}
@@ -111,12 +111,12 @@ func WithConsumeMaxBytes(maxBytes int) ConsumeOpts {
 
 // WithMessagesBatchSize limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
-func WithMessagesBatchSize(batch int) ConsumerMessagesOpts {
-	return func(cfg *pullRequest) error {
-		if batch <= 0 {
+func WithMessagesBatchSize(maxMessages int) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
+		if maxMessages <= 0 {
 			return fmt.Errorf("%w: batch size must be at least 1", ErrInvalidOption)
 		}
-		cfg.Batch = batch
+		opts.MaxMessages = maxMessages
 		return nil
 	}
 }
@@ -124,19 +124,28 @@ func WithMessagesBatchSize(batch int) ConsumerMessagesOpts {
 // WithMessagesHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
 func WithMessagesHeartbeat(hb time.Duration) ConsumerMessagesOpts {
-	return func(req *pullRequest) error {
+	return func(opts *consumeOpts) error {
 		if hb <= 0 {
 			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}
-		req.Heartbeat = hb
+		opts.Heartbeat = hb
 		return nil
 	}
 }
 
 // WithMessagesMaxBytes sets max_bytes limit on a fetch request
 func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
-	return func(cfg *pullRequest) error {
-		cfg.MaxBytes = maxBytes
+	return func(opts *consumeOpts) error {
+		opts.MaxBytes = maxBytes
+		return nil
+	}
+}
+
+// WithMessagesErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+func WithMessagesErrHandler(cb ConsumeErrHandler) ConsumerMessagesOpts {
+	return func(opts *consumeOpts) error {
+		opts.ErrHandler = cb
 		return nil
 	}
 }
@@ -144,11 +153,20 @@ func WithMessagesMaxBytes(maxBytes int) ConsumerMessagesOpts {
 // WithConsumeHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat meassage from a stream for more than the idle heartbeat setting, the subscription will be removed and error will be passed to the message handler
 func WithConsumeHeartbeat(hb time.Duration) ConsumeOpts {
-	return func(req *pullRequestOpts) error {
+	return func(req *consumeOpts) error {
 		if hb <= 0 {
 			return fmt.Errorf("%w: idle_heartbeat value must be greater than 0", ErrInvalidOption)
 		}
 		req.Heartbeat = hb
+		return nil
+	}
+}
+
+// WithConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
+// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+func WithConsumeErrHandler(cb ConsumeErrHandler) ConsumeOpts {
+	return func(opts *consumeOpts) error {
+		opts.ErrHandler = cb
 		return nil
 	}
 }

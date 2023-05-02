@@ -978,12 +978,11 @@ func TestPurgeStream(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 				var msg Msg
-				select {
-				case msg = <-msgs.Messages():
-					if msg == nil {
-						break Loop
-					}
-				case err := <-msgs.Error():
+				msg = <-msgs.Messages()
+				if msg == nil {
+					break Loop
+				}
+				if err := msgs.Error(); err != nil {
 					t.Fatalf("unexpected error during fetch: %v", err)
 				}
 				meta, err := msg.Metadata()

@@ -60,9 +60,12 @@ func TestMessageDetails(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	var msg Msg
-	select {
-	case msg = <-msgs.Messages():
-	case err := <-msgs.Error():
+
+	msg = <-msgs.Messages()
+	if msg == nil {
+		t.Fatalf("No messages available")
+	}
+	if err := msgs.Error(); err != nil {
 		t.Fatalf("unexpected error during fetch: %v", err)
 	}
 	if string(msg.Data()) != "msg" {
@@ -187,9 +190,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
@@ -223,9 +228,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		if err := msg.Ack(); err != nil {
@@ -250,9 +257,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
@@ -286,9 +295,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 
@@ -311,9 +322,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
@@ -347,9 +360,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
@@ -383,9 +398,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())
@@ -419,9 +436,11 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		var msg Msg
-		select {
-		case msg = <-msgs.Messages():
-		case err := <-msgs.Error():
+		msg = <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
 			t.Fatalf("unexpected error during fetch: %v", err)
 		}
 		sub, err := nc.SubscribeSync(msg.Reply())

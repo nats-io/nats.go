@@ -462,7 +462,6 @@ func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 		errs:    make(chan error, 1),
 	}
 	go func() {
-		defer close(l.streams)
 		for {
 			page, err := l.streamInfos(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -505,7 +504,6 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 		errs:  make(chan error, 1),
 	}
 	go func() {
-		defer close(l.names)
 		for {
 			page, err := l.streamNames(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {

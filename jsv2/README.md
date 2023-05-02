@@ -29,7 +29,6 @@ Key differences between `jetstream` and `nats` packages include:
 - Using more granular and predictable approach to consuming messages from a stream, instead of relying on often complicated and unpredictable `Subscribe()` method (and all of its flavors)
 - Allowing the usage of pull consumers to continuously receive incoming messages
 - Separating JetStream context from core NATS
-- Simplifying timeout management by extensive use of `Context`
 
 `jetstream` package provides several ways of interacting with the API:
 
@@ -51,7 +50,7 @@ import (
 )
 
 func main() {
-    // In the `jetstream` package, almost all methods rely on `context.Context` for timeout/cancellation handling
+    // In the `jetstream` package, almost all API calls rely on `context.Context` for timeout/cancellation handling
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
     defer cancel()
     nc, _ := nats.Connect(nats.DefaultURL)
@@ -76,19 +75,19 @@ func main() {
         AckPolicy: jetstream.AckExplicitPolicy,
     })
 
-    // Get a single message from the consumer
-    msgs, _ := c.Fetch(1)
+    // Get 10 messages from the consumer
+    msgs, _ := c.Fetch(10)
     var msg jetstream.Msg
-    select {
-        case msg = <-msgs.Messages():
-            msg.Ack()
-            fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
-        case err := <- msgs.Error():
-            fmt.Println(err)
+    for msg := range msgs.Messages() {
+        msg.Ack()
+        fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+    }
+    if msgs.Error() {
+        fmt.Println("Error duting Fetch(): ", msgs.Error())
     }
 
     // Receive messages continuously in a callback
-    cons, _ := c.Consume(ctx, func(msg jetstream.Msg, err error) {
+    cons, _ := c.Consume(ctx, func(msg jetstream.Msg) {
         msg.Ack()
         fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
     })
@@ -152,7 +151,7 @@ for err != nil {
     }
 }
 if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+    fmt.Println("Unexpected error ocurred")
 }
 
 // list stream names
@@ -165,7 +164,7 @@ for err != nil {
     }
 }
 if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+    fmt.Println("Unexpected error ocurred")
 }
 ```
 
@@ -216,7 +215,7 @@ fmt.Println(cachedInfo.Config.Name)
 
 ## Consumers
 
-Currently, only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continous message receival (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
+Currently, only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continuous message retrieval (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
 
 ### Consumers management
 
@@ -327,53 +326,45 @@ if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
 
 ### Receiving messages from the consumer
 
-The `Consumer` interface covers 2 patterns for receiving incoming messages from Stream - Polling Consumer pattern and Event-Driven Consumer pattern.
+The `Consumer` interface covers allows fetching messages on demand, with pre-defined batch size or
+continuous push-like receiving of messages with callbacks or pseudo-iterator.
 
-#### __Polling consumer__
+#### __Single fetch__
 
-Polling consumer pattern allows fetching a defined number of messages in a single RPC.
-
-There are two options to use the polling consumer pattern:
+This pattern pattern allows fetching a defined number of messages in a single RPC.
 
 - Using `Fetch`, consumer will return up to the provided number of messages. By default, `Fetch()` will wait 30 seconds before timing out (this behavior can be configured using `WithFetchTimeout()` option):
 
 ```go
 msgs, _ := c.Fetch(10)
-for {
-    select {
-    case msg := <-msgs.Messages():
-        // nil message signals 
-        if msg := nil {
-            return
-        }
-        fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
-    case err := <- msgs.Error():
-        // handle error
-    }
+for msg := range msgs.Messages() {
+    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+}
+if msgs.Error() != nil {
+    // handle error
 }
 ```
 
-Similarly, `FetchNoWait()` can be used in order toonly return messages from the stream available at the time of sending request:
+Similarly, `FetchNoWait()` can be used in order to only return messages from the stream available at the time of sending request:
 
 ```go
 // FetchNoWait will not wait for new messages if the whole batch is not available at the time of sending request.
 msgs, _ := c.FetchNoWait(10)
-for {
-    select {
-    case msg := <-msgs.Messages():
-        // nil message signals 
-        if msg := nil {
-            return
-        }
-        fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
-    case err := <- msgs.Error():
-        // handle error
-    }
+for msg := range msgs.Messages() {
+    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+}
+if msgs.Error() != nil {
+    // handle error
 }
 ```
 
 > __Warning__
 > Both `Fetch()` and `FetchNoWait()` have worse performance when used to continuously retrieve messages in comparison to `Messages()` or `Consume()` methods, as they do not perform any optimizations (pre-buffering) and new subscription is created for each execution.
+
+#### Continuous polling
+
+There are 2 ways to achieve push-like behavior using pull consumers in `jetstream` package.
+Both `Messages()` and `Consume()` methods perform exactly the same optimizations and can be used interchangeably.
 
 - Using `Messages()` to iterate over incoming messages:
 
@@ -391,19 +382,17 @@ for {
 iter.Stop()
 ```
 
-Unlike `Fetch()`, `Messages()` will pre-buffer the messages to increase performance. It can also be configured to only retrieve only up to provided messages/bytes in a single request:
+It can also be configured to only store up to defined number of messages/bytes in the buffer.
 
 ```go
-// a single pull request will retrieve a maximum of 10 messages or 1024 bytes (whichever is encountered first)
-iter, _ := cons.Messages(WithMessagesBatchSize(10), WithMessagesMaxBytes(1024))
+// a maximum of 10 messages or 1024 bytes will be stored in memory (whichever is encountered first)
+iter, _ := cons.Messages(WithMessagesMaxMessages(10), WithMessagesMaxBytes(1024))
 ```
 
-#### __Event-Driven consumer__
-
-Event-Driven consumer pattern allows for continuous, asynchronous processing of incoming messages in callback. Its behavior is similar to how push consumers work, therefore it can be used as a drop-in replacement in most of the use cases (with the exception of ordered push consumers).
+- Using `Consume()` receive messages in a callback
 
 ```go
-consContext, _ := c.Consume(func(msg jetstream.Msg, err error) {
+consContext, _ := c.Consume(func(msg jetstream.Msg) {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 })
 defer consContext.Stop()
@@ -411,10 +400,11 @@ defer consContext.Stop()
 
 Similarly to `Messages()`, `Consume()` can be supplied with options to modify the behavior of a single pull request:
 
-- `WithConsumeBatchSize(int)` - the maximum amount of messages returned in a single pull request
+- `WithConsumeMaxMessages(int)` - the maximum amount of messages returned in a single pull request
 - `WithConsumeMaxBytes(int)` - the maximum amount of bytes returned in a single pull request
 - `WithConsumeExpiry(time.Duration)` - maximum amount of time a single pull request should wait for the full batch
 - `WithConsumeHeartbeat(time.Duration)` - when used, sets the idle heartbeat on the `Consume()` operation, veryfing whether stream/consumer is alive
+- `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a custom error handler on `Consume()`, allowing e.g. tracking missing heartbeats.
 
 ## Publishing on stream
 
