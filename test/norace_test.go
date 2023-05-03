@@ -59,9 +59,8 @@ func TestNoRaceObjectContextOpt(t *testing.T) {
 	expectOk(t, err)
 
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-	time.AfterFunc(100*time.Millisecond, cancel)
+	time.AfterFunc(10*time.Millisecond, cancel)
 
-	time.AfterFunc(20*time.Millisecond, func() { shutdownJSServerAndRemoveStorage(t, s) })
 	start = time.Now()
 	_, err = obs.GetBytes("BLOB", nats.Context(ctx))
 	expectErr(t, err)
