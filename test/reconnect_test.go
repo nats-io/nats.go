@@ -1,4 +1,4 @@
-// Copyright 2013-2019 The NATS Authors
+// Copyright 2013-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,9 +14,13 @@
 package test
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -824,5 +828,104 @@ func TestReconnectBufSizeDisable(t *testing.T) {
 	got, _ := nc.Buffered()
 	if got != 0 {
 		t.Errorf("Unexpected buffered bytes: %v", got)
+	}
+}
+
+func TestClientTLSReconnect(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tlsverify.conf")
+	defer s.Shutdown()
+
+	// Copy the TLS certificates into a tmp dir.
+	dir := t.TempDir()
+	rootCACert := filepath.Join(dir, "ca.pem")
+	clientCert := filepath.Join(dir, "client-cert.pem")
+	clientKeyCert := filepath.Join(dir, "client-key.pem")
+	copyCerts := func() error {
+		for _, f := range []struct {
+			in  string
+			out string
+		}{
+			{
+				"./configs/certs/ca.pem",
+				rootCACert,
+			},
+			{
+				"./configs/certs/client-cert.pem",
+				clientCert,
+			},
+			{
+				"./configs/certs/client-key.pem",
+				clientKeyCert,
+			},
+		} {
+			r, err := os.Open(f.in)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			w, err := os.Create(f.out)
+			if err != nil {
+				return err
+			}
+			defer w.Close()
+			_, err = io.Copy(w, r)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	err := copyCerts()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reconnectCh := make(chan bool, 0)
+	nc, err := nats.Connect(s.Addr().String(),
+		nats.RootCAs(rootCACert),
+		nats.ClientCert(clientCert, clientKeyCert),
+		nats.ReconnectHandler(func(*nats.Conn) {
+			reconnectCh <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create (TLS) connection: %v", err)
+	}
+	defer nc.Close()
+
+	omsg := []byte("Hello!")
+	checkRecv := make(chan bool)
+	received := 0
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		received++
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+		checkRecv <- true
+	})
+	err = nc.Publish("foo", omsg)
+	if err != nil {
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
+	}
+	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed to receive message")
+	}
+ 
+	// Remove files, it should still be able to reconnect since the certs
+	// where prepared on connect.
+	os.Remove(clientCert)
+	os.Remove(clientKeyCert)
+
+	// Trigger a shutdown.
+	s.Shutdown()
+	s.WaitForShutdown()
+
+	// Restart and reconnect.
+	s = RunServerWithOptions(*opts)
+	if err := Wait(reconnectCh); err != nil {
+		t.Fatal("Failed to reconnect")
 	}
 }

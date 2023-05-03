@@ -474,6 +474,9 @@ type Options struct {
 
 	// SkipHostLookup skips the DNS lookup for the server hostname.
 	SkipHostLookup bool
+
+	// AlwaysReadTLSCertsBeforeReconnect makes the client re-read local certs before reconnecting.
+	AlwaysReadTLSCertsBeforeReconnect bool
 }
 
 const (
@@ -871,6 +874,15 @@ func ClientCert(certFile, keyFile string) Option {
 		}
 		o.TLSConfig.Certificates = []tls.Certificate{cert}
 		o.Secure = true
+		return nil
+	}
+}
+
+// AlwaysReadTLSCertsBeforeReconnect regenerates the TLS config by reading local files
+// everytime there is a reconnect.
+func AlwaysReadTLSCertsBeforeReconnect() Option {
+	return func(o *Options) error {
+		o.AlwaysReadTLSCertsBeforeReconnect = true
 		return nil
 	}
 }
