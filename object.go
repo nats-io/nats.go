@@ -368,12 +368,18 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return perr
 	}
 
-	purgePartial := func() { obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}) }
-
 	// Create our own JS context to handle errors etc.
 	js, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
 	if err != nil {
 		return nil, err
+	}
+	purgePartial := func() {
+		// wait until all pubs are complete or up to default timeout before attempting purge
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(obs.js.opts.wait):
+		}
+		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 	}
 
 	m, h := NewMsg(chunkSubj), sha256.New()
@@ -1207,7 +1213,7 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 		}
 	}
 	if o.err != nil {
-		return 0, err
+		return 0, o.err
 	}
 	if o.r == nil {
 		return 0, io.EOF
