@@ -33,7 +33,7 @@ import (
 	"github.com/nats-io/nuid"
 )
 
-func testWSGetDefaultOptions(t *testing.T, tls bool) *server.Options {
+func testWSGetDefaultOptions(t *testing.T, tls bool) server.Options {
 	t.Helper()
 	sopts := natsserver.DefaultTestOptions
 	sopts.Host = "127.0.0.1"
@@ -53,12 +53,12 @@ func testWSGetDefaultOptions(t *testing.T, tls bool) *server.Options {
 		}
 		sopts.Websocket.TLSConfig = tlsConfig
 	}
-	return &sopts
+	return sopts
 }
 
 func TestWSBasic(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
+	s := RunServerWithOptions(&sopts)
 	defer s.Shutdown()
 	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
 	nc, err := nats.Connect(url)
@@ -103,7 +103,7 @@ func TestWSBasic(t *testing.T) {
 
 func TestWSControlFrames(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
+	s := RunServerWithOptions(&sopts)
 	defer s.Shutdown()
 
 	rch := make(chan bool, 10)
@@ -156,7 +156,7 @@ func TestWSControlFrames(t *testing.T) {
 		t.Fatal("Should have been disconnected")
 	}
 
-	s = RunServerWithOptions(sopts)
+	s = RunServerWithOptions(&sopts)
 	defer s.Shutdown()
 
 	// Wait for both connections to reconnect
@@ -189,7 +189,7 @@ func TestWSControlFrames(t *testing.T) {
 
 func TestWSConcurrentConns(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
+	s := RunServerWithOptions(&sopts)
 	defer s.Shutdown()
 
 	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
@@ -243,7 +243,7 @@ func TestWSCompression(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, false)
 			sopts.Websocket.Compression = test.srvCompression
-			s := RunServerWithOptions(sopts)
+			s := RunServerWithOptions(&sopts)
 			defer s.Shutdown()
 
 			url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
@@ -304,7 +304,7 @@ func TestWSWithTLS(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, true)
 			sopts.Websocket.Compression = test.compression
-			s := RunServerWithOptions(sopts)
+			s := RunServerWithOptions(&sopts)
 			defer s.Shutdown()
 
 			var copts []nats.Option
@@ -362,7 +362,7 @@ func TestWSWithTLS(t *testing.T) {
 
 func TestWSWithTLSCustomDialer(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, true)
-	s := RunServerWithOptions(sopts)
+	s := RunServerWithOptions(&sopts)
 	defer s.Shutdown()
 
 	sd := &testSkipTLSDialer{
@@ -408,7 +408,7 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 // 	o1.Cluster.Host = "127.0.0.1"
 // 	o1.Cluster.Name = "abc"
 // 	o1.Cluster.Port = -1
-// 	s1 := RunServerWithOptions(o1)
+// 	s1 := RunServerWithOptions(&o1)
 // 	defer s1.Shutdown()
 
 // 	o2 := testWSGetDefaultOptions(t, false)
@@ -417,7 +417,7 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 // 	o2.Cluster.Name = "abc"
 // 	o2.Cluster.Port = -1
 // 	o2.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", o1.Cluster.Port))
-// 	s2 := RunServerWithOptions(o2)
+// 	s2 := RunServerWithOptions(&o2)
 // 	defer s2.Shutdown()
 
 // 	rch := make(chan bool, 10)
@@ -491,7 +491,7 @@ func TestWSStress(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, false)
 			sopts.Websocket.Compression = test.compress
-			s := RunServerWithOptions(sopts)
+			s := RunServerWithOptions(&sopts)
 			defer s.Shutdown()
 
 			var count int64
@@ -604,7 +604,7 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	o := testWSGetDefaultOptions(t, false)
 	o.Username = "user"
 	o.Password = "pwd"
-	s := RunServerWithOptions(o)
+	s := RunServerWithOptions(&o)
 	defer s.Shutdown()
 
 	tm := time.AfterFunc(3*time.Second, func() {

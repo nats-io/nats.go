@@ -25,8 +25,6 @@ import (
 	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
 )
 
-const TEST_PORT = 8168
-
 // Since we import above nats packages, we need to have a different
 // const name than TEST_PORT that we used on the other packages.
 const ENC_TEST_PORT = 8268
