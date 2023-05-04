@@ -29,6 +29,8 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
+const TEST_PORT = 8368
+
 // So that we can pass tests and benchmarks...
 type tLogger interface {
 	Fatalf(format string, args ...interface{})
@@ -159,4 +161,16 @@ func (sd *testSkipTLSDialer) Dial(network, address string) (net.Conn, error) {
 
 func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
 	return sd.skipTLS
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Reconnect tests
+////////////////////////////////////////////////////////////////////////////////
+
+var reconnectOpts = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
 }
