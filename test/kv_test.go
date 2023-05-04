@@ -1242,6 +1242,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 // 	}
 // }
 
+// Need access to internals for testing.
 // func TestKeyValueRePublish(t *testing.T) {
 // 	s := RunBasicJetStreamServer()
 // 	defer shutdownJSServerAndRemoveStorage(t, s)
