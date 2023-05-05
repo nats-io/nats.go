@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 )
 
 type (
@@ -53,14 +54,25 @@ type (
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateConsumer(context.Context, ConsumerConfig) (Consumer, error)
+
+		// OrderedConsumer returns an OrderedConsumer instance.
+		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
+		// for in order delivery of messages. Underlying consumer is re-created when necessary,
+		// without additional client code.
+		OrderedConsumer(context.Context, OrderedConsumerConfig) (Consumer, error)
+
 		// UpdateConsumer updates an existing consumer
 		UpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
+
 		// Consumer returns a Consumer interface for an existing consumer
 		Consumer(context.Context, string) (Consumer, error)
+
 		// DeleteConsumer removes a consumer
 		DeleteConsumer(context.Context, string) error
+
 		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister
+
 		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
@@ -194,6 +206,21 @@ func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consum
 		}
 	}
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
+}
+
+func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
+	oc := &orderedConsumer{
+		jetStream:  s.jetStream,
+		cfg:        &cfg,
+		stream:     s.name,
+		namePrefix: nuid.Next(),
+		doReset:    make(chan struct{}, 1),
+	}
+	if cfg.OptStartSeq != 0 {
+		oc.cursor.streamSeq = cfg.OptStartSeq - 1
+	}
+
+	return oc, nil
 }
 
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {

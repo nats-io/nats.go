@@ -32,9 +32,12 @@ type (
 		// This method will always send a single request and immediately return up to a provided number of messages
 		FetchNoWait(batch int) (MessageBatch, error)
 		// Consume can be used to continuously receive messages and handle them with the provided callback function
-		Consume(MessageHandler, ...ConsumeOpts) (ConsumeContext, error)
+		Consume(MessageHandler, ...PullConsumeOpt) (ConsumeContext, error)
 		// Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
-		Messages(...ConsumerMessagesOpts) (MessagesContext, error)
+		Messages(...PullMessagesOpt) (MessagesContext, error)
+		// Next is used to retrieve the next message from the stream.
+		// This method will block until the message is retrieved or timeout is reached.
+		Next(...FetchOpt) (Msg, error)
 
 		// Info returns Consumer details
 		Info(context.Context) (*ConsumerInfo, error)
@@ -201,8 +204,10 @@ func compareConsumerConfig(s, u *ConsumerConfig) error {
 			return makeErr("backoff", u.BackOff, s.BackOff)
 		}
 	}
-	if u.FilterSubject != s.FilterSubject {
-		return makeErr("filter subject", u.FilterSubject, s.FilterSubject)
+	for i, val := range u.FilterSubjects {
+		if val != s.FilterSubjects[i] {
+			return makeErr("filter_subjects", u.FilterSubjects, s.FilterSubjects)
+		}
 	}
 	if u.ReplayPolicy != s.ReplayPolicy {
 		return makeErr("replay policy", u.ReplayPolicy, s.ReplayPolicy)

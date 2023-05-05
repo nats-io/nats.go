@@ -42,11 +42,15 @@ type (
 	// MessageHandler is a handler function used as callback in [Consume]
 	MessageHandler func(msg Msg)
 
-	// ConsumeOpts represent additional options used in [Consume] for pull consumers
-	ConsumeOpts func(*consumeOpts) error
+	// PullConsumeOpt represent additional options used in [Consume] for pull consumers
+	PullConsumeOpt interface {
+		configureConsume(*consumeOpts) error
+	}
 
-	// ConsumerMessagesOpts represent additional options used in [Messages] for pull consumers
-	ConsumerMessagesOpts func(*consumeOpts) error
+	// PullMessagesOpt represent additional options used in [Messages] for pull consumers
+	PullMessagesOpt interface {
+		configureMessages(*consumeOpts) error
+	}
 
 	pullConsumer struct {
 		sync.Mutex
@@ -56,6 +60,7 @@ type (
 		name         string
 		info         *ConsumerInfo
 		isSubscribed uint32
+		subscription *pullSubscription
 	}
 
 	pullRequest struct {
@@ -67,20 +72,22 @@ type (
 	}
 
 	consumeOpts struct {
-		Expires     time.Duration
-		MaxMessages int
-		MaxBytes    int
-		Heartbeat   time.Duration
-		ErrHandler  ConsumeErrHandler
+		Expires                 time.Duration
+		MaxMessages             int
+		MaxBytes                int
+		Heartbeat               time.Duration
+		ErrHandler              ConsumeErrHandlerFunc
+		ReportMissingHeartbeats bool
+		ThresholdMessages       int
+		ThresholdBytes          int
 	}
 
-	ConsumeErrHandler func(consumeCtx ConsumeContext, err error)
+	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
 
 	pullSubscription struct {
 		sync.Mutex
 		consumer          *pullConsumer
 		subscription      *nats.Subscription
-		req               *pullRequest
 		msgs              chan *nats.Msg
 		errs              chan error
 		pending           pendingMsgs
@@ -90,7 +97,7 @@ type (
 		done              chan struct{}
 		reconnected       chan struct{}
 		disconnected      chan struct{}
-		fetchNext         chan struct{}
+		fetchNext         chan *pullRequest
 		reconnectHandler  nats.ConnHandler
 		disconnectHandler nats.ConnErrHandler
 		consumeOpts       *consumeOpts
@@ -109,6 +116,7 @@ type (
 	fetchResult struct {
 		msgs chan Msg
 		err  error
+		done bool
 	}
 
 	FetchOpt func(*pullRequest) error
@@ -120,51 +128,223 @@ type (
 )
 
 const (
-	DefaultBatchSize = 100
+	DefaultBatchSize = 500
 	DefaultExpires   = 30 * time.Second
-	DefaultHeartbeat = 15 * time.Second
-	DefaultThreshold = 0.75
+	DefaultHeartbeat = 5 * time.Second
+	unset            = -1
 )
+
+// Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
+//
+// Available options:
+// [ConsumeMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
+// [ConsumeMaxBytes] - sets maximum number of bytes stored in a buffer
+// [ConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
+// [ConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
+// [ConsumeErrHandler] - sets custom consume error callback handler
+// [ConsumeThresholdMessages] - sets the byte count on which Consume will trigger new pull request to the server
+// [ConsumeThresholdBytes] - sets the message count on which Consume will trigger new pull request to the server
+func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
+	if atomic.LoadUint32(&p.isSubscribed) == 1 {
+		return nil, ErrConsumerHasActiveSubscription
+	}
+	if handler == nil {
+		return nil, ErrHandlerRequired
+	}
+	consumeOpts, err := parseConsumeOpts(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
+	}
+
+	atomic.StoreUint32(&p.isSubscribed, 1)
+
+	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
+
+	sub := &pullSubscription{
+		consumer:          p,
+		errs:              make(chan error, 1),
+		done:              make(chan struct{}, 1),
+		fetchNext:         make(chan *pullRequest, 1),
+		reconnected:       make(chan struct{}),
+		disconnected:      make(chan struct{}),
+		reconnectHandler:  p.jetStream.conn.ReconnectHandler(),
+		disconnectHandler: p.jetStream.conn.DisconnectErrHandler(),
+		consumeOpts:       consumeOpts,
+	}
+
+	p.jetStream.conn.SetReconnectHandler(func(c *nats.Conn) {
+		if sub.reconnectHandler != nil {
+			sub.reconnectHandler(p.jetStream.conn)
+		}
+		sub.reconnected <- struct{}{}
+	})
+	p.jetStream.conn.SetDisconnectErrHandler(func(c *nats.Conn, err error) {
+		if sub.disconnectHandler != nil {
+			sub.disconnectHandler(p.jetStream.conn, err)
+		}
+		sub.disconnected <- struct{}{}
+	})
+	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
+	p.Lock()
+	p.subscription = sub
+	p.Unlock()
+
+	internalHandler := func(msg *nats.Msg) {
+		if sub.hbMonitor != nil {
+			sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+		}
+		userMsg, msgErr := checkMsg(msg)
+		if !userMsg && msgErr == nil {
+			return
+		}
+		defer func() {
+			if sub.pending.msgCount <= consumeOpts.ThresholdMessages ||
+				(sub.pending.byteCount <= consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
+					atomic.LoadUint32(&sub.fetchInProgress) == 1 {
+
+				sub.fetchNext <- &pullRequest{
+					Expires:   sub.consumeOpts.Expires,
+					Batch:     sub.consumeOpts.MaxMessages - sub.pending.msgCount,
+					MaxBytes:  sub.consumeOpts.MaxBytes - sub.pending.byteCount,
+					Heartbeat: sub.consumeOpts.Heartbeat,
+				}
+				sub.pending.msgCount = sub.consumeOpts.MaxMessages
+				if sub.consumeOpts.MaxBytes != 0 {
+					sub.pending.byteCount = sub.consumeOpts.MaxBytes
+				}
+			}
+		}()
+		if !userMsg {
+			// heartbeat message
+			if msgErr == nil {
+				return
+			}
+			if err := sub.handleStatusMsg(msg, msgErr); err != nil {
+				if sub.consumeOpts.ErrHandler != nil {
+					sub.consumeOpts.ErrHandler(sub, err)
+				}
+				sub.Stop()
+			}
+			return
+		}
+		handler(p.jetStream.toJSMsg(msg))
+		sub.pending.msgCount--
+		if sub.consumeOpts.MaxBytes != 0 {
+			sub.pending.byteCount -= msgSize(msg)
+		}
+	}
+	inbox := nats.NewInbox()
+	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	// initial pull
+	sub.pending.msgCount = sub.consumeOpts.MaxMessages
+	sub.pending.byteCount = sub.consumeOpts.MaxBytes
+	if err := sub.pull(&pullRequest{
+		Expires:   consumeOpts.Expires,
+		Batch:     consumeOpts.MaxMessages,
+		MaxBytes:  consumeOpts.MaxBytes,
+		Heartbeat: consumeOpts.Heartbeat,
+	}, subject); err != nil {
+		sub.errs <- err
+	}
+
+	go func() {
+		for {
+			if atomic.LoadUint32(&sub.closed) == 1 {
+				return
+			}
+			select {
+			case <-sub.disconnected:
+				if sub.hbMonitor != nil {
+					sub.hbMonitor.Stop()
+				}
+			case <-sub.reconnected:
+				// try fetching consumer info several times to make sure consumer is available after reconnect
+				for i := 0; i < 5; i++ {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_, err := p.Info(ctx)
+					cancel()
+					if err == nil {
+						break
+					}
+					if err != nil {
+						if i == 4 {
+							sub.cleanupSubscriptionAndRestoreConnHandler()
+							if sub.consumeOpts.ErrHandler != nil {
+								sub.consumeOpts.ErrHandler(sub, err)
+							}
+							return
+						}
+					}
+					time.Sleep(5 * time.Second)
+				}
+
+				sub.fetchNext <- &pullRequest{
+					Expires:   sub.consumeOpts.Expires,
+					Batch:     sub.consumeOpts.MaxMessages,
+					MaxBytes:  sub.consumeOpts.MaxBytes,
+					Heartbeat: sub.consumeOpts.Heartbeat,
+				}
+				sub.pending.msgCount = sub.consumeOpts.MaxMessages
+				sub.pending.byteCount = sub.consumeOpts.MaxBytes
+			case err := <-sub.errs:
+				if sub.consumeOpts.ErrHandler != nil {
+					sub.consumeOpts.ErrHandler(sub, err)
+				}
+				if errors.Is(err, ErrNoHeartbeat) {
+					sub.fetchNext <- &pullRequest{
+						Expires:   sub.consumeOpts.Expires,
+						Batch:     sub.consumeOpts.MaxMessages,
+						MaxBytes:  sub.consumeOpts.MaxBytes,
+						Heartbeat: sub.consumeOpts.Heartbeat,
+					}
+					sub.pending.msgCount = sub.consumeOpts.MaxMessages
+					if sub.consumeOpts.MaxBytes != 0 {
+						sub.pending.byteCount = sub.consumeOpts.MaxBytes
+					}
+				}
+			}
+		}
+	}()
+
+	go sub.pullMessages(subject)
+
+	return sub, nil
+}
 
 // Messages returns MessagesContext, allowing continuously iterating over messages on a stream.
 //
 // Available options:
-// [WithMessagesMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [WithMessagesMaxBytes] - sets maximum number of bytes stored in a buffer
-// [WithMessagesHeartbeat] - sets an idle heartbeat setting for a pull request, default value is 5 seconds.
-func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpts) (MessagesContext, error) {
+// [ConsumeMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
+// [ConsumeMaxBytes] - sets maximum number of bytes stored in a buffer
+// [ConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
+// [ConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
+// [ConsumeErrHandler] - sets custom consume error callback handler
+// [ConsumeThresholdMessages] - sets the byte count on which Consume will trigger new pull request to the server
+// [ConsumeThresholdBytes] - sets the message count on which Consume will trigger new pull request to the server
+func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
 	if atomic.LoadUint32(&p.isSubscribed) == 1 {
 		return nil, ErrConsumerHasActiveSubscription
 	}
+	consumeOpts, err := parseMessagesOpts(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
+	}
+
 	atomic.StoreUint32(&p.isSubscribed, 1)
-	// threshold := DefaultThreshold
-	consumeOpts := &consumeOpts{
-		MaxMessages: DefaultBatchSize,
-		Expires:     DefaultExpires,
-		Heartbeat:   DefaultHeartbeat,
-	}
-	for _, opt := range opts {
-		if err := opt(consumeOpts); err != nil {
-			return nil, err
-		}
-	}
-	req := &pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     int(math.Ceil(float64(consumeOpts.MaxMessages) / 4)),
-		MaxBytes:  consumeOpts.MaxBytes / 4,
-		Heartbeat: consumeOpts.Heartbeat,
-	}
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	msgs := make(chan *nats.Msg, consumeOpts.MaxMessages)
 
 	sub := &pullSubscription{
 		consumer:          p,
-		req:               req,
 		done:              make(chan struct{}, 1),
 		msgs:              msgs,
 		errs:              make(chan error, 1),
-		fetchNext:         make(chan struct{}, 1),
+		fetchNext:         make(chan *pullRequest, 1),
 		reconnected:       make(chan struct{}),
 		disconnected:      make(chan struct{}),
 		reconnectHandler:  p.jetStream.conn.ReconnectHandler(),
@@ -184,24 +364,31 @@ func (p *pullConsumer) Messages(opts ...ConsumerMessagesOpts) (MessagesContext, 
 		sub.disconnected <- struct{}{}
 	})
 	inbox := nats.NewInbox()
-	var err error
 	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		return nil, err
 	}
 
-	sub.hbMonitor = sub.scheduleHeartbeatCheck(req.Heartbeat)
+	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 	go func() {
 		<-sub.done
 		sub.cleanupSubscriptionAndRestoreConnHandler()
 	}()
+	p.Lock()
+	p.subscription = sub
+	p.Unlock()
 
 	// initial pull
-	if err := sub.pull(*req, subject); err != nil {
+	if err := sub.pull(&pullRequest{
+		Expires:   consumeOpts.Expires,
+		Batch:     consumeOpts.MaxMessages,
+		MaxBytes:  consumeOpts.MaxBytes,
+		Heartbeat: consumeOpts.Heartbeat,
+	}, subject); err != nil {
 		sub.errs <- err
 	}
-	sub.pending.msgCount = req.Batch
-	sub.pending.byteCount = req.MaxBytes
+	sub.pending.msgCount = consumeOpts.MaxMessages
+	sub.pending.byteCount = consumeOpts.MaxBytes
 	go sub.pullMessages(subject)
 
 	return sub, nil
@@ -213,64 +400,42 @@ func (s *pullSubscription) Next() (Msg, error) {
 	if atomic.LoadUint32(&s.closed) == 1 {
 		return nil, ErrMsgIteratorClosed
 	}
-	threshold := DefaultThreshold
 
 	for {
-		if float64(s.pending.msgCount) <= float64(s.consumeOpts.MaxMessages)*threshold ||
-			(float64(s.pending.byteCount) <= float64(s.consumeOpts.MaxBytes)*threshold && s.req.MaxBytes != 0) &&
+		if s.pending.msgCount <= s.consumeOpts.ThresholdMessages ||
+			(s.pending.byteCount <= s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
 				atomic.LoadUint32(&s.fetchInProgress) == 1 {
 
-			s.pending.msgCount += s.req.Batch
-			if s.req.MaxBytes > 0 {
-				s.pending.byteCount += s.req.MaxBytes
+			s.fetchNext <- &pullRequest{
+				Expires:   s.consumeOpts.Expires,
+				Batch:     s.consumeOpts.MaxMessages - s.pending.msgCount,
+				MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
+				Heartbeat: s.consumeOpts.Heartbeat,
 			}
-			s.fetchNext <- struct{}{}
+			s.pending.msgCount = s.consumeOpts.MaxMessages
+			if s.consumeOpts.MaxBytes > 0 {
+				s.pending.byteCount = s.consumeOpts.MaxBytes
+			}
 		}
 		select {
 		case msg := <-s.msgs:
 			if s.hbMonitor != nil {
-				s.hbMonitor.Reset(2 * s.req.Heartbeat)
+				s.hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 			}
-			userMsg, err := checkMsg(msg)
+			userMsg, msgErr := checkMsg(msg)
 			if !userMsg {
 				// heartbeat message
-				if err == nil {
+				if msgErr == nil {
 					continue
 				}
-				if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrMaxBytesExceeded) {
-					if s.consumeOpts.ErrHandler != nil {
-						s.consumeOpts.ErrHandler(s, err)
-					}
-					if errors.Is(err, ErrConsumerDeleted) || errors.Is(err, ErrBadRequest) {
-						s.Stop()
-						return nil, err
-					}
-					if errors.Is(err, ErrConsumerLeadershipChanged) {
-						s.pending.msgCount = 0
-						s.pending.byteCount = 0
-					}
-					continue
-				}
-				msgsLeft, bytesLeft, err := parsePending(msg)
-				if err != nil {
-					if s.consumeOpts.ErrHandler != nil {
-						s.consumeOpts.ErrHandler(s, err)
-					}
-				}
-				s.pending.msgCount -= msgsLeft
-				if s.pending.msgCount < 0 {
-					s.pending.msgCount = 0
-				}
-				if s.req.MaxBytes > 0 {
-					s.pending.byteCount -= bytesLeft
-					if s.pending.byteCount < 0 {
-						s.pending.byteCount = 0
-					}
+				if err := s.handleStatusMsg(msg, msgErr); err != nil {
+					s.Stop()
+					return nil, err
 				}
 				continue
 			}
 			s.pending.msgCount--
-			if s.req.MaxBytes > 0 {
+			if s.consumeOpts.MaxBytes > 0 {
 				s.pending.byteCount -= msgSize(msg)
 			}
 			return s.consumer.jetStream.toJSMsg(msg), nil
@@ -289,10 +454,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				if err != nil {
 					if i == 4 {
-						s.cleanupSubscriptionAndRestoreConnHandler()
-						if s.consumeOpts.ErrHandler != nil {
-							s.consumeOpts.ErrHandler(s, err)
-						}
+						s.Stop()
 						return nil, err
 					}
 				}
@@ -301,15 +463,48 @@ func (s *pullSubscription) Next() (Msg, error) {
 			s.pending.msgCount = 0
 			s.pending.byteCount = 0
 		case err := <-s.errs:
-			if s.consumeOpts.ErrHandler != nil {
-				s.consumeOpts.ErrHandler(s, err)
-			}
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
+				if s.consumeOpts.ReportMissingHeartbeats {
+					return nil, err
+				}
 			}
 		}
 	}
+}
+
+func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
+	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) {
+		if s.consumeOpts.ErrHandler != nil {
+			s.consumeOpts.ErrHandler(s, msgErr)
+		}
+		if errors.Is(msgErr, ErrConsumerDeleted) || errors.Is(msgErr, ErrBadRequest) {
+			return msgErr
+		}
+		if errors.Is(msgErr, ErrConsumerLeadershipChanged) {
+			s.pending.msgCount = 0
+			s.pending.byteCount = 0
+		}
+		return nil
+	}
+	msgsLeft, bytesLeft, err := parsePending(msg)
+	if err != nil {
+		if s.consumeOpts.ErrHandler != nil {
+			s.consumeOpts.ErrHandler(s, err)
+		}
+	}
+	s.pending.msgCount -= msgsLeft
+	if s.pending.msgCount < 0 {
+		s.pending.msgCount = 0
+	}
+	if s.consumeOpts.MaxBytes > 0 {
+		s.pending.byteCount -= bytesLeft
+		if s.pending.byteCount < 0 {
+			s.pending.byteCount = 0
+		}
+	}
+	return nil
 }
 
 func (hb *hbMonitor) Stop() {
@@ -386,13 +581,10 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	sub := &pullSubscription{
-		consumer:    p,
-		req:         req,
-		done:        make(chan struct{}, 1),
-		msgs:        msgs,
-		errs:        make(chan error, 1),
-		fetchNext:   make(chan struct{}, 1),
-		reconnected: make(chan struct{}),
+		consumer: p,
+		done:     make(chan struct{}, 1),
+		msgs:     msgs,
+		errs:     make(chan error, 1),
 	}
 	inbox := nats.NewInbox()
 	var err error
@@ -400,7 +592,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := sub.pull(*req, subject); err != nil {
+	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
 
@@ -411,6 +603,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		defer close(res.msgs)
 		for {
 			if received == req.Batch {
+				res.done = true
 				return
 			}
 			select {
@@ -422,8 +615,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if err != nil {
 					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
 						res.err = err
-						return
 					}
+					res.done = true
 					return
 				}
 				if !userMsg {
@@ -433,6 +626,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				received++
 			case <-time.After(req.Expires + 5*time.Second):
 				res.err = fmt.Errorf("fetch timed out")
+				res.done = true
 				return
 			}
 		}
@@ -448,207 +642,29 @@ func (fr *fetchResult) Error() error {
 	return fr.err
 }
 
-// Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
-//
-// Available options:
-// [WithConsumeMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [WithConsumeMaxBytes] - sets maximum number of bytes stored in a buffer
-// [WitConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
-// [WithConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
-// [WithConsumeErrHandler] - sets custom consume error callback handler
-func (p *pullConsumer) Consume(handler MessageHandler, opts ...ConsumeOpts) (ConsumeContext, error) {
-	if atomic.LoadUint32(&p.isSubscribed) == 1 {
-		return nil, ErrConsumerHasActiveSubscription
-	}
-	if handler == nil {
-		return nil, ErrHandlerRequired
-	}
-	threshold := DefaultThreshold
-	consumeOpts := &consumeOpts{
-		MaxMessages: DefaultBatchSize,
-		Expires:     DefaultExpires,
-		Heartbeat:   DefaultHeartbeat,
-	}
-	for _, opt := range opts {
-		if err := opt(consumeOpts); err != nil {
-			return nil, err
-		}
-	}
-	req := &pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     int(math.Ceil(float64(consumeOpts.MaxMessages) / 4)),
-		MaxBytes:  consumeOpts.MaxBytes / 4,
-		Heartbeat: consumeOpts.Heartbeat,
-	}
-
-	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
-
-	atomic.StoreUint32(&p.isSubscribed, 1)
-	sub := &pullSubscription{
-		consumer:          p,
-		req:               req,
-		errs:              make(chan error, 1),
-		done:              make(chan struct{}, 1),
-		fetchNext:         make(chan struct{}, 1),
-		reconnected:       make(chan struct{}),
-		disconnected:      make(chan struct{}),
-		reconnectHandler:  p.jetStream.conn.ReconnectHandler(),
-		disconnectHandler: p.jetStream.conn.DisconnectErrHandler(),
-		consumeOpts:       consumeOpts,
-	}
-
-	p.jetStream.conn.SetReconnectHandler(func(c *nats.Conn) {
-		if sub.reconnectHandler != nil {
-			sub.reconnectHandler(p.jetStream.conn)
-		}
-		sub.reconnected <- struct{}{}
-	})
-	p.jetStream.conn.SetDisconnectErrHandler(func(c *nats.Conn, err error) {
-		if sub.disconnectHandler != nil {
-			sub.disconnectHandler(p.jetStream.conn, err)
-		}
-		sub.disconnected <- struct{}{}
-	})
-	sub.hbMonitor = sub.scheduleHeartbeatCheck(req.Heartbeat)
-
-	internalHandler := func(msg *nats.Msg) {
-		if sub.hbMonitor != nil {
-			sub.hbMonitor.Reset(2 * req.Heartbeat)
-		}
-		userMsg, err := checkMsg(msg)
-		if !userMsg && err == nil {
-			return
-		}
-		defer func() {
-			if float64(sub.pending.msgCount) <= float64(consumeOpts.MaxMessages)*threshold ||
-				(float64(sub.pending.byteCount) <= float64(consumeOpts.MaxBytes)*threshold && sub.req.MaxBytes != 0) &&
-					atomic.LoadUint32(&sub.fetchInProgress) == 1 {
-
-				sub.pending.msgCount += req.Batch
-				if sub.req.MaxBytes != 0 {
-					sub.pending.byteCount += req.MaxBytes
-				}
-				sub.fetchNext <- struct{}{}
-			}
-		}()
-		if !userMsg {
-			// heartbeat message
-			if err == nil {
-				return
-			}
-			if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrMaxBytesExceeded) {
-				if sub.consumeOpts.ErrHandler != nil {
-					sub.consumeOpts.ErrHandler(sub, err)
-				}
-				if errors.Is(err, ErrConsumerDeleted) || errors.Is(err, ErrBadRequest) {
-					sub.Stop()
-				}
-				if errors.Is(err, ErrConsumerLeadershipChanged) {
-					sub.pending.msgCount = 0
-					sub.pending.byteCount = 0
-				}
-				return
-			}
-			msgsLeft, bytesLeft, err := parsePending(msg)
-			if err != nil {
-				if sub.consumeOpts.ErrHandler != nil {
-					sub.consumeOpts.ErrHandler(sub, err)
-				}
-			}
-			sub.pending.msgCount -= msgsLeft
-			if sub.pending.msgCount < 0 {
-				sub.pending.msgCount = 0
-			}
-			if sub.req.MaxBytes > 0 {
-				sub.pending.byteCount -= bytesLeft
-				if sub.pending.byteCount < 0 {
-					sub.pending.byteCount = 0
-				}
-			}
-			return
-		}
-		handler(p.jetStream.toJSMsg(msg))
-		sub.pending.msgCount--
-		if sub.req.MaxBytes != 0 {
-			sub.pending.byteCount -= msgSize(msg)
-		}
-	}
-	inbox := nats.NewInbox()
-	var err error
-	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
+func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
+	res, err := p.Fetch(1, opts...)
 	if err != nil {
 		return nil, err
 	}
-
-	// initial pull
-	sub.pending.msgCount = sub.req.Batch
-	sub.pending.byteCount = sub.req.MaxBytes
-	if err := sub.pull(*req, subject); err != nil {
-		sub.errs <- err
+	msg := <-res.Messages()
+	if msg != nil {
+		return msg, nil
 	}
+	return nil, res.Error()
+}
 
-	go func() {
-		for {
-			if atomic.LoadUint32(&sub.closed) == 1 {
-				return
-			}
-			select {
-			case <-sub.disconnected:
-				if sub.hbMonitor != nil {
-					sub.hbMonitor.Stop()
-				}
-			case <-sub.reconnected:
-				// try fetching consumer info several times to make sure consumer is available after reconnect
-				for i := 0; i < 5; i++ {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					_, err := p.Info(ctx)
-					cancel()
-					if err == nil {
-						break
-					}
-					if err != nil {
-						if i == 4 {
-							sub.cleanupSubscriptionAndRestoreConnHandler()
-							if sub.consumeOpts.ErrHandler != nil {
-								sub.consumeOpts.ErrHandler(sub, err)
-							}
-							return
-						}
-					}
-					time.Sleep(5 * time.Second)
-				}
-
-				sub.pending.msgCount = req.Batch
-				sub.pending.byteCount = req.MaxBytes
-				sub.fetchNext <- struct{}{}
-			case err := <-sub.errs:
-				if sub.consumeOpts.ErrHandler != nil {
-					sub.consumeOpts.ErrHandler(sub, err)
-				}
-				if errors.Is(err, ErrNoHeartbeat) {
-					sub.pending.msgCount = 0
-					sub.pending.byteCount = 0
-					sub.pending.msgCount += req.Batch
-					if sub.req.MaxBytes != 0 {
-						sub.pending.byteCount += req.MaxBytes
-					}
-					sub.fetchNext <- struct{}{}
-				}
-			}
-		}
-	}()
-
-	go sub.pullMessages(subject)
-
-	return sub, nil
+func (fr *fetchResult) fetchComplete() bool {
+	return fr.done
 }
 
 func (s *pullSubscription) pullMessages(subject string) {
 	for {
 		select {
-		case <-s.fetchNext:
+		case req := <-s.fetchNext:
 			atomic.StoreUint32(&s.fetchInProgress, 1)
-			if err := s.pull(*s.req, subject); err != nil {
+
+			if err := s.pull(req, subject); err != nil {
 				if errors.Is(err, ErrMsgIteratorClosed) {
 					s.cleanupSubscriptionAndRestoreConnHandler()
 					return
@@ -688,6 +704,7 @@ func (s *pullSubscription) cleanupSubscriptionAndRestoreConnHandler() {
 	atomic.StoreUint32(&s.consumer.isSubscribed, 0)
 	s.consumer.jetStream.conn.SetDisconnectErrHandler(s.disconnectHandler)
 	s.consumer.jetStream.conn.SetReconnectHandler(s.reconnectHandler)
+	s.consumer.subscription = nil
 }
 
 func msgSize(msg *nats.Msg) int {
@@ -700,7 +717,7 @@ func msgSize(msg *nats.Msg) int {
 
 // pull sends a pull request to the server and waits for messages using a subscription from [pullSubscription].
 // Messages will be fetched up to given batch_size or until there are no more messages or timeout is returned
-func (s *pullSubscription) pull(req pullRequest, subject string) error {
+func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	s.consumer.Lock()
 	defer s.consumer.Unlock()
 	if atomic.LoadUint32(&s.closed) == 1 {
@@ -719,4 +736,79 @@ func (s *pullSubscription) pull(req pullRequest, subject string) error {
 		return err
 	}
 	return nil
+}
+
+func parseConsumeOpts(opts ...PullConsumeOpt) (*consumeOpts, error) {
+	consumeOpts := &consumeOpts{
+		MaxMessages:             unset,
+		MaxBytes:                unset,
+		Expires:                 DefaultExpires,
+		Heartbeat:               unset,
+		ReportMissingHeartbeats: true,
+	}
+	for _, opt := range opts {
+		if err := opt.configureConsume(consumeOpts); err != nil {
+			return nil, err
+		}
+	}
+	if err := consumeOpts.setDefaults(); err != nil {
+		return nil, err
+	}
+	return consumeOpts, nil
+}
+
+func parseMessagesOpts(opts ...PullMessagesOpt) (*consumeOpts, error) {
+	consumeOpts := &consumeOpts{
+		MaxMessages:             unset,
+		MaxBytes:                unset,
+		Expires:                 DefaultExpires,
+		Heartbeat:               unset,
+		ReportMissingHeartbeats: true,
+	}
+	for _, opt := range opts {
+		if err := opt.configureMessages(consumeOpts); err != nil {
+			return nil, err
+		}
+	}
+	if err := consumeOpts.setDefaults(); err != nil {
+		return nil, err
+	}
+	return consumeOpts, nil
+}
+
+func (consumeOpts *consumeOpts) setDefaults() error {
+	var errs []error
+	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset {
+		errs = append(errs, fmt.Errorf("only one of MaxMessages and MaxBytes can be specified"))
+	}
+	if consumeOpts.MaxBytes != unset {
+		// when max_bytes is used, set batch size to a very large number
+		consumeOpts.MaxMessages = 1000000
+	} else if consumeOpts.MaxMessages != unset {
+		consumeOpts.MaxBytes = 0
+	} else {
+		if consumeOpts.MaxBytes == unset {
+			consumeOpts.MaxBytes = 0
+		}
+		if consumeOpts.MaxMessages == unset {
+			consumeOpts.MaxMessages = DefaultBatchSize
+		}
+	}
+
+	if consumeOpts.ThresholdMessages == 0 {
+		consumeOpts.ThresholdMessages = int(math.Ceil(float64(consumeOpts.MaxMessages) / 2))
+	}
+	if consumeOpts.ThresholdBytes == 0 {
+		consumeOpts.ThresholdBytes = int(math.Ceil(float64(consumeOpts.MaxBytes) / 2))
+	}
+	if consumeOpts.Heartbeat == unset {
+		consumeOpts.Heartbeat = consumeOpts.Expires / 2
+		if consumeOpts.Heartbeat > 30*time.Second {
+			consumeOpts.Heartbeat = 30 * time.Second
+		}
+	}
+	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
+		errs = append(errs, fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry"))
+	}
+	return errors.Join(errs...)
 }

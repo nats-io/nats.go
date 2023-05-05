@@ -155,6 +155,9 @@ var (
 
 	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator
 	ErrMsgIteratorClosed = &jsError{message: "messages iterator closed"}
+
+	ErrOrderedConsumerReset    = &jsError{message: "recreating ordered consumer"}
+	ErrOrderedSequenceMismatch = &jsError{message: "sequence mismatch"}
 )
 
 // Error prints the JetStream API error code and description

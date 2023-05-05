@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nuid"
 )
 
 type (
@@ -80,6 +81,11 @@ type (
 		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		// OrderedConsumer returns an OrderedConsumer instance.
+		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
+		// for in order delivery of messages. Underlying consumer is re-created when necessary,
+		// without additional client code.
+		OrderedConsumer(context.Context, string, OrderedConsumerConfig) (Consumer, error)
 		// UpdateConsumer updates an existing consumer
 		UpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
@@ -388,6 +394,24 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 		}
 	}
 	return upsertConsumer(ctx, js, stream, cfg)
+}
+
+func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	oc := &orderedConsumer{
+		jetStream:  js,
+		cfg:        &cfg,
+		stream:     stream,
+		namePrefix: nuid.Next(),
+		doReset:    make(chan struct{}, 1),
+	}
+	if cfg.OptStartSeq != 0 {
+		oc.cursor.streamSeq = cfg.OptStartSeq - 1
+	}
+
+	return oc, nil
 }
 
 // UpdateConsumer updates an existing consumer

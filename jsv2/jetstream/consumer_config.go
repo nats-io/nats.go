@@ -38,24 +38,26 @@ type (
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
 	ConsumerConfig struct {
-		Durable         string          `json:"durable_name,omitempty"`
-		Description     string          `json:"description,omitempty"`
-		DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
-		OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
-		OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
-		AckPolicy       AckPolicy       `json:"ack_policy"`
-		AckWait         time.Duration   `json:"ack_wait,omitempty"`
-		MaxDeliver      int             `json:"max_deliver,omitempty"`
-		BackOff         []time.Duration `json:"backoff,omitempty"`
-		FilterSubject   string          `json:"filter_subject,omitempty"`
-		ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
-		RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
-		SampleFrequency string          `json:"sample_freq,omitempty"`
-		MaxWaiting      int             `json:"max_waiting,omitempty"`
-		MaxAckPending   int             `json:"max_ack_pending,omitempty"`
-		FlowControl     bool            `json:"flow_control,omitempty"`
-		Heartbeat       time.Duration   `json:"idle_heartbeat,omitempty"`
-		HeadersOnly     bool            `json:"headers_only,omitempty"`
+		Name              string          `json:"name,omitempty"`
+		Durable           string          `json:"durable_name,omitempty"`
+		Description       string          `json:"description,omitempty"`
+		DeliverPolicy     DeliverPolicy   `json:"deliver_policy"`
+		OptStartSeq       uint64          `json:"opt_start_seq,omitempty"`
+		OptStartTime      *time.Time      `json:"opt_start_time,omitempty"`
+		AckPolicy         AckPolicy       `json:"ack_policy"`
+		AckWait           time.Duration   `json:"ack_wait,omitempty"`
+		MaxDeliver        int             `json:"max_deliver,omitempty"`
+		BackOff           []time.Duration `json:"backoff,omitempty"`
+		FilterSubjects    []string        `json:"filter_subjects,omitempty"`
+		ReplayPolicy      ReplayPolicy    `json:"replay_policy"`
+		RateLimit         uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
+		SampleFrequency   string          `json:"sample_freq,omitempty"`
+		MaxWaiting        int             `json:"max_waiting,omitempty"`
+		MaxAckPending     int             `json:"max_ack_pending,omitempty"`
+		FlowControl       bool            `json:"flow_control,omitempty"`
+		Heartbeat         time.Duration   `json:"idle_heartbeat,omitempty"`
+		HeadersOnly       bool            `json:"headers_only,omitempty"`
+		InactiveThreshold time.Duration   `json:"inactive_threshold,omitempty"`
 
 		// Pull based options.
 		MaxRequestBatch   int           `json:"max_batch,omitempty"`
@@ -65,13 +67,23 @@ type (
 		DeliverSubject string `json:"deliver_subject,omitempty"`
 		DeliverGroup   string `json:"deliver_group,omitempty"`
 
-		// Ephemeral inactivity threshold.
-		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
-
 		// Generally inherited by parent stream and other markers, now can be configured directly.
 		Replicas int `json:"num_replicas"`
 		// Force memory storage.
 		MemoryStorage bool `json:"mem_storage,omitempty"`
+	}
+
+	OrderedConsumerConfig struct {
+		FilterSubjects    []string      `json:"filter_subjects,omitempty"`
+		DeliverPolicy     DeliverPolicy `json:"deliver_policy"`
+		OptStartSeq       uint64        `json:"opt_start_seq,omitempty"`
+		OptStartTime      *time.Time    `json:"opt_start_time,omitempty"`
+		ReplayPolicy      ReplayPolicy  `json:"replay_policy"`
+		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+
+		// Maximum number of attempts for the consumer to be recreated
+		// Defaults to unlimited
+		MaxResetAttempts int
 	}
 
 	DeliverPolicy int
@@ -114,6 +126,8 @@ const (
 	// DeliverLastPerSubjectPolicy will start the consumer with the last message
 	// for all subjects received.
 	DeliverLastPerSubjectPolicy
+
+	deliverPolicyNotSet = -1
 )
 
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
