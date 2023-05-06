@@ -118,69 +118,6 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	}
 }
 
-// Need access to internals for testing.
-// func TestConnAsyncCBDeadlock(t *testing.T) {
-// 	s := RunServerOnPort(TEST_PORT)
-// 	defer s.Shutdown()
-
-// 	ch := make(chan bool)
-// 	o := nats.GetDefaultOptions()
-// 	o.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
-// 	o.ClosedCB = func(_ *nats.Conn) {
-// 		ch <- true
-// 	}
-// 	o.AsyncErrorCB = func(nc *nats.Conn, sub *nats.Subscription, err error) {
-// 		// do something with nc that requires locking behind the scenes
-// 		_ = nc.LastError()
-// 	}
-// 	nc, err := o.Connect()
-// 	if err != nil {
-// 		t.Fatalf("Should have connected ok: %v", err)
-// 	}
-
-// 	total := 300
-// 	wg := &sync.WaitGroup{}
-// 	wg.Add(total)
-// 	for i := 0; i < total; i++ {
-// 		go func() {
-// 			// overwhelm asyncCB with errors
-// 			nc.processErr(nats.AUTHORIZATION_ERR)
-// 			wg.Done()
-// 		}()
-// 	}
-// 	wg.Wait()
-
-// 	nc.Close()
-// 	if e := Wait(ch); e != nil {
-// 		t.Fatal("Deadlock")
-// 	}
-// }
-
-// func TestPingTimerLeakedOnClose(t *testing.T) {
-// 	s := RunServerOnPort(TEST_PORT)
-// 	defer s.Shutdown()
-
-// 	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT))
-// 	if err != nil {
-// 		t.Fatalf("Error on connect: %v", err)
-// 	}
-// 	nc.Close()
-// 	// There was a bug (issue #338) that if connection
-// 	// was created and closed quickly, the pinger would
-// 	// be created from a go-routine and would cause the
-// 	// connection object to be retained until the ping
-// 	// timer fired.
-// 	// Wait a little bit and check if the timer is set.
-// 	// With the defect it would be.
-// 	time.Sleep(100 * time.Millisecond)
-// 	nc.mu.Lock()
-// 	pingTimerSet := nc.ptmr != nil
-// 	nc.mu.Unlock()
-// 	if pingTimerSet {
-// 		t.Fatal("Pinger timer should not be set")
-// 	}
-// }
-
 func TestNoEcho(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
@@ -212,33 +149,6 @@ func TestNoEcho(t *testing.T) {
 		t.Fatalf("Expected no messages echoed back, received %d\n", nr)
 	}
 }
-
-// Need access to internals for testing.
-// Need access to internals for testing.
-// func TestNoEchoOldServer(t *testing.T) {
-// 	opts := nats.GetDefaultOptions()
-// 	opts.Url = nats.DefaultURL
-// 	opts.NoEcho = true
-
-// 	nc := &nats.Conn{Opts: opts}
-// 	if err := nc.setupServerPool(); err != nil {
-// 		t.Fatalf("Problem setting up Server Pool: %v\n", err)
-// 	}
-
-// 	// Old style with no proto, meaning 0. We need Proto:1 for NoEcho support.
-// 	oldInfo := "{\"server_id\":\"22\",\"version\":\"1.1.0\",\"go\":\"go1.10.2\",\"port\":4222,\"max_payload\":1048576}"
-
-// 	err := nc.processInfo(oldInfo)
-// 	if err != nil {
-// 		t.Fatalf("Error processing old style INFO: %v\n", err)
-// 	}
-
-// 	// Make sure connectProto generates an error.
-// 	_, err = nc.connectProto()
-// 	if err == nil {
-// 		t.Fatalf("Expected an error but got none\n")
-// 	}
-// }
 
 // Trust Server Tests
 
@@ -684,26 +594,6 @@ func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
 	}
 }
 
-// func TestConnectedAddr(t *testing.T) {
-// 	s := RunServerOnPort(TEST_PORT)
-// 	defer s.Shutdown()
-
-// 	var nc *nats.Conn
-// 	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
-// 		t.Fatalf("Expected empty result for nil connection, got %q", addr)
-// 	}
-// 	nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
-// 	if err != nil {
-// 		t.Fatalf("Error connecting: %v", err)
-// 	}
-// 	expected := s.Addr().String()
-// 	if addr := nc.ConnectedAddr(); addr != expected {
-// 		t.Fatalf("Expected address %q, got %q", expected, addr)
-// 	}
-// 	nc.Close()
-// 	if addr := nc.ConnectedAddr(); addr != _EMPTY_ {
-// 		t.Fatalf("Expected empty result for closed connection, got %q", addr)
-// 	}
 // }
 
 func TestSubscribeSyncRace(t *testing.T) {
@@ -910,40 +800,6 @@ func TestStatsRace(t *testing.T) {
 	wg.Wait()
 }
 
-// func TestRequestLeaksMapEntries(t *testing.T) {
-// 	o := natsserver.DefaultTestOptions
-// 	o.Port = -1
-// 	s := RunServerWithOptions(&o)
-// 	defer s.Shutdown()
-
-// 	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
-// 	if err != nil {
-// 		t.Fatalf("Error on connect: %v", err)
-// 	}
-// 	defer nc.Close()
-
-// 	response := []byte("I will help you")
-// 	nc.Subscribe("foo", func(m *nats.Msg) {
-// 		nc.Publish(m.Reply, response)
-// 	})
-
-// 	for i := 0; i < 100; i++ {
-// 		msg, err := nc.Request("foo", nil, 500*time.Millisecond)
-// 		if err != nil {
-// 			t.Fatalf("Received an error on Request test: %s", err)
-// 		}
-// 		if !bytes.Equal(msg.Data, response) {
-// 			t.Fatalf("Received invalid response")
-// 		}
-// 	}
-// 	nc.mu.Lock()
-// 	num := len(nc.respMap)
-// 	nc.mu.Unlock()
-// 	if num != 0 {
-// 		t.Fatalf("Expected 0 entries in response map, got %d", num)
-// 	}
-// }
-
 func TestRequestMultipleReplies(t *testing.T) {
 	o := natsserver.DefaultTestOptions
 	o.Port = -1
@@ -987,45 +843,6 @@ func TestRequestMultipleReplies(t *testing.T) {
 		t.Fatal(e.Error())
 	}
 }
-
-// func TestRequestInit(t *testing.T) {
-// 	o := natsserver.DefaultTestOptions
-// 	o.Port = -1
-// 	s := RunServerWithOptions(&o)
-// 	defer s.Shutdown()
-
-// 	nc, err := nats.Connect(s.ClientURL())
-// 	if err != nil {
-// 		t.Fatalf("Error on connect: %v", err)
-// 	}
-// 	defer nc.Close()
-
-// 	if _, err := nc.Subscribe("foo", func(m *nats.Msg) {
-// 		m.Respond([]byte("reply"))
-// 	}); err != nil {
-// 		t.Fatalf("Error on subscribe: %v", err)
-// 	}
-
-// 	// Artificially change the status to something that would make the internal subscribe
-// 	// call fail. Don't use CLOSED because then there is a risk that the flusher() goes away
-// 	// and so the rest of the test would fail.
-// 	nc.mu.Lock()
-// 	orgStatus := nc.status
-// 	nc.status = nats.DRAINING_SUBS
-// 	nc.mu.Unlock()
-
-// 	if _, err := nc.Request("foo", []byte("request"), 50*time.Millisecond); err == nil {
-// 		t.Fatal("Expected error, got none")
-// 	}
-
-// 	nc.mu.Lock()
-// 	nc.status = orgStatus
-// 	nc.mu.Unlock()
-
-// 	if _, err := nc.Request("foo", []byte("request"), 500*time.Millisecond); err != nil {
-// 		t.Fatalf("Error on request: %v", err)
-// 	}
-// }
 
 func TestGetRTT(t *testing.T) {
 	s := RunServerOnPort(-1)
@@ -1074,84 +891,6 @@ func TestGetClientIP(t *testing.T) {
 		t.Fatalf("Expected a connection closed error, got %v", err)
 	}
 }
-
-// Need access to internals for testing.
-// func TestNoPanicOnSrvPoolSizeChanging(t *testing.T) {
-// 	listeners := []net.Listener{}
-// 	ports := []int{}
-
-// 	for i := 0; i < 3; i++ {
-// 		l, err := net.Listen("tcp", "127.0.0.1:0")
-// 		if err != nil {
-// 			t.Fatalf("Could not listen on an ephemeral port: %v", err)
-// 		}
-// 		defer l.Close()
-// 		tl := l.(*net.TCPListener)
-// 		ports = append(ports, tl.Addr().(*net.TCPAddr).Port)
-// 		listeners = append(listeners, l)
-// 	}
-
-// 	wg := sync.WaitGroup{}
-// 	wg.Add(len(listeners))
-
-// 	connect := int32(0)
-// 	srv := func(l net.Listener) {
-// 		defer wg.Done()
-// 		for {
-// 			conn, err := l.Accept()
-// 			if err != nil {
-// 				return
-// 			}
-// 			defer conn.Close()
-
-// 			var info string
-
-// 			reject := atomic.AddInt32(&connect, 1) <= 2
-// 			if reject {
-// 				// Sends a list of 3 servers, where the second does not actually run.
-// 				// This server is going to reject the connect (with auth error), so
-// 				// client will move to 2nd, fail, then go to third...
-// 				info = fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"connect_urls\":[\"127.0.0.1:%d\",\"127.0.0.1:%d\",\"127.0.0.1:%d\"]}\r\n",
-// 					ports[0], ports[1], ports[2])
-// 			} else {
-// 				// This third server will return the INFO with only the original server
-// 				// and the third one, which will make the srvPool size shrink down to 2.
-// 				info = fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"connect_urls\":[\"127.0.0.1:%d\",\"127.0.0.1:%d\"]}\r\n",
-// 					ports[0], ports[2])
-// 			}
-// 			conn.Write([]byte(info))
-
-// 			// Read connect and ping commands sent from the client
-// 			br := bufio.NewReaderSize(conn, 10*1024)
-// 			br.ReadLine()
-// 			br.ReadLine()
-
-// 			if reject {
-// 				conn.Write([]byte(fmt.Sprintf("-ERR '%s'\r\n", nats.AUTHORIZATION_ERR)))
-// 				conn.Close()
-// 			} else {
-// 				conn.Write([]byte(pongProto))
-// 				br.ReadLine()
-// 			}
-// 		}
-// 	}
-
-// 	for _, l := range listeners {
-// 		go srv(l)
-// 	}
-
-// 	time.Sleep(250 * time.Millisecond)
-
-// 	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", ports[0]))
-// 	if err != nil {
-// 		t.Fatalf("Error on connect: %v", err)
-// 	}
-// 	nc.Close()
-// 	for _, l := range listeners {
-// 		l.Close()
-// 	}
-// 	wg.Wait()
-// }
 
 func TestReconnectWaitJitter(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
@@ -1359,41 +1098,6 @@ func TestCustomInboxPrefix(t *testing.T) {
 	}
 }
 
-// Need access to internals for testing.
-// func TestRespInbox(t *testing.T) {
-// 	s := RunServerOnPort(-1)
-// 	defer s.Shutdown()
-
-// 	nc, err := nats.Connect(s.ClientURL())
-// 	if err != nil {
-// 		t.Fatalf("Expected to connect to server, got %v", err)
-// 	}
-// 	defer nc.Close()
-
-// 	if _, err := nc.Subscribe("foo", func(msg *nats.Msg) {
-// 		lastDot := strings.LastIndex(msg.Reply, ".")
-// 		if lastDot == -1 {
-// 			msg.Respond([]byte(fmt.Sprintf("Invalid reply subject: %q", msg.Reply)))
-// 			return
-// 		}
-// 		lastToken := msg.Reply[lastDot+1:]
-// 		if len(lastToken) != replySuffixLen {
-// 			msg.Respond([]byte(fmt.Sprintf("Invalid last token: %q", lastToken)))
-// 			return
-// 		}
-// 		msg.Respond(nil)
-// 	}); err != nil {
-// 		t.Fatalf("subscribe failed: %s", err)
-// 	}
-// 	resp, err := nc.Request("foo", []byte("check inbox"), time.Second)
-// 	if err != nil {
-// 		t.Fatalf("Request failed: %v", err)
-// 	}
-// 	if len(resp.Data) > 0 {
-// 		t.Fatalf("Error: %s", resp.Data)
-// 	}
-// }
-
 func TestInProcessConn(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
@@ -1415,24 +1119,3 @@ func TestInProcessConn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-// Need access to internals for testing.
-// func TestServerListWithTrailingComma(t *testing.T) {
-// 	s := RunServerOnPort(-1)
-// 	defer s.Shutdown()
-
-// 	// Notice the comma at the end of the "list"
-// 	nc, err := nats.Connect(fmt.Sprintf("%s,", s.ClientURL()))
-// 	if err != nil {
-// 		t.Fatalf("Unable to connect: %v", err)
-// 	}
-// 	defer nc.Close()
-
-// 	// Now check server pool
-// 	nc.mu.Lock()
-// 	l := len(nc.srvPool)
-// 	nc.mu.Unlock()
-// 	if l != 1 {
-// 		t.Fatalf("There should be only 1 URL in the list, got %v", l)
-// 	}
-// }

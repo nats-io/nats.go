@@ -26,7 +26,33 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats-server/v2/server"
+	natsserver "github.com/nats-io/nats-server/v2/test"
 )
+
+func testWSGetDefaultOptions(t *testing.T, tls bool) *server.Options {
+	t.Helper()
+	sopts := natsserver.DefaultTestOptions
+	sopts.Host = "127.0.0.1"
+	sopts.Port = -1
+	sopts.Websocket.Host = "127.0.0.1"
+	sopts.Websocket.Port = -1
+	sopts.Websocket.NoTLS = !tls
+	if tls {
+		tc := &server.TLSConfigOpts{
+			CertFile: "./test/configs/certs/server.pem",
+			KeyFile:  "./test/configs/certs/key.pem",
+			CaFile:   "./test/configs/certs/ca.pem",
+		}
+		tlsConfig, err := server.GenTLSConfig(tc)
+		if err != nil {
+			t.Fatalf("Can't build TLCConfig: %v", err)
+		}
+		sopts.Websocket.TLSConfig = tlsConfig
+	}
+	return &sopts
+}
 
 type fakeReader struct {
 	mu     sync.Mutex
@@ -605,5 +631,66 @@ func TestWSProxyPath(t *testing.T) {
 				t.Fatal("Proxy was not reached")
 			}
 		})
+	}
+}
+
+// Need access to internals for testing.
+func TestWSGossipAndReconnect(t *testing.T) {
+	o1 := testWSGetDefaultOptions(t, false)
+	o1.ServerName = "A"
+	o1.Cluster.Host = "127.0.0.1"
+	o1.Cluster.Name = "abc"
+	o1.Cluster.Port = -1
+	s1 := RunServerWithOptions(o1)
+	defer s1.Shutdown()
+
+	o2 := testWSGetDefaultOptions(t, false)
+	o2.ServerName = "B"
+	o2.Cluster.Host = "127.0.0.1"
+	o2.Cluster.Name = "abc"
+	o2.Cluster.Port = -1
+	o2.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", o1.Cluster.Port))
+	s2 := RunServerWithOptions(o2)
+	defer s2.Shutdown()
+
+	rch := make(chan bool, 10)
+	url := fmt.Sprintf("ws://127.0.0.1:%d", o1.Websocket.Port)
+	nc, err := Connect(url,
+		ReconnectWait(50*time.Millisecond),
+		ReconnectHandler(func(_ *Conn) { rch <- true }),
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	timeout := time.Now().Add(time.Second)
+	for time.Now().Before(timeout) {
+		if len(nc.Servers()) > 1 {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if len(nc.Servers()) == 1 {
+		t.Fatal("Did not discover server 2")
+	}
+	s1.Shutdown()
+
+	// Wait for reconnect
+	if err := Wait(rch); err != nil {
+		t.Fatalf("Did not reconnect: %v", err)
+	}
+
+	// Now check that connection is still WS
+	nc.mu.Lock()
+	isWS := nc.ws
+	_, ok := nc.bw.w.(*websocketWriter)
+	nc.mu.Unlock()
+
+	if !isWS {
+		t.Fatal("Connection is not marked as websocket")
+	}
+	if !ok {
+		t.Fatal("Connection writer is not websocket")
 	}
 }
