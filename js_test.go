@@ -369,7 +369,7 @@ func TestJetStreamOrderedConsumerDeleteAssets(t *testing.T) {
 	t.Run("remove consumer, expect it to be recreated", func(t *testing.T) {
 		createStream()
 
-		createConsSub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.OBJECT")
+		createConsSub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.OBJECT.*.a")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
