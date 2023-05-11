@@ -47,42 +47,35 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:   "TestConsumerListener",
-		AckPolicy: jetstream.AckExplicitPolicy,
+	cons, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
+		MaxResetAttempts: 5,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	go endlessPublish(ctx, nc, js)
+	go func() {
+		var i int
+		for {
+			time.Sleep(500 * time.Millisecond)
+			if nc.Status() != nats.CONNECTED {
+				continue
+			}
+			if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
+				fmt.Println("pub error: ", err)
+			}
+			i++
+		}
+	}()
 
-	cc, err := cons.Consume(func(msg jetstream.Msg) {
+	_, err = cons.Consume(func(msg jetstream.Msg) {
 		fmt.Println(string(msg.Data()))
 		msg.Ack()
-	}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
-		fmt.Println(err)
-	}))
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cc.Stop()
-
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
-}
-
-func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {
-	var i int
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if nc.Status() != nats.CONNECTED {
-			continue
-		}
-		if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-			fmt.Println("pub error: ", err)
-		}
-		i++
-	}
 }

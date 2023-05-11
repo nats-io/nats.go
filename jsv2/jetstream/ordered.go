@@ -213,15 +213,23 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 	if c.consumerType == consumerTypeConsume {
 		return nil, fmt.Errorf("ordered consumer initialized as consume")
 	}
-	if c.runningFetch != nil && !c.runningFetch.done {
-		return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+	if c.runningFetch != nil {
+		if !c.runningFetch.done {
+			return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+		}
+		c.cursor.streamSeq = c.runningFetch.sseq
 	}
 	c.consumerType = consumerTypeFetch
 	err := c.reset()
 	if err != nil {
 		return nil, err
 	}
-	return c.currentConsumer.Fetch(batch, opts...)
+	msgs, err := c.currentConsumer.Fetch(batch, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.runningFetch = msgs.(*fetchResult)
+	return msgs, nil
 }
 
 // FetchNoWait is used to retrieve up to a provided number of messages from a stream.

@@ -17,9 +17,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -56,21 +53,19 @@ func main() {
 	}
 	go endlessPublish(ctx, nc, js)
 
-	cc, err := cons.Consume(func(msg jetstream.Msg) {
-		fmt.Println(string(msg.Data()))
-		msg.Ack()
-	}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
-		fmt.Println(err)
-	}))
-	if err != nil {
-		log.Fatal(err)
+	for {
+		msgs, err := cons.Fetch(100, jetstream.FetchMaxWait(1*time.Second))
+		if err != nil {
+			fmt.Println(err)
+		}
+		for msg := range msgs.Messages() {
+			fmt.Println(string(msg.Data()))
+			msg.Ack()
+		}
+		if msgs.Error() != nil {
+			fmt.Println("Error fetching messages: ", err)
+		}
 	}
-	defer cc.Stop()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-
 }
 
 func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {

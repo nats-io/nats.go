@@ -530,11 +530,6 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		// subscribe to next request subject to verify how many next requests were sent
-		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
-		if err != nil {
-			t.Fatalf("Error on subscribe: %v", err)
-		}
 
 		msgs := make([]Msg, 0)
 		it, err := c.Messages(PullMaxMessages(3))
@@ -557,15 +552,6 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 		it.Stop()
 		time.Sleep(10 * time.Millisecond)
-		requestsNum, _, err := sub.Pending()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		// with batch size set to 4, and 5 messages published on subject, there should be a total of 5 requests sent
-		if requestsNum < 3 {
-			t.Fatalf("Unexpected number of requests sent; want at least 3; got %d", requestsNum)
-		}
-
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 		}

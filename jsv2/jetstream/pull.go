@@ -117,6 +117,7 @@ type (
 		msgs chan Msg
 		err  error
 		done bool
+		sseq uint64
 	}
 
 	FetchOpt func(*pullRequest) error
@@ -128,10 +129,10 @@ type (
 )
 
 const (
-	DefaultBatchSize = 500
-	DefaultExpires   = 30 * time.Second
-	DefaultHeartbeat = 5 * time.Second
-	unset            = -1
+	DefaultMaxMessages = 500
+	DefaultExpires     = 30 * time.Second
+	DefaultHeartbeat   = 5 * time.Second
+	unset              = -1
 )
 
 // Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
@@ -198,8 +199,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			return
 		}
 		defer func() {
-			if sub.pending.msgCount <= consumeOpts.ThresholdMessages ||
-				(sub.pending.byteCount <= consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
+			if sub.pending.msgCount < consumeOpts.ThresholdMessages ||
+				(sub.pending.byteCount < consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
 					atomic.LoadUint32(&sub.fetchInProgress) == 1 {
 
 				sub.fetchNext <- &pullRequest{
@@ -220,6 +221,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				return
 			}
 			if err := sub.handleStatusMsg(msg, msgErr); err != nil {
+				if atomic.LoadUint32(&sub.closed) == 1 {
+					return
+				}
 				if sub.consumeOpts.ErrHandler != nil {
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
@@ -402,8 +406,8 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}
 
 	for {
-		if s.pending.msgCount <= s.consumeOpts.ThresholdMessages ||
-			(s.pending.byteCount <= s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
+		if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
+			(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
 				atomic.LoadUint32(&s.fetchInProgress) == 1 {
 
 			s.fetchNext <- &pullRequest{
@@ -524,8 +528,8 @@ func (s *pullSubscription) Stop() {
 		return
 	}
 	close(s.done)
-	atomic.StoreUint32(&s.consumer.isSubscribed, 0)
 	atomic.StoreUint32(&s.closed, 1)
+	atomic.StoreUint32(&s.consumer.isSubscribed, 0)
 }
 
 // Fetch sends a single request to retrieve given number of messages.
@@ -623,8 +627,13 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					continue
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
+				meta, err := msg.Metadata()
+				if err != nil {
+					res.err = fmt.Errorf("parsing message metadata: %s", err)
+				}
+				res.sseq = meta.Sequence.Stream
 				received++
-			case <-time.After(req.Expires + 5*time.Second):
+			case <-time.After(req.Expires + 1*time.Second):
 				res.err = fmt.Errorf("fetch timed out")
 				res.done = true
 				return
@@ -791,7 +800,7 @@ func (consumeOpts *consumeOpts) setDefaults() error {
 			consumeOpts.MaxBytes = 0
 		}
 		if consumeOpts.MaxMessages == unset {
-			consumeOpts.MaxMessages = DefaultBatchSize
+			consumeOpts.MaxMessages = DefaultMaxMessages
 		}
 	}
 
