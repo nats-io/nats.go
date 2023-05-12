@@ -1659,9 +1659,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	}
 
 	// If we are creating or updating let's process that request.
+	consName := o.cfg.Name
 	if shouldCreate {
-		consName := cfg.Durable
-		if consName == "" {
+		if cfg.Durable != "" {
+			consName = cfg.Durable
+		} else if consName == "" {
 			consName = getHash(nuid.Next())
 		}
 		info, err := js.upsertConsumer(stream, consName, ccreq.Config)
@@ -2470,6 +2472,14 @@ func ConsumerReplicas(replicas int) SubOpt {
 func ConsumerMemoryStorage() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MemoryStorage = true
+		return nil
+	})
+}
+
+// ConsumerName sets the name for a consumer.
+func ConsumerName(name string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.Name = name
 		return nil
 	})
 }

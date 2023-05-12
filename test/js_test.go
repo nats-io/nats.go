@@ -8789,3 +8789,99 @@ func TestJetStreamStreamInfoAlternates(t *testing.T) {
 		}
 	})
 }
+
+func TestJetStreamSubscribeConsumerName(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// Create the stream using our client API.
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo", "bar", "baz", "foo.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.Publish("foo", []byte("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Lookup the stream for testing.
+	_, err = js.StreamInfo("TEST")
+	if err != nil {
+		t.Fatalf("stream lookup failed: %v", err)
+	}
+
+	sub, err := js.SubscribeSync("foo", nats.ConsumerName("my-ephemeral"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cinfo, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cinfo.Config.Name
+	expected := "my-ephemeral"
+	if got != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, got)
+	}
+	// Confirm that this is a durable.
+	got = cinfo.Config.Durable
+	expected = ""
+	if got != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, got)
+	}
+	_, err = sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ConsumerName will be ignored in case a durable name has been set.
+	sub, err = js.SubscribeSync("foo", nats.Durable("durable"), nats.ConsumerName("custom-name"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cinfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cinfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = cinfo.Config.Name
+	expected = "durable"
+	if got != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, got)
+	}
+	got = cinfo.Config.Durable
+	expected = "durable"
+	if got != expected {
+		t.Fatalf("Expected: %v, got: %v", expected, got)
+	}
+	_, err = sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Default Ephemeral name should be short like in the server.
+	sub, err = js.SubscribeSync("foo", nats.ConsumerName(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cinfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedSize := 8
+	result := len(cinfo.Config.Name)
+	if result != expectedSize {
+		t.Fatalf("Expected: %v, got: %v", expectedSize, result)
+	}
+}
