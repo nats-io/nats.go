@@ -8851,10 +8851,6 @@ func TestJetStreamSubscribeConsumerName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cinfo, err = sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
 	got = cinfo.Config.Name
 	expected = "durable"
 	if got != expected {

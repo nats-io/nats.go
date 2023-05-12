@@ -3660,18 +3660,13 @@ func (st *StorageType) UnmarshalJSON(data []byte) error {
 // Length of our hash used for named consumers.
 const nameHashLen = 8
 
-// Computes a hash of 8 characters for the name.
+// Computes a hash for the given `name`.
 func getHash(name string) string {
-	return getHashSize(name, nameHashLen)
-}
-
-// Computes a hash for the given `name`. The result will be `size` characters long.
-func getHashSize(name string, size int) string {
 	sha := sha256.New()
 	sha.Write([]byte(name))
 	b := sha.Sum(nil)
-	for i := 0; i < size; i++ {
+	for i := 0; i < nameHashLen; i++ {
 		b[i] = rdigits[int(b[i]%base)]
 	}
-	return string(b[:size])
+	return string(b[:nameHashLen])
 }
