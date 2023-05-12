@@ -1662,7 +1662,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if shouldCreate {
 		consName := cfg.Durable
 		if consName == "" {
-			consName = nuid.Next()
+			consName = getHash(nuid.Next())
 		}
 		info, err := js.upsertConsumer(stream, consName, ccreq.Config)
 		if err != nil {
@@ -3645,4 +3645,23 @@ func (st *StorageType) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 	return nil
+}
+
+// Length of our hash used for named consumers.
+const nameHashLen = 8
+
+// Computes a hash of 8 characters for the name.
+func getHash(name string) string {
+	return getHashSize(name, nameHashLen)
+}
+
+// Computes a hash for the given `name`. The result will be `size` characters long.
+func getHashSize(name string, size int) string {
+	sha := sha256.New()
+	sha.Write([]byte(name))
+	b := sha.Sum(nil)
+	for i := 0; i < size; i++ {
+		b[i] = rdigits[int(b[i]%base)]
+	}
+	return string(b[:size])
 }
