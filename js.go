@@ -1659,10 +1659,12 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	}
 
 	// If we are creating or updating let's process that request.
+	consName := o.cfg.Name
 	if shouldCreate {
-		consName := cfg.Durable
-		if consName == "" {
-			consName = nuid.Next()
+		if cfg.Durable != "" {
+			consName = cfg.Durable
+		} else if consName == "" {
+			consName = getHash(nuid.Next())
 		}
 		info, err := js.upsertConsumer(stream, consName, ccreq.Config)
 		if err != nil {
@@ -2470,6 +2472,14 @@ func ConsumerReplicas(replicas int) SubOpt {
 func ConsumerMemoryStorage() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MemoryStorage = true
+		return nil
+	})
+}
+
+// ConsumerName sets the name for a consumer.
+func ConsumerName(name string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.Name = name
 		return nil
 	})
 }
@@ -3645,4 +3655,18 @@ func (st *StorageType) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
 	return nil
+}
+
+// Length of our hash used for named consumers.
+const nameHashLen = 8
+
+// Computes a hash for the given `name`.
+func getHash(name string) string {
+	sha := sha256.New()
+	sha.Write([]byte(name))
+	b := sha.Sum(nil)
+	for i := 0; i < nameHashLen; i++ {
+		b[i] = rdigits[int(b[i]%base)]
+	}
+	return string(b[:nameHashLen])
 }
