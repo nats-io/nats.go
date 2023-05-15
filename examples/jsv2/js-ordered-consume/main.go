@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -53,19 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-		var i int
-		for {
-			time.Sleep(500 * time.Millisecond)
-			if nc.Status() != nats.CONNECTED {
-				continue
-			}
-			if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-				fmt.Println("pub error: ", err)
-			}
-			i++
-		}
-	}()
+	go endlessPublish(ctx, nc, js)
 
 	_, err = cons.Consume(func(msg jetstream.Msg) {
 		fmt.Println(string(msg.Data()))
@@ -78,4 +66,18 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
+}
+
+func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {
+	var i int
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if nc.Status() != nats.CONNECTED {
+			continue
+		}
+		if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
+			fmt.Println("pub error: ", err)
+		}
+		i++
+	}
 }

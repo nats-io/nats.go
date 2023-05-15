@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -44,9 +44,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:   "TestConsumerListener",
-		AckPolicy: jetstream.AckExplicitPolicy,
+	cons, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
+		MaxResetAttempts: 5,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -54,13 +53,17 @@ func main() {
 	go endlessPublish(ctx, nc, js)
 
 	for {
-		msg, err := cons.Next()
+		msgs, err := cons.Fetch(100)
 		if err != nil {
 			fmt.Println(err)
-			continue
 		}
-		fmt.Println(string(msg.Data()))
-		msg.Ack()
+		for msg := range msgs.Messages() {
+			fmt.Println(string(msg.Data()))
+			msg.Ack()
+		}
+		if msgs.Error() != nil {
+			fmt.Println("Error fetching messages: ", err)
+		}
 	}
 }
 

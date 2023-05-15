@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -39,35 +39,21 @@ func main() {
 	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
 		Name:     "TEST_STREAM",
 		Subjects: []string{"FOO.*"},
-		Replicas: 3,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:   "TestConsumerListener",
+	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "TestConsumerMessages",
 		AckPolicy: jetstream.AckExplicitPolicy,
-		Replicas:  3,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-		var i int
-		for {
-			time.Sleep(100 * time.Millisecond)
-			if nc.Status() != nats.CONNECTED {
-				continue
-			}
-			if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
-				fmt.Println("pub error: ", err)
-			}
-			i++
-		}
-	}()
+	go endlessPublish(ctx, nc, js)
 
-	it, err := cons.Messages()
+	it, err := cons.Messages(jetstream.PullMaxMessages(1))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,5 +64,19 @@ func main() {
 		}
 		fmt.Println(string(msg.Data()))
 		msg.Ack()
+	}
+}
+
+func endlessPublish(ctx context.Context, nc *nats.Conn, js jetstream.JetStream) {
+	var i int
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if nc.Status() != nats.CONNECTED {
+			continue
+		}
+		if _, err := js.Publish(ctx, "FOO.TEST1", []byte(fmt.Sprintf("msg %d", i))); err != nil {
+			fmt.Println("pub error: ", err)
+		}
+		i++
 	}
 }

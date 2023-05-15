@@ -44,7 +44,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{
+	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:   "TestConsumerListener",
 		AckPolicy: jetstream.AckExplicitPolicy,
 	})

@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -47,8 +47,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cons, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:   "TestConsumerListener",
+	cons, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "TestConsumerConsume",
 		AckPolicy: jetstream.AckExplicitPolicy,
 	})
 	if err != nil {
