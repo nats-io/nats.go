@@ -1542,7 +1542,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	// With an explicit durable name, we can lookup the consumer first
 	// to which it should be attaching to.
-	// If bind to ordered consumer is true, skip the lookup.
+	// If SkipConsumerLookup was used, do not call consumer info.
 	if consumer != _EMPTY_ && !o.skipCInfo {
 		info, err = js.ConsumerInfo(stream, consumer)
 		notFoundErr = errors.Is(err, ErrConsumerNotFound)
@@ -1575,7 +1575,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			break
 		}
 
-		// When not bound to a consumer already, proceeed to create.
+		// When not bound to a consumer already, proceed to create.
 		fallthrough
 	default:
 		// Attempt to create consumer if not found nor using Bind.
@@ -2171,7 +2171,13 @@ type subOpts struct {
 	skipCInfo bool
 }
 
-func SkipConsumerInfo() SubOpt {
+// SkipConsumerLookup will omit lookipng up consumer when [Bind], [Durable]
+// or [ConsumerName] are provided.
+//
+// NOTE: This setting may cause an existing consumer to be overwritten. Also,
+// because consumer lookup is skipped, all consumer options like AckPolicy,
+// DeliverSubject etc. need to be provided even if consumer already exists.
+func SkipConsumerLookup() SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.skipCInfo = true
 		return nil
