@@ -865,6 +865,9 @@ func RootCAs(file ...string) Option {
 		if o.TLSConfig == nil {
 			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 		}
+		if _, err := rootCAsCB(); err != nil {
+			return err
+		}
 		o.RootCAsCB = rootCAsCB
 		o.Secure = true
 		return nil
@@ -888,6 +891,9 @@ func ClientCert(certFile, keyFile string) Option {
 		}
 		if o.TLSConfig == nil {
 			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		if _, err := tlsCertCB(); err != nil {
+			return err
 		}
 		o.TLSCertCB = tlsCertCB
 		o.Secure = true
