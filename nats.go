@@ -527,7 +527,7 @@ type Conn struct {
 	pongs         []chan struct{}
 	scratch       [scratchSize]byte
 	status        Status
-	statListeners map[Status][]chan struct{}
+	statListeners map[Status][]chan Status
 	initc         bool // true if the connection is performing the initial connect
 	err           error
 	ps            *parseState
@@ -4968,7 +4968,7 @@ func (nc *Conn) clearPendingRequestCalls() {
 func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.mu.Lock()
 	if nc.isClosed() {
-		nc.changeConnStatus(status)
+		nc.changeConnStatus(CLOSED)
 		nc.mu.Unlock()
 		return
 	}
@@ -5421,14 +5421,17 @@ func (nc *Conn) GetClientID() (uint64, error) {
 	return nc.info.CID, nil
 }
 
-func (nc *Conn) RegisterStatusChangeListener(status Status, ch chan struct{}) {
+// RegisterStatusChangeListener registers a channel waiting for a specific status change event.
+// Status change events are non-blocking - if no receiver is waiting for the status change,
+// it will not be sent on the channel. Closed channels are ignored.
+func (nc *Conn) RegisterStatusChangeListener(status Status, ch chan Status) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.statListeners == nil {
-		nc.statListeners = make(map[Status][]chan struct{})
+		nc.statListeners = make(map[Status][]chan Status)
 	}
 	if _, ok := nc.statListeners[status]; !ok {
-		nc.statListeners[status] = make([]chan struct{}, 0)
+		nc.statListeners[status] = make([]chan Status, 0)
 	}
 	nc.statListeners[status] = append(nc.statListeners[status], ch)
 }
@@ -5451,7 +5454,7 @@ Loop:
 		}
 		// only send event if someone's listening
 		select {
-		case nc.statListeners[s][i] <- struct{}{}:
+		case nc.statListeners[s][i] <- s:
 		default:
 		}
 	}
