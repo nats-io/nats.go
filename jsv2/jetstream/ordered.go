@@ -73,12 +73,12 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				c.errHandler(serial)(c.currentConsumer.subscription, err)
+				c.errHandler(serial)(c.currentConsumer.subscriptions[""], err)
 				return
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
-				c.errHandler(serial)(c.currentConsumer.subscription, ErrOrderedSequenceMismatch)
+				c.errHandler(serial)(c.currentConsumer.subscriptions[""], ErrOrderedSequenceMismatch)
 				return
 			}
 			c.cursor.deliverSeq = dseq
@@ -101,7 +101,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			select {
 			case <-c.doReset:
 				if err := c.reset(); err != nil {
-					c.errHandler(c.serial)(c.currentConsumer.subscription, err)
+					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
 				}
 				// overwrite the previous err handler to use the new serial
 				opts[len(opts)-1] = ConsumeErrHandler(c.errHandler(c.serial))
@@ -168,7 +168,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 	next := func() (Msg, error) {
 		for {
 			currentConsumer := s.consumer.currentConsumer
-			msg, err := currentConsumer.subscription.Next()
+			msg, err := currentConsumer.subscriptions[""].Next()
 			if err != nil {
 				if err := s.consumer.reset(); err != nil {
 					return nil, err
@@ -181,13 +181,13 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				s.consumer.errHandler(s.consumer.serial)(currentConsumer.subscription, err)
+				s.consumer.errHandler(s.consumer.serial)(currentConsumer.subscriptions[""], err)
 				continue
 			}
 			serial := serialNumberFromConsumer(meta.Consumer)
 			dseq := meta.Sequence.Consumer
 			if dseq != s.consumer.cursor.deliverSeq+1 {
-				s.consumer.errHandler(serial)(currentConsumer.subscription, ErrOrderedSequenceMismatch)
+				s.consumer.errHandler(serial)(currentConsumer.subscriptions[""], ErrOrderedSequenceMismatch)
 				continue
 			}
 			s.consumer.cursor.deliverSeq = dseq
@@ -199,10 +199,10 @@ func (s *orderedSubscription) Next() (Msg, error) {
 }
 
 func (s *orderedSubscription) Stop() {
-	if s.consumer.currentConsumer == nil || s.consumer.currentConsumer.subscription == nil {
+	if s.consumer.currentConsumer == nil || s.consumer.currentConsumer.subscriptions[""] == nil {
 		return
 	}
-	s.consumer.currentConsumer.subscription.Stop()
+	s.consumer.currentConsumer.subscriptions[""].Stop()
 	close(s.done)
 }
 

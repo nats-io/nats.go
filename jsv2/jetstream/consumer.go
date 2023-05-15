@@ -15,9 +15,12 @@ package jetstream
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/nats-io/nuid"
 )
 
 type (
@@ -83,14 +86,23 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		return nil, err
 	}
 
-	var ccSubj string
-	if cfg.Durable != "" {
-		if err := validateDurableName(cfg.Durable); err != nil {
-			return nil, err
+	consumerName := cfg.Name
+	if consumerName == "" {
+		if cfg.Durable != "" {
+			consumerName = cfg.Durable
+		} else {
+			consumerName = generateConsName()
 		}
-		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiDurableCreateT, stream, cfg.Durable))
+	}
+	if err := validateConsumerName(consumerName); err != nil {
+		return nil, err
+	}
+
+	var ccSubj string
+	if cfg.FilterSubject != "" {
+		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject))
 	} else {
-		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream))
+		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream, consumerName))
 	}
 	var resp consumerInfoResponse
 
@@ -105,16 +117,28 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	}
 
 	return &pullConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      resp.Name,
-		durable:   cfg.Durable != "",
-		info:      resp.ConsumerInfo,
+		jetStream:     js,
+		stream:        stream,
+		name:          resp.Name,
+		durable:       cfg.Durable != "",
+		info:          resp.ConsumerInfo,
+		subscriptions: make(map[string]*pullSubscription),
 	}, nil
 }
 
+func generateConsName() string {
+	name := nuid.Next()
+	sha := sha256.New()
+	sha.Write([]byte(name))
+	b := sha.Sum(nil)
+	for i := 0; i < 8; i++ {
+		b[i] = rdigits[int(b[i]%base)]
+	}
+	return string(b[:8])
+}
+
 func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consumer, error) {
-	if err := validateDurableName(name); err != nil {
+	if err := validateConsumerName(name); err != nil {
 		return nil, err
 	}
 	infoSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerInfoT, stream, name))
@@ -131,17 +155,20 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 		return nil, resp.Error
 	}
 
-	return &pullConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      name,
-		durable:   resp.Config.Durable != "",
-		info:      resp.ConsumerInfo,
-	}, nil
+	cons := &pullConsumer{
+		jetStream:     js,
+		stream:        stream,
+		name:          name,
+		durable:       resp.Config.Durable != "",
+		info:          resp.ConsumerInfo,
+		subscriptions: make(map[string]*pullSubscription, 0),
+	}
+
+	return cons, nil
 }
 
 func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string) error {
-	if err := validateDurableName(consumer); err != nil {
+	if err := validateConsumerName(consumer); err != nil {
 		return err
 	}
 	deleteSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerDeleteT, stream, consumer))
@@ -160,7 +187,7 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 	return nil
 }
 
-func validateDurableName(dur string) error {
+func validateConsumerName(dur string) error {
 	if strings.Contains(dur, ".") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, dur)
 	}

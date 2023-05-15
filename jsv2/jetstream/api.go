@@ -45,10 +45,11 @@ const (
 	apiAccountInfo = "INFO"
 
 	// apiConsumerCreateT is used to create consumers.
-	apiConsumerCreateT = "CONSUMER.CREATE.%s"
+	apiConsumerCreateT = "CONSUMER.CREATE.%s.%s"
 
-	// apiDurableCreateT is used to create durable consumers.
-	apiDurableCreateT = "CONSUMER.DURABLE.CREATE.%s.%s"
+	// apiConsumerCreateT is used to create consumers.
+	// it accepts stream name, consumer name and filter subject
+	apiConsumerCreateWithFilterSubjectT = "CONSUMER.CREATE.%s.%s.%s"
 
 	// apiConsumerInfoT is used to create consumers.
 	apiConsumerInfoT = "CONSUMER.INFO.%s.%s"

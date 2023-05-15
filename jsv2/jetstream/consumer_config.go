@@ -49,6 +49,7 @@ type (
 		MaxDeliver        int             `json:"max_deliver,omitempty"`
 		BackOff           []time.Duration `json:"backoff,omitempty"`
 		FilterSubjects    []string        `json:"filter_subjects,omitempty"`
+		FilterSubject     string          `json:"filter_subject,omitempty"`
 		ReplayPolicy      ReplayPolicy    `json:"replay_policy"`
 		RateLimit         uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
 		SampleFrequency   string          `json:"sample_freq,omitempty"`
@@ -126,8 +127,6 @@ const (
 	// DeliverLastPerSubjectPolicy will start the consumer with the last message
 	// for all subjects received.
 	DeliverLastPerSubjectPolicy
-
-	deliverPolicyNotSet = -1
 )
 
 func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {

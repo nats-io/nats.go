@@ -2,7 +2,6 @@ package jetstream
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -134,10 +133,8 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Println(string(msg.Data()))
 		msg.Ack()
 		msgs = append(msgs, msg)
-		fmt.Println(i)
 	}
 
 	name := c.CachedInfo().Name
@@ -152,10 +149,8 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		msg.Ack()
 		msgs = append(msgs, msg)
-		fmt.Println(i)
 	}
 
-	fmt.Println("done")
 	it.Stop()
 	time.Sleep(10 * time.Millisecond)
 	it, err = c.Messages()
@@ -170,7 +165,6 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		msg.Ack()
 		msgs = append(msgs, msg)
-		fmt.Println(i)
 	}
 
 	if len(msgs) != 3*len(testMsgs) {

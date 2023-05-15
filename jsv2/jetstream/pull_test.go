@@ -225,46 +225,6 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 	})
 
-	t.Run("with active streaming", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Consume(func(_ Msg) {})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		_, err = c.Fetch(5)
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-
-		_, err = c.FetchNoWait(5)
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-	})
-
 	t.Run("with timeout", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -771,42 +731,6 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 	})
 
-	t.Run("attempt iteration with active subscription twice on the same consumer", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		js, err := New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Consume(func(msg Msg) {})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		_, err = c.Messages()
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
-		}
-	})
-
 	t.Run("create iterator, stop, then create again", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -1031,7 +955,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			if len(msgs) != 2*len(testMsgs) {
 				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 			}
-		case <-errs:
+		case err := <-errs:
 			t.Fatalf("Unexpected error: %s", err)
 		}
 	})
@@ -1122,15 +1046,36 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		l, err := c.Consume(func(msg Msg) {})
+		wg := sync.WaitGroup{}
+		msgs1, msgs2 := make([]Msg, 0), make([]Msg, 0)
+		l1, err := c.Consume(func(msg Msg) {
+			msgs1 = append(msgs1, msg)
+			wg.Done()
+			msg.Ack()
+		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer l.Stop()
+		defer l1.Stop()
+		l2, err := c.Consume(func(msg Msg) {
+			msgs2 = append(msgs2, msg)
+			wg.Done()
+			msg.Ack()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l2.Stop()
 
-		_, err = c.Consume(func(msg Msg) {})
-		if err == nil || !errors.Is(err, ErrConsumerHasActiveSubscription) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerHasActiveSubscription, err)
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		if len(msgs1)+len(msgs2) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs1)+len(msgs2))
+		}
+		if len(msgs1) == 0 || len(msgs2) == 0 {
+			t.Fatalf("Received no messages on one of the subscriptions")
 		}
 	})
 
@@ -1633,7 +1578,7 @@ func TestPullConsumerConsume(t *testing.T) {
 	})
 }
 
-func TestPullConsumerStream_WithCluster(t *testing.T) {
+func TestPullConsumerConsume_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
 	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {

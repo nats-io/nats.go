@@ -735,10 +735,10 @@ func TestJetStream_AddConsumer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var sub *nats.Subscription
-			if test.consumerConfig.Durable != "" {
-				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.consumerConfig.Durable))
+			if test.consumerConfig.FilterSubject != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
 			} else {
-				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
 			}
 			c, err := js.AddConsumer(ctx, test.stream, test.consumerConfig)
 			if test.withError != nil {

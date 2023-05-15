@@ -25,7 +25,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func TestCreateConsumer(t *testing.T) {
+func TestAddConsumer(t *testing.T) {
 	tests := []struct {
 		name           string
 		consumerConfig ConsumerConfig
@@ -81,10 +81,10 @@ func TestCreateConsumer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var sub *nats.Subscription
-			if test.consumerConfig.Durable != "" {
-				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.DURABLE.CREATE.foo.%s", test.consumerConfig.Durable))
+			if test.consumerConfig.FilterSubject != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
 			} else {
-				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
 			}
 			c, err := s.AddConsumer(ctx, test.consumerConfig)
 			if test.withError != nil {
