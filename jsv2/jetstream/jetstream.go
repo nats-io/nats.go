@@ -1,4 +1,4 @@
-// Copyright 2020-2022 The NATS Authors
+// Copyright 2020-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -30,7 +30,7 @@ type (
 	// Create, update and get operations return 'Stream' interface,
 	// allowing operations on consumers
 	//
-	// CreateConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
+	// AddConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
 	//
 	// Client returns a JetStremClient, used to publish messages on a stream or fetch messages by sequence number
 	JetStream interface {
@@ -77,17 +77,15 @@ type (
 	}
 
 	StreamConsumerManager interface {
-		// CreateConsumer creates a consumer on a given stream with given config
-		// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
+		// AddConsumer creates a consumer on a given stream with given config.
+		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		CreateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		AddConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
 		// without additional client code.
 		OrderedConsumer(context.Context, string, OrderedConsumerConfig) (Consumer, error)
-		// UpdateConsumer updates an existing consumer
-		UpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
 		Consumer(context.Context, string, string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
@@ -374,24 +372,12 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-// CreateConsumer creates a consumer on a given stream with given config
+// AddConsumer creates a consumer on a given stream with given config
 // This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 // Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
-	}
-	if cfg.Durable != "" {
-		c, err := js.Consumer(ctx, stream, cfg.Durable)
-		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
-			return nil, err
-		}
-		if c != nil {
-			if err := compareConsumerConfig(&c.CachedInfo().Config, &cfg); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrConsumerNameAlreadyInUse, cfg.Durable)
-			}
-			return c, nil
-		}
 	}
 	return upsertConsumer(ctx, js, stream, cfg)
 }
@@ -412,21 +398,6 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 	}
 
 	return oc, nil
-}
-
-// UpdateConsumer updates an existing consumer
-func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
-	if err := validateStreamName(stream); err != nil {
-		return nil, err
-	}
-	if cfg.Durable == "" {
-		return nil, ErrConsumerNameRequired
-	}
-	_, err := js.Consumer(ctx, stream, cfg.Durable)
-	if err != nil {
-		return nil, err
-	}
-	return upsertConsumer(ctx, js, stream, cfg)
 }
 
 // Consumer returns a hook to an existing consumer, allowing processing of messages

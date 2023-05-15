@@ -49,6 +49,7 @@ const (
 	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
 
+	JSErrCodeConsumerCreate        ErrorCode = 10012
 	JSErrCodeConsumerNotFound      ErrorCode = 10014
 	JSErrCodeConsumerNameExists    ErrorCode = 10013
 	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
@@ -81,6 +82,9 @@ var (
 
 	// ErrBadRequest is returned when invalid request is sent to JetStream API.
 	ErrBadRequest JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBadRequest, Description: "bad request", Code: 400}}
+
+	// ErrConsumerCreate is returned when nats-server reports error when creating consumer (e.g. illegal update).
+	ErrConsumerCreate JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerCreate, Description: "could not create consumer", Code: 500}}
 
 	// Client errors
 

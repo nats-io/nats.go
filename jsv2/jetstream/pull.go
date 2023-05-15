@@ -54,13 +54,15 @@ type (
 
 	pullConsumer struct {
 		sync.Mutex
-		jetStream    *jetStream
-		stream       string
-		durable      bool
-		name         string
-		info         *ConsumerInfo
-		isSubscribed uint32
-		subscription *pullSubscription
+		jetStream         *jetStream
+		stream            string
+		durable           bool
+		name              string
+		info              *ConsumerInfo
+		isSubscribed      uint32
+		subscriptions     []*pullSubscription
+		reconnectHandler  nats.ConnHandler
+		disconnectHandler nats.ConnErrHandler
 	}
 
 	pullRequest struct {
@@ -86,21 +88,19 @@ type (
 
 	pullSubscription struct {
 		sync.Mutex
-		consumer          *pullConsumer
-		subscription      *nats.Subscription
-		msgs              chan *nats.Msg
-		errs              chan error
-		pending           pendingMsgs
-		hbMonitor         *hbMonitor
-		fetchInProgress   uint32
-		closed            uint32
-		done              chan struct{}
-		reconnected       chan struct{}
-		disconnected      chan struct{}
-		fetchNext         chan *pullRequest
-		reconnectHandler  nats.ConnHandler
-		disconnectHandler nats.ConnErrHandler
-		consumeOpts       *consumeOpts
+		consumer        *pullConsumer
+		subscription    *nats.Subscription
+		msgs            chan *nats.Msg
+		errs            chan error
+		pending         pendingMsgs
+		hbMonitor       *hbMonitor
+		fetchInProgress uint32
+		closed          uint32
+		done            chan struct{}
+		reconnected     chan struct{}
+		disconnected    chan struct{}
+		fetchNext       chan *pullRequest
+		consumeOpts     *consumeOpts
 	}
 
 	pendingMsgs struct {
@@ -146,9 +146,6 @@ const (
 // [ConsumeThresholdMessages] - sets the byte count on which Consume will trigger new pull request to the server
 // [ConsumeThresholdBytes] - sets the message count on which Consume will trigger new pull request to the server
 func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
-	if atomic.LoadUint32(&p.isSubscribed) == 1 {
-		return nil, ErrConsumerHasActiveSubscription
-	}
 	if handler == nil {
 		return nil, ErrHandlerRequired
 	}
@@ -162,26 +159,27 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	sub := &pullSubscription{
-		consumer:          p,
-		errs:              make(chan error, 1),
-		done:              make(chan struct{}, 1),
-		fetchNext:         make(chan *pullRequest, 1),
-		reconnected:       make(chan struct{}),
-		disconnected:      make(chan struct{}),
-		reconnectHandler:  p.jetStream.conn.ReconnectHandler(),
-		disconnectHandler: p.jetStream.conn.DisconnectErrHandler(),
-		consumeOpts:       consumeOpts,
+		consumer:     p,
+		errs:         make(chan error, 1),
+		done:         make(chan struct{}, 1),
+		fetchNext:    make(chan *pullRequest, 1),
+		reconnected:  make(chan struct{}),
+		disconnected: make(chan struct{}),
+		consumeOpts:  consumeOpts,
 	}
 
+	if p.reconnectHandler == nil {
+		p.reconnectHandler = p.jetStream.conn.ReconnectHandler()
+	}
 	p.jetStream.conn.SetReconnectHandler(func(c *nats.Conn) {
-		if sub.reconnectHandler != nil {
-			sub.reconnectHandler(p.jetStream.conn)
+		if p.reconnectHandler != nil {
+			p.reconnectHandler(p.jetStream.conn)
 		}
 		sub.reconnected <- struct{}{}
 	})
 	p.jetStream.conn.SetDisconnectErrHandler(func(c *nats.Conn, err error) {
-		if sub.disconnectHandler != nil {
-			sub.disconnectHandler(p.jetStream.conn, err)
+		if p.disconnectHandler != nil {
+			p.disconnectHandler(p.jetStream.conn, err)
 		}
 		sub.disconnected <- struct{}{}
 	})
@@ -373,7 +371,6 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		return nil, err
 	}
 
-	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 	go func() {
 		<-sub.done
 		sub.cleanupSubscriptionAndRestoreConnHandler()
@@ -382,17 +379,17 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	p.subscription = sub
 	p.Unlock()
 
-	// initial pull
-	if err := sub.pull(&pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     consumeOpts.MaxMessages,
-		MaxBytes:  consumeOpts.MaxBytes,
-		Heartbeat: consumeOpts.Heartbeat,
-	}, subject); err != nil {
-		sub.errs <- err
-	}
-	sub.pending.msgCount = consumeOpts.MaxMessages
-	sub.pending.byteCount = consumeOpts.MaxBytes
+	// // initial pull
+	// if err := sub.pull(&pullRequest{
+	// 	Expires:   consumeOpts.Expires,
+	// 	Batch:     consumeOpts.MaxMessages,
+	// 	MaxBytes:  consumeOpts.MaxBytes,
+	// 	Heartbeat: consumeOpts.Heartbeat,
+	// }, subject); err != nil {
+	// 	sub.errs <- err
+	// }
+	// sub.pending.msgCount = consumeOpts.MaxMessages
+	// sub.pending.byteCount = consumeOpts.MaxBytes
 	go sub.pullMessages(subject)
 
 	return sub, nil
@@ -404,6 +401,12 @@ func (s *pullSubscription) Next() (Msg, error) {
 	if atomic.LoadUint32(&s.closed) == 1 {
 		return nil, ErrMsgIteratorClosed
 	}
+	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+	defer func() {
+		if hbMonitor != nil {
+			hbMonitor.Stop()
+		}
+	}()
 
 	for {
 		if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
@@ -423,8 +426,8 @@ func (s *pullSubscription) Next() (Msg, error) {
 		}
 		select {
 		case msg := <-s.msgs:
-			if s.hbMonitor != nil {
-				s.hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+			if hbMonitor != nil {
+				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 			}
 			userMsg, msgErr := checkMsg(msg)
 			if !userMsg {
@@ -444,8 +447,8 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			return s.consumer.jetStream.toJSMsg(msg), nil
 		case <-s.disconnected:
-			if s.hbMonitor != nil {
-				s.hbMonitor.Stop()
+			if hbMonitor != nil {
+				hbMonitor.Stop()
 			}
 		case <-s.reconnected:
 			// try fetching consumer info several times to make sure consumer is available after reconnect
@@ -466,6 +469,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			s.pending.msgCount = 0
 			s.pending.byteCount = 0
+			hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
@@ -741,6 +745,7 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	}
 
 	reply := s.subscription.Subject
+	fmt.Println("sending pull")
 	if err := s.consumer.jetStream.conn.PublishRequest(subject, reply, reqJSON); err != nil {
 		return err
 	}

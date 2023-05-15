@@ -42,7 +42,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -93,7 +93,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -161,7 +161,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -198,7 +198,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -245,7 +245,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -285,7 +285,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -321,7 +321,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -371,7 +371,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -414,7 +414,7 @@ func TestPullConsumerNext_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -464,7 +464,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -526,7 +526,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -582,7 +582,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -652,7 +652,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -721,7 +721,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -791,7 +791,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -827,7 +827,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -904,7 +904,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -935,7 +935,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -994,7 +994,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1068,7 +1068,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1117,7 +1117,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1154,7 +1154,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1223,7 +1223,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1273,7 +1273,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1323,7 +1323,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1387,7 +1387,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1419,7 +1419,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1469,7 +1469,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1526,7 +1526,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1558,7 +1558,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1606,7 +1606,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1670,7 +1670,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1718,7 +1718,7 @@ func TestPullConsumerStream_WithCluster(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			c, err := s.CreateConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+			c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
