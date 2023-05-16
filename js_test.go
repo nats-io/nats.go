@@ -537,7 +537,7 @@ func TestJetStreamConcurrentQueueDurablePushConsumers(t *testing.T) {
 	}
 
 	// Now create 10 durables concurrently.
-	subs := make(chan *Subscription, 10)
+	subsCh := make(chan *Subscription, 10)
 	var wg sync.WaitGroup
 
 	for i := 0; i < 10; i++ {
@@ -545,12 +545,16 @@ func TestJetStreamConcurrentQueueDurablePushConsumers(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			sub, _ := js.QueueSubscribeSync("foo", "bar")
-			subs <- sub
+			subsCh <- sub
 		}()
 	}
 	// Wait for all the consumers.
 	wg.Wait()
-	close(subs)
+	close(subsCh)
+	subs := make([]*Subscription, 0, len(subsCh))
+	for sub := range subsCh {
+		subs = append(subs, sub)
+	}
 
 	si, err := js.StreamInfo("TEST")
 	if err != nil {
@@ -570,7 +574,7 @@ func TestJetStreamConcurrentQueueDurablePushConsumers(t *testing.T) {
 	got := 0
 	for time.Now().Before(timeout) {
 		got = 0
-		for sub := range subs {
+		for _, sub := range subs {
 			pending, _, _ := sub.Pending()
 			// If a single sub has the total, then probably something is not right.
 			if pending == total {
