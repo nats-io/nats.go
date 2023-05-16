@@ -211,6 +211,13 @@ type ErrHandler func(*Conn, *Subscription, error)
 // JWT for this user.
 type UserJWTHandler func() (string, error)
 
+// TLSCertHandler is used to fetch and return tls certificate.
+type TLSCertHandler func() (tls.Certificate, error)
+
+// RootCAsHandler is used to fetch and return a set of root certificate
+// authorities that clients use when verifying server certificates.
+type RootCAsHandler func() (*x509.CertPool, error)
+
 // SignatureHandler is used to sign a nonce from the server while
 // authenticating with nkeys. The user should sign the nonce and
 // return the raw signature. The client will base64 encode this to
@@ -298,6 +305,13 @@ type Options struct {
 	// TLSConfig is a custom TLS configuration to use for secure
 	// transports.
 	TLSConfig *tls.Config
+
+	// TLSCertCB is used to fetch and return custom tls certificate.
+	TLSCertCB TLSCertHandler
+
+	// RootCAsCB is used to fetch and return a set of root certificate
+	// authorities that clients use when verifying server certificates.
+	RootCAsCB RootCAsHandler
 
 	// AllowReconnect enables reconnection logic to be used when we
 	// encounter a disconnect from the current server.
@@ -834,21 +848,27 @@ func Secure(tls ...*tls.Config) Option {
 // If Secure is not already set this will set it as well.
 func RootCAs(file ...string) Option {
 	return func(o *Options) error {
-		pool := x509.NewCertPool()
-		for _, f := range file {
-			rootPEM, err := os.ReadFile(f)
-			if err != nil || rootPEM == nil {
-				return fmt.Errorf("nats: error loading or parsing rootCA file: %w", err)
+		rootCAsCB := func() (*x509.CertPool, error) {
+			pool := x509.NewCertPool()
+			for _, f := range file {
+				rootPEM, err := os.ReadFile(f)
+				if err != nil || rootPEM == nil {
+					return nil, fmt.Errorf("nats: error loading or parsing rootCA file: %w", err)
+				}
+				ok := pool.AppendCertsFromPEM(rootPEM)
+				if !ok {
+					return nil, fmt.Errorf("nats: failed to parse root certificate from %q", f)
+				}
 			}
-			ok := pool.AppendCertsFromPEM(rootPEM)
-			if !ok {
-				return fmt.Errorf("nats: failed to parse root certificate from %q", f)
-			}
+			return pool, nil
 		}
 		if o.TLSConfig == nil {
 			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 		}
-		o.TLSConfig.RootCAs = pool
+		if _, err := rootCAsCB(); err != nil {
+			return err
+		}
+		o.RootCAsCB = rootCAsCB
 		o.Secure = true
 		return nil
 	}
@@ -858,18 +878,24 @@ func RootCAs(file ...string) Option {
 // If Secure is not already set this will set it as well.
 func ClientCert(certFile, keyFile string) Option {
 	return func(o *Options) error {
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-		if err != nil {
-			return fmt.Errorf("nats: error loading client certificate: %w", err)
-		}
-		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
-		if err != nil {
-			return fmt.Errorf("nats: error parsing client certificate: %w", err)
+		tlsCertCB := func() (tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return tls.Certificate{}, fmt.Errorf("nats: error loading client certificate: %w", err)
+			}
+			cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				return tls.Certificate{}, fmt.Errorf("nats: error parsing client certificate: %w", err)
+			}
+			return cert, nil
 		}
 		if o.TLSConfig == nil {
 			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 		}
-		o.TLSConfig.Certificates = []tls.Certificate{cert}
+		if _, err := tlsCertCB(); err != nil {
+			return err
+		}
+		o.TLSCertCB = tlsCertCB
 		o.Secure = true
 		return nil
 	}
@@ -1969,11 +1995,23 @@ func (nc *Conn) makeTLSConn() error {
 		}
 	}
 	// Allow the user to configure their own tls.Config structure.
-	var tlsCopy *tls.Config
+	tlsCopy := &tls.Config{}
 	if nc.Opts.TLSConfig != nil {
 		tlsCopy = util.CloneTLSConfig(nc.Opts.TLSConfig)
-	} else {
-		tlsCopy = &tls.Config{}
+	}
+	if nc.Opts.TLSCertCB != nil {
+		cert, err := nc.Opts.TLSCertCB()
+		if err != nil {
+			return err
+		}
+		tlsCopy.Certificates = []tls.Certificate{cert}
+	}
+	if nc.Opts.RootCAsCB != nil {
+		rootCAs, err := nc.Opts.RootCAsCB()
+		if err != nil {
+			return err
+		}
+		tlsCopy.RootCAs = rootCAs
 	}
 	// If its blank we will override it with the current host
 	if tlsCopy.ServerName == _EMPTY_ {
@@ -2466,6 +2504,9 @@ func (nc *Conn) sendConnect() error {
 	// reading byte-by-byte here is ok.
 	proto, err := nc.readProto()
 	if err != nil {
+		if !nc.initc && nc.Opts.AsyncErrorCB != nil {
+			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+		}
 		return err
 	}
 
@@ -2474,6 +2515,9 @@ func (nc *Conn) sendConnect() error {
 		// Read the rest now...
 		proto, err = nc.readProto()
 		if err != nil {
+			if !nc.initc && nc.Opts.AsyncErrorCB != nil {
+				nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+			}
 			return err
 		}
 	}
