@@ -668,10 +668,6 @@ func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	return nil, res.Error()
 }
 
-func (fr *fetchResult) fetchComplete() bool {
-	return fr.done
-}
-
 func (s *pullSubscription) pullMessages(subject string) {
 	for {
 		select {
@@ -790,9 +786,8 @@ func parseMessagesOpts(opts ...PullMessagesOpt) (*consumeOpts, error) {
 }
 
 func (consumeOpts *consumeOpts) setDefaults() error {
-	var errs []error
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset {
-		errs = append(errs, fmt.Errorf("only one of MaxMessages and MaxBytes can be specified"))
+		return fmt.Errorf("only one of MaxMessages and MaxBytes can be specified")
 	}
 	if consumeOpts.MaxBytes != unset {
 		// when max_bytes is used, set batch size to a very large number
@@ -821,7 +816,7 @@ func (consumeOpts *consumeOpts) setDefaults() error {
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
-		errs = append(errs, fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry"))
+		return fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry")
 	}
-	return errors.Join(errs...)
+	return nil
 }

@@ -118,7 +118,9 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				}
 				// overwrite the previous err handler to use the new serial
 				opts[len(opts)-1] = ConsumeErrHandler(c.errHandler(c.serial))
-				c.currentConsumer.Consume(internalHandler(c.serial), opts...)
+				if _, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
+					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
+				}
 			case <-sub.done:
 				return
 			}
