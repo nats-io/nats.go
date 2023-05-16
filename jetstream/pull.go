@@ -545,6 +545,28 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 
 }
 
+// FetchBytes is used to retrieve up to a provided bytes from the stream.
+// This method will always send a single request and wait until provided number of bytes is
+// exceeded or request times out.
+func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
+	req := &pullRequest{
+		Batch:    1000000,
+		MaxBytes: maxBytes,
+		Expires:  DefaultExpires,
+	}
+	for _, opt := range opts {
+		if err := opt(req); err != nil {
+			return nil, err
+		}
+	}
+	// for longer pulls, set heartbeat value
+	if req.Expires >= 10*time.Second {
+		req.Heartbeat = 5 * time.Second
+	}
+
+	return p.fetch(req)
+}
+
 // Fetch sends a single request to retrieve given number of messages.
 // If there are any messages available at the time of sending request,
 // FetchNoWait will return immediately.
@@ -580,13 +602,13 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		return nil, err
 	}
 
-	var received int
+	var receivedMsgs, receivedBytes int
 	hbTimer := sub.scheduleHeartbeatCheck(req.Heartbeat)
 	go func(res *fetchResult) {
 		defer sub.subscription.Unsubscribe()
 		defer close(res.msgs)
 		for {
-			if received == req.Batch {
+			if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes == req.MaxBytes) {
 				res.done = true
 				return
 			}
@@ -597,7 +619,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
-					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) {
+					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) && !errors.Is(err, ErrMaxBytesExceeded) {
 						res.err = err
 					}
 					res.done = true
@@ -612,7 +634,10 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
 				}
 				res.sseq = meta.Sequence.Stream
-				received++
+				receivedMsgs++
+				if req.MaxBytes != 0 {
+					receivedBytes += msgSize(msg)
+				}
 			case <-time.After(req.Expires + 1*time.Second):
 				res.err = fmt.Errorf("fetch timed out")
 				res.done = true

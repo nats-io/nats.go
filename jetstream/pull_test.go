@@ -66,20 +66,15 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		received := make([]Msg, 0)
 		var i int
 		for msg := range msgs.Messages() {
-			if msg == nil {
-				if len(testMsgs) != len(received) {
-					t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), len(received))
-				}
-				return
-			}
 			if string(msg.Data()) != testMsgs[i] {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
-			received = append(received, msg)
 			i++
+		}
+		if len(testMsgs) != i {
+			t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), i)
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
@@ -306,7 +301,198 @@ func TestPullConsumerFetch(t *testing.T) {
 	})
 }
 
-func TestPullConsumerNext_WithCluster(t *testing.T) {
+func TestPullConsumerFetchBytes(t *testing.T) {
+	testSubject := "FOO.123"
+	msg := [10]byte{}
+	publishTestMsgs := func(t *testing.T, nc *nats.Conn, count int) {
+		for i := 0; i < count; i++ {
+			if err := nc.Publish(testSubject, msg[:]); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+	}
+
+	t.Run("no options, exact byte count received", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(300)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 5 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+
+	t.Run("no options, last msg does not fit max bytes", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(250)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 4 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+	t.Run("no options, single msg is too large", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(30)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 0 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+
+	t.Run("timeout waiting for messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy, Name: "con"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc, 5)
+		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
+		msgs, err := c.FetchBytes(1000, FetchMaxWait(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			i++
+		}
+		if i != 5 {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+}
+
+func TestPullConsumerFetch_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
 	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {

@@ -245,6 +245,32 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 	return msgs, nil
 }
 
+// FetchBytes is used to retrieve up to a provided bytes from the stream.
+// This method will always send a single request and wait until provided number of bytes is
+// exceeded or request times out.
+func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
+	if c.consumerType == consumerTypeConsume {
+		return nil, fmt.Errorf("ordered consumer initialized as consume")
+	}
+	if c.runningFetch != nil {
+		if !c.runningFetch.done {
+			return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+		}
+		c.cursor.streamSeq = c.runningFetch.sseq
+	}
+	c.consumerType = consumerTypeFetch
+	err := c.reset()
+	if err != nil {
+		return nil, err
+	}
+	msgs, err := c.currentConsumer.FetchBytes(maxBytes, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.runningFetch = msgs.(*fetchResult)
+	return msgs, nil
+}
+
 // FetchNoWait is used to retrieve up to a provided number of messages from a stream.
 // This method will always send a single request and immediately return up to a provided number of messages
 func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {

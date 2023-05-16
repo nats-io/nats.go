@@ -29,10 +29,14 @@ type (
 	Consumer interface {
 		// Fetch is used to retrieve up to a provided number of messages from a stream.
 		// This method will always send a single request and wait until either all messages are retreived
-		// or context reaches its deadline.
+		// or request times out.
 		Fetch(int, ...FetchOpt) (MessageBatch, error)
+		// FetchBytes is used to retrieve up to a provided bytes from the stream.
+		// This method will always send a single request and wait until provided number of bytes is
+		// exceeded or request times out.
+		FetchBytes(int, ...FetchOpt) (MessageBatch, error)
 		// FetchNoWait is used to retrieve up to a provided number of messages from a stream.
-		// This method will always send a single request and immediately return up to a provided number of messages
+		// This method will always send a single request and immediately return up to a provided number of messages.
 		FetchNoWait(batch int) (MessageBatch, error)
 		// Consume can be used to continuously receive messages and handle them with the provided callback function
 		Consume(MessageHandler, ...PullConsumeOpt) (ConsumeContext, error)
