@@ -1,4 +1,4 @@
-// Copyright 2021-2022 The NATS Authors
+// Copyright 2021-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -15,7 +15,6 @@ package nats
 
 import (
 	"bytes"
-	"compress/flate"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -32,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/flate"
 	"github.com/nats-io/nats-server/v2/server"
 	serverTest "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nuid"
