@@ -673,6 +673,15 @@ func (m *Msg) Equal(msg *Msg) bool {
 	return true
 }
 
+// Size returns a message size in bytes.
+func (m *Msg) Size() int {
+	if m.wsz != 0 {
+		return m.wsz
+	}
+	hdr, _ := m.headerBytes()
+	return len(m.Subject) + len(m.Reply) + len(hdr) + len(m.Data)
+}
+
 func (m *Msg) headerBytes() ([]byte, error) {
 	var hdr []byte
 	if len(m.Header) == 0 {

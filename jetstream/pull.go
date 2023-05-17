@@ -316,7 +316,7 @@ func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 	defer s.Unlock()
 	s.pending.msgCount--
 	if s.consumeOpts.MaxBytes != 0 {
-		s.pending.byteCount -= msgSize(msg)
+		s.pending.byteCount -= msg.Size()
 	}
 }
 
@@ -429,7 +429,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			s.pending.msgCount--
 			if s.consumeOpts.MaxBytes > 0 {
-				s.pending.byteCount -= msgSize(msg)
+				s.pending.byteCount -= msg.Size()
 			}
 			return s.consumer.jetStream.toJSMsg(msg), nil
 		case <-s.disconnected:
@@ -636,7 +636,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				res.sseq = meta.Sequence.Stream
 				receivedMsgs++
 				if req.MaxBytes != 0 {
-					receivedBytes += msgSize(msg)
+					receivedBytes += msg.Size()
 				}
 			case <-time.After(req.Expires + 1*time.Second):
 				res.err = fmt.Errorf("fetch timed out")
@@ -714,14 +714,6 @@ func (s *pullSubscription) cleanupSubscriptionAndRestoreConnHandler() {
 	close(s.disconnected)
 	s.subscription = nil
 	delete(s.consumer.subscriptions, s.id)
-}
-
-func msgSize(msg *nats.Msg) int {
-	if msg == nil {
-		return 0
-	}
-	size := len(msg.Subject) + len(msg.Reply) + len(msg.Data)
-	return size
 }
 
 // pull sends a pull request to the server and waits for messages using a subscription from [pullSubscription].
