@@ -1021,13 +1021,14 @@ func TestConnectHandler(t *testing.T) {
 		connHandler := func(*nats.Conn) {
 			connected <- true
 		}
-		_, err := nats.Connect(nats.DefaultURL,
+		nc, err := nats.Connect(nats.DefaultURL,
 			nats.ConnectHandler(connHandler),
 			nats.RetryOnFailedConnect(true))
 
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer nc.Close()
 		select {
 		case <-connected:
 			t.Fatalf("ConnectedCB invoked when no connection established")
