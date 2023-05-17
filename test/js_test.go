@@ -8776,7 +8776,7 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	s := RunBasicJetStreamServer()
 
 	// monitor for ErrConsumerNotActive error and suppress logging
-	hbMissed := make(chan struct{})
+	hbMissed := make(chan struct{}, 10)
 	errHandler := func(c *nats.Conn, s *nats.Subscription, err error) {
 		if !errors.Is(err, nats.ErrConsumerNotActive) {
 			t.Fatalf("Unexpected error: %v", err)

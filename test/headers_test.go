@@ -411,6 +411,7 @@ func TestMsgHeadersCasePreserving(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	resp.Body.Close()
 	result := resp.Header.Get("X-Result-A")
 	if result != "A" {
 		t.Errorf("Unexpected header value, got: %+v", result)
