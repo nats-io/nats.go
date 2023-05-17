@@ -8,6 +8,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.9.16
 	github.com/nats-io/nkeys v0.4.4
 	github.com/nats-io/nuid v1.0.1
+	go.uber.org/goleak v1.2.1
 	google.golang.org/protobuf v1.23.0
 )
 
