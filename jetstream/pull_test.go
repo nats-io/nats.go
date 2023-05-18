@@ -81,6 +81,56 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 	})
 
+	t.Run("delete consumer during fetch", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		msgs, err := c.Fetch(10)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+
+		var i int
+		for msg := range msgs.Messages() {
+			if string(msg.Data()) != testMsgs[i] {
+				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+			}
+			i++
+		}
+		if len(testMsgs) != i {
+			t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), i)
+		}
+		if !errors.Is(msgs.Error(), ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", ErrConsumerDeleted, msgs.Error())
+		}
+	})
+
 	t.Run("no options, fetch single messages one by one", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -791,6 +841,74 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("remove consumer when fetching messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		it, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer it.Stop()
+
+		publishTestMsgs(t, nc)
+		for i := 0; i < len(testMsgs); i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg == nil {
+				break
+			}
+			msg.Ack()
+			msgs = append(msgs, msg)
+		}
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+		_, err = it.Next()
+		if !errors.Is(err, ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", ErrConsumerDeleted, err)
+		}
+		publishTestMsgs(t, nc)
+		time.Sleep(50 * time.Millisecond)
+		_, err = it.Next()
+		if !errors.Is(err, ErrMsgIteratorClosed) {
+			t.Fatalf("Expected error: %v; got: %v", ErrMsgIteratorClosed, err)
+		}
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+	})
+
 	t.Run("with custom max bytes", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -1126,6 +1244,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer it.Stop()
 
 		done := make(chan struct{})
 		errs := make(chan error)
@@ -1444,6 +1563,69 @@ func TestPullConsumerConsume(t *testing.T) {
 			if string(msg.Data()) != testMsgs[i] {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
+		}
+	})
+
+	t.Run("remove consumer during consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errs := make(chan error, 10)
+		msgs := make([]Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		l, err := c.Consume(func(msg Msg) {
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, ConsumeErrHandler(func(consumeCtx ConsumeContext, err error) {
+			errs <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l.Stop()
+
+		publishTestMsgs(t, nc)
+		wg.Wait()
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+		}
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+		select {
+		case err := <-errs:
+			if !errors.Is(err, ErrConsumerDeleted) {
+				t.Fatalf("Expected error: %v; got: %v", ErrConsumerDeleted, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for %v", ErrConsumerDeleted)
+		}
+		publishTestMsgs(t, nc)
+		time.Sleep(50 * time.Millisecond)
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
 		}
 	})
 
@@ -1914,5 +2096,125 @@ func TestPullConsumerConsume_WithCluster(t *testing.T) {
 				}
 			}
 		})
+	})
+}
+
+func TestPullConsumerNext(t *testing.T) {
+	testSubject := "FOO.123"
+	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
+	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+		for _, msg := range testMsgs {
+			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+	}
+
+	t.Run("no options", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		msgs := make([]Msg, 0)
+
+		var i int
+		for i := 0; i < len(testMsgs); i++ {
+			msg, err := c.Next()
+			if err != nil {
+				t.Fatalf("Error fetching message: %s", err)
+			}
+			msgs = append(msgs, msg)
+		}
+		if len(testMsgs) != len(msgs) {
+			t.Fatalf("Invalid number of messages received; want: %d; got: %d", len(testMsgs), i)
+		}
+	})
+
+	t.Run("delete consumer while waiting for message", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		time.AfterFunc(100*time.Millisecond, func() {
+			if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+				t.Fatalf("Error deleting consumer: %s", err)
+			}
+		})
+
+		if _, err := c.Next(); !errors.Is(err, ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", ErrConsumerDeleted, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	t.Run("with custom timeout", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.AddConsumer(ctx, ConsumerConfig{AckPolicy: AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := c.Next(FetchMaxWait(50 * time.Millisecond)); !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout; got: %s", err)
+		}
 	})
 }

@@ -97,16 +97,13 @@ var (
 	// ErrStreamNameRequired is returned when the provided stream name is empty.
 	ErrStreamNameRequired JetStreamError = &jsError{message: "stream name is required"}
 
-	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty,
-	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
-
 	// ErrMsgAlreadyAckd is returned when attempting to acknowledge message more than once.
 	ErrMsgAlreadyAckd JetStreamError = &jsError{message: "message was already acknowledged"}
 
 	// ErrNoStreamResponse is returned when there is no response from stream (e.g. no responders error).
 	ErrNoStreamResponse JetStreamError = &jsError{message: "no response from stream"}
 
-	// ErrNotJSMessage is returned when attempting to get metadata from non JetStream message .
+	// ErrNotJSMessage is returned when attempting to get metadata from non JetStream message.
 	ErrNotJSMessage JetStreamError = &jsError{message: "not a jetstream message"}
 
 	// ErrInvalidStreamName is returned when the provided stream name is invalid (contains '.').
@@ -121,47 +118,59 @@ var (
 	// ErrMaxBytesExceeded is returned when a message would exceed MaxBytes set on a pull request.
 	ErrMaxBytesExceeded = &jsError{message: "message size exceeds max bytes"}
 
-	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist
+	// ErrConsumerDeleted is returned when attempting to send pull request to a consumer which does not exist.
 	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
 
-	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
+	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed.
 	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "leadership change"}
 
-	// ErrHandlerRequired is returned when no handler func is provided in Stream()
+	// ErrHandlerRequired is returned when no handler func is provided in Stream().
 	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
 
-	// ErrEndOfData is returned when iterating over paged API from JetStream reaches end of data
+	// ErrEndOfData is returned when iterating over paged API from JetStream reaches end of data.
 	ErrEndOfData = errors.New("nats: end of data reached")
 
-	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set)
+	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set).
 	ErrNoHeartbeat = &jsError{message: "no heartbeat received"}
 
-	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream
+	// ErrConsumerHasActiveSubscription is returned when a consumer is already subscribed to a stream.
 	ErrConsumerHasActiveSubscription = &jsError{message: "consumer has active subscription"}
 
-	// ErrMsgNotBound is returned when given message is not bound to any subscription
+	// ErrMsgNotBound is returned when given message is not bound to any subscription.
 	ErrMsgNotBound = &jsError{message: "message is not bound to subscription/connection"}
 
-	// ErrMsgNoReply is returned when attempting to reply to a message without a reply subject
+	// ErrMsgNoReply is returned when attempting to reply to a message without a reply subject.
 	ErrMsgNoReply = &jsError{message: "message does not have a reply"}
 
-	// ErrMsgDeleteUnsuccessful is returned when an attempt to delete a message is unsuccessful
+	// ErrMsgDeleteUnsuccessful is returned when an attempt to delete a message is unsuccessful.
 	ErrMsgDeleteUnsuccessful = &jsError{message: "message deletion unsuccessful"}
 
-	// ErrAsyncPublishReplySubjectSet is returned when reply subject is set on async message publish
+	// ErrAsyncPublishReplySubjectSet is returned when reply subject is set on async message publish.
 	ErrAsyncPublishReplySubjectSet = &jsError{message: "reply subject should be empty"}
 
-	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack
+	// ErrTooManyStalledMsgs is returned when too many outstanding async messages are waiting for ack.
 	ErrTooManyStalledMsgs = &jsError{message: "stalled with too many outstanding async published messages"}
 
-	// ErrInvalidOption is returned when there is a collision between options
+	// ErrInvalidOption is returned when there is a collision between options.
 	ErrInvalidOption = &jsError{message: "invalid jetstream option"}
 
-	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator
+	// ErrMsgIteratorClosed is returned when attempting to get message from a closed iterator.
 	ErrMsgIteratorClosed = &jsError{message: "messages iterator closed"}
 
-	ErrOrderedConsumerReset    = &jsError{message: "recreating ordered consumer"}
-	ErrOrderedSequenceMismatch = &jsError{message: "sequence mismatch"}
+	// ErrOrderedConsumerReset is returned when resetting ordered consumer fails due to too many attempts.
+	ErrOrderedConsumerReset = &jsError{message: "recreating ordered consumer"}
+
+	// ErrOrderConsumerUsedAsFetch is returned when ordered consumer was already used to process
+	// messages using Fetch (or FetchBytes).
+	ErrOrderConsumerUsedAsFetch = &jsError{message: "ordered consumer initialized as fetch"}
+
+	// ErrOrderConsumerUsedAsFetch is returned when ordered consumer was already used to process
+	// messages using Consume or Messages.
+	ErrOrderConsumerUsedAsConsume = &jsError{message: "ordered consumer initialized as consume"}
+
+	// ErrOrderedConsumerConcurrentRequests is returned when attempting to run concurrent operations
+	// on ordered consumers.
+	ErrOrderedConsumerConcurrentRequests = &jsError{message: "cannot run concurrent processing using ordered consumer"}
 )
 
 // Error prints the JetStream API error code and description

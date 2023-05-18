@@ -93,6 +93,7 @@ func TestNewWithAPIPrefix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer nc.Close()
 
 		_, err = NewWithAPIPrefix(nc, "")
 		if err == nil || err.Error() != "API prefix cannot be empty" {
@@ -152,6 +153,7 @@ func TestNewWithDomain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer nc.Close()
 
 		_, err = NewWithDomain(nc, "")
 		if err == nil || err.Error() != "domain cannot be empty" {

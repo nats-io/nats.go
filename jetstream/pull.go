@@ -96,8 +96,8 @@ type (
 		fetchInProgress uint32
 		closed          uint32
 		done            chan struct{}
-		connected       chan struct{}
-		disconnected    chan struct{}
+		connected       chan nats.Status
+		disconnected    chan nats.Status
 		fetchNext       chan *pullRequest
 		consumeOpts     *consumeOpts
 	}
@@ -168,12 +168,11 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		errs:         make(chan error, 1),
 		done:         make(chan struct{}, 1),
 		fetchNext:    make(chan *pullRequest, 1),
-		connected:    make(chan struct{}),
-		disconnected: make(chan struct{}),
+		connected:    make(chan nats.Status),
+		disconnected: make(chan nats.Status),
 		consumeOpts:  consumeOpts,
 	}
 	p.jetStream.conn.RegisterStatusChangeListener(nats.CONNECTED, sub.connected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.DISCONNECTED, sub.disconnected)
 	p.jetStream.conn.RegisterStatusChangeListener(nats.RECONNECTING, sub.disconnected)
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
@@ -246,13 +245,21 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				return
 			}
 			select {
-			case <-sub.disconnected:
+			case _, ok := <-sub.disconnected:
+				if !ok {
+					continue
+				}
 				if sub.hbMonitor != nil {
 					sub.hbMonitor.Stop()
 				}
 				isConnected = false
-			case <-sub.connected:
+			case _, ok := <-sub.connected:
+				if !ok {
+					continue
+				}
+				sub.Lock()
 				if !isConnected {
+					isConnected = true
 					// try fetching consumer info several times to make sure consumer is available after reconnect
 					for i := 0; i < 5; i++ {
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -267,6 +274,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 								if sub.consumeOpts.ErrHandler != nil {
 									sub.consumeOpts.ErrHandler(sub, err)
 								}
+								sub.Unlock()
 								return
 							}
 						}
@@ -279,8 +287,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						MaxBytes:  sub.consumeOpts.MaxBytes,
 						Heartbeat: sub.consumeOpts.Heartbeat,
 					}
+					sub.Unlock()
 					sub.resetPendingMsgs()
-					isConnected = true
 				}
 			case err := <-sub.errs:
 				if sub.consumeOpts.ErrHandler != nil {
@@ -354,12 +362,11 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		msgs:         msgs,
 		errs:         make(chan error, 1),
 		fetchNext:    make(chan *pullRequest, 1),
-		connected:    make(chan struct{}),
-		disconnected: make(chan struct{}),
+		connected:    make(chan nats.Status),
+		disconnected: make(chan nats.Status),
 		consumeOpts:  consumeOpts,
 	}
 	p.jetStream.conn.RegisterStatusChangeListener(nats.CONNECTED, sub.connected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.DISCONNECTED, sub.disconnected)
 	p.jetStream.conn.RegisterStatusChangeListener(nats.RECONNECTING, sub.disconnected)
 	inbox := nats.NewInbox()
 	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
@@ -432,13 +439,20 @@ func (s *pullSubscription) Next() (Msg, error) {
 				s.pending.byteCount -= msg.Size()
 			}
 			return s.consumer.jetStream.toJSMsg(msg), nil
-		case <-s.disconnected:
+		case _, ok := <-s.disconnected:
+			if !ok {
+				continue
+			}
 			if hbMonitor != nil {
 				hbMonitor.Stop()
 			}
 			isConnected = false
-		case <-s.connected:
+		case _, ok := <-s.connected:
+			if !ok {
+				continue
+			}
 			if !isConnected {
+				isConnected = true
 				// try fetching consumer info several times to make sure consumer is available after reconnect
 				for i := 0; i < 5; i++ {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -639,7 +653,6 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					receivedBytes += msg.Size()
 				}
 			case <-time.After(req.Expires + 1*time.Second):
-				res.err = fmt.Errorf("fetch timed out")
 				res.done = true
 				return
 			}
@@ -664,6 +677,9 @@ func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	msg := <-res.Messages()
 	if msg != nil {
 		return msg, nil
+	}
+	if res.Error() == nil {
+		return nil, nats.ErrTimeout
 	}
 	return nil, res.Error()
 }
