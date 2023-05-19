@@ -555,7 +555,7 @@ func wsFillFrameHeader(fh []byte, compressed bool, frameType wsOpCode, l int) (i
 
 func (nc *Conn) wsInitHandshake(u *url.URL) error {
 	compress := nc.Opts.Compression
-	tlsRequired := u.Scheme == wsSchemeTLS || nc.Opts.Secure || nc.Opts.TLSConfig != nil
+	tlsRequired := u.Scheme == wsSchemeTLS || nc.Opts.Secure || nc.Opts.TLSConfig != nil || nc.Opts.TLSCertCB != nil || nc.Opts.RootCAsCB != nil
 	// Do TLS here as needed.
 	if tlsRequired {
 		if err := nc.makeTLSConn(); err != nil {
