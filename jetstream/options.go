@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -84,6 +84,15 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 			return fmt.Errorf("%w: both 'keep' and 'sequence' cannot be provided in purge request", ErrInvalidOption)
 		}
 		req.Keep = keep
+		return nil
+	}
+}
+
+// WithGetMsgSubject sets the stream subject from which the message should be retrieved.
+// Server will return a first message with a seq >= to the input seq that has the specified subject.
+func WithGetMsgSubject(subject string) GetMsgOpt {
+	return func(req *apiMsgGetRequest) error {
+		req.NextFor = subject
 		return nil
 	}
 }

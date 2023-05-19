@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -108,6 +108,15 @@ const (
 	ExpectedLastSubjSeqHeader = "Nats-Expected-Last-Subject-Sequence"
 	ExpectedLastMsgIDHeader   = "Nats-Expected-Last-Msg-Id"
 	MsgRollup                 = "Nats-Rollup"
+)
+
+// Headers for republished messages and direct gets.
+const (
+	StreamHeader       = "Nats-Stream"
+	SequenceHeader     = "Nats-Sequence"
+	TimeStampHeaer     = "Nats-Time-Stamp"
+	SubjectHeader      = "Nats-Subject"
+	LastSequenceHeader = "Nats-Last-Sequence"
 )
 
 // Rollups, can be subject only or all messages.

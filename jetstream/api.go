@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -40,6 +40,9 @@ const (
 
 	// jsDomainT is used to create JetStream API prefix by specifying only Domain
 	jsDomainT = "$JS.%s.API."
+
+	// jsExtDomainT is used to create a StreamSource External APIPrefix
+	jsExtDomainT = "$JS.%s.API"
 
 	// apiAccountInfo is for obtaining general information about JetStream.
 	apiAccountInfo = "INFO"
@@ -89,6 +92,12 @@ const (
 
 	// apiMsgGetT is the endpoint to get a message.
 	apiMsgGetT = "STREAM.MSG.GET.%s"
+
+	// apiMsgGetT is the endpoint to perform a direct get of a message.
+	apiDirectMsgGetT = "DIRECT.GET.%s"
+
+	// apiDirectMsgGetLastBySubjectT is the endpoint to perform a direct get of a message by subject.
+	apiDirectMsgGetLastBySubjectT = "DIRECT.GET.%s.%s"
 
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"

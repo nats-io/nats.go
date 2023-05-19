@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestJetStreamErrors(t *testing.T) {
@@ -52,7 +53,7 @@ func TestJetStreamErrors(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -60,27 +61,27 @@ func TestJetStreamErrors(t *testing.T) {
 
 		_, err = js.AccountInfo(ctx)
 		// check directly to var (backwards compatible)
-		if err != ErrJetStreamNotEnabledForAccount {
+		if err != jetstream.ErrJetStreamNotEnabledForAccount {
 			t.Fatalf("Did not get the proper error, got %v", err)
 		}
 
 		// matching via errors.Is
-		if ok := errors.Is(err, ErrJetStreamNotEnabledForAccount); !ok {
-			t.Fatal("Expected ErrJetStreamNotEnabledForAccount")
+		if ok := errors.Is(err, jetstream.ErrJetStreamNotEnabledForAccount); !ok {
+			t.Fatal("Expected jetstream.ErrJetStreamNotEnabledForAccount")
 		}
 
 		// matching wrapped via error.Is
-		err2 := fmt.Errorf("custom error: %w", ErrJetStreamNotEnabledForAccount)
-		if ok := errors.Is(err2, ErrJetStreamNotEnabledForAccount); !ok {
+		err2 := fmt.Errorf("custom error: %w", jetstream.ErrJetStreamNotEnabledForAccount)
+		if ok := errors.Is(err2, jetstream.ErrJetStreamNotEnabledForAccount); !ok {
 			t.Fatal("Expected wrapped ErrJetStreamNotEnabled")
 		}
 
 		// via classic type assertion.
-		jserr, ok := err.(JetStreamError)
+		jserr, ok := err.(jetstream.JetStreamError)
 		if !ok {
-			t.Fatal("Expected a JetStreamError")
+			t.Fatal("Expected a jetstream.JetStreamError")
 		}
-		expected := JSErrCodeJetStreamNotEnabledForAccount
+		expected := jetstream.JSErrCodeJetStreamNotEnabledForAccount
 		if jserr.APIError().ErrorCode != expected {
 			t.Fatalf("Expected: %v, got: %v", expected, jserr.APIError().ErrorCode)
 		}
@@ -89,10 +90,10 @@ func TestJetStreamErrors(t *testing.T) {
 		}
 
 		// matching to interface via errors.As(...)
-		var apierr JetStreamError
+		var apierr jetstream.JetStreamError
 		ok = errors.As(err, &apierr)
 		if !ok {
-			t.Fatal("Expected a JetStreamError")
+			t.Fatal("Expected a jetstream.JetStreamError")
 		}
 		if apierr.APIError() == nil {
 			t.Fatal("Expected APIError")
@@ -105,25 +106,25 @@ func TestJetStreamErrors(t *testing.T) {
 			t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 		}
 
-		// an APIError also implements the JetStreamError interface.
-		var _ JetStreamError = &APIError{}
+		// an APIError also implements the jetstream.JetStreamError interface.
+		var _ jetstream.JetStreamError = &jetstream.APIError{}
 
 		// matching arbitrary custom error via errors.Is(...)
-		customErr := &APIError{ErrorCode: expected}
-		if ok := errors.Is(customErr, ErrJetStreamNotEnabledForAccount); !ok {
-			t.Fatal("Expected wrapped ErrJetStreamNotEnabledForAccount")
+		customErr := &jetstream.APIError{ErrorCode: expected}
+		if ok := errors.Is(customErr, jetstream.ErrJetStreamNotEnabledForAccount); !ok {
+			t.Fatal("Expected wrapped jetstream.ErrJetStreamNotEnabledForAccount")
 		}
-		customErr = &APIError{ErrorCode: 1}
-		if ok := errors.Is(customErr, ErrJetStreamNotEnabledForAccount); ok {
+		customErr = &jetstream.APIError{ErrorCode: 1}
+		if ok := errors.Is(customErr, jetstream.ErrJetStreamNotEnabledForAccount); ok {
 			t.Fatal("Expected to not match ErrJetStreamNotEnabled")
 		}
-		var cerr JetStreamError
+		var cerr jetstream.JetStreamError
 		if ok := errors.As(customErr, &cerr); !ok {
-			t.Fatal("Expected custom error to be a JetStreamError")
+			t.Fatal("Expected custom error to be a jetstream.JetStreamError")
 		}
 
 		// matching to concrete type via errors.As(...)
-		var aerr *APIError
+		var aerr *jetstream.APIError
 		ok = errors.As(err, &aerr)
 		if !ok {
 			t.Fatal("Expected an APIError")
@@ -148,48 +149,48 @@ func TestJetStreamErrors(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
 
 		// stream with empty name
-		_, err = js.CreateStream(ctx, StreamConfig{})
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{})
 		if err == nil {
 			t.Fatalf("Expected error, got nil")
 		}
 
 		// check directly to var (backwards compatible)
-		if err != ErrStreamNameRequired {
-			t.Fatalf("Expected: %v; got: %v", ErrInvalidStreamName, err)
+		if err != jetstream.ErrStreamNameRequired {
+			t.Fatalf("Expected: %v; got: %v", jetstream.ErrInvalidStreamName, err)
 		}
 
 		// matching via errors.Is
-		if ok := errors.Is(err, ErrStreamNameRequired); !ok {
-			t.Fatalf("Expected: %v; got: %v", ErrStreamNameRequired, err)
+		if ok := errors.Is(err, jetstream.ErrStreamNameRequired); !ok {
+			t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
 		}
 
 		// matching wrapped via error.Is
-		err2 := fmt.Errorf("custom error: %w", ErrStreamNameRequired)
-		if ok := errors.Is(err2, ErrStreamNameRequired); !ok {
+		err2 := fmt.Errorf("custom error: %w", jetstream.ErrStreamNameRequired)
+		if ok := errors.Is(err2, jetstream.ErrStreamNameRequired); !ok {
 			t.Fatal("Expected wrapped ErrStreamNameRequired")
 		}
 
 		// via classic type assertion.
-		jserr, ok := err.(JetStreamError)
+		jserr, ok := err.(jetstream.JetStreamError)
 		if !ok {
-			t.Fatal("Expected a JetStreamError")
+			t.Fatal("Expected a jetstream.JetStreamError")
 		}
 		if jserr.APIError() != nil {
 			t.Fatalf("Expected: empty APIError; got: %v", jserr.APIError())
 		}
 
 		// matching to interface via errors.As(...)
-		var jserr2 JetStreamError
+		var jserr2 jetstream.JetStreamError
 		ok = errors.As(err, &jserr2)
 		if !ok {
-			t.Fatal("Expected a JetStreamError")
+			t.Fatal("Expected a jetstream.JetStreamError")
 		}
 		if jserr2.APIError() != nil {
 			t.Fatalf("Expected: empty APIError; got: %v", jserr2.APIError())
@@ -200,7 +201,7 @@ func TestJetStreamErrors(t *testing.T) {
 		}
 
 		// matching to concrete type via errors.As(...)
-		var aerr *APIError
+		var aerr *jetstream.APIError
 		ok = errors.As(err, &aerr)
 		if ok {
 			t.Fatal("Expected ErrStreamNameRequired not to map to APIError")
