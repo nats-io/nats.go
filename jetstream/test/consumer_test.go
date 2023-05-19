@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestConsumerInfo(t *testing.T) {
@@ -33,19 +34,19 @@ func TestConsumerInfo(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
 
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.AddConsumer(ctx, ConsumerConfig{
+		c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
 			Durable:     "cons",
-			AckPolicy:   AckExplicitPolicy,
+			AckPolicy:   jetstream.AckExplicitPolicy,
 			Description: "test consumer",
 		})
 		if err != nil {
@@ -65,9 +66,9 @@ func TestConsumerInfo(t *testing.T) {
 		}
 
 		// update consumer and see if info is updated
-		_, err = s.AddConsumer(ctx, ConsumerConfig{
+		_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{
 			Durable:     "cons",
-			AckPolicy:   AckExplicitPolicy,
+			AckPolicy:   jetstream.AckExplicitPolicy,
 			Description: "updated consumer",
 		})
 		if err != nil {
@@ -95,7 +96,7 @@ func TestConsumerInfo(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -113,8 +114,8 @@ func TestConsumerInfo(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		_, err = c.Info(ctx)
-		if err == nil || !errors.Is(err, ErrConsumerNotFound) {
-			t.Fatalf("Expected error: %v; got: %v", ErrConsumerNotFound, err)
+		if err == nil || !errors.Is(err, jetstream.ErrConsumerNotFound) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
 		}
 	})
 }
@@ -129,19 +130,19 @@ func TestConsumerCachedInfo(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
 
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.AddConsumer(ctx, ConsumerConfig{
+	c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:     "cons",
-		AckPolicy:   AckExplicitPolicy,
+		AckPolicy:   jetstream.AckExplicitPolicy,
 		Description: "test consumer",
 	})
 	if err != nil {
@@ -158,9 +159,9 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 
 	// update consumer and see if info is updated
-	_, err = s.AddConsumer(ctx, ConsumerConfig{
+	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:     "cons",
-		AckPolicy:   AckExplicitPolicy,
+		AckPolicy:   jetstream.AckExplicitPolicy,
 		Description: "updated consumer",
 	})
 	if err != nil {

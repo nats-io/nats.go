@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -21,12 +21,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"go.uber.org/goleak"
+	"github.com/nats-io/nats.go/jetstream"
 )
-
-func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
-}
 
 func TestOrderedConsumerConsume(t *testing.T) {
 	testSubject := "FOO.123"
@@ -46,7 +42,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -54,19 +50,19 @@ func TestOrderedConsumerConsume(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.OrderedConsumer(ctx, OrderedConsumerConfig{})
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		msgs := make([]Msg, 0)
+		msgs := make([]jetstream.Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
-		l, err := c.Consume(func(msg Msg) {
+		l, err := c.Consume(func(msg jetstream.Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
 		})
@@ -96,7 +92,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -104,11 +100,11 @@ func TestOrderedConsumerConsume(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.OrderedConsumer(ctx, OrderedConsumerConfig{})
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -120,8 +116,8 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		}
 		for range msgs.Messages() {
 		}
-		if _, err := c.Consume(func(msg Msg) {}); !errors.Is(err, ErrOrderConsumerUsedAsFetch) {
-			t.Fatalf("Expected error: %v; got: %v", ErrOrderConsumerUsedAsFetch, err)
+		if _, err := c.Consume(func(msg jetstream.Msg) {}); !errors.Is(err, jetstream.ErrOrderConsumerUsedAsFetch) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrOrderConsumerUsedAsFetch, err)
 		}
 	})
 
@@ -133,7 +129,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -141,22 +137,22 @@ func TestOrderedConsumerConsume(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.OrderedConsumer(ctx, OrderedConsumerConfig{})
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		cc, err := c.Consume(func(msg Msg) {})
+		cc, err := c.Consume(func(msg jetstream.Msg) {})
 		defer cc.Stop()
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
 		}
-		if _, err := c.Consume(func(msg Msg) {}); !errors.Is(err, ErrOrderedConsumerConcurrentRequests) {
-			t.Fatalf("Expected error: %v; got: %v", ErrOrderedConsumerConcurrentRequests, err)
+		if _, err := c.Consume(func(msg jetstream.Msg) {}); !errors.Is(err, jetstream.ErrOrderedConsumerConcurrentRequests) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrOrderedConsumerConcurrentRequests, err)
 		}
 	})
 }
@@ -178,7 +174,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -186,16 +182,15 @@ func TestOrderedConsumerMessages(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.OrderedConsumer(ctx, OrderedConsumerConfig{})
+	c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	msgs := make([]Msg, 0)
 	it, err := c.Messages()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -208,7 +203,6 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg.Ack()
-		msgs = append(msgs, msg)
 	}
 
 	name := c.CachedInfo().Name
@@ -222,6 +216,5 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 		msg.Ack()
-		msgs = append(msgs, msg)
 	}
 }

@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestNewWithAPIPrefix(t *testing.T) {
@@ -56,12 +57,12 @@ func TestNewWithAPIPrefix(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		jsMain, err := New(ncMain)
+		jsMain, err := jetstream.New(ncMain)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		_, err = jsMain.CreateStream(ctx, StreamConfig{
+		_, err = jsMain.CreateStream(ctx, jetstream.StreamConfig{
 			Name:     "TEST",
 			Subjects: []string{"foo"},
 		})
@@ -75,7 +76,7 @@ func TestNewWithAPIPrefix(t *testing.T) {
 		}
 		defer ncTest.Close()
 
-		jsTest, err := NewWithAPIPrefix(ncTest, "main")
+		jsTest, err := jetstream.NewWithAPIPrefix(ncTest, "main")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -95,7 +96,7 @@ func TestNewWithAPIPrefix(t *testing.T) {
 		}
 		defer nc.Close()
 
-		_, err = NewWithAPIPrefix(nc, "")
+		_, err = jetstream.NewWithAPIPrefix(nc, "")
 		if err == nil || err.Error() != "API prefix cannot be empty" {
 			t.Fatalf(`Expected error: "API prefix cannot be empty"; got: %v`, err)
 		}
@@ -119,7 +120,7 @@ func TestNewWithDomain(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		js, err := NewWithDomain(nc, "ABC")
+		js, err := jetstream.NewWithDomain(nc, "ABC")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -132,7 +133,7 @@ func TestNewWithDomain(t *testing.T) {
 			t.Errorf("Invalid domain; want %v, got: %v", "ABC", accInfo.Domain)
 		}
 
-		_, err = js.CreateStream(ctx, StreamConfig{
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
 			Name:     "TEST",
 			Subjects: []string{"foo"},
 		})
@@ -155,7 +156,7 @@ func TestNewWithDomain(t *testing.T) {
 		}
 		defer nc.Close()
 
-		_, err = NewWithDomain(nc, "")
+		_, err = jetstream.NewWithDomain(nc, "")
 		if err == nil || err.Error() != "domain cannot be empty" {
 			t.Fatalf(`Expected error: "domain cannot be empty"; got: %v`, err)
 		}
@@ -173,7 +174,7 @@ func TestWithClientTrace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var sent, received string
-	js, err := New(nc, WithClientTrace(&ClientTrace{
+	js, err := jetstream.New(nc, jetstream.WithClientTrace(&jetstream.ClientTrace{
 		RequestSent: func(subj string, _ []byte) {
 			sent = fmt.Sprintf("Request sent: %s", subj)
 		},
@@ -185,7 +186,7 @@ func TestWithClientTrace(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -214,19 +215,19 @@ func TestCreateStream(t *testing.T) {
 			name:      "invalid stream name",
 			stream:    "foo.123",
 			subject:   "FOO.123",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
 			subject:   "FOO.123",
-			withError: ErrStreamNameRequired,
+			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream name already in use",
 			stream:    "foo",
 			subject:   "BAR.123",
-			withError: ErrStreamNameAlreadyInUse,
+			withError: jetstream.ErrStreamNameAlreadyInUse,
 		},
 	}
 
@@ -239,7 +240,7 @@ func TestCreateStream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestCreateStream(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err = js.CreateStream(ctx, StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -277,19 +278,19 @@ func TestUpdateStream(t *testing.T) {
 			name:      "invalid stream name",
 			stream:    "foo.123",
 			subject:   "FOO.123",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
 			subject:   "FOO.123",
-			withError: ErrStreamNameRequired,
+			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "bar",
 			subject:   "FOO.123",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 	}
 
@@ -302,18 +303,18 @@ func TestUpdateStream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s, err := js.UpdateStream(ctx, StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			s, err := js.UpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -348,17 +349,17 @@ func TestStream(t *testing.T) {
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
-			withError: ErrStreamNameRequired,
+			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "bar",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 	}
 	srv := RunBasicJetStreamServer()
@@ -370,12 +371,12 @@ func TestStream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -413,17 +414,17 @@ func TestDeleteStream(t *testing.T) {
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
-			withError: ErrStreamNameRequired,
+			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "foo",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 	}
 	srv := RunBasicJetStreamServer()
@@ -435,12 +436,12 @@ func TestDeleteStream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -472,12 +473,12 @@ func TestAccountInfo(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
-		_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -501,15 +502,15 @@ func TestAccountInfo(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
 
 		_, err = js.AccountInfo(ctx)
-		if err == nil || !errors.Is(err, ErrJetStreamNotEnabled) {
-			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabled, err)
+		if err == nil || !errors.Is(err, jetstream.ErrJetStreamNotEnabled) {
+			t.Fatalf(": %v; got: %v", jetstream.ErrJetStreamNotEnabled, err)
 		}
 	})
 
@@ -535,14 +536,14 @@ func TestAccountInfo(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		js, err := New(nc)
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
 		_, err = js.AccountInfo(ctx)
-		if err == nil || !errors.Is(err, ErrJetStreamNotEnabledForAccount) {
-			t.Fatalf(": %v; got: %v", ErrJetStreamNotEnabledForAccount, err)
+		if err == nil || !errors.Is(err, jetstream.ErrJetStreamNotEnabledForAccount) {
+			t.Fatalf(": %v; got: %v", jetstream.ErrJetStreamNotEnabledForAccount, err)
 		}
 	})
 }
@@ -574,26 +575,26 @@ func TestListStreams(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			js, err := New(nc)
+			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
 			streamsList := js.ListStreams(ctx)
-			streams := make([]*StreamInfo, 0)
+			streams := make([]*jetstream.StreamInfo, 0)
 		Loop:
 			for {
 				select {
 				case s := <-streamsList.Info():
 					streams = append(streams, s)
 				case err := <-streamsList.Err():
-					if !errors.Is(err, ErrEndOfData) {
+					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
 					break Loop
@@ -633,13 +634,13 @@ func TestStreamNames(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			js, err := New(nc)
+			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -652,7 +653,7 @@ func TestStreamNames(t *testing.T) {
 				case s := <-streamsList.Name():
 					streams = append(streams, s)
 				case err := <-streamsList.Err():
-					if !errors.Is(err, ErrEndOfData) {
+					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
 					break Loop
@@ -669,48 +670,48 @@ func TestJetStream_AddConsumer(t *testing.T) {
 	tests := []struct {
 		name           string
 		stream         string
-		consumerConfig ConsumerConfig
+		consumerConfig jetstream.ConsumerConfig
 		shouldCreate   bool
 		withError      error
 	}{
 		{
 			name:           "create durable pull consumer",
 			stream:         "foo",
-			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy},
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy},
 			shouldCreate:   true,
 		},
 		{
 			name:           "create ephemeral pull consumer",
 			stream:         "foo",
-			consumerConfig: ConsumerConfig{AckPolicy: AckExplicitPolicy},
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
 			shouldCreate:   true,
 		},
 		{
 			name:           "consumer already exists, update",
 			stream:         "foo",
-			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckExplicitPolicy, Description: "test consumer"},
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy, Description: "test consumer"},
 		},
 		{
 			name:           "consumer already exists, illegal update",
 			stream:         "foo",
-			consumerConfig: ConsumerConfig{Durable: "dur", AckPolicy: AckNonePolicy, Description: "test consumer"},
-			withError:      ErrConsumerCreate,
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckNonePolicy, Description: "test consumer"},
+			withError:      jetstream.ErrConsumerCreate,
 		},
 		{
 			name:      "stream does not exist",
 			stream:    "abc",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.1",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:           "invalid durable name",
 			stream:         "foo",
-			consumerConfig: ConsumerConfig{Durable: "dur.123", AckPolicy: AckExplicitPolicy},
-			withError:      ErrInvalidConsumerName,
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur.123", AckPolicy: jetstream.AckExplicitPolicy},
+			withError:      jetstream.ErrInvalidConsumerName,
 		},
 	}
 
@@ -721,7 +722,7 @@ func TestJetStream_AddConsumer(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -729,7 +730,7 @@ func TestJetStream_AddConsumer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -781,25 +782,25 @@ func TestJetStream_Consumer(t *testing.T) {
 			name:      "consumer does not exist",
 			stream:    "foo",
 			durable:   "abc",
-			withError: ErrConsumerNotFound,
+			withError: jetstream.ErrConsumerNotFound,
 		},
 		{
 			name:      "invalid durable name",
 			stream:    "foo",
 			durable:   "dur.123",
-			withError: ErrInvalidConsumerName,
+			withError: jetstream.ErrInvalidConsumerName,
 		},
 		{
 			name:      "stream does not exist",
 			stream:    "abc",
 			durable:   "dur",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.1",
 			durable:   "dur",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 	}
 
@@ -810,7 +811,7 @@ func TestJetStream_Consumer(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -818,11 +819,11 @@ func TestJetStream_Consumer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -862,25 +863,25 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 			name:      "consumer does not exist",
 			stream:    "foo",
 			durable:   "dur",
-			withError: ErrConsumerNotFound,
+			withError: jetstream.ErrConsumerNotFound,
 		},
 		{
 			name:      "invalid durable name",
 			stream:    "foo",
 			durable:   "dur.123",
-			withError: ErrInvalidConsumerName,
+			withError: jetstream.ErrInvalidConsumerName,
 		},
 		{
 			name:      "stream not found",
 			stream:    "abc",
 			durable:   "dur",
-			withError: ErrStreamNotFound,
+			withError: jetstream.ErrStreamNotFound,
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.1",
 			durable:   "dur",
-			withError: ErrInvalidStreamName,
+			withError: jetstream.ErrInvalidStreamName,
 		},
 	}
 
@@ -891,7 +892,7 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	js, err := New(nc)
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -899,11 +900,11 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, ConsumerConfig{Durable: "dur", AckPolicy: AckAllPolicy, Description: "desc"})
+	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -921,8 +922,8 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			_, err = s.Consumer(ctx, test.durable)
-			if err == nil || !errors.Is(err, ErrConsumerNotFound) {
-				t.Fatalf("Expected error: %v; got: %v", ErrConsumerNotFound, err)
+			if err == nil || !errors.Is(err, jetstream.ErrConsumerNotFound) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
 			}
 		})
 	}

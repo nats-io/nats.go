@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -23,14 +23,15 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestPublishMsg(t *testing.T) {
 	type publishConfig struct {
 		msg             *nats.Msg
-		opts            []PublishOpt
+		opts            []jetstream.PublishOpt
 		expectedHeaders nats.Header
-		expectedAck     PubAck
+		expectedAck     jetstream.PubAck
 		withError       func(*testing.T, error)
 	}
 	tests := []struct {
@@ -47,7 +48,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 						Domain:   "",
@@ -58,7 +59,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 						Domain:   "",
@@ -69,7 +70,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 						Domain:   "",
@@ -85,8 +86,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -99,8 +100,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:    "foo",
 						Sequence:  1,
 						Duplicate: true,
@@ -114,8 +115,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -133,8 +134,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -147,8 +148,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -161,8 +162,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -180,8 +181,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -194,9 +195,9 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastMsgID("abc")},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastMsgID("abc")},
 					withError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -215,7 +216,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -225,8 +226,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -236,8 +237,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastSequence(2)},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequence(2)},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -255,8 +256,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -266,9 +267,9 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastSequence(123)},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequence(123)},
 					withError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -287,7 +288,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -297,8 +298,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -308,8 +309,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectLastSequencePerSubject(1)},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequencePerSubject(1)},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -327,7 +328,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -337,8 +338,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -348,9 +349,9 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectLastSequencePerSubject(123)},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequencePerSubject(123)},
 					withError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -369,8 +370,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectStream("foo")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectStream("foo")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -388,9 +389,9 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectStream("abc")},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectStream("abc")},
 					withError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -414,7 +415,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 						Domain:   "test-domain",
@@ -425,7 +426,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 						Domain:   "test-domain",
@@ -436,7 +437,7 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 						Domain:   "test-domain",
@@ -452,8 +453,8 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -477,10 +478,10 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithStallWait(1 * time.Second)},
+					opts: []jetstream.PublishOpt{jetstream.WithStallWait(1 * time.Second)},
 					withError: func(t *testing.T, err error) {
-						if !errors.Is(err, ErrInvalidOption) {
-							t.Fatalf("Expected error: %v; got: %v", ErrInvalidOption, err)
+						if !errors.Is(err, jetstream.ErrInvalidOption) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 						}
 					},
 				},
@@ -493,7 +494,7 @@ func TestPublishMsg(t *testing.T) {
 					msg: &nats.Msg{
 						Data: []byte("msg 1"),
 					},
-					opts: []PublishOpt{},
+					opts: []jetstream.PublishOpt{},
 					withError: func(t *testing.T, err error) {
 						if !errors.Is(err, nats.ErrBadSubject) {
 							t.Fatalf("Expected error: %v; got: %v", nats.ErrBadSubject, err)
@@ -510,10 +511,10 @@ func TestPublishMsg(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "ABC",
 					},
-					opts: []PublishOpt{},
+					opts: []jetstream.PublishOpt{},
 					withError: func(t *testing.T, err error) {
-						if !errors.Is(err, ErrNoStreamResponse) {
-							t.Fatalf("Expected error: %v; got: %v", nats.ErrNoStreamResponse, err)
+						if !errors.Is(err, jetstream.ErrNoStreamResponse) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoStreamResponse, err)
 						}
 					},
 				},
@@ -537,7 +538,7 @@ func TestPublishMsg(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			js, err := New(nc)
+			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -545,7 +546,7 @@ func TestPublishMsg(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -584,7 +585,7 @@ func TestPublish(t *testing.T) {
 		name      string
 		msg       []byte
 		subject   string
-		opts      []PublishOpt
+		opts      []jetstream.PublishOpt
 		withError error
 	}{
 		{
@@ -596,7 +597,7 @@ func TestPublish(t *testing.T) {
 			name:    "publish single message on stream with message id",
 			msg:     []byte("msg"),
 			subject: "FOO.1",
-			opts:    []PublishOpt{WithMsgID("1")},
+			opts:    []jetstream.PublishOpt{jetstream.WithMsgID("1")},
 		},
 		{
 			name:      "empty subject passed",
@@ -615,7 +616,7 @@ func TestPublish(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			js, err := New(nc)
+			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -623,7 +624,7 @@ func TestPublish(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -648,9 +649,9 @@ func TestPublish(t *testing.T) {
 func TestPublishMsgAsync(t *testing.T) {
 	type publishConfig struct {
 		msg              *nats.Msg
-		opts             []PublishOpt
+		opts             []jetstream.PublishOpt
 		expectedHeaders  nats.Header
-		expectedAck      PubAck
+		expectedAck      jetstream.PubAck
 		withAckError     func(*testing.T, error)
 		withPublishError func(*testing.T, error)
 	}
@@ -668,7 +669,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 						Domain:   "",
@@ -679,7 +680,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 						Domain:   "",
@@ -690,7 +691,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 						Domain:   "",
@@ -706,8 +707,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -720,8 +721,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:    "foo",
 						Sequence:  1,
 						Duplicate: true,
@@ -735,8 +736,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -754,8 +755,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -768,8 +769,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -782,8 +783,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastMsgID("2")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastMsgID("2")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -801,8 +802,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithMsgID("1")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithMsgID("1")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -815,9 +816,9 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastMsgID("abc")},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastMsgID("abc")},
 					withAckError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -836,7 +837,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -846,8 +847,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -857,8 +858,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastSequence(2)},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequence(2)},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -876,8 +877,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -887,9 +888,9 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{WithExpectLastSequence(123)},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequence(123)},
 					withAckError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -908,7 +909,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -918,8 +919,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -929,8 +930,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectLastSequencePerSubject(1)},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequencePerSubject(1)},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 					},
@@ -948,7 +949,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -958,8 +959,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.2",
 					},
-					opts: []PublishOpt{},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 					},
@@ -969,9 +970,9 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectLastSequencePerSubject(123)},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectLastSequencePerSubject(123)},
 					withAckError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -990,8 +991,8 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectStream("foo")},
-					expectedAck: PubAck{
+					opts: []jetstream.PublishOpt{jetstream.WithExpectStream("foo")},
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 					},
@@ -1009,9 +1010,9 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					opts: []PublishOpt{WithExpectStream("abc")},
+					opts: []jetstream.PublishOpt{jetstream.WithExpectStream("abc")},
 					withAckError: func(t *testing.T, err error) {
-						var apiErr *APIError
+						var apiErr *jetstream.APIError
 						if ok := errors.As(err, &apiErr); !ok {
 							t.Fatalf("Expected API error; got: %v", err)
 						}
@@ -1035,7 +1036,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 1"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 1,
 						Domain:   "test-domain",
@@ -1046,7 +1047,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 2"),
 						Subject: "FOO.1",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 2,
 						Domain:   "test-domain",
@@ -1057,7 +1058,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Data:    []byte("msg 3"),
 						Subject: "FOO.2",
 					},
-					expectedAck: PubAck{
+					expectedAck: jetstream.PubAck{
 						Stream:   "foo",
 						Sequence: 3,
 						Domain:   "test-domain",
@@ -1091,7 +1092,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						Reply:   "BAR",
 					},
 					withPublishError: func(t *testing.T, err error) {
-						if !errors.Is(err, ErrAsyncPublishReplySubjectSet) {
+						if !errors.Is(err, jetstream.ErrAsyncPublishReplySubjectSet) {
 							t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 						}
 					},
@@ -1116,7 +1117,7 @@ func TestPublishMsgAsync(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			js, err := New(nc)
+			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1124,7 +1125,7 @@ func TestPublishMsgAsync(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1176,7 +1177,7 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		js, err := New(nc, WithPublishAsyncMaxPending(5))
+		js, err := jetstream.New(nc, jetstream.WithPublishAsyncMaxPending(5))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1185,7 +1186,7 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1208,7 +1209,7 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		js, err := New(nc, WithPublishAsyncMaxPending(5))
+		js, err := jetstream.New(nc, jetstream.WithPublishAsyncMaxPending(5))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1217,19 +1218,19 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		_, err = js.CreateStream(ctx, StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		for i := 0; i < 5; i++ {
-			_, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), WithStallWait(1*time.Nanosecond))
+			_, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 		}
-		if _, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), WithStallWait(1*time.Nanosecond)); err == nil || !errors.Is(err, ErrTooManyStalledMsgs) {
-			t.Fatalf("Expected error: %v; got: %v", ErrTooManyStalledMsgs, err)
+		if _, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond)); err == nil || !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrTooManyStalledMsgs, err)
 		}
 	})
 }
