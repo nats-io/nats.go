@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package jetstream
+package test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
@@ -239,7 +240,7 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
 }
 
-func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream StreamConfig, tfn func(t *testing.T, subject string, srvs ...*jsServer)) {
+func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream jetstream.StreamConfig, tfn func(t *testing.T, subject string, srvs ...*jsServer)) {
 	t.Helper()
 
 	withJSCluster(t, clusterName, size, func(t *testing.T, nodes ...*jsServer) {
@@ -252,7 +253,7 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream S
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		jsm, err := New(nc)
+		jsm, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatal(err)
 		}

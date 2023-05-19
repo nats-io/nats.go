@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -149,12 +149,14 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 
 // Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
 func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
-	if c.consumerType == consumerTypeNotSet {
+	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
 		c.consumerType = consumerTypeConsume
 		err := c.reset()
 		if err != nil {
 			return nil, err
 		}
+	} else if c.consumerType == consumerTypeConsume && c.currentConsumer != nil {
+		return nil, ErrOrderedConsumerConcurrentRequests
 	}
 	if c.consumerType == consumerTypeFetch {
 		return nil, fmt.Errorf("ordered consumer initialized as fetch")
@@ -381,7 +383,11 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		AckPolicy:         AckNonePolicy,
 		InactiveThreshold: 5 * time.Minute,
 		Replicas:          1,
-		FilterSubjects:    c.cfg.FilterSubjects,
+	}
+	if len(c.cfg.FilterSubjects) == 1 {
+		cfg.FilterSubject = c.cfg.FilterSubjects[0]
+	} else {
+		cfg.FilterSubjects = c.cfg.FilterSubjects
 	}
 
 	if seq != c.cfg.OptStartSeq+1 {

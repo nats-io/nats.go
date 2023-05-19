@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2022-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -38,7 +39,7 @@ type (
 		Purge(context.Context, ...StreamPurgeOpt) error
 
 		// GetMsg retrieves a raw stream message stored in JetStream by sequence number
-		GetMsg(context.Context, uint64) (*RawStreamMsg, error)
+		GetMsg(context.Context, uint64, ...GetMsgOpt) (*RawStreamMsg, error)
 		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
 		GetLastMsgForSubject(context.Context, string) (*RawStreamMsg, error)
 		// DeleteMsg deletes a message from a stream.
@@ -126,9 +127,12 @@ type (
 		Success bool `json:"success,omitempty"`
 	}
 
+	GetMsgOpt func(*apiMsgGetRequest) error
+
 	apiMsgGetRequest struct {
 		Seq     uint64 `json:"seq,omitempty"`
 		LastFor string `json:"last_by_subj,omitempty"`
+		NextFor string `json:"next_by_subj,omitempty"`
 	}
 
 	// apiMsgGetResponse is the response for a Stream get request.
@@ -298,8 +302,14 @@ func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	return nil
 }
 
-func (s *stream) GetMsg(ctx context.Context, seq uint64) (*RawStreamMsg, error) {
-	return s.getMsg(ctx, &apiMsgGetRequest{Seq: seq})
+func (s *stream) GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error) {
+	req := &apiMsgGetRequest{Seq: seq}
+	for _, opt := range opts {
+		if err := opt(req); err != nil {
+			return nil, err
+		}
+	}
+	return s.getMsg(ctx, req)
 }
 
 func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error) {
@@ -310,6 +320,25 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	req, err := json.Marshal(mreq)
 	if err != nil {
 		return nil, err
+	}
+	var gmSubj string
+
+	// handle direct gets
+	if s.info.Config.AllowDirect {
+		if mreq.LastFor != "" {
+			gmSubj = apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiDirectMsgGetLastBySubjectT, s.name, mreq.LastFor))
+			r, err := s.jetStream.apiRequest(ctx, gmSubj, nil)
+			if err != nil {
+				return nil, err
+			}
+			return convertDirectGetMsgResponseToMsg(s.name, r.msg)
+		}
+		gmSubj = apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiDirectMsgGetT, s.name))
+		r, err := s.jetStream.apiRequest(ctx, gmSubj, req)
+		if err != nil {
+			return nil, err
+		}
+		return convertDirectGetMsgResponseToMsg(s.name, r.msg)
 	}
 
 	var resp apiMsgGetResponse
@@ -342,6 +371,63 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 		Header:   hdr,
 		Data:     msg.Data,
 		Time:     msg.Time,
+	}, nil
+}
+
+func convertDirectGetMsgResponseToMsg(name string, r *nats.Msg) (*RawStreamMsg, error) {
+	// Check for 404/408. We would get a no-payload message and a "Status" header
+	if len(r.Data) == 0 {
+		val := r.Header.Get(statusHdr)
+		if val != "" {
+			switch val {
+			case noMessages:
+				return nil, ErrMsgNotFound
+			default:
+				desc := r.Header.Get("Description")
+				if desc == "" {
+					desc = "unable to get message"
+				}
+				return nil, fmt.Errorf("nats: %s", desc)
+			}
+		}
+	}
+	// Check for headers that give us the required information to
+	// reconstruct the message.
+	if len(r.Header) == 0 {
+		return nil, fmt.Errorf("nats: response should have headers")
+	}
+	stream := r.Header.Get(StreamHeader)
+	if stream == "" {
+		return nil, fmt.Errorf("nats: missing stream header")
+	}
+
+	seqStr := r.Header.Get(SequenceHeader)
+	if seqStr == "" {
+		return nil, fmt.Errorf("nats: missing sequence header")
+	}
+	seq, err := strconv.ParseUint(seqStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("nats: invalid sequence header '%s': %v", seqStr, err)
+	}
+	timeStr := r.Header.Get(TimeStampHeaer)
+	if timeStr == "" {
+		return nil, fmt.Errorf("nats: missing timestamp header")
+	}
+
+	tm, err := time.Parse(time.RFC3339Nano, timeStr)
+	if err != nil {
+		return nil, fmt.Errorf("nats: invalid timestamp header '%s': %v", timeStr, err)
+	}
+	subj := r.Header.Get(SubjectHeader)
+	if subj == "" {
+		return nil, fmt.Errorf("nats: missing subject header")
+	}
+	return &RawStreamMsg{
+		Subject:  subj,
+		Sequence: seq,
+		Header:   r.Header,
+		Data:     r.Data,
+		Time:     tm,
 	}, nil
 }
 
