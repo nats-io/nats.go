@@ -670,6 +670,11 @@ func ExampleSubOpt() {
 	js.Subscribe("foo", func(msg *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(msg.Data))
 	}, nats.Durable("FOO"), nats.ConsumerMemoryStorage())
+
+	// Skip consumer lookup when using explicit consumer name
+	js.Subscribe("foo", func(msg *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(msg.Data))
+	}, nats.Durable("FOO"), nats.SkipConsumerLookup())
 }
 
 func ExampleMaxWait() {
