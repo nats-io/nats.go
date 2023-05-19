@@ -110,6 +110,15 @@ const (
 	MsgRollup                 = "Nats-Rollup"
 )
 
+// Headers for republished messages and direct gets.
+const (
+	StreamHeader       = "Nats-Stream"
+	SequenceHeader     = "Nats-Sequence"
+	TimeStampHeaer     = "Nats-Time-Stamp"
+	SubjectHeader      = "Nats-Subject"
+	LastSequenceHeader = "Nats-Last-Sequence"
+)
+
 // Rollups, can be subject only or all messages.
 const (
 	MsgRollupSubject = "sub"

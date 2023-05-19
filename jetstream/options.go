@@ -88,6 +88,15 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
+// WithGetMsgSubject sets the stream subject from which the message should be retrieved.
+// Server will return a first message with a seq >= to the input seq that has the specified subject.
+func WithGetMsgSubject(subject string) GetMsgOpt {
+	return func(req *apiMsgGetRequest) error {
+		req.NextFor = subject
+		return nil
+	}
+}
+
 // PullMaxMessages limits the number of messages to be fetched from the stream in one request
 // If not provided, a default of 100 messages will be used
 type PullMaxMessages int

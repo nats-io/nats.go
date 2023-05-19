@@ -192,8 +192,16 @@ type (
 //
 // Available options:
 // [WithClientTrace] - enables request/response tracing
+// [WithPublishAsyncErrHandler] - sets error handler for async message publish
+// [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes that can be inflight at one time.
+// [WithDirectGet] - specifies whether client should use direct get requests.
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
-	jsOpts := jsOpts{apiPrefix: DefaultAPIPrefix}
+	jsOpts := jsOpts{
+		apiPrefix: DefaultAPIPrefix,
+		publisherOpts: asyncPublisherOpts{
+			maxpa: defaultAsyncPubAckInflight,
+		},
+	}
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err
@@ -217,6 +225,9 @@ const (
 //
 // Available options:
 // [WithClientTrace] - enables request/response tracing
+// [WithPublishAsyncErrHandler] - sets error handler for async message publish
+// [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes that can be inflight at one time.
+// [WithDirectGet] - specifies whether client should use direct get requests.
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := jsOpts{
 		publisherOpts: asyncPublisherOpts{
@@ -246,8 +257,15 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 //
 // Available options:
 // [WithClientTrace] - enables request/response tracing
+// [WithPublishAsyncErrHandler] - sets error handler for async message publish
+// [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes that can be inflight at one time.
+// [WithDirectGet] - specifies whether client should use direct get requests.
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
-	var jsOpts jsOpts
+	jsOpts := jsOpts{
+		publisherOpts: asyncPublisherOpts{
+			maxpa: defaultAsyncPubAckInflight,
+		},
+	}
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err
@@ -270,8 +288,30 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
+	ncfg := cfg
+	// If we have a mirror and an external domain, convert to ext.APIPrefix.
+	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
+		// Copy so we do not change the caller's version.
+		ncfg.Mirror = ncfg.Mirror.copy()
+		if err := ncfg.Mirror.convertDomain(); err != nil {
+			return nil, err
+		}
+	}
 
-	req, err := json.Marshal(cfg)
+	// Check sources for the same.
+	if len(ncfg.Sources) > 0 {
+		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
+		for i, ss := range ncfg.Sources {
+			if ss.Domain != "" {
+				ncfg.Sources[i] = ss.copy()
+				if err := ncfg.Sources[i].convertDomain(); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	req, err := json.Marshal(ncfg)
 	if err != nil {
 		return nil, err
 	}
@@ -294,6 +334,34 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		name:      cfg.Name,
 		info:      resp.StreamInfo,
 	}, nil
+}
+
+// If we have a Domain, convert to the appropriate ext.APIPrefix.
+// This will change the stream source, so should be a copy passed in.
+func (ss *StreamSource) convertDomain() error {
+	if ss.Domain == "" {
+		return nil
+	}
+	if ss.External != nil {
+		return errors.New("nats: domain and external are both set")
+	}
+	ss.External = &ExternalStream{APIPrefix: fmt.Sprintf(jsExtDomainT, ss.Domain)}
+	return nil
+}
+
+// Helper for copying when we do not want to change user's version.
+func (ss *StreamSource) copy() *StreamSource {
+	nss := *ss
+	// Check pointers
+	if ss.OptStartTime != nil {
+		t := *ss.OptStartTime
+		nss.OptStartTime = &t
+	}
+	if ss.External != nil {
+		ext := *ss.External
+		nss.External = &ext
+	}
+	return &nss
 }
 
 // UpdateStream updates an existing stream

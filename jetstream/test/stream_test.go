@@ -44,6 +44,16 @@ func TestAddConsumer(t *testing.T) {
 			shouldCreate:   true,
 		},
 		{
+			name:           "with filter subject",
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, FilterSubject: "FOO.A"},
+			shouldCreate:   true,
+		},
+		{
+			name:           "with multiple filter subjects",
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, FilterSubjects: []string{"FOO.A", "FOO.B"}},
+			shouldCreate:   true,
+		},
+		{
 			name:           "consumer already exists, update",
 			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy, Description: "test consumer"},
 		},
@@ -406,6 +416,7 @@ func TestGetMsg(t *testing.T) {
 	tests := []struct {
 		name            string
 		seq             uint64
+		opts            []jetstream.GetMsgOpt
 		expectedData    string
 		expectedHeaders nats.Header
 		withError       error
@@ -424,6 +435,16 @@ func TestGetMsg(t *testing.T) {
 			name:      "get non existing msg",
 			seq:       50,
 			withError: jetstream.ErrMsgNotFound,
+		},
+		{
+			name:         "with next for subject",
+			seq:          1,
+			opts:         []jetstream.GetMsgOpt{jetstream.WithGetMsgSubject("*.C")},
+			expectedData: "msg with headers",
+			expectedHeaders: map[string][]string{
+				"X-Nats-Test-Data": {"test_data"},
+				"X-Nats-Key":       {"123"},
+			},
 		},
 		{
 			name:         "get msg with headers",
@@ -451,7 +472,7 @@ func TestGetMsg(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	s1, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -473,16 +494,51 @@ func TestGetMsg(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s.DeleteMsg(ctx, 3); err != nil {
+	if err := s1.DeleteMsg(ctx, 3); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s.DeleteMsg(ctx, 5); err != nil {
+	if err := s1.DeleteMsg(ctx, 5); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// same stream, but with allow direct
+	s2, err := js.CreateStream(ctx,
+		jetstream.StreamConfig{Name: "bar",
+			Subjects:    []string{"BAR.*"},
+			Description: "desc",
+			AllowDirect: true,
+		})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 1; i < 5; i++ {
+		if _, err := js.Publish(ctx, "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.Publish(ctx, "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+	if _, err := js.PublishMsg(ctx, &nats.Msg{
+		Data: []byte("msg with headers"),
+		Header: map[string][]string{
+			"X-Nats-Test-Data": {"test_data"},
+			"X-Nats-Key":       {"123"},
+		},
+		Subject: "BAR.C",
+	}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := s2.DeleteMsg(ctx, 3); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := s2.DeleteMsg(ctx, 5); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			msg, err := s.GetMsg(ctx, test.seq)
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false"), func(t *testing.T) {
+			msg, err := s1.GetMsg(ctx, test.seq, test.opts...)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -497,6 +553,132 @@ func TestGetMsg(t *testing.T) {
 			}
 			if !reflect.DeepEqual(msg.Header, test.expectedHeaders) {
 				t.Fatalf("Invalid message headers; want: %v; got: %v", test.expectedHeaders, msg.Header)
+			}
+		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: true"), func(t *testing.T) {
+			msg, err := s2.GetMsg(ctx, test.seq, test.opts...)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if string(msg.Data) != test.expectedData {
+				t.Fatalf("Invalid message data; want: %s; got: %s", test.expectedData, string(msg.Data))
+			}
+			for k, v := range test.expectedHeaders {
+				if !reflect.DeepEqual(msg.Header[k], v) {
+					t.Fatalf("Expected header: %v; got: %v", v, msg.Header[k])
+				}
+			}
+		})
+	}
+}
+
+func TestGetLastMsgForSubject(t *testing.T) {
+	tests := []struct {
+		name         string
+		subject      string
+		expectedData string
+		allowDirect  bool
+		withError    error
+	}{
+		{
+			name:         "get existing msg",
+			subject:      "*.A",
+			expectedData: "msg 4 on subject A",
+		},
+		{
+			name:         "get last msg from stream",
+			subject:      ">",
+			expectedData: "msg 4 on subject B",
+		},
+		{
+			name:      "no messages on subject",
+			subject:   "*.Z",
+			withError: jetstream.ErrMsgNotFound,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s1, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 1; i < 5; i++ {
+		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.Publish(ctx, "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	// same stream, but with allow direct
+	s2, err := js.CreateStream(ctx,
+		jetstream.StreamConfig{Name: "bar",
+			Subjects:    []string{"BAR.*"},
+			Description: "desc",
+			AllowDirect: true,
+		})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 1; i < 5; i++ {
+		if _, err := js.Publish(ctx, "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.Publish(ctx, "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false"), func(t *testing.T) {
+			msg, err := s1.GetLastMsgForSubject(ctx, test.subject)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if string(msg.Data) != test.expectedData {
+				t.Fatalf("Invalid message data; want: %s; got: %s", test.expectedData, string(msg.Data))
+			}
+		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: true"), func(t *testing.T) {
+			msg, err := s2.GetLastMsgForSubject(ctx, test.subject)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if string(msg.Data) != test.expectedData {
+				t.Fatalf("Invalid message data; want: %s; got: %s", test.expectedData, string(msg.Data))
 			}
 		})
 	}

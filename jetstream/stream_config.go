@@ -35,33 +35,38 @@ type (
 	}
 
 	StreamConfig struct {
-		Name              string          `json:"name"`
-		Description       string          `json:"description,omitempty"`
-		Subjects          []string        `json:"subjects,omitempty"`
-		Retention         RetentionPolicy `json:"retention"`
-		MaxConsumers      int             `json:"max_consumers"`
-		MaxMsgs           int64           `json:"max_msgs"`
-		MaxBytes          int64           `json:"max_bytes"`
-		Discard           DiscardPolicy   `json:"discard"`
-		MaxAge            time.Duration   `json:"max_age"`
-		MaxMsgsPerSubject int64           `json:"max_msgs_per_subject"`
-		MaxMsgSize        int32           `json:"max_msg_size,omitempty"`
-		Storage           StorageType     `json:"storage"`
-		Replicas          int             `json:"num_replicas"`
-		NoAck             bool            `json:"no_ack,omitempty"`
-		Template          string          `json:"template_owner,omitempty"`
-		Duplicates        time.Duration   `json:"duplicate_window,omitempty"`
-		Placement         *Placement      `json:"placement,omitempty"`
-		Mirror            *StreamSource   `json:"mirror,omitempty"`
-		Sources           []*StreamSource `json:"sources,omitempty"`
-		Sealed            bool            `json:"sealed,omitempty"`
-		DenyDelete        bool            `json:"deny_delete,omitempty"`
-		DenyPurge         bool            `json:"deny_purge,omitempty"`
-		AllowRollup       bool            `json:"allow_rollup_hdrs,omitempty"`
-		AllowDirect       bool            `json:"allow_direct,omitempty"`
+		Name                 string          `json:"name"`
+		Description          string          `json:"description,omitempty"`
+		Subjects             []string        `json:"subjects,omitempty"`
+		Retention            RetentionPolicy `json:"retention"`
+		MaxConsumers         int             `json:"max_consumers"`
+		MaxMsgs              int64           `json:"max_msgs"`
+		MaxBytes             int64           `json:"max_bytes"`
+		Discard              DiscardPolicy   `json:"discard"`
+		DiscardNewPerSubject bool            `json:"discard_new_per_subject,omitempty"`
+		MaxAge               time.Duration   `json:"max_age"`
+		MaxMsgsPerSubject    int64           `json:"max_msgs_per_subject"`
+		MaxMsgSize           int32           `json:"max_msg_size,omitempty"`
+		Storage              StorageType     `json:"storage"`
+		Replicas             int             `json:"num_replicas"`
+		NoAck                bool            `json:"no_ack,omitempty"`
+		Template             string          `json:"template_owner,omitempty"`
+		Duplicates           time.Duration   `json:"duplicate_window,omitempty"`
+		Placement            *Placement      `json:"placement,omitempty"`
+		Mirror               *StreamSource   `json:"mirror,omitempty"`
+		Sources              []*StreamSource `json:"sources,omitempty"`
+		Sealed               bool            `json:"sealed,omitempty"`
+		DenyDelete           bool            `json:"deny_delete,omitempty"`
+		DenyPurge            bool            `json:"deny_purge,omitempty"`
+		AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
 
 		// Allow republish of the message after being sequenced and stored.
 		RePublish *RePublish `json:"republish,omitempty"`
+
+		// Allow higher performance, direct access to get individual messages. E.g. KeyValue
+		AllowDirect bool `json:"allow_direct"`
+		// Allow higher performance and unified direct access for mirrors as well.
+		MirrorDirect bool `json:"mirror_direct"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream source.
@@ -125,6 +130,7 @@ type (
 		OptStartTime  *time.Time      `json:"opt_start_time,omitempty"`
 		FilterSubject string          `json:"filter_subject,omitempty"`
 		External      *ExternalStream `json:"external,omitempty"`
+		Domain        string          `json:"-"`
 	}
 
 	// ExternalStream allows you to qualify access to a stream source in another

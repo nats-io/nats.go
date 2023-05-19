@@ -41,6 +41,9 @@ const (
 	// jsDomainT is used to create JetStream API prefix by specifying only Domain
 	jsDomainT = "$JS.%s.API."
 
+	// jsExtDomainT is used to create a StreamSource External APIPrefix
+	jsExtDomainT = "$JS.%s.API"
+
 	// apiAccountInfo is for obtaining general information about JetStream.
 	apiAccountInfo = "INFO"
 
@@ -89,6 +92,12 @@ const (
 
 	// apiMsgGetT is the endpoint to get a message.
 	apiMsgGetT = "STREAM.MSG.GET.%s"
+
+	// apiMsgGetT is the endpoint to perform a direct get of a message.
+	apiDirectMsgGetT = "DIRECT.GET.%s"
+
+	// apiDirectMsgGetLastBySubjectT is the endpoint to perform a direct get of a message by subject.
+	apiDirectMsgGetLastBySubjectT = "DIRECT.GET.%s.%s"
 
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
