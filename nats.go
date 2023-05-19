@@ -5456,6 +5456,17 @@ func (nc *Conn) GetClientID() (uint64, error) {
 	return nc.info.CID, nil
 }
 
+// ConnStatusChanged returns a channel on which connection status changes will be reported.
+// Reported statuses: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+func (nc *Conn) ConnStatusChanged() chan Status {
+	statuses := []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
+	ch := make(chan Status)
+	for _, s := range statuses {
+		nc.RegisterStatusChangeListener(s, ch)
+	}
+	return ch
+}
+
 // RegisterStatusChangeListener registers a channel waiting for a specific status change event.
 // Status change events are non-blocking - if no receiver is waiting for the status change,
 // it will not be sent on the channel. Closed channels are ignored.

@@ -2858,3 +2858,53 @@ func TestConnEventListeners(t *testing.T) {
 		}
 	})
 }
+
+func TestConnStatusChangedEvents(t *testing.T) {
+	waitFor := func(t *testing.T, ch chan nats.Status, expected nats.Status) {
+		select {
+		case s := <-ch:
+			if s != expected {
+				t.Fatalf("Expected status: %s; got: %s", expected, s)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for status %q", expected)
+		}
+	}
+	s := RunDefaultServer()
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	statusCh := nc.ConnStatusChanged()
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	s.Shutdown()
+	waitFor(t, newStatus, nats.RECONNECTING)
+
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	waitFor(t, newStatus, nats.CONNECTED)
+
+	nc.Close()
+	waitFor(t, newStatus, nats.CLOSED)
+
+	// after closing, no further updates should show up
+	select {
+	case s := <-newStatus:
+		t.Fatalf("Expected no status after closing; got: %s", s)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
