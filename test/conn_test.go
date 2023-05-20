@@ -2762,105 +2762,8 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	}
 }
 
-func TestConnEventListeners(t *testing.T) {
-	t.Run("receive all events", func(t *testing.T) {
-		errs := make(chan error)
-		waitForStatusChange := func(ch chan nats.Status, expected nats.Status) {
-			t.Helper()
-			select {
-			case s := <-ch:
-				if s != expected {
-					errs <- fmt.Errorf("Invalid status received; want: %s; got: %s", expected, s)
-				}
-				errs <- nil
-			case <-time.After(10 * time.Second):
-				errs <- fmt.Errorf("Timeout waiting for event %s", expected)
-			}
-		}
-
-		s := RunDefaultServer()
-
-		var (
-			disconnected = make(chan nats.Status)
-			reconnecting = make(chan nats.Status)
-			connected    = make(chan nats.Status)
-			drainSubs    = make(chan nats.Status)
-			drainPubs    = make(chan nats.Status)
-			closed       = make(chan nats.Status)
-		)
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		nc.RegisterStatusChangeListener(nats.DISCONNECTED, disconnected)
-		nc.RegisterStatusChangeListener(nats.RECONNECTING, reconnecting)
-		nc.RegisterStatusChangeListener(nats.CONNECTED, connected)
-		nc.RegisterStatusChangeListener(nats.DRAINING_SUBS, drainSubs)
-		nc.RegisterStatusChangeListener(nats.DRAINING_PUBS, drainPubs)
-		nc.RegisterStatusChangeListener(nats.CLOSED, closed)
-
-		go waitForStatusChange(reconnecting, nats.RECONNECTING)
-		go waitForStatusChange(connected, nats.CONNECTED)
-		go waitForStatusChange(drainSubs, nats.DRAINING_SUBS)
-		go waitForStatusChange(drainPubs, nats.DRAINING_PUBS)
-		go waitForStatusChange(closed, nats.CLOSED)
-
-		time.Sleep(100 * time.Millisecond)
-		s.Shutdown()
-		if err := <-errs; err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if status := nc.Status(); status != nats.RECONNECTING {
-			t.Fatalf("Expected RECONNECTING status; got: %s", status)
-		}
-
-		s = RunDefaultServer()
-		defer s.Shutdown()
-		if err := <-errs; err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		if status := nc.Status(); status != nats.CONNECTED {
-			t.Fatalf("Expected CONNECTED status; got: %s", status)
-		}
-
-		if err := nc.Drain(); err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		for i := 0; i < 3; i++ {
-			if err := <-errs; err != nil {
-				t.Fatalf("Unexpected error: %s", err)
-			}
-		}
-		if status := nc.Status(); status != nats.CLOSED {
-			t.Fatalf("Expected RECONNECTING status; got: %s", status)
-		}
-	})
-
-	t.Run("no not block on closed channel", func(t *testing.T) {
-		s := RunDefaultServer()
-
-		connected := make(chan nats.Status)
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %s", err)
-		}
-		defer nc.Close()
-		nc.RegisterStatusChangeListener(nats.CONNECTED, connected)
-		close(connected)
-
-		s.Shutdown()
-		s = RunDefaultServer()
-		defer s.Shutdown()
-		if err := nc.Publish("foo", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error")
-		}
-	})
-}
-
 func TestConnStatusChangedEvents(t *testing.T) {
-	waitFor := func(t *testing.T, ch chan nats.Status, expected nats.Status) {
+	waitForStatus := func(t *testing.T, ch chan nats.Status, expected nats.Status) {
 		select {
 		case s := <-ch:
 			if s != expected {
@@ -2870,41 +2773,93 @@ func TestConnStatusChangedEvents(t *testing.T) {
 			t.Fatalf("Timeout waiting for status %q", expected)
 		}
 	}
-	s := RunDefaultServer()
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	statusCh := nc.ConnStatusChanged()
-	defer close(statusCh)
-	newStatus := make(chan nats.Status, 10)
-	// non-blocking channel, so we need to be constantly listening
-	go func() {
-		for {
-			s, ok := <-statusCh
-			if !ok {
-				return
-			}
-			newStatus <- s
+	t.Run("default events", func(t *testing.T) {
+		s := RunDefaultServer()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
 		}
-	}()
-	time.Sleep(50 * time.Millisecond)
+		statusCh := nc.StatusChanged()
+		defer close(statusCh)
+		newStatus := make(chan nats.Status, 10)
+		// non-blocking channel, so we need to be constantly listening
+		go func() {
+			for {
+				s, ok := <-statusCh
+				if !ok {
+					return
+				}
+				newStatus <- s
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
 
-	s.Shutdown()
-	waitFor(t, newStatus, nats.RECONNECTING)
+		s.Shutdown()
+		waitForStatus(t, newStatus, nats.RECONNECTING)
 
-	s = RunDefaultServer()
-	defer s.Shutdown()
+		s = RunDefaultServer()
+		defer s.Shutdown()
 
-	waitFor(t, newStatus, nats.CONNECTED)
+		waitForStatus(t, newStatus, nats.CONNECTED)
 
-	nc.Close()
-	waitFor(t, newStatus, nats.CLOSED)
+		nc.Close()
+		waitForStatus(t, newStatus, nats.CLOSED)
 
-	// after closing, no further updates should show up
-	select {
-	case s := <-newStatus:
-		t.Fatalf("Expected no status after closing; got: %s", s)
-	case <-time.After(100 * time.Millisecond):
-	}
+		select {
+		case s := <-newStatus:
+			t.Fatalf("Unexpected status received: %s", s)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+
+	t.Run("custom event only", func(t *testing.T) {
+		s := RunDefaultServer()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		statusCh := nc.StatusChanged(nats.CLOSED)
+		defer close(statusCh)
+		newStatus := make(chan nats.Status, 10)
+		// non-blocking channel, so we need to be constantly listening
+		go func() {
+			for {
+				s, ok := <-statusCh
+				if !ok {
+					return
+				}
+				newStatus <- s
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
+		s.Shutdown()
+		s = RunDefaultServer()
+		defer s.Shutdown()
+		nc.Close()
+		waitForStatus(t, newStatus, nats.CLOSED)
+
+		select {
+		case s := <-newStatus:
+			t.Fatalf("Unexpected status received: %s", s)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	t.Run("do not block on channel if it's not used", func(t *testing.T) {
+		s := RunDefaultServer()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+		// do not use the returned channel, client should never block
+		_ = nc.StatusChanged()
+		s.Shutdown()
+		s = RunDefaultServer()
+		defer s.Shutdown()
+
+		if err := nc.Publish("foo", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	})
 }

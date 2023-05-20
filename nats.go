@@ -2759,7 +2759,7 @@ func (nc *Conn) doReconnect(err error) {
 		nc.bw.doneWithPending()
 
 		// This is where we are truly connected.
-		nc.changeConnStatus(CONNECTED)
+		nc.status = CONNECTED
 
 		// If we are here with a retry on failed connect, indicate that the
 		// initial connect is now complete.
@@ -5003,11 +5003,11 @@ func (nc *Conn) clearPendingRequestCalls() {
 func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.mu.Lock()
 	if nc.isClosed() {
-		nc.changeConnStatus(CLOSED)
+		nc.status = status
 		nc.mu.Unlock()
 		return
 	}
-	nc.changeConnStatus(CLOSED)
+	nc.status = CLOSED
 
 	// Kick the Go routines so they fall out.
 	nc.kickFlusher()
@@ -5456,21 +5456,23 @@ func (nc *Conn) GetClientID() (uint64, error) {
 	return nc.info.CID, nil
 }
 
-// ConnStatusChanged returns a channel on which connection status changes will be reported.
-// Reported statuses: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
-func (nc *Conn) ConnStatusChanged() chan Status {
-	statuses := []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
+// StatusChanged returns a channel on which given list of connection status changes will be reported.
+// If no statuses are provided, defaults will be used: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
+	if len(statuses) == 0 {
+		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
+	}
 	ch := make(chan Status)
 	for _, s := range statuses {
-		nc.RegisterStatusChangeListener(s, ch)
+		nc.registerStatusChangeListener(s, ch)
 	}
 	return ch
 }
 
-// RegisterStatusChangeListener registers a channel waiting for a specific status change event.
+// registerStatusChangeListener registers a channel waiting for a specific status change event.
 // Status change events are non-blocking - if no receiver is waiting for the status change,
 // it will not be sent on the channel. Closed channels are ignored.
-func (nc *Conn) RegisterStatusChangeListener(status Status, ch chan Status) {
+func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.statListeners == nil {
