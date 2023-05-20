@@ -153,12 +153,14 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 
 // Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
 func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
-	if c.consumerType == consumerTypeNotSet {
+	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
 		c.consumerType = consumerTypeConsume
 		err := c.reset()
 		if err != nil {
 			return nil, err
 		}
+	} else if c.consumerType == consumerTypeConsume && c.currentConsumer != nil {
+		return nil, ErrOrderedConsumerConcurrentRequests
 	}
 	if c.consumerType == consumerTypeFetch {
 		return nil, ErrOrderConsumerUsedAsFetch
