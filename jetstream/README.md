@@ -6,15 +6,18 @@ This doc covers the basic usage of the `jetstream` package in `nats.go` client.
   - [Overview](#overview)
   - [Basic usage](#basic-usage)
   - [Streams](#streams)
-    - [Stream management (CRUD)](#stream-management-crud)
+    - [Stream management (CRUD)](#stream-management--crud-)
     - [Listing streams and stream names](#listing-streams-and-stream-names)
     - [Stream-specific operations](#stream-specific-operations)
   - [Consumers](#consumers)
     - [Consumers management](#consumers-management)
     - [Listing consumers and consumer names](#listing-consumers-and-consumer-names)
+    - [Ordered consumers](#ordered-consumers)
     - [Receiving messages from the consumer](#receiving-messages-from-the-consumer)
-      - [Polling consumer](#polling-consumer)
-      - [Event-Driven consumer](#event-driven-consumer)
+      - [Single fetch](#single-fetch)
+      - [Continuous polling](#continuous-polling)
+        - [Using `Consume()` receive messages in a callback](#using-consume-receive-messages-in-a-callback)
+        - [Using `Messages()` to iterate over incoming messages](#using-messages-to-iterate-over-incoming-messages)
   - [Publishing on stream](#publishing-on-stream)
     - [Synchronous publish](#synchronous-publish)
     - [Async publish](#async-publish)
@@ -36,6 +39,13 @@ Key differences between `jetstream` and `nats` packages include:
 - `Stream` - used to manage consumers for a specific stream, as well as performing stream-specific operations (purging, fetching and deleting messages by sequence number, fetching stream info)
 - `Consumer` - used to get information about a consumer as well as consuming messages
 - `Msg` - used for message-specific operations - reading data, headers and metadata, as well as performing various types of acknowledgements
+
+> __NOTE__:
+> `jetstream` requires nats-server >= 2.9.0 to work correctly.
+
+> __WARNING__:
+> The new API is currently provided as a _preview_, and will deprecate previous JetStream
+subscribe APIs. It is encouraged to start experimenting with the new APIs as soon as possible.
 
 ## Basic usage
 
@@ -215,7 +225,7 @@ fmt.Println(cachedInfo.Config.Name)
 
 ## Consumers
 
-Currently, only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continuous message retrieval (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
+Only pull consumers are supported in `jetstream` package. However, unlike the JetStream API in `nats` package, pull consumers allow for continuous message retrieval (similarly to how `nats.Subscribe()` works). Because of that, push consumers can be easily replace by pull consumers for most of the use cases.
 
 ### Consumers management
 
@@ -309,6 +319,23 @@ if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
 }
 ```
 
+### Ordered consumers
+
+`jetstream`, in addition to basic named/ephemeral consumers, supports ordered consumer functionality.
+Ordered is strictly processing messages in the order that they were stored on the stream, providing a consistent and deterministic message ordering. It is also resilient to consumer deletion.
+
+Ordered consumers present the same set of message consumption methods as standard pull consumers.
+
+```go
+js, _ := jetstream.New(nc)
+
+// create a consumer (this is an idempotent operation)
+cons, _ := js.OrderedConsumer(ctx, "ORDERS", jetstream.OrderedConsumerConfig{
+    // Filter results from "ORDERS" stream by specific subject
+    FilterSubjects: []{"ORDERS.A"},
+})
+```
+
 ### Receiving messages from the consumer
 
 The `Consumer` interface covers allows fetching messages on demand, with pre-defined batch size on bytes limit, or
@@ -363,6 +390,39 @@ as they do not perform any optimizations (pre-buffering) and new subscription is
 There are 2 ways to achieve push-like behavior using pull consumers in `jetstream` package.
 Both `Messages()` and `Consume()` methods perform exactly the same optimizations and can be used interchangeably.
 
+Subject filtering is achieved by configuring a consumer with a `FilterSubject` value.
+
+##### Using `Consume()` receive messages in a callback
+
+```go
+cons, _ := js.AddConsumer("ORDERS", jetstream.ConsumerConfig{
+    AckPolicy: jetstream.AckExplicitPolicy,
+    // receive messages from ORDERS.A subject only
+    FilterSubject: "ORDERS.A"
+}))
+
+consContext, _ := c.Consume(func(msg jetstream.Msg) {
+    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+})
+defer consContext.Stop()
+```
+
+Similarly to `Messages()`, `Consume()` can be supplied with options to modify the behavior of a single pull request:
+
+- `PullMaxMessages(int)` - up to provided number of messages will be buffered
+- `PullMaxBytes(int)` - up to provided number of bytes will be buffered.
+This setting and `PullMaxMessages` are mutually exclusive
+- `PullExpiry(time.Duration)` - timeout on a single pull request to the server
+type PullThresholdMessages int
+- `PullThresholdMessages(int)` - amount of messages which triggers refilling the buffer
+- `PullThresholdBytes(int)` - amount of bytes which triggers refilling the buffer
+- `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull request.
+An error will be triggered if at least 2 heartbeats are missed
+- `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a custom error handler on `Consume()`, allowing e.g. tracking missing heartbeats.
+
+> __NOTE__:
+> `Stop()` should always be called on `ConsumeContext` to avoid leaking goroutines.
+
 ##### Using `Messages()` to iterate over incoming messages
 
 ```go
@@ -397,28 +457,6 @@ type PullThresholdMessages int
 - `PullThresholdBytes(int)` - amount of bytes which triggers refilling the buffer
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull request.
 An error will be triggered if at least 2 heartbeats are missed (unless `WithMessagesErrOnMissingHeartbeat(false)` is used)
-
-##### Using `Consume()` receive messages in a callback
-
-```go
-consContext, _ := c.Consume(func(msg jetstream.Msg) {
-    fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
-})
-defer consContext.Stop()
-```
-
-Similarly to `Messages()`, `Consume()` can be supplied with options to modify the behavior of a single pull request:
-
-- `PullMaxMessages(int)` - up to provided number of messages will be buffered
-- `PullMaxBytes(int)` - up to provided number of bytes will be buffered.
-This setting and `PullMaxMessages` are mutually exclusive
-- `PullExpiry(time.Duration)` - timeout on a single pull request to the server
-type PullThresholdMessages int
-- `PullThresholdMessages(int)` - amount of messages which triggers refilling the buffer
-- `PullThresholdBytes(int)` - amount of bytes which triggers refilling the buffer
-- `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull request.
-An error will be triggered if at least 2 heartbeats are missed
-- `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a custom error handler on `Consume()`, allowing e.g. tracking missing heartbeats.
 
 ## Publishing on stream
 
