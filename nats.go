@@ -5016,7 +5016,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		nc.mu.Unlock()
 		return
 	}
-	nc.changeConnStatus(CLOSED)
+	nc.status = CLOSED
 
 	// Kick the Go routines so they fall out.
 	nc.kickFlusher()
