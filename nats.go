@@ -541,7 +541,7 @@ type Conn struct {
 	pongs         []chan struct{}
 	scratch       [scratchSize]byte
 	status        Status
-	statListeners map[Status][]chan struct{}
+	statListeners map[Status][]chan Status
 	initc         bool // true if the connection is performing the initial connect
 	err           error
 	ps            *parseState
@@ -2759,7 +2759,7 @@ func (nc *Conn) doReconnect(err error) {
 		nc.bw.doneWithPending()
 
 		// This is where we are truly connected.
-		nc.changeConnStatus(CONNECTED)
+		nc.status = CONNECTED
 
 		// If we are here with a retry on failed connect, indicate that the
 		// initial connect is now complete.
@@ -5003,11 +5003,11 @@ func (nc *Conn) clearPendingRequestCalls() {
 func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.mu.Lock()
 	if nc.isClosed() {
-		nc.changeConnStatus(status)
+		nc.status = status
 		nc.mu.Unlock()
 		return
 	}
-	nc.changeConnStatus(CLOSED)
+	nc.status = CLOSED
 
 	// Kick the Go routines so they fall out.
 	nc.kickFlusher()
@@ -5456,14 +5456,30 @@ func (nc *Conn) GetClientID() (uint64, error) {
 	return nc.info.CID, nil
 }
 
-func (nc *Conn) RegisterStatusChangeListener(status Status, ch chan struct{}) {
+// StatusChanged returns a channel on which given list of connection status changes will be reported.
+// If no statuses are provided, defaults will be used: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
+	if len(statuses) == 0 {
+		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
+	}
+	ch := make(chan Status)
+	for _, s := range statuses {
+		nc.registerStatusChangeListener(s, ch)
+	}
+	return ch
+}
+
+// registerStatusChangeListener registers a channel waiting for a specific status change event.
+// Status change events are non-blocking - if no receiver is waiting for the status change,
+// it will not be sent on the channel. Closed channels are ignored.
+func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.statListeners == nil {
-		nc.statListeners = make(map[Status][]chan struct{})
+		nc.statListeners = make(map[Status][]chan Status)
 	}
 	if _, ok := nc.statListeners[status]; !ok {
-		nc.statListeners[status] = make([]chan struct{}, 0)
+		nc.statListeners[status] = make([]chan Status, 0)
 	}
 	nc.statListeners[status] = append(nc.statListeners[status], ch)
 }
@@ -5486,7 +5502,7 @@ Loop:
 		}
 		// only send event if someone's listening
 		select {
-		case nc.statListeners[s][i] <- struct{}{}:
+		case nc.statListeners[s][i] <- s:
 		default:
 		}
 	}
