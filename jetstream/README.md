@@ -93,7 +93,7 @@ func main() {
         fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
     }
     if msgs.Error() {
-        fmt.Println("Error duting Fetch(): ", msgs.Error())
+        fmt.Println("Error during Fetch(): ", msgs.Error())
     }
 
     // Receive messages continuously in a callback

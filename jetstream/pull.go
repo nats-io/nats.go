@@ -86,20 +86,19 @@ type (
 
 	pullSubscription struct {
 		sync.Mutex
-		id              string
-		consumer        *pullConsumer
-		subscription    *nats.Subscription
-		msgs            chan *nats.Msg
-		errs            chan error
-		pending         pendingMsgs
-		hbMonitor       *hbMonitor
-		fetchInProgress uint32
-		closed          uint32
-		done            chan struct{}
-		connected       chan struct{}
-		disconnected    chan struct{}
-		fetchNext       chan *pullRequest
-		consumeOpts     *consumeOpts
+		id                string
+		consumer          *pullConsumer
+		subscription      *nats.Subscription
+		msgs              chan *nats.Msg
+		errs              chan error
+		pending           pendingMsgs
+		hbMonitor         *hbMonitor
+		fetchInProgress   uint32
+		closed            uint32
+		done              chan struct{}
+		connStatusChanged chan nats.Status
+		fetchNext         chan *pullRequest
+		consumeOpts       *consumeOpts
 	}
 
 	pendingMsgs struct {
@@ -163,18 +162,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		consumeID = nuid.Next()
 	}
 	sub := &pullSubscription{
-		id:           consumeID,
-		consumer:     p,
-		errs:         make(chan error, 1),
-		done:         make(chan struct{}, 1),
-		fetchNext:    make(chan *pullRequest, 1),
-		connected:    make(chan struct{}),
-		disconnected: make(chan struct{}),
-		consumeOpts:  consumeOpts,
+		id:          consumeID,
+		consumer:    p,
+		errs:        make(chan error, 1),
+		done:        make(chan struct{}, 1),
+		fetchNext:   make(chan *pullRequest, 1),
+		consumeOpts: consumeOpts,
 	}
-	p.jetStream.conn.RegisterStatusChangeListener(nats.CONNECTED, sub.connected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.DISCONNECTED, sub.disconnected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.RECONNECTING, sub.disconnected)
+	sub.connStatusChanged = p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 
@@ -246,41 +241,50 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				return
 			}
 			select {
-			case <-sub.disconnected:
-				if sub.hbMonitor != nil {
-					sub.hbMonitor.Stop()
+			case status, ok := <-sub.connStatusChanged:
+				if !ok {
+					continue
 				}
-				isConnected = false
-			case <-sub.connected:
-				if !isConnected {
-					// try fetching consumer info several times to make sure consumer is available after reconnect
-					for i := 0; i < 5; i++ {
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						_, err := p.Info(ctx)
-						cancel()
-						if err == nil {
-							break
-						}
-						if err != nil {
-							if i == 4 {
-								sub.cleanupSubscriptionAndRestoreConnHandler()
-								if sub.consumeOpts.ErrHandler != nil {
-									sub.consumeOpts.ErrHandler(sub, err)
-								}
-								return
+				if status == nats.RECONNECTING {
+					if sub.hbMonitor != nil {
+						sub.hbMonitor.Stop()
+					}
+					isConnected = false
+				}
+				if status == nats.CONNECTED {
+					sub.Lock()
+					if !isConnected {
+						isConnected = true
+						// try fetching consumer info several times to make sure consumer is available after reconnect
+						for i := 0; i < 5; i++ {
+							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							_, err := p.Info(ctx)
+							cancel()
+							if err == nil {
+								break
 							}
+							if err != nil {
+								if i == 4 {
+									sub.cleanup()
+									if sub.consumeOpts.ErrHandler != nil {
+										sub.consumeOpts.ErrHandler(sub, err)
+									}
+									sub.Unlock()
+									return
+								}
+							}
+							time.Sleep(5 * time.Second)
 						}
-						time.Sleep(5 * time.Second)
-					}
 
-					sub.fetchNext <- &pullRequest{
-						Expires:   sub.consumeOpts.Expires,
-						Batch:     sub.consumeOpts.MaxMessages,
-						MaxBytes:  sub.consumeOpts.MaxBytes,
-						Heartbeat: sub.consumeOpts.Heartbeat,
+						sub.fetchNext <- &pullRequest{
+							Expires:   sub.consumeOpts.Expires,
+							Batch:     sub.consumeOpts.MaxMessages,
+							MaxBytes:  sub.consumeOpts.MaxBytes,
+							Heartbeat: sub.consumeOpts.Heartbeat,
+						}
+						sub.Unlock()
+						sub.resetPendingMsgs()
 					}
-					sub.resetPendingMsgs()
-					isConnected = true
 				}
 			case err := <-sub.errs:
 				if sub.consumeOpts.ErrHandler != nil {
@@ -316,7 +320,7 @@ func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 	defer s.Unlock()
 	s.pending.msgCount--
 	if s.consumeOpts.MaxBytes != 0 {
-		s.pending.byteCount -= msgSize(msg)
+		s.pending.byteCount -= msg.Size()
 	}
 }
 
@@ -348,19 +352,15 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		consumeID = nuid.Next()
 	}
 	sub := &pullSubscription{
-		id:           consumeID,
-		consumer:     p,
-		done:         make(chan struct{}, 1),
-		msgs:         msgs,
-		errs:         make(chan error, 1),
-		fetchNext:    make(chan *pullRequest, 1),
-		connected:    make(chan struct{}),
-		disconnected: make(chan struct{}),
-		consumeOpts:  consumeOpts,
+		id:          consumeID,
+		consumer:    p,
+		done:        make(chan struct{}, 1),
+		msgs:        msgs,
+		errs:        make(chan error, 1),
+		fetchNext:   make(chan *pullRequest, 1),
+		consumeOpts: consumeOpts,
 	}
-	p.jetStream.conn.RegisterStatusChangeListener(nats.CONNECTED, sub.connected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.DISCONNECTED, sub.disconnected)
-	p.jetStream.conn.RegisterStatusChangeListener(nats.RECONNECTING, sub.disconnected)
+	sub.connStatusChanged = p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
 	inbox := nats.NewInbox()
 	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
@@ -370,15 +370,35 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 
 	go func() {
 		<-sub.done
-		sub.cleanupSubscriptionAndRestoreConnHandler()
+		sub.cleanup()
 	}()
 	p.subscriptions[sub.id] = sub
 	p.Unlock()
 
 	go sub.pullMessages(subject)
 
+	go func() {
+		for {
+			status, ok := <-sub.connStatusChanged
+			if !ok {
+				return
+			}
+			if status == nats.CONNECTED {
+				sub.errs <- errConnected
+			}
+			if status == nats.RECONNECTING {
+				sub.errs <- errDisconnected
+			}
+		}
+	}()
+
 	return sub, nil
 }
+
+var (
+	errConnected    = errors.New("connected")
+	errDisconnected = errors.New("disconnected")
+)
 
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
@@ -429,36 +449,9 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			s.pending.msgCount--
 			if s.consumeOpts.MaxBytes > 0 {
-				s.pending.byteCount -= msgSize(msg)
+				s.pending.byteCount -= msg.Size()
 			}
 			return s.consumer.jetStream.toJSMsg(msg), nil
-		case <-s.disconnected:
-			if hbMonitor != nil {
-				hbMonitor.Stop()
-			}
-			isConnected = false
-		case <-s.connected:
-			if !isConnected {
-				// try fetching consumer info several times to make sure consumer is available after reconnect
-				for i := 0; i < 5; i++ {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					_, err := s.consumer.Info(ctx)
-					cancel()
-					if err == nil {
-						break
-					}
-					if err != nil {
-						if i == 4 {
-							s.Stop()
-							return nil, err
-						}
-					}
-					time.Sleep(5 * time.Second)
-				}
-				s.pending.msgCount = 0
-				s.pending.byteCount = 0
-				hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
-			}
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
@@ -466,6 +459,36 @@ func (s *pullSubscription) Next() (Msg, error) {
 				if s.consumeOpts.ReportMissingHeartbeats {
 					return nil, err
 				}
+			}
+			if errors.Is(err, errConnected) {
+				if !isConnected {
+					isConnected = true
+					// try fetching consumer info several times to make sure consumer is available after reconnect
+					for i := 0; i < 5; i++ {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						_, err := s.consumer.Info(ctx)
+						cancel()
+						if err == nil {
+							break
+						}
+						if err != nil {
+							if i == 4 {
+								s.Stop()
+								return nil, err
+							}
+						}
+						time.Sleep(5 * time.Second)
+					}
+					s.pending.msgCount = 0
+					s.pending.byteCount = 0
+					hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+				}
+			}
+			if errors.Is(err, errDisconnected) {
+				if hbMonitor != nil {
+					hbMonitor.Stop()
+				}
+				isConnected = false
 			}
 		}
 	}
@@ -636,10 +659,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				res.sseq = meta.Sequence.Stream
 				receivedMsgs++
 				if req.MaxBytes != 0 {
-					receivedBytes += msgSize(msg)
+					receivedBytes += msg.Size()
 				}
 			case <-time.After(req.Expires + 1*time.Second):
-				res.err = fmt.Errorf("fetch timed out")
 				res.done = true
 				return
 			}
@@ -665,6 +687,9 @@ func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	if msg != nil {
 		return msg, nil
 	}
+	if res.Error() == nil {
+		return nil, nats.ErrTimeout
+	}
 	return nil, res.Error()
 }
 
@@ -676,14 +701,14 @@ func (s *pullSubscription) pullMessages(subject string) {
 
 			if err := s.pull(req, subject); err != nil {
 				if errors.Is(err, ErrMsgIteratorClosed) {
-					s.cleanupSubscriptionAndRestoreConnHandler()
+					s.cleanup()
 					return
 				}
 				s.errs <- err
 			}
 			atomic.StoreUint32(&s.fetchInProgress, 0)
 		case <-s.done:
-			s.cleanupSubscriptionAndRestoreConnHandler()
+			s.cleanup()
 			return
 		}
 	}
@@ -700,7 +725,7 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 	}
 }
 
-func (s *pullSubscription) cleanupSubscriptionAndRestoreConnHandler() {
+func (s *pullSubscription) cleanup() {
 	s.consumer.Lock()
 	defer s.consumer.Unlock()
 	if s.subscription == nil {
@@ -710,18 +735,9 @@ func (s *pullSubscription) cleanupSubscriptionAndRestoreConnHandler() {
 		s.hbMonitor.Stop()
 	}
 	s.subscription.Unsubscribe()
-	close(s.connected)
-	close(s.disconnected)
+	close(s.connStatusChanged)
 	s.subscription = nil
 	delete(s.consumer.subscriptions, s.id)
-}
-
-func msgSize(msg *nats.Msg) int {
-	if msg == nil {
-		return 0
-	}
-	size := len(msg.Subject) + len(msg.Reply) + len(msg.Data)
-	return size
 }
 
 // pull sends a pull request to the server and waits for messages using a subscription from [pullSubscription].
