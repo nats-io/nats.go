@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -75,7 +74,6 @@ type (
 
 	endpointOpts struct {
 		subject  string
-		schema   *Schema
 		metadata map[string]string
 	}
 
@@ -133,26 +131,10 @@ type (
 		Subjects    []string `json:"subjects"`
 	}
 
-	// SchemaResp is the response value for SCHEMA requests.
-	SchemaResp struct {
-		ServiceIdentity
-		Type      string           `json:"type"`
-		APIURL    string           `json:"api_url"`
-		Endpoints []EndpointSchema `json:"endpoints"`
-	}
-
 	EndpointSchema struct {
 		Name     string            `json:"name"`
 		Subject  string            `json:"subject"`
 		Metadata map[string]string `json:"metadata"`
-		Schema   Schema            `json:"schema,omitempty"`
-	}
-
-	// Schema can be used to configure a schema for a service.
-	// It is olso returned by the SCHEMA monitoring service (if set).
-	Schema struct {
-		Request  string `json:"request"`
-		Response string `json:"response"`
 	}
 
 	// Endpoint manages a service endpoint.
@@ -188,9 +170,6 @@ type (
 		// Description of the service.
 		Description string `json:"description"`
 
-		// APIURL is an optional url pointing to API specification.
-		APIURL string `json:"api_url"`
-
 		// Metadata annotates the service
 		Metadata map[string]string `json:"metadata,omitempty"`
 
@@ -211,9 +190,6 @@ type (
 
 		// Handler used by the endpoint.
 		Handler Handler
-
-		// Schema is an optional request/response endpoint schema.
-		Schema *Schema
 
 		// Metadata annotates the service
 		Metadata map[string]string `json:"metadata,omitempty"`
@@ -275,14 +251,12 @@ const (
 	PingVerb Verb = iota
 	StatsVerb
 	InfoVerb
-	SchemaVerb
 )
 
 const (
-	InfoResponseType   = "io.nats.micro.v1.info_response"
-	PingResponseType   = "io.nats.micro.v1.ping_response"
-	StatsResponseType  = "io.nats.micro.v1.stats_response"
-	SchemaResponseType = "io.nats.micro.v1.schema_response"
+	InfoResponseType  = "io.nats.micro.v1.info_response"
+	PingResponseType  = "io.nats.micro.v1.ping_response"
+	StatsResponseType = "io.nats.micro.v1.stats_response"
 )
 
 var (
@@ -297,7 +271,7 @@ var (
 	// ErrConfigValidation is returned when service configuration is invalid
 	ErrConfigValidation = errors.New("validation")
 
-	// ErrVerbNotSupported is returned when invalid [Verb] is used (PING, SCHEMA, INFO, STATS)
+	// ErrVerbNotSupported is returned when invalid [Verb] is used (PING, INFO, STATS)
 	ErrVerbNotSupported = errors.New("unsupported verb")
 
 	// ErrServiceNameRequired is returned when attempting to generate control subject with ID but empty name
@@ -312,15 +286,13 @@ func (s Verb) String() string {
 		return "STATS"
 	case InfoVerb:
 		return "INFO"
-	case SchemaVerb:
-		return "SCHEMA"
 	default:
 		return ""
 	}
 }
 
 // AddService adds a microservice.
-// It will enable internal common services (PING, STATS, INFO and SCHEMA).
+// It will enable internal common services (PING, STATS and INFO).
 // Request handlers have to be registered separately using Service.AddEndpoint.
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
@@ -354,9 +326,6 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 
 	if config.Endpoint != nil {
 		opts := []EndpointOpt{WithEndpointSubject(config.Endpoint.Subject)}
-		if config.Endpoint.Schema != nil {
-			opts = append(opts, WithEndpointSchema(config.Endpoint.Schema))
-		}
 		if config.Endpoint.Metadata != nil {
 			opts = append(opts, WithEndpointMetadata(config.Endpoint.Metadata))
 		}
@@ -384,10 +353,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	}
 
 	for verb, source := range map[Verb]func() any{
-		InfoVerb:   func() any { return svc.Info() },
-		PingVerb:   func() any { return pingResponse },
-		StatsVerb:  func() any { return svc.Stats() },
-		SchemaVerb: func() any { return svc.schema() },
+		InfoVerb:  func() any { return svc.Info() },
+		PingVerb:  func() any { return pingResponse },
+		StatsVerb: func() any { return svc.Stats() },
 	} {
 		handler := handleVerb(verb, source)
 		if err := svc.addVerbHandlers(nc, verb, handler); err != nil {
@@ -412,10 +380,10 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 		subject = options.subject
 	}
 
-	return addEndpoint(s, name, subject, handler, options.schema, options.metadata)
+	return addEndpoint(s, name, subject, handler, options.metadata)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler, schema *Schema, metadata map[string]string) error {
+func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string) error {
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
 	}
@@ -427,7 +395,6 @@ func addEndpoint(s *service, name, subject string, handler Handler, schema *Sche
 		EndpointConfig: EndpointConfig{
 			Subject:  subject,
 			Handler:  handler,
-			Schema:   schema,
 			Metadata: metadata,
 		},
 	}
@@ -484,9 +451,6 @@ func (c *Config) valid() error {
 	}
 	if !semVerRegexp.MatchString(c.Version) {
 		return fmt.Errorf("%w: version: version should not be empty should match the SemVer format", ErrConfigValidation)
-	}
-	if _, err := url.Parse(c.APIURL); err != nil {
-		return fmt.Errorf("%w: api_url: invalid url: %s", ErrConfigValidation, err)
 	}
 	return nil
 }
@@ -744,31 +708,6 @@ func (s *service) Stopped() bool {
 	return s.stopped
 }
 
-func (s *service) schema() SchemaResp {
-	endpoints := make([]EndpointSchema, 0, len(s.endpoints))
-	for _, e := range s.endpoints {
-		schema := Schema{}
-		if e.Schema != nil {
-			schema.Request = e.Schema.Request
-			schema.Response = e.Schema.Response
-		}
-
-		endpoints = append(endpoints, EndpointSchema{
-			Name:     e.stats.Name,
-			Subject:  e.stats.Subject,
-			Metadata: e.EndpointConfig.Metadata,
-			Schema:   schema,
-		})
-	}
-
-	return SchemaResp{
-		ServiceIdentity: s.serviceIdentity(),
-		Type:            SchemaResponseType,
-		APIURL:          s.APIURL,
-		Endpoints:       endpoints,
-	}
-}
-
 func (e *NATSError) Error() string {
 	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }
@@ -788,7 +727,7 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	if g.prefix == "" {
 		endpointSubject = subject
 	}
-	return addEndpoint(g.service, name, endpointSubject, handler, options.schema, options.metadata)
+	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata)
 }
 
 func (g *group) AddGroup(name string) Group {
@@ -833,7 +772,7 @@ func (e *Endpoint) reset() {
 }
 
 // ControlSubject returns monitoring subjects used by the Service.
-// Providing a verb is mandatory (it should be one of Ping, Schema, Info or Stats).
+// Providing a verb is mandatory (it should be one of Ping, Info or Stats).
 // Depending on whether kind and id are provided, ControlSubject will return one of the following:
 //   - verb only: subject used to monitor all available services
 //   - verb and kind: subject used to monitor services with the provided name
@@ -858,13 +797,6 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 func WithEndpointSubject(subject string) EndpointOpt {
 	return func(e *endpointOpts) error {
 		e.subject = subject
-		return nil
-	}
-}
-
-func WithEndpointSchema(schema *Schema) EndpointOpt {
-	return func(e *endpointOpts) error {
-		e.schema = schema
 		return nil
 	}
 }
