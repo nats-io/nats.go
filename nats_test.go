@@ -3003,7 +3003,7 @@ func BenchmarkHeaderDecode(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				if _, err := decodeHeadersMsg(hdr); err != nil {
+				if _, err := DecodeHeadersMsg(hdr); err != nil {
 					b.Fatalf("Unexpected error: %v", err)
 				}
 			}

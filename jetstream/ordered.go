@@ -60,6 +60,8 @@ const (
 	consumerTypeFetch
 )
 
+var errOrderedSequenceMismatch = errors.New("sequence mismatch")
+
 // Consume can be used to continuously receive messages and handle them with the provided callback function
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
@@ -68,9 +70,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 		if err != nil {
 			return nil, err
 		}
+	} else if c.consumerType == consumerTypeConsume && c.currentConsumer != nil {
+		return nil, ErrOrderedConsumerConcurrentRequests
 	}
 	if c.consumerType == consumerTypeFetch {
-		return nil, fmt.Errorf("ordered consumer initialized as fetch")
+		return nil, ErrOrderConsumerUsedAsFetch
 	}
 	consumeOpts, err := parseConsumeOpts(opts...)
 	if err != nil {
@@ -91,7 +95,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
-				c.errHandler(serial)(c.currentConsumer.subscriptions[""], ErrOrderedSequenceMismatch)
+				c.errHandler(serial)(c.currentConsumer.subscriptions[""], errOrderedSequenceMismatch)
 				return
 			}
 			c.cursor.deliverSeq = dseq
@@ -131,11 +135,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 
 func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err error) {
 	return func(cc ConsumeContext, err error) {
-		if c.userErrHandler != nil {
+		if c.userErrHandler != nil && !errors.Is(err, errOrderedSequenceMismatch) {
 			c.userErrHandler(cc, err)
 		}
 		if errors.Is(err, ErrNoHeartbeat) ||
-			errors.Is(err, ErrOrderedSequenceMismatch) ||
+			errors.Is(err, errOrderedSequenceMismatch) ||
 			errors.Is(err, ErrConsumerDeleted) {
 			// only reset if serial matches the currect consumer serial and there is no reset in progress
 			if serial == c.serial && atomic.LoadUint32(&c.resetInProgress) == 0 {
@@ -159,7 +163,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 		return nil, ErrOrderedConsumerConcurrentRequests
 	}
 	if c.consumerType == consumerTypeFetch {
-		return nil, fmt.Errorf("ordered consumer initialized as fetch")
+		return nil, ErrOrderConsumerUsedAsFetch
 	}
 	consumeOpts, err := parseMessagesOpts(opts...)
 	if err != nil {
@@ -204,7 +208,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			serial := serialNumberFromConsumer(meta.Consumer)
 			dseq := meta.Sequence.Consumer
 			if dseq != s.consumer.cursor.deliverSeq+1 {
-				s.consumer.errHandler(serial)(currentConsumer.subscriptions[""], ErrOrderedSequenceMismatch)
+				s.consumer.errHandler(serial)(currentConsumer.subscriptions[""], errOrderedSequenceMismatch)
 				continue
 			}
 			s.consumer.cursor.deliverSeq = dseq
@@ -228,11 +232,11 @@ func (s *orderedSubscription) Stop() {
 // or context reaches its deadline.
 func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
-		return nil, fmt.Errorf("ordered consumer initialized as consume")
+		return nil, ErrOrderConsumerUsedAsConsume
 	}
 	if c.runningFetch != nil {
 		if !c.runningFetch.done {
-			return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+			return nil, ErrOrderedConsumerConcurrentRequests
 		}
 		c.cursor.streamSeq = c.runningFetch.sseq
 	}
@@ -254,11 +258,11 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 // exceeded or request times out.
 func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
-		return nil, fmt.Errorf("ordered consumer initialized as consume")
+		return nil, ErrOrderConsumerUsedAsConsume
 	}
 	if c.runningFetch != nil {
 		if !c.runningFetch.done {
-			return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+			return nil, ErrOrderedConsumerConcurrentRequests
 		}
 		c.cursor.streamSeq = c.runningFetch.sseq
 	}
@@ -279,10 +283,10 @@ func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBat
 // This method will always send a single request and immediately return up to a provided number of messages
 func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
-		return nil, fmt.Errorf("ordered consumer initialized as consume")
+		return nil, ErrOrderConsumerUsedAsConsume
 	}
 	if c.runningFetch != nil && !c.runningFetch.done {
-		return nil, fmt.Errorf("cannot run concurrent ordered Fetch requests")
+		return nil, ErrOrderedConsumerConcurrentRequests
 	}
 	c.consumerType = consumerTypeFetch
 	err := c.reset()
@@ -326,19 +330,16 @@ func (c *orderedConsumer) reset() error {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			err = c.jetStream.DeleteConsumer(ctx, c.stream, c.currentConsumer.CachedInfo().Name)
+			cancel()
 			if err != nil {
 				if errors.Is(err, ErrConsumerNotFound) {
-					cancel()
 					break
 				}
 				if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
-					cancel()
 					continue
 				}
-				cancel()
 				return err
 			}
-			cancel()
 			break
 		}
 	}

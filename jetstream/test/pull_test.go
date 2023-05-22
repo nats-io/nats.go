@@ -1185,6 +1185,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer it.Stop()
 
 		done := make(chan struct{})
 		errs := make(chan error)
