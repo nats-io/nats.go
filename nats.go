@@ -524,31 +524,32 @@ type Conn struct {
 	mu sync.RWMutex
 	// Opts holds the configuration of the Conn.
 	// Modifying the configuration of a running Conn is a race.
-	Opts    Options
-	wg      sync.WaitGroup
-	srvPool []*srv
-	current *srv
-	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
-	conn    net.Conn
-	bw      *natsWriter
-	br      *natsReader
-	fch     chan struct{}
-	info    serverInfo
-	ssid    int64
-	subsMu  sync.RWMutex
-	subs    map[int64]*Subscription
-	ach     *asyncCallbacksHandler
-	pongs   []chan struct{}
-	scratch [scratchSize]byte
-	status  Status
-	initc   bool // true if the connection is performing the initial connect
-	err     error
-	ps      *parseState
-	ptmr    *time.Timer
-	pout    int
-	ar      bool // abort reconnect
-	rqch    chan struct{}
-	ws      bool // true if a websocket connection
+	Opts          Options
+	wg            sync.WaitGroup
+	srvPool       []*srv
+	current       *srv
+	urls          map[string]struct{} // Keep track of all known URLs (used by processInfo)
+	conn          net.Conn
+	bw            *natsWriter
+	br            *natsReader
+	fch           chan struct{}
+	info          serverInfo
+	ssid          int64
+	subsMu        sync.RWMutex
+	subs          map[int64]*Subscription
+	ach           *asyncCallbacksHandler
+	pongs         []chan struct{}
+	scratch       [scratchSize]byte
+	status        Status
+	statListeners map[Status][]chan Status
+	initc         bool // true if the connection is performing the initial connect
+	err           error
+	ps            *parseState
+	ptmr          *time.Timer
+	pout          int
+	ar            bool // abort reconnect
+	rqch          chan struct{}
+	ws            bool // true if a websocket connection
 
 	// New style response handler
 	respSub       string               // The wildcard subject
@@ -2219,7 +2220,7 @@ func (nc *Conn) processConnectInit() error {
 	defer nc.conn.SetDeadline(time.Time{})
 
 	// Set our status to connecting.
-	nc.status = CONNECTING
+	nc.changeConnStatus(CONNECTING)
 
 	// Process the INFO protocol received from the server
 	err := nc.processExpectedInfo()
@@ -2311,7 +2312,7 @@ func (nc *Conn) connect() (bool, error) {
 		nc.initc = false
 	} else if nc.Opts.RetryOnFailedConnect {
 		nc.setup()
-		nc.status = RECONNECTING
+		nc.changeConnStatus(RECONNECTING)
 		nc.bw.switchToPending()
 		go nc.doReconnect(ErrNoServers)
 		err = nil
@@ -2551,7 +2552,7 @@ func (nc *Conn) sendConnect() error {
 	}
 
 	// This is where we are truly connected.
-	nc.status = CONNECTED
+	nc.changeConnStatus(CONNECTED)
 
 	return nil
 }
@@ -2726,7 +2727,7 @@ func (nc *Conn) doReconnect(err error) {
 			if nc.ar {
 				break
 			}
-			nc.status = RECONNECTING
+			nc.changeConnStatus(RECONNECTING)
 			continue
 		}
 
@@ -2744,7 +2745,7 @@ func (nc *Conn) doReconnect(err error) {
 		// Now send off and clear pending buffer
 		nc.err = nc.flushReconnectPendingItems()
 		if nc.err != nil {
-			nc.status = RECONNECTING
+			nc.changeConnStatus(RECONNECTING)
 			// Stop the ping timer (if set)
 			nc.stopPingTimer()
 			// Since processConnectInit() returned without error, the
@@ -2797,7 +2798,7 @@ func (nc *Conn) processOpErr(err error) {
 
 	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
 		// Set our new status
-		nc.status = RECONNECTING
+		nc.changeConnStatus(RECONNECTING)
 		// Stop ping timer if set
 		nc.stopPingTimer()
 		if nc.conn != nil {
@@ -2816,7 +2817,7 @@ func (nc *Conn) processOpErr(err error) {
 		return
 	}
 
-	nc.status = DISCONNECTED
+	nc.changeConnStatus(DISCONNECTED)
 	nc.err = err
 	nc.mu.Unlock()
 	nc.close(CLOSED, true, nil)
@@ -5065,7 +5066,7 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 	nc.subs = nil
 	nc.subsMu.Unlock()
 
-	nc.status = status
+	nc.changeConnStatus(status)
 
 	// Perform appropriate callback if needed for a disconnect.
 	if doCBs {
@@ -5210,7 +5211,7 @@ func (nc *Conn) drainConnection() {
 
 	// Flip State
 	nc.mu.Lock()
-	nc.status = DRAINING_PUBS
+	nc.changeConnStatus(DRAINING_PUBS)
 	nc.mu.Unlock()
 
 	// Do publish drain via Flush() call.
@@ -5245,7 +5246,7 @@ func (nc *Conn) Drain() error {
 		nc.mu.Unlock()
 		return nil
 	}
-	nc.status = DRAINING_SUBS
+	nc.changeConnStatus(DRAINING_SUBS)
 	go nc.drainConnection()
 	nc.mu.Unlock()
 
@@ -5453,6 +5454,68 @@ func (nc *Conn) GetClientID() (uint64, error) {
 		return 0, ErrClientIDNotSupported
 	}
 	return nc.info.CID, nil
+}
+
+// StatusChanged returns a channel on which given list of connection status changes will be reported.
+// If no statuses are provided, defaults will be used: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
+	if len(statuses) == 0 {
+		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
+	}
+	ch := make(chan Status)
+	for _, s := range statuses {
+		nc.registerStatusChangeListener(s, ch)
+	}
+	return ch
+}
+
+// registerStatusChangeListener registers a channel waiting for a specific status change event.
+// Status change events are non-blocking - if no receiver is waiting for the status change,
+// it will not be sent on the channel. Closed channels are ignored.
+func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.statListeners == nil {
+		nc.statListeners = make(map[Status][]chan Status)
+	}
+	if _, ok := nc.statListeners[status]; !ok {
+		nc.statListeners[status] = make([]chan Status, 0)
+	}
+	nc.statListeners[status] = append(nc.statListeners[status], ch)
+}
+
+// sendStatusEvent sends connection status event to all channels.
+// If channel is closed, or there is no listener, sendStatusEvent
+// will not block. Lock should be held entering.
+func (nc *Conn) sendStatusEvent(s Status) {
+Loop:
+	for i := 0; i < len(nc.statListeners[s]); i++ {
+		// make sure channel is not closed
+		select {
+		case <-nc.statListeners[s][i]:
+			// if chan is closed, remove it
+			nc.statListeners[s][i] = nc.statListeners[s][len(nc.statListeners[s])-1]
+			nc.statListeners[s] = nc.statListeners[s][:len(nc.statListeners[s])-1]
+			i--
+			continue Loop
+		default:
+		}
+		// only send event if someone's listening
+		select {
+		case nc.statListeners[s][i] <- s:
+		default:
+		}
+	}
+}
+
+// changeConnStatus changes connections status and sends events
+// to all listeners. Lock should be held entering.
+func (nc *Conn) changeConnStatus(status Status) {
+	if nc == nil {
+		return
+	}
+	nc.sendStatusEvent(status)
+	nc.status = status
 }
 
 // NkeyOptionFromSeed will load an nkey pair from a seed file.
