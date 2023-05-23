@@ -229,6 +229,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		time.Sleep(100 * time.Millisecond)
 		publishTestMsgs(t, nc)
 
 		msg := <-msgs.Messages()
