@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go/internal/parser"
 	"github.com/nats-io/nuid"
 )
 
@@ -634,7 +635,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 			}
 		}
 
-		tokens, err := getMetadataFields(m.Reply)
+		tokens, err := parser.GetMetadataFields(m.Reply)
 		if err != nil {
 			gotErr(m, err)
 			return
