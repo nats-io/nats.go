@@ -171,6 +171,10 @@ var (
 	// ErrOrderedConsumerConcurrentRequests is returned when attempting to run concurrent operations
 	// on ordered consumers.
 	ErrOrderedConsumerConcurrentRequests = &jsError{message: "cannot run concurrent processing using ordered consumer"}
+
+	// ErrOrderedConsumerNotCreated is returned when trying to get consumer info of an
+	// ordered consumer which was not yet created.
+	ErrOrderedConsumerNotCreated = &jsError{message: "consumer instance not yet created"}
 )
 
 // Error prints the JetStream API error code and description

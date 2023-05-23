@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,7 @@ type (
 		resetInProgress uint32
 		userErrHandler  ConsumeErrHandlerFunc
 		runningFetch    *fetchResult
+		sync.Mutex
 	}
 
 	orderedSubscription struct {
@@ -320,6 +322,8 @@ func serialNumberFromConsumer(name string) int {
 }
 
 func (c *orderedConsumer) reset() error {
+	c.Lock()
+	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
 		// c.currentConsumer.subscription.Stop()
@@ -421,6 +425,11 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 }
 
 func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
+	c.Lock()
+	defer c.Unlock()
+	if c.currentConsumer == nil {
+		return nil, ErrOrderedConsumerNotCreated
+	}
 	infoSubject := apiSubj(c.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, c.stream, c.currentConsumer.name))
 	var resp consumerInfoResponse
 
@@ -439,5 +448,10 @@ func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 }
 
 func (c *orderedConsumer) CachedInfo() *ConsumerInfo {
+	c.Lock()
+	defer c.Unlock()
+	if c.currentConsumer == nil {
+		return nil
+	}
 	return c.currentConsumer.info
 }
