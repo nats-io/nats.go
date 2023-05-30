@@ -170,7 +170,7 @@ func ExampleService_Info() {
 	fmt.Println(info.Name)
 	fmt.Println(info.Description)
 	fmt.Println(info.Version)
-	fmt.Println(info.Subjects)
+	fmt.Println(info.Endpoints)
 }
 
 func ExampleService_Stats() {
