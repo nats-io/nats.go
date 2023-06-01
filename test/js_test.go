@@ -5572,18 +5572,22 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 	nodes := make([]*jsServer, size)
 	opts := make([]*server.Options, 0)
 
-	getAddr := func() (string, string, int) {
+	var activeListeners []net.Listener
+	getAddr := func(t *testing.T) (string, string, int) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			panic(err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer l.Close()
 
 		addr := l.Addr()
 		host := addr.(*net.TCPAddr).IP.String()
 		port := addr.(*net.TCPAddr).Port
-		l.Close()
 		time.Sleep(100 * time.Millisecond)
+
+		// we cannot close the listener immediately to avoid duplicate port binding
+		// the returned net.Listener has to be closed after all ports are drawn
+		activeListeners = append(activeListeners, l)
 		return addr.String(), host, port
 	}
 
@@ -5600,17 +5604,21 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 
 		if size > 1 {
 			o.Cluster.Name = clusterName
-			_, host1, port1 := getAddr()
+			_, host1, port1 := getAddr(t)
 			o.Host = host1
 			o.Port = port1
 
-			addr2, host2, port2 := getAddr()
+			addr2, host2, port2 := getAddr(t)
 			o.Cluster.Host = host2
 			o.Cluster.Port = port2
 			o.Tags = []string{o.ServerName}
 			routes = append(routes, fmt.Sprintf("nats://%s", addr2))
 		}
 		opts = append(opts, &o)
+	}
+	// close all connections used to randomize ports
+	for _, l := range activeListeners {
+		l.Close()
 	}
 
 	if size > 1 {
@@ -8709,6 +8717,9 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 }
 
 func TestJetStreamConsumerReplicasOption(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
 	withJSCluster(t, "CR", 3, func(t *testing.T, nodes ...*jsServer) {
 		nc, js := jsClient(t, nodes[0].Server)
 		defer nc.Close()
