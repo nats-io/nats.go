@@ -8717,9 +8717,6 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 }
 
 func TestJetStreamConsumerReplicasOption(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
 	withJSCluster(t, "CR", 3, func(t *testing.T, nodes ...*jsServer) {
 		nc, js := jsClient(t, nodes[0].Server)
 		defer nc.Close()
