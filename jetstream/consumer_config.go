@@ -190,18 +190,15 @@ func (p DeliverPolicy) String() string {
 }
 
 const (
-	// AckNonePolicy requires no acks for delivered messages.
-	AckNonePolicy AckPolicy = iota
+	// AckExplicitPolicy requires ack or nack for all messages.
+	AckExplicitPolicy AckPolicy = iota
 
 	// AckAllPolicy when acking a sequence number, this implicitly acks all
 	// sequences below this one as well.
 	AckAllPolicy
 
-	// AckExplicitPolicy requires ack or nack for all messages.
-	AckExplicitPolicy
-
-	// For configuration mismatch check
-	ackPolicyNotSet = 99
+	// AckNonePolicy requires no acks for delivered messages.
+	AckNonePolicy
 )
 
 func (p *AckPolicy) UnmarshalJSON(data []byte) error {
@@ -227,7 +224,7 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 	case AckExplicitPolicy:
 		return json.Marshal("explicit")
 	}
-	return nil, fmt.Errorf("nats: unknown acknowlegement policy %v", p)
+	return nil, fmt.Errorf("nats: unknown acknowledgement policy %v", p)
 }
 
 func (p AckPolicy) String() string {
@@ -238,8 +235,6 @@ func (p AckPolicy) String() string {
 		return "AckAll"
 	case AckExplicitPolicy:
 		return "AckExplicit"
-	case ackPolicyNotSet:
-		return "Not Initialized"
 	}
 	return "Unknown AckPolicy"
 }

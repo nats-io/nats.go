@@ -35,27 +35,27 @@ func TestAddConsumer(t *testing.T) {
 	}{
 		{
 			name:           "create durable pull consumer",
-			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy},
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur"},
 			shouldCreate:   true,
 		},
 		{
 			name:           "create ephemeral pull consumer",
-			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckNonePolicy},
 			shouldCreate:   true,
 		},
 		{
 			name:           "with filter subject",
-			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, FilterSubject: "FOO.A"},
+			consumerConfig: jetstream.ConsumerConfig{FilterSubject: "FOO.A"},
 			shouldCreate:   true,
 		},
 		{
 			name:           "with multiple filter subjects",
-			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, FilterSubjects: []string{"FOO.A", "FOO.B"}},
+			consumerConfig: jetstream.ConsumerConfig{FilterSubjects: []string{"FOO.A", "FOO.B"}},
 			shouldCreate:   true,
 		},
 		{
 			name:           "consumer already exists, update",
-			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy, Description: "test consumer"},
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", Description: "test consumer"},
 		},
 		{
 			name:           "consumer already exists, illegal update",
@@ -64,7 +64,7 @@ func TestAddConsumer(t *testing.T) {
 		},
 		{
 			name:           "invalid durable name",
-			consumerConfig: jetstream.ConsumerConfig{Durable: "dur.123", AckPolicy: jetstream.AckExplicitPolicy},
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur.123"},
 			withError:      jetstream.ErrInvalidConsumerName,
 		},
 	}
@@ -112,9 +112,12 @@ func TestAddConsumer(t *testing.T) {
 					t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
 				}
 			}
-			_, err = s.Consumer(ctx, c.CachedInfo().Name)
+			ci, err := s.Consumer(ctx, c.CachedInfo().Name)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
+			}
+			if ci.CachedInfo().Config.AckPolicy != test.consumerConfig.AckPolicy {
+				t.Fatalf("Invalid ack policy; want: %s; got: %s", test.consumerConfig.AckPolicy, ci.CachedInfo().Config.AckPolicy)
 			}
 		})
 	}
