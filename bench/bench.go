@@ -215,6 +215,9 @@ func (sg *SampleGroup) MaxRate() int64 {
 
 // AvgRate returns the average of all the message rates in the SampleGroup
 func (sg *SampleGroup) AvgRate() int64 {
+	if !sg.HasSamples() {
+		return 0
+	}
 	sum := uint64(0)
 	for _, s := range sg.Samples {
 		sum += uint64(s.Rate())
@@ -224,6 +227,9 @@ func (sg *SampleGroup) AvgRate() int64 {
 
 // StdDev returns the standard deviation the message rates in the SampleGroup
 func (sg *SampleGroup) StdDev() float64 {
+	if !sg.HasSamples() {
+		return 0
+	}
 	avg := float64(sg.AvgRate())
 	sum := float64(0)
 	for _, c := range sg.Samples {
