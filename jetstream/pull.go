@@ -185,16 +185,21 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			return
 		}
 		defer func() {
-			if sub.pending.msgCount < consumeOpts.ThresholdMessages ||
-				(sub.pending.byteCount < consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
+			sub.Lock()
+			pending := sub.pending
+			sub.Unlock()
+
+			if pending.msgCount < consumeOpts.ThresholdMessages ||
+				(pending.byteCount < consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
 					atomic.LoadUint32(&sub.fetchInProgress) == 1 {
 
 				sub.fetchNext <- &pullRequest{
 					Expires:   sub.consumeOpts.Expires,
-					Batch:     sub.consumeOpts.MaxMessages - sub.pending.msgCount,
-					MaxBytes:  sub.consumeOpts.MaxBytes - sub.pending.byteCount,
+					Batch:     sub.consumeOpts.MaxMessages - pending.msgCount,
+					MaxBytes:  sub.consumeOpts.MaxBytes - pending.byteCount,
 					Heartbeat: sub.consumeOpts.Heartbeat,
 				}
+
 				sub.resetPendingMsgs()
 			}
 		}()
@@ -203,7 +208,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			if msgErr == nil {
 				return
 			}
-			if err := sub.handleStatusMsg(msg, msgErr); err != nil {
+
+			sub.Lock()
+			err := sub.handleStatusMsg(msg, msgErr)
+			sub.Unlock()
+
+			if err != nil {
 				if atomic.LoadUint32(&sub.closed) == 1 {
 					return
 				}
@@ -495,6 +505,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 }
 
 func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
+	s.TryLock()
 	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) {
 		if s.consumeOpts.ErrHandler != nil {
 			s.consumeOpts.ErrHandler(s, msgErr)
@@ -642,7 +653,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
-					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) && !errors.Is(err, ErrMaxBytesExceeded) {
+					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) && !errors.Is(err,
+						ErrMaxBytesExceeded) {
 						res.err = err
 					}
 					res.done = true
