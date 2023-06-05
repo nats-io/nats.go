@@ -505,7 +505,6 @@ func (s *pullSubscription) Next() (Msg, error) {
 }
 
 func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
-	s.TryLock()
 	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) {
 		if s.consumeOpts.ErrHandler != nil {
 			s.consumeOpts.ErrHandler(s, msgErr)
