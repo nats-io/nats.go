@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/nats-io/nats.go"
@@ -68,6 +69,8 @@ type (
 		UpdateStream(context.Context, StreamConfig) (Stream, error)
 		// Stream returns a [Stream] hook for a given stream name
 		Stream(context.Context, string) (Stream, error)
+		// StreamNameBySubject returns a stream name stream listening on given subject
+		StreamNameBySubject(context.Context, string) (string, error)
 		// DeleteStream removes a stream with given name
 		DeleteStream(context.Context, string) error
 		// ListStreams returns StreamInfoLister enabling iterating over a channel of stream infos
@@ -186,7 +189,13 @@ type (
 		apiPaged
 		Streams []string `json:"streams"`
 	}
+
+	streamsRequest struct {
+		Subject string `json:"subject,omitempty"`
+	}
 )
+
+var subjectRegexp = regexp.MustCompile(`^[^ >]+[>]?$`)
 
 // New returns a enw JetStream instance
 //
@@ -494,6 +503,13 @@ func validateStreamName(stream string) error {
 	return nil
 }
 
+func validateSubject(subject string) error {
+	if !subjectRegexp.MatchString(subject) {
+		return fmt.Errorf("%w: %s", ErrInvalidSubject, subject)
+	}
+	return nil
+}
+
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	var resp accountInfoResponse
 
@@ -589,6 +605,32 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 	}()
 
 	return l
+}
+
+func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (string, error) {
+	if err := validateSubject(subject); err != nil {
+		return "", err
+	}
+	streamsSubject := apiSubj(js.apiPrefix, apiStreams)
+
+	r := &streamsRequest{Subject: subject}
+	req, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	var resp streamNamesResponse
+	_, err = js.apiRequestJSON(ctx, streamsSubject, &resp, req)
+	if err != nil {
+		return "", err
+	}
+	if resp.Error != nil {
+		return "", resp.Error
+	}
+	if len(resp.Streams) == 0 {
+		return "", ErrStreamNotFound
+	}
+
+	return resp.Streams[0], nil
 }
 
 // Name returns a channel allowing retrieval of stream names returned by [StreamNames]
