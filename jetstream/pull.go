@@ -652,8 +652,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
-					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) && !errors.Is(err,
-						ErrMaxBytesExceeded) {
+					if !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages) && !errors.Is(err,ErrMaxBytesExceeded) {
 						res.err = err
 					}
 					res.done = true
