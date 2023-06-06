@@ -370,14 +370,17 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	}
 
 	// Create our own JS context to handle errors etc.
-	js, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
+	jetStream, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
 	if err != nil {
 		return nil, err
 	}
+
+	defer jetStream.(*js).cleanupReplySub()
+
 	purgePartial := func() {
 		// wait until all pubs are complete or up to default timeout before attempting purge
 		select {
-		case <-js.PublishAsyncComplete():
+		case <-jetStream.PublishAsyncComplete():
 		case <-time.After(obs.js.opts.wait):
 		}
 		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
@@ -423,7 +426,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 			h.Write(m.Data)
 
 			// Send msg itself.
-			if _, err := js.PublishMsgAsync(m); err != nil {
+			if _, err := jetStream.PublishMsgAsync(m); err != nil {
 				purgePartial()
 				return nil, err
 			}
@@ -458,7 +461,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	}
 
 	// Publish the meta message.
-	_, err = js.PublishMsgAsync(mm)
+	_, err = jetStream.PublishMsgAsync(mm)
 	if err != nil {
 		if r != nil {
 			purgePartial()
@@ -468,7 +471,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 	// Wait for all to be processed.
 	select {
-	case <-js.PublishAsyncComplete():
+	case <-jetStream.PublishAsyncComplete():
 		if err := getErr(); err != nil {
 			if r != nil {
 				purgePartial()

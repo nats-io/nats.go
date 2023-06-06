@@ -679,6 +679,15 @@ func (js *js) newAsyncReply() string {
 	return sb.String()
 }
 
+func (js *js) cleanupReplySub() {
+	js.mu.Lock()
+	if js.rsub != nil {
+		js.rsub.Unsubscribe()
+		js.rsub = nil
+	}
+	js.mu.Unlock()
+}
+
 // registerPAF will register for a PubAckFuture.
 func (js *js) registerPAF(id string, paf *pubAckFuture) (int, int) {
 	js.mu.Lock()
