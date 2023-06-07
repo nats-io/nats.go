@@ -5578,7 +5578,6 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer l.Close()
 
 		addr := l.Addr()
 		host := addr.(*net.TCPAddr).IP.String()
