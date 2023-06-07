@@ -166,9 +166,9 @@ func (t PullThresholdMessages) configureConsume(opts *consumeOpts) error {
 
 // PullThresholdBytes sets the byte count on which Consume will trigger
 // new pull request to the server. Defaults to 50% of MaxBytes (if set).
-type PullThresholBytes int
+type PullThresholdBytes int
 
-func (t PullThresholBytes) configureConsume(opts *consumeOpts) error {
+func (t PullThresholdBytes) configureConsume(opts *consumeOpts) error {
 	opts.ThresholdBytes = int(t)
 	return nil
 }
