@@ -666,7 +666,7 @@ func TestStreamNames(t *testing.T) {
 	}
 }
 
-func TestJetStream_AddConsumer(t *testing.T) {
+func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 	tests := []struct {
 		name           string
 		stream         string
@@ -743,7 +743,7 @@ func TestJetStream_AddConsumer(t *testing.T) {
 			} else {
 				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
 			}
-			c, err := js.AddConsumer(ctx, test.stream, test.consumerConfig)
+			c, err := js.CreateOrUpdateConsumer(ctx, test.stream, test.consumerConfig)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -823,7 +823,7 @@ func TestJetStream_Consumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -904,7 +904,7 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

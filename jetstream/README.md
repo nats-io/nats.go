@@ -92,7 +92,7 @@ func main() {
     }
 
     // Create durable consumer
-    c, _ := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+    c, _ := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
         Durable:   "CONS",
         AckPolicy: jetstream.AckExplicitPolicy,
     })
@@ -253,13 +253,13 @@ CRUD operations on consumers can be achieved on 2 levels:
 js, _ := jetstream.New(nc)
 
 // create a consumer (this is an idempotent operation)
-cons, _ := js.AddConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+cons, _ := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     Durable: "foo",
     AckPolicy: jetstream.AckExplicitPolicy,
 })
 
 // create an ephemeral pull consumer by not providing `Durable`
-ephemeral, _ := js.AddConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+ephemeral, _ := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
 })
 
@@ -280,7 +280,7 @@ js, _ := jetstream.New(nc)
 stream, _ := js.Stream(ctx, "ORDERS")
 
 // create consumer
-cons, _ := stream.AddConsumer(ctx, jetstream.ConsumerConfig{
+cons, _ := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
     Durable:   "foo",
     AckPolicy: jetstream.AckExplicitPolicy,
 })
@@ -422,7 +422,7 @@ value.
 ##### Using `Consume()` receive messages in a callback
 
 ```go
-cons, _ := js.AddConsumer("ORDERS", jetstream.ConsumerConfig{
+cons, _ := js.CreateOrUpdateConsumer("ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
     // receive messages from ORDERS.A subject only
     FilterSubject: "ORDERS.A"
@@ -557,7 +557,7 @@ case err := <-ackF.Err():
 }
 
 // similarly to syncronous publish, there is a helper method accepting subject and data
-ackF, err = js.PublishAsync(ctx, "ORDERS.new", []byte("hello"))
+ackF, err = js.PublishAsync("ORDERS.new", []byte("hello"))
 ```
 
 Just as for synchronous publish, `PublishAsync()` and `PublishMsgAsync()` accept

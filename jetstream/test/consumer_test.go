@@ -44,7 +44,7 @@ func TestConsumerInfo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 			Durable:     "cons",
 			AckPolicy:   jetstream.AckExplicitPolicy,
 			Description: "test consumer",
@@ -66,7 +66,7 @@ func TestConsumerInfo(t *testing.T) {
 		}
 
 		// update consumer and see if info is updated
-		_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 			Durable:     "cons",
 			AckPolicy:   jetstream.AckExplicitPolicy,
 			Description: "updated consumer",
@@ -140,7 +140,7 @@ func TestConsumerCachedInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:     "cons",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 		Description: "test consumer",
@@ -159,7 +159,7 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 
 	// update consumer and see if info is updated
-	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:     "cons",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 		Description: "updated consumer",
