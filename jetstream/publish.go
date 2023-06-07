@@ -81,7 +81,7 @@ type (
 	}
 
 	// MsgErrHandler is used to process asynchronous errors from
-	// JetStream PublishAsynjs. It will return the original
+	// JetStream PublishAsync. It will return the original
 	// message sent to the server for possible retransmitting and the error encountered.
 	MsgErrHandler func(JetStream, *nats.Msg, error)
 
@@ -200,11 +200,11 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	return ackResp.PubAck, nil
 }
 
-func (js *jetStream) PublishAsync(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (PubAckFuture, error) {
-	return js.PublishMsgAsync(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
+func (js *jetStream) PublishAsync(subj string, data []byte, opts ...PublishOpt) (PubAckFuture, error) {
+	return js.PublishMsgAsync(&nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
-func (js *jetStream) PublishMsgAsync(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (PubAckFuture, error) {
+func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFuture, error) {
 	var o pubOpts
 	if len(opts) > 0 {
 		if m.Header == nil {
@@ -309,7 +309,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 	return sb.String(), nil
 }
 
-// Handle an async reply from PublishAsynjs.
+// Handle an async reply from PublishAsync.
 func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 	if len(m.Subject) <= aReplyPreLen {
 		return

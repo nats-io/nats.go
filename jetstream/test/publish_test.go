@@ -1131,7 +1131,7 @@ func TestPublishMsgAsync(t *testing.T) {
 			}
 
 			for _, pub := range test.msgs {
-				ackFuture, err := js.PublishMsgAsync(ctx, pub.msg, pub.opts...)
+				ackFuture, err := js.PublishMsgAsync(pub.msg, pub.opts...)
 				if pub.withPublishError != nil {
 					pub.withPublishError(t, err)
 					continue
@@ -1192,7 +1192,7 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		}
 
 		for i := 0; i < 20; i++ {
-			_, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"))
+			_, err = js.PublishAsync("FOO.1", []byte("msg"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1224,12 +1224,12 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		}
 
 		for i := 0; i < 5; i++ {
-			_, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond))
+			_, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 		}
-		if _, err = js.PublishAsync(ctx, "FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond)); err == nil || !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+		if _, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond)); err == nil || !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrTooManyStalledMsgs, err)
 		}
 	})
