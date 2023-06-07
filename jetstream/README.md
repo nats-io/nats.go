@@ -476,7 +476,7 @@ in the buffer.
 
 ```go
 // a maximum of 10 messages or 1024 bytes will be stored in memory (whichever is encountered first)
-iter, _ := cons.Messages(WithMessagesMaxMessages(10), WithMessagesMaxBytes(1024))
+iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1024))
 ```
 
 `Messages()` exposes the following options:
