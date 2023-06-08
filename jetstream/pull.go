@@ -186,22 +186,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		}
 		defer func() {
 			sub.Lock()
-			pending := sub.pending
+			sub.checkPending()
 			sub.Unlock()
-
-			if pending.msgCount < consumeOpts.ThresholdMessages ||
-				(pending.byteCount < consumeOpts.ThresholdBytes && sub.consumeOpts.MaxBytes != 0) &&
-					atomic.LoadUint32(&sub.fetchInProgress) == 1 {
-
-				sub.fetchNext <- &pullRequest{
-					Expires:   sub.consumeOpts.Expires,
-					Batch:     sub.consumeOpts.MaxMessages - pending.msgCount,
-					MaxBytes:  sub.consumeOpts.MaxBytes - pending.byteCount,
-					Heartbeat: sub.consumeOpts.Heartbeat,
-				}
-
-				sub.resetPendingMsgs()
-			}
 		}()
 		if !userMsg {
 			// heartbeat message
@@ -225,7 +211,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			return
 		}
 		handler(p.jetStream.toJSMsg(msg))
+		sub.Lock()
 		sub.decrementPendingMsgs(msg)
+		sub.Unlock()
 	}
 	inbox := nats.NewInbox()
 	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
@@ -233,6 +221,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		return nil, err
 	}
 
+	sub.Lock()
 	// initial pull
 	sub.resetPendingMsgs()
 	if err := sub.pull(&pullRequest{
@@ -243,6 +232,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	}, subject); err != nil {
 		sub.errs <- err
 	}
+	sub.Unlock()
 
 	go func() {
 		isConnected := true
@@ -292,11 +282,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							MaxBytes:  sub.consumeOpts.MaxBytes,
 							Heartbeat: sub.consumeOpts.Heartbeat,
 						}
-						sub.Unlock()
 						sub.resetPendingMsgs()
 					}
+					sub.Unlock()
 				}
 			case err := <-sub.errs:
+				sub.Lock()
 				if sub.consumeOpts.ErrHandler != nil {
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
@@ -309,6 +300,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					}
 					sub.resetPendingMsgs()
 				}
+				sub.Unlock()
 			}
 		}
 	}()
@@ -318,19 +310,40 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	return sub, nil
 }
 
+// resetPendingMsgs resets pending message count and byte count
+// to the values set in consumeOpts
+// lock should be held before calling this method
 func (s *pullSubscription) resetPendingMsgs() {
-	s.Lock()
-	defer s.Unlock()
 	s.pending.msgCount = s.consumeOpts.MaxMessages
 	s.pending.byteCount = s.consumeOpts.MaxBytes
 }
 
+// decrementPendingMsgs decrements pending message count and byte count
+// lock should be held before calling this method
 func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
-	s.Lock()
-	defer s.Unlock()
 	s.pending.msgCount--
 	if s.consumeOpts.MaxBytes != 0 {
 		s.pending.byteCount -= msg.Size()
+	}
+}
+
+// checkPending verifies whether there are enough messages in
+// the buffer to trigger a new pull request.
+// lock should be held before calling this method
+func (s *pullSubscription) checkPending() {
+	if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
+		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
+			atomic.LoadUint32(&s.fetchInProgress) == 1 {
+
+		s.fetchNext <- &pullRequest{
+			Expires:   s.consumeOpts.Expires,
+			Batch:     s.consumeOpts.MaxMessages - s.pending.msgCount,
+			MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
+			Heartbeat: s.consumeOpts.Heartbeat,
+		}
+
+		s.pending.msgCount = s.consumeOpts.MaxMessages
+		s.pending.byteCount = s.consumeOpts.MaxBytes
 	}
 }
 
@@ -425,21 +438,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 
 	isConnected := true
 	for {
-		if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
-			(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
-				atomic.LoadUint32(&s.fetchInProgress) == 1 {
-
-			s.fetchNext <- &pullRequest{
-				Expires:   s.consumeOpts.Expires,
-				Batch:     s.consumeOpts.MaxMessages - s.pending.msgCount,
-				MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
-				Heartbeat: s.consumeOpts.Heartbeat,
-			}
-			s.pending.msgCount = s.consumeOpts.MaxMessages
-			if s.consumeOpts.MaxBytes > 0 {
-				s.pending.byteCount = s.consumeOpts.MaxBytes
-			}
-		}
+		s.checkPending()
 		select {
 		case msg := <-s.msgs:
 			if hbMonitor != nil {
@@ -457,10 +456,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				continue
 			}
-			s.pending.msgCount--
-			if s.consumeOpts.MaxBytes > 0 {
-				s.pending.byteCount -= msg.Size()
-			}
+			s.decrementPendingMsgs(msg)
 			return s.consumer.jetStream.toJSMsg(msg), nil
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
