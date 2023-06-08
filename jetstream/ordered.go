@@ -358,7 +358,7 @@ func (c *orderedConsumer) reset() error {
 			return fmt.Errorf("%w: maximum number of create consumer attempts reached: %s", ErrOrderedConsumerReset, err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cons, err = c.jetStream.AddConsumer(ctx, c.stream, *consumerConfig)
+		cons, err = c.jetStream.CreateOrUpdateConsumer(ctx, c.stream, *consumerConfig)
 		if err != nil {
 			if errors.Is(err, ErrConsumerNotFound) {
 				cancel()

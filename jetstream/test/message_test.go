@@ -44,7 +44,7 @@ func TestMessageDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:     "cons",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 		Description: "test consumer",
@@ -104,7 +104,7 @@ func TestAckVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 			Durable:     "cons",
 			AckPolicy:   jetstream.AckExplicitPolicy,
 			Description: "test consumer",

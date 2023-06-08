@@ -51,10 +51,10 @@ type (
 	}
 
 	streamConsumerManager interface {
-		// AddConsumer creates a consumer on a given stream with given config.
+		// CreateOrUpdateConsumer creates a consumer on a given stream with given config.
 		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
-		AddConsumer(context.Context, ConsumerConfig) (Consumer, error)
+		CreateOrUpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
 
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
@@ -193,7 +193,7 @@ type (
 	}
 )
 
-func (s *stream) AddConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
+func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
 }
 

@@ -26,7 +26,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-func TestAddConsumer(t *testing.T) {
+func TestCreateOrUpdateConsumer(t *testing.T) {
 	tests := []struct {
 		name           string
 		consumerConfig jetstream.ConsumerConfig
@@ -97,7 +97,7 @@ func TestAddConsumer(t *testing.T) {
 			} else {
 				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
 			}
-			c, err := s.AddConsumer(ctx, test.consumerConfig)
+			c, err := s.CreateOrUpdateConsumer(ctx, test.consumerConfig)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -164,7 +164,7 @@ func TestConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestDeleteConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -872,7 +872,7 @@ func TestListConsumers(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -935,7 +935,7 @@ func TestConsumerNames(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.AddConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1041,7 +1041,7 @@ func TestPurgeStream(t *testing.T) {
 				}
 				return
 			}
-			c, err := s.AddConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}

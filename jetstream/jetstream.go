@@ -31,7 +31,7 @@ type (
 	// Create, update and get operations return 'Stream' interface,
 	// allowing operations on consumers
 	//
-	// AddConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
+	// CreateOrUpdateConsumer, Consumer and DeleteConsumer are helper methods used to create/fetch/remove consumer without fetching stream (bypassing stream API)
 	//
 	// Client returns a JetStremClient, used to publish messages on a stream or fetch messages by sequence number
 	JetStream interface {
@@ -52,10 +52,10 @@ type (
 		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*PubAck, error)
 		// PublishAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and message data
-		PublishAsync(context.Context, string, []byte, ...PublishOpt) (PubAckFuture, error)
+		PublishAsync(string, []byte, ...PublishOpt) (PubAckFuture, error)
 		// PublishMsgAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and nats.Message
-		PublishMsgAsync(context.Context, *nats.Msg, ...PublishOpt) (PubAckFuture, error)
+		PublishMsgAsync(*nats.Msg, ...PublishOpt) (PubAckFuture, error)
 		// PublishAsyncPending returns the number of async publishes outstanding for this context
 		PublishAsyncPending() int
 		// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd
@@ -80,10 +80,10 @@ type (
 	}
 
 	StreamConsumerManager interface {
-		// AddConsumer creates a consumer on a given stream with given config.
+		// CreateOrUpdateConsumer creates a consumer on a given stream with given config.
 		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		AddConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		CreateOrUpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
@@ -449,10 +449,10 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-// AddConsumer creates a consumer on a given stream with given config
+// CreateOrUpdateConsumer creates a consumer on a given stream with given config
 // This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
 // Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-func (js *jetStream) AddConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}

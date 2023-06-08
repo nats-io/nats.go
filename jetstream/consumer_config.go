@@ -55,18 +55,12 @@ type (
 		SampleFrequency string          `json:"sample_freq,omitempty"`
 		MaxWaiting      int             `json:"max_waiting,omitempty"`
 		MaxAckPending   int             `json:"max_ack_pending,omitempty"`
-		FlowControl     bool            `json:"flow_control,omitempty"`
-		Heartbeat       time.Duration   `json:"idle_heartbeat,omitempty"`
 		HeadersOnly     bool            `json:"headers_only,omitempty"`
 
 		// Pull based options.
 		MaxRequestBatch    int           `json:"max_batch,omitempty"`
 		MaxRequestExpires  time.Duration `json:"max_expires,omitempty"`
 		MaxRequestMaxBytes int           `json:"max_bytes,omitempty"`
-
-		// Push based consumers.
-		DeliverSubject string `json:"deliver_subject,omitempty"`
-		DeliverGroup   string `json:"deliver_group,omitempty"`
 
 		// Inactivity threshold.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
