@@ -322,3 +322,19 @@ func restartBasicJSServer(t *testing.T, s *server.Server) *server.Server {
 	s.WaitForShutdown()
 	return RunServerWithOptions(opts)
 }
+
+func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	timeout := time.Now().Add(totalWait)
+	var err error
+	for time.Now().Before(timeout) {
+		err = f()
+		if err == nil {
+			return
+		}
+		time.Sleep(sleepDur)
+	}
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+}
