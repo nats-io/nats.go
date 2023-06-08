@@ -504,6 +504,9 @@ func validateStreamName(stream string) error {
 }
 
 func validateSubject(subject string) error {
+	if subject == "" {
+		return fmt.Errorf("%w: %s", ErrInvalidSubject, "subject cannot be empty")
+	}
 	if !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, subject)
 	}
