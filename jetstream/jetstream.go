@@ -195,7 +195,7 @@ type (
 	}
 )
 
-var subjectRegexp = regexp.MustCompile(`^[^ >]+[>]?$`)
+var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 
 // New returns a enw JetStream instance
 //

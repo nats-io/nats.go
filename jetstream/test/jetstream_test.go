@@ -947,6 +947,11 @@ func TestStreamNameBySubject(t *testing.T) {
 			expected: "bar",
 		},
 		{
+			name:     "match more than one stream, return the first one",
+			subject:  ">",
+			expected: "",
+		},
+		{
 			name:      "stream not found",
 			subject:   "BAR.XYZ",
 			withError: jetstream.ErrStreamNotFound,
@@ -994,7 +999,7 @@ func TestStreamNameBySubject(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			if name != test.expected {
+			if test.expected != "" && name != test.expected {
 				t.Fatalf("Unexpected stream name; want: %s; got: %s", test.expected, name)
 			}
 
