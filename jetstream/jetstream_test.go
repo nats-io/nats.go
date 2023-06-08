@@ -15,6 +15,7 @@ package jetstream
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -76,6 +77,41 @@ func TestMessageMetadata(t *testing.T) {
 			}
 			if *res != test.expectedMetadata {
 				t.Fatalf("Invalid metadata; want: %v; got: %v", test.expectedMetadata, res)
+			}
+		})
+	}
+}
+
+func TestValidateSubject(t *testing.T) {
+	tests := []struct {
+		subject   string
+		withError bool
+	}{
+		{"test.A", false},
+		{"test.*", false},
+		{"*", false},
+		{"*.*", false},
+		{"test.*.A", false},
+		{"test.>", false},
+		{">", false},
+		{">.", true},
+		{"test.>.A", true},
+		{"", true},
+		{"test A", true},
+	}
+
+	for _, test := range tests {
+		tName := fmt.Sprintf("subj=%s,err=%t", test.subject, test.withError)
+		t.Run(tName, func(t *testing.T) {
+			err := validateSubject(test.subject)
+			if test.withError {
+				if err == nil {
+					t.Fatal("Expected error; got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
 			}
 		})
 	}

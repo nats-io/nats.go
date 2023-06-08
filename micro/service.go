@@ -264,7 +264,7 @@ var (
 	// this regular expression is suggested regexp for semver validation: https://semver.org/
 	semVerRegexp  = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 	nameRegexp    = regexp.MustCompile(`^[A-Za-z0-9\-_]+$`)
-	subjectRegexp = regexp.MustCompile(`^[^ >]+[>]?$`)
+	subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 )
 
 // Common errors returned by the Service framework.

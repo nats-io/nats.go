@@ -928,3 +928,81 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamNameBySubject(t *testing.T) {
+	tests := []struct {
+		name      string
+		subject   string
+		withError error
+		expected  string
+	}{
+		{
+			name:     "get stream name by subject explicit",
+			subject:  "FOO.123",
+			expected: "foo",
+		},
+		{
+			name:     "get stream name by subject with wildcard",
+			subject:  "BAR.*",
+			expected: "bar",
+		},
+		{
+			name:     "match more than one stream, return the first one",
+			subject:  ">",
+			expected: "",
+		},
+		{
+			name:      "stream not found",
+			subject:   "BAR.XYZ",
+			withError: jetstream.ErrStreamNotFound,
+		},
+		{
+			name:      "invalid subject",
+			subject:   "FOO.>.123",
+			withError: jetstream.ErrInvalidSubject,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "bar", Subjects: []string{"BAR.ABC"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			name, err := js.StreamNameBySubject(ctx, test.subject)
+			if test.withError != nil {
+				if err == nil || !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if test.expected != "" && name != test.expected {
+				t.Fatalf("Unexpected stream name; want: %s; got: %s", test.expected, name)
+			}
+
+		})
+	}
+}

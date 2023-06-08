@@ -109,6 +109,9 @@ var (
 	// ErrInvalidStreamName is returned when the provided stream name is invalid (contains '.').
 	ErrInvalidStreamName JetStreamError = &jsError{message: "invalid stream name"}
 
+	// ErrInvalidSubject is returned when the provided subject name is invalid.
+	ErrInvalidSubject JetStreamError = &jsError{message: "invalid subject name"}
+
 	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.').
 	ErrInvalidConsumerName JetStreamError = &jsError{message: "invalid consumer name"}
 
