@@ -622,6 +622,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 	result.digest = sha256.New()
 
 	processChunk := func(m *Msg) {
+		var err error
 		if ctx != nil {
 			select {
 			case <-ctx.Done():

@@ -97,6 +97,12 @@ func TestObjectBasics(t *testing.T) {
 	expectOk(t, result.Error())
 	defer result.Close()
 
+	// Now get the object back with a context option.
+	result, err = obs.Get("BLOB", nats.Context(context.Background()))
+	expectOk(t, err)
+	expectOk(t, result.Error())
+	defer result.Close()
+
 	// Check info.
 	info, err = result.Info()
 	expectOk(t, err)
