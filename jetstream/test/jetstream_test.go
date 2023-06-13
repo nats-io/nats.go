@@ -780,21 +780,38 @@ func TestListStreams(t *testing.T) {
 		name       string
 		streamsNum int
 		timeout    time.Duration
+		subject    string
+		expected   int
 		withError  error
 	}{
 		{
 			name:       "list streams",
 			streamsNum: 260,
 			timeout:    10 * time.Second,
+			expected:   260,
 		},
 		{
 			name:       "with empty context",
 			streamsNum: 260,
+			expected:   260,
 		},
 		{
 			name:       "no stream available",
 			timeout:    10 * time.Second,
 			streamsNum: 0,
+			expected:   0,
+		},
+		{
+			name:       "list streams with subject filter",
+			subject:    "FOO.123",
+			streamsNum: 260,
+			expected:   1,
+		},
+		{
+			name:       "list streams with subject filter, no match",
+			subject:    "FOO.500",
+			streamsNum: 100,
+			expected:   0,
 		},
 		{
 			name:       "context timeout",
@@ -830,30 +847,25 @@ func TestListStreams(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
-			streamsList := js.ListStreams(ctx)
-			streams := make([]*jetstream.StreamInfo, 0)
-		Loop:
-			for {
-				select {
-				case s := <-streamsList.Info():
-					streams = append(streams, s)
-					if test.withError != nil {
-						t.Fatalf("Expected error: %v; got none", test.withError)
-					}
-				case err := <-streamsList.Err():
-					if test.withError != nil {
-						if !errors.Is(err, test.withError) {
-							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-						}
-						return
-					}
-					if !errors.Is(err, jetstream.ErrEndOfData) {
-						t.Fatalf("Unexpected error: %v", err)
-					}
-					break Loop
-				}
+			opts := []jetstream.StreamListOpt{}
+			if test.subject != "" {
+				opts = append(opts, jetstream.WithStreamListSubject(test.subject))
 			}
-			if len(streams) != test.streamsNum {
+			streamsList := js.ListStreams(ctx, opts...)
+			streams := make([]*jetstream.StreamInfo, 0)
+			for si := range streamsList.Info() {
+				streams = append(streams, si)
+			}
+			if test.withError != nil {
+				if !errors.Is(streamsList.Err(), test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, streamsList.Err())
+				}
+				return
+			}
+			if streamsList.Err() != nil {
+				t.Fatalf("Unexpected error: %s", streamsList.Err())
+			}
+			if len(streams) != test.expected {
 				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.streamsNum, len(streams))
 			}
 		})
@@ -864,6 +876,8 @@ func TestStreamNames(t *testing.T) {
 	tests := []struct {
 		name       string
 		streamsNum int
+		subject    string
+		expected   int
 		timeout    time.Duration
 		withError  error
 	}{
@@ -871,14 +885,30 @@ func TestStreamNames(t *testing.T) {
 			name:       "list streams",
 			streamsNum: 500,
 			timeout:    10 * time.Second,
+			expected:   500,
 		},
 		{
 			name:       "with empty context",
 			streamsNum: 500,
+			expected:   500,
 		},
 		{
 			name:       "no stream available",
 			streamsNum: 0,
+			expected:   0,
+			timeout:    10 * time.Second,
+		},
+		{
+			name:       "list streams with subject filter",
+			subject:    "FOO.123",
+			streamsNum: 260,
+			expected:   1,
+		},
+		{
+			name:       "list streams with subject filter, no match",
+			subject:    "FOO.500",
+			streamsNum: 100,
+			expected:   0,
 			timeout:    10 * time.Second,
 		},
 		{
@@ -915,30 +945,25 @@ func TestStreamNames(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
-			streamsList := js.StreamNames(ctx)
-			streams := make([]string, 0)
-		Loop:
-			for {
-				select {
-				case s := <-streamsList.Name():
-					streams = append(streams, s)
-					if test.withError != nil {
-						t.Fatalf("Expected error: %v; got none", test.withError)
-					}
-				case err := <-streamsList.Err():
-					if test.withError != nil {
-						if !errors.Is(err, test.withError) {
-							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-						}
-						return
-					}
-					if !errors.Is(err, jetstream.ErrEndOfData) {
-						t.Fatalf("Unexpected error: %v", err)
-					}
-					break Loop
-				}
+			opts := []jetstream.StreamListOpt{}
+			if test.subject != "" {
+				opts = append(opts, jetstream.WithStreamListSubject(test.subject))
 			}
-			if len(streams) != test.streamsNum {
+			streamsList := js.StreamNames(ctx, opts...)
+			streams := make([]string, 0)
+			for s := range streamsList.Name() {
+				streams = append(streams, s)
+			}
+			if test.withError != nil {
+			    if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if streamsList.Err() != nil {
+				t.Fatalf("Unexpected error: %s", streamsList.Err())
+			}
+			if len(streams) != test.expected {
 				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.streamsNum, len(streams))
 			}
 		})

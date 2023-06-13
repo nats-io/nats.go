@@ -241,6 +241,15 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
+// WithStreamListSubject can be used to filter results of ListStreams and StreamNames requests
+// to only streams that have given subject in their configuration
+func WithStreamListSubject(subject string) StreamListOpt {
+	return func(req *streamsRequest) error {
+		req.Subject = subject
+		return nil
+	}
+}
+
 // WithMsgID sets the message ID used for deduplication.
 func WithMsgID(id string) PublishOpt {
 	return func(opts *pubOpts) error {
