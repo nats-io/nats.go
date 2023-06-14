@@ -795,7 +795,7 @@ func TestMonitoringHandlers(t *testing.T) {
 		name             string
 		subject          string
 		withError        bool
-		expectedResponse interface{}
+		expectedResponse any
 	}{
 		{
 			name:    "PING all",
@@ -934,7 +934,7 @@ func TestMonitoringHandlers(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			respMap := make(map[string]interface{})
+			respMap := make(map[string]any)
 			if err := json.Unmarshal(resp.Data, &respMap); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -942,7 +942,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			expectedRespMap := make(map[string]interface{})
+			expectedRespMap := make(map[string]any)
 			if err := json.Unmarshal(expectedResponseJSON, &expectedRespMap); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1018,7 +1018,7 @@ func TestServiceStats(t *testing.T) {
 	tests := []struct {
 		name          string
 		config        micro.Config
-		expectedStats map[string]interface{}
+		expectedStats map[string]any
 	}{
 		{
 			name: "stats handler",
@@ -1032,13 +1032,13 @@ func TestServiceStats(t *testing.T) {
 			config: micro.Config{
 				Name:    "test_service",
 				Version: "0.1.0",
-				StatsHandler: func(e *micro.Endpoint) interface{} {
-					return map[string]interface{}{
+				StatsHandler: func(e *micro.Endpoint) any {
+					return map[string]any{
 						"key": "val",
 					}
 				},
 			},
-			expectedStats: map[string]interface{}{
+			expectedStats: map[string]any{
 				"key": "val",
 			},
 		},
@@ -1140,7 +1140,7 @@ func TestServiceStats(t *testing.T) {
 			}
 
 			if test.expectedStats != nil {
-				var data map[string]interface{}
+				var data map[string]any
 				if err := json.Unmarshal(stats.Endpoints[0].Data, &data); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1160,7 +1160,7 @@ func TestRequestRespond(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		respondData      interface{}
+		respondData      any
 		respondHeaders   micro.Headers
 		errDescription   string
 		errCode          string

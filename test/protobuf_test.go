@@ -76,7 +76,7 @@ func TestEncProtoNilRequest(t *testing.T) {
 	testPerson := &pb.Person{Name: "Anatolii", Age: 25, Address: "Ukraine, Nikolaev"}
 
 	//Subscribe with empty interface shouldn't failed on empty message
-	ec.Subscribe("nil_test", func(_, reply string, _ interface{}) {
+	ec.Subscribe("nil_test", func(_, reply string, _ any) {
 		ec.Publish(reply, testPerson)
 	})
 

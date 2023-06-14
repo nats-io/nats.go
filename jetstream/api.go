@@ -103,7 +103,7 @@ const (
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
 )
 
-func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp interface{}, data ...[]byte) (*jetStreamMsg, error) {
+func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp any, data ...[]byte) (*jetStreamMsg, error) {
 	jsMsg, err := js.apiRequest(ctx, subject, data...)
 	if err != nil {
 		return nil, err
