@@ -42,6 +42,15 @@ var (
 	// ErrBadRequest is returned when invalid request is sent to JetStream API.
 	ErrBadRequest JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBadRequest, Description: "bad request", Code: 400}}
 
+	// ErrDuplicateFilterSubjects is returned when both FilterSubject and FilterSubjects are specified when creating consumer.
+	ErrDuplicateFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeDuplicateFilterSubjects, Description: "consumer cannot have both FilterSubject and FilterSubjects specified", Code: 500}}
+
+	// ErrDuplicateFilterSubjects is returned when filter subjects overlap when creating consumer.
+	ErrOverlappingFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeOverlappingFilterSubjects, Description: "consumer subject filters cannot overlap", Code: 500}}
+
+	// ErrEmptyFilter is returned when a filter in FilterSubjects is empty.
+	ErrEmptyFilter JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerEmptyFilter, Description: "consumer filter in FilterSubjects cannot be empty", Code: 500}}
+
 	// Client errors
 
 	// ErrConsumerNameAlreadyInUse is an error returned when consumer with given name already exists.
@@ -61,6 +70,11 @@ var (
 
 	// ErrConsumerNameRequired is returned when the provided consumer durable name is empty.
 	ErrConsumerNameRequired JetStreamError = &jsError{message: "consumer name is required"}
+
+	// ErrConsumerMultipleFilterSubjectsNotSupported is returned when the connected nats-server version does not support setting
+	// multiple filter subjects with filter_subjects field. If this error is returned when executing AddConsumer(), the consumer with invalid
+	// configuration was already created in the server.
+	ErrConsumerMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "multiple consumer filter subjects not supported by nats-server"}
 
 	// ErrConsumerConfigRequired is returned when empty consumer consuguration is supplied to add/update consumer.
 	ErrConsumerConfigRequired JetStreamError = &jsError{message: "consumer configuration is required"}
@@ -120,9 +134,12 @@ const (
 	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
 
-	JSErrCodeConsumerNotFound      ErrorCode = 10014
-	JSErrCodeConsumerNameExists    ErrorCode = 10013
-	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
+	JSErrCodeConsumerNotFound          ErrorCode = 10014
+	JSErrCodeConsumerNameExists        ErrorCode = 10013
+	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
+	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
+	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
+	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
 
