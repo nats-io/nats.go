@@ -43,7 +43,7 @@ var (
 )
 
 // Encode
-func (pb *ProtobufEncoder) Encode(subject string, v interface{}) ([]byte, error) {
+func (pb *ProtobufEncoder) Encode(subject string, v any) ([]byte, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -60,8 +60,8 @@ func (pb *ProtobufEncoder) Encode(subject string, v interface{}) ([]byte, error)
 }
 
 // Decode
-func (pb *ProtobufEncoder) Decode(subject string, data []byte, vPtr interface{}) error {
-	if _, ok := vPtr.(*interface{}); ok {
+func (pb *ProtobufEncoder) Decode(subject string, data []byte, vPtr any) error {
+	if _, ok := vPtr.(*any); ok {
 		return nil
 	}
 	i, found := vPtr.(proto.Message)
