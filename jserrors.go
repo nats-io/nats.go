@@ -42,6 +42,15 @@ var (
 	// ErrBadRequest is returned when invalid request is sent to JetStream API.
 	ErrBadRequest JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBadRequest, Description: "bad request", Code: 400}}
 
+	// ErrDuplicateFilterSubjects is returned when both FilterSubject and FilterSubjects are specified when creating consumer.
+	ErrDuplicateFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeDuplicateFilterSubjects, Description: "consumer cannot have both FilterSubject and FilterSubjects specified", Code: 500}}
+
+	// ErrDuplicateFilterSubjects is returned when filter subjects overlap when creating consumer.
+	ErrOverlappingFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeOverlappingFilterSubjects, Description: "consumer subject filters cannot overlap", Code: 500}}
+
+	// ErrEmptyFilter is returned when a filter in FilterSubjects is empty.
+	ErrEmptyFilter JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerEmptyFilter, Description: "consumer filter in FilterSubjects cannot be empty", Code: 500}}
+
 	// Client errors
 
 	// ErrConsumerNameAlreadyInUse is an error returned when consumer with given name already exists.
@@ -125,9 +134,12 @@ const (
 	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
 
-	JSErrCodeConsumerNotFound      ErrorCode = 10014
-	JSErrCodeConsumerNameExists    ErrorCode = 10013
-	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
+	JSErrCodeConsumerNotFound          ErrorCode = 10014
+	JSErrCodeConsumerNameExists        ErrorCode = 10013
+	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
+	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
+	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
+	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
 

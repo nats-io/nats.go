@@ -379,9 +379,6 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		(cfg.Durable != "" && js.opts.featureFlags.useDurableConsumerCreate) {
 		// if server version is lower than 2.9.0 or user set the useDurableConsumerCreate flag, use the legacy DURABLE.CREATE endpoint
 		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
-	} else if len(cfg.FilterSubjects) != 0 {
-		// if multiple filter subjects are used, we must use legacy DURABLE.CREATE endpoint
-		ccSubj = fmt.Sprintf(apiDurableCreateT, stream, consumerName)
 	} else {
 		// if above server version 2.9.0, use the endpoints with consumer name
 		if cfg.FilterSubject == _EMPTY_ || cfg.FilterSubject == ">" {

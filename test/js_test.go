@@ -2109,8 +2109,8 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
-		t.Run("consumer with multiple filter subjects", func(t *testing.T) {
-			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.DURABLE.CREATE.foo.dlc-5")
+		t.Run("durable consumer with multiple filter subjects", func(t *testing.T) {
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.dlc-5")
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2132,6 +2132,56 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 			if ci == nil || ci.Config.Durable != "dlc-5" || !reflect.DeepEqual(ci.Config.FilterSubjects, []string{"foo", "bar"}) {
 				t.Fatalf("ConsumerInfo is not correct %+v", ci)
+			}
+		})
+
+		t.Run("ephemeral consumer with multiple filter subjects", func(t *testing.T) {
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+				AckPolicy:      nats.AckExplicitPolicy,
+				FilterSubjects: []string{"foo", "bar"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			_, err = sub.NextMsg(1 * time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if ci == nil || !reflect.DeepEqual(ci.Config.FilterSubjects, []string{"foo", "bar"}) {
+				t.Fatalf("ConsumerInfo is not correct %+v", ci)
+			}
+		})
+
+		t.Run("multiple filter subjects errors", func(t *testing.T) {
+			// both filter subject and filter subjects provided
+			_, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+				AckPolicy:      nats.AckExplicitPolicy,
+				FilterSubjects: []string{"foo", "bar"},
+				FilterSubject:  "baz",
+			})
+			if !errors.Is(err, nats.ErrDuplicateFilterSubjects) {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrDuplicateFilterSubjects, err)
+			}
+			// overlapping filter subjects
+			_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+				AckPolicy:      nats.AckExplicitPolicy,
+				FilterSubjects: []string{"foo.*", "foo.A"},
+			})
+			if !errors.Is(err, nats.ErrOverlappingFilterSubjects) {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrOverlappingFilterSubjects, err)
+			}
+			// empty filter subject in filter subjects
+			_, err = js.AddConsumer("foo", &nats.ConsumerConfig{
+				AckPolicy:      nats.AckExplicitPolicy,
+				FilterSubjects: []string{"foo", ""},
+			})
+			if !errors.Is(err, nats.ErrEmptyFilter) {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrEmptyFilter, err)
 			}
 		})
 
@@ -2241,7 +2291,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for info := range js.Consumers("foo") {
 			infos = append(infos, info)
 		}
-		if len(infos) != 7 || infos[0].Stream != "foo" {
+		if len(infos) != 8 || infos[0].Stream != "foo" {
 			t.Fatalf("ConsumerInfo is not correct %+v", infos)
 		}
 	})
@@ -2253,7 +2303,7 @@ func TestJetStreamManagement(t *testing.T) {
 		for name := range js.ConsumerNames("foo", nats.Context(ctx)) {
 			names = append(names, name)
 		}
-		if got, want := len(names), 7; got != want {
+		if got, want := len(names), 8; got != want {
 			t.Fatalf("Unexpected names, got=%d, want=%d", got, want)
 		}
 	})

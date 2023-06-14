@@ -54,6 +54,21 @@ func TestCreateOrUpdateConsumer(t *testing.T) {
 			shouldCreate:   true,
 		},
 		{
+			name:           "with multiple filter subjects, overlapping subjects",
+			consumerConfig: jetstream.ConsumerConfig{FilterSubjects: []string{"FOO.*", "FOO.B"}},
+			withError:      jetstream.ErrOverlappingFilterSubjects,
+		},
+		{
+			name:           "with multiple filter subjects and filter subject provided",
+			consumerConfig: jetstream.ConsumerConfig{FilterSubjects: []string{"FOO.A", "FOO.B"}, FilterSubject: "FOO.C"},
+			withError:      jetstream.ErrDuplicateFilterSubjects,
+		},
+		{
+			name:           "with empty subject in FilterSubjects",
+			consumerConfig: jetstream.ConsumerConfig{FilterSubjects: []string{"FOO.A", ""}},
+			withError:      jetstream.ErrEmptyFilter,
+		},
+		{
 			name:           "consumer already exists, update",
 			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", Description: "test consumer"},
 		},
@@ -118,6 +133,9 @@ func TestCreateOrUpdateConsumer(t *testing.T) {
 			}
 			if ci.CachedInfo().Config.AckPolicy != test.consumerConfig.AckPolicy {
 				t.Fatalf("Invalid ack policy; want: %s; got: %s", test.consumerConfig.AckPolicy, ci.CachedInfo().Config.AckPolicy)
+			}
+			if !reflect.DeepEqual(test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects) {
+				t.Fatalf("Invalid filter subjects; want: %v; got: %v", test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects)
 			}
 		})
 	}

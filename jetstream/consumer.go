@@ -103,7 +103,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	}
 
 	var ccSubj string
-	if cfg.FilterSubject != "" {
+	if cfg.FilterSubject != "" && len(cfg.FilterSubjects) == 0 {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject))
 	} else {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream, consumerName))
@@ -118,6 +118,11 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
+	}
+
+	// check whether multiple filter subjects (if used) are reflected in the returned ConsumerInfo
+	if len(cfg.FilterSubjects) != 0 && len(resp.Config.FilterSubjects) == 0 {
+		return nil, ErrConsumerMultipleFilterSubjectsNotSupported
 	}
 
 	return &pullConsumer{
