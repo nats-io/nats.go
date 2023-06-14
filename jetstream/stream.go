@@ -31,42 +31,42 @@ type (
 		streamConsumerManager
 
 		// Info returns stream details
-		Info(context.Context, ...StreamInfoOpt) (*StreamInfo, error)
+		Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error)
 		// CachedInfo returns *StreamInfo cached on a consumer struct
 		CachedInfo() *StreamInfo
 
 		// Purge removes messages from a stream
-		Purge(context.Context, ...StreamPurgeOpt) error
+		Purge(ctx context.Context, opts ...StreamPurgeOpt) error
 
 		// GetMsg retrieves a raw stream message stored in JetStream by sequence number
-		GetMsg(context.Context, uint64, ...GetMsgOpt) (*RawStreamMsg, error)
+		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
 		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
-		GetLastMsgForSubject(context.Context, string) (*RawStreamMsg, error)
+		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
 		// DeleteMsg deletes a message from a stream.
 		// The message is marked as erased, but not overwritten
-		DeleteMsg(context.Context, uint64) error
+		DeleteMsg(ctx context.Context, seq uint64) error
 		// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
 		// As a result, this operation is slower than DeleteMsg()
-		SecureDeleteMsg(context.Context, uint64) error
+		SecureDeleteMsg(ctx context.Context, seq uint64) error
 	}
 
 	streamConsumerManager interface {
 		// CreateOrUpdateConsumer creates a consumer on a given stream with given config.
 		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
-		CreateOrUpdateConsumer(context.Context, ConsumerConfig) (Consumer, error)
+		CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
 		// without additional client code.
-		OrderedConsumer(context.Context, OrderedConsumerConfig) (Consumer, error)
+		OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error)
 
 		// Consumer returns a Consumer interface for an existing consumer
-		Consumer(context.Context, string) (Consumer, error)
+		Consumer(ctx context.Context, consumer string) (Consumer, error)
 
 		// DeleteConsumer removes a consumer
-		DeleteConsumer(context.Context, string) error
+		DeleteConsumer(ctx context.Context, consumer string) error
 
 		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister

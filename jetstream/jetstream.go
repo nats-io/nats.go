@@ -46,16 +46,16 @@ type (
 	Publisher interface {
 		// Publish performs a synchronous publish to a stream and waits for ack from server
 		// It accepts subject name (which must be bound to a stream) and message data
-		Publish(context.Context, string, []byte, ...PublishOpt) (*PubAck, error)
+		Publish(ctx context.Context, subject string, payload []byte, opts ...PublishOpt) (*PubAck, error)
 		// PublishMsg performs a synchronous publish to a stream and waits for ack from server
 		// It accepts subject name (which must be bound to a stream) and nats.Message
-		PublishMsg(context.Context, *nats.Msg, ...PublishOpt) (*PubAck, error)
+		PublishMsg(ctx context.Context, msg *nats.Msg, opts ...PublishOpt) (*PubAck, error)
 		// PublishAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and message data
-		PublishAsync(string, []byte, ...PublishOpt) (PubAckFuture, error)
+		PublishAsync(subject string, payload []byte, opts ...PublishOpt) (PubAckFuture, error)
 		// PublishMsgAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and nats.Message
-		PublishMsgAsync(*nats.Msg, ...PublishOpt) (PubAckFuture, error)
+		PublishMsgAsync(msg *nats.Msg, opts ...PublishOpt) (PubAckFuture, error)
 		// PublishAsyncPending returns the number of async publishes outstanding for this context
 		PublishAsyncPending() int
 		// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd
@@ -64,15 +64,15 @@ type (
 
 	StreamManager interface {
 		// CreateStream creates a new stream with given config and returns a hook to operate on it
-		CreateStream(context.Context, StreamConfig) (Stream, error)
+		CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 		// UpdateStream updates an existing stream
-		UpdateStream(context.Context, StreamConfig) (Stream, error)
+		UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 		// Stream returns a [Stream] hook for a given stream name
-		Stream(context.Context, string) (Stream, error)
+		Stream(ctx context.Context, stream string) (Stream, error)
 		// StreamNameBySubject returns a stream name stream listening on given subject
-		StreamNameBySubject(context.Context, string) (string, error)
+		StreamNameBySubject(ctx context.Context, subject string) (string, error)
 		// DeleteStream removes a stream with given name
-		DeleteStream(context.Context, string) error
+		DeleteStream(ctx context.Context, stream string) error
 		// ListStreams returns StreamInfoLister enabling iterating over a channel of stream infos
 		ListStreams(context.Context) StreamInfoLister
 		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
@@ -83,16 +83,16 @@ type (
 		// CreateOrUpdateConsumer creates a consumer on a given stream with given config.
 		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
-		CreateOrUpdateConsumer(context.Context, string, ConsumerConfig) (Consumer, error)
+		CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
 		// without additional client code.
-		OrderedConsumer(context.Context, string, OrderedConsumerConfig) (Consumer, error)
+		OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error)
 		// Consumer returns a hook to an existing consumer, allowing processing of messages
-		Consumer(context.Context, string, string) (Consumer, error)
+		Consumer(ctx context.Context, stream string, consumer string) (Consumer, error)
 		// DeleteConsumer removes a consumer with given name from a stream
-		DeleteConsumer(context.Context, string, string) error
+		DeleteConsumer(ctx context.Context, stream string, consumer string) error
 	}
 
 	// AccountInfo contains info about the JetStream usage from the current account.
