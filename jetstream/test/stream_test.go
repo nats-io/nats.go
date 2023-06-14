@@ -966,26 +966,17 @@ func TestListConsumers(t *testing.T) {
 			}
 			consumersList := s.ListConsumers(ctx)
 			consumers := make([]*jetstream.ConsumerInfo, 0)
-		Loop:
-			for {
-				select {
-				case s := <-consumersList.Info():
-					consumers = append(consumers, s)
-					if test.withError != nil {
-						t.Fatalf("Expected error: %v; got none", test.withError)
-					}
-				case err := <-consumersList.Err():
-					if test.withError != nil {
-						if !errors.Is(err, test.withError) {
-							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-						}
-						return
-					}
-					if !errors.Is(err, jetstream.ErrEndOfData) {
-						t.Fatalf("Unexpected error: %v", err)
-					}
-					break Loop
+			for s := range consumersList.Info() {
+				consumers = append(consumers, s)
+			}
+			if test.withError != nil {
+				if !errors.Is(consumersList.Err(), test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, consumersList.Err())
 				}
+				return
+			}
+			if consumersList.Err() != nil {
+				t.Fatalf("Unexpected error: %v", consumersList.Err())
 			}
 			if len(consumers) != test.consumersNum {
 				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.consumersNum, len(consumers))
@@ -1055,26 +1046,17 @@ func TestConsumerNames(t *testing.T) {
 			}
 			consumersList := s.ConsumerNames(ctx)
 			consumers := make([]string, 0)
-		Loop:
-			for {
-				select {
-				case s := <-consumersList.Name():
-					consumers = append(consumers, s)
-					if test.withError != nil {
-						t.Fatalf("Expected error: %v; got none", test.withError)
-					}
-				case err := <-consumersList.Err():
-					if test.withError != nil {
-						if !errors.Is(err, test.withError) {
-							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-						}
-						return
-					}
-					if !errors.Is(err, jetstream.ErrEndOfData) {
-						t.Fatalf("Unexpected error: %v", err)
-					}
-					break Loop
+			for name := range consumersList.Name() {
+				consumers = append(consumers, name)
+			}
+			if test.withError != nil {
+				if !errors.Is(consumersList.Err(), test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, consumersList.Err())
 				}
+				return
+			}
+			if consumersList.Err() != nil {
+				t.Fatalf("Unexpected error: %v", consumersList.Err())
 			}
 			if len(consumers) != test.consumersNum {
 				t.Fatalf("Wrong number of streams; want: %d; got: %d", test.consumersNum, len(consumers))

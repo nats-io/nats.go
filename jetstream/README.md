@@ -301,29 +301,20 @@ fmt.Println(cachedInfo.Config.Durable)
 ```go
 // list consumers
 consumers := s.ListConsumers(ctx)
-var err error
-for err != nil {
-    select {
-    case s := <-consumers.Info():
-        fmt.Println(s.Name)
-    case err = <-consumers.Err():
-    }
+for cons := range consumers.Info() {
+    fmt.Println(cons.Name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+if consumers.Err() != nil {
+    fmt.Println("Unexpected error ocurred")
 }
 
 // list consumer names
 names := s.ConsumerNames(ctx)
-for err != nil {
-    select {
-    case name := <-names.Name():
-        fmt.Println(name)
-    case err = <-names.Err():
-    }
+for name := range names.Name() {
+    fmt.Println(name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+if names.Err() != nil {
+    fmt.Println("Unexpected error ocurred")
 }
 ```
 
