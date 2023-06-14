@@ -473,6 +473,10 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 	if cfg.OptStartSeq != 0 {
 		oc.cursor.streamSeq = cfg.OptStartSeq - 1
 	}
+	err := oc.reset()
+	if err != nil {
+		return nil, err
+	}
 
 	return oc, nil
 }

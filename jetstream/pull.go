@@ -638,7 +638,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		defer close(res.msgs)
 		for {
 			if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes == req.MaxBytes) {
+				p.Lock()
 				res.done = true
+				p.Unlock()
 				return
 			}
 			select {

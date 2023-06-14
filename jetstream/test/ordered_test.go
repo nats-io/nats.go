@@ -810,14 +810,6 @@ func TestOrderedConsumerInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = c.Info(ctx)
-	if !errors.Is(err, jetstream.ErrOrderedConsumerNotCreated) {
-		t.Fatalf("Expected error: %v; got: %v", jetstream.ErrOrderedConsumerNotCreated, err)
-	}
-	info := c.CachedInfo()
-	if info != nil {
-		t.Fatalf("Cached info should be nil if consumer is not yet created")
-	}
 
 	cc, err := c.Consume(func(msg jetstream.Msg) {})
 	if err != nil {
@@ -825,7 +817,7 @@ func TestOrderedConsumerInfo(t *testing.T) {
 	}
 	defer cc.Stop()
 
-	info, err = c.Info(ctx)
+	info, err := c.Info(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error: %s", err)
 	}
