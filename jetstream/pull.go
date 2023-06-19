@@ -215,7 +215,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		sub.decrementPendingMsgs(msg)
 		sub.Unlock()
 	}
-	inbox := nats.NewInbox()
+	inbox := p.jetStream.conn.NewInbox()
 	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
 	if err != nil {
 		return nil, err
@@ -384,7 +384,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		consumeOpts: consumeOpts,
 	}
 	sub.connStatusChanged = p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
-	inbox := nats.NewInbox()
+	inbox := p.jetStream.conn.NewInbox()
 	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		p.Unlock()
@@ -621,7 +621,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		msgs:     msgs,
 		errs:     make(chan error, 1),
 	}
-	inbox := nats.NewInbox()
+	inbox := p.jetStream.conn.NewInbox()
 	var err error
 	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
