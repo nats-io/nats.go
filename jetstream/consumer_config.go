@@ -78,6 +78,7 @@ type (
 		OptStartTime      *time.Time    `json:"opt_start_time,omitempty"`
 		ReplayPolicy      ReplayPolicy  `json:"replay_policy"`
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+		HeadersOnly       bool          `json:"headers_only,omitempty"`
 
 		// Maximum number of attempts for the consumer to be recreated
 		// Defaults to unlimited
