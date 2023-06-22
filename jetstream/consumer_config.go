@@ -38,29 +38,26 @@ type (
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
 	ConsumerConfig struct {
-		Name            string          `json:"name,omitempty"`
-		Durable         string          `json:"durable_name,omitempty"`
-		Description     string          `json:"description,omitempty"`
-		DeliverPolicy   DeliverPolicy   `json:"deliver_policy"`
-		OptStartSeq     uint64          `json:"opt_start_seq,omitempty"`
-		OptStartTime    *time.Time      `json:"opt_start_time,omitempty"`
-		AckPolicy       AckPolicy       `json:"ack_policy"`
-		AckWait         time.Duration   `json:"ack_wait,omitempty"`
-		MaxDeliver      int             `json:"max_deliver,omitempty"`
-		BackOff         []time.Duration `json:"backoff,omitempty"`
-		FilterSubjects  []string        `json:"filter_subjects,omitempty"`
-		FilterSubject   string          `json:"filter_subject,omitempty"`
-		ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
-		RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
-		SampleFrequency string          `json:"sample_freq,omitempty"`
-		MaxWaiting      int             `json:"max_waiting,omitempty"`
-		MaxAckPending   int             `json:"max_ack_pending,omitempty"`
-		HeadersOnly     bool            `json:"headers_only,omitempty"`
-
-		// Pull based options.
-		MaxRequestBatch    int           `json:"max_batch,omitempty"`
-		MaxRequestExpires  time.Duration `json:"max_expires,omitempty"`
-		MaxRequestMaxBytes int           `json:"max_bytes,omitempty"`
+		Name               string          `json:"name,omitempty"`
+		Durable            string          `json:"durable_name,omitempty"`
+		Description        string          `json:"description,omitempty"`
+		DeliverPolicy      DeliverPolicy   `json:"deliver_policy"`
+		OptStartSeq        uint64          `json:"opt_start_seq,omitempty"`
+		OptStartTime       *time.Time      `json:"opt_start_time,omitempty"`
+		AckPolicy          AckPolicy       `json:"ack_policy"`
+		AckWait            time.Duration   `json:"ack_wait,omitempty"`
+		MaxDeliver         int             `json:"max_deliver,omitempty"`
+		BackOff            []time.Duration `json:"backoff,omitempty"`
+		FilterSubject      string          `json:"filter_subject,omitempty"`
+		ReplayPolicy       ReplayPolicy    `json:"replay_policy"`
+		RateLimit          uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
+		SampleFrequency    string          `json:"sample_freq,omitempty"`
+		MaxWaiting         int             `json:"max_waiting,omitempty"`
+		MaxAckPending      int             `json:"max_ack_pending,omitempty"`
+		HeadersOnly        bool            `json:"headers_only,omitempty"`
+		MaxRequestBatch    int             `json:"max_batch,omitempty"`
+		MaxRequestExpires  time.Duration   `json:"max_expires,omitempty"`
+		MaxRequestMaxBytes int             `json:"max_bytes,omitempty"`
 
 		// Inactivity threshold.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
@@ -69,6 +66,9 @@ type (
 		Replicas int `json:"num_replicas"`
 		// Force memory storage.
 		MemoryStorage bool `json:"mem_storage,omitempty"`
+
+		// NOTE: FilterSubjects requires nats-server v2.10.0+
+		FilterSubjects []string `json:"filter_subjects,omitempty"`
 	}
 
 	OrderedConsumerConfig struct {
