@@ -85,7 +85,7 @@ type (
 
 	// StatsHandler is a function used to configure a custom STATS endpoint.
 	// It should return a value which can be serialized to JSON.
-	StatsHandler func(*Endpoint) any
+	StatsHandler func(*Endpoint) interface{}
 
 	// ServiceIdentity contains fields helping to identity a service instance.
 	ServiceIdentity struct {

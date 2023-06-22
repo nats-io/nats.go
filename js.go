@@ -1352,7 +1352,7 @@ func processConsInfo(info *ConsumerInfo, userCfg *ConsumerConfig, isPullMode boo
 }
 
 func checkConfig(s, u *ConsumerConfig) error {
-	makeErr := func(fieldName string, usrVal, srvVal any) error {
+	makeErr := func(fieldName string, usrVal, srvVal interface{}) error {
 		return fmt.Errorf("configuration requests %s to be %v, but consumer's value is %v", fieldName, usrVal, srvVal)
 	}
 

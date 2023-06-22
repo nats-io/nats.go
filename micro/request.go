@@ -43,7 +43,7 @@ type (
 
 		// RespondJSON marshals the given response value and responds to the request.
 		// Additional headers can be passed using [WithHeaders] option.
-		RespondJSON(any, ...RespondOpt) error
+		RespondJSON(interface{}, ...RespondOpt) error
 
 		// Error prepares and publishes error response from a handler.
 		// A response error should be set containing an error code and description.
@@ -111,7 +111,7 @@ func (r *request) Respond(response []byte, opts ...RespondOpt) error {
 
 // RespondJSON marshals the given response value and responds to the request.
 // Additional headers can be passed using [WithHeaders] option.
-func (r *request) RespondJSON(response any, opts ...RespondOpt) error {
+func (r *request) RespondJSON(response interface{}, opts ...RespondOpt) error {
 	resp, err := json.Marshal(response)
 	if err != nil {
 		return ErrMarshalResponse

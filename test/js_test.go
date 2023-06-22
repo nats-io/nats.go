@@ -6490,7 +6490,7 @@ func testJetStream_ClusterMultipleFetchPullSubscribe(t *testing.T, subject strin
 		gotNoMessages bool
 		count         = 0
 	)
-	queues.Range(func(k, v any) bool {
+	queues.Range(func(k, v interface{}) bool {
 		msgs := v.([]*nats.Msg)
 		count += len(msgs)
 

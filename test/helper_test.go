@@ -30,8 +30,8 @@ import (
 
 // So that we can pass tests and benchmarks...
 type tLogger interface {
-	Fatalf(format string, args ...any)
-	Errorf(format string, args ...any)
+	Fatalf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
 // TestLogger
@@ -52,7 +52,7 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	return errors.New("timeout")
 }
 
-func stackFatalf(t tLogger, f string, args ...any) {
+func stackFatalf(t tLogger, f string, args ...interface{}) {
 	lines := make([]string, 0, 32)
 	msg := fmt.Sprintf(f, args...)
 	lines = append(lines, msg)
