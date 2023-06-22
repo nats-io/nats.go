@@ -126,7 +126,7 @@ func TestEncBuiltinJsonMarshalNull(t *testing.T) {
 
 	var testValue *TestType
 
-	ec.Subscribe("json_null", func(i any) {
+	ec.Subscribe("json_null", func(i interface{}) {
 		if i != nil {
 			t.Fatalf("Received test of '%v', wanted 'nil'\n", i)
 		}
