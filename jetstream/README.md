@@ -381,7 +381,7 @@ if msgs.Error() != nil {
     // handle error
 }
 
-// receive up to 1024kB of data
+// receive up to 1024 B of data
 msgs, _ := c.FetchBytes(1024)
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
