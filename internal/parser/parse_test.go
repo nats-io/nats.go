@@ -35,7 +35,7 @@ func TestParseNum(t *testing.T) {
 		},
 		{
 			name:     "parse 0",
-			given:    "",
+			given:    "0",
 			expected: 0,
 		},
 		{
