@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -257,6 +258,153 @@ func TestCreateStream(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateStreamMirrorCrossDomains(t *testing.T) {
+	test := []struct {
+		name         string
+		streamConfig *jetstream.StreamConfig
+	}{
+		{
+			name: "create stream mirror cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Mirror: &jetstream.StreamSource{
+					Name:   "TEST",
+					Domain: "HUB",
+				},
+			},
+		},
+		{
+			name: "create stream with source cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Sources: []*jetstream.StreamSource{
+					{
+						Name:   "TEST",
+						Domain: "HUB",
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range test {
+		t.Run(test.name, func(t *testing.T) {
+			conf := createConfFile(t, []byte(`
+		server_name: HUB
+		listen: 127.0.0.1:-1
+		jetstream: { domain: HUB }
+		leafnodes { listen: 127.0.0.1:7422 }
+	}`))
+			defer os.Remove(conf)
+			srv, _ := RunServerWithConfig(conf)
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+
+			lconf := createConfFile(t, []byte(`
+	server_name: LEAF
+	listen: 127.0.0.1:-1
+	 jetstream: { domain:LEAF }
+	 leafnodes {
+		  remotes = [ { url: "leaf://127.0.0.1" } ]
+	 }
+}`))
+			defer os.Remove(lconf)
+			ln, _ := RunServerWithConfig(lconf)
+			defer shutdownJSServerAndRemoveStorage(t, ln)
+
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			js, err := jetstream.New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg1")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg2")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			lnc, err := nats.Connect(ln.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer lnc.Close()
+			ljs, err := jetstream.New(lnc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ccfg := *test.streamConfig
+			_, err = ljs.CreateStream(ctx, ccfg)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(test.streamConfig, &ccfg) {
+				t.Fatalf("Did not expect config to be altered: %+v vs %+v", test.streamConfig, ccfg)
+			}
+
+			// Make sure we sync.
+			checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+				lStream, err := ljs.Stream(ctx, "MIRROR")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				if lStream.CachedInfo().State.Msgs == 2 {
+					return nil
+				}
+				return fmt.Errorf("Did not get synced messages: %d", lStream.CachedInfo().State.Msgs)
+			})
+			if _, err := ljs.Publish(ctx, "foo", []byte("msg3")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			lStream, err := ljs.Stream(ctx, "MIRROR")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if lStream.CachedInfo().State.Msgs != 3 {
+				t.Fatalf("Expected 3 msgs in stream; got: %d", lStream.CachedInfo().State.Msgs)
+			}
+
+			rjs, err := jetstream.NewWithDomain(lnc, "HUB")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := rjs.Publish(ctx, "foo", []byte("msg4")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			rStream, err := rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if rStream.CachedInfo().State.Msgs != 4 {
+				t.Fatalf("Expected 3 msgs in stream; got: %d", rStream.CachedInfo().State.Msgs)
 			}
 		})
 	}

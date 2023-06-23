@@ -67,7 +67,6 @@ var errOrderedSequenceMismatch = errors.New("sequence mismatch")
 // Consume can be used to continuously receive messages and handle them with the provided callback function
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
-		c.consumerType = consumerTypeConsume
 		err := c.reset()
 		if err != nil {
 			return nil, err
@@ -78,6 +77,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	if c.consumerType == consumerTypeFetch {
 		return nil, ErrOrderConsumerUsedAsFetch
 	}
+	c.consumerType = consumerTypeConsume
 	consumeOpts, err := parseConsumeOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
@@ -156,7 +156,6 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 // Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
 func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
 	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
-		c.consumerType = consumerTypeConsume
 		err := c.reset()
 		if err != nil {
 			return nil, err
@@ -167,6 +166,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	if c.consumerType == consumerTypeFetch {
 		return nil, ErrOrderConsumerUsedAsFetch
 	}
+	c.consumerType = consumerTypeConsume
 	consumeOpts, err := parseMessagesOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
@@ -236,12 +236,15 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 	if c.consumerType == consumerTypeConsume {
 		return nil, ErrOrderConsumerUsedAsConsume
 	}
+	c.currentConsumer.Lock()
 	if c.runningFetch != nil {
 		if !c.runningFetch.done {
+			c.currentConsumer.Unlock()
 			return nil, ErrOrderedConsumerConcurrentRequests
 		}
 		c.cursor.streamSeq = c.runningFetch.sseq
 	}
+	c.currentConsumer.Unlock()
 	c.consumerType = consumerTypeFetch
 	err := c.reset()
 	if err != nil {

@@ -208,6 +208,10 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 	if cfg.OptStartSeq != 0 {
 		oc.cursor.streamSeq = cfg.OptStartSeq - 1
 	}
+	err := oc.reset()
+	if err != nil {
+		return nil, err
+	}
 
 	return oc, nil
 }
