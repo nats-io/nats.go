@@ -130,7 +130,7 @@ func file_pbtest_proto_rawDescGZIP() []byte {
 }
 
 var file_pbtest_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_pbtest_proto_goTypes = []interface{}{
+var file_pbtest_proto_goTypes = []any{
 	(*Person)(nil), // 0: testdata.Person
 	nil,            // 1: testdata.Person.ChildrenEntry
 }
@@ -150,7 +150,7 @@ func file_pbtest_proto_init() {
 		return
 	}
 	if !protoimpl.UnsafeEnabled {
-		file_pbtest_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_pbtest_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*Person); i {
 			case 0:
 				return &v.state
