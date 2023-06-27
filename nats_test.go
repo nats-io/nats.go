@@ -64,7 +64,7 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	return errors.New("timeout")
 }
 
-func stackFatalf(t *testing.T, f string, args ...interface{}) {
+func stackFatalf(t *testing.T, f string, args ...any) {
 	lines := make([]string, 0, 32)
 	msg := fmt.Sprintf(f, args...)
 	lines = append(lines, msg)
