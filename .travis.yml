@@ -25,3 +25,17 @@ script:
 - if [[ "$TRAVIS_GO_VERSION" =~ 1.20 ]]; then ./scripts/cov.sh TRAVIS; else go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off; fi
 after_success:
 - if [[ "$TRAVIS_GO_VERSION" =~ 1.20 ]]; then $HOME/gopath/bin/goveralls -coverprofile=acc.out -service travis-ci; fi
+
+jobs:
+  include:
+  - name: "Go: 1.20.x (nats-server@dev)"
+    go: "1.20.x"
+    before_script:
+    - go get -modfile go_test.mod github.com/nats-io/nats-server/v2@dev
+  - name: "Go: 1.20.x (nats-server@main)"
+    go: "1.20.x"
+    before_script:
+    - go get -modfile go_test.mod github.com/nats-io/nats-server/v2@main
+  allow_failures:
+  - name: "Go: 1.20.x (nats-server@dev)"
+  - name: "Go: 1.20.x (nats-server@main)"
