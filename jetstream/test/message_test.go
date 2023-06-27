@@ -306,7 +306,7 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		if err := msg.Nak(jetstream.WithNakDelay(123 * time.Nanosecond)); err != nil {
+		if err := msg.NakWithDelay(123 * time.Nanosecond); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		ack, err := sub.NextMsgWithContext(ctx)
