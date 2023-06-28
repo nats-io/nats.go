@@ -49,7 +49,11 @@ type (
 		DoubleAck(context.Context) error
 		// Nak negatively acknowledges a message
 		// This tells the server to redeliver the message
-		Nak(...NakOpt) error
+		Nak() error
+		// NakWithDelay negatively acknowledges a message
+		// This tells the server to redeliver the message
+		// after the given `delay` duration
+		NakWithDelay(delay time.Duration) error
 		// InProgress tells the server that this message is being worked on
 		// It resets the redelivery timer on the server
 		InProgress() error
@@ -84,10 +88,6 @@ type (
 	ackOpts struct {
 		nakDelay time.Duration
 	}
-
-	AckOpt func(*ackOpts) error
-
-	NakOpt func(*ackOpts) error
 
 	ackType []byte
 )
@@ -189,16 +189,14 @@ func (m *jetStreamMsg) DoubleAck(ctx context.Context) error {
 
 // Nak negatively acknowledges a message
 // This tells the server to redeliver the message
-// Nak() can be supplied with following options:
-// - WithNakDelay() - specify the duration after which the mesage should be redelivered
-func (m *jetStreamMsg) Nak(opts ...NakOpt) error {
-	var o ackOpts
-	for _, opt := range opts {
-		if err := opt(&o); err != nil {
-			return err
-		}
-	}
-	return m.ackReply(context.Background(), ackNak, false, o)
+func (m *jetStreamMsg) Nak() error {
+	return m.ackReply(context.Background(), ackNak, false, ackOpts{})
+}
+
+// NakWithDelay negatively acknowledges a message
+// This tells the server to redeliver the message after the given `delay` duration
+func (m *jetStreamMsg) NakWithDelay(delay time.Duration) error {
+	return m.ackReply(context.Background(), ackNak, false, ackOpts{nakDelay: delay})
 }
 
 // InProgress tells the server that this message is being worked on

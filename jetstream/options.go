@@ -242,14 +242,6 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
-// WithNakDelay can be used to specify the duration after which the message should be redelivered
-func WithNakDelay(delay time.Duration) NakOpt {
-	return func(opts *ackOpts) error {
-		opts.nakDelay = delay
-		return nil
-	}
-}
-
 // WithMsgID sets the message ID used for deduplication.
 func WithMsgID(id string) PublishOpt {
 	return func(opts *pubOpts) error {
