@@ -150,13 +150,13 @@ var (
 
 // ObjectStoreConfig is the config for the object store.
 type ObjectStoreConfig struct {
-	Bucket      string
-	Description string
-	TTL         time.Duration
-	MaxBytes    int64
-	Storage     StorageType
-	Replicas    int
-	Placement   *Placement
+	Bucket      string        `json:"bucket"`
+	Description string        `json:"description,omitempty"`
+	TTL         time.Duration `json:"max_age,omitempty"`
+	MaxBytes    int64         `json:"max_bytes,omitempty"`
+	Storage     StorageType   `json:"storage,omitempty"`
+	Replicas    int           `json:"num_replicas,omitempty"`
+	Placement   *Placement    `json:"placement,omitempty"`
 }
 
 type ObjectStoreStatus interface {
