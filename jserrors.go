@@ -33,6 +33,26 @@ var (
 	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration.
 	ErrStreamNameAlreadyInUse JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNameInUse, Description: "stream name already in use", Code: 400}}
 
+	// ErrStreamSubjectTransformNotSupported is returned when the connected nats-server version does not support setting
+	// the stream subject transform. If this error is returned when executing AddStream(), the stream with invalid
+	// configuration was already created in the server.
+	ErrStreamSubjectTransformNotSupported JetStreamError = &jsError{message: "stream subject transformation not supported by nats-server"}
+
+	// ErrStreamSourceSubjectTransformNotSupported is returned when the connected nats-server version does not support setting
+	// the stream source subject transform. If this error is returned when executing AddStream(), the stream with invalid
+	// configuration was already created in the server.
+	ErrStreamSourceSubjectTransformNotSupported JetStreamError = &jsError{message: "stream subject transformation not supported by nats-server"}
+
+	// ErrStreamSourceNotSupported is returned when the connected nats-server version does not support setting
+	// the stream sources. If this error is returned when executing AddStream(), the stream with invalid
+	// configuration was already created in the server.
+	ErrStreamSourceNotSupported JetStreamError = &jsError{message: "stream sourcing is not supported by nats-server"}
+
+	// ErrStreamSourceMultipleFilterSubjectsNotSupported is returned when the connected nats-server version does not support setting
+	// the stream sources. If this error is returned when executing AddStream(), the stream with invalid
+	// configuration was already created in the server.
+	ErrStreamSourceMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "stream sourcing with multiple subject filters not supported by nats-server"}
+
 	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
 	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
 

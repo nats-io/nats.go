@@ -797,6 +797,25 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, resp.Error
 	}
 
+	// check that input subject transform (if used) is reflected in the returned ConsumerInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].FilterSubjects) != 0 && len(resp.Sources[i].FilterSubjects) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
+	}
+
 	return resp.StreamInfo, nil
 }
 
