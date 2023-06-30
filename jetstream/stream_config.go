@@ -60,6 +60,9 @@ type (
 		DenyPurge            bool            `json:"deny_purge,omitempty"`
 		AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
 
+		// Allow applying a subject transform to incoming messages before doing anything else
+		SubjectTransform *SubjectTransformConfig `json:"subject_transform,omitempty"`
+
 		// Allow republish of the message after being sequenced and stored.
 		RePublish *RePublish `json:"republish,omitempty"`
 
@@ -111,6 +114,12 @@ type (
 		Offline bool          `json:"offline,omitempty"`
 		Active  time.Duration `json:"active"`
 		Lag     uint64        `json:"lag,omitempty"`
+	}
+
+	// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received
+	SubjectTransformConfig struct {
+		Source      string `json:"src,omitempty"`
+		Destination string `json:"dest"`
 	}
 
 	// RePublish is for republishing messages once committed to a stream. The original

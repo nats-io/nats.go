@@ -199,6 +199,14 @@ type (
 	}
 )
 
+const (
+	_CRLF_   = "\r\n"
+	_EMPTY_  = ""
+	_SPC_    = " "
+	_PUB_P_  = "PUB "
+	_HPUB_P_ = "HPUB "
+)
+
 // defaultAPITimeout is used if context.Background() or context.TODO() is passed to API calls.
 const defaultAPITimeout = 5 * time.Second
 
@@ -255,7 +263,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 			return nil, err
 		}
 	}
-	if apiPrefix == "" {
+	if apiPrefix == _EMPTY_ {
 		return nil, fmt.Errorf("API prefix cannot be empty")
 	}
 	if !strings.HasSuffix(apiPrefix, ".") {
@@ -287,7 +295,7 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 			return nil, err
 		}
 	}
-	if domain == "" {
+	if domain == _EMPTY_ {
 		return nil, fmt.Errorf("domain cannot be empty")
 	}
 	jsOpts.apiPrefix = fmt.Sprintf(jsDomainT, domain)
@@ -310,7 +318,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}
 	ncfg := cfg
 	// If we have a mirror and an external domain, convert to ext.APIPrefix.
-	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
+	if ncfg.Mirror != nil && ncfg.Mirror.Domain != _EMPTY_ {
 		// Copy so we do not change the caller's version.
 		ncfg.Mirror = ncfg.Mirror.copy()
 		if err := ncfg.Mirror.convertDomain(); err != nil {
@@ -322,7 +330,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if len(ncfg.Sources) > 0 {
 		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
 		for i, ss := range ncfg.Sources {
-			if ss.Domain != "" {
+			if ss.Domain != _EMPTY_ {
 				ncfg.Sources[i] = ss.copy()
 				if err := ncfg.Sources[i].convertDomain(); err != nil {
 					return nil, err
@@ -349,6 +357,25 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, resp.Error
 	}
 
+	// check that input subject transform (if used) is reflected in the returned ConsumerInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].FilterSubjects) != 0 && len(resp.Sources[i].FilterSubjects) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
+	}
+
 	return &stream{
 		jetStream: js,
 		name:      cfg.Name,
@@ -359,7 +386,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 // If we have a Domain, convert to the appropriate ext.APIPrefix.
 // This will change the stream source, so should be a copy passed in.
 func (ss *StreamSource) convertDomain() error {
-	if ss.Domain == "" {
+	if ss.Domain == _EMPTY_ {
 		return nil
 	}
 	if ss.External != nil {
@@ -410,6 +437,25 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
+	}
+
+	// check that input subject transform (if used) is reflected in the returned ConsumerInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].FilterSubjects) != 0 && len(resp.Sources[i].FilterSubjects) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
 	}
 
 	return &stream{
@@ -521,7 +567,7 @@ func (js *jetStream) DeleteConsumer(ctx context.Context, stream string, name str
 }
 
 func validateStreamName(stream string) error {
-	if stream == "" {
+	if stream == _EMPTY_ {
 		return ErrStreamNameRequired
 	}
 	if strings.Contains(stream, ".") {
@@ -531,7 +577,7 @@ func validateStreamName(stream string) error {
 }
 
 func validateSubject(subject string) error {
-	if subject == "" {
+	if subject == _EMPTY_ {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, "subject cannot be empty")
 	}
 	if !subjectRegexp.MatchString(subject) {
@@ -675,25 +721,25 @@ func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (s
 		defer cancel()
 	}
 	if err := validateSubject(subject); err != nil {
-		return "", err
+		return _EMPTY_, err
 	}
 	streamsSubject := apiSubj(js.apiPrefix, apiStreams)
 
 	r := &streamsRequest{Subject: subject}
 	req, err := json.Marshal(r)
 	if err != nil {
-		return "", err
+		return _EMPTY_, err
 	}
 	var resp streamNamesResponse
 	_, err = js.apiRequestJSON(ctx, streamsSubject, &resp, req)
 	if err != nil {
-		return "", err
+		return _EMPTY_, err
 	}
 	if resp.Error != nil {
-		return "", resp.Error
+		return _EMPTY_, resp.Error
 	}
 	if len(resp.Streams) == 0 {
-		return "", ErrStreamNotFound
+		return _EMPTY_, ErrStreamNotFound
 	}
 
 	return resp.Streams[0], nil
