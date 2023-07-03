@@ -62,7 +62,7 @@ const (
 var (
 	// API errors
 
-	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled for an account.
+	// ErrJetStreamNotEnabled is an error returned when JetStream is not enabled.
 	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled", Code: 503}}
 
 	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is not enabled for an account.
@@ -71,13 +71,13 @@ var (
 	// ErrStreamNotFound is an error returned when stream with given name does not exist.
 	ErrStreamNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNotFound, Description: "stream not found", Code: 404}}
 
-	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration
+	// ErrStreamNameAlreadyInUse is returned when a stream with given name already exists and has a different configuration.
 	ErrStreamNameAlreadyInUse JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNameInUse, Description: "stream name already in use", Code: 400}}
 
 	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
 	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
 
-	// ErrMsgNotFound is returned when message with provided sequence number does npt exist.
+	// ErrMsgNotFound is returned when message with provided sequence number does not exist.
 	ErrMsgNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMessageNotFound, Description: "message not found", Code: 404}}
 
 	// ErrBadRequest is returned when invalid request is sent to JetStream API.
@@ -167,7 +167,7 @@ var (
 	// messages using Fetch (or FetchBytes).
 	ErrOrderConsumerUsedAsFetch = &jsError{message: "ordered consumer initialized as fetch"}
 
-	// ErrOrderConsumerUsedAsFetch is returned when ordered consumer was already used to process
+	// ErrOrderConsumerUsedAsConsume is returned when ordered consumer was already used to process
 	// messages using Consume or Messages.
 	ErrOrderConsumerUsedAsConsume = &jsError{message: "ordered consumer initialized as consume"}
 

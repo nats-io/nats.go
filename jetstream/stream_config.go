@@ -110,7 +110,7 @@ type (
 	}
 
 	// RePublish is for republishing messages once committed to a stream. The original
-	// subject cis remapped from the subject pattern to the destination pattern.
+	// subject is remapped from the subject pattern to the destination pattern.
 	RePublish struct {
 		Source      string `json:"src,omitempty"`
 		Destination string `json:"dest"`
@@ -165,7 +165,7 @@ const (
 	// DiscardOld will remove older messages to return to the limits. This is
 	// the default.
 	DiscardOld DiscardPolicy = iota
-	//DiscardNew will fail to store new messages.
+	// DiscardNew will fail to store new messages.
 	DiscardNew
 )
 

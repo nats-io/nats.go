@@ -166,12 +166,12 @@ func (m *jetStreamMsg) Headers() nats.Header {
 	return m.msg.Header
 }
 
-// Subject reutrns a subject on which a message is published
+// Subject returns a subject on which a message is published
 func (m *jetStreamMsg) Subject() string {
 	return m.msg.Subject
 }
 
-// Reply reutrns a reply subject for a JetStream message
+// Reply returns a reply subject for a JetStream message
 func (m *jetStreamMsg) Reply() string {
 	return m.msg.Reply
 }
