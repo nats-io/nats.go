@@ -114,6 +114,9 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
+	// Will be used as start time to validate proper reset to sequence on retries.
+	startTime := time.Now()
+
 	// Create a sample asset.
 	msg := make([]byte, 1024*1024)
 	rand.Read(msg)
@@ -186,7 +189,7 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 			rmsg = append(rmsg, m.Data...)
 		}
 		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
-		sub, err := js.Subscribe("a", cb, OrderedConsumer(), IdleHeartbeat(250*time.Millisecond))
+		sub, err := js.Subscribe("a", cb, OrderedConsumer(), IdleHeartbeat(250*time.Millisecond), StartTime(startTime))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -208,7 +211,7 @@ func TestJetStreamOrderedConsumer(t *testing.T) {
 		var rmsg []byte
 
 		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
-		sub, err := js.SubscribeSync("a", OrderedConsumer(), IdleHeartbeat(250*time.Millisecond))
+		sub, err := js.SubscribeSync("a", OrderedConsumer(), IdleHeartbeat(250*time.Millisecond), StartTime(startTime))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}

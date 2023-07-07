@@ -1991,6 +1991,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		cfg.DeliverSubject = newDeliver
 		cfg.DeliverPolicy = DeliverByStartSequencePolicy
 		cfg.OptStartSeq = sseq
+		// In case the consumer was created with a start time, we need to clear it
+		// since we are now using a start sequence.
+		cfg.OptStartTime = nil
 
 		js := jsi.js
 		sub.mu.Unlock()
