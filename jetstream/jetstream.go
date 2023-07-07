@@ -50,10 +50,10 @@ type (
 		// PublishMsg performs a synchronous publish to a stream and waits for ack from server
 		// It accepts subject name (which must be bound to a stream) and nats.Message
 		PublishMsg(ctx context.Context, msg *nats.Msg, opts ...PublishOpt) (*PubAck, error)
-		// PublishAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
+		// PublishAsync performs an asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and message data
 		PublishAsync(subject string, payload []byte, opts ...PublishOpt) (PubAckFuture, error)
-		// PublishMsgAsync performs a asynchronous publish to a stream and returns [PubAckFuture] interface
+		// PublishMsgAsync performs an asynchronous publish to a stream and returns [PubAckFuture] interface
 		// It accepts subject name (which must be bound to a stream) and nats.Message
 		PublishMsgAsync(msg *nats.Msg, opts ...PublishOpt) (PubAckFuture, error)
 		// PublishAsyncPending returns the number of async publishes outstanding for this context
@@ -197,11 +197,11 @@ type (
 
 var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 
-// New returns a enw JetStream instance
+// New returns a new JetStream instance.
 //
 // Available options:
-// [WithClientTrace] - enables request/response tracing
-// [WithPublishAsyncErrHandler] - sets error handler for async message publish
+// [WithClientTrace] - enables request/response tracing.
+// [WithPublishAsyncErrHandler] - sets error handler for async message publish.
 // [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes that can be inflight at one time.
 // [WithDirectGet] - specifies whether client should use direct get requests.
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {

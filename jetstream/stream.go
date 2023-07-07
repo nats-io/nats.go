@@ -71,7 +71,7 @@ type (
 		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
 		ListConsumers(context.Context) ConsumerInfoLister
 
-		// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
+		// ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
 	RawStreamMsg struct {
@@ -276,8 +276,8 @@ func (s *stream) CachedInfo() *StreamInfo {
 // Purge removes messages from a stream
 //
 // Available options:
-// [WithPurgeSubject] - can be used set a sprecific subject for which messages on a stream will be purged
-// [WithPurgeSequence] - can be used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// [WithPurgeSubject] - can be used set a specific subject for which messages on a stream will be purged
+// [WithPurgeSequence] - can be used to set a specific sequence number up to which (but not including) messages will be purged from a stream
 // [WithPurgeKeep] - can be used to set the number of messages to be kept in the stream after purge.
 func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	var purgeReq StreamPurgeRequest
@@ -506,7 +506,7 @@ func (s *consumerLister) Err() <-chan error {
 	return s.errs
 }
 
-// ConsumerNames returns a  ConsumerNameLister enabling iterating over a channel of consumer names
+// ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
 func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	l := &consumerLister{
 		js:    s.jetStream,

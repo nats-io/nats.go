@@ -110,7 +110,7 @@ type (
 )
 
 const (
-	// Default time wait between retries on Publish iff err is NoResponders.
+	// Default time wait between retries on Publish if err is NoResponders.
 	DefaultPubRetryWait = 250 * time.Millisecond
 
 	// Default number of retries

@@ -30,7 +30,7 @@ import (
 type (
 	// MessagesContext supports iterating over a messages on a stream.
 	MessagesContext interface {
-		// Next retreives nest message on a stream. It will block until the next message is available.
+		// Next retreives next message on a stream. It will block until the next message is available.
 		Next() (Msg, error)
 		// Stop closes the iterator and cancels subscription.
 		Stop()
@@ -136,13 +136,13 @@ const (
 // Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
 //
 // Available options:
-// [ConsumeMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [ConsumeMaxBytes] - sets maximum number of bytes stored in a buffer
-// [ConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
-// [ConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
+// [PullMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
+// [PullMaxBytes] - sets maximum number of bytes stored in a buffer
+// [PullExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
+// [PullHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
 // [ConsumeErrHandler] - sets custom consume error callback handler
-// [ConsumeThresholdMessages] - sets the byte count on which Consume will trigger new pull request to the server
-// [ConsumeThresholdBytes] - sets the message count on which Consume will trigger new pull request to the server
+// [PullThresholdMessages] - sets the message count on which Consume will trigger new pull request to the server
+// [PullThresholdBytes] - sets the byte count on which Consume will trigger new pull request to the server
 func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if handler == nil {
 		return nil, ErrHandlerRequired
@@ -350,13 +350,11 @@ func (s *pullSubscription) checkPending() {
 // Messages returns MessagesContext, allowing continuously iterating over messages on a stream.
 //
 // Available options:
-// [ConsumeMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [ConsumeMaxBytes] - sets maximum number of bytes stored in a buffer
-// [ConsumeExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
-// [ConsumeHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
-// [ConsumeErrHandler] - sets custom consume error callback handler
-// [ConsumeThresholdMessages] - sets the byte count on which Consume will trigger new pull request to the server
-// [ConsumeThresholdBytes] - sets the message count on which Consume will trigger new pull request to the server
+// [PullMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
+// [PullMaxBytes] - sets maximum number of bytes stored in a buffer
+// [PullExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
+// [PullHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
+// [WithMessagesErrOnMissingHeartbeat] - sets whether a missing heartbeat error should be reported when calling Next
 func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
 	consumeOpts, err := parseMessagesOpts(opts...)
 	if err != nil {
@@ -596,7 +594,7 @@ func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch,
 	return p.fetch(req)
 }
 
-// Fetch sends a single request to retrieve given number of messages.
+// FetchNoWait sends a single request to retrieve given number of messages.
 // If there are any messages available at the time of sending request,
 // FetchNoWait will return immediately.
 func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {

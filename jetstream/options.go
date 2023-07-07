@@ -56,7 +56,7 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	}
 }
 
-// WithPurgeSubject sets a sprecific subject for which messages on a stream will be purged
+// WithPurgeSubject sets a specific subject for which messages on a stream will be purged
 func WithPurgeSubject(subject string) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		req.Subject = subject
@@ -64,7 +64,7 @@ func WithPurgeSubject(subject string) StreamPurgeOpt {
 	}
 }
 
-// WithPurgeSequence is used to set a sprecific sequence number up to which (but not including) messages will be purged from a stream
+// WithPurgeSequence is used to set a specific sequence number up to which (but not including) messages will be purged from a stream
 // Can be combined with [WithPurgeSubject] option, but not with [WithPurgeKeep]
 func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
@@ -206,8 +206,7 @@ func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {
 	})
 }
 
-// ConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
-// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+// WithMessagesErrOnMissingHeartbeat sets whether a missing heartbeat error should be reported when calling Next (Default: true).
 func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	return pullOptFunc(func(cfg *consumeOpts) error {
 		cfg.ReportMissingHeartbeats = hbErr
@@ -215,7 +214,7 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	})
 }
 
-// FetchMaxWait sets custom timeout fir fetching predefined batch of messages
+// FetchMaxWait sets custom timeout for fetching predefined batch of messages
 func FetchMaxWait(timeout time.Duration) FetchOpt {
 	return func(req *pullRequest) error {
 		if timeout <= 0 {
@@ -274,7 +273,7 @@ func WithExpectLastSequencePerSubject(seq uint64) PublishOpt {
 	}
 }
 
-// ExpectLastMsgId sets the expected last msgId in the response from the publish.
+// WithExpectLastMsgID sets the expected last msgId in the response from the publish.
 func WithExpectLastMsgID(id string) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastMsgID = id
