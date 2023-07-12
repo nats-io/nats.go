@@ -1279,7 +1279,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatal("Timed out waiting for Next() to return after Stop()")
 		case err := <-errs:
 			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-				t.Fatalf("Unexpected error: %s", err)
+				t.Fatalf("Unexpected error: %v", err)
 			}
 
 			if len(msgs) != len(testMsgs) {
