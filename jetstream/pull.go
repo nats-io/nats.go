@@ -438,6 +438,8 @@ func (s *pullSubscription) Next() (Msg, error) {
 	for {
 		s.checkPending()
 		select {
+		case <-s.done:
+			return nil, ErrMsgIteratorClosed
 		case msg := <-s.msgs:
 			if hbMonitor != nil {
 				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
