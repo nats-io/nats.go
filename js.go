@@ -227,13 +227,14 @@ type js struct {
 	opts *jsOpts
 
 	// For async publish context.
-	mu   sync.RWMutex
-	rpre string
-	rsub *Subscription
-	pafs map[string]*pubAckFuture
-	stc  chan struct{}
-	dch  chan struct{}
-	rr   *rand.Rand
+	mu           sync.RWMutex
+	rpre         string
+	rsub         *Subscription
+	pafs         map[string]*pubAckFuture
+	stc          chan struct{}
+	dch          chan struct{}
+	rr           *rand.Rand
+	connStatusCh chan (Status)
 }
 
 type jsOpts struct {
@@ -666,6 +667,10 @@ func (js *js) newAsyncReply() string {
 		js.rsub = sub
 		js.rr = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
+	if js.connStatusCh == nil {
+		js.connStatusCh = js.nc.StatusChanged(RECONNECTING, CLOSED)
+		go js.resetPendingAcksOnReconnect()
+	}
 	var sb strings.Builder
 	sb.WriteString(js.rpre)
 	rn := js.rr.Int63()
@@ -679,11 +684,30 @@ func (js *js) newAsyncReply() string {
 	return sb.String()
 }
 
+func (js *js) resetPendingAcksOnReconnect() {
+	for {
+		js.mu.Lock()
+		newStatus, ok := <-js.connStatusCh
+		if !ok || newStatus == CLOSED {
+			return
+		}
+		for _, paf := range js.pafs {
+			paf.err = ErrDisconnected
+		}
+		js.pafs = nil
+		js.mu.Unlock()
+	}
+}
+
 func (js *js) cleanupReplySub() {
 	js.mu.Lock()
 	if js.rsub != nil {
 		js.rsub.Unsubscribe()
 		js.rsub = nil
+	}
+	if js.connStatusCh != nil {
+		close(js.connStatusCh)
+		js.connStatusCh = nil
 	}
 	js.mu.Unlock()
 }

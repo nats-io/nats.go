@@ -7376,6 +7376,61 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 }
 
+func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	// Now create a stream and expect a PubAck from <-OK().
+	if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	errs := make(chan error, 1)
+	done := make(chan struct{}, 1)
+	acks := make(chan nats.PubAckFuture, 100)
+	go func() {
+		for i := 0; i < 100; i++ {
+			if ack, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
+				errs <- err
+				return
+			} else {
+				acks <- ack
+			}
+		}
+		close(acks)
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case err := <-errs:
+		t.Fatalf("Unexpected error during publish: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+	s.Shutdown()
+	time.Sleep(100 * time.Millisecond)
+	if pending := js.PublishAsyncPending(); pending != 0 {
+		t.Fatalf("Expected no pending messages after server shutdown; got: %d", pending)
+	}
+	s = RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	for ack := range acks {
+		select {
+		case <-ack.Ok():
+		case err := <-ack.Err():
+			if !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+	}
+}
+
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	// Comment out below to run this benchmark.
 	t.SkipNow()

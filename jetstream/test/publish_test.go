@@ -1234,3 +1234,67 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		}
 	})
 }
+
+func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	errs := make(chan error, 1)
+	done := make(chan struct{}, 1)
+	acks := make(chan jetstream.PubAckFuture, 100)
+	go func() {
+		for i := 0; i < 100; i++ {
+			if ack, err := js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+				errs <- err
+				return
+			} else {
+				acks <- ack
+			}
+		}
+		close(acks)
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case err := <-errs:
+		t.Fatalf("Unexpected error during publish: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+	s.Shutdown()
+	time.Sleep(100 * time.Millisecond)
+	if pending := js.PublishAsyncPending(); pending != 0 {
+		t.Fatalf("Expected no pending messages after server shutdown; got: %d", pending)
+	}
+	s = RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	for ack := range acks {
+		select {
+		case <-ack.Ok():
+		case err := <-ack.Err():
+			if !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+	}
+}

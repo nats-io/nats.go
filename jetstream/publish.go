@@ -93,6 +93,8 @@ type (
 		stallCh      chan struct{}
 		doneCh       chan struct{}
 		rr           *rand.Rand
+		// channel to signal when server is disconnected or conn is closed
+		connStatusCh chan (nats.Status)
 	}
 
 	pubAckResponse struct {
@@ -296,6 +298,10 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		js.publisher.replySubject = sub
 		js.publisher.rr = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
+	if js.publisher.connStatusCh == nil {
+		js.publisher.connStatusCh = js.conn.StatusChanged(nats.RECONNECTING, nats.CLOSED)
+		go js.resetPendingAcksOnReconnect()
+	}
 	var sb strings.Builder
 	sb.WriteString(js.publisher.replyPrefix)
 	rn := js.publisher.rr.Int63()
@@ -376,6 +382,21 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		paf.doneCh <- paf.ack
 	}
 	js.publisher.Unlock()
+}
+
+func (js *jetStream) resetPendingAcksOnReconnect() {
+	for {
+		newStatus, ok := <-js.publisher.connStatusCh
+		if !ok || newStatus == nats.CLOSED {
+			return
+		}
+		js.publisher.Lock()
+		for _, paf := range js.publisher.acks {
+			paf.err = nats.ErrDisconnected
+		}
+		js.publisher.acks = nil
+		js.publisher.Unlock()
+	}
 }
 
 // registerPAF will register for a PubAckFuture.
