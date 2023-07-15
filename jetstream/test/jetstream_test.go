@@ -205,10 +205,17 @@ func TestCreateStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
 			name:    "create stream, ok",
+			stream:  "foo",
+			timeout: 10 * time.Second,
+			subject: "FOO.123",
+		},
+		{
+			name:    "with empty context",
 			stream:  "foo",
 			subject: "FOO.123",
 		},
@@ -216,19 +223,29 @@ func TestCreateStream(t *testing.T) {
 			name:      "invalid stream name",
 			stream:    "foo.123",
 			subject:   "FOO.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
 			subject:   "FOO.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream name already in use",
 			stream:    "foo",
 			subject:   "BAR.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameAlreadyInUse,
+		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			subject:   "BAR.123",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 
@@ -239,8 +256,6 @@ func TestCreateStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -249,6 +264,12 @@ func TestCreateStream(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
@@ -415,30 +436,47 @@ func TestUpdateStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
 			name:    "update existing stream",
 			stream:  "foo",
 			subject: "BAR.123",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:    "with empty context",
+			stream:  "foo",
+			subject: "FOO.123",
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
 			subject:   "FOO.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
 			subject:   "FOO.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "bar",
 			subject:   "FOO.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNotFound,
+		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			subject:   "FOO.123",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 
@@ -449,19 +487,23 @@ func TestUpdateStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			s, err := js.UpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
@@ -488,26 +530,41 @@ func TestStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
-			name:   "get existing stream",
+			name:    "get existing stream",
+			stream:  "foo",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:   "with empty context",
 			stream: "foo",
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "bar",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNotFound,
+		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 	srv := RunBasicJetStreamServer()
@@ -517,20 +574,24 @@ func TestStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			s, err := js.Stream(ctx, test.stream)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
@@ -553,25 +614,34 @@ func TestDeleteStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
-			name:   "delete existing stream",
-			stream: "foo",
+			name:    "delete existing stream",
+			stream:  "foo",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:   "with empty context",
+			stream: "bar",
 		},
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrInvalidStreamName,
 		},
 		{
 			name:      "stream name required",
 			stream:    "",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
 			name:      "stream not found",
 			stream:    "foo",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNotFound,
 		},
 	}
@@ -582,20 +652,29 @@ func TestDeleteStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "bar", Subjects: []string{"BAR.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+			}
 			err := js.DeleteStream(ctx, test.stream)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
@@ -700,15 +779,28 @@ func TestListStreams(t *testing.T) {
 	tests := []struct {
 		name       string
 		streamsNum int
+		timeout    time.Duration
 		withError  error
 	}{
 		{
 			name:       "list streams",
 			streamsNum: 260,
+			timeout:    10 * time.Second,
+		},
+		{
+			name:       "with empty context",
+			streamsNum: 260,
 		},
 		{
 			name:       "no stream available",
+			timeout:    10 * time.Second,
 			streamsNum: 0,
+		},
+		{
+			name:       "context timeout",
+			streamsNum: 260,
+			timeout:    10 * time.Microsecond,
+			withError:  context.DeadlineExceeded,
 		},
 	}
 
@@ -721,15 +813,19 @@ func TestListStreams(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -741,7 +837,16 @@ func TestListStreams(t *testing.T) {
 				select {
 				case s := <-streamsList.Info():
 					streams = append(streams, s)
+					if test.withError != nil {
+						t.Fatalf("Expected error: %v; got none", test.withError)
+					}
 				case err := <-streamsList.Err():
+					if test.withError != nil {
+						if !errors.Is(err, test.withError) {
+							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+						}
+						return
+					}
 					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
@@ -759,15 +864,28 @@ func TestStreamNames(t *testing.T) {
 	tests := []struct {
 		name       string
 		streamsNum int
+		timeout    time.Duration
 		withError  error
 	}{
 		{
 			name:       "list streams",
 			streamsNum: 500,
+			timeout:    10 * time.Second,
+		},
+		{
+			name:       "with empty context",
+			streamsNum: 500,
 		},
 		{
 			name:       "no stream available",
 			streamsNum: 0,
+			timeout:    10 * time.Second,
+		},
+		{
+			name:       "context timeout",
+			streamsNum: 500,
+			timeout:    10 * time.Microsecond,
+			withError:  context.DeadlineExceeded,
 		},
 	}
 
@@ -780,15 +898,19 @@ func TestStreamNames(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.timeout)
+				defer cancel()
+			}
 			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
 			for i := 0; i < test.streamsNum; i++ {
-				_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
+				_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: fmt.Sprintf("foo%d", i), Subjects: []string{fmt.Sprintf("FOO.%d", i)}})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -800,7 +922,16 @@ func TestStreamNames(t *testing.T) {
 				select {
 				case s := <-streamsList.Name():
 					streams = append(streams, s)
+					if test.withError != nil {
+						t.Fatalf("Expected error: %v; got none", test.withError)
+					}
 				case err := <-streamsList.Err():
+					if test.withError != nil {
+						if !errors.Is(err, test.withError) {
+							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+						}
+						return
+					}
 					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
@@ -820,18 +951,27 @@ func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 		stream         string
 		consumerConfig jetstream.ConsumerConfig
 		shouldCreate   bool
+		timeout        time.Duration
 		withError      error
 	}{
 		{
 			name:           "create durable pull consumer",
 			stream:         "foo",
 			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckExplicitPolicy},
+			timeout:        10 * time.Second,
 			shouldCreate:   true,
 		},
 		{
 			name:           "create ephemeral pull consumer",
 			stream:         "foo",
 			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
+			timeout:        10 * time.Second,
+			shouldCreate:   true,
+		},
+		{
+			name:           "with empty context",
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
+			stream:         "foo",
 			shouldCreate:   true,
 		},
 		{
@@ -861,6 +1001,13 @@ func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 			consumerConfig: jetstream.ConsumerConfig{Durable: "dur.123", AckPolicy: jetstream.AckExplicitPolicy},
 			withError:      jetstream.ErrInvalidConsumerName,
 		},
+		{
+			name:           "context timeout",
+			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
+			stream:         "foo",
+			timeout:        10 * time.Microsecond,
+			withError:      context.DeadlineExceeded,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()
@@ -876,15 +1023,19 @@ func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			var sub *nats.Subscription
 			if test.consumerConfig.FilterSubject != "" {
 				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
@@ -919,10 +1070,17 @@ func TestJetStream_Consumer(t *testing.T) {
 		name      string
 		stream    string
 		durable   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
 			name:    "get existing consumer",
+			stream:  "foo",
+			durable: "dur",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:    "with empty context",
 			stream:  "foo",
 			durable: "dur",
 		},
@@ -930,6 +1088,7 @@ func TestJetStream_Consumer(t *testing.T) {
 			name:      "consumer does not exist",
 			stream:    "foo",
 			durable:   "abc",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrConsumerNotFound,
 		},
 		{
@@ -950,6 +1109,13 @@ func TestJetStream_Consumer(t *testing.T) {
 			durable:   "dur",
 			withError: jetstream.ErrInvalidStreamName,
 		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			durable:   "dur",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()
@@ -965,19 +1131,23 @@ func TestJetStream_Consumer(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			c, err := js.Consumer(ctx, test.stream, test.durable)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
@@ -1000,17 +1170,25 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 		name      string
 		stream    string
 		durable   string
+		timeout   time.Duration
 		withError error
 	}{
 		{
 			name:    "delete existing consumer",
 			stream:  "foo",
 			durable: "dur",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:    "with empty context",
+			stream:  "foo",
+			durable: "dur2",
 		},
 		{
 			name:      "consumer does not exist",
 			stream:    "foo",
 			durable:   "dur",
+			timeout:   10 * time.Second,
 			withError: jetstream.ErrConsumerNotFound,
 		},
 		{
@@ -1031,6 +1209,13 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 			durable:   "dur",
 			withError: jetstream.ErrInvalidStreamName,
 		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			durable:   "dur",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()
@@ -1046,19 +1231,27 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{Durable: "dur", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{Durable: "dur2", AckPolicy: jetstream.AckAllPolicy, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			err := js.DeleteConsumer(ctx, test.stream, test.durable)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
@@ -1082,10 +1275,17 @@ func TestStreamNameBySubject(t *testing.T) {
 		name      string
 		subject   string
 		withError error
+		timeout   time.Duration
 		expected  string
 	}{
 		{
 			name:     "get stream name by subject explicit",
+			subject:  "FOO.123",
+			timeout:  10 * time.Second,
+			expected: "foo",
+		},
+		{
+			name:     "with empty context",
 			subject:  "FOO.123",
 			expected: "foo",
 		},
@@ -1109,6 +1309,12 @@ func TestStreamNameBySubject(t *testing.T) {
 			subject:   "FOO.>.123",
 			withError: jetstream.ErrInvalidSubject,
 		},
+		{
+			name:      "context timeout",
+			subject:   "FOO.123",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()
@@ -1124,19 +1330,23 @@ func TestStreamNameBySubject(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "bar", Subjects: []string{"BAR.ABC"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "bar", Subjects: []string{"BAR.ABC"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
 			name, err := js.StreamNameBySubject(ctx, test.subject)
 			if test.withError != nil {
 				if err == nil || !errors.Is(err, test.withError) {
@@ -1150,7 +1360,6 @@ func TestStreamNameBySubject(t *testing.T) {
 			if test.expected != "" && name != test.expected {
 				t.Fatalf("Unexpected stream name; want: %s; got: %s", test.expected, name)
 			}
-
 		})
 	}
 }

@@ -217,32 +217,6 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Invalid ack body: %q", string(ack.Data))
 		}
 	})
-	t.Run("double ack, empty context", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv, nc, js, c := setup(ctx, t)
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-		defer nc.Close()
-
-		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		msgs, err := c.Fetch(1)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		msg := <-msgs.Messages()
-		if msg == nil {
-			t.Fatalf("No messages available")
-		}
-		if err := msgs.Error(); err != nil {
-			t.Fatalf("unexpected error during fetch: %v", err)
-		}
-
-		if err := msg.DoubleAck(context.Background()); err == nil || !errors.Is(err, nats.ErrNoDeadlineContext) {
-			t.Fatalf("Expected error: %v; got: %v", nats.ErrNoDeadlineContext, err)
-		}
-	})
 	t.Run("standard nak", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

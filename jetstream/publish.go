@@ -131,6 +131,10 @@ func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts
 
 // PublishMsg publishes a Msg to a stream from JetStream.
 func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	o := pubOpts{
 		retryWait:     DefaultPubRetryWait,
 		retryAttempts: DefaultPubRetryAttempts,

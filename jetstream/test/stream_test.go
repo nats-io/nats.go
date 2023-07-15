@@ -260,29 +260,43 @@ func TestStreamInfo(t *testing.T) {
 		subjectsFilter      string
 		expectedSubjectMsgs map[string]uint64
 		deletedDetails      bool
+		timeout             time.Duration
 		withError           error
 	}{
 		{
-			name: "info without opts",
+			name:    "info without opts",
+			timeout: 5 * time.Second,
+		},
+		{
+			name: "with empty context",
 		},
 		{
 			name:           "with deleted details",
 			deletedDetails: true,
+			timeout:        5 * time.Second,
 		},
 		{
 			name:                "with subjects filter, one subject",
 			subjectsFilter:      "FOO.A",
+			timeout:             5 * time.Second,
 			expectedSubjectMsgs: map[string]uint64{"FOO.A": 8},
 		},
 		{
 			name:                "with subjects filter, wildcard subject",
 			subjectsFilter:      "FOO.*",
+			timeout:             5 * time.Second,
 			expectedSubjectMsgs: map[string]uint64{"FOO.A": 8, "FOO.B": 10},
 		},
 		{
 			name:                "with subjects filter, and deleted details",
 			subjectsFilter:      "FOO.A",
+			timeout:             5 * time.Second,
 			expectedSubjectMsgs: map[string]uint64{"FOO.A": 8},
+		},
+		{
+			name:      "context timeout",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 
@@ -299,29 +313,33 @@ func TestStreamInfo(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for i := 0; i < 10; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if _, err := js.Publish(ctx, "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
-	if err := s.DeleteMsg(ctx, 3); err != nil {
+	if err := s.DeleteMsg(context.Background(), 3); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s.DeleteMsg(ctx, 5); err != nil {
+	if err := s.DeleteMsg(context.Background(), 5); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.timeout)
+				defer cancel()
+			}
 			opts := make([]jetstream.StreamInfoOpt, 0)
 			if test.deletedDetails {
 				opts = append(opts, jetstream.WithDeletedDetails(test.deletedDetails))
@@ -422,12 +440,19 @@ func TestGetMsg(t *testing.T) {
 		opts            []jetstream.GetMsgOpt
 		expectedData    string
 		expectedHeaders nats.Header
+		timeout         time.Duration
 		withError       error
 	}{
 		{
 			name:         "get existing msg",
 			seq:          2,
+			timeout:      5 * time.Second,
 			expectedData: "msg 1 on subject B",
+		},
+		{
+			name:         "with empty context",
+			seq:          2,
+			expectedData: `msg 1 on subject B`,
 		},
 		{
 			name:      "get deleted msg",
@@ -458,6 +483,12 @@ func TestGetMsg(t *testing.T) {
 				"X-Nats-Key":       {"123"},
 			},
 		},
+		{
+			name:      "context timeout",
+			seq:       1,
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()
@@ -473,21 +504,19 @@ func TestGetMsg(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s1, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	s1, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for i := 1; i < 5; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if _, err := js.Publish(ctx, "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
-	if _, err := js.PublishMsg(ctx, &nats.Msg{
+	if _, err := js.PublishMsg(context.Background(), &nats.Msg{
 		Data: []byte("msg with headers"),
 		Header: map[string][]string{
 			"X-Nats-Test-Data": {"test_data"},
@@ -497,15 +526,15 @@ func TestGetMsg(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s1.DeleteMsg(ctx, 3); err != nil {
+	if err := s1.DeleteMsg(context.Background(), 3); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s1.DeleteMsg(ctx, 5); err != nil {
+	if err := s1.DeleteMsg(context.Background(), 5); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// same stream, but with allow direct
-	s2, err := js.CreateStream(ctx,
+	s2, err := js.CreateStream(context.Background(),
 		jetstream.StreamConfig{Name: "bar",
 			Subjects:    []string{"BAR.*"},
 			Description: "desc",
@@ -515,14 +544,14 @@ func TestGetMsg(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for i := 1; i < 5; i++ {
-		if _, err := js.Publish(ctx, "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if _, err := js.Publish(ctx, "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
-	if _, err := js.PublishMsg(ctx, &nats.Msg{
+	if _, err := js.PublishMsg(context.Background(), &nats.Msg{
 		Data: []byte("msg with headers"),
 		Header: map[string][]string{
 			"X-Nats-Test-Data": {"test_data"},
@@ -532,14 +561,20 @@ func TestGetMsg(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s2.DeleteMsg(ctx, 3); err != nil {
+	if err := s2.DeleteMsg(context.Background(), 3); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if err := s2.DeleteMsg(ctx, 5); err != nil {
+	if err := s2.DeleteMsg(context.Background(), 5); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	for _, test := range tests {
+		ctx := context.Background()
+		if test.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, test.timeout)
+			defer cancel()
+		}
 		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false"), func(t *testing.T) {
 			msg, err := s1.GetMsg(ctx, test.seq, test.opts...)
 			if test.withError != nil {
@@ -587,10 +622,17 @@ func TestGetLastMsgForSubject(t *testing.T) {
 		subject      string
 		expectedData string
 		allowDirect  bool
+		timeout      time.Duration
 		withError    error
 	}{
 		{
 			name:         "get existing msg",
+			subject:      "*.A",
+			expectedData: "msg 4 on subject A",
+			timeout:      5 * time.Second,
+		},
+		{
+			name:         "with empty context",
 			subject:      "*.A",
 			expectedData: "msg 4 on subject A",
 		},
@@ -598,11 +640,18 @@ func TestGetLastMsgForSubject(t *testing.T) {
 			name:         "get last msg from stream",
 			subject:      ">",
 			expectedData: "msg 4 on subject B",
+			timeout:      5 * time.Second,
 		},
 		{
 			name:      "no messages on subject",
 			subject:   "*.Z",
 			withError: jetstream.ErrMsgNotFound,
+		},
+		{
+			name:      "context timeout",
+			subject:   "*.A",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 
@@ -619,23 +668,21 @@ func TestGetLastMsgForSubject(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s1, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
+	s1, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, Description: "desc"})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for i := 1; i < 5; i++ {
-		if _, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if _, err := js.Publish(ctx, "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "FOO.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
 
 	// same stream, but with allow direct
-	s2, err := js.CreateStream(ctx,
+	s2, err := js.CreateStream(context.Background(),
 		jetstream.StreamConfig{Name: "bar",
 			Subjects:    []string{"BAR.*"},
 			Description: "desc",
@@ -645,15 +692,21 @@ func TestGetLastMsgForSubject(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for i := 1; i < 5; i++ {
-		if _, err := js.Publish(ctx, "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "BAR.A", []byte(fmt.Sprintf("msg %d on subject A", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if _, err := js.Publish(ctx, "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
+		if _, err := js.Publish(context.Background(), "BAR.B", []byte(fmt.Sprintf("msg %d on subject B", i))); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
 
 	for _, test := range tests {
+		ctx := context.Background()
+		if test.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, test.timeout)
+			defer cancel()
+		}
 		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false"), func(t *testing.T) {
 			msg, err := s1.GetLastMsgForSubject(ctx, test.subject)
 			if test.withError != nil {
@@ -691,16 +744,28 @@ func TestDeleteMsg(t *testing.T) {
 	tests := []struct {
 		name      string
 		seq       uint64
+		timeout   time.Duration
 		withError error
 	}{
 		{
-			name: "delete message",
-			seq:  3,
+			name:    "delete message",
+			seq:     3,
+			timeout: 5 * time.Second,
+		},
+		{
+			name: "with empty context",
+			seq:  2,
 		},
 		{
 			name:      "msg not found",
 			seq:       10,
 			withError: jetstream.ErrMsgDeleteUnsuccessful,
+		},
+		{
+			name:      "context timeout",
+			seq:       1,
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 	srv := RunBasicJetStreamServer()
@@ -732,6 +797,12 @@ func TestDeleteMsg(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		ctx := context.Background()
+		if test.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, test.timeout)
+			defer cancel()
+		}
 		t.Run(test.name, func(t *testing.T) {
 			sub, err := nc.SubscribeSync("$JS.API.STREAM.MSG.DELETE.foo")
 			if err != nil {
@@ -839,15 +910,27 @@ func TestListConsumers(t *testing.T) {
 	tests := []struct {
 		name         string
 		consumersNum int
+		timeout      time.Duration
 		withError    error
 	}{
 		{
 			name:         "list consumers",
 			consumersNum: 500,
+			timeout:      5 * time.Second,
+		},
+		{
+			name:         "with empty context",
+			consumersNum: 500,
 		},
 		{
 			name:         "no consumers available",
 			consumersNum: 0,
+		},
+		{
+			name:         "context timeout",
+			consumersNum: 500,
+			timeout:      10 * time.Microsecond,
+			withError:    context.DeadlineExceeded,
 		},
 	}
 
@@ -860,22 +943,26 @@ func TestListConsumers(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
 			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
-			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+			}
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.timeout)
+				defer cancel()
 			}
 			consumersList := s.ListConsumers(ctx)
 			consumers := make([]*jetstream.ConsumerInfo, 0)
@@ -884,7 +971,16 @@ func TestListConsumers(t *testing.T) {
 				select {
 				case s := <-consumersList.Info():
 					consumers = append(consumers, s)
+					if test.withError != nil {
+						t.Fatalf("Expected error: %v; got none", test.withError)
+					}
 				case err := <-consumersList.Err():
+					if test.withError != nil {
+						if !errors.Is(err, test.withError) {
+							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+						}
+						return
+					}
 					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
@@ -902,15 +998,28 @@ func TestConsumerNames(t *testing.T) {
 	tests := []struct {
 		name         string
 		consumersNum int
+		timeout      time.Duration
 		withError    error
 	}{
 		{
 			name:         "list consumer names",
 			consumersNum: 500,
+			timeout:      5 * time.Second,
+		},
+		{
+			name:         "with empty context",
+			consumersNum: 500,
 		},
 		{
 			name:         "no consumers available",
 			consumersNum: 0,
+			timeout:      5 * time.Second,
+		},
+		{
+			name:         "context timeout",
+			consumersNum: 500,
+			timeout:      10 * time.Microsecond,
+			withError:    context.DeadlineExceeded,
 		},
 	}
 
@@ -923,22 +1032,26 @@ func TestConsumerNames(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
 			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
-			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for i := 0; i < test.consumersNum; i++ {
-				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+			}
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.timeout)
+				defer cancel()
 			}
 			consumersList := s.ConsumerNames(ctx)
 			consumers := make([]string, 0)
@@ -947,7 +1060,16 @@ func TestConsumerNames(t *testing.T) {
 				select {
 				case s := <-consumersList.Name():
 					consumers = append(consumers, s)
+					if test.withError != nil {
+						t.Fatalf("Expected error: %v; got none", test.withError)
+					}
 				case err := <-consumersList.Err():
+					if test.withError != nil {
+						if !errors.Is(err, test.withError) {
+							t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+						}
+						return
+					}
 					if !errors.Is(err, jetstream.ErrEndOfData) {
 						t.Fatalf("Unexpected error: %v", err)
 					}
@@ -966,41 +1088,57 @@ func TestPurgeStream(t *testing.T) {
 		name        string
 		opts        []jetstream.StreamPurgeOpt
 		expectedSeq []uint64
+		timeout     time.Duration
 		withError   error
 	}{
 		{
 			name:        "purge all messages",
+			expectedSeq: []uint64{},
+			timeout:     5 * time.Second,
+		},
+		{
+			name:        "with empty context",
 			expectedSeq: []uint64{},
 		},
 		{
 			name:        "purge on subject",
 			opts:        []jetstream.StreamPurgeOpt{jetstream.WithPurgeSubject("FOO.2")},
 			expectedSeq: []uint64{1, 3, 5, 7, 9},
+			timeout:     5 * time.Second,
 		},
 		{
 			name:        "purge with sequence",
 			opts:        []jetstream.StreamPurgeOpt{jetstream.WithPurgeSequence(5)},
 			expectedSeq: []uint64{5, 6, 7, 8, 9, 10},
+			timeout:     5 * time.Second,
 		},
 		{
 			name:        "purge with keep",
 			opts:        []jetstream.StreamPurgeOpt{jetstream.WithPurgeKeep(3)},
 			expectedSeq: []uint64{8, 9, 10},
+			timeout:     5 * time.Second,
 		},
 		{
 			name:        "purge with filter and sequence",
 			opts:        []jetstream.StreamPurgeOpt{jetstream.WithPurgeSubject("FOO.2"), jetstream.WithPurgeSequence(8)},
 			expectedSeq: []uint64{1, 3, 5, 7, 8, 9, 10},
+			timeout:     5 * time.Second,
 		},
 		{
 			name:        "purge with filter and keep",
 			opts:        []jetstream.StreamPurgeOpt{jetstream.WithPurgeSubject("FOO.2"), jetstream.WithPurgeKeep(3)},
 			expectedSeq: []uint64{1, 3, 5, 6, 7, 8, 9, 10},
+			timeout:     5 * time.Second,
 		},
 		{
 			name:      "with sequence and keep",
 			opts:      []jetstream.StreamPurgeOpt{jetstream.WithPurgeSequence(5), jetstream.WithPurgeKeep(3)},
 			withError: jetstream.ErrInvalidOption,
+		},
+		{
+			name:      "context timeout",
+			timeout:   10 * time.Microsecond,
+			withError: context.DeadlineExceeded,
 		},
 	}
 
@@ -1013,26 +1151,30 @@ func TestPurgeStream(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
 			js, err := jetstream.New(nc)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
 
-			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
 			for i := 0; i < 5; i++ {
-				if _, err := js.Publish(ctx, "FOO.1", []byte(fmt.Sprintf("msg %d on FOO.1", i))); err != nil {
+				if _, err := js.Publish(context.Background(), "FOO.1", []byte(fmt.Sprintf("msg %d on FOO.1", i))); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				if _, err := js.Publish(ctx, "FOO.2", []byte(fmt.Sprintf("msg %d on FOO.2", i))); err != nil {
+				if _, err := js.Publish(context.Background(), "FOO.2", []byte(fmt.Sprintf("msg %d on FOO.2", i))); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+			}
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.timeout)
+				defer cancel()
 			}
 			err = s.Purge(ctx, test.opts...)
 			if test.withError != nil {

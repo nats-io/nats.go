@@ -230,6 +230,10 @@ func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 // [WithDeletedDetails] - use to display the information about messages deleted from a stream
 // [WithSubjectFilter] - use to display the information about messages stored on given subjects
 func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	var infoReq *streamInfoRequest
 	for _, opt := range opts {
 		if infoReq == nil {
@@ -280,6 +284,10 @@ func (s *stream) CachedInfo() *StreamInfo {
 // [WithPurgeSequence] - can be used to set a specific sequence number up to which (but not including) messages will be purged from a stream
 // [WithPurgeKeep] - can be used to set the number of messages to be kept in the stream after purge.
 func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	var purgeReq StreamPurgeRequest
 	for _, opt := range opts {
 		if err := opt(&purgeReq); err != nil {
@@ -321,6 +329,10 @@ func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string) (*Raw
 }
 
 func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStreamMsg, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	req, err := json.Marshal(mreq)
 	if err != nil {
 		return nil, err
@@ -448,6 +460,10 @@ func (s *stream) SecureDeleteMsg(ctx context.Context, seq uint64) error {
 }
 
 func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	r, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -471,6 +487,10 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 		errs:      make(chan error, 1),
 	}
 	go func() {
+		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		if cancel != nil {
+			defer cancel()
+		}
 		for {
 			page, err := l.consumerInfos(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -514,6 +534,10 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 		errs:  make(chan error, 1),
 	}
 	go func() {
+		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		if cancel != nil {
+			defer cancel()
+		}
 		for {
 			page, err := l.consumerNames(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {

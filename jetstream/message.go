@@ -223,8 +223,10 @@ func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool,
 	m.Unlock()
 
 	if sync {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			return nats.ErrNoDeadlineContext
+		var cancel context.CancelFunc
+		ctx, cancel = wrapContextWithoutDeadline(ctx)
+		if cancel != nil {
+			defer cancel()
 		}
 	}
 
