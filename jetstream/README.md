@@ -166,7 +166,7 @@ js.DeleteStream(ctx, "ORDERS")
 // list streams
 streams := js.ListStreams(ctx)
 var err error
-for err != nil {
+for err == nil {
     select {
     case s := <-streams.Info():
         fmt.Println(s.Config.Name)
@@ -179,7 +179,7 @@ if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
 
 // list stream names
 names := js.StreamNames(ctx)
-for err != nil {
+for err == nil {
     select {
     case name := <-names.Name():
         fmt.Println(name)
