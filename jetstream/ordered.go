@@ -392,6 +392,7 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		InactiveThreshold: 5 * time.Minute,
 		Replicas:          1,
 		HeadersOnly:       c.cfg.HeadersOnly,
+		MemoryStorage:     true,
 	}
 	if len(c.cfg.FilterSubjects) == 1 {
 		cfg.FilterSubject = c.cfg.FilterSubjects[0]
