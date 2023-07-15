@@ -413,8 +413,12 @@ and new subscription is created for each execution.
 #### Continuous polling
 
 There are 2 ways to achieve push-like behavior using pull consumers in
-`jetstream` package. Both `Messages()` and `Consume()` methods perform exactly
-the same optimizations and can be used interchangeably.
+`jetstream` package. Both `Messages()` and `Consume()` methods perform similar optimizations
+and for most cases can be used interchangeably.
+
+There is an advantage of using `Messages()` instead of `Consume()` for work-queue scenarios,
+where messages should be fetched one by one, as it allows for finer control over fetching
+single messages on demand.
 
 Subject filtering is achieved by configuring a consumer with a `FilterSubject`
 value.
@@ -494,6 +498,34 @@ type PullThresholdMessages int
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
 
+##### Using `Messages()` to fetch single messages one by one
+
+When implementing work queue, it is possible to use `Messages()` in order to
+fetch messages from the server one-by-one, without optimizations and
+pre-buffering (to avoid redeliveries when processing messages at slow rate).
+
+```go
+// PullMaxMessages determines how many messages will be sent to the client in a single pull request
+iter, _ := cons.Messages(jetstream.PullMaxMessages(1))
+numWorkers := 5
+sem := make(chan struct{}, numWorkers)
+for {
+    sem <- struct{}{}
+    go func() {
+        defer func() {
+            <-sem
+        }()
+        msg, err := iter.Next()
+        if err != nil {
+            // handle err
+        }
+        fmt.Printf("Processing msg: %s\n", string(msg.Data()))
+        doWork()
+        msg.Ack()
+    }()
+}
+```
+
 ## Publishing on stream
 
 `JetStream` interface allows publishing messages on stream in 2 ways:
@@ -562,3 +594,7 @@ ackF, err = js.PublishAsync("ORDERS.new", []byte("hello"))
 
 Just as for synchronous publish, `PublishAsync()` and `PublishMsgAsync()` accept
 options for setting headers.
+
+## Examples
+
+You can find more examples of `jetstream` usage [here](https://github.com/nats-io/nats.go/tree/main/examples/jetstream).

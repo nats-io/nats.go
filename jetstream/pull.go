@@ -178,7 +178,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 	internalHandler := func(msg *nats.Msg) {
 		if sub.hbMonitor != nil {
-			sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+			sub.hbMonitor.Stop()
 		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
@@ -187,6 +187,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		defer func() {
 			sub.Lock()
 			sub.checkPending()
+			sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 			sub.Unlock()
 		}()
 		if !userMsg {
