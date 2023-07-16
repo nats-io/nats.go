@@ -73,7 +73,7 @@ import (
 
 func main() {
     // In the `jetstream` package, almost all API calls rely on `context.Context` for timeout/cancellation handling
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
     nc, _ := nats.Connect(nats.DefaultURL)
 
