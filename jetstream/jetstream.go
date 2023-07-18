@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
@@ -195,6 +196,9 @@ type (
 	}
 )
 
+// defaultAPITimeout is used if context.Background() or context.TODO() is passed to API calls.
+const defaultAPITimeout = 5 * time.Second
+
 var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 
 // New returns a new JetStream instance.
@@ -297,6 +301,10 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	ncfg := cfg
 	// If we have a mirror and an external domain, convert to ext.APIPrefix.
 	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
@@ -378,6 +386,10 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 
 	req, err := json.Marshal(cfg)
 	if err != nil {
@@ -409,6 +421,10 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if err := validateStreamName(name); err != nil {
 		return nil, err
 	}
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	infoSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamInfoT, name))
 
 	var resp streamInfoResponse
@@ -433,6 +449,10 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	if err := validateStreamName(name); err != nil {
 		return err
+	}
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
 	}
 	deleteSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamDeleteT, name))
 	var resp streamDeleteResponse
@@ -518,6 +538,10 @@ func validateSubject(subject string) error {
 }
 
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	var resp accountInfoResponse
 
 	infoSubject := apiSubj(js.apiPrefix, apiAccountInfo)
@@ -548,6 +572,10 @@ func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
 		errs:    make(chan error, 1),
 	}
 	go func() {
+		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		if cancel != nil {
+			defer cancel()
+		}
 		for {
 			page, err := l.streamInfos(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -590,6 +618,10 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 		errs:  make(chan error, 1),
 	}
 	go func() {
+		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		if cancel != nil {
+			defer cancel()
+		}
 		for {
 			page, err := l.streamNames(ctx)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
@@ -615,6 +647,10 @@ func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
 }
 
 func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (string, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	if err := validateSubject(subject); err != nil {
 		return "", err
 	}
@@ -699,4 +735,14 @@ func (s *streamLister) streamNames(ctx context.Context) ([]string, error) {
 	s.pageInfo = &resp.apiPaged
 	s.offset += len(resp.Streams)
 	return resp.Streams, nil
+}
+
+// wrapContextWithoutDeadline wraps context without deadline with default timeout.
+// If deadline is already set, it will be returned as is, and cancel() will be nil.
+// Caller should check if cancel() is nil before calling it.
+func wrapContextWithoutDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, nil
+	}
+	return context.WithTimeout(ctx, defaultAPITimeout)
 }

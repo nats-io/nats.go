@@ -55,6 +55,10 @@ type (
 
 // Info returns [ConsumerInfo] for a given consumer
 func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	infoSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, p.stream, p.name))
 	var resp consumerInfoResponse
 
@@ -81,6 +85,10 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 }
 
 func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig) (Consumer, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,
@@ -142,6 +150,10 @@ func generateConsName() string {
 }
 
 func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consumer, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	if err := validateConsumerName(name); err != nil {
 		return nil, err
 	}
@@ -172,6 +184,10 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 }
 
 func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string) error {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	if err := validateConsumerName(consumer); err != nil {
 		return err
 	}
