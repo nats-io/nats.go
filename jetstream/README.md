@@ -165,28 +165,19 @@ js.DeleteStream(ctx, "ORDERS")
 ```go
 // list streams
 streams := js.ListStreams(ctx)
-var err error
-for err == nil {
-    select {
-    case s := <-streams.Info():
-        fmt.Println(s.Config.Name)
-    case err = <-streams.Err():
-    }
+for s := range streams.Info() {
+    fmt.Println(s.Config.Name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
+if streams.Err() != nil {
     fmt.Println("Unexpected error ocurred")
 }
 
 // list stream names
 names := js.StreamNames(ctx)
-for err == nil {
-    select {
-    case name := <-names.Name():
-        fmt.Println(name)
-    case err = <-names.Err():
-    }
+for name := range names.Name() {
+    fmt.Println(name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
+if names.Err() != nil {
     fmt.Println("Unexpected error ocurred")
 }
 ```
@@ -202,13 +193,13 @@ Using `Stream` interface, it is also possible to:
 _ = s.Purge(ctx)
 
 // remove all messages from a stream that are stored on a specific subject
-_ = s.Purge(ctx, jetstream.WithSubject("ORDERS.new"))
+_ = s.Purge(ctx, jetstream.WithPurgeSubject("ORDERS.new"))
 
 // remove all messages up to specified sequence number
-_ = s.Purge(ctx, jetstream.WithSequence(100))
+_ = s.Purge(ctx, jetstream.WithPurgeSequence(100))
 
 // remove messages, but keep 10 newest
-_ = s.Purge(ctx, jetstream.WithKeep(10))
+_ = s.Purge(ctx, jetstream.WithPurgeKeep(10))
 ```
 
 - Get and messages from stream
@@ -310,29 +301,20 @@ fmt.Println(cachedInfo.Config.Durable)
 ```go
 // list consumers
 consumers := s.ListConsumers(ctx)
-var err error
-for err != nil {
-    select {
-    case s := <-consumers.Info():
-        fmt.Println(s.Name)
-    case err = <-consumers.Err():
-    }
+for cons := range consumers.Info() {
+    fmt.Println(cons.Name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+if consumers.Err() != nil {
+    fmt.Println("Unexpected error ocurred")
 }
 
 // list consumer names
 names := s.ConsumerNames(ctx)
-for err != nil {
-    select {
-    case name := <-names.Name():
-        fmt.Println(name)
-    case err = <-names.Err():
-    }
+for name := range names.Name() {
+    fmt.Println(name)
 }
-if err != nil && !errors.Is(err, jetstream.ErrEndOfData) {
-    fmt.Println("Unexpected error occured")
+if names.Err() != nil {
+    fmt.Println("Unexpected error ocurred")
 }
 ```
 

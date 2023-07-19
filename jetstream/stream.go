@@ -162,12 +162,12 @@ type (
 
 	ConsumerInfoLister interface {
 		Info() <-chan *ConsumerInfo
-		Err() <-chan error
+		Err() error
 	}
 
 	ConsumerNameLister interface {
 		Name() <-chan string
-		Err() <-chan error
+		Err() error
 	}
 
 	consumerLister struct {
@@ -177,7 +177,7 @@ type (
 
 		consumers chan *ConsumerInfo
 		names     chan string
-		errs      chan error
+		err       error
 	}
 
 	consumerListResponse struct {
@@ -479,14 +479,14 @@ func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
 	return nil
 }
 
-// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
+// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos.
 func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	l := &consumerLister{
 		js:        s.jetStream,
 		consumers: make(chan *ConsumerInfo),
-		errs:      make(chan error, 1),
 	}
 	go func() {
+		defer close(l.consumers)
 		ctx, cancel := wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
@@ -494,13 +494,13 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 		for {
 			page, err := l.consumerInfos(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
-				l.errs <- err
+				l.err = err
 				return
 			}
 			for _, info := range page {
 				select {
 				case <-ctx.Done():
-					l.errs <- ctx.Err()
+					l.err = ctx.Err()
 					return
 				default:
 				}
@@ -509,7 +509,6 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
-				l.errs <- err
 				return
 			}
 		}
@@ -522,8 +521,8 @@ func (s *consumerLister) Info() <-chan *ConsumerInfo {
 	return s.consumers
 }
 
-func (s *consumerLister) Err() <-chan error {
-	return s.errs
+func (s *consumerLister) Err() error {
+	return s.err
 }
 
 // ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
@@ -531,9 +530,9 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	l := &consumerLister{
 		js:    s.jetStream,
 		names: make(chan string),
-		errs:  make(chan error, 1),
 	}
 	go func() {
+		defer close(l.names)
 		ctx, cancel := wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
@@ -541,19 +540,18 @@ func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 		for {
 			page, err := l.consumerNames(ctx, s.name)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
-				l.errs <- err
+				l.err = err
 				return
 			}
 			for _, info := range page {
 				select {
 				case l.names <- info:
 				case <-ctx.Done():
-					l.errs <- ctx.Err()
+					l.err = ctx.Err()
 					return
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
-				l.errs <- err
 				return
 			}
 		}

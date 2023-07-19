@@ -75,9 +75,9 @@ type (
 		// DeleteStream removes a stream with given name
 		DeleteStream(ctx context.Context, stream string) error
 		// ListStreams returns StreamInfoLister enabling iterating over a channel of stream infos
-		ListStreams(context.Context) StreamInfoLister
+		ListStreams(context.Context, ...StreamListOpt) StreamInfoLister
 		// StreamNames returns a  StreamNameLister enabling iterating over a channel of stream names
-		StreamNames(context.Context) StreamNameLister
+		StreamNames(context.Context, ...StreamListOpt) StreamNameLister
 	}
 
 	StreamConsumerManager interface {
@@ -95,6 +95,8 @@ type (
 		// DeleteConsumer removes a consumer with given name from a stream
 		DeleteConsumer(ctx context.Context, stream string, consumer string) error
 	}
+
+	StreamListOpt func(*streamsRequest) error
 
 	// AccountInfo contains info about the JetStream usage from the current account.
 	AccountInfo struct {
@@ -158,12 +160,12 @@ type (
 
 	StreamInfoLister interface {
 		Info() <-chan *StreamInfo
-		Err() <-chan error
+		Err() error
 	}
 
 	StreamNameLister interface {
 		Name() <-chan string
-		Err() <-chan error
+		Err() error
 	}
 
 	apiPagedRequest struct {
@@ -176,7 +178,7 @@ type (
 
 		streams chan *StreamInfo
 		names   chan string
-		errs    chan error
+		err     error
 	}
 
 	streamListResponse struct {
@@ -192,6 +194,7 @@ type (
 	}
 
 	streamsRequest struct {
+		apiPagedRequest
 		Subject string `json:"subject,omitempty"`
 	}
 )
@@ -565,33 +568,43 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 }
 
 // ListStreams returns StreamInfoLister enabling iterating over a channel of stream infos
-func (js *jetStream) ListStreams(ctx context.Context) StreamInfoLister {
+//
+// Available options:
+// [WithStreamListSubject] - allows filtering returned streams by provided subject
+func (js *jetStream) ListStreams(ctx context.Context, opts ...StreamListOpt) StreamInfoLister {
 	l := &streamLister{
 		js:      js,
 		streams: make(chan *StreamInfo),
-		errs:    make(chan error, 1),
+	}
+	var streamsReq streamsRequest
+	for _, opt := range opts {
+		if err := opt(&streamsReq); err != nil {
+			l.err = err
+			close(l.streams)
+			return l
+		}
 	}
 	go func() {
+		defer close(l.streams)
 		ctx, cancel := wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
 		}
 		for {
-			page, err := l.streamInfos(ctx)
+			page, err := l.streamInfos(ctx, streamsReq)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
-				l.errs <- err
+				l.err = err
 				return
 			}
 			for _, info := range page {
 				select {
 				case l.streams <- info:
 				case <-ctx.Done():
-					l.errs <- ctx.Err()
+					l.err = ctx.Err()
 					return
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
-				l.errs <- err
 				return
 			}
 		}
@@ -606,38 +619,48 @@ func (s *streamLister) Info() <-chan *StreamInfo {
 }
 
 // Err returns an error channel which will be populated with error from [ListStreams] or [StreamNames] request
-func (s *streamLister) Err() <-chan error {
-	return s.errs
+func (s *streamLister) Err() error {
+	return s.err
 }
 
 // StreamNames returns a [StreamNameLister] enabling iterating over a channel of stream names
-func (js *jetStream) StreamNames(ctx context.Context) StreamNameLister {
+//
+// Available options:
+// [WithStreamListSubject] - allows filtering returned streams by provided subject
+func (js *jetStream) StreamNames(ctx context.Context, opts ...StreamListOpt) StreamNameLister {
 	l := &streamLister{
 		js:    js,
 		names: make(chan string),
-		errs:  make(chan error, 1),
+	}
+	var streamsReq streamsRequest
+	for _, opt := range opts {
+		if err := opt(&streamsReq); err != nil {
+			l.err = err
+			close(l.streams)
+			return l
+		}
 	}
 	go func() {
 		ctx, cancel := wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
 		}
+		defer close(l.names)
 		for {
-			page, err := l.streamNames(ctx)
+			page, err := l.streamNames(ctx, streamsReq)
 			if err != nil && !errors.Is(err, ErrEndOfData) {
-				l.errs <- err
+				l.err = err
 				return
 			}
 			for _, info := range page {
 				select {
 				case l.names <- info:
 				case <-ctx.Done():
-					l.errs <- ctx.Err()
+					l.err = ctx.Err()
 					return
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
-				l.errs <- err
 				return
 			}
 		}
@@ -682,21 +705,28 @@ func (s *streamLister) Name() <-chan string {
 }
 
 // infos fetches the next [StreamInfo] page
-func (s *streamLister) streamInfos(ctx context.Context) ([]*StreamInfo, error) {
+func (s *streamLister) streamInfos(ctx context.Context, streamsReq streamsRequest) ([]*StreamInfo, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
 	}
 
-	req, err := json.Marshal(
-		apiPagedRequest{Offset: s.offset},
-	)
+	req := streamsRequest{
+		apiPagedRequest: apiPagedRequest{
+			Offset: s.offset,
+		},
+		Subject: streamsReq.Subject,
+	}
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	slSubj := apiSubj(s.js.apiPrefix, apiStreamListT)
 	var resp streamListResponse
-	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, reqJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -710,21 +740,25 @@ func (s *streamLister) streamInfos(ctx context.Context) ([]*StreamInfo, error) {
 }
 
 // streamNames fetches the next stream names page
-func (s *streamLister) streamNames(ctx context.Context) ([]string, error) {
+func (s *streamLister) streamNames(ctx context.Context, streamsReq streamsRequest) ([]string, error) {
 	if s.pageInfo != nil && s.offset >= s.pageInfo.Total {
 		return nil, ErrEndOfData
 	}
 
-	req, err := json.Marshal(
-		apiPagedRequest{Offset: s.offset},
-	)
+	req := streamsRequest{
+		apiPagedRequest: apiPagedRequest{
+			Offset: s.offset,
+		},
+		Subject: streamsReq.Subject,
+	}
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
 	slSubj := apiSubj(s.js.apiPrefix, apiStreams)
 	var resp streamNamesResponse
-	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, req)
+	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, reqJSON)
 	if err != nil {
 		return nil, err
 	}
