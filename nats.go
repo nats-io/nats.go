@@ -5471,7 +5471,7 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	if len(statuses) == 0 {
 		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
 	}
-	ch := make(chan Status)
+	ch := make(chan Status, 10)
 	for _, s := range statuses {
 		nc.registerStatusChangeListener(s, ch)
 	}
