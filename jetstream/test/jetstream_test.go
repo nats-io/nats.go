@@ -244,7 +244,7 @@ func TestCreateStream(t *testing.T) {
 			name:      "context timeout",
 			stream:    "foo",
 			subject:   "BAR.123",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -475,7 +475,7 @@ func TestUpdateStream(t *testing.T) {
 			name:      "context timeout",
 			stream:    "foo",
 			subject:   "FOO.123",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -563,7 +563,7 @@ func TestStream(t *testing.T) {
 		{
 			name:      "context timeout",
 			stream:    "foo",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -816,7 +816,7 @@ func TestListStreams(t *testing.T) {
 		{
 			name:       "context timeout",
 			streamsNum: 260,
-			timeout:    10 * time.Microsecond,
+			timeout:    1 * time.Microsecond,
 			withError:  context.DeadlineExceeded,
 		},
 	}
@@ -914,7 +914,7 @@ func TestStreamNames(t *testing.T) {
 		{
 			name:       "context timeout",
 			streamsNum: 500,
-			timeout:    10 * time.Microsecond,
+			timeout:    1 * time.Microsecond,
 			withError:  context.DeadlineExceeded,
 		},
 	}
@@ -1030,7 +1030,7 @@ func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 			name:           "context timeout",
 			consumerConfig: jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy},
 			stream:         "foo",
-			timeout:        10 * time.Microsecond,
+			timeout:        1 * time.Microsecond,
 			withError:      context.DeadlineExceeded,
 		},
 	}
@@ -1138,7 +1138,7 @@ func TestJetStream_Consumer(t *testing.T) {
 			name:      "context timeout",
 			stream:    "foo",
 			durable:   "dur",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -1238,7 +1238,7 @@ func TestJetStream_DeleteConsumer(t *testing.T) {
 			name:      "context timeout",
 			stream:    "foo",
 			durable:   "dur",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -1337,7 +1337,7 @@ func TestStreamNameBySubject(t *testing.T) {
 		{
 			name:      "context timeout",
 			subject:   "FOO.123",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}

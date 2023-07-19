@@ -295,7 +295,7 @@ func TestStreamInfo(t *testing.T) {
 		},
 		{
 			name:      "context timeout",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -486,7 +486,7 @@ func TestGetMsg(t *testing.T) {
 		{
 			name:      "context timeout",
 			seq:       1,
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -650,7 +650,7 @@ func TestGetLastMsgForSubject(t *testing.T) {
 		{
 			name:      "context timeout",
 			subject:   "*.A",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -764,7 +764,7 @@ func TestDeleteMsg(t *testing.T) {
 		{
 			name:      "context timeout",
 			seq:       1,
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
@@ -929,7 +929,7 @@ func TestListConsumers(t *testing.T) {
 		{
 			name:         "context timeout",
 			consumersNum: 500,
-			timeout:      10 * time.Microsecond,
+			timeout:      1 * time.Microsecond,
 			withError:    context.DeadlineExceeded,
 		},
 	}
@@ -1009,7 +1009,7 @@ func TestConsumerNames(t *testing.T) {
 		{
 			name:         "context timeout",
 			consumersNum: 500,
-			timeout:      10 * time.Microsecond,
+			timeout:      1 * time.Microsecond,
 			withError:    context.DeadlineExceeded,
 		},
 	}
@@ -1119,7 +1119,7 @@ func TestPurgeStream(t *testing.T) {
 		},
 		{
 			name:      "context timeout",
-			timeout:   10 * time.Microsecond,
+			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
 	}
