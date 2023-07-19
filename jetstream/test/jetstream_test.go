@@ -955,8 +955,8 @@ func TestStreamNames(t *testing.T) {
 				streams = append(streams, s)
 			}
 			if test.withError != nil {
-			    if !errors.Is(err, test.withError) {
-					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				if !errors.Is(streamsList.Err(), test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, streamsList.Err())
 				}
 				return
 			}
