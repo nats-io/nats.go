@@ -685,12 +685,15 @@ func (js *js) newAsyncReply() string {
 }
 
 func (js *js) resetPendingAcksOnReconnect() {
+	js.mu.Lock()
+	connStatusCh := js.connStatusCh
+	js.mu.Unlock()
 	for {
-		js.mu.Lock()
-		newStatus, ok := <-js.connStatusCh
+		newStatus, ok := <-connStatusCh
 		if !ok || newStatus == CLOSED {
 			return
 		}
+		js.mu.Lock()
 		for _, paf := range js.pafs {
 			paf.err = ErrDisconnected
 		}

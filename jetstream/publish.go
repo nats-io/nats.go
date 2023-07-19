@@ -385,8 +385,11 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 }
 
 func (js *jetStream) resetPendingAcksOnReconnect() {
+	js.publisher.Lock()
+	connStatusCh := js.publisher.connStatusCh
+	js.publisher.Unlock()
 	for {
-		newStatus, ok := <-js.publisher.connStatusCh
+		newStatus, ok := <-connStatusCh
 		if !ok || newStatus == nats.CLOSED {
 			return
 		}
