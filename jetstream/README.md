@@ -62,9 +62,12 @@ experimenting with the new APIs as soon as possible.
 ## Basic usage
 
 ```go
+package main
+
 import (
     "context"
     "fmt"
+    "strconv"
     "time"
 
     "github.com/nats-io/nats.go"
@@ -88,7 +91,8 @@ func main() {
 
     // Publish some messages
     for i := 0; i < 100; i++ {
-        js.Publish(ctx, "ORDERS.new", []byte("hello"))
+        js.Publish(ctx, "ORDERS.new", []byte("hello message "+strconv.Itoa(i)))
+        fmt.Printf("Published hello message %d\n", i)
     }
 
     // Create durable consumer
@@ -98,35 +102,40 @@ func main() {
     })
 
     // Get 10 messages from the consumer
+    messageCounter := 0
     msgs, _ := c.Fetch(10)
-    var msg jetstream.Msg
     for msg := range msgs.Messages() {
         msg.Ack()
-        fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+        fmt.Printf("Received a JetStream message via fetch: %s\n", string(msg.Data()))
+        messageCounter++
     }
-    if msgs.Error() {
+    fmt.Printf("received %d messages\n", messageCounter)
+    if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
 
     // Receive messages continuously in a callback
-    cons, _ := c.Consume(ctx, func(msg jetstream.Msg) {
+    cons, _ := c.Consume(func(msg jetstream.Msg) {
         msg.Ack()
-        fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
+        fmt.Printf("Received a JetStream message via callback: %s\n", string(msg.Data()))
+        messageCounter++
     })
     defer cons.Stop()
 
-
     // Iterate over messages continuously
-    it, _ := cons.Messages()
+    it, _ := c.Messages()
     for i := 0; i < 10; i++ {
-        msg, err := it.Next()
-        if err != nil {
-            log.Fatal(err)
-        }
+        msg, _ := it.Next()
         msg.Ack()
-        fmt.Println("Received a JetStream message: %s\n", string(msg.Data()))
+        fmt.Printf("Received a JetStream message via iterator: %s\n", string(msg.Data()))
+        messageCounter++
     }
     it.Stop()
+
+    // block until all 100 published messages have been processed
+    for messageCounter < 100 {
+        time.Sleep(10 * time.Millisecond)
+    }
 }
 ```
 
