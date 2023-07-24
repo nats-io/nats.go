@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/golang/protobuf v1.4.2
 	github.com/klauspost/compress v1.16.5
-	github.com/nats-io/nats-server/v2 v2.9.19
+	github.com/nats-io/nats-server/v2 v2.9.20-0.20230724215505-4a765b6ef283
 	github.com/nats-io/nkeys v0.4.4
 	github.com/nats-io/nuid v1.0.1
 	go.uber.org/goleak v1.2.1
