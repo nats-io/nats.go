@@ -2211,7 +2211,7 @@ type subOpts struct {
 	skipCInfo bool
 }
 
-// SkipConsumerLookup will omit lookipng up consumer when [Bind], [Durable]
+// SkipConsumerLookup will omit looking up consumer when [Bind], [Durable]
 // or [ConsumerName] are provided.
 //
 // NOTE: This setting may cause an existing consumer to be overwritten. Also,
