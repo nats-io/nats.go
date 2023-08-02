@@ -370,7 +370,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
 				return nil, ErrStreamSourceSubjectTransformNotSupported
 			}
-			if len(cfg.Sources[i].FilterSubjects) != 0 && len(resp.Sources[i].FilterSubjects) == 0 {
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
 				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
 			}
 		}
@@ -452,7 +452,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
 				return nil, ErrStreamSourceSubjectTransformNotSupported
 			}
-			if len(cfg.Sources[i].FilterSubjects) != 0 && len(resp.Sources[i].FilterSubjects) == 0 {
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
 				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
 			}
 		}

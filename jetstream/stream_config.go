@@ -74,13 +74,12 @@ type (
 
 	// StreamSourceInfo shows information about an upstream stream source.
 	StreamSourceInfo struct {
-		Name                  string        `json:"name"`
-		Lag                   uint64        `json:"lag"`
-		Active                time.Duration `json:"active"`
-		FilterSubject         string        `json:"filter_subject,omitempty"`
-		SubjectTransformDest  string        `json:"subject_transform_dest,omitempty"`
-		FilterSubjects        []string      `json:"filter_subjects,omitempty"`
-		SubjectTransformDests []string      `json:"subject_transform_dests,omitempty"`
+		Name                 string                   `json:"name"`
+		Lag                  uint64                   `json:"lag"`
+		Active               time.Duration            `json:"active"`
+		FilterSubject        string                   `json:"filter_subject,omitempty"`
+		SubjectTransformDest string                   `json:"subject_transform_dest,omitempty"`
+		SubjectTransforms    []SubjectTransformConfig `json:"subject_transforms,omitempty"`
 	}
 
 	// StreamState is information about the given stream.
@@ -118,7 +117,7 @@ type (
 
 	// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received
 	SubjectTransformConfig struct {
-		Source      string `json:"src,omitempty"`
+		Source      string `json:"src"`
 		Destination string `json:"dest"`
 	}
 
@@ -138,15 +137,14 @@ type (
 
 	// StreamSource dictates how streams can source from other streams.
 	StreamSource struct {
-		Name                  string          `json:"name"`
-		OptStartSeq           uint64          `json:"opt_start_seq,omitempty"`
-		OptStartTime          *time.Time      `json:"opt_start_time,omitempty"`
-		FilterSubject         string          `json:"filter_subject,omitempty"`
-		SubjectTransformDest  string          `json:"subject_transform_dest,omitempty"`
-		FilterSubjects        []string        `json:"filter_subjects,omitempty"`
-		SubjectTransformDests []string        `json:"subject_transform_dests,omitempty"`
-		External              *ExternalStream `json:"external,omitempty"`
-		Domain                string          `json:"-"`
+		Name                 string                   `json:"name"`
+		OptStartSeq          uint64                   `json:"opt_start_seq,omitempty"`
+		OptStartTime         *time.Time               `json:"opt_start_time,omitempty"`
+		FilterSubject        string                   `json:"filter_subject,omitempty"`
+		SubjectTransformDest string                   `json:"subject_transform_dest,omitempty"`
+		SubjectTransforms    []SubjectTransformConfig `json:"subject_transforms,omitempty"`
+		External             *ExternalStream          `json:"external,omitempty"`
+		Domain               string                   `json:"-"`
 	}
 
 	// ExternalStream allows you to qualify access to a stream source in another
