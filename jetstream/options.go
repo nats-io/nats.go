@@ -197,6 +197,17 @@ func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// AutoUnsubscribeAfter
+type PullAutoUnsubscribeAfter int
+
+func (t PullAutoUnsubscribeAfter) configureConsume(opts *consumeOpts) error {
+	if t <= 0 {
+		return fmt.Errorf("%w: invalide auto unsubscribe after value", ErrInvalidOption)
+	}
+	opts.PullAutoUnsubscribeAfter = int(t)
+	return nil
+}
+
 // ConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
 // It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
 func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {

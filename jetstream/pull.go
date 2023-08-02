@@ -72,14 +72,15 @@ type (
 	}
 
 	consumeOpts struct {
-		Expires                 time.Duration
-		MaxMessages             int
-		MaxBytes                int
-		Heartbeat               time.Duration
-		ErrHandler              ConsumeErrHandlerFunc
-		ReportMissingHeartbeats bool
-		ThresholdMessages       int
-		ThresholdBytes          int
+		Expires                  time.Duration
+		MaxMessages              int
+		MaxBytes                 int
+		Heartbeat                time.Duration
+		ErrHandler               ConsumeErrHandlerFunc
+		ReportMissingHeartbeats  bool
+		ThresholdMessages        int
+		ThresholdBytes           int
+		PullAutoUnsubscribeAfter int
 	}
 
 	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
@@ -99,6 +100,7 @@ type (
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
 		consumeOpts       *consumeOpts
+		delivered         int
 	}
 
 	pendingMsgs struct {
@@ -132,6 +134,13 @@ const (
 	DefaultHeartbeat   = 5 * time.Second
 	unset              = -1
 )
+
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
 
 // Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
 //
@@ -214,7 +223,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		handler(p.jetStream.toJSMsg(msg))
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
+		sub.incrementDeliveredMsgs()
 		sub.Unlock()
+
+		if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 && sub.consumeOpts.PullAutoUnsubscribeAfter == sub.delivered {
+			sub.Stop()
+		}
 	}
 	inbox := p.jetStream.conn.NewInbox()
 	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
@@ -225,9 +239,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	sub.Lock()
 	// initial pull
 	sub.resetPendingMsgs()
+	batchSize := sub.consumeOpts.MaxMessages
+	if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
+		batchSize = min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+	}
 	if err := sub.pull(&pullRequest{
 		Expires:   consumeOpts.Expires,
-		Batch:     consumeOpts.MaxMessages,
+		Batch:     batchSize,
 		MaxBytes:  consumeOpts.MaxBytes,
 		Heartbeat: consumeOpts.Heartbeat,
 	}, subject); err != nil {
@@ -276,10 +294,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							}
 							time.Sleep(5 * time.Second)
 						}
-
+						batchSize := sub.consumeOpts.MaxMessages
+						if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
+							min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+						}
 						sub.fetchNext <- &pullRequest{
 							Expires:   sub.consumeOpts.Expires,
-							Batch:     sub.consumeOpts.MaxMessages,
+							Batch:     batchSize,
 							MaxBytes:  sub.consumeOpts.MaxBytes,
 							Heartbeat: sub.consumeOpts.Heartbeat,
 						}
@@ -293,9 +314,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
 				if errors.Is(err, ErrNoHeartbeat) {
+					batchSize := sub.consumeOpts.MaxMessages
+					if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
+						min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+					}
 					sub.fetchNext <- &pullRequest{
 						Expires:   sub.consumeOpts.Expires,
-						Batch:     sub.consumeOpts.MaxMessages,
+						Batch:     batchSize,
 						MaxBytes:  sub.consumeOpts.MaxBytes,
 						Heartbeat: sub.consumeOpts.Heartbeat,
 					}
@@ -328,6 +353,12 @@ func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 	}
 }
 
+// incrementDeliveredMsgs decrements pending message count and byte count
+// lock should be held before calling this method
+func (s *pullSubscription) incrementDeliveredMsgs() {
+	s.delivered++
+}
+
 // checkPending verifies whether there are enough messages in
 // the buffer to trigger a new pull request.
 // lock should be held before calling this method
@@ -335,16 +366,21 @@ func (s *pullSubscription) checkPending() {
 	if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
 		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
 			atomic.LoadUint32(&s.fetchInProgress) == 1 {
-
-		s.fetchNext <- &pullRequest{
-			Expires:   s.consumeOpts.Expires,
-			Batch:     s.consumeOpts.MaxMessages - s.pending.msgCount,
-			MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
-			Heartbeat: s.consumeOpts.Heartbeat,
+		batchSize := s.consumeOpts.MaxMessages - s.pending.msgCount
+		if s.consumeOpts.PullAutoUnsubscribeAfter != 0 {
+			batchSize = min(batchSize, s.consumeOpts.PullAutoUnsubscribeAfter-s.delivered-s.pending.msgCount)
 		}
+		if batchSize > 0 {
+			s.fetchNext <- &pullRequest{
+				Expires:   s.consumeOpts.Expires,
+				Batch:     batchSize,
+				MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
+				Heartbeat: s.consumeOpts.Heartbeat,
+			}
 
-		s.pending.msgCount = s.consumeOpts.MaxMessages
-		s.pending.byteCount = s.consumeOpts.MaxBytes
+			s.pending.msgCount = s.consumeOpts.MaxMessages
+			s.pending.byteCount = s.consumeOpts.MaxBytes
+		}
 	}
 }
 
@@ -436,6 +472,11 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}()
 
 	isConnected := true
+	if s.consumeOpts.PullAutoUnsubscribeAfter != 0 && s.delivered > s.consumeOpts.PullAutoUnsubscribeAfter {
+		s.Stop()
+		return nil, ErrMsgIteratorClosed
+	}
+
 	for {
 		s.checkPending()
 		select {
@@ -458,6 +499,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 				continue
 			}
 			s.decrementPendingMsgs(msg)
+			s.incrementDeliveredMsgs()
 			return s.consumer.jetStream.toJSMsg(msg), nil
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
