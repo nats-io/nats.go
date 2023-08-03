@@ -2029,7 +2029,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		cinfo, err := js.upsertConsumer(jsi.stream, consName, cfg)
 		if err != nil {
 			var apiErr *APIError
-			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) {
+			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
 				// if creating consumer failed, retry
 				return
 			} else if errors.As(err, &apiErr) && apiErr.ErrorCode == JSErrCodeInsufficientResourcesErr {
