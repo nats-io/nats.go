@@ -251,3 +251,36 @@ func TestKeyValueCreate(t *testing.T) {
 		t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
 	}
 }
+
+func TestKeyValueDelete(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	_, err = kv.Create("key", []byte("1"))
+	if err != nil {
+		t.Fatalf("Error creating key: %v", err)
+	}
+
+	//error on wrong last revision
+	err = kv.Delete("key", LastRevision(2))
+	expectedErr := "nats: wrong last sequence: 1"
+	if err.Error() != expectedErr {
+		t.Fatalf("Expected 'nats: wrong last sequence: 1', got: %v", err)
+	}
+
+	if err := kv.Delete("key", LastRevision(1)); err != nil {
+		t.Fatalf("Error deleting key: %v", err)
+	}
+	_, err = kv.Get("key")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("Expected ErrKeyNotFound, got: %v", err)
+	}
+}
