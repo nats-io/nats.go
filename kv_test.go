@@ -16,6 +16,7 @@ package nats
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 )
@@ -282,5 +283,116 @@ func TestKeyValueDelete(t *testing.T) {
 	_, err = kv.Get("key")
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("Expected ErrKeyNotFound, got: %v", err)
+	}
+}
+
+func TestKeyValuePurge(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST", History: 10})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		if _, err := kv.PutString("KEY", fmt.Sprintf("%d", i)); err != nil {
+			t.Fatalf("Error adding key: %v", err)
+		}
+	}
+
+	if err := kv.Purge("KEY"); err != nil {
+		t.Fatalf("Error purging kv: %v", err)
+	}
+
+	_, err = kv.Get("key")
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("Expected ErrKeyNotFound, got: %v", err)
+	}
+
+	i, err := js.StreamInfo("KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+
+	if i.State.Msgs != 1 {
+		t.Fatalf("Expected 1 message, got: %v", i.State.Msgs)
+	}
+}
+
+func TestHistory(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST", History: 10})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := kv.PutString("KEY", fmt.Sprintf("%d", i)); err != nil {
+			t.Fatalf("Error adding key: %v", err)
+		}
+	}
+
+	if err := kv.Delete("KEY"); err != nil {
+		t.Fatalf("Error deleting key: %v", err)
+	}
+	if _, err := kv.PutString("KEY", "1"); err != nil {
+		t.Fatalf("Error adding key: %v", err)
+	}
+	// Get history
+	history, err := kv.History("KEY")
+	if err != nil {
+		t.Fatalf("Error getting history: %v", err)
+	}
+
+	if len(history) != 5 {
+		t.Fatalf("Expected 5 items, got: %v", len(history))
+	}
+	if history[3].Operation() != KeyValueDelete {
+		t.Fatalf("Expected delete, got: %v", history[3].Operation())
+	}
+	if history[4].Operation() != KeyValuePut {
+		t.Fatalf("Expected put, got: %v", history[4].Operation())
+	}
+}
+
+func TestKeys(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := kv.PutString(fmt.Sprintf("KEY_%d", i), fmt.Sprintf("%d", i)); err != nil {
+			t.Fatalf("Error adding key: %v", err)
+		}
+	}
+
+	keys, err := kv.Keys()
+	if err != nil {
+		t.Fatalf("Error getting keys: %v", err)
+	}
+	if len(keys) != 3 {
+		t.Fatalf("Expected 3 keys, got: %v", len(keys))
+	}
+	sort.Strings(keys)
+	for i, k := range keys {
+		if k != fmt.Sprintf("KEY_%d", i) {
+			t.Fatalf("Expected KEY_%d, got: %v", i, k)
+		}
 	}
 }
