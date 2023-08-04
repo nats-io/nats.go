@@ -323,7 +323,7 @@ func TestKeyValuePurge(t *testing.T) {
 	}
 }
 
-func TestHistory(t *testing.T) {
+func TestKeyValueHistory(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -364,7 +364,7 @@ func TestHistory(t *testing.T) {
 	}
 }
 
-func TestKeys(t *testing.T) {
+func TestKeyValueKeys(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
