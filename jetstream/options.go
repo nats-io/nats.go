@@ -316,3 +316,62 @@ func WithStallWait(ttl time.Duration) PublishOpt {
 		return nil
 	}
 }
+
+// KV Options
+
+type watchOptFn func(opts *watchOpts) error
+
+func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
+	return opt(opts)
+}
+
+// IncludeHistory instructs the key watcher to include historical values as well.
+func IncludeHistory() WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.includeHistory = true
+		return nil
+	})
+}
+
+// IgnoreDeletes will have the key watcher not pass any deleted keys.
+func IgnoreDeletes() WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.ignoreDeletes = true
+		return nil
+	})
+}
+
+// MetaOnly instructs the key watcher to retrieve only the entry meta data, not the entry value
+func MetaOnly() WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.metaOnly = true
+		return nil
+	})
+}
+
+// DeleteMarkersOlderThan indicates that delete or purge markers older than that
+// will be deleted as part of PurgeDeletes() operation, otherwise, only the data
+// will be removed but markers that are recent will be kept.
+// Note that if no option is specified, the default is 30 minutes. You can set
+// this option to a negative value to instruct to always remove the markers,
+// regardless of their age.
+type DeleteMarkersOlderThan time.Duration
+
+func (ttl DeleteMarkersOlderThan) configurePurge(opts *purgeOpts) error {
+	opts.dmthr = time.Duration(ttl)
+	return nil
+}
+
+type deleteOptFn func(opts *deleteOpts) error
+
+func (opt deleteOptFn) configureDelete(opts *deleteOpts) error {
+	return opt(opts)
+}
+
+// LastRevision deletes if the latest revision matches.
+func LastRevision(revision uint64) KVDeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.revision = revision
+		return nil
+	})
+}

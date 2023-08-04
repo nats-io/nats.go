@@ -42,6 +42,7 @@ type (
 		StreamConsumerManager
 		StreamManager
 		Publisher
+		KeyValueManager
 	}
 
 	Publisher interface {

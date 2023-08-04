@@ -613,7 +613,7 @@ type Subscription struct {
 	pHead *Msg
 	pTail *Msg
 	pCond *sync.Cond
-	pDone func()
+	pDone func(subject string)
 
 	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
@@ -3025,7 +3025,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 	s.mu.Unlock()
 
 	if done != nil {
-		done()
+		done(s.Subject)
 	}
 }
 
@@ -4448,6 +4448,14 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 		return ErrBadSubscription
 	}
 	return conn.unsubscribe(s, max, false)
+}
+
+// SetClosedHandler will set the closed handler for when a subscription
+// is closed (either unsubscribed or drained).
+func (s *Subscription) SetClosedHandler(handler func(subject string)) {
+	s.mu.Lock()
+	s.pDone = handler
+	s.mu.Unlock()
 }
 
 // unsubscribe performs the low level unsubscribe to the server.

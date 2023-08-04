@@ -57,6 +57,8 @@ const (
 	JSErrCodeMessageNotFound ErrorCode = 10037
 
 	JSErrCodeBadRequest ErrorCode = 10003
+
+	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
 
 var (
@@ -178,6 +180,38 @@ var (
 	// ErrOrderedConsumerNotCreated is returned when trying to get consumer info of an
 	// ordered consumer which was not yet created.
 	ErrOrderedConsumerNotCreated = &jsError{message: "consumer instance not yet created"}
+
+	// KeyValue Errors
+
+	// ErrKeyExists is returned when attempting to create a key that already exists.
+	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
+
+	// ErrKeyValueConfigRequired is returned when attempting to create a bucket without a config.
+	ErrKeyValueConfigRequired = &jsError{message: "config required"}
+
+	// ErrInvalidBucketName is returned when attempting to create a bucket with an invalid name.
+	ErrInvalidBucketName = &jsError{message: "invalid bucket name"}
+
+	// ErrInvalidKey is returned when attempting to create a key with an invalid name.
+	ErrInvalidKey = &jsError{message: "invalid key"}
+
+	// ErrBucketNotFound is returned when attempting to access a bucket that does not exist.
+	ErrBucketNotFound = &jsError{message: "bucket not found"}
+
+	// ErrBadBucket is returned when attempting to access a bucket that is not a key-value store.
+	ErrBadBucket = &jsError{message: "bucket not valid key-value store"}
+
+	// ErrKeyNotFound is returned when attempting to access a key that does not exist.
+	ErrKeyNotFound = &jsError{message: "key not found"}
+
+	// ErrKeyDeleted is returned when attempting to access a key that was deleted.
+	ErrKeyDeleted = &jsError{message: "key was deleted"}
+
+	// ErrHistoryToLarge is returned when provided history limit is larger than 64.
+	ErrHistoryToLarge = &jsError{message: "history limited to a max of 64"}
+
+	// ErrNoKeysFound is returned when no keys are found.
+	ErrNoKeysFound = &jsError{message: "no keys found"}
 )
 
 // Error prints the JetStream API error code and description

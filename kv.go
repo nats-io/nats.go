@@ -622,7 +622,7 @@ func (kv *kvs) PutString(key string, value string) (revision uint64, err error) 
 	return kv.Put(key, []byte(value))
 }
 
-// Create will add the key/value pair iff it does not exist.
+// Create will add the key/value pair if it does not exist.
 func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	v, err := kv.Update(key, value, 0)
 	if err == nil {
@@ -645,7 +645,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	return 0, err
 }
 
-// Update will update the value iff the latest revision matches.
+// Update will update the value if the latest revision matches.
 func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error) {
 	if !keyValid(key) {
 		return 0, ErrInvalidKey
@@ -909,7 +909,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 				op = KeyValuePurge
 			}
 		}
-		delta := parser.ParseNum(tokens[ackNumPendingTokenPos])
+		delta := parser.ParseNum(tokens[parser.AckNumPendingTokenPos])
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
@@ -917,8 +917,8 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 				bucket:   kv.name,
 				key:      subj,
 				value:    m.Data,
-				revision: parser.ParseNum(tokens[ackStreamSeqTokenPos]),
-				created:  time.Unix(0, int64(parser.ParseNum(tokens[ackTimestampSeqTokenPos]))),
+				revision: parser.ParseNum(tokens[parser.AckStreamSeqTokenPos]),
+				created:  time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos]))),
 				delta:    delta,
 				op:       op,
 			}
@@ -966,7 +966,7 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 		w.updates <- nil
 	}
 	// Set us up to close when the waitForMessages func returns.
-	sub.pDone = func() {
+	sub.pDone = func(_ string) {
 		close(w.updates)
 	}
 	sub.mu.Unlock()
@@ -1020,16 +1020,16 @@ func (kv *kvs) Status() (KeyValueStatus, error) {
 // KeyValueStoreNames is used to retrieve a list of key value store names
 func (js *js) KeyValueStoreNames() <-chan string {
 	ch := make(chan string)
-	l := &streamLister{js: js}
+	l := &streamNamesLister{js: js}
 	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
 	go func() {
 		defer close(ch)
 		for l.Next() {
-			for _, info := range l.Page() {
-				if !strings.HasPrefix(info.Config.Name, kvBucketNamePre) {
+			for _, name := range l.Page() {
+				if !strings.HasPrefix(name, kvBucketNamePre) {
 					continue
 				}
-				ch <- info.Config.Name
+				ch <- name
 			}
 		}
 	}()
