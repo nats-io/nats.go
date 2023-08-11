@@ -72,15 +72,15 @@ type (
 	}
 
 	consumeOpts struct {
-		Expires                  time.Duration
-		MaxMessages              int
-		MaxBytes                 int
-		Heartbeat                time.Duration
-		ErrHandler               ConsumeErrHandlerFunc
-		ReportMissingHeartbeats  bool
-		ThresholdMessages        int
-		ThresholdBytes           int
-		PullAutoUnsubscribeAfter int
+		Expires                 time.Duration
+		MaxMessages             int
+		MaxBytes                int
+		Heartbeat               time.Duration
+		ErrHandler              ConsumeErrHandlerFunc
+		ReportMissingHeartbeats bool
+		ThresholdMessages       int
+		ThresholdBytes          int
+		AutoStopAfter           int
 	}
 
 	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
@@ -226,7 +226,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		sub.incrementDeliveredMsgs()
 		sub.Unlock()
 
-		if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 && sub.consumeOpts.PullAutoUnsubscribeAfter == sub.delivered {
+		if sub.consumeOpts.AutoStopAfter > 0 && sub.consumeOpts.AutoStopAfter == sub.delivered {
 			sub.Stop()
 		}
 	}
@@ -240,8 +240,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	// initial pull
 	sub.resetPendingMsgs()
 	batchSize := sub.consumeOpts.MaxMessages
-	if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
-		batchSize = min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+	if sub.consumeOpts.AutoStopAfter > 0 {
+		batchSize = min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
 	}
 	if err := sub.pull(&pullRequest{
 		Expires:   consumeOpts.Expires,
@@ -295,8 +295,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							time.Sleep(5 * time.Second)
 						}
 						batchSize := sub.consumeOpts.MaxMessages
-						if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
-							min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+						if sub.consumeOpts.AutoStopAfter > 0 {
+							min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
 						}
 						sub.fetchNext <- &pullRequest{
 							Expires:   sub.consumeOpts.Expires,
@@ -315,8 +315,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				}
 				if errors.Is(err, ErrNoHeartbeat) {
 					batchSize := sub.consumeOpts.MaxMessages
-					if sub.consumeOpts.PullAutoUnsubscribeAfter != 0 {
-						min(batchSize, sub.consumeOpts.PullAutoUnsubscribeAfter-sub.delivered)
+					if sub.consumeOpts.AutoStopAfter > 0 {
+						min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
 					}
 					sub.fetchNext <- &pullRequest{
 						Expires:   sub.consumeOpts.Expires,
@@ -367,8 +367,8 @@ func (s *pullSubscription) checkPending() {
 		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
 			atomic.LoadUint32(&s.fetchInProgress) == 1 {
 		batchSize := s.consumeOpts.MaxMessages - s.pending.msgCount
-		if s.consumeOpts.PullAutoUnsubscribeAfter != 0 {
-			batchSize = min(batchSize, s.consumeOpts.PullAutoUnsubscribeAfter-s.delivered-s.pending.msgCount)
+		if s.consumeOpts.AutoStopAfter > 0 {
+			batchSize = min(batchSize, s.consumeOpts.AutoStopAfter-s.delivered-s.pending.msgCount)
 		}
 		if batchSize > 0 {
 			s.fetchNext <- &pullRequest{
@@ -472,7 +472,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}()
 
 	isConnected := true
-	if s.consumeOpts.PullAutoUnsubscribeAfter != 0 && s.delivered > s.consumeOpts.PullAutoUnsubscribeAfter {
+	if s.consumeOpts.AutoStopAfter > 0 && s.delivered > s.consumeOpts.AutoStopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
 	}
@@ -822,6 +822,7 @@ func parseConsumeOpts(opts ...PullConsumeOpt) (*consumeOpts, error) {
 		Expires:                 DefaultExpires,
 		Heartbeat:               unset,
 		ReportMissingHeartbeats: true,
+		AutoStopAfter:           unset,
 	}
 	for _, opt := range opts {
 		if err := opt.configureConsume(consumeOpts); err != nil {
@@ -841,6 +842,7 @@ func parseMessagesOpts(opts ...PullMessagesOpt) (*consumeOpts, error) {
 		Expires:                 DefaultExpires,
 		Heartbeat:               unset,
 		ReportMissingHeartbeats: true,
+		AutoStopAfter:           unset,
 	}
 	for _, opt := range opts {
 		if err := opt.configureMessages(consumeOpts); err != nil {
