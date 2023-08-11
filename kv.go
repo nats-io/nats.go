@@ -237,7 +237,7 @@ type KeyValueConfig struct {
 
 // Used to watch all keys.
 const (
-	KeyValueMaxHistory = 64
+	KeyValueMaxHistory = 255
 	AllKeys            = ">"
 	kvLatestRevision   = 0
 	kvop               = "KV-Operation"
