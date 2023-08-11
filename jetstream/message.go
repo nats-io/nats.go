@@ -218,6 +218,7 @@ func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool,
 
 	m.Lock()
 	if m.ackd {
+		m.Unlock()
 		return ErrMsgAlreadyAckd
 	}
 	m.Unlock()
