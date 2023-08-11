@@ -296,7 +296,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						}
 						batchSize := sub.consumeOpts.MaxMessages
 						if sub.consumeOpts.AutoStopAfter > 0 {
-							min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
+							batchSize = min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
 						}
 						sub.fetchNext <- &pullRequest{
 							Expires:   sub.consumeOpts.Expires,
@@ -316,7 +316,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if errors.Is(err, ErrNoHeartbeat) {
 					batchSize := sub.consumeOpts.MaxMessages
 					if sub.consumeOpts.AutoStopAfter > 0 {
-						min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
+						batchSize = min(batchSize, sub.consumeOpts.AutoStopAfter-sub.delivered)
 					}
 					sub.fetchNext <- &pullRequest{
 						Expires:   sub.consumeOpts.Expires,
