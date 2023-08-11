@@ -1011,7 +1011,7 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 		return nil, resp.Error
 	}
 
-	// check that input subject transform (if used) is reflected in the returned ConsumerInfo
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
 	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
 		return nil, ErrStreamSubjectTransformNotSupported
 	}

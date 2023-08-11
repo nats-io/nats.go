@@ -78,22 +78,22 @@ var (
 	ErrStreamNameAlreadyInUse JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamNameInUse, Description: "stream name already in use", Code: 400}}
 
 	// ErrStreamSubjectTransformNotSupported is returned when the connected nats-server version does not support setting
-	// the stream subject transform. If this error is returned when executing AddStream(), the stream with invalid
+	// the stream subject transform. If this error is returned when executing CreateStream(), the stream with invalid
 	// configuration was already created in the server.
 	ErrStreamSubjectTransformNotSupported JetStreamError = &jsError{message: "stream subject transformation not supported by nats-server"}
 
 	// ErrStreamSourceSubjectTransformNotSupported is returned when the connected nats-server version does not support setting
-	// the stream source subject transform. If this error is returned when executing AddStream(), the stream with invalid
+	// the stream source subject transform. If this error is returned when executing CreateStream(), the stream with invalid
 	// configuration was already created in the server.
 	ErrStreamSourceSubjectTransformNotSupported JetStreamError = &jsError{message: "stream subject transformation not supported by nats-server"}
 
 	// ErrStreamSourceNotSupported is returned when the connected nats-server version does not support setting
-	// the stream sources. If this error is returned when executing AddStream(), the stream with invalid
+	// the stream sources. If this error is returned when executing CreateStream(), the stream with invalid
 	// configuration was already created in the server.
 	ErrStreamSourceNotSupported JetStreamError = &jsError{message: "stream sourcing is not supported by nats-server"}
 
 	// ErrStreamSourceMultipleFilterSubjectsNotSupported is returned when the connected nats-server version does not support setting
-	// the stream sources. If this error is returned when executing AddStream(), the stream with invalid
+	// the stream sources. If this error is returned when executing CreateStream(), the stream with invalid
 	// configuration was already created in the server.
 	ErrStreamSourceMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "stream sourcing with multiple subject filters not supported by nats-server"}
 
