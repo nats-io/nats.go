@@ -161,13 +161,14 @@ type Placement struct {
 
 // StreamSource dictates how streams can source from other streams.
 type StreamSource struct {
-	Name                 string          `json:"name"`
-	OptStartSeq          uint64          `json:"opt_start_seq,omitempty"`
-	OptStartTime         *time.Time      `json:"opt_start_time,omitempty"`
-	FilterSubject        string          `json:"filter_subject,omitempty"`
-	SubjectTransformDest string          `json:"subject_transform_dest,omitempty"`
-	External             *ExternalStream `json:"external,omitempty"`
-	Domain               string          `json:"-"`
+	Name                 string                   `json:"name"`
+	OptStartSeq          uint64                   `json:"opt_start_seq,omitempty"`
+	OptStartTime         *time.Time               `json:"opt_start_time,omitempty"`
+	FilterSubject        string                   `json:"filter_subject,omitempty"`
+	SubjectTransformDest string                   `json:"subject_transform_dest,omitempty"`
+	SubjectTransforms    []SubjectTransformConfig `json:"subject_transforms,omitempty"`
+	External             *ExternalStream          `json:"external,omitempty"`
+	Domain               string                   `json:"-"`
 }
 
 // ExternalStream allows you to qualify access to a stream source in another
@@ -795,6 +796,24 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, resp.Error
 	}
 
+	// check that input subject transform (if used) is reflected in the returned ConsumerInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleSubjectTransformsNotSupported
+			}
+		}
+	}
+
 	return resp.StreamInfo, nil
 }
 
@@ -912,13 +931,14 @@ type StreamAlternate struct {
 
 // StreamSourceInfo shows information about an upstream stream source.
 type StreamSourceInfo struct {
-	Name                 string          `json:"name"`
-	Lag                  uint64          `json:"lag"`
-	Active               time.Duration   `json:"active"`
-	External             *ExternalStream `json:"external"`
-	Error                *APIError       `json:"error"`
-	FilterSubject        string          `json:"filter_subject,omitempty"`
-	SubjectTransformDest string          `json:"subject_transform_dest,omitempty"`
+	Name                 string                   `json:"name"`
+	Lag                  uint64                   `json:"lag"`
+	Active               time.Duration            `json:"active"`
+	External             *ExternalStream          `json:"external"`
+	Error                *APIError                `json:"error"`
+	FilterSubject        string                   `json:"filter_subject,omitempty"`
+	SubjectTransformDest string                   `json:"subject_transform_dest,omitempty"`
+	SubjectTransforms    []SubjectTransformConfig `json:"subject_transforms,omitempty"`
 }
 
 // StreamState is information about the given stream.
@@ -990,6 +1010,26 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 		}
 		return nil, resp.Error
 	}
+
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != _EMPTY_ && resp.Sources[i].SubjectTransformDest == _EMPTY_ {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleSubjectTransformsNotSupported
+			}
+		}
+	}
+
 	return resp.StreamInfo, nil
 }
 
