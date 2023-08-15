@@ -209,27 +209,36 @@ func TestKeyValueWatch(t *testing.T) {
 	// Make sure we already got an initial value marker.
 	expectInitDone()
 
-	kv.Create(ctx, "name", []byte("derek"))
+	_, err = kv.Create(ctx, "name", []byte("derek"))
+	expectOk(t, err)
 	expectUpdate("name", "derek", 1)
-	kv.Put(ctx, "name", []byte("rip"))
+	_, err = kv.Put(ctx, "name", []byte("rip"))
+	expectOk(t, err)
 	expectUpdate("name", "rip", 2)
-	kv.Put(ctx, "name", []byte("ik"))
+	_, err = kv.Put(ctx, "name", []byte("ik"))
+	expectOk(t, err)
 	expectUpdate("name", "ik", 3)
-	kv.Put(ctx, "age", []byte("22"))
+	_, err = kv.Put(ctx, "age", []byte("22"))
+	expectOk(t, err)
 	expectUpdate("age", "22", 4)
-	kv.Put(ctx, "age", []byte("33"))
+	_, err = kv.Put(ctx, "age", []byte("33"))
+	expectOk(t, err)
 	expectUpdate("age", "33", 5)
-	kv.Delete(ctx, "age")
+	expectOk(t, kv.Delete(ctx, "age"))
 	expectDelete("age", 6)
 
 	// Stop first watcher.
 	watcher.Stop()
 
 	// Now try wildcard matching and make sure we only get last value when starting.
-	kv.Put(ctx, "t.name", []byte("rip"))
-	kv.Put(ctx, "t.name", []byte("ik"))
-	kv.Put(ctx, "t.age", []byte("22"))
-	kv.Put(ctx, "t.age", []byte("44"))
+	_, err = kv.Put(ctx, "t.name", []byte("rip"))
+	expectOk(t, err)
+	_, err = kv.Put(ctx, "t.name", []byte("ik"))
+	expectOk(t, err)
+	_, err = kv.Put(ctx, "t.age", []byte("22"))
+	expectOk(t, err)
+	_, err = kv.Put(ctx, "t.age", []byte("44"))
+	expectOk(t, err)
 
 	watcher, err = kv.Watch(ctx, "t.*")
 	expectOk(t, err)
@@ -382,7 +391,7 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 	put("name", "rip")
 	put("age", "44")
 
-	kv.Delete(ctx, "age")
+	expectOk(t, kv.Delete(ctx, "age"))
 	entries, err := kv.History(ctx, "age")
 	expectOk(t, err)
 	// Expect three entries and delete marker.
@@ -775,7 +784,7 @@ func TestKeyValueDuplicatesWindow(t *testing.T) {
 
 		_, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: ttl})
 		expectOk(t, err)
-		defer js.DeleteKeyValue(ctx, "TEST")
+		defer func() { expectOk(t, js.DeleteKeyValue(ctx, "TEST")) }()
 
 		si, err := js.Stream(ctx, "KV_TEST")
 		if err != nil {
