@@ -350,6 +350,25 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, resp.Error
 	}
 
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != "" && resp.Sources[i].SubjectTransformDest == "" {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
+	}
+
 	return &stream{
 		jetStream: js,
 		name:      cfg.Name,
@@ -411,6 +430,25 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
+	}
+
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if cfg.Sources[i].SubjectTransformDest != "" && resp.Sources[i].SubjectTransformDest == "" {
+				return nil, ErrStreamSourceSubjectTransformNotSupported
+			}
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
 	}
 
 	return &stream{
