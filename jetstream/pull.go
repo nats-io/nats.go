@@ -81,6 +81,7 @@ type (
 		ThresholdMessages       int
 		ThresholdBytes          int
 		AutoStopAfter           int
+		autoStopMsgsLeft        chan int
 	}
 
 	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
@@ -353,7 +354,7 @@ func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 	}
 }
 
-// incrementDeliveredMsgs decrements pending message count and byte count
+// incrementDeliveredMsgs increments delivered message count
 // lock should be held before calling this method
 func (s *pullSubscription) incrementDeliveredMsgs() {
 	s.delivered++
@@ -472,7 +473,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}()
 
 	isConnected := true
-	if s.consumeOpts.AutoStopAfter > 0 && s.delivered > s.consumeOpts.AutoStopAfter {
+	if s.consumeOpts.AutoStopAfter > 0 && s.delivered >= s.consumeOpts.AutoStopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
 	}
@@ -593,6 +594,13 @@ func (s *pullSubscription) Stop() {
 		return
 	}
 	close(s.done)
+	if s.consumeOpts.autoStopMsgsLeft != nil {
+		if s.delivered >= s.consumeOpts.AutoStopAfter {
+			close(s.consumeOpts.autoStopMsgsLeft)
+		} else {
+			s.consumeOpts.autoStopMsgsLeft <- s.consumeOpts.AutoStopAfter - s.delivered
+		}
+	}
 	atomic.StoreUint32(&s.closed, 1)
 }
 
@@ -614,7 +622,6 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 	}
 
 	return p.fetch(req)
-
 }
 
 // FetchBytes is used to retrieve up to a provided bytes from the stream.

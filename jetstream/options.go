@@ -164,11 +164,21 @@ func (t PullThresholdMessages) configureConsume(opts *consumeOpts) error {
 	return nil
 }
 
+func (t PullThresholdMessages) configureMessages(opts *consumeOpts) error {
+	opts.ThresholdMessages = int(t)
+	return nil
+}
+
 // PullThresholdBytes sets the byte count on which Consume will trigger
 // new pull request to the server. Defaults to 50% of MaxBytes (if set).
 type PullThresholdBytes int
 
 func (t PullThresholdBytes) configureConsume(opts *consumeOpts) error {
+	opts.ThresholdBytes = int(t)
+	return nil
+}
+
+func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 	opts.ThresholdBytes = int(t)
 	return nil
 }
@@ -202,7 +212,7 @@ type AutoStopAfter int
 
 func (nMsgs AutoStopAfter) configureConsume(opts *consumeOpts) error {
 	if nMsgs <= 0 {
-		return fmt.Errorf("%w: invalide auto unsubscribe after value", ErrInvalidOption)
+		return fmt.Errorf("%w: invalid auto stop after value", ErrInvalidOption)
 	}
 	opts.AutoStopAfter = int(nMsgs)
 	return nil
@@ -210,7 +220,7 @@ func (nMsgs AutoStopAfter) configureConsume(opts *consumeOpts) error {
 
 func (nMsgs AutoStopAfter) configureMessages(opts *consumeOpts) error {
 	if nMsgs <= 0 {
-		return fmt.Errorf("%w: invalid auto unsubscribe after value", ErrInvalidOption)
+		return fmt.Errorf("%w: invalid auto stop after value", ErrInvalidOption)
 	}
 	opts.AutoStopAfter = int(nMsgs)
 	return nil

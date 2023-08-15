@@ -1051,6 +1051,77 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("with auto unsubscribe", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "test", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for i := 0; i < 100; i++ {
+			if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]jetstream.Msg, 0)
+		it, err := c.Messages(jetstream.AutoStopAfter(50), jetstream.PullMaxMessages(40))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		for i := 0; i < 50; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg == nil {
+				break
+			}
+			if err := msg.DoubleAck(ctx); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msgs = append(msgs, msg)
+
+		}
+		if _, err := it.Next(); err != jetstream.ErrMsgIteratorClosed {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrMsgIteratorClosed, err)
+		}
+		if len(msgs) != 50 {
+			t.Fatalf("Unexpected received message count; want %d; got %d", 50, len(msgs))
+		}
+		ci, err := c.Info(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if ci.NumPending != 50 {
+			t.Fatalf("Unexpected number of pending messages; want 50; got %d", ci.NumPending)
+		}
+		if ci.NumAckPending != 0 {
+			t.Fatalf("Unexpected number of ack pending messages; want 0; got %d", ci.NumAckPending)
+		}
+		if ci.NumWaiting != 0 {
+			t.Fatalf("Unexpected number of waiting pull requests; want 0; got %d", ci.NumWaiting)
+		}
+	})
+
 	t.Run("create iterator, stop, then create again", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -1700,6 +1771,65 @@ func TestPullConsumerConsume(t *testing.T) {
 			if string(msg.Data()) != testMsgs[i] {
 				t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
 			}
+		}
+	})
+
+	t.Run("with auto unsubscribe", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		for i := 0; i < 100; i++ {
+			if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+		msgs := make([]jetstream.Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(50)
+		_, err = c.Consume(func(msg jetstream.Msg) {
+			msgs = append(msgs, msg)
+			msg.Ack()
+			wg.Done()
+		}, jetstream.AutoStopAfter(50), jetstream.PullMaxMessages(40))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg.Wait()
+		time.Sleep(10 * time.Millisecond)
+		ci, err := c.Info(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if ci.NumPending != 50 {
+			t.Fatalf("Unexpected number of pending messages; want 50; got %d", ci.NumPending)
+		}
+		if ci.NumAckPending != 0 {
+			t.Fatalf("Unexpected number of ack pending messages; want 0; got %d", ci.NumAckPending)
+		}
+		if ci.NumWaiting != 0 {
+			t.Fatalf("Unexpected number of waiting pull requests; want 0; got %d", ci.NumWaiting)
 		}
 	})
 
