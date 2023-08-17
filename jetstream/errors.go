@@ -208,7 +208,7 @@ var (
 	ErrKeyDeleted = &jsError{message: "key was deleted"}
 
 	// ErrHistoryToLarge is returned when provided history limit is larger than 64.
-	ErrHistoryToLarge = &jsError{message: "history limited to a max of 64"}
+	ErrHistoryTooLarge = &jsError{message: "history limited to a max of 64"}
 
 	// ErrNoKeysFound is returned when no keys are found.
 	ErrNoKeysFound = &jsError{message: "no keys found"}
