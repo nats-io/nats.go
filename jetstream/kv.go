@@ -291,7 +291,7 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 	history := int64(1)
 	if cfg.History > 0 {
 		if cfg.History > KeyValueMaxHistory {
-			return nil, ErrHistoryToLarge
+			return nil, ErrHistoryTooLarge
 		}
 		history = int64(cfg.History)
 	}

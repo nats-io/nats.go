@@ -341,7 +341,7 @@ func IgnoreDeletes() WatchOpt {
 	})
 }
 
-// MetaOnly instructs the key watcher to retrieve only the entry meta data, not the entry value
+// MetaOnly instructs the key watcher to retrieve only the entry meta data, not the entry value.
 func MetaOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.metaOnly = true
