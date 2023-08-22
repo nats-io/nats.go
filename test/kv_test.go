@@ -952,6 +952,8 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 
 	_, err = mkv.PutString("v", "vv")
 	expectOk(t, err)
+	// wait for the key to be propagated to the mirror
+	time.Sleep(10 * time.Millisecond)
 	e, err := mkv.Get("v")
 	expectOk(t, err)
 	if e.Operation() != nats.KeyValuePut {
@@ -959,6 +961,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 	err = mkv.Delete("v")
 	expectOk(t, err)
+	time.Sleep(10 * time.Millisecond)
 	_, err = mkv.Get("v")
 	expectErr(t, err, nats.ErrKeyNotFound)
 
@@ -983,6 +986,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	_, err = rkv.PutString("name", "ivan")
 	expectOk(t, err)
 
+	time.Sleep(10 * time.Millisecond)
 	e, err = rkv.Get("name")
 	expectOk(t, err)
 	if string(e.Value()) != "ivan" {
@@ -990,6 +994,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 	_, err = rkv.PutString("v", "vv")
 	expectOk(t, err)
+	time.Sleep(10 * time.Millisecond)
 	e, err = mkv.Get("v")
 	expectOk(t, err)
 	if e.Operation() != nats.KeyValuePut {
@@ -997,6 +1002,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 	err = rkv.Delete("v")
 	expectOk(t, err)
+	time.Sleep(10 * time.Millisecond)
 	_, err = rkv.Get("v")
 	expectErr(t, err, nats.ErrKeyNotFound)
 
