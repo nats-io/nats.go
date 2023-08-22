@@ -1,3 +1,6 @@
+//go:build compat
+// +build compat
+
 package test
 
 import (
