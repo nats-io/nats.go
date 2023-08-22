@@ -4155,12 +4155,11 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			}
 
 			<-ctx.Done()
-			sub.Drain()
-
 			if got != totalMsgs {
 				t.Fatalf("Expected %d, got %d", totalMsgs, got)
 			}
 
+			// check if consumer is configured properly
 			ci, err := js.ConsumerInfo("TEST", test.name)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -4168,6 +4167,9 @@ func TestJetStreamSubscribe_AckPolicy(t *testing.T) {
 			if ci.Config.AckPolicy != test.expected {
 				t.Fatalf("Expected %v, got %v", test.expected, ci.Config.AckPolicy)
 			}
+
+			// drain the subscription. This will remove the consumer
+			sub.Drain()
 		})
 	}
 
