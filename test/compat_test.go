@@ -70,6 +70,7 @@ func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 		t.Fatalf("Error subscribing to test subject: %v", err)
 	}
 	defer sub.Unsubscribe()
+	fmt.Println("WAITING FOR CUSTOM BUCKET RUN")
 
 	// 1. Create custom bucket
 	msg, err := sub.NextMsg(1 * time.Hour)
