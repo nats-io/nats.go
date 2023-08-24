@@ -90,6 +90,8 @@ func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 	if err := msg.Respond(nil); err != nil {
 		t.Fatalf("Error responding to message: %v", err)
 	}
+
+	fmt.Println("CUSTOM BUCKET RUN DONE")
 	validateTestResult(t, sub)
 }
 
