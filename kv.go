@@ -941,7 +941,8 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 			w.updates <- entry
 		}
 		// Check if done and initial values.
-		if !w.initDone {
+		// Skip if UpdatesOnly() is set, since there will never be updates initially.
+		if !o.updatesOnly && !w.initDone {
 			w.received++
 			// We set this on the first trip through..
 			if w.initPending == 0 {
@@ -980,7 +981,8 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	sub.mu.Lock()
 	// If there were no pending messages at the time of the creation
 	// of the consumer, send the marker.
-	if sub.jsi != nil && sub.jsi.pending == 0 {
+	// Skip if UpdatesOnly() is set, since there will never be updates initially.
+	if !o.updatesOnly && sub.jsi != nil && sub.jsi.pending == 0 {
 		w.initDone = true
 		w.updates <- nil
 	}

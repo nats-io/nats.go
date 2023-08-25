@@ -330,11 +330,8 @@ func TestKeyValueWatch(t *testing.T) {
 		watcher, err := kv.WatchAll(nats.UpdatesOnly())
 		expectOk(t, err)
 		defer watcher.Stop()
-		expectInitDone := expectInitDoneF(t, watcher)
 		expectUpdate := expectUpdateF(t, watcher)
 		expectDelete := expectDeleteF(t, watcher)
-		// make sure we do not get any values here
-		expectInitDone()
 
 		// now update some keys and expect updates
 		kv.Put("name", []byte("pp"))
@@ -356,10 +353,7 @@ func TestKeyValueWatch(t *testing.T) {
 		watcher, err = kv.Watch("t.*", nats.UpdatesOnly())
 		expectOk(t, err)
 		defer watcher.Stop()
-		expectInitDone = expectInitDoneF(t, watcher)
 		expectUpdate = expectUpdateF(t, watcher)
-
-		expectInitDone()
 
 		// update some keys and expect updates
 		kv.Put("t.name", []byte("pp"))
