@@ -164,6 +164,8 @@ type (
 		ignoreDeletes bool
 		// Include all history per subject, not just last one.
 		includeHistory bool
+		// Include only updates for keys.
+		updatesOnly bool
 		// retrieve only the meta data of the entry
 		metaOnly bool
 	}
@@ -834,6 +836,9 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	subOpts := []nats.SubOpt{nats.BindStream(kv.streamName), nats.OrderedConsumer()}
 	if !o.includeHistory {
 		subOpts = append(subOpts, nats.DeliverLastPerSubject())
+	}
+	if o.updatesOnly {
+		subOpts = append(subOpts, nats.DeliverNew())
 	}
 	if o.metaOnly {
 		subOpts = append(subOpts, nats.HeadersOnly())

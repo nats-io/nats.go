@@ -149,88 +149,224 @@ func TestKeyValueHistory(t *testing.T) {
 }
 
 func TestKeyValueWatch(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-	expectOk(t, err)
-
-	watcher, err := kv.WatchAll()
-	expectOk(t, err)
-	defer watcher.Stop()
-
-	expectUpdate := func(key, value string, revision uint64) {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v.Key() != key || string(v.Value()) != value || v.Revision() != revision {
-				t.Fatalf("Did not get expected: %+v vs %q %q %d", v, key, value, revision)
+	expectUpdateF := func(t *testing.T, watcher nats.KeyWatcher) func(key, value string, revision uint64) {
+		return func(key, value string, revision uint64) {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v.Key() != key || string(v.Value()) != value || v.Revision() != revision {
+					t.Fatalf("Did not get expected: %q %q %d vs %q %q %d", v.Key(), string(v.Value()), v.Revision(), key, value, revision)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive an update like expected")
 		}
 	}
-	expectDelete := func(key string, revision uint64) {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v.Operation() != nats.KeyValueDelete {
-				t.Fatalf("Expected a delete operation but got %+v", v)
+	expectDeleteF := func(t *testing.T, watcher nats.KeyWatcher) func(key string, revision uint64) {
+		return func(key string, revision uint64) {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v.Operation() != nats.KeyValueDelete {
+					t.Fatalf("Expected a delete operation but got %+v", v)
+				}
+				if v.Revision() != revision {
+					t.Fatalf("Did not get expected revision: %d vs %d", revision, v.Revision())
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
 			}
-			if v.Revision() != revision {
-				t.Fatalf("Did not get expected revision: %d vs %d", revision, v.Revision())
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive an update like expected")
 		}
 	}
-	expectInitDone := func() {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v != nil {
-				t.Fatalf("Did not get expected: %+v", v)
+	expectInitDoneF := func(t *testing.T, watcher nats.KeyWatcher) func() {
+		return func() {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v != nil {
+					t.Fatalf("Did not get expected: %+v", v)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive a init done like expected")
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive a init done like expected")
 		}
 	}
 
-	// Make sure we already got an initial value marker.
-	expectInitDone()
+	t.Run("default watcher", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
 
-	kv.Create("name", []byte("derek"))
-	expectUpdate("name", "derek", 1)
-	kv.Put("name", []byte("rip"))
-	expectUpdate("name", "rip", 2)
-	kv.Put("name", []byte("ik"))
-	expectUpdate("name", "ik", 3)
-	kv.Put("age", []byte("22"))
-	expectUpdate("age", "22", 4)
-	kv.Put("age", []byte("33"))
-	expectUpdate("age", "33", 5)
-	kv.Delete("age")
-	expectDelete("age", 6)
+		nc, js := jsClient(t, s)
+		defer nc.Close()
 
-	// Stop first watcher.
-	watcher.Stop()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
 
-	// Now try wildcard matching and make sure we only get last value when starting.
-	kv.Put("t.name", []byte("rip"))
-	kv.Put("t.name", []byte("ik"))
-	kv.Put("t.age", []byte("22"))
-	kv.Put("t.age", []byte("44"))
+		watcher, err := kv.WatchAll()
+		expectOk(t, err)
+		defer watcher.Stop()
 
-	watcher, err = kv.Watch("t.*")
-	expectOk(t, err)
-	defer watcher.Stop()
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		// Make sure we already got an initial value marker.
+		expectInitDone()
 
-	expectUpdate("t.name", "ik", 8)
-	expectUpdate("t.age", "44", 10)
-	expectInitDone()
+		kv.Create("name", []byte("derek"))
+		expectUpdate("name", "derek", 1)
+		kv.Put("name", []byte("rip"))
+		expectUpdate("name", "rip", 2)
+		kv.Put("name", []byte("ik"))
+		expectUpdate("name", "ik", 3)
+		kv.Put("age", []byte("22"))
+		expectUpdate("age", "22", 4)
+		kv.Put("age", []byte("33"))
+		expectUpdate("age", "33", 5)
+		kv.Delete("age")
+		expectDelete("age", 6)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		// Now try wildcard matching and make sure we only get last value when starting.
+		kv.Put("t.name", []byte("rip"))
+		kv.Put("t.name", []byte("ik"))
+		kv.Put("t.age", []byte("22"))
+		kv.Put("t.age", []byte("44"))
+
+		watcher, err = kv.Watch("t.*")
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+		expectUpdate("t.name", "ik", 8)
+		expectUpdate("t.age", "44", 10)
+		expectInitDone()
+	})
+
+	t.Run("watcher with history included", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
+		expectOk(t, err)
+
+		kv.Create("name", []byte("derek"))
+		kv.Put("name", []byte("rip"))
+		kv.Put("name", []byte("ik"))
+		kv.Put("age", []byte("22"))
+		kv.Put("age", []byte("33"))
+		kv.Delete("age")
+
+		// when using UpdatesOnly(), IncludeHistory() is not allowed
+		if _, err := kv.WatchAll(nats.IncludeHistory(), nats.UpdatesOnly()); !strings.Contains(err.Error(), "updates only can not be used with include history") {
+			t.Fatalf("Expected error to contain %q, got %q", "updates only can not be used with include history", err)
+		}
+
+		watcher, err := kv.WatchAll(nats.IncludeHistory())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		expectUpdate("name", "derek", 1)
+		expectUpdate("name", "rip", 2)
+		expectUpdate("name", "ik", 3)
+		expectUpdate("age", "22", 4)
+		expectUpdate("age", "33", 5)
+		expectDelete("age", 6)
+		expectInitDone()
+		kv.Put("name", []byte("pp"))
+		expectUpdate("name", "pp", 7)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		kv.Put("t.name", []byte("rip"))
+		kv.Put("t.name", []byte("ik"))
+		kv.Put("t.age", []byte("22"))
+		kv.Put("t.age", []byte("44"))
+
+		// try wildcard watcher and make sure we get all historical values
+		watcher, err = kv.Watch("t.*", nats.IncludeHistory())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+
+		expectUpdate("t.name", "rip", 8)
+		expectUpdate("t.name", "ik", 9)
+		expectUpdate("t.age", "22", 10)
+		expectUpdate("t.age", "44", 11)
+		expectInitDone()
+
+		kv.Put("t.name", []byte("pp"))
+		expectUpdate("t.name", "pp", 12)
+	})
+
+	t.Run("watcher with updates only", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
+		expectOk(t, err)
+
+		kv.Create("name", []byte("derek"))
+		kv.Put("name", []byte("rip"))
+		kv.Put("age", []byte("22"))
+
+		// when using UpdatesOnly(), IncludeHistory() is not allowed
+		if _, err := kv.WatchAll(nats.UpdatesOnly(), nats.IncludeHistory()); !strings.Contains(err.Error(), "include history can not be used with updates only") {
+			t.Fatalf("Expected error to contain %q, got %q", "include history can not be used with updates only", err)
+		}
+
+		watcher, err := kv.WatchAll(nats.UpdatesOnly())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		// make sure we do not get any values here
+		expectInitDone()
+
+		// now update some keys and expect updates
+		kv.Put("name", []byte("pp"))
+		expectUpdate("name", "pp", 4)
+		kv.Put("age", []byte("44"))
+		expectUpdate("age", "44", 5)
+		kv.Delete("age")
+		expectDelete("age", 6)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		kv.Put("t.name", []byte("rip"))
+		kv.Put("t.name", []byte("ik"))
+		kv.Put("t.age", []byte("22"))
+		kv.Put("t.age", []byte("44"))
+
+		// try wildcard watcher and make sure we do not get any values initially
+		watcher, err = kv.Watch("t.*", nats.UpdatesOnly())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+
+		expectInitDone()
+
+		// update some keys and expect updates
+		kv.Put("t.name", []byte("pp"))
+		expectUpdate("t.name", "pp", 11)
+		kv.Put("t.age", []byte("66"))
+		expectUpdate("t.age", "66", 12)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
