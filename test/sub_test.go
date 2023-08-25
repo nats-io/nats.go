@@ -1571,3 +1571,46 @@ func TestAutoUnsubOnSyncSubCanStillRespond(t *testing.T) {
 		t.Fatalf("Error responding: %v", err)
 	}
 }
+
+func TestSubscribe_ClosedHandler(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	ch := make(chan string, 1)
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+	sub.SetClosedHandler(func(subj string) {
+		ch <- subj
+	})
+	sub.Unsubscribe()
+	select {
+	case subj := <-ch:
+		if subj != "foo" {
+			t.Fatalf("Expected 'foo', got '%v'", subj)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Did not receive closed callback")
+	}
+
+	sub, err = nc.Subscribe("bar", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+	sub.SetClosedHandler(func(subj string) {
+		ch <- subj
+	})
+	sub.Drain()
+	select {
+	case subj := <-ch:
+		if subj != "bar" {
+			t.Fatalf("Expected 'bar', got '%v'", subj)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Did not receive closed callback")
+	}
+}

@@ -1822,6 +1822,17 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	return sub, nil
 }
 
+// InitialConsumerPending returns the number of messages pending to be
+// delivered to the consumer when the subscription was created.
+func (sub *Subscription) InitialConsumerPending() (uint64, error) {
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	if sub.jsi == nil || sub.jsi.consumer == _EMPTY_ {
+		return 0, fmt.Errorf("%w: not a JetStream subscription", ErrTypeSubscription)
+	}
+	return sub.jsi.pending, nil
+}
+
 // This long-lived routine is used per ChanSubscription to check
 // on the number of delivered messages and check for flow control response.
 func (sub *Subscription) chanSubcheckForFlowControlResponse() {
@@ -1915,7 +1926,7 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	if err != nil {
 		return false
 	}
-	sseq, dseq := parser.ParseNum(tokens[ackStreamSeqTokenPos]), parser.ParseNum(tokens[ackConsumerSeqTokenPos])
+	sseq, dseq := parser.ParseNum(tokens[parser.AckStreamSeqTokenPos]), parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 
 	jsi := sub.jsi
 	if dseq != jsi.dseq {
@@ -2157,7 +2168,7 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 
 	// Consumer sequence.
 	var ldseq string
-	dseq := tokens[ackConsumerSeqTokenPos]
+	dseq := tokens[parser.AckConsumerSeqTokenPos]
 	hdr := msg.Header[lastConsumerSeqHdr]
 	if len(hdr) == 1 {
 		ldseq = hdr[0]
@@ -2168,7 +2179,7 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 	if ldseq != dseq {
 		// Dispatch async error including details such as
 		// from where the consumer could be restarted.
-		sseq := parser.ParseNum(tokens[ackStreamSeqTokenPos])
+		sseq := parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
 		if ordered {
 			s.mu.Lock()
 			s.resetOrderedConsumer(jsi.sseq + 1)
@@ -3280,18 +3291,6 @@ type MsgMetadata struct {
 	Domain       string
 }
 
-const (
-	ackDomainTokenPos       = 2
-	ackAccHashTokenPos      = 3
-	ackStreamTokenPos       = 4
-	ackConsumerTokenPos     = 5
-	ackNumDeliveredTokenPos = 6
-	ackStreamSeqTokenPos    = 7
-	ackConsumerSeqTokenPos  = 8
-	ackTimestampSeqTokenPos = 9
-	ackNumPendingTokenPos   = 10
-)
-
 // Metadata retrieves the metadata from a JetStream message. This method will
 // return an error for non-JetStream Msgs.
 func (m *Msg) Metadata() (*MsgMetadata, error) {
@@ -3305,15 +3304,15 @@ func (m *Msg) Metadata() (*MsgMetadata, error) {
 	}
 
 	meta := &MsgMetadata{
-		Domain:       tokens[ackDomainTokenPos],
-		NumDelivered: parser.ParseNum(tokens[ackNumDeliveredTokenPos]),
-		NumPending:   parser.ParseNum(tokens[ackNumPendingTokenPos]),
-		Timestamp:    time.Unix(0, int64(parser.ParseNum(tokens[ackTimestampSeqTokenPos]))),
-		Stream:       tokens[ackStreamTokenPos],
-		Consumer:     tokens[ackConsumerTokenPos],
+		Domain:       tokens[parser.AckDomainTokenPos],
+		NumDelivered: parser.ParseNum(tokens[parser.AckNumDeliveredTokenPos]),
+		NumPending:   parser.ParseNum(tokens[parser.AckNumPendingTokenPos]),
+		Timestamp:    time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos]))),
+		Stream:       tokens[parser.AckStreamTokenPos],
+		Consumer:     tokens[parser.AckConsumerTokenPos],
 	}
-	meta.Sequence.Stream = parser.ParseNum(tokens[ackStreamSeqTokenPos])
-	meta.Sequence.Consumer = parser.ParseNum(tokens[ackConsumerSeqTokenPos])
+	meta.Sequence.Stream = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
+	meta.Sequence.Consumer = parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 	return meta, nil
 }
 

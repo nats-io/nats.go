@@ -476,6 +476,13 @@ func TestJetStreamSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	initialPending, err := sub.InitialConsumerPending()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if initialPending != 0 {
+		t.Fatalf("Expected no initial pending, got %d", initialPending)
+	}
 	sub.Unsubscribe()
 
 	// Check that Queue subscribe with HB or FC fails.
@@ -563,12 +570,20 @@ func TestJetStreamSubscribe(t *testing.T) {
 			done <- true
 		}
 	})
+
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	expectConsumers(t, 3)
 	defer sub3.Unsubscribe()
 
+	initialPending, err = sub3.InitialConsumerPending()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if initialPending != 10 {
+		t.Fatalf("Expected initial pending of 10, got %d", initialPending)
+	}
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

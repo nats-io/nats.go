@@ -658,7 +658,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 		result.digest.Write(m.Data)
 
 		// Check if we are done.
-		if tokens[ackNumPendingTokenPos] == objNoPending {
+		if tokens[parser.AckNumPendingTokenPos] == objNoPending {
 			pw.Close()
 			m.Sub.Unsubscribe()
 		}
