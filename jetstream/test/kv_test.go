@@ -154,99 +154,262 @@ func TestKeyValueHistory(t *testing.T) {
 }
 
 func TestKeyValueWatch(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
-	expectOk(t, err)
-
-	watcher, err := kv.WatchAll(ctx)
-	expectOk(t, err)
-	defer watcher.Stop()
-
-	expectUpdate := func(key, value string, revision uint64) {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v.Key() != key || string(v.Value()) != value || v.Revision() != revision {
-				t.Fatalf("Did not get expected: %+v vs %q %q %d", v, key, value, revision)
+	expectUpdateF := func(t *testing.T, watcher jetstream.KeyWatcher) func(key, value string, revision uint64) {
+		return func(key, value string, revision uint64) {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v.Key() != key || string(v.Value()) != value || v.Revision() != revision {
+					t.Fatalf("Did not get expected: %q %q %d vs %q %q %d", v.Key(), string(v.Value()), v.Revision(), key, value, revision)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive an update like expected")
 		}
 	}
-	expectDelete := func(key string, revision uint64) {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v.Operation() != jetstream.KeyValueDelete {
-				t.Fatalf("Expected a delete operation but got %+v", v)
+	expectDeleteF := func(t *testing.T, watcher jetstream.KeyWatcher) func(key string, revision uint64) {
+		return func(key string, revision uint64) {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v.Operation() != jetstream.KeyValueDelete {
+					t.Fatalf("Expected a delete operation but got %+v", v)
+				}
+				if v.Revision() != revision {
+					t.Fatalf("Did not get expected revision: %d vs %d", revision, v.Revision())
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
 			}
-			if v.Revision() != revision {
-				t.Fatalf("Did not get expected revision: %d vs %d", revision, v.Revision())
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive an update like expected")
 		}
 	}
-	expectInitDone := func() {
-		t.Helper()
-		select {
-		case v := <-watcher.Updates():
-			if v != nil {
-				t.Fatalf("Did not get expected: %+v", v)
+	expectInitDoneF := func(t *testing.T, watcher jetstream.KeyWatcher) func() {
+		return func() {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v != nil {
+					t.Fatalf("Did not get expected: %+v", v)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive a init done like expected")
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive a init done like expected")
 		}
 	}
 
-	// Make sure we already got an initial value marker.
-	expectInitDone()
+	t.Run("default watcher", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
 
-	_, err = kv.Create(ctx, "name", []byte("derek"))
-	expectOk(t, err)
-	expectUpdate("name", "derek", 1)
-	_, err = kv.Put(ctx, "name", []byte("rip"))
-	expectOk(t, err)
-	expectUpdate("name", "rip", 2)
-	_, err = kv.Put(ctx, "name", []byte("ik"))
-	expectOk(t, err)
-	expectUpdate("name", "ik", 3)
-	_, err = kv.Put(ctx, "age", []byte("22"))
-	expectOk(t, err)
-	expectUpdate("age", "22", 4)
-	_, err = kv.Put(ctx, "age", []byte("33"))
-	expectOk(t, err)
-	expectUpdate("age", "33", 5)
-	expectOk(t, kv.Delete(ctx, "age"))
-	expectDelete("age", 6)
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	// Stop first watcher.
-	watcher.Stop()
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
 
-	// Now try wildcard matching and make sure we only get last value when starting.
-	_, err = kv.Put(ctx, "t.name", []byte("rip"))
-	expectOk(t, err)
-	_, err = kv.Put(ctx, "t.name", []byte("ik"))
-	expectOk(t, err)
-	_, err = kv.Put(ctx, "t.age", []byte("22"))
-	expectOk(t, err)
-	_, err = kv.Put(ctx, "t.age", []byte("44"))
-	expectOk(t, err)
+		watcher, err := kv.WatchAll(ctx)
+		expectOk(t, err)
+		defer watcher.Stop()
 
-	watcher, err = kv.Watch(ctx, "t.*")
-	expectOk(t, err)
-	defer watcher.Stop()
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		// Make sure we already got an initial value marker.
+		expectInitDone()
 
-	expectUpdate("t.name", "ik", 8)
-	expectUpdate("t.age", "44", 10)
-	expectInitDone()
+		_, err = kv.Create(ctx, "name", []byte("derek"))
+		expectOk(t, err)
+		expectUpdate("name", "derek", 1)
+		_, err = kv.Put(ctx, "name", []byte("rip"))
+		expectOk(t, err)
+		expectUpdate("name", "rip", 2)
+		_, err = kv.Put(ctx, "name", []byte("ik"))
+		expectOk(t, err)
+		expectUpdate("name", "ik", 3)
+		_, err = kv.Put(ctx, "age", []byte("22"))
+		expectOk(t, err)
+		expectUpdate("age", "22", 4)
+		_, err = kv.Put(ctx, "age", []byte("33"))
+		expectOk(t, err)
+		expectUpdate("age", "33", 5)
+		expectOk(t, kv.Delete(ctx, "age"))
+		expectDelete("age", 6)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		// Now try wildcard matching and make sure we only get last value when starting.
+		_, err = kv.Put(ctx, "t.name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.name", []byte("ik"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("22"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("44"))
+		expectOk(t, err)
+
+		watcher, err = kv.Watch(ctx, "t.*")
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+		expectUpdate("t.name", "ik", 8)
+		expectUpdate("t.age", "44", 10)
+		expectInitDone()
+	})
+
+	t.Run("watcher with history included", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH", History: 64})
+		expectOk(t, err)
+
+		_, err = kv.Create(ctx, "name", []byte("derek"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "name", []byte("ik"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "age", []byte("22"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "age", []byte("33"))
+		expectOk(t, err)
+		expectOk(t, kv.Delete(ctx, "age"))
+
+		// when using IncludeHistory(), UpdatesOnly() is not allowed
+		if _, err := kv.WatchAll(ctx, jetstream.IncludeHistory(), jetstream.UpdatesOnly()); !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected %v, got %v", jetstream.ErrInvalidOption, err)
+		}
+
+		watcher, err := kv.WatchAll(ctx, jetstream.IncludeHistory())
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		expectUpdate("name", "derek", 1)
+		expectUpdate("name", "rip", 2)
+		expectUpdate("name", "ik", 3)
+		expectUpdate("age", "22", 4)
+		expectUpdate("age", "33", 5)
+		expectDelete("age", 6)
+		expectInitDone()
+		_, err = kv.Put(ctx, "name", []byte("pp"))
+		expectOk(t, err)
+		expectUpdate("name", "pp", 7)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		_, err = kv.Put(ctx, "t.name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.name", []byte("ik"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("22"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("44"))
+		expectOk(t, err)
+
+		// try wildcard watcher and make sure we get all historical values
+		watcher, err = kv.Watch(ctx, "t.*", jetstream.IncludeHistory())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+
+		expectUpdate("t.name", "rip", 8)
+		expectUpdate("t.name", "ik", 9)
+		expectUpdate("t.age", "22", 10)
+		expectUpdate("t.age", "44", 11)
+		expectInitDone()
+
+		_, err = kv.Put(ctx, "t.name", []byte("pp"))
+		expectOk(t, err)
+		expectUpdate("t.name", "pp", 12)
+	})
+
+	t.Run("watcher with updates only", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH", History: 64})
+		expectOk(t, err)
+
+		_, err = kv.Create(ctx, "name", []byte("derek"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "age", []byte("22"))
+		expectOk(t, err)
+
+		// when using UpdatesOnly(), IncludeHistory() is not allowed
+		if _, err := kv.WatchAll(ctx, jetstream.UpdatesOnly(), jetstream.IncludeHistory()); !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected %v, got %v", jetstream.ErrInvalidOption, err)
+		}
+
+		watcher, err := kv.WatchAll(ctx, jetstream.UpdatesOnly())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		// make sure we do not get any values here
+		expectInitDone()
+
+		// now update some keys and expect updates
+		_, err = kv.Put(ctx, "name", []byte("pp"))
+		expectOk(t, err)
+		expectUpdate("name", "pp", 4)
+		_, err = kv.Put(ctx, "age", []byte("44"))
+		expectOk(t, err)
+		expectUpdate("age", "44", 5)
+		expectOk(t, kv.Delete(ctx, "age"))
+		expectDelete("age", 6)
+
+		// Stop first watcher.
+		watcher.Stop()
+
+		_, err = kv.Put(ctx, "t.name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.name", []byte("ik"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("22"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "t.age", []byte("44"))
+		expectOk(t, err)
+
+		// try wildcard watcher and make sure we do not get any values initially
+		watcher, err = kv.Watch(ctx, "t.*", jetstream.UpdatesOnly())
+		expectOk(t, err)
+		defer watcher.Stop()
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+
+		expectInitDone()
+
+		// update some keys and expect updates
+		_, err = kv.Put(ctx, "t.name", []byte("pp"))
+		expectOk(t, err)
+		expectUpdate("t.name", "pp", 11)
+		_, err = kv.Put(ctx, "t.age", []byte("66"))
+		expectOk(t, err)
+		expectUpdate("t.age", "66", 12)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {

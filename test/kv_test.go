@@ -262,6 +262,11 @@ func TestKeyValueWatch(t *testing.T) {
 		kv.Put("age", []byte("33"))
 		kv.Delete("age")
 
+		// when using UpdatesOnly(), IncludeHistory() is not allowed
+		if _, err := kv.WatchAll(nats.IncludeHistory(), nats.UpdatesOnly()); !strings.Contains(err.Error(), "updates only can not be used with include history") {
+			t.Fatalf("Expected error to contain %q, got %q", "updates only can not be used with include history", err)
+		}
+
 		watcher, err := kv.WatchAll(nats.IncludeHistory())
 		expectOk(t, err)
 		defer watcher.Stop()
@@ -316,6 +321,11 @@ func TestKeyValueWatch(t *testing.T) {
 		kv.Create("name", []byte("derek"))
 		kv.Put("name", []byte("rip"))
 		kv.Put("age", []byte("22"))
+
+		// when using UpdatesOnly(), IncludeHistory() is not allowed
+		if _, err := kv.WatchAll(nats.UpdatesOnly(), nats.IncludeHistory()); !strings.Contains(err.Error(), "include history can not be used with updates only") {
+			t.Fatalf("Expected error to contain %q, got %q", "include history can not be used with updates only", err)
+		}
 
 		watcher, err := kv.WatchAll(nats.UpdatesOnly())
 		expectOk(t, err)

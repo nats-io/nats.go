@@ -328,7 +328,21 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 // IncludeHistory instructs the key watcher to include historical values as well.
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
+		if opts.updatesOnly {
+			return fmt.Errorf("%w: include history can not be used with updates only", ErrInvalidOption)
+		}
 		opts.includeHistory = true
+		return nil
+	})
+}
+
+// UpdatesOnly instructs the key watcher to only include updates on values (without latest values when started).
+func UpdatesOnly() WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		if opts.includeHistory {
+			return fmt.Errorf("%w: updates only can not be used with include history", ErrInvalidOption)
+		}
+		opts.updatesOnly = true
 		return nil
 	})
 }
