@@ -70,7 +70,6 @@ func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 		t.Fatalf("Error subscribing to test subject: %v", err)
 	}
 	defer sub.Unsubscribe()
-	fmt.Println("WAITING FOR CUSTOM BUCKET RUN")
 
 	// 1. Create custom bucket
 	msg, err := sub.NextMsg(1 * time.Hour)
@@ -91,7 +90,6 @@ func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 		t.Fatalf("Error responding to message: %v", err)
 	}
 
-	fmt.Println("CUSTOM BUCKET RUN DONE")
 	validateTestResult(t, sub)
 }
 
@@ -226,8 +224,9 @@ func TestCompatibilityObjectStoreUpdateMetadata(t *testing.T) {
 	validateTestResult(t, sub)
 }
 
-func TestCompatibilityObjectStoreWatch(t *testing.T) {
-	t.Skip("Skipping test until watch behavior is sorted out in compatibility-tests")
+func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
+	// Skipped until watching only for changes only is added.
+	t.Skip()
 	t.Parallel()
 
 	type config struct {
@@ -239,7 +238,7 @@ func TestCompatibilityObjectStoreWatch(t *testing.T) {
 	defer nc.Close()
 
 	// setup subscription on which tester will be sending requests
-	sub, err := nc.SubscribeSync("tests.object-store.watch.>")
+	sub, err := nc.SubscribeSync("tests.object-store.watch-updates.>")
 	if err != nil {
 		t.Fatalf("Error subscribing to test subject: %v", err)
 	}
