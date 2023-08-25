@@ -123,6 +123,8 @@ type watchOpts struct {
 	ignoreDeletes bool
 	// Include all history per subject, not just last one.
 	includeHistory bool
+	// Include only updates for keys.
+	updatesOnly bool
 	// retrieve only the meta data of the entry
 	metaOnly bool
 }
@@ -136,7 +138,21 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 // IncludeHistory instructs the key watcher to include historical values as well.
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
+		if opts.updatesOnly {
+			return errors.New("nats: include history can not be used with updates only")
+		}
 		opts.includeHistory = true
+		return nil
+	})
+}
+
+// UpdatesOnly instructs the key watcher to only include updates on values (without latest values when started).
+func UpdatesOnly() WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		if opts.includeHistory {
+			return errors.New("nats: updates only can not be used with include history")
+		}
+		opts.updatesOnly = true
 		return nil
 	})
 }
@@ -942,6 +958,9 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	subOpts := []SubOpt{BindStream(kv.stream), OrderedConsumer()}
 	if !o.includeHistory {
 		subOpts = append(subOpts, DeliverLastPerSubject())
+	}
+	if o.updatesOnly {
+		subOpts = append(subOpts, DeliverNew())
 	}
 	if o.metaOnly {
 		subOpts = append(subOpts, HeadersOnly())
