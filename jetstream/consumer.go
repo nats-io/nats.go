@@ -51,6 +51,14 @@ type (
 		// CachedInfo returns [*ConsumerInfo] cached on a consumer struct
 		CachedInfo() *ConsumerInfo
 	}
+
+	createConsumerRequest struct {
+		Stream string          `json:"stream_name"`
+		Config *ConsumerConfig `json:"config"`
+		Action consumerAction  `json:"action"`
+	}
+
+	consumerAction int
 )
 
 // Info returns [ConsumerInfo] for a given consumer
@@ -84,7 +92,7 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig) (Consumer, error) {
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action consumerAction) (Consumer, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -92,6 +100,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,
+		Action: action,
 	}
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
@@ -141,6 +150,43 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		info:          resp.ConsumerInfo,
 		subscriptions: make(map[string]*pullSubscription),
 	}, nil
+}
+
+const (
+	actionCreateOrUpdate consumerAction = iota
+	actionUpdate
+	actionCreate
+)
+
+const (
+	actionUpdateString         = "update"
+	actionCreateString         = "create"
+	actionCreateOrUpdateString = ""
+)
+
+func (a consumerAction) String() string {
+	switch a {
+	case actionCreateOrUpdate:
+		return actionCreateOrUpdateString
+	case actionCreate:
+		return actionCreateString
+	case actionUpdate:
+		return actionUpdateString
+	}
+	return actionCreateOrUpdateString
+}
+
+func (a consumerAction) MarshalJSON() ([]byte, error) {
+	switch a {
+	case actionCreate:
+		return json.Marshal(actionCreateString)
+	case actionUpdate:
+		return json.Marshal(actionUpdateString)
+	case actionCreateOrUpdate:
+		return json.Marshal(actionCreateOrUpdateString)
+	default:
+		return nil, fmt.Errorf("can not marshal %v", a)
+	}
 }
 
 func generateConsName() string {

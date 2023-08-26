@@ -253,14 +253,23 @@ CRUD operations on consumers can be achieved on 2 levels:
 js, _ := jetstream.New(nc)
 
 // create a consumer (this is an idempotent operation)
-cons, _ := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+// an error will be returned if consumer already exists and has different configuration.
+cons, _ := js.CreateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     Durable: "foo",
     AckPolicy: jetstream.AckExplicitPolicy,
 })
 
 // create an ephemeral pull consumer by not providing `Durable`
-ephemeral, _ := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+ephemeral, _ := js.CreateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
+})
+
+// consumers can be updated
+// an error will be returned if consumer with given name does not exists
+// or an illegal property is to be updated (e.g. AckPolicy)
+updated, _ := js.UpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+    AckPolicy: jetstream.AckExplicitPolicy,
+    Description: "updated consumer"
 })
 
 // get consumer handle
@@ -280,7 +289,7 @@ js, _ := jetstream.New(nc)
 stream, _ := js.Stream(ctx, "ORDERS")
 
 // create consumer
-cons, _ := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+cons, _ := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
     Durable:   "foo",
     AckPolicy: jetstream.AckExplicitPolicy,
 })
