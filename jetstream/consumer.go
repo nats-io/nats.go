@@ -28,7 +28,7 @@ type (
 	// Consumer contains methods for fetching/processing messages from a stream, as well as fetching consumer info
 	Consumer interface {
 		// Fetch is used to retrieve up to a provided number of messages from a stream.
-		// This method will always send a single request and wait until either all messages are retreived
+		// This method will always send a single request and wait until either all messages are retrieved
 		// or request times out.
 		Fetch(batch int, opts ...FetchOpt) (MessageBatch, error)
 		// FetchBytes is used to retrieve up to a provided bytes from the stream.

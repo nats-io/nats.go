@@ -2727,7 +2727,7 @@ func TestAccountInfo(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
 			}
 			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", MaxBytes: 1024})
 			if err != nil {
@@ -2749,7 +2749,7 @@ func TestAccountInfo(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Accoount info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
 			}
 		})
 	}
@@ -4109,7 +4109,7 @@ func TestJetStreamSubscribe_DeliverPolicy(t *testing.T) {
 		t.Fatalf("Error on next msg: %v", err)
 	}
 	if string(msg.Data) != "bar msg 2" {
-		t.Fatalf("Unexepcted last message: %q", msg.Data)
+		t.Fatalf("Unexpected last message: %q", msg.Data)
 	}
 }
 
@@ -7869,7 +7869,7 @@ func TestJetStreamDomain(t *testing.T) {
 	}
 }
 
-// Test that we properly enfore per subject msg limits.
+// Test that we properly enforce per subject msg limits.
 func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
 	const subjectMax = 5
 	msc := nats.StreamConfig{

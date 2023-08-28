@@ -1149,7 +1149,7 @@ func TestPublishMsgAsync(t *testing.T) {
 						t.Fatalf("Invalid headers on message; want: %v; got: %v", pub.expectedHeaders, pub.msg.Header)
 					}
 					if string(msg.Data) != string(pub.msg.Data) {
-						t.Fatalf("Invaid message in ack; want: %q; got: %q", string(pub.msg.Data), string(msg.Data))
+						t.Fatalf("Invalid message in ack; want: %q; got: %q", string(pub.msg.Data), string(msg.Data))
 					}
 				case err := <-ackFuture.Err():
 					if pub.withAckError == nil {

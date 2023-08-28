@@ -79,7 +79,7 @@ func TestObjectBasics(t *testing.T) {
 	status, err := obs.Status()
 	expectOk(t, err)
 	if !status.Sealed() {
-		t.Fatalf("exected sealed status")
+		t.Fatalf("expected sealed status")
 	}
 	if status.Size() == 0 {
 		t.Fatalf("size is 0")

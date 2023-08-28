@@ -178,7 +178,7 @@ for s := range streams.Info() {
     fmt.Println(s.Config.Name)
 }
 if streams.Err() != nil {
-    fmt.Println("Unexpected error ocurred")
+    fmt.Println("Unexpected error occurred")
 }
 
 // list stream names
@@ -187,7 +187,7 @@ for name := range names.Name() {
     fmt.Println(name)
 }
 if names.Err() != nil {
-    fmt.Println("Unexpected error ocurred")
+    fmt.Println("Unexpected error occurred")
 }
 ```
 
@@ -314,7 +314,7 @@ for cons := range consumers.Info() {
     fmt.Println(cons.Name)
 }
 if consumers.Err() != nil {
-    fmt.Println("Unexpected error ocurred")
+    fmt.Println("Unexpected error occurred")
 }
 
 // list consumer names
@@ -323,7 +323,7 @@ for name := range names.Name() {
     fmt.Println(name)
 }
 if names.Err() != nil {
-    fmt.Println("Unexpected error ocurred")
+    fmt.Println("Unexpected error occurred")
 }
 ```
 
@@ -579,7 +579,7 @@ case err := <-ackF.Err():
     fmt.Println(err)
 }
 
-// similarly to syncronous publish, there is a helper method accepting subject and data
+// similarly to synchronous publish, there is a helper method accepting subject and data
 ackF, err = js.PublishAsync("ORDERS.new", []byte("hello"))
 ```
 
