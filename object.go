@@ -1058,7 +1058,7 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 
 		// if UpdatesOnly is set, no not send nil to the channel
 		// as it would always be triggered after initializing the watcher
-		if !o.updatesOnly && !initDoneMarker && meta.NumPending == 0 {
+		if !initDoneMarker && meta.NumPending == 0 {
 			initDoneMarker = true
 			w.updates <- nil
 		}
@@ -1069,9 +1069,14 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 	// if there are no messages on the stream and we are not watching
 	// updates only, send nil to the channel to indicate that the initial
 	// watch is done
-	if !o.updatesOnly && errors.Is(err, ErrMsgNotFound) {
+	if !o.updatesOnly {
+		if errors.Is(err, ErrMsgNotFound) {
+			initDoneMarker = true
+			w.updates <- nil
+		}
+	} else {
+		// if UpdatesOnly was used, mark initialization as complete
 		initDoneMarker = true
-		w.updates <- nil
 	}
 
 	// Used ordered consumer to deliver results.
