@@ -264,6 +264,14 @@ ephemeral, _ := js.CreateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
 })
 
+
+// consumer can also be created using CreateOrUpdateConsumer
+// this method will either create a consumer if it does not exist
+// or update existing consumer (if possible)
+cons2 := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
+    Name: "bar",
+})
+
 // consumers can be updated
 // an error will be returned if consumer with given name does not exists
 // or an illegal property is to be updated (e.g. AckPolicy)

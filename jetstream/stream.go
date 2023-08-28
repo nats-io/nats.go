@@ -200,15 +200,15 @@ type (
 )
 
 func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.jetStream, s.name, cfg, actionCreateOrUpdate)
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreateOrUpdate)
 }
 
 func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.jetStream, s.name, cfg, actionCreate)
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreate)
 }
 
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.jetStream, s.name, cfg, actionUpdate)
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionUpdate)
 }
 
 func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {

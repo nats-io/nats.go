@@ -526,21 +526,21 @@ func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, 
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, actionCreateOrUpdate)
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreateOrUpdate)
 }
 
 func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, actionCreate)
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreate)
 }
 
 func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, actionUpdate)
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionUpdate)
 }
 
 func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error) {

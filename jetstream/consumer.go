@@ -55,10 +55,8 @@ type (
 	createConsumerRequest struct {
 		Stream string          `json:"stream_name"`
 		Config *ConsumerConfig `json:"config"`
-		Action consumerAction  `json:"action"`
+		Action string          `json:"action"`
 	}
-
-	consumerAction int
 )
 
 // Info returns [ConsumerInfo] for a given consumer
@@ -92,7 +90,7 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action consumerAction) (Consumer, error) {
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -153,41 +151,10 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 }
 
 const (
-	actionCreateOrUpdate consumerAction = iota
-	actionUpdate
-	actionCreate
+	consumerActionCreate         = "create"
+	consumerActionUpdate         = "update"
+	consumerActionCreateOrUpdate = ""
 )
-
-const (
-	actionUpdateString         = "update"
-	actionCreateString         = "create"
-	actionCreateOrUpdateString = ""
-)
-
-func (a consumerAction) String() string {
-	switch a {
-	case actionCreateOrUpdate:
-		return actionCreateOrUpdateString
-	case actionCreate:
-		return actionCreateString
-	case actionUpdate:
-		return actionUpdateString
-	}
-	return actionCreateOrUpdateString
-}
-
-func (a consumerAction) MarshalJSON() ([]byte, error) {
-	switch a {
-	case actionCreate:
-		return json.Marshal(actionCreateString)
-	case actionUpdate:
-		return json.Marshal(actionUpdateString)
-	case actionCreateOrUpdate:
-		return json.Marshal(actionCreateOrUpdateString)
-	default:
-		return nil, fmt.Errorf("can not marshal %v", a)
-	}
-}
 
 func generateConsName() string {
 	name := nuid.Next()
