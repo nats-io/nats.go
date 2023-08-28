@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -225,8 +224,6 @@ func TestCompatibilityObjectStoreUpdateMetadata(t *testing.T) {
 }
 
 func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
-	// Skipped until watching only for changes only is added.
-	t.Skip()
 	t.Parallel()
 
 	type config struct {
@@ -257,15 +254,13 @@ func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	time.Sleep(5 * time.Second)
-	watcher, err := os.Watch()
+	watcher, err := os.Watch(nats.UpdatesOnly())
 	if err != nil {
 		t.Fatalf("Error getting watcher: %v", err)
 	}
 	var info *nats.ObjectInfo
 	select {
 	case info = <-watcher.Updates():
-		fmt.Println(info.Digest)
 	case <-time.After(30 * time.Second):
 		t.Fatalf("Timeout waiting for object update")
 	}
