@@ -396,7 +396,7 @@ func DirectGetNext(subject string) JSOpt {
 }
 
 // StreamListFilter is an option that can be used to configure `StreamsInfo()` and `StreamNames()` requests.
-// It allows filtering the retured streams by subject associated with each stream.
+// It allows filtering the returned streams by subject associated with each stream.
 // Wildcards can be used. For example, `StreamListFilter(FOO.*.A) will return
 // all streams which have at least one subject matching the provided pattern (e.g. FOO.TEST.A).
 func StreamListFilter(subject string) JSOpt {
@@ -3362,7 +3362,7 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 	case AckExplicitPolicy:
 		return json.Marshal("explicit")
 	default:
-		return nil, fmt.Errorf("nats: unknown acknowlegement policy %v", p)
+		return nil, fmt.Errorf("nats: unknown acknowledgement policy %v", p)
 	}
 }
 

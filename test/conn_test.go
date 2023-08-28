@@ -2279,7 +2279,7 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 				// The processing of PONG in sendConnect() should leave the
 				// rest for the readLoop to process.
 				c.Write([]byte("PONG\r\nINFO {\"server_id\":\"server1\",\"connect_urls\":[\"127.0.0.1:4222\", \"127.0.0.1:4223\", \"127.0.0.1:4224\"]}\r\n"))
-				// Wait for the notication
+				// Wait for the notification
 				<-ch
 				// Close the connection in our side and go back into accept
 				c.Close()

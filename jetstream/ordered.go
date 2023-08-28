@@ -230,7 +230,7 @@ func (s *orderedSubscription) Stop() {
 }
 
 // Fetch is used to retrieve up to a provided number of messages from a stream.
-// This method will always send a single request and wait until either all messages are retreived
+// This method will always send a single request and wait until either all messages are retrieved
 // or context reaches its deadline.
 func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {

@@ -257,7 +257,7 @@ func TestDrainConnection(t *testing.T) {
 	expected := int32(50)
 	sleep := 10 * time.Millisecond
 
-	// Create the listner for responses on "bar"
+	// Create the listener for responses on "bar"
 	_, err = nc2.Subscribe("bar", func(_ *nats.Msg) {
 		r := atomic.AddInt32(&responses, 1)
 		if r == expected {

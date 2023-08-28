@@ -69,7 +69,7 @@ func TestMessageDetails(t *testing.T) {
 		t.Fatalf("unexpected error during fetch: %v", err)
 	}
 	if string(msg.Data()) != "msg" {
-		t.Fatalf("Invalid messge body; want: 'msg'; got: %q", string(msg.Data()))
+		t.Fatalf("Invalid message body; want: 'msg'; got: %q", string(msg.Data()))
 	}
 	metadata, err := msg.Metadata()
 	if err != nil {
