@@ -474,86 +474,136 @@ func TestObjectMetadata(t *testing.T) {
 }
 
 func TestObjectWatch(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "WATCH-TEST"})
-	expectOk(t, err)
-
-	watcher, err := obs.Watch()
-	expectOk(t, err)
-	defer watcher.Stop()
-
-	expectUpdate := func(name string) {
-		t.Helper()
-		select {
-		case info := <-watcher.Updates():
-			if false && info.Name != name { // TODO what is supposed to happen here?
-				t.Fatalf("Expected update for %q, but got %+v", name, info)
+	expectUpdateF := func(t *testing.T, watcher nats.ObjectWatcher) func(name string) {
+		return func(name string) {
+			t.Helper()
+			select {
+			case info := <-watcher.Updates():
+				if false && info.Name != name { // TODO what is supposed to happen here?
+					t.Fatalf("Expected update for %q, but got %+v", name, info)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive an update like expected")
 		}
 	}
 
-	expectNoMoreUpdates := func() {
-		t.Helper()
-		select {
-		case info := <-watcher.Updates():
-			t.Fatalf("Got an unexpected update: %+v", info)
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	expectInitDone := func() {
-		t.Helper()
-		select {
-		case info := <-watcher.Updates():
-			if info != nil {
-				t.Fatalf("Did not get expected: %+v", info)
+	expectNoMoreUpdatesF := func(t *testing.T, watcher nats.ObjectWatcher) func() {
+		return func() {
+			t.Helper()
+			select {
+			case info := <-watcher.Updates():
+				t.Fatalf("Got an unexpected update: %+v", info)
+			case <-time.After(100 * time.Millisecond):
 			}
-		case <-time.After(time.Second):
-			t.Fatalf("Did not receive a init done like expected")
 		}
 	}
 
-	// We should get a marker that is nil when all initital values are delivered.
-	expectInitDone()
-
-	_, err = obs.PutString("A", "AAA")
-	expectOk(t, err)
-	_, err = obs.PutString("B", "BBB")
-	expectOk(t, err)
-
-	// Initial Values.
-	expectUpdate("A")
-	expectUpdate("B")
-	expectNoMoreUpdates()
-
-	// Delete
-	err = obs.Delete("A")
-	expectOk(t, err)
-
-	expectUpdate("A")
-	expectNoMoreUpdates()
-
-	// New
-	_, err = obs.PutString("C", "CCC")
-	expectOk(t, err)
-
-	// Update Meta
-	deletedInfo, err := obs.GetInfo("A", nats.GetObjectInfoShowDeleted())
-	expectOk(t, err)
-	if !deletedInfo.Deleted {
-		t.Fatalf("Expected object to be deleted.")
+	expectInitDoneF := func(t *testing.T, watcher nats.ObjectWatcher) func() {
+		return func() {
+			t.Helper()
+			select {
+			case info := <-watcher.Updates():
+				if info != nil {
+					t.Fatalf("Did not get expected: %+v", info)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive a init done like expected")
+			}
+		}
 	}
-	meta := &deletedInfo.ObjectMeta
-	meta.Description = "Making a change."
-	err = obs.UpdateMeta("A", meta)
-	expectErr(t, err, nats.ErrUpdateMetaDeleted)
+
+	t.Run("default watcher", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "WATCH-TEST"})
+		expectOk(t, err)
+
+		watcher, err := obs.Watch()
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectUpdate := expectUpdateF(t, watcher)
+		expectNoMoreUpdates := expectNoMoreUpdatesF(t, watcher)
+		expectInitDone := expectInitDoneF(t, watcher)
+
+		// We should get a marker that is nil when all initial values are delivered.
+		expectInitDone()
+
+		_, err = obs.PutString("A", "AAA")
+		expectOk(t, err)
+		_, err = obs.PutString("B", "BBB")
+		expectOk(t, err)
+
+		// Initial Values.
+		expectUpdate("A")
+		expectUpdate("B")
+		expectNoMoreUpdates()
+
+		// Delete
+		err = obs.Delete("A")
+		expectOk(t, err)
+
+		expectUpdate("A")
+		expectNoMoreUpdates()
+
+		// New
+		_, err = obs.PutString("C", "CCC")
+		expectOk(t, err)
+
+		// Update Meta
+		deletedInfo, err := obs.GetInfo("A", nats.GetObjectInfoShowDeleted())
+		expectOk(t, err)
+		if !deletedInfo.Deleted {
+			t.Fatalf("Expected object to be deleted.")
+		}
+		meta := &deletedInfo.ObjectMeta
+		meta.Description = "Making a change."
+		err = obs.UpdateMeta("A", meta)
+		expectErr(t, err, nats.ErrUpdateMetaDeleted)
+	})
+
+	t.Run("watcher with update", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "WATCH-TEST"})
+		expectOk(t, err)
+
+		_, err = obs.PutString("A", "AAA")
+		expectOk(t, err)
+		_, err = obs.PutString("B", "BBB")
+		expectOk(t, err)
+
+		watcher, err := obs.Watch(nats.UpdatesOnly())
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectUpdate := expectUpdateF(t, watcher)
+		expectNoMoreUpdates := expectNoMoreUpdatesF(t, watcher)
+
+		// when listening for updates only, we should not receive anything when watcher is started
+		expectNoMoreUpdates()
+
+		// Delete
+		err = obs.Delete("A")
+		expectOk(t, err)
+
+		expectUpdate("A")
+		expectNoMoreUpdates()
+
+		// New
+		_, err = obs.PutString("C", "CCC")
+		expectOk(t, err)
+		expectUpdate("C")
+	})
 }
 
 func TestObjectLinks(t *testing.T) {

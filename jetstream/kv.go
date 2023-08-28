@@ -856,12 +856,18 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	sub.SetClosedHandler(func(_ string) {
 		close(w.updates)
 	})
-	initialPending, err := sub.InitialConsumerPending()
 	// If there were no pending messages at the time of the creation
 	// of the consumer, send the marker.
-	if err == nil && initialPending == 0 {
+	// Skip if UpdatesOnly() is set, since there will never be updates initially.
+	if !o.updatesOnly {
+		initialPending, err := sub.InitialConsumerPending()
+		if err == nil && initialPending == 0 {
+			w.initDone = true
+			w.updates <- nil
+		}
+	} else {
+		// if UpdatesOnly was used, mark initialization as complete
 		w.initDone = true
-		w.updates <- nil
 	}
 	w.sub = sub
 	return w, nil

@@ -1056,6 +1056,8 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 			w.updates <- &info
 		}
 
+		// if UpdatesOnly is set, no not send nil to the channel
+		// as it would always be triggered after initializing the watcher
 		if !initDoneMarker && meta.NumPending == 0 {
 			initDoneMarker = true
 			w.updates <- nil
@@ -1064,15 +1066,26 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 
 	allMeta := fmt.Sprintf(objAllMetaPreTmpl, obs.name)
 	_, err := obs.js.GetLastMsg(obs.stream, allMeta)
-	if err == ErrMsgNotFound {
+	// if there are no messages on the stream and we are not watching
+	// updates only, send nil to the channel to indicate that the initial
+	// watch is done
+	if !o.updatesOnly {
+		if errors.Is(err, ErrMsgNotFound) {
+			initDoneMarker = true
+			w.updates <- nil
+		}
+	} else {
+		// if UpdatesOnly was used, mark initialization as complete
 		initDoneMarker = true
-		w.updates <- nil
 	}
 
 	// Used ordered consumer to deliver results.
 	subOpts := []SubOpt{OrderedConsumer()}
 	if !o.includeHistory {
 		subOpts = append(subOpts, DeliverLastPerSubject())
+	}
+	if o.updatesOnly {
+		subOpts = append(subOpts, DeliverNew())
 	}
 	sub, err := obs.js.Subscribe(allMeta, update, subOpts...)
 	if err != nil {
