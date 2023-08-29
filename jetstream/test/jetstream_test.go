@@ -1090,6 +1090,187 @@ func TestJetStream_CreateOrUpdateConsumer(t *testing.T) {
 	}
 }
 
+func TestJetStream_CreateConsumer(t *testing.T) {
+	tests := []struct {
+		name           string
+		consumerConfig jetstream.ConsumerConfig
+		shouldCreate   bool
+		stream         string
+		withError      error
+	}{
+		{
+			name:           "create consumer",
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur"},
+			stream:         "foo",
+			shouldCreate:   true,
+		},
+		{
+			name:           "consumer already exists, error",
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", Description: "test consumer"},
+			stream:         "foo",
+			withError:      jetstream.ErrConsumerExists,
+		},
+		{
+			name:           "stream does not exist",
+			stream:         "abc",
+			consumerConfig: jetstream.ConsumerConfig{Durable: "dur"},
+			withError:      jetstream.ErrStreamNotFound,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sub *nats.Subscription
+			if test.consumerConfig.FilterSubject != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
+			} else {
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
+			}
+			c, err := js.CreateConsumer(ctx, test.stream, test.consumerConfig)
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if test.shouldCreate {
+				if _, err := sub.NextMsgWithContext(ctx); err != nil {
+					t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
+				}
+			}
+			ci, err := s.Consumer(ctx, c.CachedInfo().Name)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if ci.CachedInfo().Config.AckPolicy != test.consumerConfig.AckPolicy {
+				t.Fatalf("Invalid ack policy; want: %s; got: %s", test.consumerConfig.AckPolicy, ci.CachedInfo().Config.AckPolicy)
+			}
+			if !reflect.DeepEqual(test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects) {
+				t.Fatalf("Invalid filter subjects; want: %v; got: %v", test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects)
+			}
+		})
+	}
+}
+
+func TestJetStream_UpdateConsumer(t *testing.T) {
+	tests := []struct {
+		name           string
+		consumerConfig jetstream.ConsumerConfig
+		shouldUpdate   bool
+		stream         string
+		withError      error
+	}{
+		{
+			name:           "update consumer",
+			consumerConfig: jetstream.ConsumerConfig{Name: "testcons", Description: "updated consumer"},
+			stream:         "foo",
+			shouldUpdate:   true,
+		},
+		{
+			name:           "illegal update",
+			consumerConfig: jetstream.ConsumerConfig{Name: "testcons", AckPolicy: jetstream.AckNonePolicy},
+			stream:         "foo",
+			withError:      jetstream.ErrConsumerCreate,
+		},
+		{
+			name:           "consumer does not exist",
+			consumerConfig: jetstream.ConsumerConfig{Name: "abc"},
+			stream:         "foo",
+			withError:      jetstream.ErrConsumerDoesNotExist,
+		},
+		{
+			name:           "stream does not exist",
+			consumerConfig: jetstream.ConsumerConfig{Name: "testcons"},
+			stream:         "abc",
+			withError:      jetstream.ErrStreamNotFound,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = s.CreateConsumer(ctx, jetstream.ConsumerConfig{Name: "testcons"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sub *nats.Subscription
+			if test.consumerConfig.FilterSubject != "" {
+				sub, err = nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.CREATE.foo.*.%s", test.consumerConfig.FilterSubject))
+			} else {
+				sub, err = nc.SubscribeSync("$JS.API.CONSUMER.CREATE.foo.*")
+			}
+			c, err := js.UpdateConsumer(ctx, test.stream, test.consumerConfig)
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if test.shouldUpdate {
+				if _, err := sub.NextMsgWithContext(ctx); err != nil {
+					t.Fatalf("Expected request on %s; got %s", sub.Subject, err)
+				}
+			}
+			ci, err := s.Consumer(ctx, c.CachedInfo().Name)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if ci.CachedInfo().Config.AckPolicy != test.consumerConfig.AckPolicy {
+				t.Fatalf("Invalid ack policy; want: %s; got: %s", test.consumerConfig.AckPolicy, ci.CachedInfo().Config.AckPolicy)
+			}
+			if !reflect.DeepEqual(test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects) {
+				t.Fatalf("Invalid filter subjects; want: %v; got: %v", test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects)
+			}
+		})
+	}
+}
+
 func TestJetStream_Consumer(t *testing.T) {
 	tests := []struct {
 		name      string
