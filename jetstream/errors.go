@@ -53,9 +53,11 @@ const (
 	JSErrCodeConsumerNotFound          ErrorCode = 10014
 	JSErrCodeConsumerNameExists        ErrorCode = 10013
 	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
+	JSErrCodeConsumerExists            ErrorCode = 10148
 	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
 	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
+	JSErrCodeConsumerDoesNotExist      ErrorCode = 10149
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
 
@@ -101,6 +103,12 @@ var (
 
 	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
 	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
+
+	// ErrConsumerExists is returned when attempting to create a consumer with CreateConsumer but a consumer with given name already exists.
+	ErrConsumerExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerExists, Description: "consumer already exists", Code: 400}}
+
+	// ErrConsumerNameExists is returned when attempting to update a consumer with UpdateConsumer but a consumer with given name does not exist.
+	ErrConsumerDoesNotExist JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerDoesNotExist, Description: "consumer does not exist", Code: 400}}
 
 	// ErrMsgNotFound is returned when message with provided sequence number does not exist.
 	ErrMsgNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMessageNotFound, Description: "message not found", Code: 404}}
