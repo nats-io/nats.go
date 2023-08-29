@@ -169,6 +169,11 @@ func TestCreateConsumer(t *testing.T) {
 			shouldCreate:   true,
 		},
 		{
+			name:           "with metadata",
+			consumerConfig: jetstream.ConsumerConfig{Metadata: map[string]string{"foo": "bar", "baz": "quux"}},
+			shouldCreate:   true,
+		},
+		{
 			name:           "with multiple filter subjects",
 			consumerConfig: jetstream.ConsumerConfig{FilterSubjects: []string{"FOO.A", "FOO.B"}},
 			shouldCreate:   true,
@@ -253,6 +258,9 @@ func TestCreateConsumer(t *testing.T) {
 			if !reflect.DeepEqual(test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects) {
 				t.Fatalf("Invalid filter subjects; want: %v; got: %v", test.consumerConfig.FilterSubjects, ci.CachedInfo().Config.FilterSubjects)
 			}
+			if !reflect.DeepEqual(test.consumerConfig.Metadata, ci.CachedInfo().Config.Metadata) {
+				t.Fatalf("Invalid metadata; want: %v; got: %v", test.consumerConfig.Metadata, ci.CachedInfo().Config.Metadata)
+			}
 		})
 	}
 }
@@ -267,6 +275,11 @@ func TestUpdateConsumer(t *testing.T) {
 		{
 			name:           "update consumer",
 			consumerConfig: jetstream.ConsumerConfig{Name: "testcons", Description: "updated consumer"},
+			shouldUpdate:   true,
+		},
+		{
+			name:           "update consumer, with metadata",
+			consumerConfig: jetstream.ConsumerConfig{Name: "testcons", Description: "updated consumer", Metadata: map[string]string{"foo": "bar", "baz": "quux"}},
 			shouldUpdate:   true,
 		},
 		{
