@@ -56,6 +56,16 @@ type (
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
+		// CreateConsumer creates a consumer on a given stream with given config.
+		// If consumer already exists, an ErrConsumerExists is returned.
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
+
+		// UpdateConsumer updates an existing consumer with given config.
+		// If consumer does not exist, an ErrConsumerDoesNotExist is returned.
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
+
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
@@ -74,6 +84,7 @@ type (
 		// ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
+
 	RawStreamMsg struct {
 		Subject  string
 		Sequence uint64
@@ -98,11 +109,6 @@ type (
 	consumerInfoResponse struct {
 		apiResponse
 		*ConsumerInfo
-	}
-
-	createConsumerRequest struct {
-		Stream string          `json:"stream_name"`
-		Config *ConsumerConfig `json:"config"`
 	}
 
 	StreamPurgeOpt func(*StreamPurgeRequest) error
@@ -194,7 +200,15 @@ type (
 )
 
 func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.jetStream, s.name, cfg)
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreateOrUpdate)
+}
+
+func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreate)
+}
+
+func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
+	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionUpdate)
 }
 
 func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
