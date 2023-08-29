@@ -51,6 +51,12 @@ type (
 		// CachedInfo returns [*ConsumerInfo] cached on a consumer struct
 		CachedInfo() *ConsumerInfo
 	}
+
+	createConsumerRequest struct {
+		Stream string          `json:"stream_name"`
+		Config *ConsumerConfig `json:"config"`
+		Action string          `json:"action"`
+	}
 )
 
 // Info returns [ConsumerInfo] for a given consumer
@@ -84,7 +90,7 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig) (Consumer, error) {
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -92,6 +98,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,
+		Action: action,
 	}
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
@@ -142,6 +149,12 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		subscriptions: make(map[string]*pullSubscription),
 	}, nil
 }
+
+const (
+	consumerActionCreate         = "create"
+	consumerActionUpdate         = "update"
+	consumerActionCreateOrUpdate = ""
+)
 
 func generateConsName() string {
 	name := nuid.Next()
