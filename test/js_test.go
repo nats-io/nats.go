@@ -1900,12 +1900,22 @@ func TestJetStreamManagement(t *testing.T) {
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
 	t.Run("create stream", func(t *testing.T) {
-		si, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"foo", "bar", "baz"}})
+		si, err := js.AddStream(&nats.StreamConfig{
+			Name:     "foo",
+			Subjects: []string{"foo", "bar", "baz"},
+			Metadata: map[string]string{
+				"foo": "bar",
+				"baz": "quux",
+			},
+		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if si == nil || si.Config.Name != "foo" {
 			t.Fatalf("StreamInfo is not correct %+v", si)
+		}
+		if !reflect.DeepEqual(si.Config.Metadata, map[string]string{"foo": "bar", "baz": "quux"}) {
+			t.Fatalf("Metadata is not correct %+v", si.Config.Metadata)
 		}
 	})
 
@@ -1991,7 +2001,14 @@ func TestJetStreamManagement(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer sub.Unsubscribe()
-			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "dlc", AckPolicy: nats.AckExplicitPolicy})
+			ci, err := js.AddConsumer("foo", &nats.ConsumerConfig{
+				Durable:   "dlc",
+				AckPolicy: nats.AckExplicitPolicy,
+				Metadata: map[string]string{
+					"foo": "bar",
+					"baz": "quux",
+				},
+			})
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2004,6 +2021,9 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 			if ci == nil || ci.Name != "dlc" || ci.Stream != "foo" {
 				t.Fatalf("ConsumerInfo is not correct %+v", ci)
+			}
+			if !reflect.DeepEqual(ci.Config.Metadata, map[string]string{"foo": "bar", "baz": "quux"}) {
+				t.Fatalf("Metadata is not correct %+v", ci.Config.Metadata)
 			}
 		})
 		t.Run("with name set", func(t *testing.T) {

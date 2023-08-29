@@ -205,6 +205,7 @@ func TestCreateStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		metadata  map[string]string
 		timeout   time.Duration
 		withError error
 	}{
@@ -215,9 +216,29 @@ func TestCreateStream(t *testing.T) {
 			subject: "FOO.123",
 		},
 		{
+			name:   "create stream with metadata",
+			stream: "foo_meta",
+			metadata: map[string]string{
+				"foo":  "bar",
+				"name": "test",
+			},
+			timeout: 10 * time.Second,
+			subject: "FOO.meta",
+		},
+		{
+			name:   "create stream with metadata, reserved prefix",
+			stream: "foo_meta1",
+			metadata: map[string]string{
+				"foo":           "bar",
+				"_nats_version": "2.10.0",
+			},
+			timeout: 10 * time.Second,
+			subject: "FOO.meta1",
+		},
+		{
 			name:    "with empty context",
-			stream:  "foo",
-			subject: "FOO.123",
+			stream:  "foo_empty_ctx",
+			subject: "FOO.ctx",
 		},
 		{
 			name:      "invalid stream name",
@@ -270,7 +291,7 @@ func TestCreateStream(t *testing.T) {
 				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
 				defer cancel()
 			}
-			_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}, Metadata: test.metadata})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -279,6 +300,9 @@ func TestCreateStream(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(s.CachedInfo().Config.Metadata, test.metadata) {
+				t.Fatalf("Invalid metadata; want: %v, got: %v", test.metadata, s.CachedInfo().Config.Metadata)
 			}
 		})
 	}
@@ -436,6 +460,7 @@ func TestUpdateStream(t *testing.T) {
 		name      string
 		stream    string
 		subject   string
+		metadata  map[string]string
 		timeout   time.Duration
 		withError error
 	}{
@@ -449,6 +474,16 @@ func TestUpdateStream(t *testing.T) {
 			name:    "with empty context",
 			stream:  "foo",
 			subject: "FOO.123",
+		},
+		{
+			name:    "update existing, add metadata",
+			stream:  "foo",
+			subject: "BAR.123",
+			metadata: map[string]string{
+				"foo":  "bar",
+				"name": "test",
+			},
+			timeout: 10 * time.Second,
 		},
 		{
 			name:      "invalid stream name",
@@ -504,7 +539,7 @@ func TestUpdateStream(t *testing.T) {
 				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
 				defer cancel()
 			}
-			s, err := js.UpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			s, err := js.UpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}, Metadata: test.metadata})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -520,6 +555,9 @@ func TestUpdateStream(t *testing.T) {
 			}
 			if len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != test.subject {
 				t.Fatalf("Invalid stream subjects after update: %v", info.Config.Subjects)
+			}
+			if !reflect.DeepEqual(info.Config.Metadata, test.metadata) {
+				t.Fatalf("Invalid metadata; want: %v, got: %v", test.metadata, info.Config.Metadata)
 			}
 		})
 	}

@@ -70,6 +70,11 @@ type (
 		AllowDirect bool `json:"allow_direct"`
 		// Allow higher performance and unified direct access for mirrors as well.
 		MirrorDirect bool `json:"mirror_direct"`
+
+		// Metadata is additional metadata for the Stream.
+		// Keys starting with `_nats` are reserved.
+		// NOTE: Metadata requires nats-server v2.10.0+
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream source.
