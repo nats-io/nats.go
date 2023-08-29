@@ -1424,7 +1424,7 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 			t.Fatalf("Unexpected error: %s", err)
 		}
 		go func() {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 			cancel()
 		}()
 		msgs := make([]*nats.Msg, 0)

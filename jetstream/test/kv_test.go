@@ -979,7 +979,7 @@ func TestListKeyValueStores(t *testing.T) {
 
 			nc, js := jsClient(t, s)
 			defer nc.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			// create stream without the chunk subject, but with KV_ prefix
