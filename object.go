@@ -157,6 +157,10 @@ type ObjectStoreConfig struct {
 	Storage     StorageType   `json:"storage,omitempty"`
 	Replicas    int           `json:"num_replicas,omitempty"`
 	Placement   *Placement    `json:"placement,omitempty"`
+
+	// Bucket-specific metadata
+	// NOTE: Metadata requires nats-server v2.10.0+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type ObjectStoreStatus interface {
@@ -176,6 +180,8 @@ type ObjectStoreStatus interface {
 	Size() uint64
 	// BackingStore provides details about the underlying storage
 	BackingStore() string
+	// Metadata is the user supplied metadata for the bucket
+	Metadata() map[string]string
 }
 
 // ObjectMetaOptions
@@ -186,9 +192,10 @@ type ObjectMetaOptions struct {
 
 // ObjectMeta is high level information about an object.
 type ObjectMeta struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Headers     Header `json:"headers,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Headers     Header            `json:"headers,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 
 	// Optional options.
 	Opts *ObjectMetaOptions `json:"options,omitempty"`
@@ -280,6 +287,7 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 		Discard:     DiscardNew,
 		AllowRollup: true,
 		AllowDirect: true,
+		Metadata:    cfg.Metadata,
 	}
 
 	// Create our stream.
@@ -974,6 +982,7 @@ func (obs *obs) UpdateMeta(name string, meta *ObjectMeta) error {
 	info.Name = meta.Name
 	info.Description = meta.Description
 	info.Headers = meta.Headers
+	info.Metadata = meta.Metadata
 
 	// Prepare the meta message
 	if err = publishMeta(info, obs.js); err != nil {
@@ -1196,6 +1205,9 @@ func (s *ObjectBucketStatus) Size() uint64 { return s.nfo.State.Bytes }
 
 // BackingStore indicates what technology is used for storage of the bucket
 func (s *ObjectBucketStatus) BackingStore() string { return "JetStream" }
+
+// Metadata is the metadata supplied when creating the bucket
+func (s *ObjectBucketStatus) Metadata() map[string]string { return s.nfo.Config.Metadata }
 
 // StreamInfo is the stream info retrieved to create the status
 func (s *ObjectBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
