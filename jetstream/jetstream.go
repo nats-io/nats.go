@@ -721,9 +721,6 @@ func (s *streamLister) streamInfos(ctx context.Context, streamsReq streamsReques
 	if err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
 
 	slSubj := apiSubj(s.js.apiPrefix, apiStreamListT)
 	var resp streamListResponse
