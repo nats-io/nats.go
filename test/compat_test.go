@@ -341,6 +341,106 @@ func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
 	validateTestResult(t, sub)
 }
 
+func TestCompatibilityObjectStoreGetLink(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Bucket string `json:"bucket"`
+		Object string `json:"object"`
+	}
+
+	nc, js := connect(t)
+	defer nc.Close()
+
+	// setup subscription on which tester will be sending requests
+	sub, err := nc.SubscribeSync("tests.object-store.get-link.>")
+	if err != nil {
+		t.Fatalf("Error subscribing to test subject: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	msg, err := sub.NextMsg(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	// Watch object
+	var cfg config
+	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
+		t.Fatalf("Error unmarshalling message: %v", err)
+	}
+	os, err := js.ObjectStore(cfg.Bucket)
+	if err != nil {
+		t.Fatalf("Error getting object store: %v", err)
+	}
+	obj, err := os.Get(cfg.Object)
+	if err != nil {
+		t.Fatalf("Error getting object: %v", err)
+	}
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		t.Fatalf("Error reading object: %v", err)
+	}
+	// calculate sha256 of the object
+	h := sha256.New()
+	h.Write(data)
+	sha := h.Sum(nil)
+
+	if err := msg.Respond(sha); err != nil {
+		t.Fatalf("Error responding to message: %v", err)
+	}
+
+	validateTestResult(t, sub)
+}
+
+func TestCompatibilityObjectStorePutLink(t *testing.T) {
+	t.Parallel()
+
+	type config struct {
+		Bucket   string `json:"bucket"`
+		Object   string `json:"object"`
+		LinkName string `json:"link_name"`
+	}
+
+	nc, js := connect(t)
+	defer nc.Close()
+
+	// setup subscription on which tester will be sending requests
+	sub, err := nc.SubscribeSync("tests.object-store.put-link.>")
+	if err != nil {
+		t.Fatalf("Error subscribing to test subject: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	msg, err := sub.NextMsg(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	// Watch object
+	var cfg config
+	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
+		t.Fatalf("Error unmarshalling message: %v", err)
+	}
+	os, err := js.ObjectStore(cfg.Bucket)
+	if err != nil {
+		t.Fatalf("Error getting object store: %v", err)
+	}
+	sourceObj, err := os.GetInfo(cfg.Object)
+	if err != nil {
+		t.Fatalf("Error getting object: %v", err)
+	}
+	_, err = os.AddLink(cfg.LinkName, sourceObj)
+	if err != nil {
+		t.Fatalf("Error adding link: %v", err)
+	}
+
+	if err := msg.Respond(nil); err != nil {
+		t.Fatalf("Error responding to message: %v", err)
+	}
+
+	validateTestResult(t, sub)
+}
+
 func validateTestResult(t *testing.T, sub *nats.Subscription) {
 	t.Helper()
 	stepEnd, err := sub.NextMsg(5 * time.Second)
