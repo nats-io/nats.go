@@ -401,27 +401,45 @@ func TestObjectMetadata(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "META-TEST"})
+	bucketMetadata := map[string]string{"foo": "bar", "baz": "boo"}
+	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{
+		Bucket:   "META-TEST",
+		Metadata: bucketMetadata,
+	})
 	expectOk(t, err)
+	status, err := obs.Status()
+	expectOk(t, err)
+	if !reflect.DeepEqual(status.Metadata(), bucketMetadata) {
+		t.Fatalf("invalid bucket metadata: %+v", status.Metadata())
+	}
 
 	// Simple with no Meta.
 	_, err = obs.PutString("A", "AAA")
 	expectOk(t, err)
-	_, err = obs.PutString("C", "CCC")
+	buf := bytes.NewBufferString("CCC")
+	objectMetadata := map[string]string{"name": "C", "description": "descC"}
+	info, err := obs.Put(&nats.ObjectMeta{Name: "C", Metadata: objectMetadata}, buf)
 	expectOk(t, err)
+	if !reflect.DeepEqual(info.Metadata, objectMetadata) {
+		t.Fatalf("invalid object metadata: %+v", info.Metadata)
+	}
 
 	meta := &nats.ObjectMeta{Name: "A"}
 	meta.Description = "descA"
 	meta.Headers = make(nats.Header)
 	meta.Headers.Set("color", "blue")
+	objectMetadata["description"] = "updated desc"
+	objectMetadata["version"] = "0.1"
+	meta.Metadata = objectMetadata
 
 	// simple update that does not change the name, just adds data
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
 
-	info, err := obs.GetInfo("A")
+	info, err = obs.GetInfo("A")
 	expectOk(t, err)
-	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" {
+	if info.Name != "A" || info.Description != "descA" || info.Headers == nil || info.Headers.Get("color") != "blue" ||
+		!reflect.DeepEqual(info.Metadata, objectMetadata) {
 		t.Fatalf("Update failed: %+v", info)
 	}
 
@@ -430,6 +448,7 @@ func TestObjectMetadata(t *testing.T) {
 	meta.Description = "descB"
 	meta.Headers = make(nats.Header)
 	meta.Headers.Set("color", "red")
+	meta.Metadata = nil
 
 	err = obs.UpdateMeta("A", meta)
 	expectOk(t, err)
@@ -441,7 +460,7 @@ func TestObjectMetadata(t *testing.T) {
 
 	info, err = obs.GetInfo("B")
 	expectOk(t, err)
-	if info.Name != "B" || info.Description != "descB" || info.Headers == nil || info.Headers.Get("color") != "red" {
+	if info.Name != "B" || info.Description != "descB" || info.Headers == nil || info.Headers.Get("color") != "red" || info.Metadata != nil {
 		t.Fatalf("Update failed: %+v", info)
 	}
 
