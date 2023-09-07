@@ -698,6 +698,10 @@ func (js *js) resetPendingAcksOnReconnect() {
 			paf.err = ErrDisconnected
 		}
 		js.pafs = nil
+		if js.dch != nil {
+			close(js.dch)
+			js.dch = nil
+		}
 		js.mu.Unlock()
 	}
 }

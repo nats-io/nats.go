@@ -1233,6 +1233,43 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrTooManyStalledMsgs, err)
 		}
 	})
+
+	t.Run("with server restart", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		go func() {
+			for i := 0; i < 50; i++ {
+				_, _ = js.PublishAsync("FOO.1", []byte("msg"))
+			}
+		}()
+		srv = restartBasicJSServer(t, srv)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+	})
 }
 
 func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
