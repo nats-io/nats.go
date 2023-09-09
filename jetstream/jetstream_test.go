@@ -16,6 +16,7 @@ package jetstream
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -273,4 +274,27 @@ func TestRetryWithBackoff(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOptions(t *testing.T) {
+	t.Run("publish", func(t *testing.T) {
+		t.Run("WithHeader", func(t *testing.T) {
+			customHeader := "test"
+			customHeaderValues := []string{"some", "values"}
+			po := pubOpts{}
+			sut := WithHeader(customHeader, customHeaderValues)
+
+			err := sut(&po)
+			if err != nil {
+				t.Fatalf("expected nil error got: %s", err)
+			}
+			if po.headerValues == nil {
+				t.Fatal("nil headerValues")
+			}
+
+			if got := po.headerValues.Values(customHeader); !reflect.DeepEqual(got, customHeaderValues) {
+				t.Fatalf("header %s not set - expected %+v got %+v", customHeader, customHeaderValues, got)
+			}
+		})
+	})
 }

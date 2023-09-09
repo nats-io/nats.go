@@ -52,6 +52,9 @@ type (
 
 		// stallWait is the max wait of a async pub ack.
 		stallWait time.Duration
+
+		// headerValues contains any arbitrary headers provided by the caller
+		headerValues nats.Header
 	}
 
 	// PubAckFuture is a future for a PubAck.
@@ -171,6 +174,12 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
 	}
 
+	if o.headerValues != nil {
+		for k, v := range o.headerValues {
+			m.Header[k] = v
+		}
+	}
+
 	var resp *nats.Msg
 	var err error
 
@@ -243,6 +252,12 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 	}
 	if o.lastSubjectSeq != nil {
 		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+
+	if o.headerValues != nil {
+		for k, v := range o.headerValues {
+			m.Header[k] = v
+		}
 	}
 
 	// Reply
