@@ -946,6 +946,7 @@ func ReconnectWait(t time.Duration) Option {
 }
 
 // MaxReconnects is an Option to set the maximum number of reconnect attempts.
+// If negative, it will never stop trying to reconnect.
 // Defaults to 60.
 func MaxReconnects(max int) Option {
 	return func(o *Options) error {
