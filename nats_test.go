@@ -1575,6 +1575,38 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	}
 }
 
+func TestReconnectMissingCredentials(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	chainedFile := createTmpFile(t, []byte(chained))
+	defer os.Remove(chainedFile)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	errs := make(chan error, 1)
+	nc, err := Connect(url, UserCredentials(chainedFile), ErrorHandler(func(_ *Conn, _ *Subscription, err error) {
+		errs <- err
+	}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	defer nc.Close()
+	os.Remove(chainedFile)
+	ts.Shutdown()
+
+	ts = runTrustServer()
+	defer ts.Shutdown()
+
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "no such file or directory") {
+			t.Fatalf("Expected error about missing creds file, got %q", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Did not get error about missing creds file")
+	}
+}
+
 func TestUserJWTAndSeed(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
