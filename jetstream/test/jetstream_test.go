@@ -777,7 +777,7 @@ func TestCreateOrUpdate_UpdateStream(t *testing.T) {
 		{
 			name:      "invalid stream name",
 			stream:    "foo.123",
-			subject:   "FOO.123",
+			subject:   "FOO.1234",
 			timeout:   10 * time.Second,
 			withError: jetstream.ErrInvalidStreamName,
 		},
@@ -791,14 +791,14 @@ func TestCreateOrUpdate_UpdateStream(t *testing.T) {
 		{
 			name:      "stream not found",
 			stream:    "bar",
-			subject:   "FOO.123",
+			subject:   "FOO.12345",
 			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNotFound,
 		},
 		{
 			name:      "context timeout",
 			stream:    "foo",
-			subject:   "FOO.123",
+			subject:   "FOO.123456",
 			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
