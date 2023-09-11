@@ -50,8 +50,7 @@ const (
 	Version                   = "1.28.0"
 	DefaultURL                = "nats://127.0.0.1:4222"
 	DefaultPort               = 4222
-	DefaultMaxReconnect       = 60
-	DefaultReconnectWait      = 2 * time.Second
+	DefaultMaxReconnect       = -1
 	DefaultReconnectJitter    = 100 * time.Millisecond
 	DefaultReconnectJitterTLS = time.Second
 	DefaultTimeout            = 2 * time.Second
@@ -62,6 +61,10 @@ const (
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
 	LangString                = "go"
+
+	// DEPRECATED: Client now uses [nats.DefaultReconnectBackoffHandler] to
+	// handle default reconnect wait time.
+	DefaultReconnectWait = 2 * time.Second
 )
 
 const (
@@ -143,17 +146,17 @@ var (
 // GetDefaultOptions returns default configuration options for the client.
 func GetDefaultOptions() Options {
 	return Options{
-		AllowReconnect:     true,
-		MaxReconnect:       DefaultMaxReconnect,
-		ReconnectWait:      DefaultReconnectWait,
-		ReconnectJitter:    DefaultReconnectJitter,
-		ReconnectJitterTLS: DefaultReconnectJitterTLS,
-		Timeout:            DefaultTimeout,
-		PingInterval:       DefaultPingInterval,
-		MaxPingsOut:        DefaultMaxPingOut,
-		SubChanLen:         DefaultMaxChanLen,
-		ReconnectBufSize:   DefaultReconnectBufSize,
-		DrainTimeout:       DefaultDrainTimeout,
+		AllowReconnect:       true,
+		MaxReconnect:         DefaultMaxReconnect,
+		ReconnectJitter:      DefaultReconnectJitter,
+		ReconnectJitterTLS:   DefaultReconnectJitterTLS,
+		Timeout:              DefaultTimeout,
+		PingInterval:         DefaultPingInterval,
+		MaxPingsOut:          DefaultMaxPingOut,
+		SubChanLen:           DefaultMaxChanLen,
+		ReconnectBufSize:     DefaultReconnectBufSize,
+		DrainTimeout:         DefaultDrainTimeout,
+		IgnoreAuthErrorAbort: true,
 	}
 }
 
@@ -484,6 +487,7 @@ type Options struct {
 
 	// IgnoreAuthErrorAbort - if set to true, client opts out of the default connect behavior of aborting
 	// subsequent reconnect attempts if server returns the same auth error twice (regardless of reconnect policy).
+	// DEPRECATED: This option will be removed in future releases.
 	IgnoreAuthErrorAbort bool
 
 	// SkipHostLookup skips the DNS lookup for the server hostname.
@@ -1297,9 +1301,18 @@ func CustomInboxPrefix(p string) Option {
 
 // IgnoreAuthErrorAbort opts out of the default connect behavior of aborting
 // subsequent reconnect attempts if server returns the same auth error twice.
+// DEPRECATED: This option is now set to 'true' by default, therefore this option will be removed in future releases.
 func IgnoreAuthErrorAbort() Option {
 	return func(o *Options) error {
 		o.IgnoreAuthErrorAbort = true
+		return nil
+	}
+}
+
+// AbortOnAuthErrors causes the client to bail out after 2 subsequent auth connection errors.
+func AbortOnAuthErrors() Option {
+	return func(o *Options) error {
+		o.IgnoreAuthErrorAbort = false
 		return nil
 	}
 }
@@ -2614,6 +2627,28 @@ func (nc *Conn) stopPingTimer() {
 	}
 }
 
+// DefaultReconnectBackoffHandler returns a default reconnect exponential backoff interval.
+// Base reconnect wait is 10ms, with x2 multiplier. Max wait time is 2 minutes.
+// 10ms, 20ms, 40ms, 80ms...2m
+// A random jitter is added to the result.
+func DefaultReconnectBackoffHandler(jitter time.Duration) ReconnectDelayHandler {
+	return func(attempts int) time.Duration {
+		// base interval is 10ms
+		backoff := 10 * time.Millisecond
+		for i := 0; i < attempts-1; i++ {
+			backoff *= 2
+			if backoff > 2*time.Minute {
+				backoff = 2 * time.Minute
+				break
+			}
+		}
+		if jitter > 0 {
+			jitter = time.Duration(rand.Int63n(int64(jitter)))
+		}
+		return backoff + jitter
+	}
+}
+
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
 func (nc *Conn) doReconnect(err error) {
@@ -2651,11 +2686,10 @@ func (nc *Conn) doReconnect(err error) {
 	var wlf int
 
 	var jitter time.Duration
-	var rw time.Duration
 	// If a custom reconnect delay handler is set, this takes precedence.
 	crd := nc.Opts.CustomReconnectDelayCB
-	if crd == nil {
-		rw = nc.Opts.ReconnectWait
+	rw := nc.Opts.ReconnectWait
+	if crd == nil && rw == 0 {
 		// TODO: since we sleep only after the whole list has been tried, we can't
 		// rely on individual *srv to know if it is a TLS or non-TLS url.
 		// We have to pick which type of jitter to use, for now, we use these hints:
@@ -2663,6 +2697,8 @@ func (nc *Conn) doReconnect(err error) {
 		if nc.Opts.Secure || nc.Opts.TLSConfig != nil {
 			jitter = nc.Opts.ReconnectJitterTLS
 		}
+
+		crd = DefaultReconnectBackoffHandler(jitter)
 	}
 
 	for i := 0; len(nc.srvPool) > 0; {
