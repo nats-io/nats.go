@@ -423,7 +423,6 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 }
 
 func (js *jetStream) CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
-	var s Stream
 	s, err := js.UpdateStream(ctx, cfg)
 	if err != nil {
 		if err == ErrStreamNotFound {
@@ -431,6 +430,8 @@ func (js *jetStream) CreateOrUpdateStream(ctx context.Context, cfg StreamConfig)
 			if err != nil {
 				return nil, err
 			}
+
+			return s, nil
 		}
 
 		return nil, err
