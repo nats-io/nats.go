@@ -465,11 +465,10 @@ func TestCreateOrUpdate_CreateStream(t *testing.T) {
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
-			name:      "update stream, ok",
-			stream:    "foo",
-			subject:   "BAR.123",
-			timeout:   10 * time.Second,
-			withError: jetstream.ErrStreamNameAlreadyInUse,
+			name:    "update stream, ok",
+			stream:  "foo",
+			subject: "BAR.123",
+			timeout: 10 * time.Second,
 		},
 		{
 			name:      "context timeout",
