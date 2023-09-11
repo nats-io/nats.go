@@ -69,6 +69,8 @@ type (
 		CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 		// UpdateStream updates an existing stream
 		UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
+		// CreateOrUpdateStream creates a stream with given config. If stream already exists, it will be updated (if possible).
+		CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 		// Stream returns a [Stream] hook for a given stream name
 		Stream(ctx context.Context, stream string) (Stream, error)
 		// StreamNameBySubject returns a stream name stream listening on given subject
@@ -418,6 +420,23 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		name:      cfg.Name,
 		info:      resp.StreamInfo,
 	}, nil
+}
+
+func (js *jetStream) CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
+	var s Stream
+	s, err := js.UpdateStream(ctx, cfg)
+	if err != nil {
+		if err == ErrStreamNotFound {
+			s, err = js.CreateStream(ctx, cfg)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return nil, err
+	}
+
+	return s, nil
 }
 
 // Stream returns a [Stream] hook for a given stream name

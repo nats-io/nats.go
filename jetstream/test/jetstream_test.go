@@ -431,6 +431,237 @@ func TestCreateStreamMirrorCrossDomains(t *testing.T) {
 	}
 }
 
+func TestCreateOrUpdate_CreateStream(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		subject   string
+		timeout   time.Duration
+		withError error
+	}{
+		{
+			name:    "create stream, ok",
+			stream:  "foo",
+			timeout: 10 * time.Second,
+			subject: "FOO.123",
+		},
+		{
+			name:    "with empty context",
+			stream:  "foo-o",
+			subject: "FOO.123",
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.123",
+			subject:   "FOO.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrInvalidStreamName,
+		},
+		{
+			name:      "stream name required",
+			stream:    "",
+			subject:   "FOO.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrStreamNameRequired,
+		},
+		{
+			name:      "update stream, ok",
+			stream:    "foo",
+			subject:   "BAR.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrStreamNameAlreadyInUse,
+		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			subject:   "BAR.123",
+			timeout:   1 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
+			_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateOrUpdateStream_CreateMirrorCrossDomains(t *testing.T) {
+	test := []struct {
+		name         string
+		streamConfig *jetstream.StreamConfig
+	}{
+		{
+			name: "create stream mirror cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Mirror: &jetstream.StreamSource{
+					Name:   "TEST",
+					Domain: "HUB",
+				},
+			},
+		},
+		{
+			name: "create stream with source cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Sources: []*jetstream.StreamSource{
+					{
+						Name:   "TEST",
+						Domain: "HUB",
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range test {
+		t.Run(test.name, func(t *testing.T) {
+			conf := createConfFile(t, []byte(`
+		server_name: HUB
+		listen: 127.0.0.1:-1
+		jetstream: { domain: HUB }
+		leafnodes { listen: 127.0.0.1:7422 }
+	}`))
+			defer os.Remove(conf)
+			srv, _ := RunServerWithConfig(conf)
+			defer shutdownJSServerAndRemoveStorage(t, srv)
+
+			lconf := createConfFile(t, []byte(`
+	server_name: LEAF
+	listen: 127.0.0.1:-1
+	 jetstream: { domain:LEAF }
+	 leafnodes {
+		  remotes = [ { url: "leaf://127.0.0.1" } ]
+	 }
+}`))
+			defer os.Remove(lconf)
+			ln, _ := RunServerWithConfig(lconf)
+			defer shutdownJSServerAndRemoveStorage(t, ln)
+
+			nc, err := nats.Connect(srv.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			js, err := jetstream.New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg1")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg2")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			lnc, err := nats.Connect(ln.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer lnc.Close()
+			ljs, err := jetstream.New(lnc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ccfg := *test.streamConfig
+			_, err = ljs.CreateOrUpdateStream(ctx, ccfg)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(test.streamConfig, &ccfg) {
+				t.Fatalf("Did not expect config to be altered: %+v vs %+v", test.streamConfig, ccfg)
+			}
+
+			// Make sure we sync.
+			checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+				lStream, err := ljs.Stream(ctx, "MIRROR")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				if lStream.CachedInfo().State.Msgs == 2 {
+					return nil
+				}
+				return fmt.Errorf("Did not get synced messages: %d", lStream.CachedInfo().State.Msgs)
+			})
+			if _, err := ljs.Publish(ctx, "foo", []byte("msg3")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			lStream, err := ljs.Stream(ctx, "MIRROR")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if lStream.CachedInfo().State.Msgs != 3 {
+				t.Fatalf("Expected 3 msgs in stream; got: %d", lStream.CachedInfo().State.Msgs)
+			}
+
+			rjs, err := jetstream.NewWithDomain(lnc, "HUB")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := rjs.Publish(ctx, "foo", []byte("msg4")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			rStream, err := rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if rStream.CachedInfo().State.Msgs != 4 {
+				t.Fatalf("Expected 3 msgs in stream; got: %d", rStream.CachedInfo().State.Msgs)
+			}
+		})
+	}
+}
+
 func TestUpdateStream(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -505,6 +736,100 @@ func TestUpdateStream(t *testing.T) {
 				defer cancel()
 			}
 			s, err := js.UpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			info, err := s.Info(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != test.subject {
+				t.Fatalf("Invalid stream subjects after update: %v", info.Config.Subjects)
+			}
+		})
+	}
+}
+
+func TestCreateOrUpdate_UpdateStream(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		subject   string
+		timeout   time.Duration
+		withError error
+	}{
+		{
+			name:    "update existing stream",
+			stream:  "foo",
+			subject: "BAR.123",
+			timeout: 10 * time.Second,
+		},
+		{
+			name:    "with empty context",
+			stream:  "foo",
+			subject: "FOO.123",
+		},
+		{
+			name:      "invalid stream name",
+			stream:    "foo.123",
+			subject:   "FOO.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrInvalidStreamName,
+		},
+		{
+			name:      "stream name required",
+			stream:    "",
+			subject:   "FOO.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrStreamNameRequired,
+		},
+		{
+			name:      "stream not found",
+			stream:    "bar",
+			subject:   "FOO.123",
+			timeout:   10 * time.Second,
+			withError: jetstream.ErrStreamNotFound,
+		},
+		{
+			name:      "context timeout",
+			stream:    "foo",
+			subject:   "FOO.123",
+			timeout:   1 * time.Microsecond,
+			withError: context.DeadlineExceeded,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.123"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
+			s, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
