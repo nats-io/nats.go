@@ -789,11 +789,10 @@ func TestCreateOrUpdate_UpdateStream(t *testing.T) {
 			withError: jetstream.ErrStreamNameRequired,
 		},
 		{
-			name:      "stream not found",
-			stream:    "bar",
-			subject:   "FOO.12345",
-			timeout:   10 * time.Second,
-			withError: jetstream.ErrStreamNotFound,
+			name:    "create stream, ok",
+			stream:  "bar",
+			subject: "FOO.12345",
+			timeout: 10 * time.Second,
 		},
 		{
 			name:      "context timeout",
