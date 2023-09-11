@@ -443,12 +443,12 @@ func TestCreateOrUpdate_CreateStream(t *testing.T) {
 			name:    "create stream, ok",
 			stream:  "foo",
 			timeout: 10 * time.Second,
-			subject: "FOO.123",
+			subject: "FOO.1",
 		},
 		{
 			name:    "with empty context",
 			stream:  "foo-o",
-			subject: "FOO.123",
+			subject: "FOO.12",
 		},
 		{
 			name:      "invalid stream name",
@@ -460,7 +460,7 @@ func TestCreateOrUpdate_CreateStream(t *testing.T) {
 		{
 			name:      "stream name required",
 			stream:    "",
-			subject:   "FOO.123",
+			subject:   "FOO.1234",
 			timeout:   10 * time.Second,
 			withError: jetstream.ErrStreamNameRequired,
 		},
@@ -473,7 +473,7 @@ func TestCreateOrUpdate_CreateStream(t *testing.T) {
 		{
 			name:      "context timeout",
 			stream:    "foo",
-			subject:   "BAR.123",
+			subject:   "BAR.1234",
 			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
 		},
