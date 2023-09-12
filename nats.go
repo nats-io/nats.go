@@ -61,6 +61,7 @@ const (
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
+	DefaultFlusherTimeout     = 30 * time.Second
 	LangString                = "go"
 )
 
@@ -154,6 +155,7 @@ func GetDefaultOptions() Options {
 		SubChanLen:         DefaultMaxChanLen,
 		ReconnectBufSize:   DefaultReconnectBufSize,
 		DrainTimeout:       DefaultDrainTimeout,
+		FlusherTimeout:     DefaultFlusherTimeout,
 	}
 }
 
