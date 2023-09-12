@@ -34,10 +34,6 @@ import (
 )
 
 // ObjectStoreManager creates, loads and deletes Object Stores
-//
-// Notice: Experimental Preview
-//
-// This functionality is EXPERIMENTAL and may be changed in later releases.
 type ObjectStoreManager interface {
 	// ObjectStore will look up and bind to an existing object store instance.
 	ObjectStore(bucket string) (ObjectStore, error)
@@ -53,10 +49,6 @@ type ObjectStoreManager interface {
 
 // ObjectStore is a blob store capable of storing large objects efficiently in
 // JetStream streams
-//
-// Notice: Experimental Preview
-//
-// This functionality is EXPERIMENTAL and may be changed in later releases.
 type ObjectStore interface {
 	// Put will place the contents from the reader into a new object.
 	Put(obj *ObjectMeta, reader io.Reader, opts ...ObjectOpt) (*ObjectInfo, error)
