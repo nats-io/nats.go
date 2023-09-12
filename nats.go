@@ -61,7 +61,7 @@ const (
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
-	DefaultFlusherTimeout     = 30 * time.Second
+	DefaultFlusherTimeout     = time.Minute
 	LangString                = "go"
 )
 
@@ -358,6 +358,7 @@ type Options struct {
 
 	// FlusherTimeout is the maximum time to wait for write operations
 	// to the underlying connection to complete (including the flusher loop).
+	// Defaults to 1m.
 	FlusherTimeout time.Duration
 
 	// PingInterval is the period at which the client will be sending ping
