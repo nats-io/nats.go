@@ -474,6 +474,10 @@ func (s *service) wrapConnectionEventCallbacks() {
 	s.natsHandlers.asyncErr = s.nc.ErrorHandler()
 	if s.natsHandlers.asyncErr != nil {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+			if sub == nil {
+				s.natsHandlers.asyncErr(c, sub, err)
+				return
+			}
 			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
 			if !match {
 				s.natsHandlers.asyncErr(c, sub, err)
@@ -496,6 +500,9 @@ func (s *service) wrapConnectionEventCallbacks() {
 		})
 	} else {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
+			if sub == nil {
+				return
+			}
 			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
 			if !match {
 				return
