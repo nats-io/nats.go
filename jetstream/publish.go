@@ -402,6 +402,10 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			paf.err = nats.ErrDisconnected
 		}
 		js.publisher.acks = nil
+		if js.publisher.doneCh != nil {
+			close(js.publisher.doneCh)
+			js.publisher.doneCh = nil
+		}
 		js.publisher.Unlock()
 	}
 }
