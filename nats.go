@@ -2501,6 +2501,9 @@ func (nc *Conn) sendConnect() error {
 	// Construct the CONNECT protocol string
 	cProto, err := nc.connectProto()
 	if err != nil {
+		if !nc.initc && nc.Opts.AsyncErrorCB != nil {
+			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+		}
 		return err
 	}
 
