@@ -171,18 +171,32 @@ var emptyMsgType = reflect.TypeOf(&Msg{})
 // messages using the specified Handler. The Handler should be a func that matches
 // a signature from the description of Handler from above.
 func (c *EncodedConn) Subscribe(subject string, cb Handler) (*Subscription, error) {
-	return c.subscribe(subject, _EMPTY_, cb)
+	return c.subscribe(subject, _EMPTY_, cb, false)
 }
 
 // QueueSubscribe will create a queue subscription on the given subject and process
 // incoming messages using the specified Handler. The Handler should be a func that
 // matches a signature from the description of Handler from above.
 func (c *EncodedConn) QueueSubscribe(subject, queue string, cb Handler) (*Subscription, error) {
-	return c.subscribe(subject, queue, cb)
+	return c.subscribe(subject, queue, cb, false)
+}
+
+// This is very similar to Subscribe
+// the main difference is this will invoke handler in the separate go routine
+// Use this if you require parallel processing of the incoming messages
+func (c *EncodedConn) SubscribeParallel(subject string, cb Handler) (*Subscription, error) {
+	return c.subscribe(subject, _EMPTY_, cb, true)
+}
+
+// This is very similar to QueueSubscribe
+// the main difference is this will invoke handler in the separate go routine
+// Use this if you require parallel processing of the incoming messages
+func (c *EncodedConn) QueueSubscribeParallel(subject, queue string, cb Handler) (*Subscription, error) {
+	return c.subscribe(subject, queue, cb, true)
 }
 
 // Internal implementation that all public functions will use.
-func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscription, error) {
+func (c *EncodedConn) subscribe(subject, queue string, cb Handler, isParallel bool) (*Subscription, error) {
 	if cb == nil {
 		return nil, errors.New("nats: Handler required for EncodedConn Subscription")
 	}
@@ -231,7 +245,11 @@ func (c *EncodedConn) subscribe(subject, queue string, cb Handler) (*Subscriptio
 			}
 
 		}
-		cbValue.Call(oV)
+		if isParallel {
+			go cbValue.Call(oV)
+		} else {
+			cbValue.Call(oV)
+		}
 	}
 
 	return c.Conn.subscribe(subject, queue, natsCB, nil, false, nil)
