@@ -95,6 +95,65 @@ _ = numbersGroup.AddEndpoint("add", micro.HandlerFunc(addHandler))
 _ = numbersGroup.AddEndpoint("multiply", micro.HandlerFunc(multiplyHandler))
 ```
 
+## Customizing queue groups
+
+For each service, group and endpoint the queue group used to gather responses
+can be customized. If not provided a default queue group will be used (`q`).
+Customizing queue groups can be useful to e.g. implement fanout request pattern
+or hedged request pattern (to reduce tail latencies by only waiting for the
+first response for multiple service instances).
+
+Let's say we have multiple services listening on the same subject, but with
+different queue groups:
+
+```go
+for i := 0; i < 5; i++ {
+  srv, _ := micro.AddService(nc, micro.Config{
+    Name:        "EchoService",
+    Version:     "1.0.0",
+    QueueGroup:  fmt.Sprintf("q-%d", i),
+    // base handler
+    Endpoint: &micro.EndpointConfig{
+        Subject: "svc.echo",
+        Handler: micro.HandlerFunc(echoHandler),
+    },
+  })
+}
+```
+
+In the client, we can send request to `svc.echo` to receive responses from all
+services registered on this subject (or wait only for the first response):
+
+```go
+sub, _ := nc.SubscribeSync("rply")
+nc.PublishRequest("svc.echo", "rply", nil)
+for start := time.Now(); time.Since(start) < 5*time.Second; {
+  msg, err := sub.NextMsg(1 * time.Second)
+  if err != nil {
+    break
+  }
+  fmt.Println("Received ", string(msg.Data))
+}
+```
+
+Queue groups can be overwritten by setting them on groups and endpoints as well:
+
+```go
+  srv, _ := micro.AddService(nc, micro.Config{
+    Name:        "EchoService",
+    Version:     "1.0.0",
+    QueueGroup:  "q1",
+  })
+
+  g := srv.AddGroup("g", micro.WithGroupQueueGroup("q2"))
+
+  // will be registered with queue group 'q2' from parent group
+  g.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+
+  // will be registered with queue group 'q3'
+  g.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q3"))
+```
+
 ## Discovery and Monitoring
 
 Each service is assigned a unique ID on creation. A service instance is
