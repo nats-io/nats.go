@@ -1180,6 +1180,18 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	if !errors.Is(err, nats.ErrNoHeartbeat) {
 		t.Fatalf("Expected no heartbeat error; got: %v", err)
 	}
+
+	// heartbeat value too large
+	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value invalid
+	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
 }
 
 func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
@@ -1266,6 +1278,18 @@ func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
 		t.Fatalf("Expected timeout after 200ms and before 300ms; got: %v", elapsed)
 	}
 	if !errors.Is(msgs.Error(), nats.ErrNoHeartbeat) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value too large
+	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value invalid
+	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
+	if !errors.Is(err, nats.ErrInvalidArg) {
 		t.Fatalf("Expected no heartbeat error; got: %v", err)
 	}
 }

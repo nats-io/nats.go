@@ -2609,6 +2609,9 @@ func PullMaxWaiting(n int) SubOpt {
 type PullHeartbeat time.Duration
 
 func (h PullHeartbeat) configurePull(opts *pullOpts) error {
+	if h <= 0 {
+		return fmt.Errorf("%w: idle heartbeat has to be greater than 0", ErrInvalidArg)
+	}
 	opts.hb = time.Duration(h)
 	return nil
 }
@@ -2737,6 +2740,9 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		ttl = js.opts.wait
 	}
 	sub.mu.Unlock()
+	if o.hb != 0 && 2*o.hb >= ttl {
+		return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
+	}
 
 	// Use the given context or setup a default one for the span
 	// of the pull batch request.
@@ -2995,6 +3001,9 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 		ttl = js.opts.wait
 	}
 	sub.mu.Unlock()
+	if o.hb != 0 && 2*o.hb >= ttl {
+		return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
+	}
 
 	// Use the given context or setup a default one for the span
 	// of the pull batch request.
