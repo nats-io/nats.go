@@ -17,6 +17,7 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -4068,6 +4069,159 @@ func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
 // or an error, including a timeout if no message was received properly.
 func (nc *Conn) Request(subj string, data []byte, timeout time.Duration) (*Msg, error) {
 	return nc.request(subj, nil, data, timeout)
+}
+
+type requestManyOpts struct {
+	maxWait    time.Duration
+	gapTimeout *gapTimeoutOpts
+	count      int
+}
+
+type gapTimeoutOpts struct {
+	firstMax time.Duration
+	gap      time.Duration
+	// used to differenciate between default value and user-set value
+	custom bool
+}
+
+type RequestManyOpt func(*requestManyOpts) error
+
+func WithRequestManyMaxWait(maxWait time.Duration) RequestManyOpt {
+	return func(opts *requestManyOpts) error {
+		if maxWait <= 0 {
+			return fmt.Errorf("%w: max wait has to be greater than 0", ErrInvalidArg)
+		}
+		opts.maxWait = maxWait
+		return nil
+	}
+}
+
+func WithRequestManyGapTimer(initialMaxWait, gapTime time.Duration) RequestManyOpt {
+	return func(opts *requestManyOpts) error {
+		if initialMaxWait <= 0 {
+			return fmt.Errorf("%w: initial wait time has to be greater than 0", ErrInvalidArg)
+		}
+		if gapTime <= 0 {
+			return fmt.Errorf("%w: gap time has to be greater than 0", ErrInvalidArg)
+		}
+		opts.gapTimeout = &gapTimeoutOpts{
+			firstMax: initialMaxWait,
+			gap:      gapTime,
+			custom:   true,
+		}
+		return nil
+	}
+}
+
+func WithRequestManyCount(count int) RequestManyOpt {
+	return func(opts *requestManyOpts) error {
+		if count <= 0 {
+			return fmt.Errorf("%w: expected request count has to be greater than 0", ErrInvalidArg)
+		}
+		opts.count = count
+		return nil
+	}
+}
+
+func (nc *Conn) RequestMany(subject string, data []byte, opts ...RequestManyOpt) (<-chan *Msg, error) {
+	reqOpts := &requestManyOpts{
+		gapTimeout: &gapTimeoutOpts{
+			firstMax: nc.Opts.Timeout,
+			gap:      300 * time.Millisecond,
+		},
+	}
+
+	for _, opt := range opts {
+		if err := opt(reqOpts); err != nil {
+			return nil, err
+		}
+	}
+	// if user set a custom maxWait and did not set gap timer, we don't want to
+	// use the defaults
+	if reqOpts.maxWait != 0 && !reqOpts.gapTimeout.custom {
+		reqOpts.gapTimeout = nil
+	}
+
+	inbox := nc.newRespInbox()
+	var mch chan *Msg
+	if reqOpts.count > 0 {
+		mch = make(chan *Msg, reqOpts.count)
+	} else {
+		mch = make(chan *Msg, nc.Opts.SubChanLen)
+	}
+
+	var maxWait *time.Timer
+	var gapTimer *time.Timer
+	if reqOpts.maxWait > 0 {
+		maxWait = globalTimerPool.Get(reqOpts.maxWait)
+	}
+	if reqOpts.gapTimeout != nil {
+		gapTimer = globalTimerPool.Get(reqOpts.gapTimeout.firstMax)
+	}
+	returnTimers := func() {
+		if maxWait != nil {
+			globalTimerPool.Put(maxWait)
+		}
+		if gapTimer != nil {
+			globalTimerPool.Put(gapTimer)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sub, err := nc.Subscribe(inbox, func(msg *Msg) {
+		if gapTimer != nil {
+			gapTimer.Reset(reqOpts.gapTimeout.gap)
+		}
+		mch <- msg
+	})
+	if err != nil {
+		cancel()
+		returnTimers()
+		return nil, err
+	}
+	sub.SetClosedHandler(func(subject string) {
+		returnTimers()
+		close(mch)
+		cancel()
+	})
+	if reqOpts.count != 0 {
+		sub.AutoUnsubscribe(reqOpts.count)
+	}
+	go func() {
+		if maxWait != nil && gapTimer != nil {
+			select {
+			case <-maxWait.C:
+				sub.Unsubscribe()
+			case <-gapTimer.C:
+				sub.Unsubscribe()
+			case <-ctx.Done():
+				sub.Unsubscribe()
+			}
+		} else if maxWait != nil {
+			fmt.Println("with max wait")
+			select {
+			case <-maxWait.C:
+				sub.Unsubscribe()
+			case <-ctx.Done():
+				sub.Unsubscribe()
+			}
+		} else if gapTimer != nil {
+			select {
+			case <-gapTimer.C:
+				sub.Unsubscribe()
+			case <-ctx.Done():
+				sub.Unsubscribe()
+			}
+		} else {
+			<-ctx.Done()
+			sub.Unsubscribe()
+		}
+	}()
+	err = nc.PublishRequest(subject, inbox, data)
+	if err != nil {
+		sub.Unsubscribe()
+		return nil, err
+	}
+	return mch, nil
 }
 
 func (nc *Conn) useOldRequestStyle() bool {

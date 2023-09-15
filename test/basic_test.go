@@ -798,6 +798,111 @@ func TestRequestCloseTimeout(t *testing.T) {
 	}
 }
 
+func TestRequestMany(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.Timeout(400*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	for i := 0; i < 5; i++ {
+		sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
+			nc.Publish(m.Reply, response)
+		})
+		if err != nil {
+			t.Fatalf("Received an error on subscribe: %s", err)
+		}
+		defer sub.Unsubscribe()
+	}
+
+	tests := []struct {
+		name         string
+		subject      string
+		opts         []nats.RequestManyOpt
+		minTime      time.Duration
+		expectedMsgs int
+	}{
+		{
+			name:         "default",
+			subject:      "foo",
+			opts:         nil,
+			minTime:      300 * time.Millisecond,
+			expectedMsgs: 5,
+		},
+		{
+			name:    "with max wait",
+			subject: "foo",
+			opts: []nats.RequestManyOpt{
+				nats.WithRequestManyMaxWait(500 * time.Millisecond),
+			},
+			minTime:      500 * time.Millisecond,
+			expectedMsgs: 5,
+		},
+		{
+			name:    "with count reached",
+			subject: "foo",
+			opts: []nats.RequestManyOpt{
+				nats.WithRequestManyCount(3),
+			},
+			minTime:      0,
+			expectedMsgs: 3,
+		},
+		{
+			name:    "with max wait and limit",
+			subject: "foo",
+			opts: []nats.RequestManyOpt{
+				nats.WithRequestManyMaxWait(500 * time.Millisecond),
+				nats.WithRequestManyCount(3),
+			},
+			minTime:      0,
+			expectedMsgs: 3,
+		},
+		{
+			name:    "with count timeout",
+			subject: "foo",
+			opts: []nats.RequestManyOpt{
+				nats.WithRequestManyCount(6),
+			},
+			minTime:      300 * time.Millisecond,
+			expectedMsgs: 5,
+		},
+		{
+			name:    "with no responses",
+			subject: "bar",
+			minTime: 300,
+			// no responders
+			expectedMsgs: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now()
+			msgs, err := nc.RequestMany(test.subject, nil, test.opts...)
+			if err != nil {
+				t.Fatalf("Received an error on Request test: %s", err)
+			}
+
+			var i int
+			for msg := range msgs {
+				fmt.Println(string(msg.Data))
+				fmt.Println(msg.Header)
+				i++
+			}
+			if i != test.expectedMsgs {
+				t.Fatalf("Expected %d messages, got %d", test.expectedMsgs, i)
+			}
+			if time.Since(now) < test.minTime || time.Since(now) > test.minTime+100*time.Millisecond {
+				t.Fatalf("Expected to receive all messages between %v and %v, got %v", test.minTime, test.minTime+100*time.Millisecond, time.Since(now))
+			}
+		})
+	}
+}
+
 func TestFlushInCB(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
