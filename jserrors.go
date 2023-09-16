@@ -104,6 +104,9 @@ var (
 	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
 	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "Leadership Changed"}
 
+	// ErrNoHeartbeat is returned when no heartbeat is received from server when sending requests with pull consumer.
+	ErrNoHeartbeat JetStreamError = &jsError{message: "no heartbeat received"}
+
 	// DEPRECATED: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")

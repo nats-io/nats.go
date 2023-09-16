@@ -1124,6 +1124,176 @@ func TestJetStreamSubscribe_SkipConsumerLookup(t *testing.T) {
 	})
 }
 
+func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := js.Publish("foo", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+	}
+
+	// fetch 5 messages, should finish immediately
+	msgs, err := sub.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+	}
+	now := time.Now()
+	// no messages available, should time out normally
+	_, err = sub.Fetch(5, nats.PullHeartbeat(50*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	elapsed := time.Since(now)
+	if elapsed < 300*time.Millisecond {
+		t.Fatalf("Expected timeout after 300ms; got: %v", elapsed)
+	}
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatalf("Expected timeout error; got: %v", err)
+	}
+
+	// delete consumer to verify heartbeats are not sent anymore
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = sub.Fetch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(1*time.Second))
+	if !errors.Is(err, nats.ErrNoHeartbeat) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value too large
+	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value invalid
+	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+}
+
+func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := js.Publish("foo", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+	}
+
+	// fetch 5 messages, should finish immediately
+	msgs, err := sub.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	var i int
+	for msg := range msgs.Messages() {
+		i++
+		msg.Ack()
+	}
+	if i != 5 {
+		t.Fatalf("Expected %d messages; got: %d", 5, i)
+	}
+	if msgs.Error() != nil {
+		t.Fatalf("Unexpected error: %s", msgs.Error())
+	}
+	now := time.Now()
+	// no messages available, should time out normally
+	msgs, err = sub.FetchBatch(5, nats.PullHeartbeat(50*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	i = 0
+	for msg := range msgs.Messages() {
+		i++
+		msg.Ack()
+	}
+	elapsed := time.Since(now)
+	if i != 0 {
+		t.Fatalf("Expected %d messages; got: %d", 0, i)
+	}
+	if msgs.Error() != nil {
+		t.Fatalf("Unexpected error: %s", msgs.Error())
+	}
+	if elapsed < 290*time.Millisecond {
+		t.Fatalf("Expected timeout after 300ms; got: %v", elapsed)
+	}
+
+	// delete consumer to verify heartbeats are not sent anymore
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	now = time.Now()
+	msgs, err = sub.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(1*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for msg := range msgs.Messages() {
+		msg.Ack()
+	}
+	elapsed = time.Since(now)
+	if elapsed < 200*time.Millisecond || elapsed > 300*time.Millisecond {
+		t.Fatalf("Expected timeout after 200ms and before 300ms; got: %v", elapsed)
+	}
+	if !errors.Is(msgs.Error(), nats.ErrNoHeartbeat) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value too large
+	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// heartbeat value invalid
+	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+}
+
 func TestPullSubscribeFetchBatch(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
