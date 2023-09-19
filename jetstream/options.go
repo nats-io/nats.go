@@ -207,22 +207,22 @@ func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-// AutoStopAfter sets the number of messages after which the consumer is automatically stopped
-type AutoStopAfter int
+// StopAfter sets the number of messages after which the consumer is automatically stopped
+type StopAfter int
 
-func (nMsgs AutoStopAfter) configureConsume(opts *consumeOpts) error {
+func (nMsgs StopAfter) configureConsume(opts *consumeOpts) error {
 	if nMsgs <= 0 {
 		return fmt.Errorf("%w: auto stop after value cannot be less than 1", ErrInvalidOption)
 	}
-	opts.AutoStopAfter = int(nMsgs)
+	opts.StopAfter = int(nMsgs)
 	return nil
 }
 
-func (nMsgs AutoStopAfter) configureMessages(opts *consumeOpts) error {
+func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
 	if nMsgs <= 0 {
 		return fmt.Errorf("%w: auto stop after value cannot be less than 1", ErrInvalidOption)
 	}
-	opts.AutoStopAfter = int(nMsgs)
+	opts.StopAfter = int(nMsgs)
 	return nil
 }
 

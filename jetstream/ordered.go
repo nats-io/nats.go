@@ -27,21 +27,21 @@ import (
 
 type (
 	orderedConsumer struct {
-		jetStream        *jetStream
-		cfg              *OrderedConsumerConfig
-		stream           string
-		currentConsumer  *pullConsumer
-		cursor           cursor
-		namePrefix       string
-		serial           int
-		consumerType     consumerType
-		doReset          chan struct{}
-		resetInProgress  uint32
-		userErrHandler   ConsumeErrHandlerFunc
-		autoStopAfter    int
-		autoStopMsgsLeft chan int
-		withAutoStop     bool
-		runningFetch     *fetchResult
+		jetStream         *jetStream
+		cfg               *OrderedConsumerConfig
+		stream            string
+		currentConsumer   *pullConsumer
+		cursor            cursor
+		namePrefix        string
+		serial            int
+		consumerType      consumerType
+		doReset           chan struct{}
+		resetInProgress   uint32
+		userErrHandler    ConsumeErrHandlerFunc
+		stopAfter         int
+		stopAfterMsgsLeft chan int
+		withStopAfter     bool
+		runningFetch      *fetchResult
 		sync.Mutex
 	}
 
@@ -87,13 +87,13 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	}
 	c.userErrHandler = consumeOpts.ErrHandler
 	opts = append(opts, ConsumeErrHandler(c.errHandler(c.serial)))
-	if consumeOpts.AutoStopAfter > 0 {
-		c.withAutoStop = true
-		c.autoStopAfter = consumeOpts.AutoStopAfter
+	if consumeOpts.StopAfter > 0 {
+		c.withStopAfter = true
+		c.stopAfter = consumeOpts.StopAfter
 	}
-	c.autoStopMsgsLeft = make(chan int, 1)
-	if c.autoStopAfter > 0 {
-		opts = append(opts, consumeStopAfterNotify(c.autoStopAfter, c.autoStopMsgsLeft))
+	c.stopAfterMsgsLeft = make(chan int, 1)
+	if c.stopAfter > 0 {
+		opts = append(opts, consumeStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 	}
 	sub := &orderedSubscription{
 		consumer: c,
@@ -130,12 +130,12 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 		for {
 			select {
 			case <-c.doReset:
-				if c.withAutoStop {
+				if c.withStopAfter {
 					select {
-					case c.autoStopAfter = <-c.autoStopMsgsLeft:
+					case c.stopAfter = <-c.stopAfterMsgsLeft:
 					default:
 					}
-					if c.autoStopAfter <= 0 {
+					if c.stopAfter <= 0 {
 						sub.Stop()
 						return
 					}
@@ -143,7 +143,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				if err := c.reset(); err != nil {
 					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
 				}
-				if c.autoStopAfter > 0 {
+				if c.stopAfter > 0 {
 					opts = opts[:len(opts)-2]
 				} else {
 					opts = opts[:len(opts)-1]
@@ -151,19 +151,19 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 
 				// overwrite the previous err handler to use the new serial
 				opts = append(opts, ConsumeErrHandler(c.errHandler(c.serial)))
-				if c.withAutoStop {
-					opts = append(opts, consumeStopAfterNotify(c.autoStopAfter, c.autoStopMsgsLeft))
+				if c.withStopAfter {
+					opts = append(opts, consumeStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 				}
 				if _, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
 					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
 				}
 			case <-sub.done:
 				return
-			case msgsLeft, ok := <-c.autoStopMsgsLeft:
+			case msgsLeft, ok := <-c.stopAfterMsgsLeft:
 				if !ok {
 					close(sub.done)
 				}
-				c.autoStopAfter = msgsLeft
+				c.stopAfter = msgsLeft
 				return
 			}
 		}
@@ -207,14 +207,14 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 	opts = append(opts, WithMessagesErrOnMissingHeartbeat(true))
-	c.autoStopMsgsLeft = make(chan int, 1)
-	if consumeOpts.AutoStopAfter > 0 {
-		c.withAutoStop = true
-		c.autoStopAfter = consumeOpts.AutoStopAfter
+	c.stopAfterMsgsLeft = make(chan int, 1)
+	if consumeOpts.StopAfter > 0 {
+		c.withStopAfter = true
+		c.stopAfter = consumeOpts.StopAfter
 	}
 	c.userErrHandler = consumeOpts.ErrHandler
-	if c.autoStopAfter > 0 {
-		opts = append(opts, messagesStopAfterNotify(c.autoStopAfter, c.autoStopMsgsLeft))
+	if c.stopAfter > 0 {
+		opts = append(opts, messagesStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 	}
 	_, err = c.currentConsumer.Messages(opts...)
 	if err != nil {
@@ -239,16 +239,16 @@ func (s *orderedSubscription) Next() (Msg, error) {
 				s.Stop()
 				return nil, err
 			}
-			if s.consumer.withAutoStop {
+			if s.consumer.withStopAfter {
 				select {
-				case s.consumer.autoStopAfter = <-s.consumer.autoStopMsgsLeft:
+				case s.consumer.stopAfter = <-s.consumer.stopAfterMsgsLeft:
 				default:
 				}
-				if s.consumer.autoStopAfter <= 0 {
+				if s.consumer.stopAfter <= 0 {
 					s.Stop()
 					return nil, ErrMsgIteratorClosed
 				}
-				s.opts[len(s.opts)-1] = AutoStopAfter(s.consumer.autoStopAfter)
+				s.opts[len(s.opts)-1] = StopAfter(s.consumer.stopAfter)
 			}
 			if err := s.consumer.reset(); err != nil {
 				return nil, err
@@ -487,16 +487,16 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 
 func consumeStopAfterNotify(numMsgs int, msgsLeftAfterStop chan int) PullConsumeOpt {
 	return pullOptFunc(func(opts *consumeOpts) error {
-		opts.AutoStopAfter = numMsgs
-		opts.autoStopMsgsLeft = msgsLeftAfterStop
+		opts.StopAfter = numMsgs
+		opts.stopAfterMsgsLeft = msgsLeftAfterStop
 		return nil
 	})
 }
 
 func messagesStopAfterNotify(numMsgs int, msgsLeftAfterStop chan int) PullMessagesOpt {
 	return pullOptFunc(func(opts *consumeOpts) error {
-		opts.AutoStopAfter = numMsgs
-		opts.autoStopMsgsLeft = msgsLeftAfterStop
+		opts.StopAfter = numMsgs
+		opts.stopAfterMsgsLeft = msgsLeftAfterStop
 		return nil
 	})
 }

@@ -1082,7 +1082,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 
 		msgs := make([]jetstream.Msg, 0)
-		it, err := c.Messages(jetstream.AutoStopAfter(50), jetstream.PullMaxMessages(40))
+		it, err := c.Messages(jetstream.StopAfter(50), jetstream.PullMaxMessages(40))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1811,7 +1811,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			msgs = append(msgs, msg)
 			msg.Ack()
 			wg.Done()
-		}, jetstream.AutoStopAfter(50), jetstream.PullMaxMessages(40))
+		}, jetstream.StopAfter(50), jetstream.PullMaxMessages(40))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
