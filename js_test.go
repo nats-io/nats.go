@@ -1302,7 +1302,7 @@ func TestJetStreamTransform(t *testing.T) {
 	_, err = js.AddStream(&StreamConfig{
 		Subjects: []string{},
 		Name:     "SOURCING",
-		Sources:  []*StreamSource{{Name: "ORIGIN", SubjectTransformDest: "fromtest.>"}},
+		Sources:  []*StreamSource{{Name: "ORIGIN", SubjectTransforms: []SubjectTransformConfig{{Source: ">", Destination: "fromtest.>"}}}},
 		Storage:  MemoryStorage,
 	})
 	if err != nil {
