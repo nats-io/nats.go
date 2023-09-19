@@ -374,7 +374,7 @@ func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 	// wait for reconnection error (bad certificate)
 	select {
 	case err := <-errChan:
-		if !strings.Contains(err.Error(), "bad certificate") {
+		if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate required") {
 			t.Fatalf("Expected bad certificate error; got: %s", err)
 		}
 	case <-time.After(5 * time.Second):
