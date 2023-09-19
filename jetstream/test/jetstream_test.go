@@ -1607,3 +1607,46 @@ func TestStreamNameBySubject(t *testing.T) {
 		})
 	}
 }
+
+func TestJetStreamTransform(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	ctx := context.Background()
+	_, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:             "ORIGIN",
+		Subjects:         []string{"test"},
+		SubjectTransform: &jetstream.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+		Storage:          jetstream.MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = nc.Publish("test", []byte("1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sourcingStream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Subjects: []string{},
+		Name:     "SOURCING",
+		Sources:  []*jetstream.StreamSource{{Name: "ORIGIN", SubjectTransforms: []jetstream.SubjectTransformConfig{{Source: ">", Destination: "fromtest.>"}}}},
+		Storage:  jetstream.MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	cons, err := sourcingStream.CreateConsumer(ctx, jetstream.ConsumerConfig{FilterSubject: "fromtest.>", MemoryStorage: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	m, err := cons.Next()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if m.Subject() != "fromtest.transformed.test" {
+		t.Fatalf("the subject of the message doesn't match the expected fromtest.transformed.test: %s", m.Subject())
+	}
+}
