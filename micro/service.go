@@ -450,13 +450,11 @@ func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if o.queueGroup == "" {
-		o.queueGroup = s.Config.QueueGroup
-	}
+	queueGroup := queueGroupName(o.queueGroup, s.Config.QueueGroup)
 	return &group{
 		service:    s,
 		prefix:     name,
-		queueGroup: o.queueGroup,
+		queueGroup: queueGroup,
 	}
 }
 
@@ -783,11 +781,11 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup)
 }
 
-func queueGroupName(endpointQG, groupGQ string) string {
-	queueGroup := endpointQG
+func queueGroupName(customQG, parentQG string) string {
+	queueGroup := customQG
 	if queueGroup == "" {
-		if groupGQ != "" {
-			queueGroup = groupGQ
+		if parentQG != "" {
+			queueGroup = parentQG
 		} else {
 			queueGroup = DefaultQueueGroup
 		}
@@ -800,9 +798,7 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if o.queueGroup == "" {
-		o.queueGroup = g.queueGroup
-	}
+	queueGroup := queueGroupName(o.queueGroup, g.queueGroup)
 
 	parts := make([]string, 0, 2)
 	if g.prefix != "" {
@@ -816,7 +812,7 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	return &group{
 		service:    g.service,
 		prefix:     prefix,
-		queueGroup: o.queueGroup,
+		queueGroup: queueGroup,
 	}
 }
 

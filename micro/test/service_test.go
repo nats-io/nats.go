@@ -1486,15 +1486,28 @@ func TestCustomQueueGroup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+
+				// add endpoint on service directly, should have the same queue group
 				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+
+				// add group with queue group from service config
+				g1 := srv.AddGroup("g1")
+
+				// add endpoint on group, should have queue group from service config
+				err = g1.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
 				return srv
 			},
 			expectedQueueGroups: map[string]string{
 				"default": "custom",
 				"bar":     "custom",
+				"baz":     "custom",
 			},
 		},
 		{
@@ -1539,6 +1552,7 @@ func TestCustomQueueGroup(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
+				// add endpoint on group, should have queue group from g3
 				err = g3.AddEndpoint("quux", micro.HandlerFunc(func(r micro.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
