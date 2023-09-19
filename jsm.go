@@ -102,30 +102,32 @@ type JetStreamManager interface {
 // There are sensible defaults for most. If no subjects are
 // given the name will be used as the only subject.
 type StreamConfig struct {
-	Name                 string          `json:"name"`
-	Description          string          `json:"description,omitempty"`
-	Subjects             []string        `json:"subjects,omitempty"`
-	Retention            RetentionPolicy `json:"retention"`
-	MaxConsumers         int             `json:"max_consumers"`
-	MaxMsgs              int64           `json:"max_msgs"`
-	MaxBytes             int64           `json:"max_bytes"`
-	Discard              DiscardPolicy   `json:"discard"`
-	DiscardNewPerSubject bool            `json:"discard_new_per_subject,omitempty"`
-	MaxAge               time.Duration   `json:"max_age"`
-	MaxMsgsPerSubject    int64           `json:"max_msgs_per_subject"`
-	MaxMsgSize           int32           `json:"max_msg_size,omitempty"`
-	Storage              StorageType     `json:"storage"`
-	Replicas             int             `json:"num_replicas"`
-	NoAck                bool            `json:"no_ack,omitempty"`
-	Template             string          `json:"template_owner,omitempty"`
-	Duplicates           time.Duration   `json:"duplicate_window,omitempty"`
-	Placement            *Placement      `json:"placement,omitempty"`
-	Mirror               *StreamSource   `json:"mirror,omitempty"`
-	Sources              []*StreamSource `json:"sources,omitempty"`
-	Sealed               bool            `json:"sealed,omitempty"`
-	DenyDelete           bool            `json:"deny_delete,omitempty"`
-	DenyPurge            bool            `json:"deny_purge,omitempty"`
-	AllowRollup          bool            `json:"allow_rollup_hdrs,omitempty"`
+	Name                 string           `json:"name"`
+	Description          string           `json:"description,omitempty"`
+	Subjects             []string         `json:"subjects,omitempty"`
+	Retention            RetentionPolicy  `json:"retention"`
+	MaxConsumers         int              `json:"max_consumers"`
+	MaxMsgs              int64            `json:"max_msgs"`
+	MaxBytes             int64            `json:"max_bytes"`
+	Discard              DiscardPolicy    `json:"discard"`
+	DiscardNewPerSubject bool             `json:"discard_new_per_subject,omitempty"`
+	MaxAge               time.Duration    `json:"max_age"`
+	MaxMsgsPerSubject    int64            `json:"max_msgs_per_subject"`
+	MaxMsgSize           int32            `json:"max_msg_size,omitempty"`
+	Storage              StorageType      `json:"storage"`
+	Replicas             int              `json:"num_replicas"`
+	NoAck                bool             `json:"no_ack,omitempty"`
+	Template             string           `json:"template_owner,omitempty"`
+	Duplicates           time.Duration    `json:"duplicate_window,omitempty"`
+	Placement            *Placement       `json:"placement,omitempty"`
+	Mirror               *StreamSource    `json:"mirror,omitempty"`
+	Sources              []*StreamSource  `json:"sources,omitempty"`
+	Sealed               bool             `json:"sealed,omitempty"`
+	DenyDelete           bool             `json:"deny_delete,omitempty"`
+	DenyPurge            bool             `json:"deny_purge,omitempty"`
+	AllowRollup          bool             `json:"allow_rollup_hdrs,omitempty"`
+	Compression          StoreCompression `json:"compression"`
+	FirstSeq             uint64           `json:"first_seq,omitempty"`
 
 	// Allow applying a subject transform to incoming messages before doing anything else.
 	SubjectTransform *SubjectTransformConfig `json:"subject_transform,omitempty"`
@@ -137,6 +139,9 @@ type StreamConfig struct {
 	AllowDirect bool `json:"allow_direct"`
 	// Allow higher performance and unified direct access for mirrors as well.
 	MirrorDirect bool `json:"mirror_direct"`
+
+	// Limits for consumers on this stream.
+	ConsumerLimits StreamConsumerLimits `json:"consumer_limits,omitempty"`
 
 	// Metadata is additional metadata for the Stream.
 	// Keys starting with `_nats` are reserved.
@@ -180,6 +185,13 @@ type StreamSource struct {
 type ExternalStream struct {
 	APIPrefix     string `json:"api"`
 	DeliverPrefix string `json:"deliver,omitempty"`
+}
+
+// StreamConsumerLimits are the limits for a consumer on a stream.
+// These can be overridden on a per consumer basis.
+type StreamConsumerLimits struct {
+	InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+	MaxAckPending     int           `json:"max_ack_pending,omitempty"`
 }
 
 // Helper for copying when we do not want to change user's version.
