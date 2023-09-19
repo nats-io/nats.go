@@ -664,8 +664,9 @@ func TestGroups(t *testing.T) {
 			name:         "no groups",
 			endpointName: "foo",
 			expectedEndpoint: micro.EndpointInfo{
-				Name:    "foo",
-				Subject: "foo",
+				Name:       "foo",
+				Subject:    "foo",
+				QueueGroup: "q",
 			},
 		},
 		{
@@ -673,8 +674,9 @@ func TestGroups(t *testing.T) {
 			endpointName: "foo",
 			groups:       []string{"g1"},
 			expectedEndpoint: micro.EndpointInfo{
-				Name:    "foo",
-				Subject: "g1.foo",
+				Name:       "foo",
+				Subject:    "g1.foo",
+				QueueGroup: "q",
 			},
 		},
 		{
@@ -682,8 +684,9 @@ func TestGroups(t *testing.T) {
 			endpointName: "foo",
 			groups:       []string{""},
 			expectedEndpoint: micro.EndpointInfo{
-				Name:    "foo",
-				Subject: "foo",
+				Name:       "foo",
+				Subject:    "foo",
+				QueueGroup: "q",
 			},
 		},
 		{
@@ -691,8 +694,9 @@ func TestGroups(t *testing.T) {
 			endpointName: "foo",
 			groups:       []string{"", "g1", ""},
 			expectedEndpoint: micro.EndpointInfo{
-				Name:    "foo",
-				Subject: "g1.foo",
+				Name:       "foo",
+				Subject:    "g1.foo",
+				QueueGroup: "q",
 			},
 		},
 		{
@@ -700,8 +704,9 @@ func TestGroups(t *testing.T) {
 			endpointName: "foo",
 			groups:       []string{"g1", "g2", "g3"},
 			expectedEndpoint: micro.EndpointInfo{
-				Name:    "foo",
-				Subject: "g1.g2.g3.foo",
+				Name:       "foo",
+				Subject:    "g1.g2.g3.foo",
+				QueueGroup: "q",
 			},
 		},
 	}
@@ -849,9 +854,10 @@ func TestMonitoringHandlers(t *testing.T) {
 				},
 				Endpoints: []micro.EndpointInfo{
 					{
-						Name:     "default",
-						Subject:  "test.func",
-						Metadata: map[string]string{"basic": "schema"},
+						Name:       "default",
+						Subject:    "test.func",
+						QueueGroup: "q",
+						Metadata:   map[string]string{"basic": "schema"},
 					},
 				},
 			},
@@ -869,9 +875,10 @@ func TestMonitoringHandlers(t *testing.T) {
 				},
 				Endpoints: []micro.EndpointInfo{
 					{
-						Name:     "default",
-						Subject:  "test.func",
-						Metadata: map[string]string{"basic": "schema"},
+						Name:       "default",
+						Subject:    "test.func",
+						QueueGroup: "q",
+						Metadata:   map[string]string{"basic": "schema"},
 					},
 				},
 			},
@@ -889,9 +896,10 @@ func TestMonitoringHandlers(t *testing.T) {
 				},
 				Endpoints: []micro.EndpointInfo{
 					{
-						Name:     "default",
-						Subject:  "test.func",
-						Metadata: map[string]string{"basic": "schema"},
+						Name:       "default",
+						Subject:    "test.func",
+						QueueGroup: "q",
+						Metadata:   map[string]string{"basic": "schema"},
 					},
 				},
 			},
@@ -1429,5 +1437,307 @@ func TestControlSubject(t *testing.T) {
 				t.Errorf("Invalid subject; want: %q; got: %q", test.expectedSubject, res)
 			}
 		})
+	}
+}
+
+func TestCustomQueueGroup(t *testing.T) {
+	tests := []struct {
+		name                string
+		endpointInit        func(*testing.T, *nats.Conn) micro.Service
+		expectedQueueGroups map[string]string
+	}{
+		{
+			name: "default queue group",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:    "test_service",
+					Version: "0.0.1",
+					Endpoint: &micro.EndpointConfig{
+						Subject: "foo",
+						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"default": "q",
+				"bar":     "q",
+			},
+		},
+		{
+			name: "custom queue group on service config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:       "test_service",
+					Version:    "0.0.1",
+					QueueGroup: "custom",
+					Endpoint: &micro.EndpointConfig{
+						Subject: "foo",
+						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on service directly, should have the same queue group
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add group with queue group from service config
+				g1 := srv.AddGroup("g1")
+
+				// add endpoint on group, should have queue group from service config
+				err = g1.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"default": "custom",
+				"bar":     "custom",
+				"baz":     "custom",
+			},
+		},
+		{
+			name: "overwriting queue groups",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:       "test_service",
+					Version:    "0.0.1",
+					QueueGroup: "q-config",
+					Endpoint: &micro.EndpointConfig{
+						Subject:    "foo",
+						QueueGroup: "q-default",
+						Handler:    micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				g1 := srv.AddGroup("g1", micro.WithGroupQueueGroup("q-g1"))
+
+				// should have the same queue group as the parent group
+				g2 := g1.AddGroup("g2")
+
+				// overwrite parent group queue group
+				g3 := g2.AddGroup("g3", micro.WithGroupQueueGroup("q-g3"))
+
+				// add endpoint on service directly, overwriting the queue group
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-bar"))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on group, should have queue group from g1
+				err = g2.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on group, overwriting the queue group
+				err = g2.AddEndpoint("qux", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-qux"))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on group, should have queue group from g3
+				err = g3.AddEndpoint("quux", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"default": "q-default",
+				"bar":     "q-bar",
+				"baz":     "q-g1",
+				"qux":     "q-qux",
+				"quux":    "q-g3",
+			},
+		},
+		{
+			name: "empty queue group in option, inherit from parent",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:       "test_service",
+					Version:    "0.0.1",
+					QueueGroup: "q-config",
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on service directly, overwriting the queue group
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup(""))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"bar": "q-config",
+			},
+		},
+		{
+			name: "invalid queue group on service config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				_, err := micro.AddService(nc, micro.Config{
+					Name:       "test_service",
+					Version:    "0.0.1",
+					QueueGroup: ">.abc",
+					Endpoint: &micro.EndpointConfig{
+						Subject: "foo",
+						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if !errors.Is(err, micro.ErrConfigValidation) {
+					t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "invalid queue group on endpoint",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				_, err := micro.AddService(nc, micro.Config{
+					Name:    "test_service",
+					Version: "0.0.1",
+					Endpoint: &micro.EndpointConfig{
+						Subject:    "foo",
+						QueueGroup: ">.abc",
+						Handler:    micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if !errors.Is(err, micro.ErrConfigValidation) {
+					t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunServerOnPort(-1)
+			defer s.Shutdown()
+
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Expected to connect to server, got %v", err)
+			}
+			defer nc.Close()
+			srv := test.endpointInit(t, nc)
+			if srv == nil {
+				return
+			}
+			defer srv.Stop()
+			info := srv.Info()
+			endpoints := make(map[string]micro.EndpointInfo)
+			for _, e := range info.Endpoints {
+				endpoints[e.Name] = e
+			}
+			if len(endpoints) != len(test.expectedQueueGroups) {
+				t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpoints))
+			}
+			for name, expectedGroup := range test.expectedQueueGroups {
+				if endpoints[name].QueueGroup != expectedGroup {
+					t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpoints[name].QueueGroup)
+				}
+			}
+
+			stats := srv.Stats()
+			// make sure the same queue groups are on stats
+			endpointStats := make(map[string]*micro.EndpointStats)
+
+			for _, e := range stats.Endpoints {
+				endpointStats[e.Name] = e
+			}
+			if len(endpointStats) != len(test.expectedQueueGroups) {
+				t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpointStats))
+			}
+			for name, expectedGroup := range test.expectedQueueGroups {
+				if endpointStats[name].QueueGroup != expectedGroup {
+					t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpointStats[name].QueueGroup)
+				}
+			}
+		})
+	}
+}
+
+func TestCustomQueueGroupMultipleResponses(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	for i := 0; i < 5; i++ {
+		f := func(i int) func(r micro.Request) {
+			return func(r micro.Request) {
+				time.Sleep(10 * time.Millisecond)
+				r.Respond([]byte(fmt.Sprintf("%d", i)))
+			}
+		}
+		service, err := micro.AddService(nc, micro.Config{
+			Name:       "test_service",
+			Version:    "0.0.1",
+			QueueGroup: fmt.Sprintf("q-%d", i),
+			Endpoint: &micro.EndpointConfig{
+				Subject: "foo",
+				Handler: micro.HandlerFunc(f(i)),
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer service.Stop()
+	}
+	err = nc.PublishRequest("foo", "rply", []byte("req"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := nc.SubscribeSync("rply")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	expectedResponses := map[string]bool{
+		"0": false,
+		"1": false,
+		"2": false,
+		"3": false,
+		"4": false,
+	}
+	defer sub.Unsubscribe()
+	for i := 0; i < 5; i++ {
+		msg, err := sub.NextMsg(1 * time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		expectedResponses[string(msg.Data)] = true
+	}
+	msg, err := sub.NextMsg(100 * time.Millisecond)
+	if err == nil {
+		t.Fatalf("Unexpected message: %v", string(msg.Data))
+	}
+	for k, v := range expectedResponses {
+		if !v {
+			t.Fatalf("Did not receive response from service %s", k)
+		}
 	}
 }
