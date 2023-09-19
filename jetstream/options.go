@@ -164,11 +164,21 @@ func (t PullThresholdMessages) configureConsume(opts *consumeOpts) error {
 	return nil
 }
 
+func (t PullThresholdMessages) configureMessages(opts *consumeOpts) error {
+	opts.ThresholdMessages = int(t)
+	return nil
+}
+
 // PullThresholdBytes sets the byte count on which Consume will trigger
 // new pull request to the server. Defaults to 50% of MaxBytes (if set).
 type PullThresholdBytes int
 
 func (t PullThresholdBytes) configureConsume(opts *consumeOpts) error {
+	opts.ThresholdBytes = int(t)
+	return nil
+}
+
+func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 	opts.ThresholdBytes = int(t)
 	return nil
 }
@@ -194,6 +204,25 @@ func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 		return fmt.Errorf("%w: idle_heartbeat value must be within 1s-30s range", ErrInvalidOption)
 	}
 	opts.Heartbeat = hbTime
+	return nil
+}
+
+// StopAfter sets the number of messages after which the consumer is automatically stopped
+type StopAfter int
+
+func (nMsgs StopAfter) configureConsume(opts *consumeOpts) error {
+	if nMsgs <= 0 {
+		return fmt.Errorf("%w: auto stop after value cannot be less than 1", ErrInvalidOption)
+	}
+	opts.StopAfter = int(nMsgs)
+	return nil
+}
+
+func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
+	if nMsgs <= 0 {
+		return fmt.Errorf("%w: auto stop after value cannot be less than 1", ErrInvalidOption)
+	}
+	opts.StopAfter = int(nMsgs)
 	return nil
 }
 
