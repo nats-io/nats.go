@@ -1118,6 +1118,7 @@ type ConsumerConfig struct {
 	MaxDeliver      int             `json:"max_deliver,omitempty"`
 	BackOff         []time.Duration `json:"backoff,omitempty"`
 	FilterSubject   string          `json:"filter_subject,omitempty"`
+	FilterSubjects  []string        `json:"filter_subjects,omitempty"`
 	ReplayPolicy    ReplayPolicy    `json:"replay_policy"`
 	RateLimit       uint64          `json:"rate_limit_bps,omitempty"` // Bits per sec
 	SampleFrequency string          `json:"sample_freq,omitempty"`
@@ -1143,6 +1144,11 @@ type ConsumerConfig struct {
 	Replicas int `json:"num_replicas"`
 	// Force memory storage.
 	MemoryStorage bool `json:"mem_storage,omitempty"`
+
+	// Metadata is additional metadata for the Consumer.
+	// Keys starting with `_nats` are reserved.
+	// NOTE: Metadata requires nats-server v2.10.0+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
@@ -2570,6 +2576,16 @@ func ConsumerName(name string) SubOpt {
 	})
 }
 
+// ConsumerFilterSubjects can be used to set multiple subject filters on the consumer.
+// It has to be used in conjunction with [nats.BindStream] and
+// with empty 'subject' parameter.
+func ConsumerFilterSubjects(subjects ...string) SubOpt {
+	return subOptFn(func(opts *subOpts) error {
+		opts.cfg.FilterSubjects = subjects
+		return nil
+	})
+}
+
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
@@ -3720,6 +3736,53 @@ func (st *StorageType) UnmarshalJSON(data []byte) error {
 		*st = FileStorage
 	default:
 		return fmt.Errorf("nats: can not unmarshal %q", data)
+	}
+	return nil
+}
+
+type StoreCompression uint8
+
+const (
+	NoCompression StoreCompression = iota
+	S2Compression
+)
+
+func (alg StoreCompression) String() string {
+	switch alg {
+	case NoCompression:
+		return "None"
+	case S2Compression:
+		return "S2"
+	default:
+		return "Unknown StoreCompression"
+	}
+}
+
+func (alg StoreCompression) MarshalJSON() ([]byte, error) {
+	var str string
+	switch alg {
+	case S2Compression:
+		str = "s2"
+	case NoCompression:
+		str = "none"
+	default:
+		return nil, fmt.Errorf("unknown compression algorithm")
+	}
+	return json.Marshal(str)
+}
+
+func (alg *StoreCompression) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	switch str {
+	case "s2":
+		*alg = S2Compression
+	case "none":
+		*alg = NoCompression
+	default:
+		return fmt.Errorf("unknown compression algorithm")
 	}
 	return nil
 }

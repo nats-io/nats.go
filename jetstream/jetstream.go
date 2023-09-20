@@ -86,6 +86,14 @@ type (
 		// If consumer already exists, it will be updated (if possible).
 		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
 		CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
+		// CreateConsumer creates a consumer on a given stream with given config.
+		// If consumer already exists, ErrConsumerExists is returned.
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
+		CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
+		// UpdateConsumer updates an existing consumer.
+		// If consumer does not exist, ErrConsumerDoesNotExist is returned.
+		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
+		UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 		// OrderedConsumer returns an OrderedConsumer instance.
 		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
 		// for in order delivery of messages. Underlying consumer is re-created when necessary,
@@ -350,6 +358,22 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, resp.Error
 	}
 
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
+	}
+
 	return &stream{
 		jetStream: js,
 		name:      cfg.Name,
@@ -411,6 +435,22 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
+	}
+
+	// check that input subject transform (if used) is reflected in the returned StreamInfo
+	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
+		return nil, ErrStreamSubjectTransformNotSupported
+	}
+
+	if len(cfg.Sources) != 0 {
+		if len(cfg.Sources) != len(resp.Sources) {
+			return nil, ErrStreamSourceNotSupported
+		}
+		for i := range cfg.Sources {
+			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
+				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
+			}
+		}
 	}
 
 	return &stream{
@@ -480,7 +520,21 @@ func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, 
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg)
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreateOrUpdate)
+}
+
+func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreate)
+}
+
+func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return upsertConsumer(ctx, js, stream, cfg, consumerActionUpdate)
 }
 
 func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error) {
