@@ -2714,6 +2714,88 @@ func TestJetStreamManagement(t *testing.T) {
 	})
 }
 
+func TestStreamConfigMatches(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	cfgSource := nats.StreamConfig{
+		Name:                 "source",
+		Description:          "desc",
+		Subjects:             []string{"foo.*"},
+		Retention:            nats.WorkQueuePolicy,
+		MaxConsumers:         10,
+		MaxMsgs:              100,
+		MaxBytes:             1000,
+		Discard:              nats.DiscardNew,
+		DiscardNewPerSubject: true,
+		MaxAge:               100 * time.Second,
+		MaxMsgsPerSubject:    1000,
+		MaxMsgSize:           10000,
+		Storage:              nats.MemoryStorage,
+		Replicas:             1,
+		NoAck:                true,
+		Duplicates:           10 * time.Second,
+		Sealed:               false,
+		DenyDelete:           true,
+		DenyPurge:            false,
+		AllowRollup:          true,
+		Compression:          nats.S2Compression,
+		FirstSeq:             5,
+		SubjectTransform:     &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+		RePublish: &nats.RePublish{
+			Source:      ">",
+			Destination: "RP.>",
+			HeadersOnly: true,
+		},
+		AllowDirect: true,
+		ConsumerLimits: nats.StreamConsumerLimits{
+			InactiveThreshold: 10 * time.Second,
+			MaxAckPending:     500,
+		},
+		Metadata: map[string]string{
+			"foo": "bar",
+		},
+	}
+
+	s, err := js.AddStream(&cfgSource)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(s.Config, cfgSource) {
+		t.Fatalf("StreamConfig doesn't match")
+	}
+
+	cfg := nats.StreamConfig{
+		Name:              "mirror",
+		MaxConsumers:      10,
+		MaxMsgs:           100,
+		MaxBytes:          1000,
+		MaxAge:            100 * time.Second,
+		MaxMsgsPerSubject: 1000,
+		MaxMsgSize:        10000,
+		Replicas:          1,
+		Mirror: &nats.StreamSource{
+			Name:        "source",
+			OptStartSeq: 10,
+			SubjectTransforms: []nats.SubjectTransformConfig{
+				{Source: ">", Destination: "transformed.>"},
+			},
+		},
+		MirrorDirect:     true,
+		SubjectTransform: &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+	}
+
+	s, err = js.AddStream(&cfg)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(s.Config, cfg) {
+		t.Fatalf("StreamConfig doesn't match")
+	}
+}
+
 func TestStreamLister(t *testing.T) {
 	tests := []struct {
 		name       string
