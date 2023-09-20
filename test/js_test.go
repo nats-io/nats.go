@@ -2069,15 +2069,28 @@ func TestJetStreamManagement(t *testing.T) {
 
 	// Create the stream using our client API.
 	var si *nats.StreamInfo
+
 	t.Run("create stream", func(t *testing.T) {
-		si, err := js.AddStream(&nats.StreamConfig{
-			Name:     "foo",
-			Subjects: []string{"foo", "bar", "baz"},
+		consLimits := nats.StreamConsumerLimits{
+			MaxAckPending:     100,
+			InactiveThreshold: 10 * time.Second,
+		}
+		cfg := &nats.StreamConfig{
+			Name:        "foo",
+			Subjects:    []string{"foo", "bar", "baz"},
+			Compression: nats.S2Compression,
+			ConsumerLimits: nats.StreamConsumerLimits{
+				MaxAckPending:     100,
+				InactiveThreshold: 10 * time.Second,
+			},
+			FirstSeq: 22,
 			Metadata: map[string]string{
 				"foo": "bar",
 				"baz": "quux",
 			},
-		})
+		}
+
+		si, err := js.AddStream(cfg)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -2086,6 +2099,15 @@ func TestJetStreamManagement(t *testing.T) {
 		}
 		if !reflect.DeepEqual(si.Config.Metadata, map[string]string{"foo": "bar", "baz": "quux"}) {
 			t.Fatalf("Metadata is not correct %+v", si.Config.Metadata)
+		}
+		if si.Config.Compression != nats.S2Compression {
+			t.Fatalf("Compression is not correct %+v", si.Config.Compression)
+		}
+		if si.Config.FirstSeq != 22 {
+			t.Fatalf("FirstSeq is not correct %+v", si.Config.FirstSeq)
+		}
+		if si.Config.ConsumerLimits != consLimits {
+			t.Fatalf("ConsumerLimits is not correct %+v", si.Config.ConsumerLimits)
 		}
 	})
 
