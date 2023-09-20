@@ -51,6 +51,12 @@ type (
 		// CachedInfo returns [*ConsumerInfo] cached on a consumer struct
 		CachedInfo() *ConsumerInfo
 	}
+
+	createConsumerRequest struct {
+		Stream string          `json:"stream_name"`
+		Config *ConsumerConfig `json:"config"`
+		Action string          `json:"action"`
+	}
 )
 
 // Info returns [ConsumerInfo] for a given consumer
@@ -84,7 +90,7 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig) (Consumer, error) {
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -92,6 +98,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,
+		Action: action,
 	}
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
@@ -111,7 +118,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	}
 
 	var ccSubj string
-	if cfg.FilterSubject != "" {
+	if cfg.FilterSubject != "" && len(cfg.FilterSubjects) == 0 {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject))
 	} else {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream, consumerName))
@@ -128,6 +135,11 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		return nil, resp.Error
 	}
 
+	// check whether multiple filter subjects (if used) are reflected in the returned ConsumerInfo
+	if len(cfg.FilterSubjects) != 0 && len(resp.Config.FilterSubjects) == 0 {
+		return nil, ErrConsumerMultipleFilterSubjectsNotSupported
+	}
+
 	return &pullConsumer{
 		jetStream:     js,
 		stream:        stream,
@@ -137,6 +149,12 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		subscriptions: make(map[string]*pullSubscription),
 	}, nil
 }
+
+const (
+	consumerActionCreate         = "create"
+	consumerActionUpdate         = "update"
+	consumerActionCreateOrUpdate = ""
+)
 
 func generateConsName() string {
 	name := nuid.Next()

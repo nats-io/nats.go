@@ -432,14 +432,21 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		scfg.Mirror = m
 		scfg.MirrorDirect = true
 	} else if len(cfg.Sources) > 0 {
-		// For now we do not allow direct subjects for sources. If that is desired a user could use stream API directly.
 		for _, ss := range cfg.Sources {
-			if !strings.HasPrefix(ss.Name, kvBucketNamePre) {
-				ss = ss.copy()
+			var sourceBucketName string
+			if strings.HasPrefix(ss.Name, kvBucketNamePre) {
+				sourceBucketName = ss.Name[len(kvBucketNamePre):]
+			} else {
+				sourceBucketName = ss.Name
 				ss.Name = fmt.Sprintf(kvBucketNameTmpl, ss.Name)
+			}
+
+			if ss.External == nil || sourceBucketName != cfg.Bucket {
+				ss.SubjectTransforms = []SubjectTransformConfig{{Source: fmt.Sprintf(kvSubjectsTmpl, sourceBucketName), Destination: fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)}}
 			}
 			scfg.Sources = append(scfg.Sources, ss)
 		}
+		scfg.Subjects = []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)}
 	} else {
 		scfg.Subjects = []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)}
 	}
