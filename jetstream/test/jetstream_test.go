@@ -431,7 +431,7 @@ func TestCreateStreamMirrorCrossDomains(t *testing.T) {
 	}
 }
 
-func TestCreateOrUpdate(t *testing.T) {
+func TestCreateOrUpdateStream(t *testing.T) {
 	tests := []struct {
 		name          string
 		stream        string
@@ -441,20 +441,20 @@ func TestCreateOrUpdate(t *testing.T) {
 		withInfoCheck bool
 	}{
 		{
-			name:          "create stream, ok",
+			name:          "create stream ok",
 			stream:        "foo",
 			timeout:       10 * time.Second,
 			subject:       "FOO.1",
 			withInfoCheck: false,
 		},
 		{
-			name:          "create stream, empty context",
+			name:          "create stream empty context",
 			stream:        "foo-o",
 			subject:       "FOO.12",
 			withInfoCheck: false,
 		},
 		{
-			name:          "create stream, invalid stream name",
+			name:          "create stream invalid stream name",
 			stream:        "foo.123",
 			subject:       "FOO.123",
 			timeout:       10 * time.Second,
@@ -462,7 +462,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			withInfoCheck: false,
 		},
 		{
-			name:          "create stream, stream name required",
+			name:          "create stream stream name required",
 			stream:        "",
 			subject:       "FOO.1234",
 			timeout:       10 * time.Second,
@@ -470,14 +470,14 @@ func TestCreateOrUpdate(t *testing.T) {
 			withInfoCheck: false,
 		},
 		{
-			name:          "update stream, ok",
+			name:          "update stream ok",
 			stream:        "foo",
 			subject:       "BAR.123",
 			timeout:       10 * time.Second,
 			withInfoCheck: true,
 		},
 		{
-			name:          "create stream, context timeout",
+			name:          "create stream context timeout",
 			stream:        "foo",
 			subject:       "BAR.1234",
 			timeout:       1 * time.Microsecond,
@@ -485,31 +485,31 @@ func TestCreateOrUpdate(t *testing.T) {
 			withInfoCheck: false,
 		},
 		{
-			name:          "update stream, with empty context",
-			stream:        "sample.foo",
+			name:          "update stream with empty context",
+			stream:        "sample-foo",
 			subject:       "SAMPLE.FOO.123",
 			withInfoCheck: true,
 		},
 		{
-			name:          "update stream, invalid stream name",
-			stream:        "sample.foo.123",
-			subject:       "SAMPLE.FOO.1234",
+			name:          "update stream invalid stream name",
+			stream:        "sample-foo.123",
+			subject:       "SAMPLE-FOO.1234",
 			timeout:       10 * time.Second,
 			withError:     jetstream.ErrInvalidStreamName,
 			withInfoCheck: true,
 		},
 		{
-			name:          "update stream, stream name required",
+			name:          "update stream stream name required",
 			stream:        "",
-			subject:       "SAMPLE.FOO.123",
+			subject:       "SAMPLE-FOO.123",
 			timeout:       10 * time.Second,
 			withError:     jetstream.ErrStreamNameRequired,
 			withInfoCheck: true,
 		},
 		{
-			name:          "update stream, context timeout",
-			stream:        "sample.foo",
-			subject:       "SAMPLE.FOO.123456",
+			name:          "update stream context timeout",
+			stream:        "sample-foo",
+			subject:       "SAMPLE-FOO.123456",
 			timeout:       1 * time.Microsecond,
 			withError:     context.DeadlineExceeded,
 			withInfoCheck: true,
@@ -529,7 +529,7 @@ func TestCreateOrUpdate(t *testing.T) {
 	}
 	defer nc.Close()
 
-	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "sample.foo", Subjects: []string{"SAMPLE.FOO.123"}})
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "sample-foo", Subjects: []string{"SAMPLE-FOO.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
