@@ -456,7 +456,7 @@ func TestCreateOrUpdateStream(t *testing.T) {
 		{
 			name:          "create stream invalid stream name",
 			stream:        "foo.123",
-			subject:       "FOO.123",
+			subject:       "FOO-123",
 			timeout:       10 * time.Second,
 			withError:     jetstream.ErrInvalidStreamName,
 			withInfoCheck: false,
@@ -464,7 +464,7 @@ func TestCreateOrUpdateStream(t *testing.T) {
 		{
 			name:          "create stream stream name required",
 			stream:        "",
-			subject:       "FOO.1234",
+			subject:       "FOO-1234",
 			timeout:       10 * time.Second,
 			withError:     jetstream.ErrStreamNameRequired,
 			withInfoCheck: false,
@@ -472,27 +472,27 @@ func TestCreateOrUpdateStream(t *testing.T) {
 		{
 			name:          "update stream ok",
 			stream:        "foo",
-			subject:       "BAR.123",
+			subject:       "BAR-123",
 			timeout:       10 * time.Second,
 			withInfoCheck: true,
 		},
 		{
 			name:          "create stream context timeout",
 			stream:        "foo",
-			subject:       "BAR.1234",
+			subject:       "BAR-1234",
 			timeout:       1 * time.Microsecond,
 			withError:     context.DeadlineExceeded,
 			withInfoCheck: false,
 		},
 		{
 			name:          "update stream with empty context",
-			stream:        "sample-foo",
+			stream:        "sample-foo-1",
 			subject:       "SAMPLE-FOO-123",
 			withInfoCheck: true,
 		},
 		{
 			name:          "update stream invalid stream name",
-			stream:        "sample-foo-123",
+			stream:        "sample-foo.123",
 			subject:       "SAMPLE-FOO-1234",
 			timeout:       10 * time.Second,
 			withError:     jetstream.ErrInvalidStreamName,
@@ -508,7 +508,7 @@ func TestCreateOrUpdateStream(t *testing.T) {
 		},
 		{
 			name:          "update stream context timeout",
-			stream:        "sample-foo",
+			stream:        "sample-foo-2",
 			subject:       "SAMPLE-FOO-123456",
 			timeout:       1 * time.Microsecond,
 			withError:     context.DeadlineExceeded,
@@ -528,11 +528,6 @@ func TestCreateOrUpdateStream(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
-
-	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "sample-foo", Subjects: []string{"SAMPLE-FOO-123"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
