@@ -1143,6 +1143,7 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %s", err)
 	}
+	defer sub.Unsubscribe()
 	for i := 0; i < 5; i++ {
 		if _, err := js.Publish("foo", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1184,13 +1185,51 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	// heartbeat value too large
 	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
 	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
+		t.Fatalf("Expected invalid arg error; got: %v", err)
 	}
 
 	// heartbeat value invalid
 	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
 	if !errors.Is(err, nats.ErrInvalidArg) {
-		t.Fatalf("Expected no heartbeat error; got: %v", err)
+		t.Fatalf("Expected invalid arg error; got: %v", err)
+	}
+
+	// set short timeout on JetStream context
+	js, err = nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub1, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	defer sub.Unsubscribe()
+
+	// should produce invalid arg error based on default timeout from JetStream context
+	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected invalid arg error; got: %v", err)
+	}
+
+	// overwrite default timeout with context timeout, fetch available messages
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	msgs, err = sub1.Fetch(10, nats.PullHeartbeat(100*time.Millisecond), nats.Context(ctx))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if len(msgs) != 5 {
+		t.Fatalf("Expected %d messages; got: %d", 5, len(msgs))
+	}
+	for _, msg := range msgs {
+		msg.Ack()
+	}
+
+	// overwrite default timeout with max wait, should time out because no messages are available
+	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatalf("Expected timeout error; got: %v", err)
 	}
 }
 
@@ -1213,6 +1252,7 @@ func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %s", err)
 	}
+	defer sub.Unsubscribe()
 	for i := 0; i < 5; i++ {
 		if _, err := js.Publish("foo", []byte("msg")); err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1282,15 +1322,54 @@ func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
 	}
 
 	// heartbeat value too large
-	_, err = sub.Fetch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	_, err = sub.FetchBatch(5, nats.PullHeartbeat(200*time.Millisecond), nats.MaxWait(300*time.Millisecond))
 	if !errors.Is(err, nats.ErrInvalidArg) {
 		t.Fatalf("Expected no heartbeat error; got: %v", err)
 	}
 
 	// heartbeat value invalid
-	_, err = sub.Fetch(5, nats.PullHeartbeat(-1))
+	_, err = sub.FetchBatch(5, nats.PullHeartbeat(-1))
 	if !errors.Is(err, nats.ErrInvalidArg) {
 		t.Fatalf("Expected no heartbeat error; got: %v", err)
+	}
+
+	// set short timeout on JetStream context
+	js, err = nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub1, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	defer sub.Unsubscribe()
+
+	// should produce invalid arg error based on default timeout from JetStream context
+	_, err = sub1.Fetch(5, nats.PullHeartbeat(100*time.Millisecond))
+	if !errors.Is(err, nats.ErrInvalidArg) {
+		t.Fatalf("Expected invalid arg error; got: %v", err)
+	}
+
+	// overwrite default timeout with context timeout, fetch available messages
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	msgs, err = sub1.FetchBatch(10, nats.PullHeartbeat(100*time.Millisecond), nats.Context(ctx))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	for msg := range msgs.Messages() {
+		msg.Ack()
+	}
+
+	// overwrite default timeout with max wait, should time out because no messages are available
+	msgs, err = sub1.FetchBatch(5, nats.PullHeartbeat(100*time.Millisecond), nats.MaxWait(300*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	<-msgs.Done()
+	if msgs.Error() != nil {
+		t.Fatalf("Unexpected error: %s", msgs.Error())
 	}
 }
 
