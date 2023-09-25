@@ -2756,9 +2756,6 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		ttl = js.opts.wait
 	}
 	sub.mu.Unlock()
-	if o.hb != 0 && 2*o.hb >= ttl {
-		return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
-	}
 
 	// Use the given context or setup a default one for the span
 	// of the pull batch request.
@@ -2783,6 +2780,14 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		ctx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
+
+	// if heartbeat is set, validate it against the context timeout
+	if o.hb > 0 {
+		deadline, _ := ctx.Deadline()
+		if 2*o.hb >= time.Until(deadline) {
+			return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
+		}
+	}
 
 	// Check if context not done already before making the request.
 	select {
@@ -3017,9 +3022,6 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 		ttl = js.opts.wait
 	}
 	sub.mu.Unlock()
-	if o.hb != 0 && 2*o.hb >= ttl {
-		return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
-	}
 
 	// Use the given context or setup a default one for the span
 	// of the pull batch request.
@@ -3049,6 +3051,14 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			cancel()
 		}
 	}()
+
+	// if heartbeat is set, validate it against the context timeout
+	if o.hb > 0 {
+		deadline, _ := ctx.Deadline()
+		if 2*o.hb >= time.Until(deadline) {
+			return nil, fmt.Errorf("%w: idle heartbeat value too large", ErrInvalidArg)
+		}
+	}
 
 	// Check if context not done already before making the request.
 	select {
