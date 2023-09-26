@@ -418,6 +418,58 @@ func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 	}
 }
 
+func TestClientCertificateMem(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tlsverify.conf")
+	defer s.Shutdown()
+
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureURL := fmt.Sprintf("nats://%s", endpoint)
+
+	// load certs into memory
+	clientCert, err := os.ReadFile("./configs/certs/client-cert.pem")
+	if err != nil {
+		t.Fatalf("Failed to read clientCert: %v", err)
+	}
+	clientKey, err := os.ReadFile("./configs/certs/client-key.pem")
+	if err != nil {
+		t.Fatalf("Failed to read clientKey: %v", err)
+	}
+	ca, err := os.ReadFile("./configs/certs/ca.pem")
+	if err != nil {
+		t.Fatalf("Failed to read ca: %v", err)
+	}
+
+	nc, err := nats.Connect(secureURL,
+		nats.RootCAsMem(ca),
+		nats.ClientCertMem(clientCert, clientKey))
+	if err != nil {
+		t.Fatalf("Failed to create (TLS) connection from Memory: %v", err)
+	}
+	defer nc.Close()
+
+	omsg := []byte("Hello!")
+	checkRecv := make(chan bool)
+
+	received := 0
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		received++
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+		checkRecv <- true
+	})
+	err = nc.Publish("foo", omsg)
+	if err != nil {
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
+	}
+	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed to receive message")
+	}
+}
+
+
 func TestServerTLSHintConnections(t *testing.T) {
 	s, opts := RunServerWithConfig("./configs/tls.conf")
 	defer s.Shutdown()
