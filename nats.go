@@ -887,6 +887,31 @@ func RootCAs(file ...string) Option {
 	}
 }
 
+// RootCAsMem is a helper option to provide the RootCAs pool from memory.
+// If Secure is not already set this will set it as well.
+func RootCAsMem(rootCAs []byte) Option {
+
+	return func(o *Options) error {
+		rootCAsCB := func() (*x509.CertPool, error) {
+			pool := x509.NewCertPool()
+			ok := pool.AppendCertsFromPEM(rootCAs)
+			if !ok {
+				return nil, fmt.Errorf("nats: failed to parse root certificate from memory")
+			}
+			return pool, nil
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		if _, err := rootCAsCB(); err != nil {
+			return err
+		}
+		o.RootCAsCB = rootCAsCB
+		o.Secure = true
+		return nil
+	}
+}
+
 // ClientCert is a helper option to provide the client certificate from a file.
 // If Secure is not already set this will set it as well.
 func ClientCert(certFile, keyFile string) Option {
@@ -899,6 +924,33 @@ func ClientCert(certFile, keyFile string) Option {
 			cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 			if err != nil {
 				return tls.Certificate{}, fmt.Errorf("nats: error parsing client certificate: %w", err)
+			}
+			return cert, nil
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		if _, err := tlsCertCB(); err != nil {
+			return err
+		}
+		o.TLSCertCB = tlsCertCB
+		o.Secure = true
+		return nil
+	}
+}
+
+// ClientCertMem is a helper option to provide the client certificate from memory.
+// If Secure is not already set this will set it as well.
+func ClientCertMem(cert []byte, key []byte) Option {
+	return func(o *Options) error {
+		tlsCertCB := func() (tls.Certificate, error) {
+			cert, err := tls.X509KeyPair(cert, key)
+			if err != nil {
+				return tls.Certificate{}, fmt.Errorf("nats: error loading client certificate from MEM: %w", err)
+			}
+			cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				return tls.Certificate{}, fmt.Errorf("nats: error parsing client certificate from MEM: %w", err)
 			}
 			return cert, nil
 		}
