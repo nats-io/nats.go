@@ -2799,8 +2799,8 @@ func TestStreamConfigMatches(t *testing.T) {
 	nc, js := jsClient(t, srv)
 	defer nc.Close()
 
-	cfgSource := nats.StreamConfig{
-		Name:                 "source",
+	cfg := nats.StreamConfig{
+		Name:                 "stream",
 		Description:          "desc",
 		Subjects:             []string{"foo.*"},
 		Retention:            nats.WorkQueuePolicy,
@@ -2838,15 +2838,15 @@ func TestStreamConfigMatches(t *testing.T) {
 		},
 	}
 
-	s, err := js.AddStream(&cfgSource)
+	s, err := js.AddStream(&cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(s.Config, cfgSource) {
-		t.Fatalf("StreamConfig doesn't match")
+	if !reflect.DeepEqual(s.Config, cfg) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
 	}
 
-	cfg := nats.StreamConfig{
+	cfgMirror := nats.StreamConfig{
 		Name:              "mirror",
 		MaxConsumers:      10,
 		MaxMsgs:           100,
@@ -2855,8 +2855,9 @@ func TestStreamConfigMatches(t *testing.T) {
 		MaxMsgsPerSubject: 1000,
 		MaxMsgSize:        10000,
 		Replicas:          1,
+		Duplicates:        10 * time.Second,
 		Mirror: &nats.StreamSource{
-			Name:        "source",
+			Name:        "stream",
 			OptStartSeq: 10,
 			SubjectTransforms: []nats.SubjectTransformConfig{
 				{Source: ">", Destination: "transformed.>"},
@@ -2866,12 +2867,43 @@ func TestStreamConfigMatches(t *testing.T) {
 		SubjectTransform: &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
 	}
 
-	s, err = js.AddStream(&cfg)
+	s, err = js.AddStream(&cfgMirror)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(s.Config, cfg) {
-		t.Fatalf("StreamConfig doesn't match")
+	if !reflect.DeepEqual(s.Config, cfgMirror) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
+	}
+
+	cfgSourcing := nats.StreamConfig{
+		Name:              "sourcing",
+		Subjects:          []string{"BAR"},
+		MaxConsumers:      10,
+		MaxMsgs:           100,
+		MaxBytes:          1000,
+		MaxAge:            100 * time.Second,
+		MaxMsgsPerSubject: 1000,
+		MaxMsgSize:        10000,
+		Replicas:          1,
+		Duplicates:        10 * time.Second,
+		Sources: []*nats.StreamSource{
+			{
+				Name:        "stream",
+				OptStartSeq: 10,
+				SubjectTransforms: []nats.SubjectTransformConfig{
+					{Source: ">", Destination: "transformed.>"},
+				},
+			},
+		},
+		SubjectTransform: &nats.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+	}
+
+	s, err = js.AddStream(&cfgSourcing)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(s.Config, cfgSourcing) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.Config)
 	}
 }
 

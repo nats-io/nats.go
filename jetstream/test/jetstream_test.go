@@ -1664,8 +1664,8 @@ func TestStreamConfigMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	cfgSource := jetstream.StreamConfig{
-		Name:                 "source",
+	cfg := jetstream.StreamConfig{
+		Name:                 "stream",
 		Description:          "desc",
 		Subjects:             []string{"foo.*"},
 		Retention:            jetstream.WorkQueuePolicy,
@@ -1703,15 +1703,15 @@ func TestStreamConfigMatches(t *testing.T) {
 		},
 	}
 
-	s, err := js.CreateStream(context.Background(), cfgSource)
+	s, err := js.CreateStream(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(s.CachedInfo().Config, cfgSource) {
-		t.Fatalf("StreamConfig doesn't match")
+	if !reflect.DeepEqual(s.CachedInfo().Config, cfg) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.CachedInfo().Config)
 	}
 
-	cfg := jetstream.StreamConfig{
+	cfgMirror := jetstream.StreamConfig{
 		Name:              "mirror",
 		MaxConsumers:      10,
 		MaxMsgs:           100,
@@ -1720,8 +1720,9 @@ func TestStreamConfigMatches(t *testing.T) {
 		MaxMsgsPerSubject: 1000,
 		MaxMsgSize:        10000,
 		Replicas:          1,
+		Duplicates:        10 * time.Second,
 		Mirror: &jetstream.StreamSource{
-			Name:        "source",
+			Name:        "stream",
 			OptStartSeq: 10,
 			SubjectTransforms: []jetstream.SubjectTransformConfig{
 				{Source: ">", Destination: "transformed.>"},
@@ -1731,12 +1732,43 @@ func TestStreamConfigMatches(t *testing.T) {
 		SubjectTransform: &jetstream.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
 	}
 
-	s, err = js.CreateStream(context.Background(), cfg)
+	s, err = js.CreateStream(context.Background(), cfgMirror)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(s.CachedInfo().Config, cfg) {
-		t.Fatalf("StreamConfig doesn't match")
+	if !reflect.DeepEqual(s.CachedInfo().Config, cfgMirror) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.CachedInfo().Config)
+	}
+
+	cfgSourcing := jetstream.StreamConfig{
+		Name:              "sourcing",
+		Subjects:          []string{"BAR"},
+		MaxConsumers:      10,
+		MaxMsgs:           100,
+		MaxBytes:          1000,
+		MaxAge:            100 * time.Second,
+		MaxMsgsPerSubject: 1000,
+		MaxMsgSize:        10000,
+		Replicas:          1,
+		Duplicates:        10 * time.Second,
+		Sources: []*jetstream.StreamSource{
+			{
+				Name:        "stream",
+				OptStartSeq: 10,
+				SubjectTransforms: []jetstream.SubjectTransformConfig{
+					{Source: ">", Destination: "transformed.>"},
+				},
+			},
+		},
+		SubjectTransform: &jetstream.SubjectTransformConfig{Source: ">", Destination: "transformed.>"},
+	}
+
+	s, err = js.CreateStream(context.Background(), cfgSourcing)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(s.CachedInfo().Config, cfgSourcing) {
+		t.Fatalf("StreamConfig doesn't match: %#v", s.CachedInfo().Config)
 	}
 }
 
@@ -1792,8 +1824,6 @@ func TestConsumerConfigMatches(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if !reflect.DeepEqual(c.CachedInfo().Config, cfg) {
-		fmt.Printf("%#v\n", c.CachedInfo().Config)
-		fmt.Printf("%#v\n", cfg)
 		t.Fatalf("ConsumerConfig doesn't match")
 	}
 }

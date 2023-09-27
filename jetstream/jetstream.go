@@ -364,7 +364,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}
 
 	if len(cfg.Sources) != 0 {
-		if len(cfg.Sources) != len(resp.Sources) {
+		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
 		for i := range cfg.Sources {
@@ -443,7 +443,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}
 
 	if len(cfg.Sources) != 0 {
-		if len(cfg.Sources) != len(resp.Sources) {
+		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
 		for i := range cfg.Sources {
