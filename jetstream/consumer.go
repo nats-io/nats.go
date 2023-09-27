@@ -95,6 +95,12 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	if cancel != nil {
 		defer cancel()
 	}
+
+	if len(cfg.FilterSubjects) == 1 {
+		cfg.FilterSubject = cfg.FilterSubjects[0]
+		cfg.FilterSubjects = nil
+	}
+
 	req := createConsumerRequest{
 		Stream: stream,
 		Config: &cfg,

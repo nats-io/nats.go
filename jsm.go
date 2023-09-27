@@ -381,6 +381,11 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		defer cancel()
 	}
 
+	if len(cfg.FilterSubjects) == 1 {
+		cfg.FilterSubject = cfg.FilterSubjects[0]
+		cfg.FilterSubjects = nil
+	}
+
 	req, err := json.Marshal(&createConsumerRequest{Stream: stream, Config: cfg})
 	if err != nil {
 		return nil, err
