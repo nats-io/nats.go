@@ -817,7 +817,7 @@ func (js *js) AddStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error) {
 		return nil, ErrStreamSubjectTransformNotSupported
 	}
 	if len(cfg.Sources) != 0 {
-		if len(cfg.Sources) != len(resp.Sources) {
+		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
 		for i := range cfg.Sources {
@@ -1029,7 +1029,7 @@ func (js *js) UpdateStream(cfg *StreamConfig, opts ...JSOpt) (*StreamInfo, error
 	}
 
 	if len(cfg.Sources) != 0 {
-		if len(cfg.Sources) != len(resp.Sources) {
+		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
 		for i := range cfg.Sources {
