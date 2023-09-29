@@ -69,7 +69,7 @@ var errOrderedSequenceMismatch = errors.New("sequence mismatch")
 
 // Consume can be used to continuously receive messages and handle them with the provided callback function
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
-	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
+	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
 		if err != nil {
 			return nil, err
@@ -133,7 +133,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				if c.withStopAfter {
 					select {
 					case c.stopAfter = <-c.stopAfterMsgsLeft:
-					default:
+					case <-time.After(1 * time.Second):
 					}
 					if c.stopAfter <= 0 {
 						sub.Stop()
@@ -178,7 +178,8 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 		}
 		if errors.Is(err, ErrNoHeartbeat) ||
 			errors.Is(err, errOrderedSequenceMismatch) ||
-			errors.Is(err, ErrConsumerDeleted) {
+			errors.Is(err, ErrConsumerDeleted) ||
+			errors.Is(err, ErrConsumerNotFound) {
 			// only reset if serial matches the current consumer serial and there is no reset in progress
 			if serial == c.serial && atomic.LoadUint32(&c.resetInProgress) == 0 {
 				atomic.StoreUint32(&c.resetInProgress, 1)
@@ -190,7 +191,7 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 
 // Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
 func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
-	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
+	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
 		if err != nil {
 			return nil, err
@@ -386,6 +387,9 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
+		if c.currentConsumer.subscriptions[""] != nil {
+			c.currentConsumer.subscriptions[""].Stop()
+		}
 		var err error
 		for i := 0; ; i++ {
 			if c.cfg.MaxResetAttempts > 0 && i == c.cfg.MaxResetAttempts {
