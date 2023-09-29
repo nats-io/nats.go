@@ -205,6 +205,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					return
 				}
 				if sub.consumeOpts.ErrHandler != nil {
+					fmt.Println("calling err handler: ", err)
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
 				sub.Stop()
@@ -257,24 +258,33 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					if !isConnected {
 						isConnected = true
 						// try fetching consumer info several times to make sure consumer is available after reconnect
-						for i := 0; i < 5; i++ {
-							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-							_, err := p.Info(ctx)
-							cancel()
-							if err == nil {
-								break
+						numAttempts := 10
+						err = retryWithBackoff(func(attempt int) (bool, error) {
+							isClosed := atomic.LoadUint32(&sub.closed) == 1
+							if isClosed {
+								return false, nil
 							}
+							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							defer cancel()
+							_, err := p.Info(ctx)
 							if err != nil {
-								if i == 4 {
-									sub.cleanup()
-									if sub.consumeOpts.ErrHandler != nil {
-										sub.consumeOpts.ErrHandler(sub, err)
+								if sub.consumeOpts.ErrHandler != nil {
+									err = fmt.Errorf("[%d] attempting to fetch consumer info after reconnect: %w", attempt, err)
+									if attempt == numAttempts-1 {
+										err = errors.Join(err, fmt.Errorf("maximum retry attempts reached"))
 									}
-									sub.Unlock()
-									return
+									sub.consumeOpts.ErrHandler(sub, err)
 								}
 							}
-							time.Sleep(5 * time.Second)
+							return true, err
+						}, numAttempts, 100*time.Millisecond)
+						if err != nil {
+							sub.cleanup()
+							if sub.consumeOpts.ErrHandler != nil {
+								sub.consumeOpts.ErrHandler(sub, err)
+							}
+							sub.Unlock()
+							return
 						}
 
 						sub.fetchNext <- &pullRequest{
@@ -283,6 +293,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							MaxBytes:  sub.consumeOpts.MaxBytes,
 							Heartbeat: sub.consumeOpts.Heartbeat,
 						}
+						sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 						sub.resetPendingMsgs()
 					}
 					sub.Unlock()
@@ -309,6 +320,26 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	go sub.pullMessages(subject)
 
 	return sub, nil
+}
+
+func retryWithBackoff(f func(int) (bool, error), attempts int, interval time.Duration) error {
+	var err error
+	var shouldContinue bool
+	for i := 0; ; i++ {
+		shouldContinue, err = f(i)
+		if !shouldContinue {
+			return err
+		}
+		interval *= 2
+		if interval >= 1*time.Minute {
+			interval = 1 * time.Minute
+		}
+		if attempts > 0 && i >= attempts {
+			break
+		}
+		time.Sleep(interval)
+	}
+	return err
 }
 
 // resetPendingMsgs resets pending message count and byte count
@@ -470,26 +501,24 @@ func (s *pullSubscription) Next() (Msg, error) {
 			if errors.Is(err, errConnected) {
 				if !isConnected {
 					isConnected = true
+					attempts := 10
 					// try fetching consumer info several times to make sure consumer is available after reconnect
-					for i := 0; i < 5; i++ {
+					err = retryWithBackoff(func(attempt int) (bool, error) {
+						fmt.Println("attempting to fetch consumer info after reconnect: ", attempt)
 						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
 						_, err := s.consumer.Info(ctx)
-						cancel()
-						if err == nil {
-							break
-						}
-						if err != nil {
-							if i == 4 {
-								s.Stop()
-								return nil, err
-							}
-						}
-						time.Sleep(5 * time.Second)
+						return true, err
+					}, attempts, 100*time.Millisecond)
+					if err != nil {
+						s.Stop()
+						return nil, err
 					}
-					s.pending.msgCount = 0
-					s.pending.byteCount = 0
-					hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+					time.Sleep(5 * time.Second)
 				}
+				s.pending.msgCount = 0
+				s.pending.byteCount = 0
+				hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {

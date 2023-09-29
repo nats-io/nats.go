@@ -34,7 +34,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			}
 		}
 	}
-	t.Run("base usage, delete consumer", func(t *testing.T) {
+	t.Run("base usage, server restart", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -73,10 +73,8 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		publishTestMsgs(t, nc)
 		wg.Wait()
 
-		name := c.CachedInfo().Name
-		if err := s.DeleteConsumer(ctx, name); err != nil {
-			t.Fatal(err)
-		}
+		srv = restartBasicJSServer(t, srv)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
 		wg.Add(len(testMsgs))
 		publishTestMsgs(t, nc)
 		wg.Wait()
@@ -167,7 +165,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			}
 		}
 	}
-	t.Run("base usage, delete consumer", func(t *testing.T) {
+	t.Run("base usage, server restart", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -207,10 +205,8 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			}
 			msgs = append(msgs, msg)
 		}
-		name := c.CachedInfo().Name
-		if err := s.DeleteConsumer(ctx, name); err != nil {
-			t.Fatal(err)
-		}
+		srv = restartBasicJSServer(t, srv)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
 		publishTestMsgs(t, nc)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()

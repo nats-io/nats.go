@@ -64,7 +64,7 @@ const (
 
 var errOrderedSequenceMismatch = errors.New("sequence mismatch")
 
-// Consume can be used to continuously receive messages and handle them with the provided callback function
+// Consume can be used to continuously receive messages and handle them with the provided callback function.
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume && c.currentConsumer == nil {
 		err := c.reset()
@@ -137,18 +137,22 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 
 func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err error) {
 	return func(cc ConsumeContext, err error) {
+		c.Lock()
+		defer c.Unlock()
 		if c.userErrHandler != nil && !errors.Is(err, errOrderedSequenceMismatch) {
 			c.userErrHandler(cc, err)
 		}
 		if errors.Is(err, ErrNoHeartbeat) ||
 			errors.Is(err, errOrderedSequenceMismatch) ||
-			errors.Is(err, ErrConsumerDeleted) {
-			// only reset if serial matches the currect consumer serial and there is no reset in progress
+			errors.Is(err, ErrConsumerNotFound) {
+			// only reset if serial matches the current consumer serial and there is no reset in progress
 			if serial == c.serial && atomic.LoadUint32(&c.resetInProgress) == 0 {
 				atomic.StoreUint32(&c.resetInProgress, 1)
+				if c.currentConsumer != nil && c.currentConsumer.subscriptions[""] != nil {
+					c.currentConsumer.subscriptions[""].Stop()
+				}
 				c.doReset <- struct{}{}
 			}
-
 		}
 	}
 }
@@ -193,6 +197,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			currentConsumer := s.consumer.currentConsumer
 			msg, err := currentConsumer.subscriptions[""].Next()
 			if err != nil {
+				fmt.Println(err)
 				if err := s.consumer.reset(); err != nil {
 					return nil, err
 				}
@@ -329,54 +334,41 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
-		// c.currentConsumer.subscription.Stop()
-		var err error
-		for i := 0; ; i++ {
-			if c.cfg.MaxResetAttempts > 0 && i == c.cfg.MaxResetAttempts {
-				return fmt.Errorf("%w: maximum number of delete attempts reached: %s", ErrOrderedConsumerReset, err)
-			}
+		err := retryWithBackoff(func(attempt int) (bool, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err = c.jetStream.DeleteConsumer(ctx, c.stream, c.currentConsumer.CachedInfo().Name)
-			cancel()
-			if err != nil {
-				if errors.Is(err, ErrConsumerNotFound) {
-					break
-				}
-				if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
-					continue
-				}
-				return err
+			defer cancel()
+			err := c.jetStream.DeleteConsumer(ctx, c.stream, c.currentConsumer.CachedInfo().Name)
+			if err == nil || errors.Is(err, ErrConsumerNotFound) {
+				return false, nil
 			}
-			break
+			if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+				return true, err
+			}
+			return false, err
+		}, c.cfg.MaxResetAttempts, 1*time.Second)
+		if err != nil {
+			return fmt.Errorf("%w: maximum number of delete attempts reached: %s", ErrOrderedConsumerReset, err)
 		}
 	}
 	seq := c.cursor.streamSeq + 1
 	c.cursor.deliverSeq = 0
 	consumerConfig := c.getConsumerConfigForSeq(seq)
 
-	var err error
 	var cons Consumer
-	for i := 0; ; i++ {
-		if c.cfg.MaxResetAttempts > 0 && i == c.cfg.MaxResetAttempts {
-			return fmt.Errorf("%w: maximum number of create consumer attempts reached: %s", ErrOrderedConsumerReset, err)
-		}
+	var err error
+	err = retryWithBackoff(func(attempt int) (bool, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		cons, err = c.jetStream.CreateOrUpdateConsumer(ctx, c.stream, *consumerConfig)
 		if err != nil {
-			if errors.Is(err, ErrConsumerNotFound) {
-				cancel()
-				break
-			}
-			if errors.Is(err, nats.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
-				cancel()
-				continue
-			}
-			cancel()
-			return err
+			return true, err
 		}
-		cancel()
-		break
+		return false, nil
+	}, c.cfg.MaxResetAttempts, 1*time.Second)
+	if err != nil {
+		return fmt.Errorf("%w: maximum number of create consumer attempts reached: %s", ErrOrderedConsumerReset, err)
 	}
+
 	c.currentConsumer = cons.(*pullConsumer)
 	return nil
 }
