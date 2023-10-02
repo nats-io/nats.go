@@ -519,6 +519,9 @@ func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		}
 		return nil, resp.Error
 	}
+	if resp.Error == nil && resp.ConsumerInfo == nil {
+		return nil, ErrConsumerNotFound
+	}
 
 	c.currentConsumer.info = resp.ConsumerInfo
 	return resp.ConsumerInfo, nil

@@ -77,6 +77,9 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		}
 		return nil, resp.Error
 	}
+	if resp.Error == nil && resp.ConsumerInfo == nil {
+		return nil, ErrConsumerNotFound
+	}
 
 	p.info = resp.ConsumerInfo
 	return resp.ConsumerInfo, nil
@@ -187,6 +190,9 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 			return nil, ErrConsumerNotFound
 		}
 		return nil, resp.Error
+	}
+	if resp.Error == nil && resp.ConsumerInfo == nil {
+		return nil, ErrConsumerNotFound
 	}
 
 	cons := &pullConsumer{
