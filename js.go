@@ -3223,6 +3223,9 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 		}
 		return nil, info.Error
 	}
+	if info.Error == nil && info.ConsumerInfo == nil {
+		return nil, ErrConsumerNotFound
+	}
 	return info.ConsumerInfo, nil
 }
 
