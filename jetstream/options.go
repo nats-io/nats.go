@@ -121,18 +121,20 @@ func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
 type PullExpiry time.Duration
 
 func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
-	if exp < 0 {
-		return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
+	expiry := time.Duration(exp)
+	if expiry < 1*time.Second {
+		return fmt.Errorf("%w: expires value must be at least 1s", ErrInvalidOption)
 	}
-	opts.Expires = time.Duration(exp)
+	opts.Expires = expiry
 	return nil
 }
 
 func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
-	if exp < 0 {
-		return fmt.Errorf("%w: expires value must be positive", ErrInvalidOption)
+	expiry := time.Duration(exp)
+	if expiry < 0 {
+		return fmt.Errorf("%w: expires value must be at least 1s", ErrInvalidOption)
 	}
-	opts.Expires = time.Duration(exp)
+	opts.Expires = expiry
 	return nil
 }
 
@@ -191,8 +193,8 @@ type PullHeartbeat time.Duration
 
 func (hb PullHeartbeat) configureConsume(opts *consumeOpts) error {
 	hbTime := time.Duration(hb)
-	if hbTime < 1*time.Second || hbTime > 30*time.Second {
-		return fmt.Errorf("%w: idle_heartbeat value must be within 1s-30s range", ErrInvalidOption)
+	if hbTime < 500*time.Millisecond || hbTime > 30*time.Second {
+		return fmt.Errorf("%w: idle_heartbeat value must be within 500ms-30s range", ErrInvalidOption)
 	}
 	opts.Heartbeat = hbTime
 	return nil
@@ -200,8 +202,8 @@ func (hb PullHeartbeat) configureConsume(opts *consumeOpts) error {
 
 func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 	hbTime := time.Duration(hb)
-	if hbTime < 1*time.Second || hbTime > 30*time.Second {
-		return fmt.Errorf("%w: idle_heartbeat value must be within 1s-30s range", ErrInvalidOption)
+	if hbTime < 500*time.Millisecond || hbTime > 30*time.Second {
+		return fmt.Errorf("%w: idle_heartbeat value must be within 500ms-30s range", ErrInvalidOption)
 	}
 	opts.Heartbeat = hbTime
 	return nil

@@ -2045,141 +2045,220 @@ func TestPullConsumerConsume(t *testing.T) {
 func TestPullConsumerConsume_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
 	}
 
 	name := "cluster"
-	stream := jetstream.StreamConfig{
+	singleStream := jetstream.StreamConfig{
 		Name:     name,
 		Replicas: 1,
 		Subjects: []string{"FOO.*"},
 	}
 
-	t.Run("no options", func(t *testing.T) {
-		withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
-			nc, err := nats.Connect(srvs[0].ClientURL())
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+	streamWithReplicas := jetstream.StreamConfig{
+		Name:     name,
+		Replicas: 3,
+		Subjects: []string{"FOO.*"},
+	}
 
-			js, err := jetstream.New(nc)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer nc.Close()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s, err := js.Stream(ctx, stream.Name)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			msgs := make([]jetstream.Msg, 0)
-			wg := &sync.WaitGroup{}
-			wg.Add(len(testMsgs))
-			l, err := c.Consume(func(msg jetstream.Msg) {
-				msgs = append(msgs, msg)
-				wg.Done()
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer l.Stop()
-
-			publishTestMsgs(t, nc)
-			wg.Wait()
-			if len(msgs) != len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
-			}
-			for i, msg := range msgs {
-				if string(msg.Data()) != testMsgs[i] {
-					t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
-				}
-			}
-		})
-	})
-
-	t.Run("subscribe, cancel subscription, then subscribe again", func(t *testing.T) {
-		withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
-			nc, err := nats.Connect(srvs[0].ClientURL())
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			js, err := jetstream.New(nc)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer nc.Close()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			s, err := js.Stream(ctx, stream.Name)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			wg := sync.WaitGroup{}
-			wg.Add(len(testMsgs))
-			msgs := make([]jetstream.Msg, 0)
-			l, err := c.Consume(func(msg jetstream.Msg) {
-				if err := msg.Ack(); err != nil {
+	for _, stream := range []jetstream.StreamConfig{singleStream, streamWithReplicas} {
+		t.Run(fmt.Sprintf("num replicas: %d, no options", stream.Replicas), func(t *testing.T) {
+			withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
+				nc, err := nats.Connect(srvs[0].ClientURL())
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				msgs = append(msgs, msg)
-				if len(msgs) == 5 {
-					cancel()
-				}
-				wg.Done()
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
 
-			publishTestMsgs(t, nc)
-			wg.Wait()
-			l.Stop()
-
-			time.Sleep(10 * time.Millisecond)
-			wg.Add(len(testMsgs))
-			defer cancel()
-			l, err = c.Consume(func(msg jetstream.Msg) {
-				if err := msg.Ack(); err != nil {
+				js, err := jetstream.New(nc)
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				msgs = append(msgs, msg)
-				wg.Done()
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer l.Stop()
-			publishTestMsgs(t, nc)
-			wg.Wait()
-			if len(msgs) != 2*len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
-			}
-			expectedMsgs := append(testMsgs, testMsgs...)
-			for i, msg := range msgs {
-				if string(msg.Data()) != expectedMsgs[i] {
-					t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+				defer nc.Close()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s, err := js.Stream(ctx, stream.Name)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
 				}
-			}
+				c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				msgs := make([]jetstream.Msg, 0)
+				wg := &sync.WaitGroup{}
+				wg.Add(len(testMsgs))
+				l, err := c.Consume(func(msg jetstream.Msg) {
+					msgs = append(msgs, msg)
+					wg.Done()
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer l.Stop()
+
+				publishTestMsgs(t, js)
+				wg.Wait()
+				if len(msgs) != len(testMsgs) {
+					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+				}
+				for i, msg := range msgs {
+					if string(msg.Data()) != testMsgs[i] {
+						t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+					}
+				}
+			})
 		})
-	})
+
+		t.Run(fmt.Sprintf("num replicas: %d, subscribe, cancel subscription, then subscribe again", stream.Replicas), func(t *testing.T) {
+			withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
+				nc, err := nats.Connect(srvs[0].ClientURL())
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				js, err := jetstream.New(nc)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer nc.Close()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				s, err := js.Stream(ctx, stream.Name)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				wg := sync.WaitGroup{}
+				wg.Add(len(testMsgs))
+				msgs := make([]jetstream.Msg, 0)
+				l, err := c.Consume(func(msg jetstream.Msg) {
+					if err := msg.Ack(); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					msgs = append(msgs, msg)
+					if len(msgs) == 5 {
+						cancel()
+					}
+					wg.Done()
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				publishTestMsgs(t, js)
+				wg.Wait()
+				l.Stop()
+
+				time.Sleep(10 * time.Millisecond)
+				wg.Add(len(testMsgs))
+				l, err = c.Consume(func(msg jetstream.Msg) {
+					if err := msg.Ack(); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					msgs = append(msgs, msg)
+					wg.Done()
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer l.Stop()
+				publishTestMsgs(t, js)
+				wg.Wait()
+				if len(msgs) != 2*len(testMsgs) {
+					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+				}
+				expectedMsgs := append(testMsgs, testMsgs...)
+				for i, msg := range msgs {
+					if string(msg.Data()) != expectedMsgs[i] {
+						t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+					}
+				}
+			})
+		})
+
+		t.Run(fmt.Sprintf("num replicas: %d, recover consume after server restart", stream.Replicas), func(t *testing.T) {
+			withJSClusterAndStream(t, name, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
+				nc, err := nats.Connect(srvs[0].ClientURL())
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				js, err := jetstream.New(nc)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer nc.Close()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				s, err := js.Stream(ctx, streamWithReplicas.Name)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, InactiveThreshold: 10 * time.Second})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				wg := sync.WaitGroup{}
+				wg.Add(len(testMsgs))
+				msgs := make([]jetstream.Msg, 0)
+				l, err := c.Consume(func(msg jetstream.Msg) {
+					if err := msg.Ack(); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					msgs = append(msgs, msg)
+					wg.Done()
+				}, jetstream.PullExpiry(1*time.Second), jetstream.PullHeartbeat(500*time.Millisecond))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer l.Stop()
+
+				publishTestMsgs(t, js)
+				wg.Wait()
+
+				time.Sleep(10 * time.Millisecond)
+				srvs[0].Shutdown()
+				srvs[1].Shutdown()
+				srvs[0].Restart()
+				srvs[1].Restart()
+				wg.Add(len(testMsgs))
+
+				for i := 0; i < 10; i++ {
+					time.Sleep(500 * time.Millisecond)
+					if _, err := js.Stream(context.Background(), stream.Name); err == nil {
+						break
+					} else if i == 9 {
+						t.Fatal("JetStream not recovered: ", err)
+					}
+				}
+				publishTestMsgs(t, js)
+				wg.Wait()
+				if len(msgs) != 2*len(testMsgs) {
+					t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+				}
+				expectedMsgs := append(testMsgs, testMsgs...)
+				for i, msg := range msgs {
+					if string(msg.Data()) != expectedMsgs[i] {
+						t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, testMsgs[i], string(msg.Data()))
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestPullConsumerNext(t *testing.T) {
