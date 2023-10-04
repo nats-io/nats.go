@@ -387,16 +387,19 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
+		c.currentConsumer.Lock()
 		if c.currentConsumer.subscriptions[""] != nil {
 			c.currentConsumer.subscriptions[""].Stop()
 		}
+		consName := c.currentConsumer.CachedInfo().Name
+		c.currentConsumer.Unlock()
 		var err error
 		for i := 0; ; i++ {
 			if c.cfg.MaxResetAttempts > 0 && i == c.cfg.MaxResetAttempts {
 				return fmt.Errorf("%w: maximum number of delete attempts reached: %s", ErrOrderedConsumerReset, err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err = c.jetStream.DeleteConsumer(ctx, c.stream, c.currentConsumer.CachedInfo().Name)
+			err = c.jetStream.DeleteConsumer(ctx, c.stream, consName)
 			cancel()
 			if err != nil {
 				if errors.Is(err, ErrConsumerNotFound) {
