@@ -455,6 +455,136 @@ func TestCreateStreamMirrorCrossDomains(t *testing.T) {
 	}
 }
 
+func TestCreateOrUpdateStream(t *testing.T) {
+	tests := []struct {
+		name          string
+		stream        string
+		subject       string
+		timeout       time.Duration
+		withError     error
+		withInfoCheck bool
+	}{
+		{
+			name:          "create stream ok",
+			stream:        "foo",
+			timeout:       10 * time.Second,
+			subject:       "FOO.1",
+			withInfoCheck: false,
+		},
+		{
+			name:          "create stream empty context",
+			stream:        "foo-o",
+			subject:       "FOO.12",
+			withInfoCheck: false,
+		},
+		{
+			name:          "create stream invalid stream name",
+			stream:        "foo.123",
+			subject:       "FOO-123",
+			timeout:       10 * time.Second,
+			withError:     jetstream.ErrInvalidStreamName,
+			withInfoCheck: false,
+		},
+		{
+			name:          "create stream stream name required",
+			stream:        "",
+			subject:       "FOO-1234",
+			timeout:       10 * time.Second,
+			withError:     jetstream.ErrStreamNameRequired,
+			withInfoCheck: false,
+		},
+		{
+			name:          "update stream ok",
+			stream:        "foo",
+			subject:       "BAR-123",
+			timeout:       10 * time.Second,
+			withInfoCheck: true,
+		},
+		{
+			name:          "create stream context timeout",
+			stream:        "foo",
+			subject:       "BAR-1234",
+			timeout:       1 * time.Microsecond,
+			withError:     context.DeadlineExceeded,
+			withInfoCheck: false,
+		},
+		{
+			name:          "update stream with empty context",
+			stream:        "sample-foo-1",
+			subject:       "SAMPLE-FOO-123",
+			withInfoCheck: true,
+		},
+		{
+			name:          "update stream invalid stream name",
+			stream:        "sample-foo.123",
+			subject:       "SAMPLE-FOO-1234",
+			timeout:       10 * time.Second,
+			withError:     jetstream.ErrInvalidStreamName,
+			withInfoCheck: true,
+		},
+		{
+			name:          "update stream stream name required",
+			stream:        "",
+			subject:       "SAMPLE-FOO-123",
+			timeout:       10 * time.Second,
+			withError:     jetstream.ErrStreamNameRequired,
+			withInfoCheck: true,
+		},
+		{
+			name:          "update stream context timeout",
+			stream:        "sample-foo-2",
+			subject:       "SAMPLE-FOO-123456",
+			timeout:       1 * time.Microsecond,
+			withError:     context.DeadlineExceeded,
+			withInfoCheck: true,
+		},
+	}
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			if test.timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+			}
+			s, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{Name: test.stream, Subjects: []string{test.subject}})
+			if test.withError != nil {
+				if !errors.Is(err, test.withError) {
+					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if test.withInfoCheck {
+				info, err := s.Info(ctx)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != test.subject {
+					t.Fatalf("Invalid stream subjects after update: %v", info.Config.Subjects)
+				}
+			}
+		})
+	}
+}
+
 func TestUpdateStream(t *testing.T) {
 	tests := []struct {
 		name      string
