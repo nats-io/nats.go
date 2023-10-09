@@ -2863,3 +2863,112 @@ func TestConnStatusChangedEvents(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	})
 }
+
+func TestTLSHandshakeFirst(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tls.conf")
+	defer s.Shutdown()
+
+	secureURL := fmt.Sprintf("tls://derek:porkchop@localhost:%d", opts.Port)
+	nc, err := nats.Connect(secureURL,
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.TLSHandshakeFirst())
+	if err == nil || !strings.Contains(err.Error(), "TLS handshake") {
+		if err == nil {
+			nc.Close()
+		}
+		t.Fatalf("Expected error about not being a TLS handshake, got %v", err)
+	}
+
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+	}
+	tlsConf, err := server.GenTLSConfig(tc)
+	if err != nil {
+		t.Fatalf("Can't build TLCConfig: %v", err)
+	}
+	tlsConf.ServerName = "localhost"
+
+	// Start a mockup server that will do the TLS handshake first
+	// and then send the INFO protcol.
+	l, e := net.Listen("tcp", ":0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	tl := l.(*net.TCPListener)
+	defer tl.Close()
+
+	addr := tl.Addr().(*net.TCPAddr)
+
+	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		conn, err := l.Accept()
+		if err != nil {
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		// Do the TLS handshake now.
+		conn = tls.Server(conn, tlsConf)
+		tlsconn := conn.(*tls.Conn)
+		if err := tlsconn.Handshake(); err != nil {
+			errCh <- fmt.Errorf("Server error during handshake: %v", err)
+			return
+		}
+
+		// Send back the INFO
+		info := fmt.Sprintf("INFO {\"server_id\":\"foobar\",\"host\":\"localhost\",\"port\":%d,\"auth_required\":false,\"tls_required\":true,\"tls_available\":true,\"tls_verify\":true,\"max_payload\":1048576}\r\n", addr.Port)
+		tlsconn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		line := make([]byte, 256)
+		_, err = tlsconn.Read(line)
+		if err != nil {
+			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
+			return
+		}
+		tlsconn.Write([]byte("PONG\r\n"))
+
+		// Wait for the signal that client is ok
+		<-doneCh
+		// Server is done now.
+		errCh <- nil
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	secureURL = fmt.Sprintf("tls://derek:porkchop@localhost:%d", addr.Port)
+	nc, err = nats.Connect(secureURL,
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.TLSHandshakeFirst())
+	if err != nil {
+		wg.Wait()
+		e := <-errCh
+		t.Fatalf("Unexpected error: %v (server error=%s)", err, e.Error())
+	}
+
+	state, err := nc.TLSConnectionState()
+	if err != nil {
+		t.Fatalf("Expected connection state: %v", err)
+	}
+	if !state.HandshakeComplete {
+		t.Fatalf("Expected valid connection state")
+	}
+	nc.Close()
+
+	close(doneCh)
+	wg.Wait()
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatalf("Error from server: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Server did not exit")
+	}
+}

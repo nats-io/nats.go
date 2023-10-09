@@ -311,6 +311,13 @@ type Options struct {
 	// TLSCertCB is used to fetch and return custom tls certificate.
 	TLSCertCB TLSCertHandler
 
+	// TLSHandshakeFirst is used to instruct the library perform
+	// the TLS handshake right after the connect and before receiving
+	// the INFO protocol from the server. If this option is enabled
+	// but the server is not configured to perform the TLS handshake
+	// first, the connection will fail.
+	TLSHandshakeFirst bool
+
 	// RootCAsCB is used to fetch and return a set of root certificate
 	// authorities that clients use when verifying server certificates.
 	RootCAsCB RootCAsHandler
@@ -1315,6 +1322,17 @@ func SkipHostLookup() Option {
 	}
 }
 
+// TLSHandshakeFirst is an Option to perform the TLS handshake first, that is
+// before receiving the INFO protocol. This requires the server to also be
+// configured with such option, otherwise the connection will fail.
+func TLSHandshakeFirst() Option {
+	return func(o *Options) error {
+		o.TLSHandshakeFirst = true
+		o.Secure = true
+		return nil
+	}
+}
+
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
@@ -1479,6 +1497,12 @@ func (o Options) Connect() (*Conn, error) {
 		nc.Opts.Dialer = &net.Dialer{
 			Timeout: nc.Opts.Timeout,
 		}
+	}
+
+	// If the TLSHandshakeFirst option is specified, make sure that
+	// the Secure boolean is true.
+	if nc.Opts.TLSHandshakeFirst {
+		nc.Opts.Secure = true
 	}
 
 	if err := nc.setupServerPool(); err != nil {
@@ -2235,6 +2259,14 @@ func (nc *Conn) processConnectInit() error {
 	// Set our status to connecting.
 	nc.changeConnStatus(CONNECTING)
 
+	// If we need to have a TLS connection and want the TLS handshake to occur
+	// first, do it now.
+	if nc.Opts.Secure && nc.Opts.TLSHandshakeFirst {
+		if err := nc.makeTLSConn(); err != nil {
+			return err
+		}
+	}
+
 	// Process the INFO protocol received from the server
 	err := nc.processExpectedInfo()
 	if err != nil {
@@ -2351,8 +2383,13 @@ func (nc *Conn) checkForSecure() error {
 		o.Secure = true
 	}
 
-	// Need to rewrap with bufio
 	if o.Secure {
+		// If TLS handshake first is true, we have already done
+		// the handshake, so we are done here.
+		if o.TLSHandshakeFirst {
+			return nil
+		}
+		// Need to rewrap with bufio
 		if err := nc.makeTLSConn(); err != nil {
 			return err
 		}
