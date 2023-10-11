@@ -241,7 +241,7 @@ fmt.Println(cachedInfo.Config.Name)
 Only pull consumers are supported in `jetstream` package. However, unlike the
 JetStream API in `nats` package, pull consumers allow for continuous message
 retrieval (similarly to how `nats.Subscribe()` works). Because of that, push
-consumers can be easily replace by pull consumers for most of the use cases.
+consumers can be easily replaced by pull consumers for most of the use cases.
 
 ### Consumers management
 
@@ -273,7 +273,7 @@ cons2 := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
 })
 
 // consumers can be updated
-// an error will be returned if consumer with given name does not exists
+// an error will be returned if consumer with given name does not exist
 // or an illegal property is to be updated (e.g. AckPolicy)
 updated, _ := js.UpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
