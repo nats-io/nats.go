@@ -132,7 +132,6 @@ type (
 const (
 	DefaultMaxMessages = 500
 	DefaultExpires     = 30 * time.Second
-	DefaultHeartbeat   = 5 * time.Second
 	unset              = -1
 )
 
@@ -192,12 +191,17 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
+			if sub.hbMonitor != nil {
+				sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+			}
 			return
 		}
 		defer func() {
 			sub.Lock()
 			sub.checkPending()
-			sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+			if sub.hbMonitor != nil {
+				sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+			}
 			sub.Unlock()
 		}()
 		if !userMsg {
@@ -305,6 +309,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							MaxBytes:  sub.consumeOpts.MaxBytes,
 							Heartbeat: sub.consumeOpts.Heartbeat,
 						}
+						if sub.hbMonitor != nil {
+							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
+						}
 						sub.resetPendingMsgs()
 					}
 					sub.Unlock()
@@ -324,6 +331,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						Batch:     batchSize,
 						MaxBytes:  sub.consumeOpts.MaxBytes,
 						Heartbeat: sub.consumeOpts.Heartbeat,
+					}
+					if sub.hbMonitor != nil {
+						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 					}
 					sub.resetPendingMsgs()
 				}
@@ -465,7 +475,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 	if atomic.LoadUint32(&s.closed) == 1 {
 		return nil, ErrMsgIteratorClosed
 	}
-	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
 	defer func() {
 		if hbMonitor != nil {
 			hbMonitor.Stop()
@@ -509,6 +519,9 @@ func (s *pullSubscription) Next() (Msg, error) {
 				if s.consumeOpts.ReportMissingHeartbeats {
 					return nil, err
 				}
+				if hbMonitor != nil {
+					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+				}
 			}
 			if errors.Is(err, errConnected) {
 				if !isConnected {
@@ -531,12 +544,14 @@ func (s *pullSubscription) Next() (Msg, error) {
 					}
 					s.pending.msgCount = 0
 					s.pending.byteCount = 0
-					hbMonitor = s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+					if hbMonitor != nil {
+						hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+					}
 				}
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
-					hbMonitor.Stop()
+					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 				}
 				isConnected = false
 			}
