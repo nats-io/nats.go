@@ -133,7 +133,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				if c.withStopAfter {
 					select {
 					case c.stopAfter = <-c.stopAfterMsgsLeft:
-					case <-time.After(1 * time.Second):
+					default:
 					}
 					if c.stopAfter <= 0 {
 						sub.Stop()
