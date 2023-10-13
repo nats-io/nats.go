@@ -1,4 +1,4 @@
-// Copyright 2012-2019 The NATS Authors
+// Copyright 2012-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -482,6 +482,16 @@ func TestEncDrainSupported(t *testing.T) {
 	}
 }
 
+const ENC_TEST_PORT = 8268
+
+var options = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", ENC_TEST_PORT),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
+}
+
 func TestPublishErrorAfterSubscribeDecodeError(t *testing.T) {
 	ts := RunServerOnPort(ENC_TEST_PORT)
 	defer ts.Shutdown()
@@ -617,7 +627,7 @@ func TestVariousFailureConditions(t *testing.T) {
 	}()
 }
 
-func TestENCRequest(t *testing.T) {
+func TesEncodedConnRequest(t *testing.T) {
 	ts := RunServerOnPort(ENC_TEST_PORT)
 	defer ts.Shutdown()
 

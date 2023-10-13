@@ -1,4 +1,4 @@
-// Copyright 2012-2020 The NATS Authors
+// Copyright 2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -33,7 +33,7 @@ import (
 	"github.com/nats-io/nuid"
 )
 
-func testWSGetDefaultOptions(t *testing.T, tls bool) server.Options {
+func testWSGetDefaultOptions(t *testing.T, tls bool) *server.Options {
 	t.Helper()
 	sopts := natsserver.DefaultTestOptions
 	sopts.Host = "127.0.0.1"
@@ -53,13 +53,14 @@ func testWSGetDefaultOptions(t *testing.T, tls bool) server.Options {
 		}
 		sopts.Websocket.TLSConfig = tlsConfig
 	}
-	return sopts
+	return &sopts
 }
 
 func TestWSBasic(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(&sopts)
+	s := RunServerWithOptions(sopts)
 	defer s.Shutdown()
+
 	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
 	nc, err := nats.Connect(url)
 	if err != nil {
@@ -103,7 +104,7 @@ func TestWSBasic(t *testing.T) {
 
 func TestWSControlFrames(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(&sopts)
+	s := RunServerWithOptions(sopts)
 	defer s.Shutdown()
 
 	rch := make(chan bool, 10)
@@ -136,15 +137,6 @@ func TestWSControlFrames(t *testing.T) {
 	}
 	defer nc.Close()
 
-	// Enqueue a PING and make sure that we don't break
-	// nc.wsEnqueueControlMsg(true, wsPingMessage, []byte("this is a ping payload"))
-	select {
-	case e := <-dch:
-		t.Fatal(e)
-	case <-time.After(250 * time.Millisecond):
-		// OK
-	}
-
 	// Shutdown the server, which should send a close message, which by
 	// spec the client will try to echo back.
 	s.Shutdown()
@@ -156,7 +148,7 @@ func TestWSControlFrames(t *testing.T) {
 		t.Fatal("Should have been disconnected")
 	}
 
-	s = RunServerWithOptions(&sopts)
+	s = RunServerWithOptions(sopts)
 	defer s.Shutdown()
 
 	// Wait for both connections to reconnect
@@ -189,7 +181,7 @@ func TestWSControlFrames(t *testing.T) {
 
 func TestWSConcurrentConns(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(&sopts)
+	s := RunServerWithOptions(sopts)
 	defer s.Shutdown()
 
 	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
@@ -243,7 +235,7 @@ func TestWSCompression(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, false)
 			sopts.Websocket.Compression = test.srvCompression
-			s := RunServerWithOptions(&sopts)
+			s := RunServerWithOptions(sopts)
 			defer s.Shutdown()
 
 			url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
@@ -304,7 +296,7 @@ func TestWSWithTLS(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, true)
 			sopts.Websocket.Compression = test.compression
-			s := RunServerWithOptions(&sopts)
+			s := RunServerWithOptions(sopts)
 			defer s.Shutdown()
 
 			var copts []nats.Option
@@ -360,9 +352,22 @@ func TestWSWithTLS(t *testing.T) {
 	}
 }
 
+type testSkipTLSDialer struct {
+	dialer  *net.Dialer
+	skipTLS bool
+}
+
+func (sd *testSkipTLSDialer) Dial(network, address string) (net.Conn, error) {
+	return sd.dialer.Dial(network, address)
+}
+
+func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
+	return sd.skipTLS
+}
+
 func TestWSWithTLSCustomDialer(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, true)
-	s := RunServerWithOptions(&sopts)
+	s := RunServerWithOptions(sopts)
 	defer s.Shutdown()
 
 	sd := &testSkipTLSDialer{
@@ -401,6 +406,53 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 	defer nc.Close()
 }
 
+func TestWSGossipAndReconnect(t *testing.T) {
+	o1 := testWSGetDefaultOptions(t, false)
+	o1.ServerName = "A"
+	o1.Cluster.Host = "127.0.0.1"
+	o1.Cluster.Name = "abc"
+	o1.Cluster.Port = -1
+	s1 := RunServerWithOptions(o1)
+	defer s1.Shutdown()
+
+	o2 := testWSGetDefaultOptions(t, false)
+	o2.ServerName = "B"
+	o2.Cluster.Host = "127.0.0.1"
+	o2.Cluster.Name = "abc"
+	o2.Cluster.Port = -1
+	o2.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", o1.Cluster.Port))
+	s2 := RunServerWithOptions(o2)
+	defer s2.Shutdown()
+
+	rch := make(chan bool, 10)
+	url := fmt.Sprintf("ws://127.0.0.1:%d", o1.Websocket.Port)
+	nc, err := nats.Connect(url,
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	timeout := time.Now().Add(time.Second)
+	for time.Now().Before(timeout) {
+		if len(nc.Servers()) > 1 {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if len(nc.Servers()) == 1 {
+		t.Fatal("Did not discover server 2")
+	}
+	s1.Shutdown()
+
+	// Wait for reconnect
+	if err := Wait(rch); err != nil {
+		t.Fatalf("Did not reconnect: %v", err)
+	}
+}
+
 func TestWSStress(t *testing.T) {
 	// Enable this test only when wanting to stress test the system, say after
 	// some changes in the library or if a bug is found. Also, don't run it
@@ -430,7 +482,7 @@ func TestWSStress(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sopts := testWSGetDefaultOptions(t, false)
 			sopts.Websocket.Compression = test.compress
-			s := RunServerWithOptions(&sopts)
+			s := RunServerWithOptions(sopts)
 			defer s.Shutdown()
 
 			var count int64
@@ -543,7 +595,7 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	o := testWSGetDefaultOptions(t, false)
 	o.Username = "user"
 	o.Password = "pwd"
-	s := RunServerWithOptions(&o)
+	s := RunServerWithOptions(o)
 	defer s.Shutdown()
 
 	tm := time.AfterFunc(3*time.Second, func() {

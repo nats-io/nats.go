@@ -1,4 +1,4 @@
-// Copyright 2012-2020 The NATS Authors
+// Copyright 2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -10,11 +10,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package test
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"net"
@@ -35,14 +33,11 @@ import (
 )
 
 func TestMaxConnectionsReconnect(t *testing.T) {
-
 	// Start first server
 	s1Opts := natsserver.DefaultTestOptions
 	s1Opts.Port = -1
 	s1Opts.MaxConn = 2
-	s1Opts.Cluster.Name = "test"
-	s1Opts.Cluster.Host = "127.0.0.1"
-	s1Opts.Cluster.Port = -1
+	s1Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
 	s1 := RunServerWithOptions(&s1Opts)
 	defer s1.Shutdown()
 
@@ -50,9 +45,7 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	s2Opts := natsserver.DefaultTestOptions
 	s2Opts.Port = -1
 	s2Opts.MaxConn = 2
-	s2Opts.Cluster.Name = "test"
-	s2Opts.Cluster.Host = "127.0.0.1"
-	s2Opts.Cluster.Port = -1
+	s2Opts.Cluster = server.ClusterOpts{Name: "test", Host: "127.0.0.1", Port: -1}
 	s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s1Opts.Cluster.Port))
 	s2 := RunServerWithOptions(&s2Opts)
 	defer s2.Shutdown()
@@ -191,6 +184,21 @@ func runTrustServer() *server.Server {
 	return s
 }
 
+func createTmpFile(t *testing.T, content []byte) string {
+	t.Helper()
+	conf, err := os.CreateTemp("", "")
+	if err != nil {
+		t.Fatalf("Error creating conf file: %v", err)
+	}
+	fName := conf.Name()
+	conf.Close()
+	if err := os.WriteFile(fName, content, 0666); err != nil {
+		os.Remove(fName)
+		t.Fatalf("Error writing conf file: %v", err)
+	}
+	return fName
+}
+
 func TestBasicUserJWTAuth(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
@@ -281,6 +289,38 @@ func TestUserCredentialsChainedFile(t *testing.T) {
 	}
 }
 
+func TestReconnectMissingCredentials(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	chainedFile := createTmpFile(t, []byte(chained))
+	defer os.Remove(chainedFile)
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	errs := make(chan error, 1)
+	nc, err := nats.Connect(url, nats.UserCredentials(chainedFile), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+		errs <- err
+	}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	defer nc.Close()
+	os.Remove(chainedFile)
+	ts.Shutdown()
+
+	ts = runTrustServer()
+	defer ts.Shutdown()
+
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "no such file or directory") {
+			t.Fatalf("Expected error about missing creds file, got %q", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Did not get error about missing creds file")
+	}
+}
+
 func TestUserJWTAndSeed(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
@@ -320,7 +360,7 @@ func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 	}
 	var err error
 	if opts.TLSConfig, err = server.GenTLSConfig(tc); err != nil {
-		panic("Can't build TLCConfig")
+		t.Fatalf("Unexpected error: %s", err)
 	}
 
 	// copy the opts for the second server.
@@ -361,6 +401,14 @@ func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 	}
 }
 
+var natsReconnectOpts = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
+}
+
 func TestNkeyAuth(t *testing.T) {
 	if server.VERSION[0] == '1' {
 		t.Skip()
@@ -376,7 +424,7 @@ func TestNkeyAuth(t *testing.T) {
 	ts := RunServerWithOptions(&sopts)
 	defer ts.Shutdown()
 
-	opts := reconnectOpts
+	opts := natsReconnectOpts
 	if _, err := opts.Connect(); err == nil {
 		t.Fatalf("Expected to fail with no nkey auth defined")
 	}
@@ -413,117 +461,6 @@ func TestNkeyAuth(t *testing.T) {
 	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		t.Fatalf("Error on Flush: %v", err)
 	}
-}
-
-func createTmpFile(t *testing.T, content []byte) string {
-	t.Helper()
-	conf, err := os.CreateTemp("", "")
-	if err != nil {
-		t.Fatalf("Error creating conf file: %v", err)
-	}
-	fName := conf.Name()
-	conf.Close()
-	if err := os.WriteFile(fName, content, 0666); err != nil {
-		os.Remove(fName)
-		t.Fatalf("Error writing conf file: %v", err)
-	}
-	return fName
-}
-
-func TestNKeyOptionFromSeed(t *testing.T) {
-	if _, err := nats.NkeyOptionFromSeed("file_that_does_not_exist"); err == nil {
-		t.Fatal("Expected error got none")
-	}
-
-	seedFile := createTmpFile(t, []byte(`
-		# No seed
-		THIS_NOT_A_NKEY_SEED
-	`))
-	defer os.Remove(seedFile)
-	if _, err := nats.NkeyOptionFromSeed(seedFile); err == nil || !strings.Contains(err.Error(), "seed found") {
-		t.Fatalf("Expected error about seed not found, got %v", err)
-	}
-	os.Remove(seedFile)
-
-	seedFile = createTmpFile(t, []byte(`
-		# Invalid seed
-		SUBADSEED
-	`))
-	// Make sure that we detect SU (trim space) but it still fails because
-	// this is not a valid NKey.
-	if _, err := nats.NkeyOptionFromSeed(seedFile); err == nil || strings.Contains(err.Error(), "seed found") {
-		t.Fatalf("Expected error about invalid key, got %v", err)
-	}
-	os.Remove(seedFile)
-
-	kp, _ := nkeys.CreateUser()
-	seed, _ := kp.Seed()
-	seedFile = createTmpFile(t, seed)
-	opt, err := nats.NkeyOptionFromSeed(seedFile)
-	if err != nil {
-		t.Fatalf("Error: %v", err)
-	}
-
-	l, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal("Could not listen on an ephemeral port")
-	}
-	tl := l.(*net.TCPListener)
-	defer tl.Close()
-
-	addr := tl.Addr().(*net.TCPAddr)
-
-	ch := make(chan bool, 1)
-	errCh := make(chan error, 1)
-	rs := func(ch chan bool) {
-		conn, err := l.Accept()
-		if err != nil {
-			errCh <- fmt.Errorf("error accepting client connection: %v", err)
-			return
-		}
-		defer conn.Close()
-		info := "INFO {\"server_id\":\"foobar\",\"nonce\":\"anonce\"}\r\n"
-		conn.Write([]byte(info))
-
-		// Read connect and ping commands sent from the client
-		br := bufio.NewReaderSize(conn, 10*1024)
-		line, _, err := br.ReadLine()
-		if err != nil {
-			errCh <- fmt.Errorf("expected CONNECT and PING from client, got: %s", err)
-			return
-		}
-		// If client got an error reading the seed, it will not send it
-		if bytes.Contains(line, []byte(`"sig":`)) {
-			conn.Write([]byte("PONG\r\n"))
-		} else {
-			conn.Write([]byte(`-ERR go away\r\n`))
-			conn.Close()
-		}
-		// Now wait to be notified that we can finish
-		<-ch
-		errCh <- nil
-	}
-	go rs(ch)
-
-	nc, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt)
-	if err != nil {
-		t.Fatalf("Error on connect: %v", err)
-	}
-	nc.Close()
-	close(ch)
-
-	checkErrChannel(t, errCh)
-
-	// Now that option is already created, change content of file
-	os.WriteFile(seedFile, []byte(`xxxxx`), 0666)
-	ch = make(chan bool, 1)
-	go rs(ch)
-
-	if _, err := nats.Connect(fmt.Sprintf("nats://127.0.0.1:%d", addr.Port), opt); err == nil {
-		t.Fatal("Expected error, got none")
-	}
-	close(ch)
-	checkErrChannel(t, errCh)
 }
 
 func TestLookupHostResultIsRandomized(t *testing.T) {
@@ -594,7 +531,27 @@ func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
 	}
 }
 
-// }
+func TestConnectedAddr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	var nc *nats.Conn
+	if addr := nc.ConnectedAddr(); addr != "" {
+		t.Fatalf("Expected empty result for nil connection, got %q", addr)
+	}
+	nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	expected := s.Addr().String()
+	if addr := nc.ConnectedAddr(); addr != expected {
+		t.Fatalf("Expected address %q, got %q", expected, addr)
+	}
+	nc.Close()
+	if addr := nc.ConnectedAddr(); addr != "" {
+		t.Fatalf("Expected empty result for closed connection, got %q", addr)
+	}
+}
 
 func TestSubscribeSyncRace(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
@@ -798,6 +755,34 @@ func TestStatsRace(t *testing.T) {
 
 	close(ch)
 	wg.Wait()
+}
+
+func TestRequestLeaksMapEntries(t *testing.T) {
+	o := natsserver.DefaultTestOptions
+	o.Port = -1
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", o.Host, o.Port))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	response := []byte("I will help you")
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		nc.Publish(m.Reply, response)
+	})
+
+	for i := 0; i < 100; i++ {
+		msg, err := nc.Request("foo", nil, 500*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Received an error on Request test: %s", err)
+		}
+		if !bytes.Equal(msg.Data, response) {
+			t.Fatalf("Received invalid response")
+		}
+	}
 }
 
 func TestRequestMultipleReplies(t *testing.T) {
@@ -1060,7 +1045,7 @@ func TestCustomInboxPrefix(t *testing.T) {
 	for _, p := range []string{"$BOB.", "$BOB.*", "$BOB.>", ">", ".", "", "BOB.*.X", "BOB.>.X"} {
 		err := nats.CustomInboxPrefix(p)(opts)
 		if err == nil {
-			t.Fatalf("Expeted error for %q", p)
+			t.Fatalf("Expected error for %q", p)
 		}
 	}
 
@@ -1095,6 +1080,41 @@ func TestCustomInboxPrefix(t *testing.T) {
 
 	if !bytes.Equal(resp.Data, []byte("ok")) {
 		t.Fatalf("did not receive ok: %q", resp.Data)
+	}
+}
+
+func TestRespInbox(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	if _, err := nc.Subscribe("foo", func(msg *nats.Msg) {
+		lastDot := strings.LastIndex(msg.Reply, ".")
+		if lastDot == -1 {
+			msg.Respond([]byte(fmt.Sprintf("Invalid reply subject: %q", msg.Reply)))
+			return
+		}
+		lastToken := msg.Reply[lastDot+1:]
+		replySuffixLen := 8
+		if len(lastToken) != replySuffixLen {
+			msg.Respond([]byte(fmt.Sprintf("Invalid last token: %q", lastToken)))
+			return
+		}
+		msg.Respond(nil)
+	}); err != nil {
+		t.Fatalf("subscribe failed: %s", err)
+	}
+	resp, err := nc.Request("foo", []byte("check inbox"), time.Second)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	if len(resp.Data) > 0 {
+		t.Fatalf("Error: %s", resp.Data)
 	}
 }
 

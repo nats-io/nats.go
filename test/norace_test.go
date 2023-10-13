@@ -1,4 +1,4 @@
-// Copyright 2019-2022 The NATS Authors
+// Copyright 2019-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -171,74 +171,6 @@ func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("Failed to get all %d messages, only got %d", toSend, received)
 	case <-done:
-	}
-}
-
-func TestNoRaceJetStreamChanSubscribeStall(t *testing.T) {
-	conf := createConfFile(t, []byte(`
-		listen: 127.0.0.1:-1
-		jetstream: enabled
-		no_auth_user: pc
-		accounts: {
-			JS: {
-				jetstream: enabled
-				users: [ {user: pc, password: foo} ]
-			},
-		}
-	`))
-	defer os.Remove(conf)
-
-	s, _ := RunServerWithConfig(conf)
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	var err error
-
-	// Create a stream.
-	if _, err = js.AddStream(&nats.StreamConfig{Name: "STALL"}); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	_, err = js.StreamInfo("STALL")
-	if err != nil {
-		t.Fatalf("stream lookup failed: %v", err)
-	}
-
-	msg := []byte(strings.Repeat("A", 512))
-	toSend := 100_000
-	for i := 0; i < toSend; i++ {
-		// Use plain NATS here for speed.
-		nc.Publish("STALL", msg)
-	}
-	nc.Flush()
-
-	batch := 100
-	msgs := make(chan *nats.Msg, batch-2)
-	sub, err := js.ChanSubscribe("STALL", msgs,
-		nats.Durable("dlc"),
-		nats.EnableFlowControl(),
-		nats.IdleHeartbeat(5*time.Second),
-		nats.MaxAckPending(batch-2),
-	)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer sub.Unsubscribe()
-
-	for received := 0; received < toSend; {
-		select {
-		case m := <-msgs:
-			received++
-			meta, _ := m.Metadata()
-			if meta.Sequence.Consumer != uint64(received) {
-				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Sequence.Consumer)
-			}
-			m.Ack()
-		case <-time.After(time.Second):
-			t.Fatalf("Timeout waiting for messages, last received was %d", received)
-		}
 	}
 }
 
@@ -726,6 +658,7 @@ func TestNoRaceJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 			delivered <- m
 			if len(delivered) == totalMsgs {
 				cancel()
+				return
 			}
 		}
 	}()
@@ -764,5 +697,73 @@ func TestNoRaceJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 	case <-time.After(1 * time.Second):
 	case err := <-errCh:
 		t.Errorf("error handler: %v", err)
+	}
+}
+
+func TestNoRaceJetStreamChanSubscribeStall(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: enabled
+		no_auth_user: pc
+		accounts: {
+			JS: {
+				jetstream: enabled
+				users: [ {user: pc, password: foo} ]
+			},
+		}
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	var err error
+
+	// Create a stream.
+	if _, err = js.AddStream(&nats.StreamConfig{Name: "STALL"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.StreamInfo("STALL")
+	if err != nil {
+		t.Fatalf("stream lookup failed: %v", err)
+	}
+
+	msg := []byte(strings.Repeat("A", 512))
+	toSend := 100_000
+	for i := 0; i < toSend; i++ {
+		// Use plain NATS here for speed.
+		nc.Publish("STALL", msg)
+	}
+	nc.Flush()
+
+	batch := 100
+	msgs := make(chan *nats.Msg, batch-2)
+	sub, err := js.ChanSubscribe("STALL", msgs,
+		nats.Durable("dlc"),
+		nats.EnableFlowControl(),
+		nats.IdleHeartbeat(5*time.Second),
+		nats.MaxAckPending(batch-2),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	for received := 0; received < toSend; {
+		select {
+		case m := <-msgs:
+			received++
+			meta, _ := m.Metadata()
+			if meta.Sequence.Consumer != uint64(received) {
+				t.Fatalf("Missed something, wanted %d but got %d", received, meta.Sequence.Consumer)
+			}
+			m.Ack()
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout waiting for messages, last received was %d", received)
+		}
 	}
 }
