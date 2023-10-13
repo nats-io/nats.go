@@ -16,7 +16,6 @@ package test
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -148,29 +147,4 @@ func createConfFile(t *testing.T, content []byte) string {
 		t.Fatalf("Error writing conf file: %v", err)
 	}
 	return fName
-}
-
-type testSkipTLSDialer struct {
-	dialer  *net.Dialer
-	skipTLS bool
-}
-
-func (sd *testSkipTLSDialer) Dial(network, address string) (net.Conn, error) {
-	return sd.dialer.Dial(network, address)
-}
-
-func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
-	return sd.skipTLS
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Reconnect tests
-////////////////////////////////////////////////////////////////////////////////
-
-var reconnectOpts = nats.Options{
-	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
-	AllowReconnect: true,
-	MaxReconnect:   10,
-	ReconnectWait:  100 * time.Millisecond,
-	Timeout:        nats.DefaultTimeout,
 }

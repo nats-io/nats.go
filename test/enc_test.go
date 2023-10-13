@@ -25,18 +25,6 @@ import (
 	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
 )
 
-// Since we import above nats packages, we need to have a different
-// const name than TEST_PORT that we used on the other packages.
-const ENC_TEST_PORT = 8268
-
-var options = nats.Options{
-	Url:            fmt.Sprintf("nats://127.0.0.1:%d", ENC_TEST_PORT),
-	AllowReconnect: true,
-	MaxReconnect:   10,
-	ReconnectWait:  100 * time.Millisecond,
-	Timeout:        nats.DefaultTimeout,
-}
-
 func NewDefaultEConn(t *testing.T) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(NewConnection(t, TEST_PORT), nats.DEFAULT_ENCODER)
 	if err != nil {

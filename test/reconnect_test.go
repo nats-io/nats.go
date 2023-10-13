@@ -730,6 +730,14 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 	}
 }
 
+var reconnectOpts = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
+}
+
 func TestConnCloseNoCallback(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
