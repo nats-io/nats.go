@@ -61,7 +61,7 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	return errors.New("timeout")
 }
 
-func stackFatalf(t *testing.T, f string, args ...interface{}) {
+func stackFatalf(t *testing.T, f string, args ...any) {
 	lines := make([]string, 0, 32)
 	msg := fmt.Sprintf(f, args...)
 	lines = append(lines, msg)
@@ -1576,7 +1576,7 @@ func TestNoPanicOnSrvPoolSizeChanging(t *testing.T) {
 func TestHeaderParser(t *testing.T) {
 	shouldErr := func(hdr string) {
 		t.Helper()
-		if _, err := decodeHeadersMsg([]byte(hdr)); err == nil {
+		if _, err := DecodeHeadersMsg([]byte(hdr)); err == nil {
 			t.Fatalf("Expected an error")
 		}
 	}
@@ -1588,7 +1588,7 @@ func TestHeaderParser(t *testing.T) {
 	// Check that we can do inline status and descriptions
 	checkStatus := func(hdr string, status int, description string) {
 		t.Helper()
-		hdrs, err := decodeHeadersMsg([]byte(hdr + "\r\n\r\n"))
+		hdrs, err := DecodeHeadersMsg([]byte(hdr + "\r\n\r\n"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1782,7 +1782,7 @@ func BenchmarkHeaderDecode(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				if _, err := decodeHeadersMsg(hdr); err != nil {
+				if _, err := DecodeHeadersMsg(hdr); err != nil {
 					b.Fatalf("Unexpected error: %v", err)
 				}
 			}

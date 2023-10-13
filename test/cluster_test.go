@@ -114,7 +114,7 @@ func TestServersOption(t *testing.T) {
 }
 
 func TestNewStyleServersOption(t *testing.T) {
-	nc, err := nats.Connect(nats.DefaultURL, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
+	_, err := nats.Connect(nats.DefaultURL, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
 	if runtime.GOOS == "windows" {
 		if err == nil || !strings.Contains(err.Error(), "timeout") {
 			t.Fatalf("Expected timeout, got %v", err)
@@ -122,7 +122,6 @@ func TestNewStyleServersOption(t *testing.T) {
 	} else if err != nats.ErrNoServers {
 		t.Fatalf("Wrong error: '%v'\n", err)
 	}
-	defer nc.Close()
 	servers := strings.Join(testServers, ",")
 
 	_, err = nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
@@ -139,7 +138,7 @@ func TestNewStyleServersOption(t *testing.T) {
 	// Do this in case some failure occurs before explicit shutdown
 	defer s1.Shutdown()
 
-	nc, err = nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
+	nc, err := nats.Connect(servers, nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
 	if err != nil {
 		t.Fatalf("Could not connect: %v\n", err)
 	}
