@@ -6,7 +6,7 @@ This file lists the dependencies used in this repository.
 |-----------------------------------|--------------|
 | Go                                | BSD 3-Clause |
 | github.com/golang/protobuf/proto  | BSD-3-Clause |
-| github.com/klauspost/compress     | Apache-2.0   |
+| github.com/klauspost/compress     | BSD-3-Clause |
 | github.com/nats-io/nats-server/v2 | Apache-2.0   |
 | github.com/nats-io/nkeys          | Apache-2.0   |
 | github.com/nats-io/nuid           | Apache-2.0   |
