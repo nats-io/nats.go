@@ -18,25 +18,9 @@ package nats
 ////////////////////////////////////////////////////////////////////////////////
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
-
-func createConfFile(t *testing.T, content []byte) string {
-	t.Helper()
-	conf, err := os.CreateTemp("", "")
-	if err != nil {
-		t.Fatalf("Error creating conf file: %v", err)
-	}
-	fName := conf.Name()
-	conf.Close()
-	if err := os.WriteFile(fName, content, 0666); err != nil {
-		os.Remove(fName)
-		t.Fatalf("Error writing conf file: %v", err)
-	}
-	return fName
-}
 
 func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	// This test checks the conversion of a "direct get message" response

@@ -1154,7 +1154,7 @@ func TestKeyValueNonDirectGet(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	kvi, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
 	if err != nil {
 		t.Fatalf("Error creating store: %v", err)
 	}
@@ -1171,7 +1171,7 @@ func TestKeyValueNonDirectGet(t *testing.T) {
 	if _, err := js.UpdateStream(&cfg); err != nil {
 		t.Fatalf("Error updating stream: %v", err)
 	}
-	kvi, err = js.KeyValue("TEST")
+	kvi, err := js.KeyValue("TEST")
 	if err != nil {
 		t.Fatalf("Error getting kv: %v", err)
 	}

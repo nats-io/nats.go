@@ -3077,28 +3077,6 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 // Return what is to be used. If we return nil the message will be dropped.
 type msgFilter func(m *Msg) *Msg
 
-func (nc *Conn) addMsgFilter(subject string, filter msgFilter) {
-	nc.subsMu.Lock()
-	defer nc.subsMu.Unlock()
-
-	if nc.filters == nil {
-		nc.filters = make(map[string]msgFilter)
-	}
-	nc.filters[subject] = filter
-}
-
-func (nc *Conn) removeMsgFilter(subject string) {
-	nc.subsMu.Lock()
-	defer nc.subsMu.Unlock()
-
-	if nc.filters != nil {
-		delete(nc.filters, subject)
-		if len(nc.filters) == 0 {
-			nc.filters = nil
-		}
-	}
-}
-
 // processMsg is called by parse and will place the msg on the
 // appropriate channel/pending queue for processing. If the channel is full,
 // or the pending queue is over the pending limits, the connection is
