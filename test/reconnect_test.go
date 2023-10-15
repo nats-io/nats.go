@@ -27,7 +27,7 @@ import (
 )
 
 func startReconnectServer(t *testing.T) *server.Server {
-	return RunServerOnPort(22222)
+	return RunServerOnPort(TEST_PORT)
 }
 
 func TestReconnectTotalTime(t *testing.T) {
@@ -55,7 +55,7 @@ func TestReconnectDisallowedFlags(t *testing.T) {
 
 	ch := make(chan bool)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://127.0.0.1:22222"
+	opts.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	opts.AllowReconnect = false
 	opts.ClosedCB = func(_ *nats.Conn) {
 		ch <- true
@@ -79,7 +79,7 @@ func TestReconnectAllowedFlags(t *testing.T) {
 	ch := make(chan bool)
 	dch := make(chan bool)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://127.0.0.1:22222"
+	opts.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 2
 	opts.ReconnectWait = 1 * time.Second
@@ -117,14 +117,6 @@ func TestReconnectAllowedFlags(t *testing.T) {
 
 	// clear the CloseCB since ch will block
 	nc.Opts.ClosedCB = nil
-}
-
-var reconnectOpts = nats.Options{
-	Url:            "nats://127.0.0.1:22222",
-	AllowReconnect: true,
-	MaxReconnect:   10,
-	ReconnectWait:  100 * time.Millisecond,
-	Timeout:        nats.DefaultTimeout,
 }
 
 func TestConnCloseBreaksReconnectLoop(t *testing.T) {
@@ -414,7 +406,7 @@ func TestIsClosed(t *testing.T) {
 	ts := startReconnectServer(t)
 	defer ts.Shutdown()
 
-	nc := NewConnection(t, 22222)
+	nc := NewConnection(t, TEST_PORT)
 	defer nc.Close()
 
 	if nc.IsClosed() {
@@ -442,7 +434,7 @@ func TestIsReconnectingAndStatus(t *testing.T) {
 	disconnectedch := make(chan bool, 3)
 	reconnectch := make(chan bool, 2)
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://127.0.0.1:22222"
+	opts.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
@@ -512,7 +504,7 @@ func TestFullFlushChanDuringReconnect(t *testing.T) {
 	reconnectch := make(chan bool, 2)
 
 	opts := nats.GetDefaultOptions()
-	opts.Url = "nats://127.0.0.1:22222"
+	opts.Url = fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
 	opts.AllowReconnect = true
 	opts.MaxReconnect = 10000
 	opts.ReconnectWait = 100 * time.Millisecond
@@ -736,6 +728,14 @@ func TestReconnectTLSHostNoIP(t *testing.T) {
 	if e := WaitTime(rch, time.Second); e != nil {
 		t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
 	}
+}
+
+var reconnectOpts = nats.Options{
+	Url:            fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT),
+	AllowReconnect: true,
+	MaxReconnect:   10,
+	ReconnectWait:  100 * time.Millisecond,
+	Timeout:        nats.DefaultTimeout,
 }
 
 func TestConnCloseNoCallback(t *testing.T) {

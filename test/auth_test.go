@@ -1,4 +1,4 @@
-// Copyright 2012-2020 The NATS Authors
+// Copyright 2012-2023 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -32,7 +32,7 @@ func TestAuth(t *testing.T) {
 	opts.Port = 8232
 	opts.Username = "derek"
 	opts.Password = "foo"
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	_, err := nats.Connect("nats://127.0.0.1:8232")
@@ -75,7 +75,7 @@ func TestAuthFailNoDisconnectErrCB(t *testing.T) {
 	opts.Port = 8232
 	opts.Username = "derek"
 	opts.Password = "foo"
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	copts := nats.GetDefaultOptions()
@@ -108,7 +108,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	opts2.Port = 23233
 	opts2.Username = "ivan"
 	opts2.Password = "foo"
-	ts2 := RunServerWithOptions(opts2)
+	ts2 := RunServerWithOptions(&opts2)
 	defer ts2.Shutdown()
 
 	ts3 := RunServerOnPort(23234)
@@ -172,7 +172,7 @@ func TestTokenHandlerReconnect(t *testing.T) {
 	opts2.Port = 8233
 	secret := "S3Cr3T0k3n!"
 	opts2.Authorization = secret
-	ts2 := RunServerWithOptions(opts2)
+	ts2 := RunServerWithOptions(&opts2)
 	defer ts2.Shutdown()
 
 	reconnectch := make(chan bool)
@@ -225,7 +225,7 @@ func TestTokenAuth(t *testing.T) {
 	opts.Port = 8232
 	secret := "S3Cr3T0k3n!"
 	opts.Authorization = secret
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	_, err := nats.Connect("nats://127.0.0.1:8232")
@@ -269,7 +269,7 @@ func TestTokenHandlerAuth(t *testing.T) {
 	opts.Port = 8232
 	secret := "S3Cr3T0k3n!"
 	opts.Authorization = secret
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	_, err := nats.Connect("nats://127.0.0.1:8232")
@@ -320,7 +320,7 @@ func TestPermViolation(t *testing.T) {
 			},
 		},
 	}
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	errCh := make(chan error, 2)

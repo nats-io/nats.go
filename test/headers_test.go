@@ -122,7 +122,7 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 	s1Opts.Cluster.Name = "CLUSTER"
 	s1Opts.Cluster.Host = "127.0.0.1"
 	s1Opts.Cluster.Port = -1
-	s := natsserver.RunServer(&s1Opts)
+	s := RunServerWithOptions(&s1Opts)
 	defer s.Shutdown()
 
 	nc, err := nats.Connect(s.ClientURL())
@@ -163,7 +163,7 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 		s2Opts.Cluster.Port = -1
 		s2Opts.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", s.ClusterAddr().Port))
 		for {
-			s := natsserver.RunServer(&s2Opts)
+			s := RunServerWithOptions(&s2Opts)
 			s.Shutdown()
 			select {
 			case <-ch:
@@ -196,7 +196,7 @@ func TestNoHeaderSupport(t *testing.T) {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.NoHeaderSupport = true
-	s := RunServerWithOptions(opts)
+	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
 	nc, err := nats.Connect(s.ClientURL())

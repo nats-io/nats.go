@@ -28,6 +28,8 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
+const TEST_PORT = 8368
+
 // So that we can pass tests and benchmarks...
 type tLogger interface {
 	Fatalf(format string, args ...any)
@@ -112,12 +114,12 @@ func RunServerOnPort(port int) *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = port
 	opts.Cluster.Name = "testing"
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
 // RunServerWithOptions will run a server with the given options.
-func RunServerWithOptions(opts server.Options) *server.Server {
-	return natsserver.RunServer(&opts)
+func RunServerWithOptions(opts *server.Options) *server.Server {
+	return natsserver.RunServer(opts)
 }
 
 // RunServerWithConfig will run a server with the given configuration file.
@@ -129,7 +131,7 @@ func RunBasicJetStreamServer() *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.JetStream = true
-	return RunServerWithOptions(opts)
+	return RunServerWithOptions(&opts)
 }
 
 func createConfFile(t *testing.T, content []byte) string {
