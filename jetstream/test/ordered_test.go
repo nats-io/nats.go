@@ -84,6 +84,128 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		l.Stop()
 	})
 
+	t.Run("base usage, server shutdown", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]jetstream.Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		errs := make(chan error)
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
+			if errors.Is(err, jetstream.ErrConsumerNotFound) {
+				errs <- err
+			}
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		srv = restartBasicJSServer(t, srv)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		select {
+		case err := <-errs:
+			if !errors.Is(err, jetstream.ErrConsumerNotFound) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for error")
+		}
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		l.Stop()
+	})
+
+	t.Run("base usage, missing heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// we have to delete consumer before trying to consume
+		// in order to get missing heartbeats
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Config.Name); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errs := make(chan error)
+		msgs := make([]jetstream.Msg, 0)
+		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs))
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
+			errs <- err
+		}), jetstream.PullHeartbeat(1*time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		select {
+		case err := <-errs:
+			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for error")
+		}
+		wg.Wait()
+
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+		l.Stop()
+	})
+
 	t.Run("consumer used as fetch", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -340,6 +462,118 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		name := c.CachedInfo().Name
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
+		}
+		publishTestMsgs(t, nc)
+		for i := 0; i < 5; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			msgs = append(msgs, msg)
+		}
+		if len(msgs) != 2*len(testMsgs) {
+			t.Fatalf("Expected %d messages; got: %d", 2*len(testMsgs), len(msgs))
+		}
+	})
+
+	t.Run("base usage, server restart", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]jetstream.Msg, 0)
+		it, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer it.Stop()
+
+		publishTestMsgs(t, nc)
+		for i := 0; i < 5; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			msgs = append(msgs, msg)
+		}
+		srv = restartBasicJSServer(t, srv)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		publishTestMsgs(t, nc)
+		for i := 0; i < 5; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			msgs = append(msgs, msg)
+		}
+		if len(msgs) != 2*len(testMsgs) {
+			t.Fatalf("Expected %d messages; got: %d", 2*len(testMsgs), len(msgs))
+		}
+	})
+
+	t.Run("base usage, missing heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		name := c.CachedInfo().Name
+		if err := s.DeleteConsumer(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+		msgs := make([]jetstream.Msg, 0)
+		it, err := c.Messages(jetstream.PullHeartbeat(1 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer it.Stop()
+
+		publishTestMsgs(t, nc)
+		for i := 0; i < 5; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			msgs = append(msgs, msg)
 		}
 		publishTestMsgs(t, nc)
 		for i := 0; i < 5; i++ {
