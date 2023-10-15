@@ -156,7 +156,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if handler == nil {
 		return nil, ErrHandlerRequired
 	}
-	consumeOpts, err := parseConsumeOpts(opts...)
+	consumeOpts, err := parseConsumeOpts(false, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
@@ -418,7 +418,7 @@ func (s *pullSubscription) checkPending() {
 // [PullHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
 // [WithMessagesErrOnMissingHeartbeat] - sets whether a missing heartbeat error should be reported when calling Next
 func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
-	consumeOpts, err := parseMessagesOpts(opts...)
+	consumeOpts, err := parseMessagesOpts(false, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
@@ -870,7 +870,7 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	return nil
 }
 
-func parseConsumeOpts(opts ...PullConsumeOpt) (*consumeOpts, error) {
+func parseConsumeOpts(ordered bool, opts ...PullConsumeOpt) (*consumeOpts, error) {
 	consumeOpts := &consumeOpts{
 		MaxMessages:             unset,
 		MaxBytes:                unset,
@@ -884,13 +884,13 @@ func parseConsumeOpts(opts ...PullConsumeOpt) (*consumeOpts, error) {
 			return nil, err
 		}
 	}
-	if err := consumeOpts.setDefaults(); err != nil {
+	if err := consumeOpts.setDefaults(ordered); err != nil {
 		return nil, err
 	}
 	return consumeOpts, nil
 }
 
-func parseMessagesOpts(opts ...PullMessagesOpt) (*consumeOpts, error) {
+func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, error) {
 	consumeOpts := &consumeOpts{
 		MaxMessages:             unset,
 		MaxBytes:                unset,
@@ -904,13 +904,13 @@ func parseMessagesOpts(opts ...PullMessagesOpt) (*consumeOpts, error) {
 			return nil, err
 		}
 	}
-	if err := consumeOpts.setDefaults(); err != nil {
+	if err := consumeOpts.setDefaults(ordered); err != nil {
 		return nil, err
 	}
 	return consumeOpts, nil
 }
 
-func (consumeOpts *consumeOpts) setDefaults() error {
+func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset {
 		return fmt.Errorf("only one of MaxMessages and MaxBytes can be specified")
 	}
@@ -935,9 +935,16 @@ func (consumeOpts *consumeOpts) setDefaults() error {
 		consumeOpts.ThresholdBytes = int(math.Ceil(float64(consumeOpts.MaxBytes) / 2))
 	}
 	if consumeOpts.Heartbeat == unset {
-		consumeOpts.Heartbeat = consumeOpts.Expires / 2
-		if consumeOpts.Heartbeat > 30*time.Second {
-			consumeOpts.Heartbeat = 30 * time.Second
+		if ordered {
+			consumeOpts.Heartbeat = 5 * time.Second
+			if consumeOpts.Expires < 10*time.Second {
+				consumeOpts.Heartbeat = consumeOpts.Expires / 2
+			}
+		} else {
+			consumeOpts.Heartbeat = consumeOpts.Expires / 2
+			if consumeOpts.Heartbeat > 30*time.Second {
+				consumeOpts.Heartbeat = 30 * time.Second
+			}
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
@@ -978,24 +985,18 @@ func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
 	var shouldContinue bool
 	// if custom backoff is set, use it instead of other options
 	if len(opts.customBackoff) > 0 {
-		for i := 0; ; i++ {
-			if opts.attempts > 0 && i >= opts.attempts {
-				break
-			}
-			if i >= len(opts.customBackoff) {
-				if opts.attempts == 0 {
-					break
-				}
-				i = len(opts.customBackoff) - 1
+		if opts.attempts != 0 {
+			return fmt.Errorf("cannot use custom backoff intervals when attempts are set")
+		}
+		for i, interval := range opts.customBackoff {
+			select {
+			case <-opts.cancel:
+				return nil
+			case <-time.After(interval):
 			}
 			shouldContinue, err = f(i)
 			if !shouldContinue {
 				return err
-			}
-			select {
-			case <-opts.cancel:
-				return nil
-			case <-time.After(opts.customBackoff[i]):
 			}
 		}
 		return err
@@ -1024,17 +1025,17 @@ func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
 		if !shouldContinue {
 			return err
 		}
-		interval = time.Duration(float64(interval) * opts.factor)
-		if interval >= opts.maxInterval {
-			interval = opts.maxInterval
-		}
-		if opts.attempts > 0 && i >= opts.attempts {
+		if opts.attempts > 0 && i >= opts.attempts-1 {
 			break
 		}
 		select {
 		case <-opts.cancel:
 			return nil
 		case <-time.After(interval):
+		}
+		interval = time.Duration(float64(interval) * opts.factor)
+		if interval >= opts.maxInterval {
+			interval = opts.maxInterval
 		}
 	}
 	return err

@@ -116,3 +116,161 @@ func TestValidateSubject(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryWithBackoff(t *testing.T) {
+	tests := []struct {
+		name                  string
+		givenOpts             backoffOpts
+		withError             bool
+		timeout               time.Duration
+		cancelAfter           time.Duration
+		successfulAttemptNum  int
+		expectedAttemptsCount int
+	}{
+		{
+			name: "infinite attempts, 5 tries before success",
+			givenOpts: backoffOpts{
+				attempts:        -1,
+				initialInterval: 10 * time.Millisecond,
+				maxInterval:     60 * time.Millisecond,
+			},
+			withError:            false,
+			successfulAttemptNum: 5,
+			// 0ms + 10ms + 20ms + 40ms + 60ms = 130ms
+			timeout:               200 * time.Millisecond,
+			expectedAttemptsCount: 5,
+		},
+		{
+			name: "infinite attempts, 5 tries before success, without initial execution",
+			givenOpts: backoffOpts{
+				attempts:                -1,
+				initialInterval:         10 * time.Millisecond,
+				disableInitialExecution: true,
+				factor:                  2,
+				maxInterval:             60 * time.Millisecond,
+			},
+			withError:            false,
+			successfulAttemptNum: 5,
+			// 10ms + 20ms + 40ms + 60ms + 60 = 190ms
+			timeout:               250 * time.Millisecond,
+			expectedAttemptsCount: 5,
+		},
+		{
+			name: "5 attempts, unsuccessful",
+			givenOpts: backoffOpts{
+				attempts:        5,
+				initialInterval: 10 * time.Millisecond,
+				factor:          2,
+				maxInterval:     60 * time.Millisecond,
+			},
+			withError: true,
+			// 0ms + 10ms + 20ms + 40ms + 60ms = 130ms
+			timeout:               200 * time.Millisecond,
+			expectedAttemptsCount: 5,
+		},
+		{
+			name: "custom backoff values, should override other settings",
+			givenOpts: backoffOpts{
+				initialInterval: 2 * time.Second,
+				factor:          2,
+				maxInterval:     100 * time.Millisecond,
+				customBackoff:   []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond, 40 * time.Millisecond, 50 * time.Millisecond},
+			},
+			withError:            false,
+			successfulAttemptNum: 4,
+			// 10ms + 20ms + 30ms + 40ms = 100ms
+			timeout:               150 * time.Millisecond,
+			expectedAttemptsCount: 4,
+		},
+		{
+			name: "no custom backoff, with cancel",
+			givenOpts: backoffOpts{
+				attempts:        -1,
+				initialInterval: 100 * time.Millisecond,
+				factor:          1,
+			},
+			withError:             false,
+			cancelAfter:           150 * time.Millisecond,
+			timeout:               200 * time.Millisecond,
+			expectedAttemptsCount: 2,
+		},
+		{
+			name: "custom backoff, with cancel",
+			givenOpts: backoffOpts{
+				customBackoff: []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond},
+			},
+			cancelAfter:           150 * time.Millisecond,
+			expectedAttemptsCount: 1,
+			timeout:               200 * time.Millisecond,
+		},
+		{
+			name: "attempts num not provided",
+			givenOpts: backoffOpts{
+				initialInterval: 100 * time.Millisecond,
+				factor:          1,
+			},
+			withError:             true,
+			timeout:               1 * time.Second,
+			expectedAttemptsCount: 1,
+		},
+		{
+			name: "custom backoff, but attempts num provided",
+			givenOpts: backoffOpts{
+				customBackoff: []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond},
+				attempts:      5,
+			},
+			withError:             true,
+			timeout:               1 * time.Second,
+			expectedAttemptsCount: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ok := make(chan struct{})
+			errs := make(chan error, 1)
+
+			var cancelChan chan struct{}
+			if test.cancelAfter != 0 {
+				cancelChan = make(chan struct{})
+				test.givenOpts.cancel = cancelChan
+			}
+			var count int
+			go func() {
+				err := retryWithBackoff(func(attempt int) (bool, error) {
+					count = attempt
+					if test.successfulAttemptNum != 0 && attempt == test.successfulAttemptNum-1 {
+						return false, nil
+					}
+					return true, fmt.Errorf("error %d", attempt)
+				}, test.givenOpts)
+				if err != nil {
+					errs <- err
+					return
+				}
+				close(ok)
+			}()
+			if test.cancelAfter > 0 {
+				go func() {
+					time.Sleep(test.cancelAfter)
+					close(cancelChan)
+				}()
+			}
+			select {
+			case <-ok:
+				if test.withError {
+					t.Fatal("Expected error; got nil")
+				}
+			case err := <-errs:
+				if !test.withError {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			case <-time.After(test.timeout):
+				t.Fatalf("Timeout after %v", test.timeout)
+			}
+			if count != test.expectedAttemptsCount-1 {
+				t.Fatalf("Invalid count; want: %d; got: %d", test.expectedAttemptsCount, count)
+			}
+		})
+	}
+}

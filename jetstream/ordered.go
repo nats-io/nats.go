@@ -81,7 +81,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 		return nil, ErrOrderConsumerUsedAsFetch
 	}
 	c.consumerType = consumerTypeConsume
-	consumeOpts, err := parseConsumeOpts(opts...)
+	consumeOpts, err := parseConsumeOpts(true, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
@@ -203,7 +203,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 		return nil, ErrOrderConsumerUsedAsFetch
 	}
 	c.consumerType = consumerTypeConsume
-	consumeOpts, err := parseMessagesOpts(opts...)
+	consumeOpts, err := parseMessagesOpts(true, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
