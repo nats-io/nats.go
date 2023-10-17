@@ -351,7 +351,6 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
 		}
 		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
-			svc.asyncDispatcher.close()
 			return nil, err
 		}
 	}
