@@ -675,8 +675,8 @@ func (s *service) Stop() error {
 	s.stopped = true
 	if s.DoneHandler != nil {
 		s.asyncDispatcher.push(func() { s.DoneHandler(s) })
-		s.asyncDispatcher.close()
 	}
+	s.asyncDispatcher.close()
 	return nil
 }
 
