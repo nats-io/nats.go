@@ -526,7 +526,7 @@ func TestService(t *testing.T) {
 	})
 
 	// setup subscription on which tester will be sending requests
-	sub, err := nc.SubscribeSync("tests.service.service.>")
+	sub, err := nc.SubscribeSync("tests.service.core.>")
 	if err != nil {
 		t.Fatalf("Error subscribing to test subject: %v", err)
 	}
@@ -545,6 +545,9 @@ func TestService(t *testing.T) {
 
 	var services []micro.Service
 	svcCfg := cfg.Config
+	svcCfg.StatsHandler = func(e *micro.Endpoint) any {
+		return map[string]string{"endpoint": e.Name}
+	}
 	svc, err := micro.AddService(nc, svcCfg.Config)
 	if err != nil {
 		t.Fatalf("Error adding service: %v", err)
