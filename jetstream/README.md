@@ -6,7 +6,7 @@ This doc covers the basic usage of the `jetstream` package in `nats.go` client.
   - [Overview](#overview)
   - [Basic usage](#basic-usage)
   - [Streams](#streams)
-    - [Stream management (CRUD)](#stream-management--crud-)
+    - [Stream management (CRUD)](#stream-management-crud)
     - [Listing streams and stream names](#listing-streams-and-stream-names)
     - [Stream-specific operations](#stream-specific-operations)
   - [Consumers](#consumers)
