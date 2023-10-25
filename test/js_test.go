@@ -9421,14 +9421,14 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(consDeleteMsg.Subject, "$JS.API.CONSUMER.DELETE.") {
+	if !strings.HasPrefix(consDeleteMsg.Subject, "$JS.API.CONSUMER.") {
 		t.Fatalf("Unexpected message subject: %q", consDeleteMsg.Subject)
 	}
 	consCreateMsg, err := apiSub.NextMsg(2 * time.Second)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(consCreateMsg.Subject, "$JS.API.CONSUMER.CREATE.") {
+	if !strings.HasPrefix(consCreateMsg.Subject, "$JS.API.CONSUMER.") {
 		t.Fatalf("Unexpected message subject: %q", consCreateMsg.Subject)
 	}
 	if _, err := js.Publish("FOO.A", []byte("msg 2")); err != nil {

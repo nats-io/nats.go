@@ -2051,23 +2051,13 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		js := jsi.js
 		sub.mu.Unlock()
 
-		// Attempt to delete the existing consumer.
-		// If ErrConsumerNotFound is returned, it means that the consumer was already deleted
-		// by the server, so we can proceed to create a new consumer.
-		err := sub.deleteConsumer()
-		if err != nil && !errors.Is(err, ErrConsumerNotFound) {
-			var apiErr *APIError
-			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
-				// if creating consumer failed, retry
-				return
-			} else if errors.As(err, &apiErr) && apiErr.ErrorCode == JSErrCodeInsufficientResourcesErr {
-				// retry for insufficient resources, as it may mean that client is connected to a running
-				// server in cluster while the server hosting R1 JetStream resources is restarting
-				return
-			}
-			pushErr(err)
-		}
 		sub.mu.Lock()
+		// Attempt to delete the existing consumer.
+		// We don't wait for the response since even if it's unsuccessful,
+		// inactivity threshold will kick in and delete it.
+		if jsi.consumer != _EMPTY_ {
+			go js.DeleteConsumer(jsi.stream, jsi.consumer)
+		}
 		jsi.consumer = ""
 		sub.mu.Unlock()
 		consName := getHash(nuid.Next())
