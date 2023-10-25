@@ -5807,7 +5807,6 @@ func TestJetStreamSubscribe_ReplayPolicy(t *testing.T) {
 	// Enough time to get the next message according to the original playback.
 	_, err = sub.NextMsg(110 * time.Millisecond)
 	if err != nil {
-
 		t.Fatalf("Unexpected error: %v", err)
 	}
 }
@@ -9382,15 +9381,30 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	consInfo, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	consName := consInfo.Name
+	// validate that the generated name of the consumer is 8
+	// characters long (shorter than standard nuid)
+	if len(consName) != 8 {
+		t.Fatalf("Unexpected consumer name: %q", consName)
+	}
 	if _, err := js.Publish("FOO.A", []byte("msg 1")); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	msg, err := sub.NextMsg(time.Second)
+	msg, err := sub.NextMsg(2 * time.Second)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if string(msg.Data) != "msg 1" {
 		t.Fatalf("Invalid msg value; want: 'msg 1'; got: %q", string(msg.Data))
+	}
+
+	apiSub, err := nc.SubscribeSync("$JS.API.CONSUMER.*.>")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// restart the server
@@ -9403,12 +9417,33 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("Did not receive consumer not active error")
 	}
+	consDeleteMsg, err := apiSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(consDeleteMsg.Subject, "$JS.API.CONSUMER.DELETE.") {
+		t.Fatalf("Unexpected message subject: %q", consDeleteMsg.Subject)
+	}
+	consCreateMsg, err := apiSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(consCreateMsg.Subject, "$JS.API.CONSUMER.CREATE.") {
+		t.Fatalf("Unexpected message subject: %q", consCreateMsg.Subject)
+	}
 	if _, err := js.Publish("FOO.A", []byte("msg 2")); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	msg, err = sub.NextMsg(time.Second)
+	msg, err = sub.NextMsg(2 * time.Second)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
+	}
+	consInfo, err = sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if consInfo.Name == consName || len(consInfo.Name) != 8 {
+		t.Fatalf("Unexpected consumer name: %q", consInfo.Name)
 	}
 
 	// make sure we pick up where we left off
