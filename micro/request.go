@@ -71,6 +71,11 @@ type (
 		msg          *nats.Msg
 		respondError error
 	}
+
+	serviceError struct {
+		Code        string `json:"code"`
+		Description string `json:"description"`
+	}
 )
 
 var (
@@ -144,6 +149,11 @@ func (r *request) Error(code, description string, data []byte, opts ...RespondOp
 		r.respondError = err
 		return err
 	}
+	r.respondError = &serviceError{
+		Code:        code,
+		Description: description,
+	}
+
 	return nil
 }
 
@@ -186,4 +196,8 @@ func (h Headers) Get(key string) string {
 // It is case-sensitive.
 func (h Headers) Values(key string) []string {
 	return nats.Header(h).Values(key)
+}
+
+func (e *serviceError) Error() string {
+	return fmt.Sprintf("%s:%s", e.Code, e.Description)
 }
