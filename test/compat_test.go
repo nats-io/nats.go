@@ -495,7 +495,7 @@ type serviceStepConfig[T any] struct {
 	Config  T      `json:"config"`
 }
 
-func TestService(t *testing.T) {
+func TestTestCompatibilityService(t *testing.T) {
 	t.Parallel()
 	nc := connect(t)
 	defer nc.Close()
