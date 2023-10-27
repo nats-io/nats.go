@@ -178,7 +178,7 @@ var (
 	ErrHandlerRequired = &jsError{message: "handler cannot be empty"}
 
 	// ErrEndOfData is returned when iterating over paged API from JetStream reaches end of data.
-	ErrEndOfData = errors.New("nats: end of data reached")
+	ErrEndOfData = &jsError{message: "end of data reached"}
 
 	// ErrNoHeartbeat is received when no message is received in IdleHeartbeat time (if set).
 	ErrNoHeartbeat = &jsError{message: "no heartbeat received"}
@@ -257,6 +257,57 @@ var (
 
 	// ErrNoKeysFound is returned when no keys are found.
 	ErrNoKeysFound = &jsError{message: "no keys found"}
+
+	// ErrObjectConfigRequired is returned when attempting to create an object without a config.
+	ErrObjectConfigRequired = &jsError{message: "object-store config required"}
+
+	// ErrBadObjectMeta is returned when the meta information of an object is invalid.
+	ErrBadObjectMeta = &jsError{message: "object-store meta information invalid"}
+
+	// ErrObjectNotFound is returned when an object is not found.
+	ErrObjectNotFound = &jsError{message: "object not found"}
+
+	// ErrInvalidStoreName is returned when the name of an object-store is invalid.
+	ErrInvalidStoreName = &jsError{message: "invalid object-store name"}
+
+	// ErrDigestMismatch is returned when the digests of an object do not match.
+	ErrDigestMismatch = &jsError{message: "received a corrupt object, digests do not match"}
+
+	// ErrInvalidDigestFormat is returned when the digest hash of an object has an invalid format.
+	ErrInvalidDigestFormat = &jsError{message: "object digest hash has invalid format"}
+
+	// ErrNoObjectsFound is returned when no objects are found.
+	ErrNoObjectsFound = &jsError{message: "no objects found"}
+
+	// ErrObjectAlreadyExists is returned when an object with the same name already exists.
+	ErrObjectAlreadyExists = &jsError{message: "an object already exists with that name"}
+
+	// ErrNameRequired is returned when a name is required.
+	ErrNameRequired = &jsError{message: "name is required"}
+
+	// ErrLinkNotAllowed is returned when a link cannot be set when putting the object in a bucket.
+	ErrLinkNotAllowed = &jsError{message: "link cannot be set when putting the object in bucket"}
+
+	// ErrObjectRequired is returned when an object is required.
+	ErrObjectRequired = &jsError{message: "object required"}
+
+	// ErrNoLinkToDeleted is returned when it is not allowed to link to a deleted object.
+	ErrNoLinkToDeleted = &jsError{message: "not allowed to link to a deleted object"}
+
+	// ErrNoLinkToLink is returned when it is not allowed to link to another link.
+	ErrNoLinkToLink = &jsError{message: "not allowed to link to another link"}
+
+	// ErrCantGetBucket is returned when an invalid Get is attempted on an object that is a link to a bucket.
+	ErrCantGetBucket = &jsError{message: "invalid Get, object is a link to a bucket"}
+
+	// ErrBucketRequired is returned when a bucket is required.
+	ErrBucketRequired = &jsError{message: "bucket required"}
+
+	// ErrBucketMalformed is returned when a bucket is malformed.
+	ErrBucketMalformed = &jsError{message: "bucket malformed"}
+
+	// ErrUpdateMetaDeleted is returned when the meta information of a deleted object cannot be updated.
+	ErrUpdateMetaDeleted = &jsError{message: "cannot update meta for a deleted object"}
 )
 
 // Error prints the JetStream API error code and description
