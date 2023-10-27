@@ -1241,6 +1241,10 @@ func (sub *Subscription) deleteConsumer() error {
 		sub.mu.Unlock()
 		return nil
 	}
+	if jsi.stream == _EMPTY_ || jsi.consumer == _EMPTY_ {
+		sub.mu.Unlock()
+		return nil
+	}
 	stream, consumer := jsi.stream, jsi.consumer
 	js := jsi.js
 	sub.mu.Unlock()
@@ -2047,7 +2051,16 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		js := jsi.js
 		sub.mu.Unlock()
 
-		consName := nuid.Next()
+		sub.mu.Lock()
+		// Attempt to delete the existing consumer.
+		// We don't wait for the response since even if it's unsuccessful,
+		// inactivity threshold will kick in and delete it.
+		if jsi.consumer != _EMPTY_ {
+			go js.DeleteConsumer(jsi.stream, jsi.consumer)
+		}
+		jsi.consumer = ""
+		sub.mu.Unlock()
+		consName := getHash(nuid.Next())
 		cinfo, err := js.upsertConsumer(jsi.stream, consName, cfg)
 		if err != nil {
 			var apiErr *APIError
