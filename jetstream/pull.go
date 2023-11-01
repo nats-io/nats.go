@@ -637,10 +637,9 @@ func (hb *hbMonitor) Reset(dur time.Duration) {
 }
 
 func (s *pullSubscription) Stop() {
-	if atomic.LoadUint32(&s.closed) == 1 {
+	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	atomic.StoreUint32(&s.closed, 1)
 	close(s.done)
 	if s.consumeOpts.stopAfterMsgsLeft != nil {
 		if s.delivered >= s.consumeOpts.StopAfter {
