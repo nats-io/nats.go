@@ -14,7 +14,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 [Coverage-Url]: https://coveralls.io/r/nats-io/nats.go?branch=main
 [Coverage-image]: https://coveralls.io/repos/github/nats-io/nats.go/badge.svg?branch=main
 
-[NATS by example - An evolving collection of runnable, cross-client reference examples for NATS](https://natsbyexample.com)
+**Check out [NATS by example](https://natsbyexample.com) - An evolving collection of runnable, cross-client reference examples for NATS.**
 
 ## Installation
 
