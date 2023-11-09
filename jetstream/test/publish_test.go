@@ -1075,8 +1075,59 @@ func TestPublishMsgAsync(t *testing.T) {
 						Subject: "ABC",
 					},
 					withAckError: func(t *testing.T, err error) {
-						if !errors.Is(err, nats.ErrNoResponders) {
-							t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
+						if !errors.Is(err, jetstream.ErrNoStreamResponse) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoStreamResponse, err)
+						}
+					},
+				},
+			},
+		},
+		{
+			name: "invalid retry number set",
+			msgs: []publishConfig{
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 1"),
+						Subject: "FOO.1",
+					},
+					opts: []jetstream.PublishOpt{jetstream.WithRetryAttempts(-1)},
+					withPublishError: func(t *testing.T, err error) {
+						if !errors.Is(err, jetstream.ErrInvalidOption) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+						}
+					},
+				},
+			},
+		},
+		{
+			name: "invalid retry wait set",
+			msgs: []publishConfig{
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 1"),
+						Subject: "FOO.1",
+					},
+					opts: []jetstream.PublishOpt{jetstream.WithRetryWait(-1)},
+					withPublishError: func(t *testing.T, err error) {
+						if !errors.Is(err, jetstream.ErrInvalidOption) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+						}
+					},
+				},
+			},
+		},
+		{
+			name: "invalid stall wait set",
+			msgs: []publishConfig{
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 1"),
+						Subject: "FOO.1",
+					},
+					opts: []jetstream.PublishOpt{jetstream.WithStallWait(-1)},
+					withPublishError: func(t *testing.T, err error) {
+						if !errors.Is(err, jetstream.ErrInvalidOption) {
+							t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 						}
 					},
 				},
@@ -1333,5 +1384,86 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("Did not receive completion signal")
 		}
+	}
+}
+
+func TestAsyncPublishRetry(t *testing.T) {
+	tests := []struct {
+		name     string
+		pubOpts  []jetstream.PublishOpt
+		ackError error
+	}{
+		{
+			name: "retry until stream is ready",
+			pubOpts: []jetstream.PublishOpt{
+				jetstream.WithRetryAttempts(10),
+				jetstream.WithRetryWait(100 * time.Millisecond),
+			},
+		},
+		{
+			name: "fail after max retries",
+			pubOpts: []jetstream.PublishOpt{
+				jetstream.WithRetryAttempts(2),
+				jetstream.WithRetryWait(50 * time.Millisecond),
+			},
+			ackError: jetstream.ErrNoStreamResponse,
+		},
+		{
+			name: "retries disabled",
+			pubOpts: []jetstream.PublishOpt{
+				jetstream.WithRetryAttempts(0),
+			},
+			ackError: jetstream.ErrNoStreamResponse,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// set max pending to 1 so that we can test if retries don't cause stall
+			js, err := jetstream.New(nc, jetstream.WithPublishAsyncMaxPending(1))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			test.pubOpts = append(test.pubOpts, jetstream.WithStallWait(1*time.Nanosecond))
+			ack, err := js.PublishAsync("foo", []byte("hello"), test.pubOpts...)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			errs := make(chan error, 1)
+			go func() {
+				// create stream with delay so that publish will receive no responders
+				time.Sleep(300 * time.Millisecond)
+				if _, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST", Subjects: []string{"foo"}}); err != nil {
+					errs <- err
+				}
+			}()
+			select {
+			case <-ack.Ok():
+			case err := <-ack.Err():
+				if test.ackError != nil {
+					if !errors.Is(err, test.ackError) {
+						t.Fatalf("Expected error: %v; got: %v", test.ackError, err)
+					}
+				} else {
+					t.Fatalf("Unexpected ack error: %v", err)
+				}
+			case err := <-errs:
+				t.Fatalf("Error creating stream: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for ack")
+			}
+		})
 	}
 }
