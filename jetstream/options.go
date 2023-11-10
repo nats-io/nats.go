@@ -16,6 +16,8 @@ package jetstream
 import (
 	"fmt"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 type pullOptFunc func(*consumeOpts) error
@@ -277,6 +279,17 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 func WithStreamListSubject(subject string) StreamListOpt {
 	return func(req *streamsRequest) error {
 		req.Subject = subject
+		return nil
+	}
+}
+
+// WithHeader adds an arbitrary header to the underlying message.
+func WithHeader(key string, value []string) PublishOpt {
+	return func(opts *pubOpts) error {
+		if opts.headerValues == nil {
+			opts.headerValues = nats.Header{}
+		}
+		opts.headerValues[key] = value
 		return nil
 	}
 }
