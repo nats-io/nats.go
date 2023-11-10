@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro_test
+package service_test
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/micro"
+	"github.com/nats-io/nats.go/service"
 )
 
 func Example() {
@@ -32,12 +32,12 @@ func Example() {
 
 	// endpoint handler - in this case, HandlerFunc is used,
 	// which is a built-in implementation of Handler interface
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(req service.Request) {
 		req.Respond(req.Data())
 	}
 
 	// second endpoint
-	incrementHandler := func(req micro.Request) {
+	incrementHandler := func(req service.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
 			req.Error("400", "request data should be a number", nil)
@@ -49,7 +49,7 @@ func Example() {
 	}
 
 	// third endpoint
-	multiplyHandler := func(req micro.Request) {
+	multiplyHandler := func(req service.Request) {
 		val, err := strconv.Atoi(string(req.Data()))
 		if err != nil {
 			req.Error("400", "request data should be a number", nil)
@@ -60,18 +60,18 @@ func Example() {
 		req.Respond([]byte(strconv.Itoa(responseData)))
 	}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:        "IncrementService",
 		Version:     "0.1.0",
 		Description: "Increment numbers",
 
 		// base handler - for simple services with single endpoints this is sufficient
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(echoHandler),
+			Handler: service.HandlerFunc(echoHandler),
 		},
 	}
-	svc, err := micro.AddService(nc, config)
+	svc, err := service.AddService(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,11 +81,11 @@ func Example() {
 	numbers := svc.AddGroup("numbers")
 
 	// register endpoints in a group
-	err = numbers.AddEndpoint("Increment", micro.HandlerFunc(incrementHandler))
+	err = numbers.AddEndpoint("Increment", service.HandlerFunc(incrementHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = numbers.AddEndpoint("Multiply", micro.HandlerFunc(multiplyHandler))
+	err = numbers.AddEndpoint("Multiply", service.HandlerFunc(multiplyHandler))
 	if err != nil {
 		log.Fatal(err)
 	}

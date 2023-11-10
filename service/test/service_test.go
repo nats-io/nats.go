@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro_test
+package service_test
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ import (
 	"github.com/nats-io/nats-server/v2/server"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/micro"
+	"github.com/nats-io/nats.go/service"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 )
@@ -42,8 +42,8 @@ func TestServiceBasics(t *testing.T) {
 	}
 	defer nc.Close()
 
-	// Stub micro.
-	doAdd := func(req micro.Request) {
+	// Stub service.
+	doAdd := func(req service.Request) {
 		if rand.Intn(10) == 0 {
 			if err := req.Error("500", "Unexpected error!", nil); err != nil {
 				t.Fatalf("Unexpected error when sending error response: %v", err)
@@ -61,22 +61,22 @@ func TestServiceBasics(t *testing.T) {
 		}
 	}
 
-	var svcs []micro.Service
+	var svcs []service.Service
 
-	// Create 5 micro responders.
-	config := micro.Config{
+	// Create 5 service responders.
+	config := service.Config{
 		Name:        "CoolAddService",
 		Version:     "0.1.0",
 		Description: "Add things together",
 		Metadata:    map[string]string{"basic": "metadata"},
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "svc.add",
-			Handler: micro.HandlerFunc(doAdd),
+			Handler: service.HandlerFunc(doAdd),
 		},
 	}
 
 	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
+		svc, err := service.AddService(nc, config)
 		if err != nil {
 			t.Fatalf("Expected to create Service, got %v", err)
 		}
@@ -107,7 +107,7 @@ func TestServiceBasics(t *testing.T) {
 
 	// Make sure we can request info, 1 response.
 	// This could be exported as well as main ServiceImpl.
-	subj, err := micro.ControlSubject(micro.InfoVerb, "CoolAddService", "")
+	subj, err := service.ControlSubject(service.InfoVerb, "CoolAddService", "")
 	if err != nil {
 		t.Fatalf("Failed to building info subject %v", err)
 	}
@@ -115,18 +115,18 @@ func TestServiceBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected a response, got %v", err)
 	}
-	var inf micro.Info
+	var inf service.Info
 	if err := json.Unmarshal(info.Data, &inf); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Ping all micros. Multiple responses.
+	// Ping all services. Multiple responses.
 	inbox := nats.NewInbox()
 	sub, err := nc.SubscribeSync(inbox)
 	if err != nil {
 		t.Fatalf("subscribe failed: %s", err)
 	}
-	pingSubject, err := micro.ControlSubject(micro.PingVerb, "CoolAddService", "")
+	pingSubject, err := service.ControlSubject(service.PingVerb, "CoolAddService", "")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -146,13 +146,13 @@ func TestServiceBasics(t *testing.T) {
 		t.Fatalf("Expected 5 ping responses, got: %d", pingCount)
 	}
 
-	// Get stats from all micros
+	// Get stats from all services
 	statsInbox := nats.NewInbox()
 	sub, err = nc.SubscribeSync(statsInbox)
 	if err != nil {
 		t.Fatalf("subscribe failed: %s", err)
 	}
-	statsSubject, err := micro.ControlSubject(micro.StatsVerb, "CoolAddService", "")
+	statsSubject, err := service.ControlSubject(service.StatsVerb, "CoolAddService", "")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -160,14 +160,14 @@ func TestServiceBasics(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	stats := make([]micro.Stats, 0)
+	stats := make([]service.Stats, 0)
 	var requestsNum int
 	for {
 		resp, err := sub.NextMsg(250 * time.Millisecond)
 		if err != nil {
 			break
 		}
-		var srvStats micro.Stats
+		var srvStats service.Stats
 		if err := json.Unmarshal(resp.Data, &srvStats); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -175,14 +175,14 @@ func TestServiceBasics(t *testing.T) {
 		stats = append(stats, srvStats)
 	}
 	if len(stats) != 5 {
-		t.Fatalf("Expected stats for 5 micros, got: %d", len(stats))
+		t.Fatalf("Expected stats for 5 services, got: %d", len(stats))
 	}
 
 	// Services should process 50 requests total
 	if requestsNum != 50 {
 		t.Fatalf("Expected a total fo 50 requests processed, got: %d", requestsNum)
 	}
-	// Reset stats for a micro
+	// Reset stats for a service
 	svcs[0].Reset()
 
 	if svcs[0].Stats().Endpoints[0].NumRequests != 0 {
@@ -192,7 +192,7 @@ func TestServiceBasics(t *testing.T) {
 }
 
 func TestAddService(t *testing.T) {
-	testHandler := func(micro.Request) {}
+	testHandler := func(service.Request) {}
 	errNats := make(chan struct{})
 	errService := make(chan struct{})
 	closedNats := make(chan struct{})
@@ -200,25 +200,25 @@ func TestAddService(t *testing.T) {
 
 	tests := []struct {
 		name              string
-		givenConfig       micro.Config
+		givenConfig       service.Config
 		endpoints         []string
 		natsClosedHandler nats.ConnHandler
 		natsErrorHandler  nats.ErrHandler
 		asyncErrorSubject string
-		expectedPing      micro.Ping
+		expectedPing      service.Ping
 		withError         error
 	}{
 		{
 			name: "minimal config",
-			givenConfig: micro.Config{
-				Name:     "test_micro",
+			givenConfig: service.Config{
+				Name:     "test_service",
 				Version:  "0.1.0",
 				Metadata: map[string]string{"basic": "metadata"},
 			},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{"basic": "metadata"},
 				},
@@ -226,19 +226,19 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with single base endpoint",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				Endpoint: &micro.EndpointConfig{
+				Endpoint: &service.EndpointConfig{
 					Subject:  "test",
-					Handler:  micro.HandlerFunc(testHandler),
+					Handler:  service.HandlerFunc(testHandler),
 					Metadata: map[string]string{"basic": "endpoint_metadata"},
 				},
 			},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -246,19 +246,19 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with base endpoint and additional endpoints",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				Endpoint: &micro.EndpointConfig{
+				Endpoint: &service.EndpointConfig{
 					Subject: "test",
-					Handler: micro.HandlerFunc(testHandler),
+					Handler: service.HandlerFunc(testHandler),
 				},
 			},
 			endpoints: []string{"func1", "func2", "func3"},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -266,18 +266,18 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with done handler, no handlers on nats connection",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(service.Service) {
 					doneService <- struct{}{}
 				},
 			},
 			endpoints: []string{"func"},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -285,18 +285,18 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with error handler, no handlers on nats connection",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				ErrorHandler: func(micro.Service, *micro.NATSError) {
+				ErrorHandler: func(service.Service, *service.NATSError) {
 					errService <- struct{}{}
 				},
 			},
 			endpoints: []string{"func"},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -305,30 +305,30 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with error handler, no handlers on nats connection, error on monitoring subject",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				ErrorHandler: func(micro.Service, *micro.NATSError) {
+				ErrorHandler: func(service.Service, *service.NATSError) {
 					errService <- struct{}{}
 				},
 			},
 			endpoints: []string{"func"},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
 			},
-			asyncErrorSubject: "$SRV.PING.test_micro",
+			asyncErrorSubject: "$SRV.PING.test_service",
 		},
 		{
 			name: "with done handler, append to nats handlers",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(service.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -339,10 +339,10 @@ func TestAddService(t *testing.T) {
 			natsErrorHandler: func(*nats.Conn, *nats.Subscription, error) {
 				errNats <- struct{}{}
 			},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -351,10 +351,10 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with error handler, append to nats handlers",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(service.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -365,10 +365,10 @@ func TestAddService(t *testing.T) {
 			natsErrorHandler: func(*nats.Conn, *nats.Subscription, error) {
 				errNats <- struct{}{}
 			},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -376,10 +376,10 @@ func TestAddService(t *testing.T) {
 		},
 		{
 			name: "with error handler, append to nats handlers, error on monitoring subject",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				DoneHandler: func(micro.Service) {
+				DoneHandler: func(service.Service) {
 					doneService <- struct{}{}
 				},
 			},
@@ -390,10 +390,10 @@ func TestAddService(t *testing.T) {
 			natsErrorHandler: func(*nats.Conn, *nats.Subscription, error) {
 				errNats <- struct{}{}
 			},
-			expectedPing: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedPing: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					Metadata: map[string]string{},
 				},
@@ -401,33 +401,33 @@ func TestAddService(t *testing.T) {
 			asyncErrorSubject: "$SRV.PING.TEST_SERVICE",
 		},
 		{
-			name: "validation error, invalid micro name",
-			givenConfig: micro.Config{
-				Name:    "test_micro!",
+			name: "validation error, invalid service name",
+			givenConfig: service.Config{
+				Name:    "test_service!",
 				Version: "0.1.0",
 			},
 			endpoints: []string{"func"},
-			withError: micro.ErrConfigValidation,
+			withError: service.ErrConfigValidation,
 		},
 		{
 			name: "validation error, invalid version",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "abc",
 			},
 			endpoints: []string{"func"},
-			withError: micro.ErrConfigValidation,
+			withError: service.ErrConfigValidation,
 		},
 		{
 			name: "validation error, invalid endpoint subject",
-			givenConfig: micro.Config{
-				Name:    "test_micro",
+			givenConfig: service.Config{
+				Name:    "test_service",
 				Version: "0.0.1",
-				Endpoint: &micro.EndpointConfig{
+				Endpoint: &service.EndpointConfig{
 					Subject: "endpoint subject",
 				},
 			},
-			withError: micro.ErrConfigValidation,
+			withError: service.ErrConfigValidation,
 		},
 	}
 
@@ -445,7 +445,7 @@ func TestAddService(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := micro.AddService(nc, test.givenConfig)
+			srv, err := service.AddService(nc, test.givenConfig)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -456,7 +456,7 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			for _, endpoint := range test.endpoints {
-				if err := srv.AddEndpoint(endpoint, micro.HandlerFunc(testHandler)); err != nil {
+				if err := srv.AddEndpoint(endpoint, service.HandlerFunc(testHandler)); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
@@ -469,7 +469,7 @@ func TestAddService(t *testing.T) {
 			if subjectsNum != len(info.Endpoints) {
 				t.Fatalf("Invalid number of registered endpoints; want: %d; got: %d", subjectsNum, len(info.Endpoints))
 			}
-			pingSubject, err := micro.ControlSubject(micro.PingVerb, info.Name, info.ID)
+			pingSubject, err := service.ControlSubject(service.PingVerb, info.Name, info.ID)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -477,7 +477,7 @@ func TestAddService(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			var ping micro.Ping
+			var ping service.Ping
 			if err := json.Unmarshal(pingResp.Data, &ping); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -520,7 +520,7 @@ func TestAddService(t *testing.T) {
 			}
 
 			if err := srv.Stop(); err != nil {
-				t.Fatalf("Unexpected error when stopping the micro: %v", err)
+				t.Fatalf("Unexpected error when stopping the service: %v", err)
 			}
 			if test.natsClosedHandler != nil {
 				go nc.Opts.ClosedCB(nc)
@@ -608,7 +608,7 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 			coreNatsAsyncErrors := []nats.ErrHandler{nil, func(c *nats.Conn, s *nats.Subscription, err error) {}}
 			for _, cb := range coreNatsAsyncErrors {
 				errChan := make(chan struct{})
-				errHandler := func(s micro.Service, err *micro.NATSError) {
+				errHandler := func(s service.Service, err *service.NATSError) {
 					errChan <- struct{}{}
 				}
 				s := RunServerOnPort(-1)
@@ -620,13 +620,13 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 				}
 				defer nc.Close()
 				nc.SetErrorHandler(cb)
-				svc, err := micro.AddService(nc, micro.Config{
-					Name:         "test_micro",
+				svc, err := service.AddService(nc, service.Config{
+					Name:         "test_service",
 					Version:      "0.0.1",
-					ErrorHandler: micro.ErrHandler(errHandler),
-					Endpoint: &micro.EndpointConfig{
+					ErrorHandler: service.ErrHandler(errHandler),
+					Endpoint: &service.EndpointConfig{
 						Subject: test.endpointSubject,
-						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+						Handler: service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
 				if err != nil {
@@ -639,12 +639,12 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 					select {
 					case <-errChan:
 					case <-time.After(10 * time.Millisecond):
-						t.Fatalf("Expected micro error callback")
+						t.Fatalf("Expected service error callback")
 					}
 				} else {
 					select {
 					case <-errChan:
-						t.Fatalf("Expected no micro error callback")
+						t.Fatalf("Expected no service error callback")
 					case <-time.After(10 * time.Millisecond):
 					}
 				}
@@ -658,12 +658,12 @@ func TestGroups(t *testing.T) {
 		name             string
 		endpointName     string
 		groups           []string
-		expectedEndpoint micro.EndpointInfo
+		expectedEndpoint service.EndpointInfo
 	}{
 		{
 			name:         "no groups",
 			endpointName: "foo",
-			expectedEndpoint: micro.EndpointInfo{
+			expectedEndpoint: service.EndpointInfo{
 				Name:       "foo",
 				Subject:    "foo",
 				QueueGroup: "q",
@@ -673,7 +673,7 @@ func TestGroups(t *testing.T) {
 			name:         "single group",
 			endpointName: "foo",
 			groups:       []string{"g1"},
-			expectedEndpoint: micro.EndpointInfo{
+			expectedEndpoint: service.EndpointInfo{
 				Name:       "foo",
 				Subject:    "g1.foo",
 				QueueGroup: "q",
@@ -683,7 +683,7 @@ func TestGroups(t *testing.T) {
 			name:         "single empty group",
 			endpointName: "foo",
 			groups:       []string{""},
-			expectedEndpoint: micro.EndpointInfo{
+			expectedEndpoint: service.EndpointInfo{
 				Name:       "foo",
 				Subject:    "foo",
 				QueueGroup: "q",
@@ -693,7 +693,7 @@ func TestGroups(t *testing.T) {
 			name:         "empty groups",
 			endpointName: "foo",
 			groups:       []string{"", "g1", ""},
-			expectedEndpoint: micro.EndpointInfo{
+			expectedEndpoint: service.EndpointInfo{
 				Name:       "foo",
 				Subject:    "g1.foo",
 				QueueGroup: "q",
@@ -703,7 +703,7 @@ func TestGroups(t *testing.T) {
 			name:         "multiple groups",
 			endpointName: "foo",
 			groups:       []string{"g1", "g2", "g3"},
-			expectedEndpoint: micro.EndpointInfo{
+			expectedEndpoint: service.EndpointInfo{
 				Name:       "foo",
 				Subject:    "g1.g2.g3.foo",
 				QueueGroup: "q",
@@ -722,8 +722,8 @@ func TestGroups(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := micro.AddService(nc, micro.Config{
-				Name:    "test_micro",
+			srv, err := service.AddService(nc, service.Config{
+				Name:    "test_service",
 				Version: "0.0.1",
 			})
 			if err != nil {
@@ -736,12 +736,12 @@ func TestGroups(t *testing.T) {
 				for _, g := range test.groups[1:] {
 					group = group.AddGroup(g)
 				}
-				err = group.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+				err = group.AddEndpoint(test.endpointName, service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			} else {
-				err = srv.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+				err = srv.AddEndpoint(test.endpointName, service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -769,28 +769,28 @@ func TestMonitoringHandlers(t *testing.T) {
 	defer nc.Close()
 
 	asyncErr := make(chan struct{})
-	errHandler := func(s micro.Service, n *micro.NATSError) {
+	errHandler := func(s service.Service, n *service.NATSError) {
 		asyncErr <- struct{}{}
 	}
 
-	config := micro.Config{
-		Name:         "test_micro",
+	config := service.Config{
+		Name:         "test_service",
 		Version:      "0.1.0",
 		ErrorHandler: errHandler,
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject:  "test.func",
-			Handler:  micro.HandlerFunc(func(r micro.Request) {}),
+			Handler:  service.HandlerFunc(func(r service.Request) {}),
 			Metadata: map[string]string{"basic": "schema"},
 		},
 	}
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.AddService(nc, config)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer func() {
 		srv.Stop()
 		if !srv.Stopped() {
-			t.Fatalf("Expected micro to be stopped")
+			t.Fatalf("Expected service to be stopped")
 		}
 	}()
 
@@ -805,10 +805,10 @@ func TestMonitoringHandlers(t *testing.T) {
 		{
 			name:    "PING all",
 			subject: "$SRV.PING",
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedResponse: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
@@ -817,11 +817,11 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "PING name",
-			subject: "$SRV.PING.test_micro",
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			subject: "$SRV.PING.test_service",
+			expectedResponse: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
@@ -830,11 +830,11 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "PING ID",
-			subject: fmt.Sprintf("$SRV.PING.test_micro.%s", info.ID),
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			subject: fmt.Sprintf("$SRV.PING.test_service.%s", info.ID),
+			expectedResponse: service.Ping{
+				Type: service.PingResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
@@ -844,15 +844,15 @@ func TestMonitoringHandlers(t *testing.T) {
 		{
 			name:    "INFO all",
 			subject: "$SRV.INFO",
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			expectedResponse: service.Info{
+				Type: service.InfoResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
 				},
-				Endpoints: []micro.EndpointInfo{
+				Endpoints: []service.EndpointInfo{
 					{
 						Name:       "default",
 						Subject:    "test.func",
@@ -864,16 +864,16 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "INFO name",
-			subject: "$SRV.INFO.test_micro",
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			subject: "$SRV.INFO.test_service",
+			expectedResponse: service.Info{
+				Type: service.InfoResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
 				},
-				Endpoints: []micro.EndpointInfo{
+				Endpoints: []service.EndpointInfo{
 					{
 						Name:       "default",
 						Subject:    "test.func",
@@ -885,16 +885,16 @@ func TestMonitoringHandlers(t *testing.T) {
 		},
 		{
 			name:    "INFO ID",
-			subject: fmt.Sprintf("$SRV.INFO.test_micro.%s", info.ID),
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_micro",
+			subject: fmt.Sprintf("$SRV.INFO.test_service.%s", info.ID),
+			expectedResponse: service.Info{
+				Type: service.InfoResponseType,
+				ServiceIdentity: service.ServiceIdentity{
+					Name:     "test_service",
 					Version:  "0.1.0",
 					ID:       info.ID,
 					Metadata: map[string]string{},
 				},
-				Endpoints: []micro.EndpointInfo{
+				Endpoints: []service.EndpointInfo{
 					{
 						Name:       "default",
 						Subject:    "test.func",
@@ -977,7 +977,7 @@ func TestContextHandler(t *testing.T) {
 	type key string
 	ctx = context.WithValue(ctx, key("key"), []byte("val"))
 
-	handler := func(ctx context.Context, req micro.Request) {
+	handler := func(ctx context.Context, req service.Request) {
 		select {
 		case <-ctx.Done():
 			req.Error("400", "context canceled", nil)
@@ -986,16 +986,16 @@ func TestContextHandler(t *testing.T) {
 			req.Respond(v.([]byte))
 		}
 	}
-	config := micro.Config{
-		Name:    "test_micro",
+	config := service.Config{
+		Name:    "test_service",
 		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "test.func",
-			Handler: micro.ContextHandler(ctx, handler),
+			Handler: service.ContextHandler(ctx, handler),
 		},
 	}
 
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.AddService(nc, config)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1013,34 +1013,34 @@ func TestContextHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %s", err)
 	}
-	if resp.Header.Get(micro.ErrorCodeHeader) != "400" {
+	if resp.Header.Get(service.ErrorCodeHeader) != "400" {
 		t.Fatalf("Expected error response after canceling context; got: %q", string(resp.Data))
 	}
 
 }
 
 func TestServiceStats(t *testing.T) {
-	handler := func(r micro.Request) {
+	handler := func(r service.Request) {
 		r.Respond([]byte("ok"))
 	}
 	tests := []struct {
 		name          string
-		config        micro.Config
+		config        service.Config
 		expectedStats map[string]any
 	}{
 		{
 			name: "stats handler",
-			config: micro.Config{
-				Name:    "test_micro",
+			config: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
 			},
 		},
 		{
 			name: "with stats handler",
-			config: micro.Config{
-				Name:    "test_micro",
+			config: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				StatsHandler: func(e *micro.Endpoint) any {
+				StatsHandler: func(e *service.Endpoint) any {
 					return map[string]any{
 						"key": "val",
 					}
@@ -1052,12 +1052,12 @@ func TestServiceStats(t *testing.T) {
 		},
 		{
 			name: "with default endpoint",
-			config: micro.Config{
-				Name:    "test_micro",
+			config: service.Config{
+				Name:    "test_service",
 				Version: "0.1.0",
-				Endpoint: &micro.EndpointConfig{
+				Endpoint: &service.EndpointConfig{
 					Subject:  "test.func",
-					Handler:  micro.HandlerFunc(handler),
+					Handler:  service.HandlerFunc(handler),
 					Metadata: map[string]string{"test": "value"},
 				},
 			},
@@ -1075,13 +1075,13 @@ func TestServiceStats(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := micro.AddService(nc, test.config)
+			srv, err := service.AddService(nc, test.config)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			if test.config.Endpoint == nil {
-				opts := []micro.EndpointOpt{micro.WithEndpointSubject("test.func")}
-				if err := srv.AddEndpoint("func", micro.HandlerFunc(handler), opts...); err != nil {
+				opts := []service.EndpointOpt{service.WithEndpointSubject("test.func")}
+				if err := srv.AddEndpoint("func", service.HandlerFunc(handler), opts...); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 			}
@@ -1100,12 +1100,12 @@ func TestServiceStats(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 
 			info := srv.Info()
-			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_micro.%s", info.ID), nil, 1*time.Second)
+			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			var stats micro.Stats
+			var stats service.Stats
 			if err := json.Unmarshal(resp.Data, &stats); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1114,10 +1114,10 @@ func TestServiceStats(t *testing.T) {
 				t.Fatalf("Unexpected number of endpoints: want: %d; got: %d", 1, len(stats.Endpoints))
 			}
 			if stats.Name != info.Name {
-				t.Errorf("Unexpected micro name; want: %s; got: %s", info.Name, stats.Name)
+				t.Errorf("Unexpected service name; want: %s; got: %s", info.Name, stats.Name)
 			}
 			if stats.ID != info.ID {
-				t.Errorf("Unexpected micro name; want: %s; got: %s", info.ID, stats.ID)
+				t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
 			}
 			if test.config.Endpoint == nil && stats.Endpoints[0].Name != "func" {
 				t.Errorf("Invalid endpoint name; want: %s; got: %s", "func", stats.Endpoints[0].Name)
@@ -1143,8 +1143,8 @@ func TestServiceStats(t *testing.T) {
 			if stats.Started.IsZero() {
 				t.Errorf("Expected non-empty start time")
 			}
-			if stats.Type != micro.StatsResponseType {
-				t.Errorf("Invalid response type; want: %s; got: %s", micro.StatsResponseType, stats.Type)
+			if stats.Type != service.StatsResponseType {
+				t.Errorf("Invalid response type; want: %s; got: %s", service.StatsResponseType, stats.Type)
 			}
 
 			if test.expectedStats != nil {
@@ -1169,7 +1169,7 @@ func TestRequestRespond(t *testing.T) {
 	tests := []struct {
 		name             string
 		respondData      any
-		respondHeaders   micro.Headers
+		respondHeaders   service.Headers
 		errDescription   string
 		errCode          string
 		errData          []byte
@@ -1185,14 +1185,14 @@ func TestRequestRespond(t *testing.T) {
 		},
 		{
 			name:             "byte response, with headers",
-			respondHeaders:   micro.Headers{"key": []string{"value"}},
+			respondHeaders:   service.Headers{"key": []string{"value"}},
 			respondData:      []byte("OK"),
 			expectedResponse: []byte("OK"),
 		},
 		{
 			name:             "byte response, connection closed",
 			respondData:      []byte("OK"),
-			withRespondError: micro.ErrRespond,
+			withRespondError: service.ErrRespond,
 		},
 		{
 			name:             "struct response",
@@ -1202,7 +1202,7 @@ func TestRequestRespond(t *testing.T) {
 		{
 			name:             "invalid response data",
 			respondData:      func() {},
-			withRespondError: micro.ErrMarshalResponse,
+			withRespondError: service.ErrMarshalResponse,
 		},
 		{
 			name:            "generic error",
@@ -1214,7 +1214,7 @@ func TestRequestRespond(t *testing.T) {
 		},
 		{
 			name:            "generic error, with headers",
-			respondHeaders:  micro.Headers{"key": []string{"value"}},
+			respondHeaders:  service.Headers{"key": []string{"value"}},
 			errDescription:  "oops",
 			errCode:         "500",
 			errData:         []byte("error!"),
@@ -1231,12 +1231,12 @@ func TestRequestRespond(t *testing.T) {
 		{
 			name:             "missing error code",
 			errDescription:   "oops",
-			withRespondError: micro.ErrArgRequired,
+			withRespondError: service.ErrArgRequired,
 		},
 		{
 			name:             "missing error description",
 			errCode:          "500",
-			withRespondError: micro.ErrArgRequired,
+			withRespondError: service.ErrArgRequired,
 		},
 	}
 
@@ -1256,8 +1256,8 @@ func TestRequestRespond(t *testing.T) {
 			errCode := test.errCode
 			errDesc := test.errDescription
 			errData := test.errData
-			handler := func(req micro.Request) {
-				if errors.Is(test.withRespondError, micro.ErrRespond) {
+			handler := func(req service.Request) {
+				if errors.Is(test.withRespondError, service.ErrRespond) {
 					nc.Close()
 					return
 				}
@@ -1269,7 +1269,7 @@ func TestRequestRespond(t *testing.T) {
 				}
 				if errCode == "" && errDesc == "" {
 					if resp, ok := respData.([]byte); ok {
-						err := req.Respond(resp, micro.WithHeaders(test.respondHeaders))
+						err := req.Respond(resp, service.WithHeaders(test.respondHeaders))
 						if respError != nil {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
@@ -1280,7 +1280,7 @@ func TestRequestRespond(t *testing.T) {
 							t.Fatalf("Unexpected error when sending response: %v", err)
 						}
 					} else {
-						err := req.RespondJSON(respData, micro.WithHeaders(test.respondHeaders))
+						err := req.RespondJSON(respData, service.WithHeaders(test.respondHeaders))
 						if respError != nil {
 							if !errors.Is(err, respError) {
 								t.Fatalf("Expected error: %v; got: %v", respError, err)
@@ -1294,7 +1294,7 @@ func TestRequestRespond(t *testing.T) {
 					return
 				}
 
-				err := req.Error(errCode, errDesc, errData, micro.WithHeaders(test.respondHeaders))
+				err := req.Error(errCode, errDesc, errData, service.WithHeaders(test.respondHeaders))
 				if respError != nil {
 					if !errors.Is(err, respError) {
 						t.Fatalf("Expected error: %v; got: %v", respError, err)
@@ -1306,13 +1306,13 @@ func TestRequestRespond(t *testing.T) {
 				}
 			}
 
-			svc, err := micro.AddService(nc, micro.Config{
+			svc, err := service.AddService(nc, service.Config{
 				Name:        "CoolService",
 				Version:     "0.1.0",
-				Description: "test micro",
-				Endpoint: &micro.EndpointConfig{
+				Description: "test service",
+				Endpoint: &service.EndpointConfig{
 					Subject: "test.func",
-					Handler: micro.HandlerFunc(handler),
+					Handler: service.HandlerFunc(handler),
 				},
 			})
 			if err != nil {
@@ -1342,14 +1342,14 @@ func TestRequestRespond(t *testing.T) {
 				if description != test.expectedMessage {
 					t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
 				}
-				expectedHeaders := micro.Headers{
+				expectedHeaders := service.Headers{
 					"Nats-Service-Error-Code": []string{resp.Header.Get("Nats-Service-Error-Code")},
 					"Nats-Service-Error":      []string{resp.Header.Get("Nats-Service-Error")},
 				}
 				for k, v := range test.respondHeaders {
 					expectedHeaders[k] = v
 				}
-				if !reflect.DeepEqual(expectedHeaders, micro.Headers(resp.Header)) {
+				if !reflect.DeepEqual(expectedHeaders, service.Headers(resp.Header)) {
 					t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
 				}
 				return
@@ -1363,7 +1363,7 @@ func TestRequestRespond(t *testing.T) {
 				t.Fatalf("Invalid response; want: %s; got: %s", string(test.expectedResponse), string(resp.Data))
 			}
 
-			if !reflect.DeepEqual(test.respondHeaders, micro.Headers(resp.Header)) {
+			if !reflect.DeepEqual(test.respondHeaders, service.Headers(resp.Header)) {
 				t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
 			}
 		})
@@ -1383,7 +1383,7 @@ func RunServerWithOptions(opts *server.Options) *server.Server {
 func TestControlSubject(t *testing.T) {
 	tests := []struct {
 		name            string
-		verb            micro.Verb
+		verb            service.Verb
 		srvName         string
 		id              string
 		expectedSubject string
@@ -1391,39 +1391,39 @@ func TestControlSubject(t *testing.T) {
 	}{
 		{
 			name:            "PING ALL",
-			verb:            micro.PingVerb,
+			verb:            service.PingVerb,
 			expectedSubject: "$SRV.PING",
 		},
 		{
 			name:            "PING name",
-			verb:            micro.PingVerb,
+			verb:            service.PingVerb,
 			srvName:         "test",
 			expectedSubject: "$SRV.PING.test",
 		},
 		{
 			name:            "PING id",
-			verb:            micro.PingVerb,
+			verb:            service.PingVerb,
 			srvName:         "test",
 			id:              "123",
 			expectedSubject: "$SRV.PING.test.123",
 		},
 		{
 			name:      "invalid verb",
-			verb:      micro.Verb(100),
-			withError: micro.ErrVerbNotSupported,
+			verb:      service.Verb(100),
+			withError: service.ErrVerbNotSupported,
 		},
 		{
 			name:      "name not provided",
-			verb:      micro.PingVerb,
+			verb:      service.PingVerb,
 			srvName:   "",
 			id:        "123",
-			withError: micro.ErrServiceNameRequired,
+			withError: service.ErrServiceNameRequired,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			res, err := micro.ControlSubject(test.verb, test.srvName, test.id)
+			res, err := service.ControlSubject(test.verb, test.srvName, test.id)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -1443,24 +1443,24 @@ func TestControlSubject(t *testing.T) {
 func TestCustomQueueGroup(t *testing.T) {
 	tests := []struct {
 		name                string
-		endpointInit        func(*testing.T, *nats.Conn) micro.Service
+		endpointInit        func(*testing.T, *nats.Conn) service.Service
 		expectedQueueGroups map[string]string
 	}{
 		{
 			name: "default queue group",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				srv, err := micro.AddService(nc, micro.Config{
-					Name:    "test_micro",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				srv, err := service.AddService(nc, service.Config{
+					Name:    "test_service",
 					Version: "0.0.1",
-					Endpoint: &micro.EndpointConfig{
+					Endpoint: &service.EndpointConfig{
 						Subject: "foo",
-						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+						Handler: service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				err = srv.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1472,32 +1472,32 @@ func TestCustomQueueGroup(t *testing.T) {
 			},
 		},
 		{
-			name: "custom queue group on micro config",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				srv, err := micro.AddService(nc, micro.Config{
-					Name:       "test_micro",
+			name: "custom queue group on service config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				srv, err := service.AddService(nc, service.Config{
+					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "custom",
-					Endpoint: &micro.EndpointConfig{
+					Endpoint: &service.EndpointConfig{
 						Subject: "foo",
-						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+						Handler: service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
-				// add endpoint on micro directly, should have the same queue group
-				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				// add endpoint on service directly, should have the same queue group
+				err = srv.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
-				// add group with queue group from micro config
+				// add group with queue group from service config
 				g1 := srv.AddGroup("g1")
 
-				// add endpoint on group, should have queue group from micro config
-				err = g1.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				// add endpoint on group, should have queue group from service config
+				err = g1.AddEndpoint("baz", service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1512,48 +1512,48 @@ func TestCustomQueueGroup(t *testing.T) {
 		},
 		{
 			name: "overwriting queue groups",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				srv, err := micro.AddService(nc, micro.Config{
-					Name:       "test_micro",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				srv, err := service.AddService(nc, service.Config{
+					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "q-config",
-					Endpoint: &micro.EndpointConfig{
+					Endpoint: &service.EndpointConfig{
 						Subject:    "foo",
 						QueueGroup: "q-default",
-						Handler:    micro.HandlerFunc(func(r micro.Request) {}),
+						Handler:    service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				g1 := srv.AddGroup("g1", micro.WithGroupQueueGroup("q-g1"))
+				g1 := srv.AddGroup("g1", service.WithGroupQueueGroup("q-g1"))
 
 				// should have the same queue group as the parent group
 				g2 := g1.AddGroup("g2")
 
 				// overwrite parent group queue group
-				g3 := g2.AddGroup("g3", micro.WithGroupQueueGroup("q-g3"))
+				g3 := g2.AddGroup("g3", service.WithGroupQueueGroup("q-g3"))
 
-				// add endpoint on micro directly, overwriting the queue group
-				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-bar"))
+				// add endpoint on service directly, overwriting the queue group
+				err = srv.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}), service.WithEndpointQueueGroup("q-bar"))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
 				// add endpoint on group, should have queue group from g1
-				err = g2.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				err = g2.AddEndpoint("baz", service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
 				// add endpoint on group, overwriting the queue group
-				err = g2.AddEndpoint("qux", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-qux"))
+				err = g2.AddEndpoint("qux", service.HandlerFunc(func(r service.Request) {}), service.WithEndpointQueueGroup("q-qux"))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
 				// add endpoint on group, should have queue group from g3
-				err = g3.AddEndpoint("quux", micro.HandlerFunc(func(r micro.Request) {}))
+				err = g3.AddEndpoint("quux", service.HandlerFunc(func(r service.Request) {}))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1569,9 +1569,9 @@ func TestCustomQueueGroup(t *testing.T) {
 		},
 		{
 			name: "empty queue group in option, inherit from parent",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				srv, err := micro.AddService(nc, micro.Config{
-					Name:       "test_micro",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				srv, err := service.AddService(nc, service.Config{
+					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "q-config",
 				})
@@ -1579,8 +1579,8 @@ func TestCustomQueueGroup(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
-				// add endpoint on micro directly, overwriting the queue group
-				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup(""))
+				// add endpoint on service directly, overwriting the queue group
+				err = srv.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}), service.WithEndpointQueueGroup(""))
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
@@ -1592,37 +1592,37 @@ func TestCustomQueueGroup(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid queue group on micro config",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				_, err := micro.AddService(nc, micro.Config{
-					Name:       "test_micro",
+			name: "invalid queue group on service config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				_, err := service.AddService(nc, service.Config{
+					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: ">.abc",
-					Endpoint: &micro.EndpointConfig{
+					Endpoint: &service.EndpointConfig{
 						Subject: "foo",
-						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+						Handler: service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
-				if !errors.Is(err, micro.ErrConfigValidation) {
-					t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+				if !errors.Is(err, service.ErrConfigValidation) {
+					t.Fatalf("Expected error: %v; got: %v", service.ErrConfigValidation, err)
 				}
 				return nil
 			},
 		},
 		{
 			name: "invalid queue group on endpoint",
-			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
-				_, err := micro.AddService(nc, micro.Config{
-					Name:    "test_micro",
+			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
+				_, err := service.AddService(nc, service.Config{
+					Name:    "test_service",
 					Version: "0.0.1",
-					Endpoint: &micro.EndpointConfig{
+					Endpoint: &service.EndpointConfig{
 						Subject:    "foo",
 						QueueGroup: ">.abc",
-						Handler:    micro.HandlerFunc(func(r micro.Request) {}),
+						Handler:    service.HandlerFunc(func(r service.Request) {}),
 					},
 				})
-				if !errors.Is(err, micro.ErrConfigValidation) {
-					t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+				if !errors.Is(err, service.ErrConfigValidation) {
+					t.Fatalf("Expected error: %v; got: %v", service.ErrConfigValidation, err)
 				}
 				return nil
 			},
@@ -1645,7 +1645,7 @@ func TestCustomQueueGroup(t *testing.T) {
 			}
 			defer srv.Stop()
 			info := srv.Info()
-			endpoints := make(map[string]micro.EndpointInfo)
+			endpoints := make(map[string]service.EndpointInfo)
 			for _, e := range info.Endpoints {
 				endpoints[e.Name] = e
 			}
@@ -1660,7 +1660,7 @@ func TestCustomQueueGroup(t *testing.T) {
 
 			stats := srv.Stats()
 			// make sure the same queue groups are on stats
-			endpointStats := make(map[string]*micro.EndpointStats)
+			endpointStats := make(map[string]*service.EndpointStats)
 
 			for _, e := range stats.Endpoints {
 				endpointStats[e.Name] = e
@@ -1688,25 +1688,25 @@ func TestCustomQueueGroupMultipleResponses(t *testing.T) {
 	defer nc.Close()
 
 	for i := 0; i < 5; i++ {
-		f := func(i int) func(r micro.Request) {
-			return func(r micro.Request) {
+		f := func(i int) func(r service.Request) {
+			return func(r service.Request) {
 				time.Sleep(10 * time.Millisecond)
 				r.Respond([]byte(fmt.Sprintf("%d", i)))
 			}
 		}
-		micro, err := micro.AddService(nc, micro.Config{
-			Name:       "test_micro",
+		service, err := service.AddService(nc, service.Config{
+			Name:       "test_service",
 			Version:    "0.0.1",
 			QueueGroup: fmt.Sprintf("q-%d", i),
-			Endpoint: &micro.EndpointConfig{
+			Endpoint: &service.EndpointConfig{
 				Subject: "foo",
-				Handler: micro.HandlerFunc(f(i)),
+				Handler: service.HandlerFunc(f(i)),
 			},
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer micro.Stop()
+		defer service.Stop()
 	}
 	err = nc.PublishRequest("foo", "rply", []byte("req"))
 	if err != nil {
@@ -1737,7 +1737,7 @@ func TestCustomQueueGroupMultipleResponses(t *testing.T) {
 	}
 	for k, v := range expectedResponses {
 		if !v {
-			t.Fatalf("Did not receive response from micro %s", k)
+			t.Fatalf("Did not receive response from service %s", k)
 		}
 	}
 }
