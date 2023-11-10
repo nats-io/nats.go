@@ -65,7 +65,7 @@ func TestServiceBasics(t *testing.T) {
 
 	// Create 5 service responders.
 	config := service.Config{
-		Name:        "CoolAddService",
+		Name:        "CoolNew",
 		Version:     "0.1.0",
 		Description: "Add things together",
 		Metadata:    map[string]string{"basic": "metadata"},
@@ -76,7 +76,7 @@ func TestServiceBasics(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		svc, err := service.AddService(nc, config)
+		svc, err := service.New(nc, config)
 		if err != nil {
 			t.Fatalf("Expected to create Service, got %v", err)
 		}
@@ -94,8 +94,8 @@ func TestServiceBasics(t *testing.T) {
 
 	for _, svc := range svcs {
 		info := svc.Info()
-		if info.Name != "CoolAddService" {
-			t.Fatalf("Expected %q, got %q", "CoolAddService", info.Name)
+		if info.Name != "CoolNew" {
+			t.Fatalf("Expected %q, got %q", "CoolNew", info.Name)
 		}
 		if len(info.Description) == 0 || len(info.Version) == 0 {
 			t.Fatalf("Expected non empty description and version")
@@ -107,7 +107,7 @@ func TestServiceBasics(t *testing.T) {
 
 	// Make sure we can request info, 1 response.
 	// This could be exported as well as main ServiceImpl.
-	subj, err := service.ControlSubject(service.InfoVerb, "CoolAddService", "")
+	subj, err := service.ControlSubject(service.InfoVerb, "CoolNew", "")
 	if err != nil {
 		t.Fatalf("Failed to building info subject %v", err)
 	}
@@ -126,7 +126,7 @@ func TestServiceBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe failed: %s", err)
 	}
-	pingSubject, err := service.ControlSubject(service.PingVerb, "CoolAddService", "")
+	pingSubject, err := service.ControlSubject(service.PingVerb, "CoolNew", "")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestServiceBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe failed: %s", err)
 	}
-	statsSubject, err := service.ControlSubject(service.StatsVerb, "CoolAddService", "")
+	statsSubject, err := service.ControlSubject(service.StatsVerb, "CoolNew", "")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestServiceBasics(t *testing.T) {
 
 }
 
-func TestAddService(t *testing.T) {
+func TestNew(t *testing.T) {
 	testHandler := func(service.Request) {}
 	errNats := make(chan struct{})
 	errService := make(chan struct{})
@@ -445,7 +445,7 @@ func TestAddService(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := service.AddService(nc, test.givenConfig)
+			srv, err := service.New(nc, test.givenConfig)
 			if test.withError != nil {
 				if !errors.Is(err, test.withError) {
 					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
@@ -620,7 +620,7 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 				}
 				defer nc.Close()
 				nc.SetErrorHandler(cb)
-				svc, err := service.AddService(nc, service.Config{
+				svc, err := service.New(nc, service.Config{
 					Name:         "test_service",
 					Version:      "0.0.1",
 					ErrorHandler: service.ErrHandler(errHandler),
@@ -722,7 +722,7 @@ func TestGroups(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := service.AddService(nc, service.Config{
+			srv, err := service.New(nc, service.Config{
 				Name:    "test_service",
 				Version: "0.0.1",
 			})
@@ -783,7 +783,7 @@ func TestMonitoringHandlers(t *testing.T) {
 			Metadata: map[string]string{"basic": "schema"},
 		},
 	}
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestContextHandler(t *testing.T) {
 		},
 	}
 
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1075,7 +1075,7 @@ func TestServiceStats(t *testing.T) {
 			}
 			defer nc.Close()
 
-			srv, err := service.AddService(nc, test.config)
+			srv, err := service.New(nc, test.config)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1306,7 +1306,7 @@ func TestRequestRespond(t *testing.T) {
 				}
 			}
 
-			svc, err := service.AddService(nc, service.Config{
+			svc, err := service.New(nc, service.Config{
 				Name:        "CoolService",
 				Version:     "0.1.0",
 				Description: "test service",
@@ -1449,7 +1449,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "default queue group",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				srv, err := service.AddService(nc, service.Config{
+				srv, err := service.New(nc, service.Config{
 					Name:    "test_service",
 					Version: "0.0.1",
 					Endpoint: &service.EndpointConfig{
@@ -1474,7 +1474,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "custom queue group on service config",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				srv, err := service.AddService(nc, service.Config{
+				srv, err := service.New(nc, service.Config{
 					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "custom",
@@ -1513,7 +1513,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "overwriting queue groups",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				srv, err := service.AddService(nc, service.Config{
+				srv, err := service.New(nc, service.Config{
 					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "q-config",
@@ -1570,7 +1570,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "empty queue group in option, inherit from parent",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				srv, err := service.AddService(nc, service.Config{
+				srv, err := service.New(nc, service.Config{
 					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: "q-config",
@@ -1594,7 +1594,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "invalid queue group on service config",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				_, err := service.AddService(nc, service.Config{
+				_, err := service.New(nc, service.Config{
 					Name:       "test_service",
 					Version:    "0.0.1",
 					QueueGroup: ">.abc",
@@ -1612,7 +1612,7 @@ func TestCustomQueueGroup(t *testing.T) {
 		{
 			name: "invalid queue group on endpoint",
 			endpointInit: func(t *testing.T, nc *nats.Conn) service.Service {
-				_, err := service.AddService(nc, service.Config{
+				_, err := service.New(nc, service.Config{
 					Name:    "test_service",
 					Version: "0.0.1",
 					Endpoint: &service.EndpointConfig{
@@ -1694,7 +1694,7 @@ func TestCustomQueueGroupMultipleResponses(t *testing.T) {
 				r.Respond([]byte(fmt.Sprintf("%d", i)))
 			}
 		}
-		service, err := service.AddService(nc, service.Config{
+		svc, err := service.New(nc, service.Config{
 			Name:       "test_service",
 			Version:    "0.0.1",
 			QueueGroup: fmt.Sprintf("q-%d", i),
@@ -1706,7 +1706,7 @@ func TestCustomQueueGroupMultipleResponses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer service.Stop()
+		defer svc.Stop()
 	}
 	err = nc.PublishRequest("foo", "rply", []byte("req"))
 	if err != nil {

@@ -71,7 +71,7 @@ func Example() {
 			Handler: service.HandlerFunc(echoHandler),
 		},
 	}
-	svc, err := service.AddService(nc, config)
+	svc, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}

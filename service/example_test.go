@@ -23,7 +23,7 @@ import (
 	"github.com/nats-io/nats.go/service"
 )
 
-func ExampleAddService() {
+func ExampleNew() {
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
@@ -57,7 +57,7 @@ func ExampleAddService() {
 		},
 	}
 
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func ExampleService_AddEndpoint() {
 		Version: "1.0.0",
 	}
 
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func ExampleWithEndpointSubject() {
 		Version: "1.0.0",
 	}
 
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func ExampleService_AddGroup() {
 		Version: "1.0.0",
 	}
 
-	srv, err := service.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func ExampleService_Info() {
 		Name: "EchoService",
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// service info
 	info := srv.Info()
@@ -189,7 +189,7 @@ func ExampleService_Stats() {
 		},
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 	// stats of a service instance
 	stats := srv.Stats()
 
@@ -210,7 +210,7 @@ func ExampleService_Stop() {
 		Version: "0.1.0",
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -237,7 +237,7 @@ func ExampleService_Stopped() {
 		Version: "0.1.0",
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -262,7 +262,7 @@ func ExampleService_Reset() {
 		Version: "0.1.0",
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// reset endpoint stats on this service
 	srv.Reset()
@@ -302,7 +302,7 @@ func ExampleContextHandler() {
 		},
 	}
 
-	srv, _ := service.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 	defer srv.Stop()
 }
 

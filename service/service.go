@@ -307,13 +307,19 @@ func (s Verb) String() string {
 	}
 }
 
-// AddService adds a serviceservice.
+// AddService adds a service.
+// Deprecated: use New instead.
+func AddService(nc *nats.Conn, config Config) (Service, error) {
+	return New(nc, config)
+}
+
+// New creates a new service.
 // It will enable internal common services (PING, STATS and INFO).
 // Request handlers have to be registered separately using Service.AddEndpoint.
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
-func AddService(nc *nats.Conn, config Config) (Service, error) {
+func New(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
 	}
