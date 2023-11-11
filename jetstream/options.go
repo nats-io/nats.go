@@ -122,7 +122,7 @@ type PullExpiry time.Duration
 
 func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
 	expiry := time.Duration(exp)
-	if expiry < 1*time.Second {
+	if expiry < time.Second {
 		return fmt.Errorf("%w: expires value must be at least 1s", ErrInvalidOption)
 	}
 	opts.Expires = expiry
@@ -131,7 +131,7 @@ func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
 
 func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
 	expiry := time.Duration(exp)
-	if expiry < 0 {
+	if expiry < time.Second {
 		return fmt.Errorf("%w: expires value must be at least 1s", ErrInvalidOption)
 	}
 	opts.Expires = expiry
