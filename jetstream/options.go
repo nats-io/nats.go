@@ -322,7 +322,7 @@ func WithExpectLastMsgID(id string) PublishOpt {
 }
 
 // WithRetryWait sets the retry wait time when ErrNoResponders is encountered.
-// Defaults to 2
+// Defaults to 250ms
 func WithRetryWait(dur time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if dur <= 0 {
@@ -334,7 +334,7 @@ func WithRetryWait(dur time.Duration) PublishOpt {
 }
 
 // WithRetryAttempts sets the retry number of attempts when ErrNoResponders is encountered.
-// Defaults to 250ms
+// Defaults to 2
 func WithRetryAttempts(num int) PublishOpt {
 	return func(opts *pubOpts) error {
 		if num < 0 {
