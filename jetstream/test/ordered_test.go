@@ -1362,3 +1362,34 @@ func TestOrderedConsumerInfo(t *testing.T) {
 		t.Fatalf("New consumer should be returned; got: %s", info.Name)
 	}
 }
+
+func TestOrderedConsumerNextTimeout(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = c.Next(jetstream.FetchMaxWait(1 * time.Second))
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrTimeout, err)
+	}
+}

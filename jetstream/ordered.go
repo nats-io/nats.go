@@ -368,6 +368,9 @@ func (c *orderedConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	if msg != nil {
 		return msg, nil
 	}
+	if res.Error() == nil {
+		return nil, nats.ErrTimeout
+	}
 	return nil, res.Error()
 }
 
