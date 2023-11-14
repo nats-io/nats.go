@@ -736,6 +736,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		for {
 			select {
 			case msg := <-msgs:
+				p.Lock()
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
@@ -751,7 +752,6 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if !userMsg {
 					continue
 				}
-				p.Lock()
 				res.msgs <- p.jetStream.toJSMsg(msg)
 				meta, err := msg.Metadata()
 				if err != nil {

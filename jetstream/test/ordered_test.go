@@ -16,6 +16,7 @@ package test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -1391,5 +1392,55 @@ func TestOrderedConsumerNextTimeout(t *testing.T) {
 	_, err = c.Next(jetstream.FetchMaxWait(1 * time.Second))
 	if !errors.Is(err, nats.ErrTimeout) {
 		t.Fatalf("Expected error: %v; got: %v", nats.ErrTimeout, err)
+	}
+}
+
+func TestOrderedConsumerNextOrder(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		for i := 0; i < 100_000; i++ {
+			js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("%d", 1)))
+		}
+	}()
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 100_000; i++ {
+
+		fmt.Printf("i: %d\n", i)
+		msg, err := c.Next(jetstream.FetchMaxWait(5 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		fmt.Println("got some message ", i)
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if meta.Sequence.Stream != uint64(i+1) {
+			t.Fatalf("Unexpected sequence number: %d", meta.Sequence.Stream)
+		}
 	}
 }
