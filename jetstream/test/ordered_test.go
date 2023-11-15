@@ -1412,9 +1412,14 @@ func TestOrderedConsumerNextOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	publishFailed := make(chan error, 1)
+
 	go func() {
 		for i := 0; i < 100_000; i++ {
-			js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("%d", 1)))
+			_, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("%d", 1)))
+			if err != nil {
+				publishFailed <- err
+			}
 		}
 	}()
 
@@ -1429,12 +1434,16 @@ func TestOrderedConsumerNextOrder(t *testing.T) {
 
 	for i := 0; i < 100_000; i++ {
 
-		fmt.Printf("i: %d\n", i)
+		select {
+		case err := <-publishFailed:
+			t.Fatalf("Publish error: %v", err)
+		default:
+		}
+
 		msg, err := c.Next(jetstream.FetchMaxWait(5 * time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		fmt.Println("got some message ", i)
 		meta, err := msg.Metadata()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
