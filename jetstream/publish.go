@@ -128,9 +128,8 @@ const (
 const (
 	statusHdr = "Status"
 
-	inboxPrefix = "_INBOX."
-	rdigits     = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	base        = 62
+	rdigits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	base    = 62
 )
 
 func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (*PubAck, error) {
@@ -310,7 +309,11 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		for i := 0; i < aReplyTokensize; i++ {
 			b[i] = rdigits[int(b[i]%base)]
 		}
-		js.publisher.replyPrefix = fmt.Sprintf("%s%s.", inboxPrefix, b[:aReplyTokensize])
+		inboxPrefix := "_INBOX"
+		if js.conn.Opts.InboxPrefix != "" {
+			inboxPrefix = js.conn.Opts.InboxPrefix
+		}
+		js.publisher.replyPrefix = fmt.Sprintf("%s.%s.", inboxPrefix, b[:aReplyTokensize])
 		sub, err := js.conn.Subscribe(fmt.Sprintf("%s*", js.publisher.replyPrefix), js.handleAsyncReply)
 		if err != nil {
 			js.publisher.Unlock()
