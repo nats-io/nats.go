@@ -144,9 +144,11 @@ type (
 	JetStreamOpt func(*jsOpts) error
 
 	jsOpts struct {
-		publisherOpts asyncPublisherOpts
-		apiPrefix     string
-		clientTrace   *ClientTrace
+		publisherOpts  asyncPublisherOpts
+		apiPrefix      string
+		replyPrefix    string
+		replyPrefixLen int
+		clientTrace    *ClientTrace
 	}
 
 	// ClientTrace can be used to trace API interactions for the JetStream Context.
@@ -229,6 +231,7 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 			maxpa: defaultAsyncPubAckInflight,
 		},
 	}
+	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err
@@ -248,6 +251,16 @@ const (
 	defaultAsyncPubAckInflight = 4000
 )
 
+func setReplyPrefix(nc *nats.Conn, jsOpts *jsOpts) {
+	jsOpts.replyPrefix = nats.InboxPrefix
+	if nc.Opts.InboxPrefix != "" {
+		jsOpts.replyPrefix = nc.Opts.InboxPrefix + "."
+	}
+	// Add 1 for the dot separator.
+	jsOpts.replyPrefixLen = len(jsOpts.replyPrefix) + aReplyTokensize + 1
+
+}
+
 // NewWithAPIPrefix returns a new JetStream instance and sets the API prefix to be used in requests to JetStream API
 //
 // Available options:
@@ -261,6 +274,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 			maxpa: defaultAsyncPubAckInflight,
 		},
 	}
+	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err
@@ -293,6 +307,7 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 			maxpa: defaultAsyncPubAckInflight,
 		},
 	}
+	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
 		if err := opt(&jsOpts); err != nil {
 			return nil, err

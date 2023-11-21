@@ -268,7 +268,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		if err != nil {
 			return nil, fmt.Errorf("nats: error creating async reply handler: %s", err)
 		}
-		id = m.Reply[aReplyPreLen:]
+		id = m.Reply[js.replyPrefixLen:]
 		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait}
 		numPending, maxPending := js.registerPAF(id, paf)
 
@@ -282,7 +282,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		}
 	} else {
 		// when retrying, get the ID from existing reply subject
-		id = m.Reply[aReplyPreLen:]
+		id = m.Reply[js.replyPrefixLen:]
 	}
 
 	if err := js.conn.PublishMsg(m); err != nil {
@@ -295,7 +295,6 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 
 // For quick token lookup etc.
 const (
-	aReplyPreLen    = 14
 	aReplyTokensize = 6
 )
 
@@ -309,11 +308,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		for i := 0; i < aReplyTokensize; i++ {
 			b[i] = rdigits[int(b[i]%base)]
 		}
-		inboxPrefix := "_INBOX"
-		if js.conn.Opts.InboxPrefix != "" {
-			inboxPrefix = js.conn.Opts.InboxPrefix
-		}
-		js.publisher.replyPrefix = fmt.Sprintf("%s.%s.", inboxPrefix, b[:aReplyTokensize])
+		js.publisher.replyPrefix = fmt.Sprintf("%s%s.", js.replyPrefix, b[:aReplyTokensize])
 		sub, err := js.conn.Subscribe(fmt.Sprintf("%s*", js.publisher.replyPrefix), js.handleAsyncReply)
 		if err != nil {
 			js.publisher.Unlock()
@@ -341,10 +336,10 @@ func (js *jetStream) newAsyncReply() (string, error) {
 
 // Handle an async reply from PublishAsync.
 func (js *jetStream) handleAsyncReply(m *nats.Msg) {
-	if len(m.Subject) <= aReplyPreLen {
+	if len(m.Subject) <= js.replyPrefixLen {
 		return
 	}
-	id := m.Subject[aReplyPreLen:]
+	id := m.Subject[js.replyPrefixLen:]
 
 	js.publisher.Lock()
 
