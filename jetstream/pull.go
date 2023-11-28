@@ -747,9 +747,11 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 						res.err = err
 					}
 					res.done = true
+					p.Unlock()
 					return
 				}
 				if !userMsg {
+					p.Unlock()
 					continue
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
@@ -762,7 +764,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if req.MaxBytes != 0 {
 					receivedBytes += msg.Size()
 				}
-				if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes == req.MaxBytes) {
+				if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes >= req.MaxBytes) {
 					res.done = true
 					p.Unlock()
 					return

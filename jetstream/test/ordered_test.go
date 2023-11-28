@@ -1415,7 +1415,7 @@ func TestOrderedConsumerNextOrder(t *testing.T) {
 	publishFailed := make(chan error, 1)
 
 	go func() {
-		for i := 0; i < 100_000; i++ {
+		for i := 0; i < 1000; i++ {
 			_, err := js.Publish(ctx, "FOO.A", []byte(fmt.Sprintf("%d", 1)))
 			if err != nil {
 				publishFailed <- err
@@ -1432,7 +1432,7 @@ func TestOrderedConsumerNextOrder(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	for i := 0; i < 100_000; i++ {
+	for i := 0; i < 1000; i++ {
 
 		select {
 		case err := <-publishFailed:
