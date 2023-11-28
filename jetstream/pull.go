@@ -734,14 +734,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		defer sub.subscription.Unsubscribe()
 		defer close(res.msgs)
 		for {
-			if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes == req.MaxBytes) {
-				p.Lock()
-				res.done = true
-				p.Unlock()
-				return
-			}
 			select {
 			case msg := <-msgs:
+				p.Lock()
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
@@ -752,9 +747,11 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 						res.err = err
 					}
 					res.done = true
+					p.Unlock()
 					return
 				}
 				if !userMsg {
+					p.Unlock()
 					continue
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
@@ -767,6 +764,12 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if req.MaxBytes != 0 {
 					receivedBytes += msg.Size()
 				}
+				if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes >= req.MaxBytes) {
+					res.done = true
+					p.Unlock()
+					return
+				}
+				p.Unlock()
 			case <-time.After(req.Expires + 1*time.Second):
 				res.done = true
 				return
