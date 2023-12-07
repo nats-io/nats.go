@@ -434,6 +434,7 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	if err != nil {
 		return err
 	}
+	s.m.Lock()
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
 	endpoint.stats = EndpointStats{
@@ -441,6 +442,7 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 		Subject:    subject,
 		QueueGroup: queueGroup,
 	}
+	s.m.Unlock()
 	return nil
 }
 
