@@ -692,6 +692,9 @@ func (s *service) serviceIdentity() ServiceIdentity {
 
 // Info returns information about the service
 func (s *service) Info() Info {
+	s.m.Lock()
+	defer s.m.Unlock()
+
 	endpoints := make([]EndpointInfo, 0, len(s.endpoints))
 	for _, e := range s.endpoints {
 		endpoints = append(endpoints, EndpointInfo{
