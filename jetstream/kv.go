@@ -411,7 +411,7 @@ func (js *jetStream) KeyValueStoreNames(ctx context.Context) KeyValueNamesLister
 				if !strings.HasPrefix(name, kvBucketNamePre) {
 					continue
 				}
-				res.kvNames <- name
+				res.kvNames <- strings.TrimPrefix(name, kvBucketNamePre)
 			}
 			if errors.Is(err, ErrEndOfData) {
 				return
