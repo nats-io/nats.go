@@ -404,6 +404,53 @@ func TestKeyValueWatch(t *testing.T) {
 		expectOk(t, err)
 		expectUpdate("t.age", "66", 12)
 	})
+
+	t.Run("watcher with start revision", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		_, err = kv.Create(ctx, "name", []byte("derek"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "name", []byte("rip"))
+		expectOk(t, err)
+		_, err = kv.Put(ctx, "age", []byte("22"))
+		expectOk(t, err)
+
+		watcherFrom2, err := kv.WatchAll(ctx, jetstream.StartRevision(2))
+		expectOk(t, err)
+		defer watcherFrom2.Stop()
+
+		expectUpdate := expectUpdateF(t, watcherFrom2)
+
+		// check that we get only updates after revision 2
+		expectUpdate("name", "rip", 2)
+		expectUpdate("age", "22", 3)
+
+		// stop first watcher
+		watcherFrom2.Stop()
+
+		_, err = kv.Put(ctx, "name2", []byte("ik"))
+		expectOk(t, err)
+
+		// create a new watcher with start revision 3
+		watcherFrom3, err := kv.WatchAll(ctx, jetstream.StartRevision(3))
+		expectOk(t, err)
+		defer watcherFrom2.Stop()
+
+		expectUpdate = expectUpdateF(t, watcherFrom3)
+
+		// check that we get only updates after revision 3
+		expectUpdate("age", "22", 3)
+		expectUpdate("name2", "ik", 4)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {

@@ -402,6 +402,13 @@ func MetaOnly() WatchOpt {
 	})
 }
 
+func StartRevision(revision uint64) WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.startSeq = revision
+		return nil
+	})
+}
+
 // DeleteMarkersOlderThan indicates that delete or purge markers older than that
 // will be deleted as part of PurgeDeletes() operation, otherwise, only the data
 // will be removed but markers that are recent will be kept.
