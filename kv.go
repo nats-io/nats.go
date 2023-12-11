@@ -1062,7 +1062,7 @@ func (js *js) KeyValueStoreNames() <-chan string {
 				if !strings.HasPrefix(name, kvBucketNamePre) {
 					continue
 				}
-				ch <- name
+				ch <- strings.TrimPrefix(name, kvBucketNamePre)
 			}
 		}
 	}()
