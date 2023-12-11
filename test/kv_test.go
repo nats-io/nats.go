@@ -979,6 +979,9 @@ func TestListKeyValueStores(t *testing.T) {
 			}
 			names := make([]string, 0)
 			for name := range js.KeyValueStoreNames() {
+				if strings.HasPrefix(name, "KV_") {
+					t.Fatalf("Expected name without KV_ prefix, got %q", name)
+				}
 				names = append(names, name)
 			}
 			if len(names) != test.bucketsNum {
