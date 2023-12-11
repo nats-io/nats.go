@@ -18,6 +18,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
 )
 
@@ -43,7 +45,14 @@ type objectStepConfig[T any] struct {
 
 func TestCompatibilityObjectStoreDefaultBucket(t *testing.T) {
 	t.Parallel()
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
 
 	// setup subscription on which tester will be sending requests
@@ -59,7 +68,9 @@ func TestCompatibilityObjectStoreDefaultBucket(t *testing.T) {
 		t.Fatalf("Error getting message: %v", err)
 	}
 
-	_, err = js.CreateObjectStore(&nats.ObjectStoreConfig{
+	ctx := context.Background()
+
+	_, err = js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{
 		Bucket: "test",
 	})
 	if err != nil {
@@ -74,8 +85,15 @@ func TestCompatibilityObjectStoreDefaultBucket(t *testing.T) {
 
 func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 	t.Parallel()
-	nc, js := connectJS(t)
-	defer nc.Close()
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.custom-bucket.>")
@@ -89,12 +107,12 @@ func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error getting message: %v", err)
 	}
-	var cfg objectStepConfig[*nats.ObjectStoreConfig]
+	var cfg objectStepConfig[jetstream.ObjectStoreConfig]
 	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
 
-	_, err = js.CreateObjectStore(cfg.Config)
+	_, err = js.CreateObjectStore(ctx, cfg.Config)
 	if err != nil {
 		t.Fatalf("Error creating object store: %v", err)
 	}
@@ -113,8 +131,16 @@ func TestCompatibilityObjectStoreGetObject(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.get-object.>")
@@ -132,11 +158,11 @@ func TestCompatibilityObjectStoreGetObject(t *testing.T) {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
 	// Get object
-	os, err := js.ObjectStore(cfg.Bucket)
+	os, err := js.ObjectStore(ctx, cfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	obj, err := os.Get(cfg.Object)
+	obj, err := os.Get(ctx, cfg.Object)
 	if err != nil {
 		t.Fatalf("Error creating object store: %v", err)
 	}
@@ -160,8 +186,16 @@ func TestCompatibilityObjectStoreGetObject(t *testing.T) {
 func TestCompatibilityObjectStorePutObject(t *testing.T) {
 	t.Parallel()
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.put-object.>")
@@ -175,11 +209,11 @@ func TestCompatibilityObjectStorePutObject(t *testing.T) {
 		t.Fatalf("Error getting message: %v", err)
 	}
 	// Put object
-	var putObjectCfg objectStepConfig[*nats.ObjectMeta]
+	var putObjectCfg objectStepConfig[jetstream.ObjectMeta]
 	if err := json.Unmarshal(msg.Data, &putObjectCfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(putObjectCfg.Bucket)
+	os, err := js.ObjectStore(ctx, putObjectCfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
@@ -193,7 +227,7 @@ func TestCompatibilityObjectStorePutObject(t *testing.T) {
 		t.Fatalf("Error reading content: %v", err)
 	}
 	defer resp.Body.Close()
-	if _, err := os.Put(putObjectCfg.Config, bytes.NewBuffer(data)); err != nil {
+	if _, err := os.Put(ctx, putObjectCfg.Config, bytes.NewBuffer(data)); err != nil {
 		t.Fatalf("Error putting object: %v", err)
 	}
 	if err := msg.Respond(nil); err != nil {
@@ -205,8 +239,16 @@ func TestCompatibilityObjectStorePutObject(t *testing.T) {
 func TestCompatibilityObjectStoreUpdateMetadata(t *testing.T) {
 	t.Parallel()
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.update-metadata.>")
@@ -220,15 +262,15 @@ func TestCompatibilityObjectStoreUpdateMetadata(t *testing.T) {
 		t.Fatalf("Error getting message: %v", err)
 	}
 	// Update object metadata
-	var putObjectCfg objectStepConfig[*nats.ObjectMeta]
+	var putObjectCfg objectStepConfig[jetstream.ObjectMeta]
 	if err := json.Unmarshal(msg.Data, &putObjectCfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(putObjectCfg.Bucket)
+	os, err := js.ObjectStore(ctx, putObjectCfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	if err := os.UpdateMeta(putObjectCfg.Object, putObjectCfg.Config); err != nil {
+	if err := os.UpdateMeta(ctx, putObjectCfg.Object, putObjectCfg.Config); err != nil {
 		t.Fatalf("Error putting object: %v", err)
 	}
 	if err := msg.Respond(nil); err != nil {
@@ -245,8 +287,16 @@ func TestCompatibilityObjectStoreWatch(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.watch.>")
@@ -264,16 +314,16 @@ func TestCompatibilityObjectStoreWatch(t *testing.T) {
 	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(cfg.Bucket)
+	os, err := js.ObjectStore(ctx, cfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	watcher, err := os.Watch()
+	watcher, err := os.Watch(ctx)
 	if err != nil {
 		t.Fatalf("Error getting watcher: %v", err)
 	}
 	var digests []string
-	var info *nats.ObjectInfo
+	var info *jetstream.ObjectInfo
 
 	// get the initial value
 	select {
@@ -315,8 +365,16 @@ func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
+	ctx := context.Background()
 
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.watch-updates.>")
@@ -334,15 +392,15 @@ func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
 	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(cfg.Bucket)
+	os, err := js.ObjectStore(ctx, cfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	watcher, err := os.Watch(nats.UpdatesOnly())
+	watcher, err := os.Watch(ctx, jetstream.UpdatesOnly())
 	if err != nil {
 		t.Fatalf("Error getting watcher: %v", err)
 	}
-	var info *nats.ObjectInfo
+	var info *jetstream.ObjectInfo
 	select {
 	case info = <-watcher.Updates():
 	case <-time.After(30 * time.Second):
@@ -363,9 +421,16 @@ func TestCompatibilityObjectStoreGetLink(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
-
+	ctx := context.Background()
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.get-link.>")
 	if err != nil {
@@ -382,11 +447,11 @@ func TestCompatibilityObjectStoreGetLink(t *testing.T) {
 	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(cfg.Bucket)
+	os, err := js.ObjectStore(ctx, cfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	obj, err := os.Get(cfg.Object)
+	obj, err := os.Get(ctx, cfg.Object)
 	if err != nil {
 		t.Fatalf("Error getting object: %v", err)
 	}
@@ -416,9 +481,16 @@ func TestCompatibilityObjectStorePutLink(t *testing.T) {
 		LinkName string `json:"link_name"`
 	}
 
-	nc, js := connectJS(t)
+	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Error connecting to NATS: %v", err)
+	}
 	defer nc.Close()
-
+	ctx := context.Background()
 	// setup subscription on which tester will be sending requests
 	sub, err := nc.SubscribeSync("tests.object-store.put-link.>")
 	if err != nil {
@@ -435,15 +507,15 @@ func TestCompatibilityObjectStorePutLink(t *testing.T) {
 	if err := json.Unmarshal(msg.Data, &cfg); err != nil {
 		t.Fatalf("Error unmarshalling message: %v", err)
 	}
-	os, err := js.ObjectStore(cfg.Bucket)
+	os, err := js.ObjectStore(ctx, cfg.Bucket)
 	if err != nil {
 		t.Fatalf("Error getting object store: %v", err)
 	}
-	sourceObj, err := os.GetInfo(cfg.Object)
+	sourceObj, err := os.GetInfo(ctx, cfg.Object)
 	if err != nil {
 		t.Fatalf("Error getting object: %v", err)
 	}
-	_, err = os.AddLink(cfg.LinkName, sourceObj)
+	_, err = os.AddLink(ctx, cfg.LinkName, sourceObj)
 	if err != nil {
 		t.Fatalf("Error adding link: %v", err)
 	}
