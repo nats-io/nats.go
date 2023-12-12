@@ -424,28 +424,28 @@ func TestKeyValueWatch(t *testing.T) {
 		_, err = kv.Put(ctx, "age", []byte("22"))
 		expectOk(t, err)
 
-		watcherFrom2, err := kv.WatchAll(ctx, jetstream.StartRevision(2))
+		watcher, err := kv.WatchAll(ctx, jetstream.StartRevision(2))
 		expectOk(t, err)
-		defer watcherFrom2.Stop()
+		defer watcher.Stop()
 
-		expectUpdate := expectUpdateF(t, watcherFrom2)
+		expectUpdate := expectUpdateF(t, watcher)
 
 		// check that we get only updates after revision 2
 		expectUpdate("name", "rip", 2)
 		expectUpdate("age", "22", 3)
 
 		// stop first watcher
-		watcherFrom2.Stop()
+		watcher.Stop()
 
 		_, err = kv.Put(ctx, "name2", []byte("ik"))
 		expectOk(t, err)
 
 		// create a new watcher with start revision 3
-		watcherFrom3, err := kv.WatchAll(ctx, jetstream.StartRevision(3))
+		watcher, err = kv.WatchAll(ctx, jetstream.StartRevision(3))
 		expectOk(t, err)
-		defer watcherFrom2.Stop()
+		defer watcher.Stop()
 
-		expectUpdate = expectUpdateF(t, watcherFrom3)
+		expectUpdate = expectUpdateF(t, watcher)
 
 		// check that we get only updates after revision 3
 		expectUpdate("age", "22", 3)
