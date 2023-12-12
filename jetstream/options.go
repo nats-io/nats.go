@@ -402,6 +402,7 @@ func MetaOnly() WatchOpt {
 	})
 }
 
+// StartRevision instructs the key watcher to start at the given revision.
 func StartRevision(revision uint64) WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.startRevision = revision
