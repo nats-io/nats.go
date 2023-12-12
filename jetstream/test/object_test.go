@@ -24,6 +24,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -975,6 +976,9 @@ func TestListObjectStores(t *testing.T) {
 			names := make([]string, 0)
 			objectStoreNames := js.ObjectStoreNames(ctx)
 			for name := range objectStoreNames.Name() {
+				if strings.HasPrefix(name, "OBJ_") {
+					t.Fatalf("Expected name without OBJ_ prefix, got: %s", name)
+				}
 				names = append(names, name)
 			}
 			expectOk(t, objectStoreNames.Error())

@@ -1218,7 +1218,7 @@ func (js *jetStream) ObjectStoreNames(ctx context.Context) ObjectStoreNamesListe
 				if !strings.HasPrefix(name, "OBJ_") {
 					continue
 				}
-				res.obsNames <- name
+				res.obsNames <- strings.TrimPrefix(name, "OBJ_")
 			}
 			if errors.Is(err, ErrEndOfData) {
 				return
