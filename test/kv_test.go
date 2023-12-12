@@ -1395,3 +1395,37 @@ func TestKeyValueSourcing(t *testing.T) {
 		t.Fatalf("Got error getting keyB from C: %v", err)
 	}
 }
+
+func TestKeyValueCompression(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+		Bucket:      "A",
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	status, err := kv.Status()
+	if err != nil {
+		t.Fatalf("Error getting bucket status: %v", err)
+	}
+
+	if !status.IsCompressed() {
+		t.Fatalf("Expected bucket to be compressed")
+	}
+
+	kvStream, err := js.StreamInfo("KV_A")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+
+	if kvStream.Config.Compression != nats.S2Compression {
+		t.Fatalf("Expected stream to be compressed with S2")
+	}
+}
