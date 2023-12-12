@@ -1042,6 +1042,9 @@ func TestListKeyValueStores(t *testing.T) {
 			names := make([]string, 0)
 			kvNames := js.KeyValueStoreNames(ctx)
 			for name := range kvNames.Name() {
+				if strings.HasPrefix(name, "KV_") {
+					t.Fatalf("Expected name without KV_ prefix, got %q", name)
+				}
 				names = append(names, name)
 			}
 			if kvNames.Error() != nil {
@@ -1402,4 +1405,39 @@ func expectErr(t *testing.T, err error, expected ...error) {
 		}
 	}
 	t.Fatalf("Expected one of %+v, got '%v'", expected, err)
+}
+
+func TestKeyValueCompression(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kvCompressed, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:      "A",
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	status, err := kvCompressed.Status(ctx)
+	if err != nil {
+		t.Fatalf("Error getting bucket status: %v", err)
+	}
+
+	if !status.IsCompressed() {
+		t.Fatalf("Expected bucket to be compressed")
+	}
+
+	kvStream, err := js.Stream(ctx, "KV_A")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+
+	if kvStream.CachedInfo().Config.Compression != jetstream.S2Compression {
+		t.Fatalf("Expected stream to be compressed with S2")
+	}
 }

@@ -92,6 +92,10 @@ type (
 		RePublish    *RePublish
 		Mirror       *StreamSource
 		Sources      []*StreamSource
+
+		// Enable underlying stream compression.
+		// NOTE: Compression is supported for nats-server 2.10.0+
+		Compression bool
 	}
 
 	KeyValueLister interface {
@@ -123,6 +127,9 @@ type (
 
 		// Bytes returns the size in bytes of the bucket
 		Bytes() uint64
+
+		// IsCompressed indicates if the data is compressed on disk
+		IsCompressed() bool
 	}
 
 	// KeyWatcher is what is returned when doing a watch.
@@ -324,6 +331,10 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 	if cfg.TTL > 0 && cfg.TTL < duplicateWindow {
 		duplicateWindow = cfg.TTL
 	}
+	var compression StoreCompression
+	if cfg.Compression {
+		compression = S2Compression
+	}
 	scfg := StreamConfig{
 		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
 		Description:       cfg.Description,
@@ -341,6 +352,7 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 		MaxConsumers:      -1,
 		AllowDirect:       true,
 		RePublish:         cfg.RePublish,
+		Compression:       compression,
 	}
 	if cfg.Mirror != nil {
 		// Copy in case we need to make changes so we do not change caller's version.
@@ -413,7 +425,7 @@ func (js *jetStream) KeyValueStoreNames(ctx context.Context) KeyValueNamesLister
 				if !strings.HasPrefix(name, kvBucketNamePre) {
 					continue
 				}
-				res.kvNames <- name
+				res.kvNames <- strings.TrimPrefix(name, kvBucketNamePre)
 			}
 			if errors.Is(err, ErrEndOfData) {
 				return
@@ -480,6 +492,9 @@ func (s *KeyValueBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
 
 // Bytes is the size of the stream
 func (s *KeyValueBucketStatus) Bytes() uint64 { return s.nfo.State.Bytes }
+
+// IsCompressed indicates if the data is compressed on disk
+func (s *KeyValueBucketStatus) IsCompressed() bool { return s.nfo.Config.Compression != NoCompression }
 
 type kvLister struct {
 	kvs     chan KeyValueStatus
