@@ -995,6 +995,9 @@ func TestListKeyValueStores(t *testing.T) {
 			names := make([]string, 0)
 			kvNames := js.KeyValueStoreNames(ctx)
 			for name := range kvNames.Name() {
+				if strings.HasPrefix(name, "KV_") {
+					t.Fatalf("Expected name without KV_ prefix, got %q", name)
+				}
 				names = append(names, name)
 			}
 			if kvNames.Error() != nil {
