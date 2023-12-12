@@ -404,7 +404,7 @@ func MetaOnly() WatchOpt {
 
 func StartRevision(revision uint64) WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
-		opts.startSeq = revision
+		opts.startRevision = revision
 		return nil
 	})
 }
