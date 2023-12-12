@@ -746,6 +746,80 @@ func TestKeyValueKeys(t *testing.T) {
 	}
 }
 
+func TestKeyValueListKeys(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
+	expectOk(t, err)
+
+	put := func(key, value string) {
+		t.Helper()
+		_, err := kv.Put(ctx, key, []byte(value))
+		expectOk(t, err)
+	}
+
+	// Put in a few names and ages.
+	put("name", "derek")
+	put("age", "22")
+	put("country", "US")
+	put("name", "ivan")
+	put("age", "33")
+	put("country", "US")
+	put("name", "rip")
+	put("age", "44")
+	put("country", "MT")
+
+	keys, err := kv.ListKeys(ctx)
+	expectOk(t, err)
+
+	kmap := make(map[string]struct{})
+	for key := range keys.Keys() {
+		if _, ok := kmap[key]; ok {
+			t.Fatalf("Already saw %q", key)
+		}
+		kmap[key] = struct{}{}
+	}
+	if len(kmap) != 3 {
+		t.Fatalf("Expected 3 total keys, got %d", len(kmap))
+	}
+	expected := map[string]struct{}{
+		"name":    struct{}{},
+		"age":     struct{}{},
+		"country": struct{}{},
+	}
+	if !reflect.DeepEqual(kmap, expected) {
+		t.Fatalf("Expected %+v but got %+v", expected, kmap)
+	}
+	// Make sure delete and purge do the right thing and not return the keys.
+	err = kv.Delete(ctx, "name")
+	expectOk(t, err)
+	err = kv.Purge(ctx, "country")
+	expectOk(t, err)
+
+	keys, err = kv.ListKeys(ctx)
+	expectOk(t, err)
+
+	kmap = make(map[string]struct{})
+	for key := range keys.Keys() {
+		if _, ok := kmap[key]; ok {
+			t.Fatalf("Already saw %q", key)
+		}
+		kmap[key] = struct{}{}
+	}
+	if len(kmap) != 1 {
+		t.Fatalf("Expected 1 total key, got %d", len(kmap))
+	}
+	if _, ok := kmap["age"]; !ok {
+		t.Fatalf("Expected %q to be only key present", "age")
+	}
+}
+
 func TestKeyValueCrossAccounts(t *testing.T) {
 	conf := createConfFile(t, []byte(`
         jetstream: enabled
