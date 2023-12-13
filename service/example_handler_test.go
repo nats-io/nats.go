@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro_test
+package service_test
 
 import (
 	"log"
 	"strconv"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/micro"
+	"github.com/nats-io/nats.go/service"
 )
 
 type rectangle struct {
@@ -26,9 +26,9 @@ type rectangle struct {
 	width  int
 }
 
-// Handle is an implementation of micro.Handler used to
+// Handle is an implementation of service.Handler used to
 // calculate the area of a rectangle
-func (r rectangle) Handle(req micro.Request) {
+func (r rectangle) Handle(req service.Request) {
 	area := r.height * r.width
 	req.Respond([]byte(strconv.Itoa(area)))
 }
@@ -42,15 +42,15 @@ func ExampleHandler() {
 
 	rec := rectangle{10, 5}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "RectangleAreaService",
 		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "area.rectangle",
 			Handler: rec,
 		},
 	}
-	svc, err := micro.AddService(nc, config)
+	svc, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package micro_test
+package service_test
 
 import (
 	"context"
@@ -20,44 +20,44 @@ import (
 	"reflect"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/micro"
+	"github.com/nats-io/nats.go/service"
 )
 
-func ExampleAddService() {
+func ExampleNew() {
 	nc, err := nats.Connect("127.0.0.1:4222")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(req service.Request) {
 		req.Respond(req.Data())
 	}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:        "EchoService",
 		Version:     "1.0.0",
 		Description: "Send back what you receive",
 		// DoneHandler can be set to customize behavior on stopping a service.
-		DoneHandler: func(srv micro.Service) {
+		DoneHandler: func(srv service.Service) {
 			info := srv.Info()
 			fmt.Printf("stopped service %q with ID %q\n", info.Name, info.ID)
 		},
 
 		// ErrorHandler can be used to customize behavior on service execution error.
-		ErrorHandler: func(srv micro.Service, err *micro.NATSError) {
+		ErrorHandler: func(srv service.Service, err *service.NATSError) {
 			info := srv.Info()
 			fmt.Printf("Service %q returned an error on subject %q: %s", info.Name, err.Subject, err.Description)
 		},
 
 		// optional base handler
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(echoHandler),
+			Handler: service.HandlerFunc(echoHandler),
 		},
 	}
 
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -71,22 +71,22 @@ func ExampleService_AddEndpoint() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(req service.Request) {
 		req.Respond(req.Data())
 	}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "1.0.0",
 	}
 
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// endpoint will be registered under "Echo" subject
-	err = srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	err = srv.AddEndpoint("Echo", service.HandlerFunc(echoHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -99,22 +99,22 @@ func ExampleWithEndpointSubject() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(req service.Request) {
 		req.Respond(req.Data())
 	}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "1.0.0",
 	}
 
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// endpoint will be registered under "service.echo" subject
-	err = srv.AddEndpoint("Echo", micro.HandlerFunc(echoHandler), micro.WithEndpointSubject("service.echo"))
+	err = srv.AddEndpoint("Echo", service.HandlerFunc(echoHandler), service.WithEndpointSubject("service.echo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,16 +127,16 @@ func ExampleService_AddGroup() {
 	}
 	defer nc.Close()
 
-	echoHandler := func(req micro.Request) {
+	echoHandler := func(req service.Request) {
 		req.Respond(req.Data())
 	}
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "1.0.0",
 	}
 
-	srv, err := micro.AddService(nc, config)
+	srv, err := service.New(nc, config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func ExampleService_AddGroup() {
 	v1 := srv.AddGroup("v1")
 
 	// endpoint will be registered under "v1.Echo" subject
-	err = v1.AddEndpoint("Echo", micro.HandlerFunc(echoHandler))
+	err = v1.AddEndpoint("Echo", service.HandlerFunc(echoHandler))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -157,11 +157,11 @@ func ExampleService_Info() {
 	}
 	defer nc.Close()
 
-	config := micro.Config{
+	config := service.Config{
 		Name: "EchoService",
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// service info
 	info := srv.Info()
@@ -180,16 +180,16 @@ func ExampleService_Stats() {
 	}
 	defer nc.Close()
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "echo",
-			Handler: micro.HandlerFunc(func(r micro.Request) {}),
+			Handler: service.HandlerFunc(func(r service.Request) {}),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 	// stats of a service instance
 	stats := srv.Stats()
 
@@ -205,12 +205,12 @@ func ExampleService_Stop() {
 	}
 	defer nc.Close()
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -232,12 +232,12 @@ func ExampleService_Stopped() {
 	}
 	defer nc.Close()
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// stop a service
 	err = srv.Stop()
@@ -257,17 +257,17 @@ func ExampleService_Reset() {
 	}
 	defer nc.Close()
 
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 
 	// reset endpoint stats on this service
 	srv.Reset()
 
-	empty := micro.Stats{
+	empty := service.Stats{
 		ServiceIdentity: srv.Info().ServiceIdentity,
 	}
 	if !reflect.DeepEqual(srv.Stats(), empty) {
@@ -282,7 +282,7 @@ func ExampleContextHandler() {
 	}
 	defer nc.Close()
 
-	handler := func(ctx context.Context, req micro.Request) {
+	handler := func(ctx context.Context, req service.Request) {
 		select {
 		case <-ctx.Done():
 			req.Error("400", "context canceled", nil)
@@ -293,31 +293,31 @@ func ExampleContextHandler() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	config := micro.Config{
+	config := service.Config{
 		Name:    "EchoService",
 		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
+		Endpoint: &service.EndpointConfig{
 			Subject: "echo",
-			Handler: micro.ContextHandler(ctx, handler),
+			Handler: service.ContextHandler(ctx, handler),
 		},
 	}
 
-	srv, _ := micro.AddService(nc, config)
+	srv, _ := service.New(nc, config)
 	defer srv.Stop()
 }
 
 func ExampleControlSubject() {
 
 	// subject used to get PING from all services
-	subjectPINGAll, _ := micro.ControlSubject(micro.PingVerb, "", "")
+	subjectPINGAll, _ := service.ControlSubject(service.PingVerb, "", "")
 	fmt.Println(subjectPINGAll)
 
 	// subject used to get PING from services with provided name
-	subjectPINGName, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "")
+	subjectPINGName, _ := service.ControlSubject(service.PingVerb, "CoolService", "")
 	fmt.Println(subjectPINGName)
 
 	// subject used to get PING from a service with provided name and ID
-	subjectPINGInstance, _ := micro.ControlSubject(micro.PingVerb, "CoolService", "123")
+	subjectPINGInstance, _ := service.ControlSubject(service.PingVerb, "CoolService", "123")
 	fmt.Println(subjectPINGInstance)
 
 	// Output:
@@ -327,7 +327,7 @@ func ExampleControlSubject() {
 }
 
 func ExampleRequest_Respond() {
-	handler := func(req micro.Request) {
+	handler := func(req service.Request) {
 		// respond to the request
 		if err := req.Respond(req.Data()); err != nil {
 			log.Fatal(err)
@@ -343,7 +343,7 @@ func ExampleRequest_RespondJSON() {
 		Y int `json:"y"`
 	}
 
-	handler := func(req micro.Request) {
+	handler := func(req service.Request) {
 		resp := Point{5, 10}
 		// respond to the request
 		// response will be serialized to {"x":5,"y":10}
@@ -356,7 +356,7 @@ func ExampleRequest_RespondJSON() {
 }
 
 func ExampleRequest_Error() {
-	handler := func(req micro.Request) {
+	handler := func(req service.Request) {
 		// respond with an error
 		// Error sets Nats-Service-Error and Nats-Service-Error-Code headers in the response
 		if err := req.Error("400", "bad request", []byte(`{"error": "value should be a number"}`)); err != nil {

@@ -1,4 +1,4 @@
-# NATS micro
+# Service API
 
 - [Overview](#overview)
 - [Basic usage](#basic-usage)
@@ -9,38 +9,38 @@
 
 ## Overview
 
-The `micro` package in the NATS.go library provides a simple way to create
+The `service` package in the NATS.go library provides a simple way to create
 microservices that leverage NATS for scalability, load management and
 observability.
 
 ## Basic usage
 
-To start using the `micro` package, import it in your application:
+To start using the `service` package, import it in your application:
 
 ```go
-import "github.com/nats-io/nats.go/micro"
+import "github.com/nats-io/nats.go/service"
 ```
 
-The core of the `micro` package is the Service. A Service aggregates endpoints
+The core of the `service` package is the Service. A Service aggregates endpoints
 for handling application logic. Services are named and versioned. You create a
-Service using the `micro.NewService()` function, passing in the NATS connection
+Service using the `service.NewService()` function, passing in the NATS connection
 and Service configuration.
 
 ```go
 nc, _ := nats.Connect(nats.DefaultURL)
 
 // request handler
-echoHandler := func(req micro.Request) {
+echoHandler := func(req service.Request) {
     req.Respond(req.Data())
 }
 
-srv, err := micro.AddService(nc, micro.Config{
+srv, err := service.New(nc, service.Config{
     Name:        "EchoService",
     Version:     "1.0.0",
     // base handler
-    Endpoint: &micro.EndpointConfig{
+    Endpoint: &service.EndpointConfig{
         Subject: "svc.echo",
-        Handler: micro.HandlerFunc(echoHandler),
+        Handler: service.HandlerFunc(echoHandler),
     },
 })
 ```
@@ -66,33 +66,33 @@ Base endpoint can be optionally configured on a service, but it is also possible
 to add more endpoints after the service is created.
 
 ```go
-srv, _ := micro.AddService(nc, config)
+srv, _ := service.New(nc, config)
 
 // endpoint will be registered under "svc.add" subject
-err = srv.AddEndpoint("svc.add", micro.HandlerFunc(add))
+err = srv.AddEndpoint("svc.add", service.HandlerFunc(add))
 ```
 
 In the above example `svc.add` is an endpoint name and subject. It is possible
 have a different endpoint name then the endpoint subject by using
-`micro.WithEndpointSubject()` option in `AddEndpoint()`.
+`service.WithEndpointSubject()` option in `AddEndpoint()`.
 
 ```go
 // endpoint will be registered under "svc.add" subject
-err = srv.AddEndpoint("Adder", micro.HandlerFunc(echoHandler), micro.WithEndpointSubject("svc.add"))
+err = srv.AddEndpoint("Adder", service.HandlerFunc(echoHandler), service.WithEndpointSubject("svc.add"))
 ```
 
 Endpoints can also be aggregated using groups. A group represents a common
 subject prefix used by all endpoints associated with it.
 
 ```go
-srv, _ := micro.AddService(nc, config)
+srv, _ := service.New(nc, config)
 
 numbersGroup := srv.AddGroup("numbers")
 
 // endpoint will be registered under "numbers.add" subject
-_ = numbersGroup.AddEndpoint("add", micro.HandlerFunc(addHandler))
+_ = numbersGroup.AddEndpoint("add", service.HandlerFunc(addHandler))
 // endpoint will be registered under "numbers.multiply" subject
-_ = numbersGroup.AddEndpoint("multiply", micro.HandlerFunc(multiplyHandler))
+_ = numbersGroup.AddEndpoint("multiply", service.HandlerFunc(multiplyHandler))
 ```
 
 ## Customizing queue groups
@@ -108,14 +108,14 @@ different queue groups:
 
 ```go
 for i := 0; i < 5; i++ {
-  srv, _ := micro.AddService(nc, micro.Config{
+  srv, _ := service.New(nc, service.Config{
     Name:        "EchoService",
     Version:     "1.0.0",
     QueueGroup:  fmt.Sprintf("q-%d", i),
     // base handler
-    Endpoint: &micro.EndpointConfig{
+    Endpoint: &service.EndpointConfig{
         Subject: "svc.echo",
-        Handler: micro.HandlerFunc(echoHandler),
+        Handler: service.HandlerFunc(echoHandler),
     },
   })
 }
@@ -139,19 +139,19 @@ for start := time.Now(); time.Since(start) < 5*time.Second; {
 Queue groups can be overwritten by setting them on groups and endpoints as well:
 
 ```go
-  srv, _ := micro.AddService(nc, micro.Config{
+  srv, _ := service.New(nc, service.Config{
     Name:        "EchoService",
     Version:     "1.0.0",
     QueueGroup:  "q1",
   })
 
-  g := srv.AddGroup("g", micro.WithGroupQueueGroup("q2"))
+  g := srv.AddGroup("g", service.WithGroupQueueGroup("q2"))
 
   // will be registered with queue group 'q2' from parent group
-  g.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+  g.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}))
 
   // will be registered with queue group 'q3'
-  g.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q3"))
+  g.AddEndpoint("bar", service.HandlerFunc(func(r service.Request) {}), service.WithEndpointQueueGroup("q3"))
 ```
 
 ## Discovery and Monitoring
@@ -180,20 +180,20 @@ For given configuration
 
 ```go
 nc, _ := nats.Connect("nats://localhost:4222")
-echoHandler := func(req micro.Request) {
+echoHandler := func(req service.Request) {
     req.Respond(req.Data())
 }
 
-config := micro.Config{
+config := service.Config{
     Name:    "EchoService",
     Version: "1.0.0",
-    Endpoint: &micro.EndpointConfig{
+    Endpoint: &service.EndpointConfig{
         Subject: "svc.echo",
-        Handler: micro.HandlerFunc(echoHandler),
+        Handler: service.HandlerFunc(echoHandler),
     },
 }
 for i := 0; i < 3; i++ {
-    srv, err := micro.AddService(nc, config)
+    srv, err := service.New(nc, config)
     if err != nil {
         log.Fatal(err)
     }
@@ -245,4 +245,4 @@ this package.
 ## Documentation
 
 The complete documentation is available on
-[GoDoc](https://godoc.org/github.com/nats-io/nats.go/micro).
+[GoDoc](https://godoc.org/github.com/nats-io/nats.go/service).
