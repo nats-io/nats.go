@@ -303,6 +303,9 @@ func (js *js) ObjectStore(bucket string) (ObjectStore, error) {
 	stream := fmt.Sprintf(objNameTmpl, bucket)
 	si, err := js.StreamInfo(stream)
 	if err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			return nil, ErrBucketNotFound
+		}
 		return nil, err
 	}
 	return &obs{name: bucket, stream: si.Config.Name, js: js}, nil
@@ -926,6 +929,9 @@ func (obs *obs) GetInfo(name string, opts ...GetObjectInfoOpt) (*ObjectInfo, err
 
 	m, err := obs.js.GetLastMsg(stream, metaSubj)
 	if err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			return nil, ErrBucketNotFound
+		}
 		if err == ErrMsgNotFound {
 			err = ErrObjectNotFound
 		}

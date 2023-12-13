@@ -43,6 +43,9 @@ func TestObjectBasics(t *testing.T) {
 	_, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "notok!", Description: "testing"})
 	expectErr(t, err, nats.ErrInvalidStoreName)
 
+	_, err = js.ObjectStore("OBJS")
+	expectErr(t, err, nats.ErrBucketNotFound)
+
 	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS", Description: "testing"})
 	expectOk(t, err)
 
@@ -131,7 +134,7 @@ func TestObjectBasics(t *testing.T) {
 	err = js.DeleteObjectStore("OBJS")
 	expectOk(t, err)
 	_, err = obs.Get("BLOB")
-	expectErr(t, err, nats.ErrStreamNotFound)
+	expectErr(t, err, nats.ErrBucketNotFound)
 }
 
 func TestGetObjectDigestMismatch(t *testing.T) {
