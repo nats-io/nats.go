@@ -424,7 +424,7 @@ func TestKeyValueWatch(t *testing.T) {
 		_, err = kv.Put(ctx, "age", []byte("22"))
 		expectOk(t, err)
 
-		watcher, err := kv.WatchAll(ctx, jetstream.StartRevision(2))
+		watcher, err := kv.WatchAll(ctx, jetstream.ResumeFromSeq(2))
 		expectOk(t, err)
 		defer watcher.Stop()
 
@@ -441,7 +441,7 @@ func TestKeyValueWatch(t *testing.T) {
 		expectOk(t, err)
 
 		// create a new watcher with start revision 3
-		watcher, err = kv.WatchAll(ctx, jetstream.StartRevision(3))
+		watcher, err = kv.WatchAll(ctx, jetstream.ResumeFromSeq(3))
 		expectOk(t, err)
 		defer watcher.Stop()
 
