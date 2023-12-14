@@ -67,7 +67,10 @@ type (
 		// WatchAll will invoke the callback for all updates.
 		WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, error)
 		// Keys will return all keys.
+		// DEPRECATED: Use ListKeys instead to avoid memory issues.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
+		// ListKeys will return all keys in a channel.
+		ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error)
 		// History will return all historical values for the key.
 		History(ctx context.Context, key string, opts ...WatchOpt) ([]KeyValueEntry, error)
 		// Bucket returns the current bucket name.
@@ -76,6 +79,12 @@ type (
 		PurgeDeletes(ctx context.Context, opts ...KVPurgeOpt) error
 		// Status retrieves the status and configuration of a bucket
 		Status(ctx context.Context) (KeyValueStatus, error)
+	}
+
+	// KeyLister is used to retrieve a list of key value store keys
+	KeyLister interface {
+		Keys() <-chan string
+		Stop() error
 	}
 
 	// KeyValueConfig is for configuring a KeyValue store.
@@ -926,6 +935,46 @@ func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 		return nil, ErrNoKeysFound
 	}
 	return keys, nil
+}
+
+type keyLister struct {
+	watcher KeyWatcher
+	keys    chan string
+}
+
+// Keys will return all keys.
+func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error) {
+	opts = append(opts, IgnoreDeletes(), MetaOnly())
+	watcher, err := kv.WatchAll(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
+
+	go func() {
+		defer close(kl.keys)
+		defer watcher.Stop()
+		for {
+			select {
+			case entry := <-watcher.Updates():
+				if entry == nil {
+					return
+				}
+				kl.keys <- entry.Key()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return kl, nil
+}
+
+func (kl *keyLister) Keys() <-chan string {
+	return kl.keys
+}
+
+func (kl *keyLister) Stop() error {
+	return kl.watcher.Stop()
 }
 
 // History will return all historical values for the key.

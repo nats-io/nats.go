@@ -65,7 +65,10 @@ type KeyValue interface {
 	// WatchAll will invoke the callback for all updates.
 	WatchAll(opts ...WatchOpt) (KeyWatcher, error)
 	// Keys will return all keys.
+	// DEPRECATED: Use ListKeys instead to avoid memory issues.
 	Keys(opts ...WatchOpt) ([]string, error)
+	// ListKeys will return all keys in a channel.
+	ListKeys(opts ...WatchOpt) (KeyLister, error)
 	// History will return all historical values for the key.
 	History(key string, opts ...WatchOpt) ([]KeyValueEntry, error)
 	// Bucket returns the current bucket name.
@@ -107,6 +110,12 @@ type KeyWatcher interface {
 	// Updates returns a channel to read any updates to entries.
 	Updates() <-chan KeyValueEntry
 	// Stop will stop this watcher.
+	Stop() error
+}
+
+// KeyLister is used to retrieve a list of key value store keys
+type KeyLister interface {
+	Keys() <-chan string
 	Stop() error
 }
 
@@ -840,6 +849,41 @@ func (kv *kvs) Keys(opts ...WatchOpt) ([]string, error) {
 		return nil, ErrNoKeysFound
 	}
 	return keys, nil
+}
+
+type keyLister struct {
+	watcher KeyWatcher
+	keys    chan string
+}
+
+// ListKeys will return all keys.
+func (kv *kvs) ListKeys(opts ...WatchOpt) (KeyLister, error) {
+	opts = append(opts, IgnoreDeletes(), MetaOnly())
+	watcher, err := kv.WatchAll(opts...)
+	if err != nil {
+		return nil, err
+	}
+	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
+
+	go func() {
+		defer close(kl.keys)
+		defer watcher.Stop()
+		for entry := range watcher.Updates() {
+			if entry == nil {
+				return
+			}
+			kl.keys <- entry.Key()
+		}
+	}()
+	return kl, nil
+}
+
+func (kl *keyLister) Keys() <-chan string {
+	return kl.keys
+}
+
+func (kl *keyLister) Stop() error {
+	return kl.watcher.Stop()
 }
 
 // History will return all values for the key.
