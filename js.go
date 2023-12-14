@@ -1708,7 +1708,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// Auto acknowledge unless manual ack is set or policy is set to AckNonePolicy
 	if cb != nil && !o.mack && o.cfg.AckPolicy != AckNonePolicy {
 		ocb := cb
-		cb = func(m *Msg) { ocb(m); m.Ack() }
+		cb = func(m *Msg) { ocb(m); _ = m.Ack() }
 	}
 	sub, err := nc.subscribe(deliver, queue, cb, ch, isSync, jsi)
 	if err != nil {
@@ -1815,7 +1815,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		if bl < DefaultSubPendingBytesLimit {
 			bl = DefaultSubPendingBytesLimit
 		}
-		sub.SetPendingLimits(maxap, bl)
+		_ = sub.SetPendingLimits(maxap, bl)
 	}
 
 	// Do heartbeats last if needed.
@@ -1876,7 +1876,7 @@ func (sub *Subscription) chanSubcheckForFlowControlResponse() {
 	sub.mu.Unlock()
 	// This call will return an error (which we don't care here)
 	// if nc is nil or fcReply is empty.
-	nc.Publish(fcReply, nil)
+	_ = nc.Publish(fcReply, nil)
 }
 
 // ErrConsumerSequenceMismatch represents an error from a consumer
@@ -1997,7 +1997,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 			// existing sub and be done
 			go func(sid int64) {
 				nc.mu.Lock()
-				nc.bw.appendString(fmt.Sprintf(unsubProto, sid, _EMPTY_))
+				_ = nc.bw.appendString(fmt.Sprintf(unsubProto, sid, _EMPTY_))
 				nc.kickFlusher()
 				nc.mu.Unlock()
 			}(sub.sid)
@@ -2022,10 +2022,10 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		// Remap a new low level sub into this sub since its client accessible.
 		// This is done here in this go routine to prevent lock inversion.
 		nc.mu.Lock()
-		nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
-		nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, nsid))
+		_ = nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
+		_ = nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, nsid))
 		if maxStr != _EMPTY_ {
-			nc.bw.appendString(fmt.Sprintf(unsubProto, nsid, maxStr))
+			_ = nc.bw.appendString(fmt.Sprintf(unsubProto, nsid, maxStr))
 		}
 		nc.kickFlusher()
 		nc.mu.Unlock()
@@ -2059,7 +2059,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		// We don't wait for the response since even if it's unsuccessful,
 		// inactivity threshold will kick in and delete it.
 		if jsi.consumer != _EMPTY_ {
-			go js.DeleteConsumer(jsi.stream, jsi.consumer)
+			go func() { _ = js.DeleteConsumer(jsi.stream, jsi.consumer) }()
 		}
 		jsi.consumer = ""
 		sub.mu.Unlock()

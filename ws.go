@@ -168,7 +168,7 @@ func (d *wsDecompressor) decompress() ([]byte, error) {
 	if d.flate == nil {
 		d.flate = flate.NewReader(d)
 	} else {
-		d.flate.(flate.Resetter).Reset(d, nil)
+		_ = d.flate.(flate.Resetter).Reset(d, nil)
 	}
 	b, err := io.ReadAll(d.flate)
 	// Now reset the compressed buffers list
@@ -614,7 +614,7 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 	var resp *http.Response
 
 	br := bufio.NewReaderSize(nc.conn, 4096)
-	nc.conn.SetReadDeadline(time.Now().Add(nc.Opts.Timeout))
+	_ = nc.conn.SetReadDeadline(time.Now().Add(nc.Opts.Timeout))
 	resp, err = http.ReadResponse(br, req)
 	if err == nil &&
 		(resp.StatusCode != 101 ||
@@ -640,7 +640,7 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 	if resp != nil {
 		resp.Body.Close()
 	}
-	nc.conn.SetReadDeadline(time.Time{})
+	_ = nc.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return err
 	}

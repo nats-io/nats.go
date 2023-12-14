@@ -447,7 +447,7 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 	var o groupOpts
 	for _, opt := range opts {
-		opt(&o)
+		_ = opt(&o)
 	}
 	queueGroup := queueGroupName(o.queueGroup, s.Config.QueueGroup)
 	return &group{
@@ -502,7 +502,7 @@ func (s *service) wrapConnectionEventCallbacks() {
 		})
 	} else {
 		s.nc.SetClosedHandler(func(c *nats.Conn) {
-			s.Stop()
+			_ = s.Stop()
 		})
 	}
 
@@ -554,7 +554,7 @@ func (s *service) wrapConnectionEventCallbacks() {
 				endpoint.stats.LastError = err.Error()
 			}
 			s.m.Unlock()
-			s.Stop()
+			_ = s.Stop()
 		})
 	}
 }
@@ -617,7 +617,7 @@ func (svc *service) addVerbHandlers(nc *nats.Conn, verb Verb, handler HandlerFun
 func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
-		s.Stop()
+		_ = s.Stop()
 		return err
 	}
 
@@ -625,7 +625,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		handler(&request{msg: msg})
 	})
 	if err != nil {
-		s.Stop()
+		_ = s.Stop()
 		return err
 	}
 	return nil
@@ -795,7 +795,7 @@ func queueGroupName(customQG, parentQG string) string {
 func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	var o groupOpts
 	for _, opt := range opts {
-		opt(&o)
+		_ = opt(&o)
 	}
 	queueGroup := queueGroupName(o.queueGroup, g.queueGroup)
 

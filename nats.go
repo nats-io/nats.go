@@ -2253,8 +2253,8 @@ func (nc *Conn) setup() {
 func (nc *Conn) processConnectInit() error {
 
 	// Set our deadline for the whole connect process
-	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
-	defer nc.conn.SetDeadline(time.Time{})
+	_ = nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
+	defer func() { _ = nc.conn.SetDeadline(time.Time{}) }()
 
 	// Set our status to connecting.
 	nc.changeConnStatus(CONNECTING)
@@ -2436,7 +2436,7 @@ func (nc *Conn) processExpectedInfo() error {
 // and kicking the flush Go routine.  These writes are protected.
 func (nc *Conn) sendProto(proto string) {
 	nc.mu.Lock()
-	nc.bw.appendString(proto)
+	_ = nc.bw.appendString(proto)
 	nc.kickFlusher()
 	nc.mu.Unlock()
 }
@@ -3033,7 +3033,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 
 		// Respond to flow control if applicable
 		if fcReply != _EMPTY_ {
-			nc.Publish(fcReply, nil)
+			_ = nc.Publish(fcReply, nil)
 		}
 
 		if closed {
@@ -3261,7 +3261,7 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.mu.Unlock()
 
 	if fcReply != _EMPTY_ {
-		nc.Publish(fcReply, nil)
+		_ = nc.Publish(fcReply, nil)
 	}
 
 	// Handle control heartbeat messages.
@@ -3468,7 +3468,7 @@ func (nc *Conn) processInfo(info string) error {
 		if _, present := nc.urls[curl]; !present {
 			hasNew = true
 		}
-		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
+		_ = nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
 	}
 	if hasNew {
 		// Randomize the pool if allowed but leave the first URL in place.
@@ -3491,7 +3491,7 @@ func (nc *Conn) processInfo(info string) error {
 func (nc *Conn) processAsyncInfo(info []byte) {
 	nc.mu.Lock()
 	// Ignore errors, we will simply not update the server pool...
-	nc.processInfo(string(info))
+	_ = nc.processInfo(string(info))
 	nc.mu.Unlock()
 }
 
@@ -4259,7 +4259,7 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here if reconnecting.
 	if !nc.isReconnecting() {
-		nc.bw.appendString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+		_ = nc.bw.appendString(fmt.Sprintf(subProto, subj, queue, sub.sid))
 		nc.kickFlusher()
 	}
 
@@ -4522,7 +4522,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		nc.bw.appendString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		_ = nc.bw.appendString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 		nc.kickFlusher()
 	}
 
@@ -4665,7 +4665,7 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	s.mu.Unlock()
 
 	if fcReply != _EMPTY_ {
-		nc.Publish(fcReply, nil)
+		_ = nc.Publish(fcReply, nil /* no data */)
 	}
 
 	if max > 0 {
@@ -4871,7 +4871,7 @@ func (nc *Conn) removeFlushEntry(ch chan struct{}) bool {
 // The lock must be held entering this function.
 func (nc *Conn) sendPing(ch chan struct{}) {
 	nc.pongs = append(nc.pongs, ch)
-	nc.bw.appendString(pingProto)
+	_ = nc.bw.appendString(pingProto)
 	// Flush in place.
 	nc.bw.flush()
 }
@@ -4996,17 +4996,17 @@ func (nc *Conn) resendSubscriptions() {
 			// reached the max, if so unsubscribe.
 			if adjustedMax == 0 {
 				s.mu.Unlock()
-				nc.bw.writeDirect(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
+				_ = nc.bw.writeDirect(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
 				continue
 			}
 		}
 		subj, queue, sid := s.Subject, s.Queue, s.sid
 		s.mu.Unlock()
 
-		nc.bw.writeDirect(fmt.Sprintf(subProto, subj, queue, sid))
+		_ = nc.bw.writeDirect(fmt.Sprintf(subProto, subj, queue, sid))
 		if adjustedMax > 0 {
 			maxStr := strconv.Itoa(int(adjustedMax))
-			nc.bw.writeDirect(fmt.Sprintf(unsubProto, sid, maxStr))
+			_ = nc.bw.writeDirect(fmt.Sprintf(unsubProto, sid, maxStr))
 		}
 	}
 }
@@ -5683,6 +5683,6 @@ func (tw *timeoutWriter) Write(p []byte) (int, error) {
 	var n int
 	tw.conn.SetWriteDeadline(time.Now().Add(tw.timeout))
 	n, tw.err = tw.conn.Write(p)
-	tw.conn.SetWriteDeadline(time.Time{})
+	_ = tw.conn.SetWriteDeadline(time.Time{})
 	return n, tw.err
 }

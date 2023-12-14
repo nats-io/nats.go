@@ -383,7 +383,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		case <-jetStream.PublishAsyncComplete():
 		case <-time.After(obs.js.opts.wait):
 		}
-		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
+		_ = obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 	}
 
 	m, h := NewMsg(chunkSubj), sha256.New()
@@ -487,7 +487,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
 		echunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
-		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj})
+		_ = obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj})
 	}
 
 	// TODO would it be okay to do this to return the info with the correct time?
@@ -1242,7 +1242,7 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	r.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = r.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, err = r.Read(p)
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		if ctx := o.ctx; ctx != nil {
