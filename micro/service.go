@@ -71,7 +71,7 @@ type (
 	}
 
 	EndpointOpt func(*endpointOpts) error
-	GroupOpt    func(*groupOpts) error
+	GroupOpt    func(*groupOpts)
 
 	endpointOpts struct {
 		subject    string
@@ -530,8 +530,11 @@ func (s *service) wrapConnectionEventCallbacks() {
 				endpoint.stats.LastError = err.Error()
 			}
 			s.m.Unlock()
-			s.Stop()
-			s.natsHandlers.asyncErr(c, sub, err)
+			if stopErr := s.Stop(); stopErr != nil {
+				s.natsHandlers.asyncErr(c, sub, errors.Join(err, fmt.Errorf("stopping service: %w", stopErr)))
+			} else {
+				s.natsHandlers.asyncErr(c, sub, err)
+			}
 		})
 	} else {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
@@ -617,7 +620,9 @@ func (svc *service) addVerbHandlers(nc *nats.Conn, verb Verb, handler HandlerFun
 func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
 	subj, err := ControlSubject(verb, kind, id)
 	if err != nil {
-		s.Stop()
+		if stopErr := s.Stop(); stopErr != nil {
+			return errors.Join(err, fmt.Errorf("stopping service: %w", stopErr))
+		}
 		return err
 	}
 
@@ -625,7 +630,9 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		handler(&request{msg: msg})
 	})
 	if err != nil {
-		s.Stop()
+		if stopErr := s.Stop(); err != nil {
+			return errors.Join(err, fmt.Errorf("stopping service: %w", stopErr))
+		}
 		return err
 	}
 	return nil
@@ -884,8 +891,7 @@ func WithEndpointQueueGroup(queueGroup string) EndpointOpt {
 }
 
 func WithGroupQueueGroup(queueGroup string) GroupOpt {
-	return func(g *groupOpts) error {
+	return func(g *groupOpts) {
 		g.queueGroup = queueGroup
-		return nil
 	}
 }
