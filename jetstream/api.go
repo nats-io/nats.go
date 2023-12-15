@@ -111,7 +111,7 @@ func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp an
 	if err := json.Unmarshal(jsMsg.Data(), resp); err != nil {
 		return nil, err
 	}
-	return jsMsg, err
+	return jsMsg, nil
 }
 
 // a RequestWithContext with tracing via TraceCB

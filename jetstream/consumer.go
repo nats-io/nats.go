@@ -233,7 +233,7 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 
 func validateConsumerName(dur string) error {
 	if strings.Contains(dur, ".") {
-		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, dur)
+		return fmt.Errorf("%w: %q", ErrInvalidConsumerName, dur)
 	}
 	return nil
 }

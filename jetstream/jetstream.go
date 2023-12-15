@@ -314,7 +314,7 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 		}
 	}
 	if domain == "" {
-		return nil, fmt.Errorf("domain cannot be empty")
+		return nil, errors.New("domain cannot be empty")
 	}
 	jsOpts.apiPrefix = fmt.Sprintf(jsDomainT, domain)
 	js := &jetStream{
