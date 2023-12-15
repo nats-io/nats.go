@@ -1815,7 +1815,9 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		if bl < DefaultSubPendingBytesLimit {
 			bl = DefaultSubPendingBytesLimit
 		}
-		sub.SetPendingLimits(maxap, bl)
+		if err := sub.SetPendingLimits(maxap, bl); err != nil {
+			return nil, err
+		}
 	}
 
 	// Do heartbeats last if needed.

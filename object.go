@@ -377,13 +377,16 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 	defer jetStream.(*js).cleanupReplySub()
 
-	purgePartial := func() {
+	purgePartial := func() error {
 		// wait until all pubs are complete or up to default timeout before attempting purge
 		select {
 		case <-jetStream.PublishAsyncComplete():
 		case <-time.After(obs.js.opts.wait):
 		}
-		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
+		if err := obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}); err != nil {
+			return fmt.Errorf("could not cleanup bucket after erronous put operation: %w", err)
+		}
+		return nil
 	}
 
 	m, h := NewMsg(chunkSubj), sha256.New()
@@ -404,7 +407,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 			default:
 			}
 			if err != nil {
-				purgePartial()
+				if purgeErr := purgePartial(); purgeErr != nil {
+					return nil, errors.Join(err, purgeErr)
+				}
 				return nil, err
 			}
 		}
@@ -415,7 +420,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 		// Handle all non EOF errors
 		if readErr != nil && readErr != io.EOF {
-			purgePartial()
+			if purgeErr := purgePartial(); purgeErr != nil {
+				return nil, errors.Join(readErr, purgeErr)
+			}
 			return nil, readErr
 		}
 
@@ -427,11 +434,15 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 
 			// Send msg itself.
 			if _, err := jetStream.PublishMsgAsync(m); err != nil {
-				purgePartial()
+				if purgeErr := purgePartial(); purgeErr != nil {
+					return nil, errors.Join(err, purgeErr)
+				}
 				return nil, err
 			}
 			if err := getErr(); err != nil {
-				purgePartial()
+				if purgeErr := purgePartial(); purgeErr != nil {
+					return nil, errors.Join(err, purgeErr)
+				}
 				return nil, err
 			}
 			// Update totals.
@@ -455,7 +466,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	mm.Data, err = json.Marshal(info)
 	if err != nil {
 		if r != nil {
-			purgePartial()
+			if purgeErr := purgePartial(); purgeErr != nil {
+				return nil, errors.Join(err, purgeErr)
+			}
 		}
 		return nil, err
 	}
@@ -464,7 +477,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	_, err = jetStream.PublishMsgAsync(mm)
 	if err != nil {
 		if r != nil {
-			purgePartial()
+			if purgeErr := purgePartial(); purgeErr != nil {
+				return nil, errors.Join(err, purgeErr)
+			}
 		}
 		return nil, err
 	}
@@ -474,7 +489,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	case <-jetStream.PublishAsyncComplete():
 		if err := getErr(); err != nil {
 			if r != nil {
-				purgePartial()
+				if purgeErr := purgePartial(); purgeErr != nil {
+					return nil, errors.Join(err, purgeErr)
+				}
 			}
 			return nil, err
 		}
@@ -487,7 +504,9 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
 		echunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, einfo.NUID)
-		obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj})
+		if err := obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: echunkSubj}); err != nil {
+			return info, err
+		}
 	}
 
 	// TODO would it be okay to do this to return the info with the correct time?
