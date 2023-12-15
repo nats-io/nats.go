@@ -859,6 +859,9 @@ func (obs *obs) GetInfo(ctx context.Context, name string, opts ...GetObjectInfoO
 		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrObjectNotFound
 		}
+		if errors.Is(err, ErrStreamNotFound) {
+			err = ErrBucketNotFound
+		}
 		return nil, err
 	}
 	var info ObjectInfo
