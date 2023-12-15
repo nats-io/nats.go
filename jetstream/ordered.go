@@ -107,12 +107,20 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				c.errHandler(serial)(c.currentConsumer.subscriptions[""], err)
+				sub, ok := c.currentConsumer.getSubscription("")
+				if !ok {
+					return
+				}
+				c.errHandler(serial)(sub, err)
 				return
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
-				c.errHandler(serial)(c.currentConsumer.subscriptions[""], errOrderedSequenceMismatch)
+				sub, ok := c.currentConsumer.getSubscription("")
+				if !ok {
+					return
+				}
+				c.errHandler(serial)(sub, errOrderedSequenceMismatch)
 				return
 			}
 			c.cursor.deliverSeq = dseq
@@ -141,7 +149,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 					}
 				}
 				if err := c.reset(); err != nil {
-					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
+					sub, ok := c.currentConsumer.getSubscription("")
+					if !ok {
+						return
+					}
+					c.errHandler(c.serial)(sub, err)
 				}
 				if c.stopAfter > 0 {
 					opts = opts[:len(opts)-2]
@@ -155,7 +167,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 					opts = append(opts, consumeStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 				}
 				if _, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
-					c.errHandler(c.serial)(c.currentConsumer.subscriptions[""], err)
+					sub, ok := c.currentConsumer.getSubscription("")
+					if !ok {
+						return
+					}
+					c.errHandler(c.serial)(sub, err)
 				}
 			case <-sub.done:
 				return
@@ -234,7 +250,11 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 func (s *orderedSubscription) Next() (Msg, error) {
 	for {
 		currentConsumer := s.consumer.currentConsumer
-		msg, err := currentConsumer.subscriptions[""].Next()
+		sub, ok := currentConsumer.getSubscription("")
+		if !ok {
+			return nil, ErrMsgIteratorClosed
+		}
+		msg, err := sub.Next()
 		if err != nil {
 			if errors.Is(err, ErrMsgIteratorClosed) {
 				s.Stop()
@@ -262,13 +282,13 @@ func (s *orderedSubscription) Next() (Msg, error) {
 		}
 		meta, err := msg.Metadata()
 		if err != nil {
-			s.consumer.errHandler(s.consumer.serial)(currentConsumer.subscriptions[""], err)
+			s.consumer.errHandler(s.consumer.serial)(sub, err)
 			continue
 		}
 		serial := serialNumberFromConsumer(meta.Consumer)
 		dseq := meta.Sequence.Consumer
 		if dseq != s.consumer.cursor.deliverSeq+1 {
-			s.consumer.errHandler(serial)(currentConsumer.subscriptions[""], errOrderedSequenceMismatch)
+			s.consumer.errHandler(serial)(sub, errOrderedSequenceMismatch)
 			continue
 		}
 		s.consumer.cursor.deliverSeq = dseq
@@ -278,12 +298,13 @@ func (s *orderedSubscription) Next() (Msg, error) {
 }
 
 func (s *orderedSubscription) Stop() {
-	s.consumer.currentConsumer.Lock()
-	defer s.consumer.currentConsumer.Unlock()
-	if s.consumer.currentConsumer.subscriptions[""] == nil {
+	sub, ok := s.consumer.currentConsumer.getSubscription("")
+	if !ok {
 		return
 	}
-	s.consumer.currentConsumer.subscriptions[""].Stop()
+	s.consumer.currentConsumer.Lock()
+	defer s.consumer.currentConsumer.Unlock()
+	sub.Stop()
 	close(s.done)
 }
 
@@ -390,9 +411,10 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
+		sub, ok := c.currentConsumer.getSubscription("")
 		c.currentConsumer.Lock()
-		if c.currentConsumer.subscriptions[""] != nil {
-			c.currentConsumer.subscriptions[""].Stop()
+		if ok {
+			sub.Stop()
 		}
 		consName := c.currentConsumer.CachedInfo().Name
 		c.currentConsumer.Unlock()
