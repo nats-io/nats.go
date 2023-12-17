@@ -359,7 +359,7 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
 	si, err := js.StreamInfo(stream)
 	if err != nil {
-		if err == ErrStreamNotFound {
+		if errors.Is(err, ErrStreamNotFound) {
 			err = ErrBucketNotFound
 		}
 		return nil, err
@@ -486,7 +486,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 		// the stream.
 		// The same logic applies for KVs created pre 2.9.x and
 		// the AllowDirect setting.
-		if err == ErrStreamNameAlreadyInUse {
+		if errors.Is(err, ErrStreamNameAlreadyInUse) {
 			if si, _ = js.StreamInfo(scfg.Name); si != nil {
 				// To compare, make the server's stream info discard
 				// policy same than ours.
@@ -558,7 +558,7 @@ func keyValid(key string) bool {
 func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 	e, err := kv.get(key, kvLatestRevision)
 	if err != nil {
-		if err == ErrKeyDeleted {
+		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -571,7 +571,7 @@ func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 func (kv *kvs) GetRevision(key string, revision uint64) (KeyValueEntry, error) {
 	e, err := kv.get(key, revision)
 	if err != nil {
-		if err == ErrKeyDeleted {
+		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -608,7 +608,7 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 		}
 	}
 	if err != nil {
-		if err == ErrMsgNotFound {
+		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrKeyNotFound
 		}
 		return nil, err
@@ -675,7 +675,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 
 	// TODO(dlc) - Since we have tombstones for DEL ops for watchers, this could be from that
 	// so we need to double check.
-	if e, err := kv.get(key, kvLatestRevision); err == ErrKeyDeleted {
+	if e, err := kv.get(key, kvLatestRevision); errors.Is(err, ErrKeyDeleted) {
 		return kv.Update(key, value, e.Revision())
 	}
 

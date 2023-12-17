@@ -626,7 +626,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 		if ctx != nil {
 			select {
 			case <-ctx.Done():
-				if ctx.Err() == context.Canceled {
+				if errors.Is(ctx.Err(), context.Canceled) {
 					err = ctx.Err()
 				} else {
 					err = ErrTimeout
@@ -926,7 +926,7 @@ func (obs *obs) GetInfo(name string, opts ...GetObjectInfoOpt) (*ObjectInfo, err
 
 	m, err := obs.js.GetLastMsg(stream, metaSubj)
 	if err != nil {
-		if err == ErrMsgNotFound {
+		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrObjectNotFound
 		}
 		return nil, err
