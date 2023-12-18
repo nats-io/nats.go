@@ -402,6 +402,14 @@ func MetaOnly() WatchOpt {
 	})
 }
 
+// ResumeFromRevision instructs the key watcher to resume from a specific revision number.
+func ResumeFromRevision(revision uint64) WatchOpt {
+	return watchOptFn(func(opts *watchOpts) error {
+		opts.resumeFromRevision = revision
+		return nil
+	})
+}
+
 // DeleteMarkersOlderThan indicates that delete or purge markers older than that
 // will be deleted as part of PurgeDeletes() operation, otherwise, only the data
 // will be removed but markers that are recent will be kept.
