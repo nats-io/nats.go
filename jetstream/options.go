@@ -402,10 +402,10 @@ func MetaOnly() WatchOpt {
 	})
 }
 
-// ResumeFromSeq instructs the key watcher to resume from a specific sequence number.
-func ResumeFromSeq(revision uint64) WatchOpt {
+// ResumeFromRevision instructs the key watcher to resume from a specific revision number.
+func ResumeFromRevision(revision uint64) WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
-		opts.resumeFromSeq = revision
+		opts.resumeFromRevision = revision
 		return nil
 	})
 }

@@ -184,8 +184,8 @@ type (
 		updatesOnly bool
 		// retrieve only the meta data of the entry
 		metaOnly bool
-		// resumeFromSeq is the sequence to resume from
-		resumeFromSeq uint64
+		// resumeFromRevision is the revision to resume from.
+		resumeFromRevision uint64
 	}
 
 	KVDeleteOpt interface {
@@ -877,8 +877,8 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	if o.metaOnly {
 		subOpts = append(subOpts, nats.HeadersOnly())
 	}
-	if o.resumeFromSeq > 0 {
-		subOpts = append(subOpts, nats.StartSequence(o.resumeFromSeq))
+	if o.resumeFromRevision > 0 {
+		subOpts = append(subOpts, nats.StartSequence(o.resumeFromRevision))
 	}
 	subOpts = append(subOpts, nats.Context(ctx))
 	// Create the sub and rest of initialization under the lock.
