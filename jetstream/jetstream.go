@@ -111,13 +111,20 @@ type (
 
 	// AccountInfo contains info about the JetStream usage from the current account.
 	AccountInfo struct {
-		Memory    uint64        `json:"memory"`
-		Store     uint64        `json:"storage"`
-		Streams   int           `json:"streams"`
-		Consumers int           `json:"consumers"`
-		Domain    string        `json:"domain"`
-		API       APIStats      `json:"api"`
-		Limits    AccountLimits `json:"limits"`
+		Tier
+		Domain string          `json:"domain"`
+		API    APIStats        `json:"api"`
+		Tiers  map[string]Tier `json:"tiers"`
+	}
+
+	Tier struct {
+		Memory         uint64        `json:"memory"`
+		Store          uint64        `json:"storage"`
+		ReservedMemory uint64        `json:"reserved_memory"`
+		ReservedStore  uint64        `json:"reserved_storage"`
+		Streams        int           `json:"streams"`
+		Consumers      int           `json:"consumers"`
+		Limits         AccountLimits `json:"limits"`
 	}
 
 	// APIStats reports on API calls to JetStream for this account.
