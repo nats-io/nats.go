@@ -1042,3 +1042,10 @@ func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
 	}
 	return err
 }
+
+func (c *pullConsumer) getSubscription(id string) (*pullSubscription, bool) {
+	c.Lock()
+	defer c.Unlock()
+	sub, ok := c.subscriptions[id]
+	return sub, ok
+}
