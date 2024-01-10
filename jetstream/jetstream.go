@@ -158,6 +158,7 @@ type (
 	}
 	streamInfoResponse struct {
 		apiResponse
+		apiPaged
 		*StreamInfo
 	}
 
