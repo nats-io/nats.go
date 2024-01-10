@@ -1359,6 +1359,61 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("no messages received after stop", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs := make([]jetstream.Msg, 0)
+		it, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		publishTestMsgs(t, nc)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			it.Stop()
+		}()
+		for i := 0; i < 2; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(80 * time.Millisecond)
+			msg.Ack()
+			msgs = append(msgs, msg)
+		}
+		_, err = it.Next()
+		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrMsgIteratorClosed, err)
+		}
+
+		if len(msgs) != 2 {
+			t.Fatalf("Unexpected received message count after drain; want %d; got %d", len(testMsgs), len(msgs))
+		}
+	})
+
 	t.Run("drain mode", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -2094,6 +2149,54 @@ func TestPullConsumerConsume(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		publishTestMsgs(t, nc)
 		wg.Wait()
+	})
+
+	t.Run("no messages received after stop", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		wg := &sync.WaitGroup{}
+		wg.Add(2)
+		publishTestMsgs(t, nc)
+		msgs := make([]jetstream.Msg, 0)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			time.Sleep(80 * time.Millisecond)
+			msg.Ack()
+			msgs = append(msgs, msg)
+			wg.Done()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		cc.Stop()
+		wg.Wait()
+		// wait for some time to make sure no new messages are received
+		time.Sleep(100 * time.Millisecond)
+
+		if len(msgs) != 2 {
+			t.Fatalf("Unexpected received message count after stop; want 2; got %d", len(msgs))
+		}
 	})
 
 	t.Run("drain mode", func(t *testing.T) {

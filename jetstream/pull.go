@@ -36,6 +36,7 @@ type (
 
 		// Stop unsubscribes from the stream and cancels subscription. Calling
 		// Next after calling Stop will return ErrMsgIteratorClosed error.
+		// All messages that are already in the buffer are discarded.
 		Stop()
 
 		// Drain unsubscribes from the stream and cancels subscription. All
@@ -48,6 +49,7 @@ type (
 	ConsumeContext interface {
 		// Stop unsubscribes from the stream and cancels subscription.
 		// No more messages will be received after calling this method.
+		// All messages that are already in the buffer are discarded.
 		Stop()
 
 		// Drain unsubscribes from the stream and cancels subscription.
@@ -261,7 +263,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		return func(subject string) {
 			p.Lock()
 			defer p.Unlock()
-			delete(sub.consumer.subscriptions, sid)
+			delete(p.subscriptions, sid)
+			atomic.CompareAndSwapUint32(&sub.draining, 1, 0)
 		}
 	}(sub.id))
 
@@ -527,7 +530,9 @@ var (
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
 	defer s.Unlock()
-	if len(s.msgs) == 0 && (s.subscription == nil || !s.subscription.IsValid()) {
+	drainMode := atomic.LoadUint32(&s.draining) == 1
+	closed := atomic.LoadUint32(&s.closed) == 1
+	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
 	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
@@ -556,6 +561,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
 				delete(s.consumer.subscriptions, s.id)
+				atomic.CompareAndSwapUint32(&s.draining, 1, 0)
 				return nil, ErrMsgIteratorClosed
 			}
 			if hbMonitor != nil {
@@ -907,7 +913,6 @@ func (s *pullSubscription) cleanup() {
 	if s.hbMonitor != nil {
 		s.hbMonitor.Stop()
 	}
-	close(s.connStatusChanged)
 	drainMode := atomic.LoadUint32(&s.draining) == 1
 	if drainMode {
 		s.subscription.Drain()

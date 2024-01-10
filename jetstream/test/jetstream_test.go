@@ -426,10 +426,16 @@ func TestCreateStreamMirrorCrossDomains(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-
-			if lStream.CachedInfo().State.Msgs != 3 {
-				t.Fatalf("Expected 3 msgs in stream; got: %d", lStream.CachedInfo().State.Msgs)
-			}
+			checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+				info, err := lStream.Info(ctx)
+				if err != nil {
+					return fmt.Errorf("Unexpected error when getting stream info: %v", err)
+				}
+				if info.State.Msgs != 3 {
+					return fmt.Errorf("Expected 3 msgs in stream; got: %d", lStream.CachedInfo().State.Msgs)
+				}
+				return nil
+			})
 
 			rjs, err := jetstream.NewWithDomain(lnc, "HUB")
 			if err != nil {
