@@ -4298,6 +4298,12 @@ func (nc *Conn) removeSub(s *Subscription) {
 		}
 	}
 
+	if s.typ != AsyncSubscription {
+		done := s.pDone
+		if done != nil {
+			done(s.Subject)
+		}
+	}
 	// Mark as invalid
 	s.closed = true
 	if s.pCond != nil {

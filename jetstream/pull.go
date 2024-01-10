@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -30,14 +30,31 @@ import (
 type (
 	// MessagesContext supports iterating over a messages on a stream.
 	MessagesContext interface {
-		// Next retreives next message on a stream. It will block until the next message is available.
+		// Next retreives next message on a stream. It will block until the next
+		// message is available.
 		Next() (Msg, error)
-		// Stop closes the iterator and cancels subscription.
+
+		// Stop unsubscribes from the stream and cancels subscription. Calling
+		// Next after calling Stop will return ErrMsgIteratorClosed error.
+		// All messages that are already in the buffer are discarded.
 		Stop()
+
+		// Drain unsubscribes from the stream and cancels subscription. All
+		// messages that are already in the buffer will be available on
+		// subsequent calls to Next. After the buffer is drained, Next will
+		// return ErrMsgIteratorClosed error.
+		Drain()
 	}
 
 	ConsumeContext interface {
+		// Stop unsubscribes from the stream and cancels subscription.
+		// No more messages will be received after calling this method.
+		// All messages that are already in the buffer are discarded.
 		Stop()
+
+		// Drain unsubscribes from the stream and cancels subscription.
+		// All messages that are already in the buffer will be processed in callback function.
+		Drain()
 	}
 
 	// MessageHandler is a handler function used as callback in [Consume]
@@ -97,7 +114,9 @@ type (
 		hbMonitor         *hbMonitor
 		fetchInProgress   uint32
 		closed            uint32
+		draining          uint32
 		done              chan struct{}
+		drained           chan struct{}
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
 		consumeOpts       *consumeOpts
@@ -240,6 +259,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if err != nil {
 		return nil, err
 	}
+	sub.subscription.SetClosedHandler(func(sid string) func(string) {
+		return func(subject string) {
+			p.Lock()
+			defer p.Unlock()
+			delete(p.subscriptions, sid)
+			atomic.CompareAndSwapUint32(&sub.draining, 1, 0)
+		}
+	}(sub.id))
 
 	sub.Lock()
 	// initial pull
@@ -352,6 +379,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					sub.resetPendingMsgs()
 				}
 				sub.Unlock()
+			case <-sub.done:
+				return
 			}
 		}
 	}()
@@ -438,6 +467,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		id:          consumeID,
 		consumer:    p,
 		done:        make(chan struct{}, 1),
+		drained:     make(chan struct{}, 1),
 		msgs:        msgs,
 		errs:        make(chan error, 1),
 		fetchNext:   make(chan *pullRequest, 1),
@@ -450,11 +480,21 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		p.Unlock()
 		return nil, err
 	}
+	sub.subscription.SetClosedHandler(func(sid string) func(string) {
+		return func(subject string) {
+			p.Lock()
+			defer p.Unlock()
+			if atomic.LoadUint32(&sub.draining) != 1 {
+				// if we're not draining, subscription can be closed as soon
+				// as closed handler is called
+				// otherwise, we need to wait until all messages are drained
+				// in Next
+				delete(p.subscriptions, sid)
+			}
+			close(msgs)
+		}
+	}(sub.id))
 
-	go func() {
-		<-sub.done
-		sub.cleanup()
-	}()
 	p.subscriptions[sub.id] = sub
 	p.Unlock()
 
@@ -462,15 +502,19 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 
 	go func() {
 		for {
-			status, ok := <-sub.connStatusChanged
-			if !ok {
+			select {
+			case status, ok := <-sub.connStatusChanged:
+				if !ok {
+					return
+				}
+				if status == nats.CONNECTED {
+					sub.errs <- errConnected
+				}
+				if status == nats.RECONNECTING {
+					sub.errs <- errDisconnected
+				}
+			case <-sub.done:
 				return
-			}
-			if status == nats.CONNECTED {
-				sub.errs <- errConnected
-			}
-			if status == nats.RECONNECTING {
-				sub.errs <- errDisconnected
 			}
 		}
 	}()
@@ -486,7 +530,9 @@ var (
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
 	defer s.Unlock()
-	if atomic.LoadUint32(&s.closed) == 1 {
+	drainMode := atomic.LoadUint32(&s.draining) == 1
+	closed := atomic.LoadUint32(&s.closed) == 1
+	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
 	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
@@ -506,8 +552,18 @@ func (s *pullSubscription) Next() (Msg, error) {
 		s.checkPending()
 		select {
 		case <-s.done:
+			drainMode := atomic.LoadUint32(&s.draining) == 1
+			if drainMode {
+				continue
+			}
 			return nil, ErrMsgIteratorClosed
-		case msg := <-s.msgs:
+		case msg, ok := <-s.msgs:
+			if !ok {
+				// if msgs channel is closed, it means that subscription was either drained or stopped
+				delete(s.consumer.subscriptions, s.id)
+				atomic.CompareAndSwapUint32(&s.draining, 1, 0)
+				return nil, ErrMsgIteratorClosed
+			}
 			if hbMonitor != nil {
 				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 			}
@@ -640,6 +696,21 @@ func (s *pullSubscription) Stop() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
+	close(s.done)
+	if s.consumeOpts.stopAfterMsgsLeft != nil {
+		if s.delivered >= s.consumeOpts.StopAfter {
+			close(s.consumeOpts.stopAfterMsgsLeft)
+		} else {
+			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
+		}
+	}
+}
+
+func (s *pullSubscription) Drain() {
+	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+		return
+	}
+	atomic.StoreUint32(&s.draining, 1)
 	close(s.done)
 	if s.consumeOpts.stopAfterMsgsLeft != nil {
 		if s.delivered >= s.consumeOpts.StopAfter {
@@ -834,18 +905,20 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 }
 
 func (s *pullSubscription) cleanup() {
-	s.consumer.Lock()
-	defer s.consumer.Unlock()
-	if s.subscription == nil {
+	s.Lock()
+	defer s.Unlock()
+	if s.subscription == nil || !s.subscription.IsValid() {
 		return
 	}
 	if s.hbMonitor != nil {
 		s.hbMonitor.Stop()
 	}
-	s.subscription.Unsubscribe()
-	close(s.connStatusChanged)
-	s.subscription = nil
-	delete(s.consumer.subscriptions, s.id)
+	drainMode := atomic.LoadUint32(&s.draining) == 1
+	if drainMode {
+		s.subscription.Drain()
+	} else {
+		s.subscription.Unsubscribe()
+	}
 	atomic.StoreUint32(&s.closed, 1)
 }
 

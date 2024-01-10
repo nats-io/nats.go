@@ -49,6 +49,7 @@ type (
 		consumer *orderedConsumer
 		opts     []PullMessagesOpt
 		done     chan struct{}
+		closed   uint32
 	}
 
 	cursor struct {
@@ -298,6 +299,9 @@ func (s *orderedSubscription) Next() (Msg, error) {
 }
 
 func (s *orderedSubscription) Stop() {
+	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+		return
+	}
 	sub, ok := s.consumer.currentConsumer.getSubscription("")
 	if !ok {
 		return
@@ -305,6 +309,20 @@ func (s *orderedSubscription) Stop() {
 	s.consumer.currentConsumer.Lock()
 	defer s.consumer.currentConsumer.Unlock()
 	sub.Stop()
+	close(s.done)
+}
+
+func (s *orderedSubscription) Drain() {
+	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+		return
+	}
+	sub, ok := s.consumer.currentConsumer.getSubscription("")
+	if !ok {
+		return
+	}
+	s.consumer.currentConsumer.Lock()
+	defer s.consumer.currentConsumer.Unlock()
+	sub.Drain()
 	close(s.done)
 }
 
