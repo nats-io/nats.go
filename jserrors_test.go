@@ -1,8 +1,8 @@
 package nats
 
 import (
-	"testing"
 	"errors"
+	"testing"
 )
 
 func Test_wrapError_Unwrap(t *testing.T) {
