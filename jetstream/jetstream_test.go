@@ -274,3 +274,184 @@ func TestRetryWithBackoff(t *testing.T) {
 		})
 	}
 }
+
+func TestPullConsumer_checkPending(t *testing.T) {
+	tests := []struct {
+		name                string
+		givenSub            *pullSubscription
+		shouldSend          bool
+		expectedPullRequest *pullRequest
+	}{
+		{
+			name: "msgs threshold not reached, bytes not set, no pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					msgCount: 10,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5,
+					MaxMessages:       10,
+				},
+				fetchInProgress: 0,
+			},
+			shouldSend: false,
+		},
+		{
+			name: "pending msgs below threshold, send pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					msgCount: 4,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5,
+					MaxMessages:       10,
+				},
+				fetchInProgress: 0,
+			},
+			shouldSend: true,
+			expectedPullRequest: &pullRequest{
+				Batch:    6,
+				MaxBytes: 0,
+			},
+		},
+		{
+			name: "pending msgs below threshold but PR in progress",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					msgCount: 4,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5,
+					MaxMessages:       10,
+				},
+				fetchInProgress: 1,
+			},
+			shouldSend: false,
+		},
+		{
+			name: "pending bytes below threshold, send pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					byteCount: 400,
+					msgCount:  1000000, // msgs count should be ignored
+				},
+				consumeOpts: &consumeOpts{
+					MaxMessages:    1000000,
+					ThresholdBytes: 500,
+					MaxBytes:       1000,
+				},
+				fetchInProgress: 0,
+			},
+			shouldSend: true,
+			expectedPullRequest: &pullRequest{
+				Batch:    1000000,
+				MaxBytes: 600,
+			},
+		},
+		{
+			name: "pending bytes above threshold, no pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					byteCount: 600,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdBytes: 500,
+					MaxBytes:       1000,
+				},
+				fetchInProgress: 0,
+			},
+			shouldSend: false,
+		},
+		{
+			name: "pending bytes below threshold, fetch in progress, no pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					byteCount: 400,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdBytes: 500,
+					MaxBytes:       1000,
+				},
+				fetchInProgress: 1,
+			},
+			shouldSend: false,
+		},
+		{
+			name: "StopAfter set, pending msgs below StopAfter, send pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					msgCount: 4,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5,
+					MaxMessages:       10,
+					StopAfter:         8,
+				},
+				fetchInProgress: 0,
+				delivered:       2,
+			},
+			shouldSend: true,
+			expectedPullRequest: &pullRequest{
+				Batch:    2, // StopAfter (8) - delivered (2) - pending (4)
+				MaxBytes: 0,
+			},
+		},
+		{
+			name: "StopAfter set, pending msgs equal to StopAfter, no pull request",
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{
+					msgCount: 6,
+				},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5,
+					MaxMessages:       10,
+					StopAfter:         6,
+				},
+				fetchInProgress: 0,
+				delivered:       0,
+			},
+			shouldSend: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prChan := make(chan *pullRequest, 1)
+			test.givenSub.fetchNext = prChan
+			errs := make(chan error, 1)
+			ok := make(chan struct{}, 1)
+			go func() {
+				if test.shouldSend {
+					select {
+					case pr := <-prChan:
+						if *pr != *test.expectedPullRequest {
+							errs <- fmt.Errorf("Invalid pull request; want: %#v; got: %#v", test.expectedPullRequest, pr)
+							return
+						}
+						ok <- struct{}{}
+					case <-time.After(1 * time.Second):
+						errs <- fmt.Errorf("Timeout")
+						return
+					}
+				} else {
+					select {
+					case <-prChan:
+						errs <- fmt.Errorf("Unexpected pull request")
+					case <-time.After(100 * time.Millisecond):
+						ok <- struct{}{}
+						return
+					}
+				}
+			}()
+
+			test.givenSub.checkPending()
+			select {
+			case <-ok:
+				// ok
+			case err := <-errs:
+				t.Fatal(err)
+			}
+
+		})
+	}
+}
