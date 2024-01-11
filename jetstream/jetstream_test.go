@@ -300,7 +300,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			name: "pending msgs below threshold, send pull request",
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
-					msgCount: 4,
+					msgCount:  4,
+					byteCount: 400, // byte count should be ignored
 				},
 				consumeOpts: &consumeOpts{
 					ThresholdMessages: 5,
