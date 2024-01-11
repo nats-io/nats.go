@@ -647,8 +647,8 @@ func TestSubjectsFilterPaging(t *testing.T) {
 		t.Fatalf("Unexpected number of subjects; want: 110000; got: %d", len(info.State.Subjects))
 	}
 	cInfo := s.CachedInfo()
-	if len(cInfo.State.Subjects) != 110000 {
-		t.Fatalf("Unexpected number of subjects; want: 110000; got: %d", len(cInfo.State.Subjects))
+	if len(cInfo.State.Subjects) != 0 {
+		t.Fatalf("Unexpected number of subjects; want: 0; got: %d", len(cInfo.State.Subjects))
 	}
 }
 

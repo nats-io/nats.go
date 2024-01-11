@@ -264,6 +264,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 	var offset int
 
 	infoSubject := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiStreamInfoT, s.name))
+	var info *StreamInfo
 	for {
 		if infoReq != nil {
 			if infoReq.SubjectFilter != "" {
@@ -287,7 +288,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 			}
 			return nil, resp.Error
 		}
-		s.info = resp.StreamInfo
+		info = resp.StreamInfo
 		var total int
 		if resp.Total != 0 {
 			total = resp.Total
@@ -299,13 +300,16 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 			offset = len(subjectMap)
 		}
 		if total == 0 || total <= offset {
-			resp.StreamInfo.State.Subjects = subjectMap
-			s.info = resp.StreamInfo
+			info.State.Subjects = nil
+			// we don't want to store subjects in cache
+			cached := *info
+			s.info = &cached
+			info.State.Subjects = subjectMap
 			break
 		}
 	}
 
-	return s.info, nil
+	return info, nil
 }
 
 // CachedInfo returns *StreamInfo cached on a stream struct
