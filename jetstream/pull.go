@@ -417,10 +417,19 @@ func (s *pullSubscription) incrementDeliveredMsgs() {
 // the buffer to trigger a new pull request.
 // lock should be held before calling this method
 func (s *pullSubscription) checkPending() {
-	if s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
-		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0) &&
-			atomic.LoadUint32(&s.fetchInProgress) == 1 {
-		batchSize := s.consumeOpts.MaxMessages - s.pending.msgCount
+	if (s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
+		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0)) &&
+		atomic.LoadUint32(&s.fetchInProgress) == 0 {
+
+		var batchSize, maxBytes int
+		if s.consumeOpts.MaxBytes == 0 {
+			// if using messages, calculate appropriate batch size
+			batchSize = s.consumeOpts.MaxMessages - s.pending.msgCount
+		} else {
+			// if using bytes, use the max value
+			batchSize = s.consumeOpts.MaxMessages
+			maxBytes = s.consumeOpts.MaxBytes - s.pending.byteCount
+		}
 		if s.consumeOpts.StopAfter > 0 {
 			batchSize = min(batchSize, s.consumeOpts.StopAfter-s.delivered-s.pending.msgCount)
 		}
@@ -428,7 +437,7 @@ func (s *pullSubscription) checkPending() {
 			s.fetchNext <- &pullRequest{
 				Expires:   s.consumeOpts.Expires,
 				Batch:     batchSize,
-				MaxBytes:  s.consumeOpts.MaxBytes - s.pending.byteCount,
+				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
 			}
 
