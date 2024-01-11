@@ -280,7 +280,7 @@ func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, err
 	streamName := fmt.Sprintf(kvBucketNameTmpl, bucket)
 	stream, err := js.Stream(ctx, streamName)
 	if err != nil {
-		if err == ErrStreamNotFound {
+		if errors.Is(err, ErrStreamNotFound) {
 			err = ErrBucketNotFound
 		}
 		return nil, err
@@ -567,7 +567,7 @@ func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEn
 		}
 	}
 	if err != nil {
-		if err == ErrMsgNotFound {
+		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrKeyNotFound
 		}
 		return nil, err
@@ -619,7 +619,7 @@ func (e *kve) Operation() KeyValueOp { return e.op }
 func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
 	e, err := kv.get(ctx, key, kvLatestRevision)
 	if err != nil {
-		if err == ErrKeyDeleted {
+		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -632,7 +632,7 @@ func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
 func (kv *kvs) GetRevision(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
 	e, err := kv.get(ctx, key, revision)
 	if err != nil {
-		if err == ErrKeyDeleted {
+		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -677,7 +677,7 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte) (revision u
 		return v, nil
 	}
 
-	if e, err := kv.get(ctx, key, kvLatestRevision); err == ErrKeyDeleted {
+	if e, err := kv.get(ctx, key, kvLatestRevision); errors.Is(err, ErrKeyDeleted) {
 		return kv.Update(ctx, key, value, e.Revision())
 	}
 

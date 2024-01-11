@@ -297,7 +297,7 @@ func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 	resp, err := js.apiRequestWithContext(o.ctx, js.apiSubj(apiAccountInfo), nil)
 	if err != nil {
 		// todo maybe nats server should never have no responder on this subject and always respond if they know there is no js to be had
-		if err == ErrNoResponders {
+		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
 		}
 		return nil, err
@@ -415,7 +415,7 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 
 	resp, err := js.apiRequestWithContext(o.ctx, js.apiSubj(ccSubj), req)
 	if err != nil {
-		if err == ErrNoResponders {
+		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
 		}
 		return nil, err
@@ -1623,7 +1623,7 @@ func (jsc *js) StreamNameBySubject(subj string, opts ...JSOpt) (string, error) {
 
 	resp, err := jsc.apiRequestWithContext(o.ctx, jsc.apiSubj(apiStreams), j)
 	if err != nil {
-		if err == ErrNoResponders {
+		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
 		}
 		return _EMPTY_, err

@@ -545,7 +545,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 
 	if err != nil {
-		for r, ttl := 0, o.ttl; err == ErrNoResponders && (r < o.rnum || o.rnum < 0); r++ {
+		for r, ttl := 0, o.ttl; errors.Is(err, ErrNoResponders) && (r < o.rnum || o.rnum < 0); r++ {
 			// To protect against small blips in leadership changes etc, if we get a no responders here retry.
 			if o.ctx != nil {
 				select {
@@ -567,7 +567,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 			}
 		}
 		if err != nil {
-			if err == ErrNoResponders {
+			if errors.Is(err, ErrNoResponders) {
 				err = ErrNoStreamResponse
 			}
 			return nil, err
@@ -1601,7 +1601,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if consumer != _EMPTY_ && !o.skipCInfo {
 		info, err = js.ConsumerInfo(stream, consumer)
 		notFoundErr = errors.Is(err, ErrConsumerNotFound)
-		lookupErr = err == ErrJetStreamNotEnabled || err == ErrTimeout || err == context.DeadlineExceeded
+		lookupErr = err == ErrJetStreamNotEnabled || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded)
 	}
 
 	switch {
@@ -2831,7 +2831,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		// are no messages.
 		msg, err = sub.nextMsgWithContext(ctx, true, false)
 		if err != nil {
-			if err == errNoMessages {
+			if errors.Is(err, errNoMessages) {
 				err = nil
 			}
 			break
@@ -2911,13 +2911,13 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 				usrMsg, err = checkMsg(msg, true, noWait)
 				if err == nil && usrMsg {
 					msgs = append(msgs, msg)
-				} else if noWait && (err == errNoMessages || err == errRequestsPending) && len(msgs) == 0 {
+				} else if noWait && (errors.Is(err, errNoMessages) || errors.Is(err, errRequestsPending)) && len(msgs) == 0 {
 					// If we have a 404/408 for our "no_wait" request and have
 					// not collected any message, then resend request to
 					// wait this time.
 					noWait = false
 					err = sendReq()
-				} else if err == ErrTimeout && len(msgs) == 0 {
+				} else if errors.Is(err, ErrTimeout) && len(msgs) == 0 {
 					// If we get a 408, we will bail if we already collected some
 					// messages, otherwise ignore and go back calling nextMsg.
 					err = nil
@@ -3100,7 +3100,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 		// are no messages.
 		msg, err := sub.nextMsgWithContext(ctx, true, false)
 		if err != nil {
-			if err == errNoMessages {
+			if errors.Is(err, errNoMessages) {
 				err = nil
 			}
 			result.err = err
@@ -3177,7 +3177,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 
 			usrMsg, err = checkMsg(msg, true, false)
 			if err != nil {
-				if err == ErrTimeout {
+				if errors.Is(err, ErrTimeout) {
 					if reqID != "" && !subjectMatchesReqID(msg.Subject, reqID) {
 						// ignore timeout message from server if it comes from a different pull request
 						continue
@@ -3206,7 +3206,7 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 
 // checkCtxErr is used to determine whether ErrTimeout should be returned in case of context timeout
 func (o *pullOpts) checkCtxErr(err error) error {
-	if o.ctx == nil && err == context.DeadlineExceeded {
+	if o.ctx == nil && errors.Is(err, context.DeadlineExceeded) {
 		return ErrTimeout
 	}
 	return err
@@ -3222,7 +3222,7 @@ func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer strin
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
 	resp, err := js.apiRequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
 	if err != nil {
-		if err == ErrNoResponders {
+		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
 		}
 		return nil, err
