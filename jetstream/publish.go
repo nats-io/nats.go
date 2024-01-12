@@ -93,12 +93,12 @@ type (
 
 	asyncPublishContext struct {
 		sync.RWMutex
-		replyPrefix  string
-		replySubject *nats.Subscription
-		acks         map[string]*pubAckFuture
-		stallCh      chan struct{}
-		doneCh       chan struct{}
-		rr           *rand.Rand
+		replyPrefix string
+		replySub    *nats.Subscription
+		acks        map[string]*pubAckFuture
+		stallCh     chan struct{}
+		doneCh      chan struct{}
+		rr          *rand.Rand
 		// channel to signal when server is disconnected or conn is closed
 		connStatusCh chan (nats.Status)
 	}
@@ -300,7 +300,7 @@ const (
 
 func (js *jetStream) newAsyncReply() (string, error) {
 	js.publisher.Lock()
-	if js.publisher.replySubject == nil {
+	if js.publisher.replySub == nil {
 		// Create our wildcard reply subject.
 		sha := sha256.New()
 		sha.Write([]byte(nuid.Next()))
@@ -314,7 +314,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 			js.publisher.Unlock()
 			return "", err
 		}
-		js.publisher.replySubject = sub
+		js.publisher.replySub = sub
 		js.publisher.rr = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	if js.publisher.connStatusCh == nil {

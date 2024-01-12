@@ -43,6 +43,7 @@ type (
 		StreamManager
 		Publisher
 		KeyValueManager
+		ObjectStoreManager
 	}
 
 	Publisher interface {
@@ -861,4 +862,20 @@ func wrapContextWithoutDeadline(ctx context.Context) (context.Context, context.C
 		return ctx, nil
 	}
 	return context.WithTimeout(ctx, defaultAPITimeout)
+}
+
+func (js *jetStream) cleanupReplySub() {
+	if js.publisher == nil {
+		return
+	}
+	js.publisher.Lock()
+	if js.publisher.replySub != nil {
+		js.publisher.replySub.Unsubscribe()
+		js.publisher.replySub = nil
+	}
+	if js.publisher.connStatusCh != nil {
+		close(js.publisher.connStatusCh)
+		js.publisher.connStatusCh = nil
+	}
+	js.publisher.Unlock()
 }
