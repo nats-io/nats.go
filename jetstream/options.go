@@ -264,7 +264,11 @@ func WithDeletedDetails(deletedDetails bool) StreamInfoOpt {
 	}
 }
 
-// WithSubjectFilter can be used to display the information about messages stored on given subjects
+// WithSubjectFilter can be used to display the information about messages
+// stored on given subjects.
+// NOTE: if the subject filter matches over 100k
+// subjects, this will result in multiple requests to the server to retrieve all
+// the information, and all of the returned subjects will be kept in memory.
 func WithSubjectFilter(subject string) StreamInfoOpt {
 	return func(req *streamInfoRequest) error {
 		req.SubjectFilter = subject
