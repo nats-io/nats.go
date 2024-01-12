@@ -434,6 +434,7 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	if err != nil {
 		return err
 	}
+	s.m.Lock()
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
 	endpoint.stats = EndpointStats{
@@ -441,6 +442,7 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 		Subject:    subject,
 		QueueGroup: queueGroup,
 	}
+	s.m.Unlock()
 	return nil
 }
 
@@ -697,6 +699,9 @@ func (s *service) serviceIdentity() ServiceIdentity {
 
 // Info returns information about the service
 func (s *service) Info() Info {
+	s.m.Lock()
+	defer s.m.Unlock()
+
 	endpoints := make([]EndpointInfo, 0, len(s.endpoints))
 	for _, e := range s.endpoints {
 		endpoints = append(endpoints, EndpointInfo{

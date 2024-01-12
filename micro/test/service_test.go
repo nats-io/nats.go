@@ -188,7 +188,6 @@ func TestServiceBasics(t *testing.T) {
 	if svcs[0].Stats().Endpoints[0].NumRequests != 0 {
 		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
 	}
-
 }
 
 func TestAddService(t *testing.T) {
@@ -1016,7 +1015,48 @@ func TestContextHandler(t *testing.T) {
 	if resp.Header.Get(micro.ErrorCodeHeader) != "400" {
 		t.Fatalf("Expected error response after canceling context; got: %q", string(resp.Data))
 	}
+}
 
+func TestAddEndpoint_RaceCondition(t *testing.T) {
+	// This test will fail with the '-race' flag if the lock/unlock are removed from service.go lines 437 and 445
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	ctx := context.Background()
+
+	handler := func(ctx context.Context, req micro.Request) {
+		req.RespondJSON(map[string]any{"hello": "world"})
+	}
+	config := micro.Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "test.func",
+			Handler: micro.ContextHandler(ctx, handler),
+		},
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer srv.Stop()
+
+	errs := make(chan error)
+	go func(errs chan error) {
+		errs <- srv.AddEndpoint("test", micro.ContextHandler(ctx, handler))
+	}(errs)
+
+	err = <-errs
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
 }
 
 func TestServiceStats(t *testing.T) {
