@@ -610,6 +610,48 @@ func TestStreamInfo(t *testing.T) {
 	}
 }
 
+func TestSubjectsFilterPaging(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 0; i < 110000; i++ {
+		if _, err := js.PublishAsync(fmt.Sprintf("FOO.%d", i), nil); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(5 * time.Second):
+		t.Fatal("PublishAsyncComplete timeout")
+	}
+
+	info, err := s.Info(context.Background(), jetstream.WithSubjectFilter("FOO.*"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(info.State.Subjects) != 110000 {
+		t.Fatalf("Unexpected number of subjects; want: 110000; got: %d", len(info.State.Subjects))
+	}
+	cInfo := s.CachedInfo()
+	if len(cInfo.State.Subjects) != 0 {
+		t.Fatalf("Unexpected number of subjects; want: 0; got: %d", len(cInfo.State.Subjects))
+	}
+}
+
 func TestStreamCachedInfo(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)

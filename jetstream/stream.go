@@ -102,6 +102,7 @@ type (
 	StreamInfoOpt func(*streamInfoRequest) error
 
 	streamInfoRequest struct {
+		apiPaged
 		DeletedDetails bool   `json:"deleted_details,omitempty"`
 		SubjectFilter  string `json:"subjects_filter,omitempty"`
 	}
@@ -259,28 +260,56 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 	}
 	var req []byte
 	var err error
-	if infoReq != nil {
-		req, err = json.Marshal(infoReq)
-		if err != nil {
-			return nil, err
-		}
-	}
+	var subjectMap map[string]uint64
+	var offset int
 
 	infoSubject := apiSubj(s.jetStream.apiPrefix, fmt.Sprintf(apiStreamInfoT, s.name))
-	var resp streamInfoResponse
-
-	if _, err = s.jetStream.apiRequestJSON(ctx, infoSubject, &resp, req); err != nil {
-		return nil, err
-	}
-	if resp.Error != nil {
-		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
-			return nil, ErrStreamNotFound
+	var info *StreamInfo
+	for {
+		if infoReq != nil {
+			if infoReq.SubjectFilter != "" {
+				if subjectMap == nil {
+					subjectMap = make(map[string]uint64)
+				}
+				infoReq.Offset = offset
+			}
+			req, err = json.Marshal(infoReq)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return nil, resp.Error
+		var resp streamInfoResponse
+		if _, err = s.jetStream.apiRequestJSON(ctx, infoSubject, &resp, req); err != nil {
+			return nil, err
+		}
+		if resp.Error != nil {
+			if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
+				return nil, ErrStreamNotFound
+			}
+			return nil, resp.Error
+		}
+		info = resp.StreamInfo
+		var total int
+		if resp.Total != 0 {
+			total = resp.Total
+		}
+		if len(resp.StreamInfo.State.Subjects) > 0 {
+			for subj, msgs := range resp.StreamInfo.State.Subjects {
+				subjectMap[subj] = msgs
+			}
+			offset = len(subjectMap)
+		}
+		if total == 0 || total <= offset {
+			info.State.Subjects = nil
+			// we don't want to store subjects in cache
+			cached := *info
+			s.info = &cached
+			info.State.Subjects = subjectMap
+			break
+		}
 	}
-	s.info = resp.StreamInfo
 
-	return resp.StreamInfo, nil
+	return info, nil
 }
 
 // CachedInfo returns *StreamInfo cached on a stream struct
