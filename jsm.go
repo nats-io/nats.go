@@ -252,11 +252,13 @@ type AccountInfo struct {
 }
 
 type Tier struct {
-	Memory    uint64        `json:"memory"`
-	Store     uint64        `json:"storage"`
-	Streams   int           `json:"streams"`
-	Consumers int           `json:"consumers"`
-	Limits    AccountLimits `json:"limits"`
+	Memory         uint64        `json:"memory"`
+	Store          uint64        `json:"storage"`
+	ReservedMemory uint64        `json:"reserved_memory"`
+	ReservedStore  uint64        `json:"reserved_storage"`
+	Streams        int           `json:"streams"`
+	Consumers      int           `json:"consumers"`
+	Limits         AccountLimits `json:"limits"`
 }
 
 // APIStats reports on API calls to JetStream for this account.
