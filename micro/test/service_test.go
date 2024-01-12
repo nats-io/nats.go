@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -1017,8 +1018,7 @@ func TestContextHandler(t *testing.T) {
 	}
 }
 
-func TestAddEndpoint_RaceCondition(t *testing.T) {
-	// This test will fail with the '-race' flag if the lock/unlock are removed from service.go lines 437 and 445
+func TestAddEndpoint_Concurrency(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
 
@@ -1036,10 +1036,6 @@ func TestAddEndpoint_RaceCondition(t *testing.T) {
 	config := micro.Config{
 		Name:    "test_service",
 		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
-			Subject: "test.func",
-			Handler: micro.ContextHandler(ctx, handler),
-		},
 	}
 
 	srv, err := micro.AddService(nc, config)
@@ -1048,15 +1044,37 @@ func TestAddEndpoint_RaceCondition(t *testing.T) {
 	}
 	defer srv.Stop()
 
-	errs := make(chan error)
-	go func(errs chan error) {
-		errs <- srv.AddEndpoint("test", micro.ContextHandler(ctx, handler))
-	}(errs)
+	res := make(chan error, 10)
+	wg := sync.WaitGroup{}
+	wg.Add(10)
 
-	err = <-errs
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
+	// now add a few endpoints concurrently
+	// and make sure they are added successfully
+	// and there is no race
+	for i := 0; i < 10; i++ {
+		go func(i int) {
+			wg.Wait()
+			res <- srv.AddEndpoint(fmt.Sprintf("test%d", i), micro.ContextHandler(ctx, handler))
+		}(i)
+		// after all goroutines are started, release the lock
 	}
+	wg.Add(-10)
+
+	for i := 0; i < 10; i++ {
+		select {
+		case err := <-res:
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Timeout waiting for endpoint to be added")
+		}
+	}
+
+	if len(srv.Info().Endpoints) != 10 {
+		t.Fatalf("Expected 11 endpoints, got: %d", len(srv.Info().Endpoints))
+	}
+
 }
 
 func TestServiceStats(t *testing.T) {
