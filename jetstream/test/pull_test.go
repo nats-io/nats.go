@@ -1293,69 +1293,79 @@ func TestPullConsumerMessages(t *testing.T) {
 	})
 
 	t.Run("with graceful shutdown", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
-
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
+		cases := map[string]func(jetstream.MessagesContext){
+			"stop":  func(mc jetstream.MessagesContext) { mc.Stop() },
+			"drain": func(mc jetstream.MessagesContext) { mc.Drain() },
 		}
 
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
+		for name, unsubscribe := range cases {
+			t.Run(name, func(t *testing.T) {
+				srv := RunBasicJetStreamServer()
+				defer shutdownJSServerAndRemoveStorage(t, srv)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		it, err := c.Messages()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		publishTestMsgs(t, nc)
-
-		errs := make(chan error)
-		msgs := make([]jetstream.Msg, 0)
-
-		go func() {
-			for {
-				msg, err := it.Next()
+				nc, err := nats.Connect(srv.ClientURL())
 				if err != nil {
-					errs <- err
-					return
+					t.Fatalf("Unexpected error: %v", err)
 				}
-				msg.Ack()
-				msgs = append(msgs, msg)
-			}
-		}()
 
-		time.Sleep(10 * time.Millisecond)
-		it.Stop() // Next() should return ErrMsgIteratorClosed
+				js, err := jetstream.New(nc)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer nc.Close()
 
-		timeout := time.NewTimer(5 * time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 
-		select {
-		case <-timeout.C:
-			t.Fatal("Timed out waiting for Next() to return after Stop()")
-		case err := <-errs:
-			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+				it, err := c.Messages()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 
-			if len(msgs) != len(testMsgs) {
-				t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
-			}
+				publishTestMsgs(t, nc)
+
+				errs := make(chan error)
+				msgs := make([]jetstream.Msg, 0)
+
+				go func() {
+					for {
+						msg, err := it.Next()
+						if err != nil {
+							errs <- err
+							return
+						}
+						msg.Ack()
+						msgs = append(msgs, msg)
+					}
+				}()
+
+				time.Sleep(10 * time.Millisecond)
+				unsubscribe(it) // Next() should return ErrMsgIteratorClosed
+
+				timer := time.NewTimer(5 * time.Second)
+				defer timer.Stop()
+
+				select {
+				case <-timer.C:
+					t.Fatal("Timed out waiting for Next() to return")
+				case err := <-errs:
+					if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+
+					if len(msgs) != len(testMsgs) {
+						t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+					}
+				}
+			})
 		}
 	})
 
