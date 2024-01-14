@@ -535,18 +535,21 @@ var (
 )
 
 func (s *pullSubscription) Next() (Msg, error) {
+	// done indicates whether s.done channel was closed while holding the lock
+	var done bool
+	s.Lock()
+	defer func() {
+		if !done {
+			s.Unlock()
+		}
+	}()
+
 	drainMode := atomic.LoadUint32(&s.draining) == 1
 	closed := atomic.LoadUint32(&s.closed) == 1
 	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
-
-	s.Lock()
-	consumeOpts := *s.consumeOpts
-	delivered := s.delivered
-	s.Unlock()
-
-	hbMonitor := s.scheduleHeartbeatCheck(2 * consumeOpts.Heartbeat)
+	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
 	defer func() {
 		if hbMonitor != nil {
 			hbMonitor.Stop()
@@ -554,115 +557,165 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}()
 
 	isConnected := true
-	if consumeOpts.StopAfter > 0 && delivered >= consumeOpts.StopAfter {
+	if s.consumeOpts.StopAfter > 0 && s.delivered >= s.consumeOpts.StopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
 	}
 
 	for {
-		s.Lock()
 		s.checkPending()
-		s.Unlock()
-
-		select {
-		case msg, ok := <-s.msgs:
-			if !ok {
-				// if msgs channel is closed, it means that subscription was either drained or stopped
-				s.Lock()
-				delete(s.consumer.subscriptions, s.id)
-				s.Unlock()
-				atomic.CompareAndSwapUint32(&s.draining, 1, 0)
-				return nil, ErrMsgIteratorClosed
-			}
-			if hbMonitor != nil {
-				hbMonitor.Reset(2 * consumeOpts.Heartbeat)
-			}
-			userMsg, msgErr := checkMsg(msg)
-			if !userMsg {
-				// heartbeat message
-				if msgErr == nil {
+		if !done {
+			select {
+			case <-s.done:
+				drainMode := atomic.LoadUint32(&s.draining) == 1
+				if drainMode {
+					done = true
+					s.Unlock()
 					continue
 				}
-				s.Lock()
-				err := s.handleStatusMsg(msg, msgErr)
-				s.Unlock()
+				return nil, ErrMsgIteratorClosed
+			case msg, ok := <-s.msgs:
+				if !ok {
+					// if msgs channel is closed, it means that subscription was either drained or stopped
+					delete(s.consumer.subscriptions, s.id)
+					atomic.CompareAndSwapUint32(&s.draining, 1, 0)
+					return nil, ErrMsgIteratorClosed
+				}
+				jsMsg, err := s.handleIncomingMessage(msg, hbMonitor)
 				if err != nil {
-					s.Stop()
 					return nil, err
 				}
-				continue
-			}
-			s.Lock()
-			s.decrementPendingMsgs(msg)
-			s.incrementDeliveredMsgs()
-			s.Unlock()
-			return s.consumer.jetStream.toJSMsg(msg), nil
-		case err := <-s.errs:
-			if errors.Is(err, ErrNoHeartbeat) {
-				s.Lock()
-				s.pending.msgCount = 0
-				s.pending.byteCount = 0
-				s.Unlock()
-				if consumeOpts.ReportMissingHeartbeats {
+				if jsMsg == nil {
+					continue
+				}
+				return jsMsg, nil
+			case err := <-s.errs:
+				isConnected, err = s.handleError(err, hbMonitor, isConnected)
+				if err != nil {
 					return nil, err
 				}
-				if hbMonitor != nil {
-					hbMonitor.Reset(2 * consumeOpts.Heartbeat)
-				}
 			}
-			if errors.Is(err, errConnected) {
-				if !isConnected {
-					isConnected = true
-					// try fetching consumer info several times to make sure consumer is available after reconnect
-					backoffOpts := backoffOpts{
-						attempts:                10,
-						initialInterval:         1 * time.Second,
-						disableInitialExecution: true,
-						factor:                  2,
-						maxInterval:             10 * time.Second,
-						cancel:                  s.done,
-					}
-					err = retryWithBackoff(func(attempt int) (bool, error) {
-						isClosed := atomic.LoadUint32(&s.closed) == 1
-						if isClosed {
-							return false, nil
-						}
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						defer cancel()
-						_, err := s.consumer.Info(ctx)
-						if err != nil {
-							if errors.Is(err, ErrConsumerNotFound) {
-								return false, err
-							}
-							if attempt == backoffOpts.attempts-1 {
-								return true, fmt.Errorf("could not get consumer info after server reconnect: %w", err)
-							}
-							return true, err
-						}
-						return false, nil
-					}, backoffOpts)
-					if err != nil {
-						s.Stop()
-						return nil, err
-					}
-
-					s.Lock()
-					s.pending.msgCount = 0
-					s.pending.byteCount = 0
-					s.Unlock()
-					if hbMonitor != nil {
-						hbMonitor.Reset(2 * consumeOpts.Heartbeat)
-					}
+		} else {
+			// if we're in drain mode, we need to wait until all messages are drained
+			// before returning ErrMsgIteratorClosed
+			select {
+			case msg, ok := <-s.msgs:
+				if !ok {
+					// if msgs channel is closed, it means that subscription was either drained or stopped
+					delete(s.consumer.subscriptions, s.id)
+					atomic.CompareAndSwapUint32(&s.draining, 1, 0)
+					return nil, ErrMsgIteratorClosed
 				}
-			}
-			if errors.Is(err, errDisconnected) {
-				if hbMonitor != nil {
-					hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+				jsMsg, err := s.handleIncomingMessage(msg, hbMonitor)
+				if err != nil {
+					return nil, err
 				}
-				isConnected = false
+				if jsMsg == nil {
+					continue
+				}
+				return jsMsg, nil
+			case err := <-s.errs:
+				isConnected, err = s.handleError(err, hbMonitor, isConnected)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
+}
+
+// handleIncomingMessage parses received nats.Msg and either returns a
+// jetstream.Msg or handles status/heartbeat. If the message is a heartbeat
+// message or a pull request termination, it will return nil, nil. If the
+// message is a jetstream message, it will return a jetstream.Msg and nil. If
+// the message is an error, it will return nil and an error.
+// lock should be held before calling this method
+func (s *pullSubscription) handleIncomingMessage(msg *nats.Msg, hbMonitor *hbMonitor) (Msg, error) {
+	if hbMonitor != nil {
+		hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+	}
+	userMsg, msgErr := checkMsg(msg)
+	if !userMsg {
+		// heartbeat message
+		if msgErr == nil {
+			return nil, nil
+		}
+		if err := s.handleStatusMsg(msg, msgErr); err != nil {
+			s.Stop()
+			return nil, err
+		}
+		return nil, nil
+	}
+	s.decrementPendingMsgs(msg)
+	s.incrementDeliveredMsgs()
+	return s.consumer.jetStream.toJSMsg(msg), nil
+}
+
+// handleError is responsible for handling errors received on subscription
+// Based on the error, it will either return is as-is or handle it internally.
+// The returned bool indicates whether the connection is still active.
+// lock should be held before calling this method
+func (s *pullSubscription) handleError(err error, hbMonitor *hbMonitor, isConnected bool) (bool, error) {
+	if errors.Is(err, ErrNoHeartbeat) {
+		s.pending.msgCount = 0
+		s.pending.byteCount = 0
+		if s.consumeOpts.ReportMissingHeartbeats {
+			return isConnected, err
+		}
+		if hbMonitor != nil {
+			hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+		}
+	}
+	if errors.Is(err, errConnected) {
+		if !isConnected {
+			isConnected = true
+			// try fetching consumer info several times to make sure consumer is available after reconnect
+			backoffOpts := backoffOpts{
+				attempts:                10,
+				initialInterval:         1 * time.Second,
+				disableInitialExecution: true,
+				factor:                  2,
+				maxInterval:             10 * time.Second,
+				cancel:                  s.done,
+			}
+			err = retryWithBackoff(func(attempt int) (bool, error) {
+				isClosed := atomic.LoadUint32(&s.closed) == 1
+				if isClosed {
+					return false, nil
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, err := s.consumer.Info(ctx)
+				if err != nil {
+					if errors.Is(err, ErrConsumerNotFound) {
+						return false, err
+					}
+					if attempt == backoffOpts.attempts-1 {
+						return true, fmt.Errorf("could not get consumer info after server reconnect: %w", err)
+					}
+					return true, err
+				}
+				return false, nil
+			}, backoffOpts)
+			if err != nil {
+				s.Stop()
+				return isConnected, err
+			}
+
+			s.pending.msgCount = 0
+			s.pending.byteCount = 0
+			if hbMonitor != nil {
+				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+			}
+		}
+	}
+	if errors.Is(err, errDisconnected) {
+		if hbMonitor != nil {
+			hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+		}
+		isConnected = false
+	}
+	return isConnected, nil
 }
 
 func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
