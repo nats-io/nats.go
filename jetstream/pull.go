@@ -116,7 +116,6 @@ type (
 		closed            uint32
 		draining          uint32
 		done              chan struct{}
-		drained           chan struct{}
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
 		consumeOpts       *consumeOpts
@@ -476,7 +475,6 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		id:          consumeID,
 		consumer:    p,
 		done:        make(chan struct{}, 1),
-		drained:     make(chan struct{}, 1),
 		msgs:        msgs,
 		errs:        make(chan error, 1),
 		fetchNext:   make(chan *pullRequest, 1),
