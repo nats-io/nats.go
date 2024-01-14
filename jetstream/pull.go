@@ -537,14 +537,18 @@ var (
 )
 
 func (s *pullSubscription) Next() (Msg, error) {
-	s.Lock()
-	defer s.Unlock()
 	drainMode := atomic.LoadUint32(&s.draining) == 1
 	closed := atomic.LoadUint32(&s.closed) == 1
 	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
-	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
+
+	s.Lock()
+	consumeOpts := *s.consumeOpts
+	delivered := s.delivered
+	s.Unlock()
+
+	hbMonitor := s.scheduleHeartbeatCheck(2 * consumeOpts.Heartbeat)
 	defer func() {
 		if hbMonitor != nil {
 			hbMonitor.Stop()
@@ -552,29 +556,28 @@ func (s *pullSubscription) Next() (Msg, error) {
 	}()
 
 	isConnected := true
-	if s.consumeOpts.StopAfter > 0 && s.delivered >= s.consumeOpts.StopAfter {
+	if consumeOpts.StopAfter > 0 && delivered >= consumeOpts.StopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
 	}
 
 	for {
+		s.Lock()
 		s.checkPending()
+		s.Unlock()
+
 		select {
-		case <-s.done:
-			drainMode := atomic.LoadUint32(&s.draining) == 1
-			if drainMode {
-				continue
-			}
-			return nil, ErrMsgIteratorClosed
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
+				s.Lock()
 				delete(s.consumer.subscriptions, s.id)
+				s.Unlock()
 				atomic.CompareAndSwapUint32(&s.draining, 1, 0)
 				return nil, ErrMsgIteratorClosed
 			}
 			if hbMonitor != nil {
-				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+				hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 			}
 			userMsg, msgErr := checkMsg(msg)
 			if !userMsg {
@@ -582,24 +585,31 @@ func (s *pullSubscription) Next() (Msg, error) {
 				if msgErr == nil {
 					continue
 				}
-				if err := s.handleStatusMsg(msg, msgErr); err != nil {
+				s.Lock()
+				err := s.handleStatusMsg(msg, msgErr)
+				s.Unlock()
+				if err != nil {
 					s.Stop()
 					return nil, err
 				}
 				continue
 			}
+			s.Lock()
 			s.decrementPendingMsgs(msg)
 			s.incrementDeliveredMsgs()
+			s.Unlock()
 			return s.consumer.jetStream.toJSMsg(msg), nil
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
+				s.Lock()
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
-				if s.consumeOpts.ReportMissingHeartbeats {
+				s.Unlock()
+				if consumeOpts.ReportMissingHeartbeats {
 					return nil, err
 				}
 				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+					hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 				}
 			}
 			if errors.Is(err, errConnected) {
@@ -638,16 +648,18 @@ func (s *pullSubscription) Next() (Msg, error) {
 						return nil, err
 					}
 
+					s.Lock()
 					s.pending.msgCount = 0
 					s.pending.byteCount = 0
+					s.Unlock()
 					if hbMonitor != nil {
-						hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+						hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 					}
 				}
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+					hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 				}
 				isConnected = false
 			}
