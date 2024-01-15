@@ -116,7 +116,6 @@ type (
 		closed            uint32
 		draining          uint32
 		done              chan struct{}
-		drained           chan struct{}
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
 		consumeOpts       *consumeOpts
@@ -476,7 +475,6 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		id:          consumeID,
 		consumer:    p,
 		done:        make(chan struct{}, 1),
-		drained:     make(chan struct{}, 1),
 		msgs:        msgs,
 		errs:        make(chan error, 1),
 		fetchNext:   make(chan *pullRequest, 1),
@@ -560,12 +558,6 @@ func (s *pullSubscription) Next() (Msg, error) {
 	for {
 		s.checkPending()
 		select {
-		case <-s.done:
-			drainMode := atomic.LoadUint32(&s.draining) == 1
-			if drainMode {
-				continue
-			}
-			return nil, ErrMsgIteratorClosed
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
@@ -914,8 +906,11 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 }
 
 func (s *pullSubscription) cleanup() {
-	s.Lock()
-	defer s.Unlock()
+	// For now this function does not need to hold the lock.
+	// Holding the lock here might cause a deadlock if Next()
+	// is already holding the lock and waiting.
+	// The fields that are read (subscription, hbMonitor)
+	// are read only (Only written on creation of pullSubscription).
 	if s.subscription == nil || !s.subscription.IsValid() {
 		return
 	}
