@@ -1185,8 +1185,24 @@ func TestPullConsumerMessages(t *testing.T) {
 
 		wg.Wait()
 
-		if _, err := it.Next(); err != jetstream.ErrMsgIteratorClosed {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrMsgIteratorClosed, err)
+		// Call Next in a goroutine so we can timeout if it doesn't return.
+		errs := make(chan error)
+		go func() {
+			// This call should return the error ErrMsgIteratorClosed.
+			_, err := it.Next()
+			errs <- err
+		}()
+
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+			t.Fatal("Timed out waiting for Next() to return")
+		case err := <-errs:
+			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 		}
 
 		mu.Lock()

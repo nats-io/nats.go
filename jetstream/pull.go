@@ -906,6 +906,11 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 }
 
 func (s *pullSubscription) cleanup() {
+	// For now this function does not need to hold the lock.
+	// Holding the lock here might cause a deadlock if Next()
+	// is already holding the lock and waiting.
+	// The fields that are read (subscription, hbMonitor)
+	// are read only (Only written on creation of pullSubscription).
 	if s.subscription == nil || !s.subscription.IsValid() {
 		return
 	}
