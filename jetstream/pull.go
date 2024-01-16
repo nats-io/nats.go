@@ -649,11 +649,11 @@ func (s *pullSubscription) Next() (Msg, error) {
 
 func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) {
-		if s.consumeOpts.ErrHandler != nil {
-			s.consumeOpts.ErrHandler(s, msgErr)
-		}
 		if errors.Is(msgErr, ErrConsumerDeleted) || errors.Is(msgErr, ErrBadRequest) {
 			return msgErr
+		}
+		if s.consumeOpts.ErrHandler != nil {
+			s.consumeOpts.ErrHandler(s, msgErr)
 		}
 		if errors.Is(msgErr, ErrConsumerLeadershipChanged) {
 			s.pending.msgCount = 0
@@ -663,9 +663,6 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 	}
 	msgsLeft, bytesLeft, err := parsePending(msg)
 	if err != nil {
-		if s.consumeOpts.ErrHandler != nil {
-			s.consumeOpts.ErrHandler(s, err)
-		}
 		return err
 	}
 	s.pending.msgCount -= msgsLeft
