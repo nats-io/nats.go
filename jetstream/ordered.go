@@ -139,6 +139,13 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 		for {
 			select {
 			case <-c.doReset:
+				if err := c.reset(); err != nil {
+					sub, ok := c.currentConsumer.getSubscription("")
+					if !ok {
+						return
+					}
+					c.errHandler(c.serial)(sub, err)
+				}
 				if c.withStopAfter {
 					select {
 					case c.stopAfter = <-c.stopAfterMsgsLeft:
@@ -148,13 +155,6 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 						sub.Stop()
 						return
 					}
-				}
-				if err := c.reset(); err != nil {
-					sub, ok := c.currentConsumer.getSubscription("")
-					if !ok {
-						return
-					}
-					c.errHandler(c.serial)(sub, err)
 				}
 				if c.stopAfter > 0 {
 					opts = opts[:len(opts)-2]
@@ -190,6 +190,8 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 
 func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err error) {
 	return func(cc ConsumeContext, err error) {
+		c.Lock()
+		defer c.Unlock()
 		if c.userErrHandler != nil && !errors.Is(err, errOrderedSequenceMismatch) {
 			c.userErrHandler(cc, err)
 		}
