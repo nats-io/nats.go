@@ -849,7 +849,7 @@ func InProcessServer(server InProcessConnProvider) Option {
 
 // Secure is an Option to enable TLS secure connections that skip server verification by default.
 // Pass a TLS Configuration for proper TLS.
-// NOTE: This should NOT be used in a production setting.
+// A TLS Configuration using InsecureSkipVerify should NOT be used in a production setting.
 func Secure(tls ...*tls.Config) Option {
 	return func(o *Options) error {
 		o.Secure = true
