@@ -1077,3 +1077,32 @@ func TestDecodeObjectDigest(t *testing.T) {
 		})
 	}
 }
+
+func TestObjectStoreGetObjectContextTimeout(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	obs, err := js.CreateObjectStore(context.Background(), jetstream.ObjectStoreConfig{Bucket: "OBJS"})
+	expectOk(t, err)
+
+	blob := make([]byte, 1024)
+	_, err = rand.Read(blob)
+	expectOk(t, err)
+
+	_, err = obs.PutBytes(context.Background(), "blob", blob)
+	expectOk(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	r, err := obs.Get(ctx, "blob")
+	expectOk(t, err)
+	time.Sleep(15 * time.Millisecond)
+	var res []byte
+	_, err = r.Read(res)
+	expectErr(t, err, nats.ErrTimeout)
+	r.Close()
+}

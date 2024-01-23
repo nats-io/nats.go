@@ -1120,7 +1120,11 @@ func (obs *obs) Status(ctx context.Context) (ObjectStoreStatus, error) {
 func (o *objResult) Read(p []byte) (n int, err error) {
 	o.Lock()
 	defer o.Unlock()
+	readDeadline := time.Now().Add(defaultAPITimeout)
 	if ctx := o.ctx; ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			readDeadline = deadline
+		}
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.Canceled {
@@ -1139,7 +1143,7 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	_ = r.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = r.SetReadDeadline(readDeadline)
 	n, err = r.Read(p)
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		if ctx := o.ctx; ctx != nil {
