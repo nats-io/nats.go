@@ -258,8 +258,9 @@ const (
 
 // Service Error headers
 const (
-	ErrorHeader     = "Nats-Service-Error"
-	ErrorCodeHeader = "Nats-Service-Error-Code"
+	ErrorHeader        = "Nats-Service-Error"
+	ErrorCodeHeader    = "Nats-Service-Error-Code"
+	ErrorRecoverHeader = "Nats-Service-Error-Recover"
 )
 
 // Verbs being used to set up a specific control subject.
