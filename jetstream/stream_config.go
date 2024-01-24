@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -26,154 +26,356 @@ import (
 type (
 	// StreamInfo shows config and current state for this stream.
 	StreamInfo struct {
-		Config  StreamConfig        `json:"config"`
-		Created time.Time           `json:"created"`
-		State   StreamState         `json:"state"`
-		Cluster *ClusterInfo        `json:"cluster,omitempty"`
-		Mirror  *StreamSourceInfo   `json:"mirror,omitempty"`
+		// Config contains the configuration settings of the stream, set when
+		// creating or updating the stream.
+		Config StreamConfig `json:"config"`
+
+		// Created is the timestamp when the stream was created.
+		Created time.Time `json:"created"`
+
+		// State provides the state of the stream at the time of request,
+		// including metrics like the number of messages in the stream, total
+		// bytes, etc.
+		State StreamState `json:"state"`
+
+		// Cluster contains information about the cluster to which this stream
+		// belongs (if applicable).
+		Cluster *ClusterInfo `json:"cluster,omitempty"`
+
+		// Mirror contains information about another stream this one is
+		// mirroring. Mirroring is used to create replicas of another stream's
+		// data. This field is omitted if the stream is not mirroring another
+		// stream.
+		Mirror *StreamSourceInfo `json:"mirror,omitempty"`
+
+		// Sources is a list of source streams from which this stream collects
+		// data.
 		Sources []*StreamSourceInfo `json:"sources,omitempty"`
 	}
 
+	// StreamConfig is the configuration of a JetStream stream.
 	StreamConfig struct {
-		Name                 string           `json:"name"`
-		Description          string           `json:"description,omitempty"`
-		Subjects             []string         `json:"subjects,omitempty"`
-		Retention            RetentionPolicy  `json:"retention"`
-		MaxConsumers         int              `json:"max_consumers"`
-		MaxMsgs              int64            `json:"max_msgs"`
-		MaxBytes             int64            `json:"max_bytes"`
-		Discard              DiscardPolicy    `json:"discard"`
-		DiscardNewPerSubject bool             `json:"discard_new_per_subject,omitempty"`
-		MaxAge               time.Duration    `json:"max_age"`
-		MaxMsgsPerSubject    int64            `json:"max_msgs_per_subject"`
-		MaxMsgSize           int32            `json:"max_msg_size,omitempty"`
-		Storage              StorageType      `json:"storage"`
-		Replicas             int              `json:"num_replicas"`
-		NoAck                bool             `json:"no_ack,omitempty"`
-		Template             string           `json:"template_owner,omitempty"`
-		Duplicates           time.Duration    `json:"duplicate_window,omitempty"`
-		Placement            *Placement       `json:"placement,omitempty"`
-		Mirror               *StreamSource    `json:"mirror,omitempty"`
-		Sources              []*StreamSource  `json:"sources,omitempty"`
-		Sealed               bool             `json:"sealed,omitempty"`
-		DenyDelete           bool             `json:"deny_delete,omitempty"`
-		DenyPurge            bool             `json:"deny_purge,omitempty"`
-		AllowRollup          bool             `json:"allow_rollup_hdrs,omitempty"`
-		Compression          StoreCompression `json:"compression"`
-		FirstSeq             uint64           `json:"first_seq,omitempty"`
+		// Name is the name of the stream. It is required and must be unique
+		// across the JetStream account.
+		Name string `json:"name"`
 
-		// Allow applying a subject transform to incoming messages before doing anything else
+		// Description is an optional description of the stream.
+		Description string `json:"description,omitempty"`
+
+		// Subjects is a list of subjects that the stream is listening on.
+		// Wildcards are supported. Subjects cannot be set if the stream is
+		// created as a mirror.
+		Subjects []string `json:"subjects,omitempty"`
+
+		// Retention defines the message retention policy for the stream.
+		// Defaults to LimitsPolicy.
+		Retention RetentionPolicy `json:"retention"`
+
+		// MaxConsumers specifies the maximum number of consumers allowed for
+		// the stream.
+		MaxConsumers int `json:"max_consumers"`
+
+		// MaxMsgs is the maximum number of messages the stream will store.
+		// After reaching the limit, stream adheres to the discard policy.
+		// Defaults to -1 (unlimited).
+		MaxMsgs int64 `json:"max_msgs"`
+
+		// MaxBytes is the maximum total size of messages the stream will store.
+		// After reaching the limit, stream adheres to the discard policy.
+		// Defaults to -1 (unlimited).
+		MaxBytes int64 `json:"max_bytes"`
+
+		// Discard defines the policy for handling messages when the stream
+		// reaches its limits in terms of number of messages or total bytes.
+		Discard DiscardPolicy `json:"discard"`
+
+		// DiscardNewPerSubject is a flag to enable discarding new messages per
+		// subject when limits are reached. Requires DiscardPolicy to be
+		// DiscardNew and the MaxMsgsPerSubject to be set.
+		DiscardNewPerSubject bool `json:"discard_new_per_subject,omitempty"`
+
+		// MaxAge is the maximum age of messages that the stream will retain.
+		MaxAge time.Duration `json:"max_age"`
+
+		// MaxMsgsPerSubject is the maximum number of messages per subject that
+		// the stream will retain.
+		MaxMsgsPerSubject int64 `json:"max_msgs_per_subject"`
+
+		// MaxMsgSize is the maximum size of any single message in the stream.
+		MaxMsgSize int32 `json:"max_msg_size,omitempty"`
+
+		// Storage specifies the type of storage backend used for the stream
+		// (file or memory).
+		Storage StorageType `json:"storage"`
+
+		// Replicas is the number of stream replicas in clustered JetStream.
+		// Defaults to 1, maximum is 5.
+		Replicas int `json:"num_replicas"`
+
+		// NoAck is a flag to disable acknowledging messages received by this
+		// stream.
+		NoAck bool `json:"no_ack,omitempty"`
+
+		// Duplicates is the window within which to track duplicate messages.
+		// Defaults to 0.
+		Duplicates time.Duration `json:"duplicate_window,omitempty"`
+
+		// Placement is used to declare where the stream should be placed via
+		// tags and/or an explicit cluster name.
+		Placement *Placement `json:"placement,omitempty"`
+
+		// Mirror defines the configuration for mirroring another stream.
+		Mirror *StreamSource `json:"mirror,omitempty"`
+
+		// Sources is a list of other streams this stream sources messages from.
+		Sources []*StreamSource `json:"sources,omitempty"`
+
+		// Sealed streams do not allow messages to be deleted via limits or API,
+		// sealed streams can not be unsealed via configuration update. Can only
+		// be set on already created streams via the Update API.
+		Sealed bool `json:"sealed,omitempty"`
+
+		// DenyDelete restricts the ability to delete messages from a stream via
+		// the API. Defaults to false.
+		DenyDelete bool `json:"deny_delete,omitempty"`
+
+		// DenyPurge restricts the ability to purge messages from a stream via
+		// the API. Defaults to false.
+		DenyPurge bool `json:"deny_purge,omitempty"`
+
+		// AllowRollup allows the use of the Nats-Rollup header to replace all
+		// contents of a stream, or subject in a stream, with a single new
+		// message.
+		AllowRollup bool `json:"allow_rollup_hdrs,omitempty"`
+
+		// Compression specifies the message storage compression algorithm.
+		// Defaults to NoCompression.
+		Compression StoreCompression `json:"compression"`
+
+		// FirstSeq is the initial sequence number of the first message in the
+		// stream.
+		FirstSeq uint64 `json:"first_seq,omitempty"`
+
+		// SubjectTransform allows applying a transformation to matching
+		// messages' subjects.
 		SubjectTransform *SubjectTransformConfig `json:"subject_transform,omitempty"`
 
-		// Allow republish of the message after being sequenced and stored.
+		// RePublish allows immediate republishing a message to the configured
+		// subject after it's stored.
 		RePublish *RePublish `json:"republish,omitempty"`
 
-		// Allow higher performance, direct access to get individual messages. E.g. KeyValue
+		// AllowDirect enables direct access to individual messages using direct
+		// get API. Defaults to false.
 		AllowDirect bool `json:"allow_direct"`
-		// Allow higher performance and unified direct access for mirrors as well.
+
+		// MirrorDirect enables direct access to individual messages from the
+		// origin stream using direct get API. Defaults to false.
 		MirrorDirect bool `json:"mirror_direct"`
 
-		// Limits for consumers on this stream.
+		// ConsumerLimits defines limits of certain values that consumers can
+		// set, defaults for those who don't set these settings
 		ConsumerLimits StreamConsumerLimits `json:"consumer_limits,omitempty"`
 
-		// Metadata is additional metadata for the Stream.
-		// Keys starting with `_nats` are reserved.
-		// NOTE: Metadata requires nats-server v2.10.0+
+		// Metadata is a set of application-defined key-value pairs for
+		// associating metadata on the stream. This feature requires nats-server
+		// v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
+
+		// Template identifies the template that manages the Stream. DEPRECATED:
+		// This feature is no longer supported.
+		Template string `json:"template_owner,omitempty"`
 	}
 
-	// StreamSourceInfo shows information about an upstream stream source.
+	// StreamSourceInfo shows information about an upstream stream
+	// source/mirror.
 	StreamSourceInfo struct {
-		Name              string                   `json:"name"`
-		Lag               uint64                   `json:"lag"`
-		Active            time.Duration            `json:"active"`
-		FilterSubject     string                   `json:"filter_subject,omitempty"`
+		// Name is the name of the stream that is being replicated.
+		Name string `json:"name"`
+
+		// Lag informs how many messages behind the source/mirror operation is.
+		Lag uint64 `json:"lag"`
+
+		// Active informs when last the mirror or sourced stream had activity.
+		// Value will be -1 when there has been no activity.
+		Active time.Duration `json:"active"`
+
+		// FilterSubject is the subject filter defined for this source/mirror.
+		FilterSubject string `json:"filter_subject,omitempty"`
+
+		// SubjectTransforms is a list of subject transforms defined for this
+		// source/mirror.
 		SubjectTransforms []SubjectTransformConfig `json:"subject_transforms,omitempty"`
 	}
 
-	// StreamState is information about the given stream.
+	// StreamState is the state of a JetStream stream at the time of request.
 	StreamState struct {
-		Msgs        uint64            `json:"messages"`
-		Bytes       uint64            `json:"bytes"`
-		FirstSeq    uint64            `json:"first_seq"`
-		FirstTime   time.Time         `json:"first_ts"`
-		LastSeq     uint64            `json:"last_seq"`
-		LastTime    time.Time         `json:"last_ts"`
-		Consumers   int               `json:"consumer_count"`
-		Deleted     []uint64          `json:"deleted"`
-		NumDeleted  int               `json:"num_deleted"`
-		NumSubjects uint64            `json:"num_subjects"`
-		Subjects    map[string]uint64 `json:"subjects"`
+		// Msgs is the number of messages stored in the stream.
+		Msgs uint64 `json:"messages"`
+
+		// Bytes is the number of bytes stored in the stream.
+		Bytes uint64 `json:"bytes"`
+
+		// FirstSeq is the sequence number of the first message in the stream.
+		FirstSeq uint64 `json:"first_seq"`
+
+		// FirstTime is the timestamp of the first message in the stream.
+		FirstTime time.Time `json:"first_ts"`
+
+		// LastSeq is the sequence number of the last message in the stream.
+		LastSeq uint64 `json:"last_seq"`
+
+		// LastTime is the timestamp of the last message in the stream.
+		LastTime time.Time `json:"last_ts"`
+
+		// Consumers is the number of consumers on the stream.
+		Consumers int `json:"consumer_count"`
+
+		// Deleted is a list of sequence numbers that have been removed from the
+		// stream. This field will only be returned if the stream has been
+		// fetched with the DeletedDetails option.
+		Deleted []uint64 `json:"deleted"`
+
+		// NumDeleted is the number of messages that have been removed from the
+		// stream.
+		NumDeleted int `json:"num_deleted"`
+
+		// NumSubjects is the number of unique subjects the stream has received
+		// messages on.
+		NumSubjects uint64 `json:"num_subjects"`
+
+		// Subjects is a list of subjects the stream has received messages on.
+		// This field will only be returned if the stream has been fetched with
+		// the SubjectFilter option.
+		Subjects map[string]uint64 `json:"subjects"`
 	}
 
-	// ClusterInfo shows information about the underlying set of servers
-	// that make up the stream or consumer.
+	// ClusterInfo shows information about the underlying set of servers that
+	// make up the stream or consumer.
 	ClusterInfo struct {
-		Name     string      `json:"name,omitempty"`
-		Leader   string      `json:"leader,omitempty"`
+		// Name is the name of the cluster.
+		Name string `json:"name,omitempty"`
+
+		// Leader is the server name of the RAFT leader.
+		Leader string `json:"leader,omitempty"`
+
+		// Replicas is the list of members of the RAFT cluster
 		Replicas []*PeerInfo `json:"replicas,omitempty"`
 	}
 
-	// PeerInfo shows information about all the peers in the cluster that
-	// are supporting the stream or consumer.
+	// PeerInfo shows information about the peers in the cluster that are
+	// supporting the stream or consumer.
 	PeerInfo struct {
-		Name    string        `json:"name"`
-		Current bool          `json:"current"`
-		Offline bool          `json:"offline,omitempty"`
-		Active  time.Duration `json:"active"`
-		Lag     uint64        `json:"lag,omitempty"`
+		// Name is the server name of the peer.
+		Name string `json:"name"`
+
+		// Current indicates if the peer is up to date and synchronized with the
+		// leader.
+		Current bool `json:"current"`
+
+		// Offline indicates if the peer is considered offline by the group.
+		Offline bool `json:"offline,omitempty"`
+
+		// Active it the duration since this peer was last seen.
+		Active time.Duration `json:"active"`
+
+		// Lag is the number of uncommitted operations this peer is behind the
+		// leader.
+		Lag uint64 `json:"lag,omitempty"`
 	}
 
-	// SubjectTransformConfig is for applying a subject transform (to matching messages) before doing anything else when a new message is received
+	// SubjectTransformConfig is for applying a subject transform (to matching
+	// messages) before doing anything else when a new message is received.
 	SubjectTransformConfig struct {
-		Source      string `json:"src"`
+		// Source is the subject pattern to match incoming messages against.
+		Source string `json:"src"`
+
+		// Destination is the subject pattern to remap the subject to.
 		Destination string `json:"dest"`
 	}
 
-	// RePublish is for republishing messages once committed to a stream. The original
-	// subject is remapped from the subject pattern to the destination pattern.
+	// RePublish is for republishing messages once committed to a stream. The
+	// original subject is remapped from the subject pattern to the destination
+	// pattern.
 	RePublish struct {
-		Source      string `json:"src,omitempty"`
+		// Source is the subject pattern to match incoming messages against.
+		Source string `json:"src,omitempty"`
+
+		// Destination is the subject pattern to republish the subject to.
 		Destination string `json:"dest"`
-		HeadersOnly bool   `json:"headers_only,omitempty"`
+
+		// HeadersOnly is a flag to indicate that only the headers should be
+		// republished.
+		HeadersOnly bool `json:"headers_only,omitempty"`
 	}
 
 	// Placement is used to guide placement of streams in clustered JetStream.
 	Placement struct {
-		Cluster string   `json:"cluster"`
-		Tags    []string `json:"tags,omitempty"`
+		// Cluster is the name of the cluster to which the stream should be
+		// assigned.
+		Cluster string `json:"cluster"`
+
+		// Tags are used to match streams to servers in the cluster. A stream
+		// will be assigned to a server with a matching tag.
+		Tags []string `json:"tags,omitempty"`
 	}
 
 	// StreamSource dictates how streams can source from other streams.
 	StreamSource struct {
-		Name              string                   `json:"name"`
-		OptStartSeq       uint64                   `json:"opt_start_seq,omitempty"`
-		OptStartTime      *time.Time               `json:"opt_start_time,omitempty"`
-		FilterSubject     string                   `json:"filter_subject,omitempty"`
+		// Name is the name of the stream to source from.
+		Name string `json:"name"`
+
+		// OptStartSeq is the sequence number to start sourcing from.
+		OptStartSeq uint64 `json:"opt_start_seq,omitempty"`
+
+		// OptStartTime is the timestamp of messages to start sourcing from.
+		OptStartTime *time.Time `json:"opt_start_time,omitempty"`
+
+		// FilterSubject is the subject filter used to only replicate messages
+		// with matching subjects.
+		FilterSubject string `json:"filter_subject,omitempty"`
+
+		// SubjectTransforms is a list of subject transforms to apply to
+		// matching messages.
 		SubjectTransforms []SubjectTransformConfig `json:"subject_transforms,omitempty"`
-		External          *ExternalStream          `json:"external,omitempty"`
-		Domain            string                   `json:"-"`
+
+		// External is a configuration referencing a stream source in another
+		// account or JetStream domain.
+		External *ExternalStream `json:"external,omitempty"`
+
+		// Domain is used to configure a stream source in another JetStream
+		// domain. This setting will set the External field with the appropriate
+		// APIPrefix.
+		Domain string `json:"-"`
 	}
 
 	// ExternalStream allows you to qualify access to a stream source in another
 	// account.
 	ExternalStream struct {
-		APIPrefix     string `json:"api"`
+		// APIPrefix is the subject prefix that imports the other account/domain
+		// $JS.API.CONSUMER.> subjects.
+		APIPrefix string `json:"api"`
+
+		// DeliverPrefix is the delivery subject to use for the push consumer.
 		DeliverPrefix string `json:"deliver"`
 	}
 
-	// StreamConsumerLimits are the limits for a consumer on a stream.
-	// These can be overridden on a per consumer basis.
+	// StreamConsumerLimits are the limits for a consumer on a stream. These can
+	// be overridden on a per consumer basis.
 	StreamConsumerLimits struct {
+		// InactiveThreshold is a duration which instructs the server to clean
+		// up the consumer if it has been inactive for the specified duration.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
-		MaxAckPending     int           `json:"max_ack_pending,omitempty"`
+
+		// MaxAckPending is a maximum number of outstanding unacknowledged
+		// messages for a consumer.
+		MaxAckPending int `json:"max_ack_pending,omitempty"`
 	}
 
-	// DiscardPolicy determines how to proceed when limits of messages or bytes are
-	// reached.
+	// DiscardPolicy determines how to proceed when limits of messages or bytes
+	// are reached.
 	DiscardPolicy int
 
-	// RetentionPolicy determines how messages in a set are retained.
+	// RetentionPolicy determines how messages in a stream are retained.
 	RetentionPolicy int
 
 	// StorageType determines how messages are stored for retention.
@@ -184,12 +386,16 @@ type (
 )
 
 const (
-	// LimitsPolicy (default) means that messages are retained until any given limit is reached.
-	// This could be one of MaxMsgs, MaxBytes, or MaxAge.
+	// LimitsPolicy (default) means that messages are retained until any given
+	// limit is reached. This could be one of MaxMsgs, MaxBytes, or MaxAge.
 	LimitsPolicy RetentionPolicy = iota
-	// InterestPolicy specifies that when all known observables have acknowledged a message it can be removed.
+
+	// InterestPolicy specifies that when all known observables have
+	// acknowledged a message it can be removed.
 	InterestPolicy
-	// WorkQueuePolicy specifies that when the first worker or subscriber acknowledges the message it can be removed.
+
+	// WorkQueuePolicy specifies that when the first worker or subscriber
+	// acknowledges the message it can be removed.
 	WorkQueuePolicy
 )
 
@@ -197,7 +403,8 @@ const (
 	// DiscardOld will remove older messages to return to the limits. This is
 	// the default.
 	DiscardOld DiscardPolicy = iota
-	// DiscardNew will fail to store new messages.
+
+	// DiscardNew will fail to store new messages once the limits are reached.
 	DiscardNew
 )
 
@@ -333,7 +540,10 @@ func jsonString(s string) string {
 }
 
 const (
+	// NoCompression disables compression on the stream. This is the default.
 	NoCompression StoreCompression = iota
+
+	// S2Compression enables S2 compression on the stream.
 	S2Compression
 )
 
