@@ -28,8 +28,7 @@ func (fn pullOptFunc) configureMessages(opts *consumeOpts) error {
 	return fn(opts)
 }
 
-// WithClientTrace enables request/response API calls tracing
-// ClientTrace is used to provide handlers for each event
+// WithClientTrace enables request/response API calls tracing.
 func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 	return func(opts *jsOpts) error {
 		opts.clientTrace = ct
@@ -37,7 +36,7 @@ func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 	}
 }
 
-// WithPublishAsyncErrHandler sets error handler for async message publish
+// WithPublishAsyncErrHandler sets error handler for async message publish.
 func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 	return func(opts *jsOpts) error {
 		opts.publisherOpts.aecb = cb
@@ -45,7 +44,8 @@ func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 	}
 }
 
-// WithPublishAsyncMaxPending sets the maximum outstanding async publishes that can be inflight at one time.
+// WithPublishAsyncMaxPending sets the maximum outstanding async publishes that
+// can be inflight at one time.
 func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	return func(opts *jsOpts) error {
 		if max < 1 {
@@ -56,7 +56,8 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	}
 }
 
-// WithPurgeSubject sets a specific subject for which messages on a stream will be purged
+// WithPurgeSubject sets a specific subject for which messages on a stream will
+// be purged
 func WithPurgeSubject(subject string) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		req.Subject = subject
@@ -64,8 +65,9 @@ func WithPurgeSubject(subject string) StreamPurgeOpt {
 	}
 }
 
-// WithPurgeSequence is used to set a specific sequence number up to which (but not including) messages will be purged from a stream
-// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeKeep]
+// WithPurgeSequence is used to set a specific sequence number up to which (but
+// not including) messages will be purged from a stream Can be combined with
+// [WithPurgeSubject] option, but not with [WithPurgeKeep]
 func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Keep != 0 {
@@ -76,8 +78,9 @@ func WithPurgeSequence(sequence uint64) StreamPurgeOpt {
 	}
 }
 
-// WithPurgeKeep sets the number of messages to be kept in the stream after purge.
-// Can be combined with [WithPurgeSubject] option, but not with [WithPurgeSequence]
+// WithPurgeKeep sets the number of messages to be kept in the stream after
+// purge. Can be combined with [WithPurgeSubject] option, but not with
+// [WithPurgeSequence]
 func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	return func(req *StreamPurgeRequest) error {
 		if req.Sequence != 0 {
@@ -88,8 +91,9 @@ func WithPurgeKeep(keep uint64) StreamPurgeOpt {
 	}
 }
 
-// WithGetMsgSubject sets the stream subject from which the message should be retrieved.
-// Server will return a first message with a seq >= to the input seq that has the specified subject.
+// WithGetMsgSubject sets the stream subject from which the message should be
+// retrieved. Server will return a first message with a seq >= to the input seq
+// that has the specified subject.
 func WithGetMsgSubject(subject string) GetMsgOpt {
 	return func(req *apiMsgGetRequest) error {
 		req.NextFor = subject
@@ -97,8 +101,9 @@ func WithGetMsgSubject(subject string) GetMsgOpt {
 	}
 }
 
-// PullMaxMessages limits the number of messages to be fetched from the stream in one request
-// If not provided, a default of 100 messages will be used
+// PullMaxMessages limits the number of messages to be buffered in the client.
+// If not provided, a default of 500 messages will be used.
+// This option is exclusive with PullMaxBytes.
 type PullMaxMessages int
 
 func (max PullMaxMessages) configureConsume(opts *consumeOpts) error {
@@ -117,7 +122,9 @@ func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-// PullExpiry sets timeout on a single batch request, waiting until at least one message is available
+// PullExpiry sets timeout on a single pull request, waiting until at least one
+// message is available.
+// If not provided, a default of 30 seconds will be used.
 type PullExpiry time.Duration
 
 func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
@@ -138,7 +145,9 @@ func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-// PullMaxBytes sets max_bytes limit on a fetch request
+// PullMaxBytes limits the number of bytes to be buffered in the client.
+// If not provided, the limit is not set (max messages will be used instead).
+// This option is exclusive with PullMaxMessages.
 type PullMaxBytes int
 
 func (max PullMaxBytes) configureConsume(opts *consumeOpts) error {
@@ -188,7 +197,8 @@ func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 // PullHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat message from a stream for more
 // than the idle heartbeat setting, the subscription will be removed
-// and error will be passed to the message handler
+// and error will be passed to the message handler.
+// If not provided, a default PullExpiry / 2 will be used (capped at 30 seconds)
 type PullHeartbeat time.Duration
 
 func (hb PullHeartbeat) configureConsume(opts *consumeOpts) error {
@@ -209,7 +219,8 @@ func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-// StopAfter sets the number of messages after which the consumer is automatically stopped
+// StopAfter sets the number of messages after which the consumer is
+// automatically stopped and no more messages are pulled from the server.
 type StopAfter int
 
 func (nMsgs StopAfter) configureConsume(opts *consumeOpts) error {
@@ -228,8 +239,10 @@ func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-// ConsumeErrHandler sets custom error handler invoked when an error was encountered while consuming messages
-// It will be invoked for both terminal (Consumer Deleted, invalid request body) and non-terminal (e.g. missing heartbeats) errors
+// ConsumeErrHandler sets custom error handler invoked when an error was
+// encountered while consuming messages It will be invoked for both terminal
+// (Consumer Deleted, invalid request body) and non-terminal (e.g. missing
+// heartbeats) errors.
 func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {
 	return pullOptFunc(func(cfg *consumeOpts) error {
 		cfg.ErrHandler = cb
@@ -237,7 +250,8 @@ func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {
 	})
 }
 
-// WithMessagesErrOnMissingHeartbeat sets whether a missing heartbeat error should be reported when calling Next (Default: true).
+// WithMessagesErrOnMissingHeartbeat sets whether a missing heartbeat error
+// should be reported when calling [MessagesContext.Next] (Default: true).
 func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	return pullOptFunc(func(cfg *consumeOpts) error {
 		cfg.ReportMissingHeartbeats = hbErr
@@ -245,7 +259,7 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	})
 }
 
-// FetchMaxWait sets custom timeout for fetching predefined batch of messages
+// FetchMaxWait sets custom timeout for fetching predefined batch of messages.
 func FetchMaxWait(timeout time.Duration) FetchOpt {
 	return func(req *pullRequest) error {
 		if timeout <= 0 {
@@ -256,7 +270,8 @@ func FetchMaxWait(timeout time.Duration) FetchOpt {
 	}
 }
 
-// WithDeletedDetails can be used to display the information about messages deleted from a stream on a stream info request
+// WithDeletedDetails can be used to display the information about messages
+// deleted from a stream on a stream info request
 func WithDeletedDetails(deletedDetails bool) StreamInfoOpt {
 	return func(req *streamInfoRequest) error {
 		req.DeletedDetails = deletedDetails
@@ -276,8 +291,9 @@ func WithSubjectFilter(subject string) StreamInfoOpt {
 	}
 }
 
-// WithStreamListSubject can be used to filter results of ListStreams and StreamNames requests
-// to only streams that have given subject in their configuration
+// WithStreamListSubject can be used to filter results of ListStreams and
+// StreamNames requests to only streams that have given subject in their
+// configuration.
 func WithStreamListSubject(subject string) StreamListOpt {
 	return func(req *streamsRequest) error {
 		req.Subject = subject
@@ -301,7 +317,8 @@ func WithExpectStream(stream string) PublishOpt {
 	}
 }
 
-// WithExpectLastSequence sets the expected sequence in the response from the publish.
+// WithExpectLastSequence sets the expected sequence in the response from the
+// publish.
 func WithExpectLastSequence(seq uint64) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastSeq = &seq
@@ -309,7 +326,8 @@ func WithExpectLastSequence(seq uint64) PublishOpt {
 	}
 }
 
-// WithExpectLastSequencePerSubject sets the expected sequence per subject in the response from the publish.
+// WithExpectLastSequencePerSubject sets the expected sequence per subject in
+// the response from the publish.
 func WithExpectLastSequencePerSubject(seq uint64) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastSubjectSeq = &seq
@@ -317,7 +335,8 @@ func WithExpectLastSequencePerSubject(seq uint64) PublishOpt {
 	}
 }
 
-// WithExpectLastMsgID sets the expected last msgId in the response from the publish.
+// WithExpectLastMsgID sets the expected last msgId in the response from the
+// publish.
 func WithExpectLastMsgID(id string) PublishOpt {
 	return func(opts *pubOpts) error {
 		opts.lastMsgID = id
@@ -326,7 +345,7 @@ func WithExpectLastMsgID(id string) PublishOpt {
 }
 
 // WithRetryWait sets the retry wait time when ErrNoResponders is encountered.
-// Defaults to 250ms
+// Defaults to 250ms.
 func WithRetryWait(dur time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if dur <= 0 {
@@ -337,8 +356,8 @@ func WithRetryWait(dur time.Duration) PublishOpt {
 	}
 }
 
-// WithRetryAttempts sets the retry number of attempts when ErrNoResponders is encountered.
-// Defaults to 2
+// WithRetryAttempts sets the retry number of attempts when ErrNoResponders is
+// encountered. Defaults to 2
 func WithRetryAttempts(num int) PublishOpt {
 	return func(opts *pubOpts) error {
 		if num < 0 {
@@ -349,7 +368,9 @@ func WithRetryAttempts(num int) PublishOpt {
 	}
 }
 
-// WithStallWait sets the max wait when the producer becomes stall producing messages.
+// WithStallWait sets the max wait when the producer becomes stall producing
+// messages. If a publish call is blocked for this long, ErrTooManyStalledMsgs
+// is returned.
 func WithStallWait(ttl time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
 		if ttl <= 0 {
@@ -368,7 +389,8 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 	return opt(opts)
 }
 
-// IncludeHistory instructs the key watcher to include historical values as well.
+// IncludeHistory instructs the key watcher to include historical values as
+// well.
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		if opts.updatesOnly {
@@ -379,7 +401,8 @@ func IncludeHistory() WatchOpt {
 	})
 }
 
-// UpdatesOnly instructs the key watcher to only include updates on values (without latest values when started).
+// UpdatesOnly instructs the key watcher to only include updates on values
+// (without latest values when started).
 func UpdatesOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		if opts.includeHistory {
@@ -398,7 +421,8 @@ func IgnoreDeletes() WatchOpt {
 	})
 }
 
-// MetaOnly instructs the key watcher to retrieve only the entry meta data, not the entry value.
+// MetaOnly instructs the key watcher to retrieve only the entry meta data, not
+// the entry value.
 func MetaOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.metaOnly = true
@@ -406,7 +430,8 @@ func MetaOnly() WatchOpt {
 	})
 }
 
-// ResumeFromRevision instructs the key watcher to resume from a specific revision number.
+// ResumeFromRevision instructs the key watcher to resume from a specific
+// revision number.
 func ResumeFromRevision(revision uint64) WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.resumeFromRevision = revision
@@ -451,7 +476,8 @@ func GetObjectShowDeleted() GetObjectOpt {
 	}
 }
 
-// GetObjectInfoShowDeleted makes GetInfo() return object if it was marked as deleted.
+// GetObjectInfoShowDeleted makes GetInfo() return object if it was marked as
+// deleted.
 func GetObjectInfoShowDeleted() GetObjectInfoOpt {
 	return func(opts *getObjectInfoOpts) error {
 		opts.showDeleted = true

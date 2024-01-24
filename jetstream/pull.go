@@ -29,9 +29,11 @@ import (
 
 type (
 	// MessagesContext supports iterating over a messages on a stream.
+	// It is returned by [Consumer.Messages] method.
 	MessagesContext interface {
-		// Next retreives next message on a stream. It will block until the next
-		// message is available.
+		// Next retrieves next message on a stream. It will block until the next
+		// message is available. If the context is cancelled, Next will return
+		// ErrMsgIteratorClosed error.
 		Next() (Msg, error)
 
 		// Stop unsubscribes from the stream and cancels subscription. Calling
@@ -46,6 +48,8 @@ type (
 		Drain()
 	}
 
+	// ConsumeContext supports processing incoming messages from a stream.
+	// It is returned by [Consumer.Consume] method.
 	ConsumeContext interface {
 		// Stop unsubscribes from the stream and cancels subscription.
 		// No more messages will be received after calling this method.
@@ -57,15 +61,15 @@ type (
 		Drain()
 	}
 
-	// MessageHandler is a handler function used as callback in [Consume]
+	// MessageHandler is a handler function used as callback in [Consume].
 	MessageHandler func(msg Msg)
 
-	// PullConsumeOpt represent additional options used in [Consume] for pull consumers
+	// PullConsumeOpt represent additional options used in [Consume] for pull consumers.
 	PullConsumeOpt interface {
 		configureConsume(*consumeOpts) error
 	}
 
-	// PullMessagesOpt represent additional options used in [Messages] for pull consumers
+	// PullMessagesOpt represent additional options used in [Messages] for pull consumers.
 	PullMessagesOpt interface {
 		configureMessages(*consumeOpts) error
 	}
@@ -160,16 +164,11 @@ func min(x, y int) int {
 	return y
 }
 
-// Consume returns a ConsumeContext, allowing for processing incoming messages from a stream in a given callback function.
+// Consume can be used to continuously receive messages and handle them
+// with the provided callback function. Consume cannot be used concurrently
+// when using ordered consumer.
 //
-// Available options:
-// [PullMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [PullMaxBytes] - sets maximum number of bytes stored in a buffer
-// [PullExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
-// [PullHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
-// [ConsumeErrHandler] - sets custom consume error callback handler
-// [PullThresholdMessages] - sets the message count on which Consume will trigger new pull request to the server
-// [PullThresholdBytes] - sets the byte count on which Consume will trigger new pull request to the server
+// See [Consumer.Consume] for more details.
 func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if handler == nil {
 		return nil, ErrHandlerRequired
@@ -446,14 +445,11 @@ func (s *pullSubscription) checkPending() {
 	}
 }
 
-// Messages returns MessagesContext, allowing continuously iterating over messages on a stream.
+// Messages returns MessagesContext, allowing continuously iterating
+// over messages on a stream. Messages cannot be used concurrently
+// when using ordered consumer.
 //
-// Available options:
-// [PullMaxMessages] - sets maximum number of messages stored in a buffer, default is set to 100
-// [PullMaxBytes] - sets maximum number of bytes stored in a buffer
-// [PullExpiry] - sets a timeout for individual batch request, default is set to 30 seconds
-// [PullHeartbeat] - sets an idle heartbeat setting for a pull request, default is set to 5s
-// [WithMessagesErrOnMissingHeartbeat] - sets whether a missing heartbeat error should be reported when calling Next
+// See [Consumer.Messages] for more details.
 func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
 	consumeOpts, err := parseMessagesOpts(false, opts...)
 	if err != nil {
@@ -534,6 +530,9 @@ var (
 	errDisconnected = errors.New("disconnected")
 )
 
+// Next retrieves next message on a stream. It will block until the next
+// message is available. If the context is cancelled, Next will return
+// ErrMsgIteratorClosed error.
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
 	defer s.Unlock()
@@ -690,6 +689,9 @@ func (hb *hbMonitor) Reset(dur time.Duration) {
 	hb.Mutex.Unlock()
 }
 
+// Stop unsubscribes from the stream and cancels subscription. Calling
+// Next after calling Stop will return ErrMsgIteratorClosed error.
+// All messages that are already in the buffer are discarded.
 func (s *pullSubscription) Stop() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
@@ -704,6 +706,10 @@ func (s *pullSubscription) Stop() {
 	}
 }
 
+// Drain unsubscribes from the stream and cancels subscription. All
+// messages that are already in the buffer will be available on
+// subsequent calls to Next. After the buffer is drained, Next will
+// return ErrMsgIteratorClosed error.
 func (s *pullSubscription) Drain() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
@@ -855,6 +861,9 @@ func (fr *fetchResult) Error() error {
 	return fr.err
 }
 
+// Next is used to retrieve the next message from the stream. This
+// method will block until the message is retrieved or timeout is
+// reached.
 func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	res, err := p.Fetch(1, opts...)
 	if err != nil {

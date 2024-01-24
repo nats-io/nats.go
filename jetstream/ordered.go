@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -68,7 +68,11 @@ const (
 
 var errOrderedSequenceMismatch = errors.New("sequence mismatch")
 
-// Consume can be used to continuously receive messages and handle them with the provided callback function
+// Consume can be used to continuously receive messages and handle them
+// with the provided callback function. Consume cannot be used concurrently
+// when using ordered consumer.
+//
+// See [Consumer.Consume] for more details.
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
 	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
@@ -208,7 +212,11 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 	}
 }
 
-// Messages returns [MessagesContext], allowing continuously iterating over messages on a stream.
+// Messages returns MessagesContext, allowing continuously iterating
+// over messages on a stream. Messages cannot be used concurrently
+// when using ordered consumer.
+//
+// See [Consumer.Messages] for more details.
 func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
 	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
@@ -328,9 +336,13 @@ func (s *orderedSubscription) Drain() {
 	close(s.done)
 }
 
-// Fetch is used to retrieve up to a provided number of messages from a stream.
-// This method will always send a single request and wait until either all messages are retrieved
-// or context reaches its deadline.
+// Fetch is used to retrieve up to a provided number of messages from a
+// stream. This method will always send a single request and wait until
+// either all messages are retrieved or request times out.
+//
+// It is not efficient to use Fetch with on an ordered consumer, as it will
+// reset the consumer for each subsequent Fetch call.
+// Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
 		return nil, ErrOrderConsumerUsedAsConsume
@@ -357,9 +369,13 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 	return msgs, nil
 }
 
-// FetchBytes is used to retrieve up to a provided bytes from the stream.
-// This method will always send a single request and wait until provided number of bytes is
-// exceeded or request times out.
+// FetchBytes is used to retrieve up to a provided bytes from the
+// stream. This method will always send a single request and wait until
+// provided number of bytes is exceeded or request times out.
+//
+// It is not efficient to use FetchBytes with on an ordered consumer, as it will
+// reset the consumer for each subsequent Fetch call.
+// Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
 		return nil, ErrOrderConsumerUsedAsConsume
@@ -383,8 +399,14 @@ func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBat
 	return msgs, nil
 }
 
-// FetchNoWait is used to retrieve up to a provided number of messages from a stream.
-// This method will always send a single request and immediately return up to a provided number of messages
+// FetchNoWait is used to retrieve up to a provided number of messages
+// from a stream. This method will always send a single request and
+// immediately return up to a provided number of messages or wait until
+// at least one message is available or request times out.
+//
+// It is not efficient to use FetchNoWait with on an ordered consumer, as it will
+// reset the consumer for each subsequent Fetch call.
+// Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	if c.consumerType == consumerTypeConsume {
 		return nil, ErrOrderConsumerUsedAsConsume
@@ -400,6 +422,13 @@ func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	return c.currentConsumer.FetchNoWait(batch)
 }
 
+// Next is used to retrieve the next message from the stream. This
+// method will block until the message is retrieved or timeout is
+// reached.
+//
+// It is not efficient to use Next with on an ordered consumer, as it will
+// reset the consumer for each subsequent Fetch call.
+// Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) Next(opts ...FetchOpt) (Msg, error) {
 	res, err := c.Fetch(1, opts...)
 	if err != nil {
@@ -553,6 +582,9 @@ func messagesStopAfterNotify(numMsgs int, msgsLeftAfterStop chan int) PullMessag
 	})
 }
 
+// Info returns information about the ordered consumer.
+// Note that this method will fetch the latest instance of the
+// consumer from the server, which can be deleted by the library at any time.
 func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	c.Lock()
 	defer c.Unlock()
@@ -579,6 +611,9 @@ func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	return resp.ConsumerInfo, nil
 }
 
+// CachedInfo returns cached information about the consumer currently
+// used by the ordered consumer. Cached info will be updated on every call
+// to [Consumer.Info] or on consumer reset.
 func (c *orderedConsumer) CachedInfo() *ConsumerInfo {
 	c.Lock()
 	defer c.Unlock()
