@@ -85,6 +85,16 @@ var (
 )
 
 func (fn HandlerFunc) Handle(req Request) {
+	defer func(r Request) {
+		if recoverErr := recover(); recoverErr != nil {
+			r.Error("500", "internal server error", nil, WithHeaders(Headers{
+				"Nats-Service-Recover": []string{
+					fmt.Sprintf("%v", recoverErr),
+				},
+			}))
+		}
+	}(req)
+
 	fn(req)
 }
 
