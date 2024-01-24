@@ -57,6 +57,9 @@ type (
 	StreamConfig struct {
 		// Name is the name of the stream. It is required and must be unique
 		// across the JetStream account.
+		//
+		// Name Names cannot contain whitespace, ., *, >, path separators
+		// (forward or backwards slash), and non-printable characters.
 		Name string `json:"name"`
 
 		// Description is an optional description of the stream.
@@ -77,12 +80,12 @@ type (
 
 		// MaxMsgs is the maximum number of messages the stream will store.
 		// After reaching the limit, stream adheres to the discard policy.
-		// Defaults to -1 (unlimited).
+		// If not set, server default is -1 (unlimited).
 		MaxMsgs int64 `json:"max_msgs"`
 
 		// MaxBytes is the maximum total size of messages the stream will store.
 		// After reaching the limit, stream adheres to the discard policy.
-		// Defaults to -1 (unlimited).
+		// If not set, server default is -1 (unlimited).
 		MaxBytes int64 `json:"max_bytes"`
 
 		// Discard defines the policy for handling messages when the stream
@@ -114,10 +117,15 @@ type (
 
 		// NoAck is a flag to disable acknowledging messages received by this
 		// stream.
+		//
+		// If set to true, publish methods from the JetStream client will not
+		// work as expected, since they rely on acknowledgements. Core NATS
+		// publish methods should be used instead. Note tha this will make
+		// message delivery less reliable.
 		NoAck bool `json:"no_ack,omitempty"`
 
 		// Duplicates is the window within which to track duplicate messages.
-		// Defaults to 0.
+		// If not set, server default is 2 minutes.
 		Duplicates time.Duration `json:"duplicate_window,omitempty"`
 
 		// Placement is used to declare where the stream should be placed via
@@ -193,6 +201,8 @@ type (
 		Name string `json:"name"`
 
 		// Lag informs how many messages behind the source/mirror operation is.
+		// This will only show correctly if there is active communication
+		// with stream/mirror.
 		Lag uint64 `json:"lag"`
 
 		// Active informs when last the mirror or sourced stream had activity.
@@ -236,16 +246,18 @@ type (
 		Deleted []uint64 `json:"deleted"`
 
 		// NumDeleted is the number of messages that have been removed from the
-		// stream.
+		// stream. Only deleted messages causing a gap in stream sequence numbers
+		// are counted. Messages deleted at the beginning or end of the stream
+		// are not counted.
 		NumDeleted int `json:"num_deleted"`
 
 		// NumSubjects is the number of unique subjects the stream has received
 		// messages on.
 		NumSubjects uint64 `json:"num_subjects"`
 
-		// Subjects is a list of subjects the stream has received messages on.
-		// This field will only be returned if the stream has been fetched with
-		// the SubjectFilter option.
+		// Subjects is a map of subjects the stream has received messages on
+		// with message count per subject. This field will only be returned if
+		// the stream has been fetched with the SubjectFilter option.
 		Subjects map[string]uint64 `json:"subjects"`
 	}
 
@@ -336,6 +348,9 @@ type (
 
 		// SubjectTransforms is a list of subject transforms to apply to
 		// matching messages.
+		//
+		// Subject transforms on sources and mirrors are also used as subject
+		// filters with optional transformations.
 		SubjectTransforms []SubjectTransformConfig `json:"subject_transforms,omitempty"`
 
 		// External is a configuration referencing a stream source in another

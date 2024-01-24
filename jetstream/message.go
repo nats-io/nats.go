@@ -47,7 +47,7 @@ type (
 		// Reply returns a reply subject for a message.
 		Reply() string
 
-		// Ack acknowledges a message This tells the server that the message was
+		// Ack acknowledges a message. This tells the server that the message was
 		// successfully processed and it can move on to the next message.
 		Ack() error
 
@@ -58,6 +58,10 @@ type (
 
 		// Nak negatively acknowledges a message. This tells the server to
 		// redeliver the message.
+		//
+		// Nak does not adhere to AckWait or Backoff configured on the consumer
+		// and triggers instant redelivery. For a delayed redelivery, use
+		// NakWithDelay.
 		Nak() error
 
 		// NakWithDelay negatively acknowledges a message. This tells the server
@@ -82,10 +86,11 @@ type (
 		// consumer.
 		NumDelivered uint64
 
-		// NumPending is the number of messages pending for this consumer.
+		// NumPending is the number of messages that match the consumer's
+		// filter, but have not been delivered yet.
 		NumPending uint64
 
-		// Timestamp is the time the message was received.
+		// Timestamp is the time the message was originally stored on a stream.
 		Timestamp time.Time
 
 		// Stream is the stream name this message is stored on.
@@ -101,8 +106,8 @@ type (
 	// SequencePair includes the consumer and stream sequence numbers for a
 	// message.
 	SequencePair struct {
-		// Consumer is the consumer sequence number for a message. This is the
-		// total number of messages the consumer has seen (including
+		// Consumer is the consumer sequence number for message deliveries. This
+		// is the total number of messages the consumer has seen (including
 		// redeliveries).
 		Consumer uint64 `json:"consumer_seq"`
 
@@ -133,22 +138,71 @@ const (
 	noResponders     = "503"
 )
 
-// Headers for published messages.
+// Headers used when publishing messages.
 const (
-	MsgIDHeader               = "Nats-Msg-Id"
-	ExpectedStreamHeader      = "Nats-Expected-Stream"
-	ExpectedLastSeqHeader     = "Nats-Expected-Last-Sequence"
+	// MsgIdHeader is used to specify a user-defined message ID. It can be used
+	// e.g. for deduplication in conjunction with the Duplicates duration on
+	// ConsumerConfig or to provide optimistic concurrency safety together with
+	// [ExpectedLastMsgIDHeader].
+	//
+	// This can be set when publishing messages using [WithMsgID] option.
+	MsgIDHeader = "Nats-Msg-Id"
+
+	// ExpectedStreamHeader contains stream name and is used to assure that the
+	// published message is received by expected stream. Server will reject the
+	// message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectStream] option.
+	ExpectedStreamHeader = "Nats-Expected-Stream"
+
+	// ExpectedLastSeqHeader contains the expected last sequence number of the
+	// stream and can be used to apply optimistic concurrency control at stream
+	// level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectLastSequence]
+	// option. option.
+	ExpectedLastSeqHeader = "Nats-Expected-Last-Sequence"
+
+	// ExpectedLastSubjSeqHeader contains the expected last sequence number on
+	// the subject and can be used to apply optimistic concurrency control at
+	// subject level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using
+	// [WithExpectLastSequencePerSubject] option.
 	ExpectedLastSubjSeqHeader = "Nats-Expected-Last-Subject-Sequence"
-	ExpectedLastMsgIDHeader   = "Nats-Expected-Last-Msg-Id"
-	MsgRollup                 = "Nats-Rollup"
+
+	// ExpectedLastMsgIDHeader contains the expected last message ID on the
+	// subject and can be used to apply optimistic concurrency control at
+	// stream level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectLastMsgID]
+	// option.
+	ExpectedLastMsgIDHeader = "Nats-Expected-Last-Msg-Id"
+
+	// MsgRollup is used to apply a purge of all prior messages in the stream
+	// ("all") or at the subject ("sub") before this message.
+	MsgRollup = "Nats-Rollup"
 )
 
-// Headers for republished messages and direct gets.
+// Headers for republished messages and direct gets. Those headers are set by
+// the server and should not be set by the client.
 const (
-	StreamHeader       = "Nats-Stream"
-	SequenceHeader     = "Nats-Sequence"
-	TimeStampHeaer     = "Nats-Time-Stamp"
-	SubjectHeader      = "Nats-Subject"
+	// StreamHeader contains the stream name the message was republished from or
+	// the stream name the message was retrieved from using direct get.
+	StreamHeader = "Nats-Stream"
+
+	// SequenceHeader contains the original sequence number of the message.
+	SequenceHeader = "Nats-Sequence"
+
+	// TimeStampHeader contains the original timestamp of the message.
+	TimeStampHeaer = "Nats-Time-Stamp"
+
+	// SubjectHeader contains the original subject the message was published to.
+	SubjectHeader = "Nats-Subject"
+
+	// LastSequenceHeader contains the last sequence of the message having the
+	// same subject, otherwise zero if this is the first message for the
+	// subject.
 	LastSequenceHeader = "Nats-Last-Sequence"
 )
 
@@ -214,7 +268,7 @@ func (m *jetStreamMsg) Reply() string {
 	return m.msg.Reply
 }
 
-// Ack acknowledges a message This tells the server that the message was
+// Ack acknowledges a message. This tells the server that the message was
 // successfully processed and it can move on to the next message.
 func (m *jetStreamMsg) Ack() error {
 	return m.ackReply(context.Background(), ackAck, false, ackOpts{})

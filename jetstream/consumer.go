@@ -30,14 +30,14 @@ type (
 	//
 	// This package provides two implementations of Consumer interface:
 	//
-	// - Basic named/ephemeral pull consumers. These consumers are created using
-	//   CreateConsumer method on Stream or JetStream interface. They have to be
+	// - Standard named/ephemeral pull consumers. These consumers are created using
+	//   CreateConsumer method on Stream or JetStream interface. They can be
 	//   explicitly configured (using [ConsumerConfig]) and managed by the user,
 	//   either from this package or externally.
 	//
 	// - Ordered consumers. These consumers are created using OrderedConsumer
 	//   method on Stream or JetStream interface. They are managed by the library
-	//   and provide a simple way to consume messages from a stream in order. Ordered
+	//   and provide a simple way to consume messages from a stream. Ordered
 	//   consumers are ephemeral in-memory pull consumers and are resilient to
 	//   deletes and restarts. They provide limited configuration options
 	//   using [OrderedConsumerConfig].
@@ -47,22 +47,46 @@ type (
 	// retrieval using Fetch and Next methods.
 	Consumer interface {
 		// Fetch is used to retrieve up to a provided number of messages from a
-		// stream. This method will always send a single request and wait until
-		// either all messages are retrieved or request times out.
+		// stream. This method will send a single request and deliver either all
+		// requested messages unless time out is met earlier. Fetch timeout
+		// defaults to 30 seconds and can be configured using FetchMaxWait
+		// option.
+		//
+		// Fetch is non-blocking and returns MessageBatch, exposing a channel
+		// for delivered messages.
+		//
+		// Messages channel is always closed, thus it is safe to range over it
+		// without additional checks.
 		Fetch(batch int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchBytes is used to retrieve up to a provided bytes from the
-		// stream. This method will always send a single request and wait until
-		// provided number of bytes is exceeded or request times out.
+		// stream. This method will send a single request and deliver the
+		// provided number of bytes unless time out is met earlier. FetchBytes
+		// timeout defaults to 30 seconds and can be configured using
+		// FetchMaxWait option.
+		//
+		// FetchBytes is non-blocking and returns MessageBatch, exposing a channel
+		// for delivered messages.
+		//
+		// Messages channel is always closed, thus it is safe to range over it
+		// without additional checks.
 		FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchNoWait is used to retrieve up to a provided number of messages
-		// from a stream. This method will send a single request and
-		// immediately return up to a provided number of messages or wait until
-		// at least one message is available or request times out.
+		// from a stream. Unlike Fetch, FetchNoWait will only deliver messages
+		// that are currently available in the stream and will not wait for new
+		// messages to arrive, even if batch size is not met. FetchNoWait
+		// timeout defaults to 30 seconds and can be configured using
+		// FetchMaxWait option.
+		//
+		// FetchNoWait is non-blocking and returns MessageBatch, exposing a
+		// channel for delivered messages.
+		//
+		// Messages channel is always closed, thus it is safe to range over it
+		// without additional checks.
 		FetchNoWait(batch int) (MessageBatch, error)
 
-		// Consume can be used to continuously receive messages and handle them
+		// Consume will continuously receive messages and handle them
 		// with the provided callback function. Consume can be configured using
 		// PullConsumeOpt options:
 		//
@@ -91,7 +115,7 @@ type (
 		//   This option is enabled by default.
 		Messages(opts ...PullMessagesOpt) (MessagesContext, error)
 
-		// Next is used to retrieve the next message from the stream. This
+		// Next is used to retrieve the next message from the consumer. This
 		// method will block until the message is retrieved or timeout is
 		// reached.
 		Next(opts ...FetchOpt) (Msg, error)

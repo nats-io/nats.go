@@ -55,7 +55,7 @@ type (
 		DeleteMsg(ctx context.Context, seq uint64) error
 
 		// SecureDeleteMsg deletes a message from a stream. The deleted message
-		// is overwritten with random data As a result, this operation is slower
+		// is overwritten with random data. As a result, this operation is slower
 		// than DeleteMsg.
 		SecureDeleteMsg(ctx context.Context, seq uint64) error
 	}
@@ -63,29 +63,30 @@ type (
 	streamConsumerManager interface {
 		// CreateOrUpdateConsumer creates a consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
-		// possible). Consumer interface is returned, serving as a hook to
-		// operate on a consumer (e.g. fetch messages)
+		// possible). Consumer interface is returned, allowing to operate on a
+		// consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
 		// CreateConsumer creates a consumer on a given stream with given
-		// config. If consumer already exists, ErrConsumerExists is returned.
-		// Consumer interface is returned, serving as a hook to operate on a
-		// consumer (e.g. fetch messages)
+		// config. If consumer already exists and the provided configuration
+		// differs from its configuration, ErrConsumerExists is returned. If the
+		// provided configuration is the same as the existing consumer, the
+		// existing consumer is returned. Consumer interface is returned,
+		// allowing to operate on a consumer (e.g. fetch messages).
 		CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
 		// UpdateConsumer updates an existing consumer. If consumer does not
 		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
-		// returned, serving as a hook to operate on a consumer (e.g. fetch
-		// messages)
+		// returned, allowing to operate on a consumer (e.g. fetch messages).
 		UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
 		// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
-		// allows fetching messages from a stream (just like standard consumer),
-		// for in order delivery of messages. Underlying consumer is re-created
-		// when necessary, without additional client code.
+		// are managed by the library and provide a simple way to consume
+		// messages from a stream. Ordered consumers are ephemeral in-memory
+		// pull consumers and are resilient to deletes and restarts.
 		OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error)
 
-		// Consumer returns a hook to an existing consumer, allowing processing
+		// Consumer returns an interface to an existing consumer, allowing processing
 		// of messages. If consumer does not exist, ErrConsumerNotFound is
 		// returned.
 		Consumer(ctx context.Context, consumer string) (Consumer, error)
@@ -231,32 +232,33 @@ type (
 
 // CreateOrUpdateConsumer creates a consumer on a given stream with
 // given config. If consumer already exists, it will be updated (if
-// possible). Consumer interface is returned, serving as a hook to
-// operate on a consumer (e.g. fetch messages)
+// possible). Consumer interface is returned, allowing to operate on a
+// consumer (e.g. fetch messages).
 func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreateOrUpdate)
 }
 
 // CreateConsumer creates a consumer on a given stream with given
-// config. If consumer already exists, ErrConsumerExists is returned.
-// Consumer interface is returned, serving as a hook to operate on a
-// consumer (e.g. fetch messages)
+// config. If consumer already exists and the provided configuration
+// differs from its configuration, ErrConsumerExists is returned. If the
+// provided configuration is the same as the existing consumer, the
+// existing consumer is returned. Consumer interface is returned,
+// allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreate)
 }
 
 // UpdateConsumer updates an existing consumer. If consumer does not
 // exist, ErrConsumerDoesNotExist is returned. Consumer interface is
-// returned, serving as a hook to operate on a consumer (e.g. fetch
-// messages)
+// returned, allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionUpdate)
 }
 
 // OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
-// allows fetching messages from a stream (just like standard consumer),
-// for in order delivery of messages. Underlying consumer is re-created
-// when necessary, without additional client code.
+// are managed by the library and provide a simple way to consume
+// messages from a stream. Ordered consumers are ephemeral in-memory
+// pull consumers and are resilient to deletes and restarts.
 func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
 	oc := &orderedConsumer{
 		jetStream:  s.jetStream,
@@ -276,7 +278,7 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 	return oc, nil
 }
 
-// Consumer returns a hook to an existing consumer, allowing processing
+// Consumer returns an interface to an existing consumer, allowing processing
 // of messages. If consumer does not exist, ErrConsumerNotFound is
 // returned.
 func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {
@@ -541,7 +543,7 @@ func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
 }
 
 // SecureDeleteMsg deletes a message from a stream. The deleted message
-// is overwritten with random data As a result, this operation is slower
+// is overwritten with random data. As a result, this operation is slower
 // than DeleteMsg.
 func (s *stream) SecureDeleteMsg(ctx context.Context, seq uint64) error {
 	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq})

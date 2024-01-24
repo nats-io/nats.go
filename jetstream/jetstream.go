@@ -42,10 +42,11 @@ type (
 	// JetStream can be created using [New], [NewWithAPIPrefix] or
 	// [NewWithDomain] methods.
 	JetStream interface {
-		// Returns *AccountInfo, containing details about the account associated
-		// with this JetStream connection. If account is not enabled for JetStream,
-		// ErrJetStreamNotEnabledForAccount is returned. If the server does not
-		// have JetStream enabled, ErrJetStreamNotEnabled is returned.
+		// AccountInfo fetches account information from the server, containing details
+		// about the account associated with this JetStream connection. If account is
+		// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned. If
+		// the server does not have JetStream enabled, ErrJetStreamNotEnabled is
+		// returned.
 		AccountInfo(ctx context.Context) (*AccountInfo, error)
 
 		StreamConsumerManager
@@ -69,18 +70,31 @@ type (
 		// stream) and nats.Message.
 		PublishMsg(ctx context.Context, msg *nats.Msg, opts ...PublishOpt) (*PubAck, error)
 
-		// PublishAsync performs an asynchronous publish to a stream and returns
-		// [PubAckFuture] interface. It accepts subject name (which must be bound
-		// to a stream) and message payload.
+		// PublishAsync performs a publish to a stream and returns
+		// [PubAckFuture] interface, not blocking while waiting for an
+		// acknowledgement. It accepts subject name (which must be bound to a
+		// stream) and message payload.
+		//
+		// PublishAsync does not guarantee that the message has been
+		// received by the server. It only guarantees that the message has been
+		// sent to the server and thus messages can be stored in the stream
+		// out of order in case of retries.
 		PublishAsync(subject string, payload []byte, opts ...PublishOpt) (PubAckFuture, error)
 
-		// PublishMsgAsync performs an asynchronous publish to a stream and
-		// returns [PubAckFuture] interface. It accepts subject name (which must
+		// PublishMsgAsync performs a publish to a stream and returns
+		// [PubAckFuture] interface, not blocking while waiting for an
+		// acknowledgement. It accepts subject name (which must
 		// be bound to a stream) and nats.Message.
+		//
+		// PublishMsgAsync does not guarantee that the message has been
+		// sent to the server and thus messages can be stored in the stream
+		// received by the server. It only guarantees that the message has been
+		// out of order in case of retries.
 		PublishMsgAsync(msg *nats.Msg, opts ...PublishOpt) (PubAckFuture, error)
 
 		// PublishAsyncPending returns the number of async publishes outstanding
-		// for this context.
+		// for this context. An outstanding publish is one that has been
+		// sent by the publisher but has not yet received an ack.
 		PublishAsyncPending() int
 
 		// PublishAsyncComplete returns a channel that will be closed when all
@@ -91,11 +105,11 @@ type (
 
 	// StreamManager provides CRUD API for managing streams. It is available as
 	// a part of [JetStream] interface. CreateStream, UpdateStream,
-	// CreateOrUpdateStream and Stream methods return a [Stream] hook, allowing
+	// CreateOrUpdateStream and Stream methods return a [Stream] interface, allowing
 	// to operate on a stream.
 	StreamManager interface {
-		// CreateStream creates a new stream with given config and returns a
-		// hook to operate on it. If stream with given name already exists,
+		// CreateStream creates a new stream with given config and returns an
+		// interface to operate on it. If stream with given name already exists,
 		// ErrStreamNameAlreadyInUse is returned.
 		CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
@@ -107,7 +121,7 @@ type (
 		// already exists, it will be updated (if possible).
 		CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
-		// Stream fetches [StreamInfo] and returns a [Stream] hook for a given stream name.
+		// Stream fetches [StreamInfo] and returns a [Stream] interface for a given stream name.
 		// If stream does not exist, ErrStreamNotFound is returned.
 		Stream(ctx context.Context, stream string) (Stream, error)
 
@@ -133,34 +147,35 @@ type (
 	// available as a part of [JetStream] interface. This is an alternative to
 	// [Stream] interface, allowing to bypass stream lookup. CreateConsumer,
 	// UpdateConsumer, CreateOrUpdateConsumer and Consumer methods return a
-	// [Consumer] hook, allowing to operate on a consumer (e.g. consume
+	// [Consumer] interface, allowing to operate on a consumer (e.g. consume
 	// messages).
 	StreamConsumerManager interface {
 		// CreateOrUpdateConsumer creates a consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
-		// possible). Consumer interface is returned, serving as a hook to
-		// operate on a consumer (e.g. fetch messages)
+		// possible). Consumer interface is returned, allowing to operate on a
+		// consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 
 		// CreateConsumer creates a consumer on a given stream with given
-		// config. If consumer already exists, ErrConsumerExists is returned.
-		// Consumer interface is returned, serving as a hook to operate on a
-		// consumer (e.g. fetch messages)
+		// config. If consumer already exists and the provided configuration
+		// differs from its configuration, ErrConsumerExists is returned. If the
+		// provided configuration is the same as the existing consumer, the
+		// existing consumer is returned. Consumer interface is returned,
+		// allowing to operate on a consumer (e.g. fetch messages).
 		CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 
 		// UpdateConsumer updates an existing consumer. If consumer does not
 		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
-		// returned, serving as a hook to operate on a consumer (e.g. fetch
-		// messages)
+		// returned, allowing to operate on a consumer (e.g. fetch messages).
 		UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 
 		// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
-		// allows fetching messages from a stream (just like standard consumer),
-		// for in order delivery of messages. Underlying consumer is re-created
-		// when necessary, without additional client code.
+		// are managed by the library and provide a simple way to consume
+		// messages from a stream. Ordered consumers are ephemeral in-memory
+		// pull consumers and are resilient to deletes and restarts.
 		OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error)
 
-		// Consumer returns a hook to an existing consumer, allowing processing
+		// Consumer returns an interface to an existing consumer, allowing processing
 		// of messages. If consumer does not exist, ErrConsumerNotFound is
 		// returned.
 		Consumer(ctx context.Context, stream string, consumer string) (Consumer, error)
@@ -452,8 +467,8 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 	return js, nil
 }
 
-// CreateStream creates a new stream with given config and returns a
-// hook to operate on it. If stream with given name already exists,
+// CreateStream creates a new stream with given config and returns an
+// interface to operate on it. If stream with given name already exists,
 // ErrStreamNameAlreadyInUse is returned.
 func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
 	if err := validateStreamName(cfg.Name); err != nil {
@@ -621,7 +636,7 @@ func (js *jetStream) CreateOrUpdateStream(ctx context.Context, cfg StreamConfig)
 	return s, nil
 }
 
-// Stream fetches [StreamInfo] and returns a [Stream] hook for a given stream name.
+// Stream fetches [StreamInfo] and returns a [Stream] interface for a given stream name.
 // If stream does not exist, ErrStreamNotFound is returned.
 func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if err := validateStreamName(name); err != nil {
@@ -675,9 +690,10 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
-// CreateOrUpdateConsumer creates a consumer on a given stream with given config
-// This operation is idempotent - if a consumer already exists, it will be a no-op (or error if configs do not match)
-// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages)
+// CreateOrUpdateConsumer creates a consumer on a given stream with
+// given config. If consumer already exists, it will be updated (if
+// possible). Consumer interface is returned, allowing to operate on a
+// consumer (e.g. fetch messages).
 func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
@@ -686,9 +702,11 @@ func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, 
 }
 
 // CreateConsumer creates a consumer on a given stream with given
-// config. If consumer already exists, ErrConsumerExists is returned.
-// Consumer interface is returned, serving as a hook to operate on a
-// consumer (e.g. fetch messages)
+// config. If consumer already exists and the provided configuration
+// differs from its configuration, ErrConsumerExists is returned. If the
+// provided configuration is the same as the existing consumer, the
+// existing consumer is returned. Consumer interface is returned,
+// allowing to operate on a consumer (e.g. fetch messages).
 func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
@@ -698,8 +716,7 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 
 // UpdateConsumer updates an existing consumer. If consumer does not
 // exist, ErrConsumerDoesNotExist is returned. Consumer interface is
-// returned, serving as a hook to operate on a consumer (e.g. fetch
-// messages)
+// returned, allowing to operate on a consumer (e.g. fetch messages).
 func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
@@ -707,10 +724,10 @@ func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg Cons
 	return upsertConsumer(ctx, js, stream, cfg, consumerActionUpdate)
 }
 
-// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer allows
-// fetching messages from a stream (just like standard consumer), for in order
-// delivery of messages. Underlying consumer is re-created when necessary,
-// without additional client code.
+// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
+// are managed by the library and provide a simple way to consume
+// messages from a stream. Ordered consumers are ephemeral in-memory
+// pull consumers and are resilient to deletes and restarts.
 func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error) {
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
@@ -733,7 +750,7 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 	return oc, nil
 }
 
-// Consumer returns a hook to an existing consumer, allowing processing
+// Consumer returns an interface to an existing consumer, allowing processing
 // of messages. If consumer does not exist, ErrConsumerNotFound is
 // returned.
 func (js *jetStream) Consumer(ctx context.Context, stream string, name string) (Consumer, error) {
@@ -772,10 +789,11 @@ func validateSubject(subject string) error {
 	return nil
 }
 
-// Returns *AccountInfo, containing details about the account associated
-// with this JetStream connection. If account is not enabled for JetStream,
-// ErrJetStreamNotEnabledForAccount is returned. If the server does not
-// have JetStream enabled, ErrJetStreamNotEnabled is returned.
+// AccountInfo fetches account information from the server, containing details
+// about the account associated with this JetStream connection. If account is
+// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned. If
+// the server does not have JetStream enabled, ErrJetStreamNotEnabled is
+// returned.
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
