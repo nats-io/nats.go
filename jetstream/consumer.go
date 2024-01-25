@@ -57,7 +57,7 @@ type (
 		FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchNoWait is used to retrieve up to a provided number of messages
-		// from a stream. This method will always send a single request and
+		// from a stream. This method will send a single request and
 		// immediately return up to a provided number of messages or wait until
 		// at least one message is available or request times out.
 		FetchNoWait(batch int) (MessageBatch, error)
