@@ -130,7 +130,7 @@ type (
 		// Sources is a list of other streams this stream sources messages from.
 		Sources []*StreamSource `json:"sources,omitempty"`
 
-		// Sealed streams do not allow messages to be deleted via limits or API,
+		// Sealed streams do not allow messages to be published or deleted via limits or API,
 		// sealed streams can not be unsealed via configuration update. Can only
 		// be set on already created streams via the Update API.
 		Sealed bool `json:"sealed,omitempty"`
