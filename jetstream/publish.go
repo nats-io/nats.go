@@ -37,6 +37,7 @@ type (
 		maxpa int
 	}
 
+	// PublishOpt are the options that can be passed to Publish methods.
 	PublishOpt func(*pubOpts) error
 
 	pubOpts struct {
@@ -58,6 +59,7 @@ type (
 	}
 
 	// PubAckFuture is a future for a PubAck.
+	// It can be used to wait for a PubAck or an error after an async publish.
 	PubAckFuture interface {
 		// Ok returns a receive only channel that can be used to get a PubAck.
 		Ok() <-chan *PubAck
@@ -86,9 +88,9 @@ type (
 		asyncPublisherOpts
 	}
 
-	// MsgErrHandler is used to process asynchronous errors from
-	// JetStream PublishAsync. It will return the original
-	// message sent to the server for possible retransmitting and the error encountered.
+	// MsgErrHandler is used to process asynchronous errors from JetStream
+	// PublishAsync. It will return the original message sent to the server for
+	// possible retransmitting and the error encountered.
 	MsgErrHandler func(JetStream, *nats.Msg, error)
 
 	asyncPublishContext struct {
@@ -110,15 +112,23 @@ type (
 
 	// PubAck is an ack received after successfully publishing a message.
 	PubAck struct {
-		Stream    string `json:"stream"`
-		Sequence  uint64 `json:"seq"`
-		Duplicate bool   `json:"duplicate,omitempty"`
-		Domain    string `json:"domain,omitempty"`
+		// Stream is the stream name the message was published to.
+		Stream string `json:"stream"`
+
+		// Sequence is the stream sequence number of the message.
+		Sequence uint64 `json:"seq"`
+
+		// Duplicate indicates whether the message was a duplicate.
+		// Duplicate can be detected using the [MsgIDHeader] and [StreamConfig.Duplicates].
+		Duplicate bool `json:"duplicate,omitempty"`
+
+		// Domain is the domain the message was published to.
+		Domain string `json:"domain,omitempty"`
 	}
 )
 
 const (
-	// Default time wait between retries on Publish if err is NoResponders.
+	// Default time wait between retries on Publish if err is ErrNoResponders.
 	DefaultPubRetryWait = 250 * time.Millisecond
 
 	// Default number of retries
@@ -132,11 +142,16 @@ const (
 	base    = 62
 )
 
+// Publish performs a synchronous publish to a stream and waits for ack
+// from server. It accepts subject name (which must be bound to a stream)
+// and message payload.
 func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts ...PublishOpt) (*PubAck, error) {
 	return js.PublishMsg(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
-// PublishMsg publishes a Msg to a stream from JetStream.
+// PublishMsg performs a synchronous publish to a stream and waits for
+// ack from server. It accepts subject name (which must be bound to a
+// stream) and nats.Message.
 func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
@@ -211,10 +226,16 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	return ackResp.PubAck, nil
 }
 
+// PublishAsync performs an asynchronous publish to a stream and returns
+// [PubAckFuture] interface. It accepts subject name (which must be bound
+// to a stream) and message payload.
 func (js *jetStream) PublishAsync(subj string, data []byte, opts ...PublishOpt) (PubAckFuture, error) {
 	return js.PublishMsgAsync(&nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
+// PublishMsgAsync performs an asynchronous publish to a stream and
+// returns [PubAckFuture] interface. It accepts subject name (which must
+// be bound to a stream) and nats.Message.
 func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFuture, error) {
 	o := pubOpts{
 		retryWait:     DefaultPubRetryWait,
@@ -516,14 +537,17 @@ func (paf *pubAckFuture) Msg() *nats.Msg {
 	return paf.msg
 }
 
-// PublishAsyncPending returns how many PubAckFutures are pending.
+// PublishAsyncPending returns the number of async publishes outstanding
+// for this context.
 func (js *jetStream) PublishAsyncPending() int {
 	js.publisher.RLock()
 	defer js.publisher.RUnlock()
 	return len(js.publisher.acks)
 }
 
-// PublishAsyncComplete returns a channel that will be closed when all outstanding messages have been ack'd.
+// PublishAsyncComplete returns a channel that will be closed when all
+// outstanding asynchronously published messages are acknowledged by the
+// server.
 func (js *jetStream) PublishAsyncComplete() <-chan struct{} {
 	js.publisher.Lock()
 	defer js.publisher.Unlock()

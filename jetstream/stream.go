@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -26,62 +26,81 @@ import (
 )
 
 type (
-	// Stream contains CRUD methods on a consumer, as well as operations on an existing stream
+	// Stream contains CRUD methods on a consumer, as well as operations on an existing stream.
+	// It allows fetching and removing messages from a stream, as well as purging a stream.
 	Stream interface {
 		streamConsumerManager
 
-		// Info returns stream details
+		// Info returns StreamInfo from the server.
 		Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error)
-		// CachedInfo returns *StreamInfo cached on a consumer struct
+
+		// CachedInfo returns ConsumerInfo currently cached on this stream.
+		// This method does not perform any network requests. The cached
+		// StreamInfo is updated on every call to Info and Update.
 		CachedInfo() *StreamInfo
 
-		// Purge removes messages from a stream
+		// Purge removes messages from a stream. It is a destructive operation.
+		// Use with caution. See StreamPurgeOpt for available options.
 		Purge(ctx context.Context, opts ...StreamPurgeOpt) error
 
-		// GetMsg retrieves a raw stream message stored in JetStream by sequence number
+		// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
 		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
-		// GetLastMsgForSubject retrieves the last raw stream message stored in JetStream by subject
+
+		// GetLastMsgForSubject retrieves the last raw stream message stored in
+		// JetStream on a given subject subject.
 		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
+
 		// DeleteMsg deletes a message from a stream.
-		// The message is marked as erased, but not overwritten
+		// On the server, the message is marked as erased, but not overwritten.
 		DeleteMsg(ctx context.Context, seq uint64) error
-		// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
-		// As a result, this operation is slower than DeleteMsg()
+
+		// SecureDeleteMsg deletes a message from a stream. The deleted message
+		// is overwritten with random data. As a result, this operation is slower
+		// than DeleteMsg.
 		SecureDeleteMsg(ctx context.Context, seq uint64) error
 	}
 
 	streamConsumerManager interface {
-		// CreateOrUpdateConsumer creates a consumer on a given stream with given config.
-		// If consumer already exists, it will be updated (if possible).
-		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		// CreateOrUpdateConsumer creates a consumer on a given stream with
+		// given config. If consumer already exists, it will be updated (if
+		// possible). Consumer interface is returned, allowing to operate on a
+		// consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
-		// CreateConsumer creates a consumer on a given stream with given config.
-		// If consumer already exists, an ErrConsumerExists is returned.
-		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		// CreateConsumer creates a consumer on a given stream with given
+		// config. If consumer already exists and the provided configuration
+		// differs from its configuration, ErrConsumerExists is returned. If the
+		// provided configuration is the same as the existing consumer, the
+		// existing consumer is returned. Consumer interface is returned,
+		// allowing to operate on a consumer (e.g. fetch messages).
 		CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
-		// UpdateConsumer updates an existing consumer with given config.
-		// If consumer does not exist, an ErrConsumerDoesNotExist is returned.
-		// Consumer interface is returned, serving as a hook to operate on a consumer (e.g. fetch messages).
+		// UpdateConsumer updates an existing consumer. If consumer does not
+		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+		// returned, allowing to operate on a consumer (e.g. fetch messages).
 		UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
-		// OrderedConsumer returns an OrderedConsumer instance.
-		// OrderedConsumer allows fetching messages from a stream (just like standard consumer),
-		// for in order delivery of messages. Underlying consumer is re-created when necessary,
-		// without additional client code.
+		// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
+		// are managed by the library and provide a simple way to consume
+		// messages from a stream. Ordered consumers are ephemeral in-memory
+		// pull consumers and are resilient to deletes and restarts.
 		OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error)
 
-		// Consumer returns a Consumer interface for an existing consumer
+		// Consumer returns an interface to an existing consumer, allowing processing
+		// of messages. If consumer does not exist, ErrConsumerNotFound is
+		// returned.
 		Consumer(ctx context.Context, consumer string) (Consumer, error)
 
-		// DeleteConsumer removes a consumer
+		// DeleteConsumer removes a consumer with given name from a stream.
+		// If consumer does not exist, ErrConsumerNotFound is returned.
 		DeleteConsumer(ctx context.Context, consumer string) error
 
-		// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos
+		// ListConsumers returns ConsumerInfoLister enabling iterating over a
+		// channel of consumer infos.
 		ListConsumers(context.Context) ConsumerInfoLister
 
-		// ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
+		// ConsumerNames returns a ConsumerNameLister enabling iterating over a
+		// channel of consumer names.
 		ConsumerNames(context.Context) ConsumerNameLister
 	}
 
@@ -99,6 +118,7 @@ type (
 		jetStream *jetStream
 	}
 
+	// StreamInfoOpt is a function setting options for [Stream.Info]
 	StreamInfoOpt func(*streamInfoRequest) error
 
 	streamInfoRequest struct {
@@ -112,7 +132,10 @@ type (
 		*ConsumerInfo
 	}
 
+	// StreamPurgeOpt is a function setting options for [Stream.Purge]
 	StreamPurgeOpt func(*StreamPurgeRequest) error
+
+	// StreamPurgeRequest is an API request body to purge a stream.
 
 	StreamPurgeRequest struct {
 		// Purge up to but not including sequence.
@@ -134,6 +157,7 @@ type (
 		Success bool `json:"success,omitempty"`
 	}
 
+	// GetMsgOpt is a function setting options for [Stream.GetMsg]
 	GetMsgOpt func(*apiMsgGetRequest) error
 
 	apiMsgGetRequest struct {
@@ -167,11 +191,17 @@ type (
 		Success bool `json:"success,omitempty"`
 	}
 
+	// ConsumerInfoLister is used to iterate over a channel of consumer infos.
+	// Err method can be used to check for errors encountered during iteration.
+	// Info channel is always closed and therefore can be used in a range loop.
 	ConsumerInfoLister interface {
 		Info() <-chan *ConsumerInfo
 		Err() error
 	}
 
+	// ConsumerNameLister is used to iterate over a channel of consumer names.
+	// Err method can be used to check for errors encountered during iteration.
+	// Name channel is always closed and therefore can be used in a range loop.
 	ConsumerNameLister interface {
 		Name() <-chan string
 		Err() error
@@ -200,18 +230,35 @@ type (
 	}
 )
 
+// CreateOrUpdateConsumer creates a consumer on a given stream with
+// given config. If consumer already exists, it will be updated (if
+// possible). Consumer interface is returned, allowing to operate on a
+// consumer (e.g. fetch messages).
 func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreateOrUpdate)
 }
 
+// CreateConsumer creates a consumer on a given stream with given
+// config. If consumer already exists and the provided configuration
+// differs from its configuration, ErrConsumerExists is returned. If the
+// provided configuration is the same as the existing consumer, the
+// existing consumer is returned. Consumer interface is returned,
+// allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionCreate)
 }
 
+// UpdateConsumer updates an existing consumer. If consumer does not
+// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+// returned, allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
 	return upsertConsumer(ctx, s.jetStream, s.name, cfg, consumerActionUpdate)
 }
 
+// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
+// are managed by the library and provide a simple way to consume
+// messages from a stream. Ordered consumers are ephemeral in-memory
+// pull consumers and are resilient to deletes and restarts.
 func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
 	oc := &orderedConsumer{
 		jetStream:  s.jetStream,
@@ -231,19 +278,20 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 	return oc, nil
 }
 
+// Consumer returns an interface to an existing consumer, allowing processing
+// of messages. If consumer does not exist, ErrConsumerNotFound is
+// returned.
 func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {
 	return getConsumer(ctx, s.jetStream, s.name, name)
 }
 
+// DeleteConsumer removes a consumer with given name from a stream.
+// If consumer does not exist, ErrConsumerNotFound is returned.
 func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 	return deleteConsumer(ctx, s.jetStream, s.name, name)
 }
 
-// Info fetches *StreamInfo from server
-//
-// Available options:
-// [WithDeletedDetails] - use to display the information about messages deleted from a stream
-// [WithSubjectFilter] - use to display the information about messages stored on given subjects
+// Info returns StreamInfo from the server.
 func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
@@ -312,20 +360,15 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 	return info, nil
 }
 
-// CachedInfo returns *StreamInfo cached on a stream struct
-//
-// NOTE: The returned object might not be up to date with the most recent updates on the server
-// For up-to-date information, use [Info]
+// CachedInfo returns ConsumerInfo currently cached on this stream.
+// This method does not perform any network requests. The cached
+// StreamInfo is updated on every call to Info and Update.
 func (s *stream) CachedInfo() *StreamInfo {
 	return s.info
 }
 
-// Purge removes messages from a stream
-//
-// Available options:
-// [WithPurgeSubject] - can be used set a specific subject for which messages on a stream will be purged
-// [WithPurgeSequence] - can be used to set a specific sequence number up to which (but not including) messages will be purged from a stream
-// [WithPurgeKeep] - can be used to set the number of messages to be kept in the stream after purge.
+// Purge removes messages from a stream. It is a destructive operation.
+// Use with caution. See StreamPurgeOpt for available options.
 func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
@@ -357,6 +400,7 @@ func (s *stream) Purge(ctx context.Context, opts ...StreamPurgeOpt) error {
 	return nil
 }
 
+// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
 func (s *stream) GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error) {
 	req := &apiMsgGetRequest{Seq: seq}
 	for _, opt := range opts {
@@ -367,6 +411,8 @@ func (s *stream) GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*Ra
 	return s.getMsg(ctx, req)
 }
 
+// GetLastMsgForSubject retrieves the last raw stream message stored in
+// JetStream on a given subject subject.
 func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error) {
 	return s.getMsg(ctx, &apiMsgGetRequest{LastFor: subject})
 }
@@ -491,13 +537,14 @@ func convertDirectGetMsgResponseToMsg(name string, r *nats.Msg) (*RawStreamMsg, 
 }
 
 // DeleteMsg deletes a message from a stream.
-// The message is marked as erased, but not overwritten
+// On the server, the message is marked as erased, but not overwritten.
 func (s *stream) DeleteMsg(ctx context.Context, seq uint64) error {
 	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq, NoErase: true})
 }
 
-// SecureDeleteMsg deletes a message from a stream. The deleted message is overwritten with random data
-// As a result, this operation is slower than DeleteMsg()
+// SecureDeleteMsg deletes a message from a stream. The deleted message
+// is overwritten with random data. As a result, this operation is slower
+// than DeleteMsg.
 func (s *stream) SecureDeleteMsg(ctx context.Context, seq uint64) error {
 	return s.deleteMsg(ctx, &msgDeleteRequest{Seq: seq})
 }
@@ -522,7 +569,8 @@ func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
 	return nil
 }
 
-// ListConsumers returns ConsumerInfoLister enabling iterating over a channel of consumer infos.
+// ListConsumers returns ConsumerInfoLister enabling iterating over a
+// channel of consumer infos.
 func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 	l := &consumerLister{
 		js:        s.jetStream,
@@ -568,7 +616,8 @@ func (s *consumerLister) Err() error {
 	return s.err
 }
 
-// ConsumerNames returns a ConsumerNameLister enabling iterating over a channel of consumer names
+// ConsumerNames returns a ConsumerNameLister enabling iterating over a
+// channel of consumer names.
 func (s *stream) ConsumerNames(ctx context.Context) ConsumerNameLister {
 	l := &consumerLister{
 		js:    s.jetStream,

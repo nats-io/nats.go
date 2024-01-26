@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -27,55 +27,92 @@ import (
 )
 
 type (
-	// Msg contains methods to operate on a JetStream message
-	// Metadata, Data, Headers, Subject and Reply can be used to retrieve the specific parts of the underlying message
-	// Ack, DoubleAck, Nak, InProgress and Term are various flavors of ack requests
+	// Msg contains methods to operate on a JetStream message. Metadata, Data,
+	// Headers, Subject and Reply can be used to retrieve the specific parts of
+	// the underlying message. Ack, DoubleAck, Nak, NakWithDelay, InProgress and
+	// Term are various flavors of ack requests.
 	Msg interface {
-		// Metadata returns [MsgMetadata] for a JetStream message
+		// Metadata returns [MsgMetadata] for a JetStream message.
 		Metadata() (*MsgMetadata, error)
-		// Data returns the message body
+
+		// Data returns the message body.
 		Data() []byte
-		// Headers returns a map of headers for a message
+
+		// Headers returns a map of headers for a message.
 		Headers() nats.Header
-		// Subject returns a subject on which a message is published
+
+		// Subject returns a subject on which a message was published/received.
 		Subject() string
-		// Reply returns a reply subject for a message
+
+		// Reply returns a reply subject for a message.
 		Reply() string
 
-		// Ack acknowledges a message
-		// This tells the server that the message was successfully processed and it can move on to the next message
+		// Ack acknowledges a message. This tells the server that the message was
+		// successfully processed and it can move on to the next message.
 		Ack() error
-		// DoubleAck acknowledges a message and waits for ack from server
+
+		// DoubleAck acknowledges a message and waits for ack reply from the server.
+		// While it impacts performance, it is useful for scenarios where
+		// message loss is not acceptable.
 		DoubleAck(context.Context) error
-		// Nak negatively acknowledges a message
-		// This tells the server to redeliver the message
+
+		// Nak negatively acknowledges a message. This tells the server to
+		// redeliver the message.
+		//
+		// Nak does not adhere to AckWait or Backoff configured on the consumer
+		// and triggers instant redelivery. For a delayed redelivery, use
+		// NakWithDelay.
 		Nak() error
-		// NakWithDelay negatively acknowledges a message
-		// This tells the server to redeliver the message
-		// after the given `delay` duration
+
+		// NakWithDelay negatively acknowledges a message. This tells the server
+		// to redeliver the message after the given delay.
 		NakWithDelay(delay time.Duration) error
-		// InProgress tells the server that this message is being worked on
-		// It resets the redelivery timer on the server
+
+		// InProgress tells the server that this message is being worked on. It
+		// resets the redelivery timer on the server.
 		InProgress() error
-		// Term tells the server to not redeliver this message, regardless of the value of nats.MaxDeliver
+
+		// Term tells the server to not redeliver this message, regardless of
+		// the value of MaxDeliver.
 		Term() error
 	}
 
 	// MsgMetadata is the JetStream metadata associated with received messages.
 	MsgMetadata struct {
-		Sequence     SequencePair
+		// Sequence is the sequence information for the message.
+		Sequence SequencePair
+
+		// NumDelivered is the number of times this message was delivered to the
+		// consumer.
 		NumDelivered uint64
-		NumPending   uint64
-		Timestamp    time.Time
-		Stream       string
-		Consumer     string
-		Domain       string
+
+		// NumPending is the number of messages that match the consumer's
+		// filter, but have not been delivered yet.
+		NumPending uint64
+
+		// Timestamp is the time the message was originally stored on a stream.
+		Timestamp time.Time
+
+		// Stream is the stream name this message is stored on.
+		Stream string
+
+		// Consumer is the consumer name this message was delivered to.
+		Consumer string
+
+		// Domain is the domain this message was received on.
+		Domain string
 	}
 
-	// SequencePair includes the consumer and stream sequence info from a JetStream consumer.
+	// SequencePair includes the consumer and stream sequence numbers for a
+	// message.
 	SequencePair struct {
+		// Consumer is the consumer sequence number for message deliveries. This
+		// is the total number of messages the consumer has seen (including
+		// redeliveries).
 		Consumer uint64 `json:"consumer_seq"`
-		Stream   uint64 `json:"stream_seq"`
+
+		// Stream is the stream sequence number for a message.
+		Stream uint64 `json:"stream_seq"`
 	}
 
 	jetStreamMsg struct {
@@ -101,28 +138,83 @@ const (
 	noResponders     = "503"
 )
 
+// Headers used when publishing messages.
 const (
-	MsgIDHeader               = "Nats-Msg-Id"
-	ExpectedStreamHeader      = "Nats-Expected-Stream"
-	ExpectedLastSeqHeader     = "Nats-Expected-Last-Sequence"
+	// MsgIdHeader is used to specify a user-defined message ID. It can be used
+	// e.g. for deduplication in conjunction with the Duplicates duration on
+	// ConsumerConfig or to provide optimistic concurrency safety together with
+	// [ExpectedLastMsgIDHeader].
+	//
+	// This can be set when publishing messages using [WithMsgID] option.
+	MsgIDHeader = "Nats-Msg-Id"
+
+	// ExpectedStreamHeader contains stream name and is used to assure that the
+	// published message is received by expected stream. Server will reject the
+	// message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectStream] option.
+	ExpectedStreamHeader = "Nats-Expected-Stream"
+
+	// ExpectedLastSeqHeader contains the expected last sequence number of the
+	// stream and can be used to apply optimistic concurrency control at stream
+	// level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectLastSequence]
+	// option. option.
+	ExpectedLastSeqHeader = "Nats-Expected-Last-Sequence"
+
+	// ExpectedLastSubjSeqHeader contains the expected last sequence number on
+	// the subject and can be used to apply optimistic concurrency control at
+	// subject level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using
+	// [WithExpectLastSequencePerSubject] option.
 	ExpectedLastSubjSeqHeader = "Nats-Expected-Last-Subject-Sequence"
-	ExpectedLastMsgIDHeader   = "Nats-Expected-Last-Msg-Id"
-	MsgRollup                 = "Nats-Rollup"
+
+	// ExpectedLastMsgIDHeader contains the expected last message ID on the
+	// subject and can be used to apply optimistic concurrency control at
+	// stream level. Server will reject the message if it is not the case.
+	//
+	// This can be set when publishing messages using [WithExpectLastMsgID]
+	// option.
+	ExpectedLastMsgIDHeader = "Nats-Expected-Last-Msg-Id"
+
+	// MsgRollup is used to apply a purge of all prior messages in the stream
+	// ("all") or at the subject ("sub") before this message.
+	MsgRollup = "Nats-Rollup"
 )
 
-// Headers for republished messages and direct gets.
+// Headers for republished messages and direct gets. Those headers are set by
+// the server and should not be set by the client.
 const (
-	StreamHeader       = "Nats-Stream"
-	SequenceHeader     = "Nats-Sequence"
-	TimeStampHeaer     = "Nats-Time-Stamp"
-	SubjectHeader      = "Nats-Subject"
+	// StreamHeader contains the stream name the message was republished from or
+	// the stream name the message was retrieved from using direct get.
+	StreamHeader = "Nats-Stream"
+
+	// SequenceHeader contains the original sequence number of the message.
+	SequenceHeader = "Nats-Sequence"
+
+	// TimeStampHeader contains the original timestamp of the message.
+	TimeStampHeaer = "Nats-Time-Stamp"
+
+	// SubjectHeader contains the original subject the message was published to.
+	SubjectHeader = "Nats-Subject"
+
+	// LastSequenceHeader contains the last sequence of the message having the
+	// same subject, otherwise zero if this is the first message for the
+	// subject.
 	LastSequenceHeader = "Nats-Last-Sequence"
 )
 
 // Rollups, can be subject only or all messages.
 const (
+	// MsgRollupSubject is used to purge all messages before this message on the
+	// message subject.
 	MsgRollupSubject = "sub"
-	MsgRollupAll     = "all"
+
+	// MsgRollupAll is used to purge all messages before this message on the
+	// stream.
+	MsgRollupAll = "all"
 )
 
 var (
@@ -132,7 +224,7 @@ var (
 	ackTerm     ackType = []byte("+TERM")
 )
 
-// Metadata returns [MsgMetadata] for a JetStream message
+// Metadata returns [MsgMetadata] for a JetStream message.
 func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	if err := m.checkReply(); err != nil {
 		return nil, err
@@ -156,56 +248,59 @@ func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	return meta, nil
 }
 
-// Data returns the message body
+// Data returns the message body.
 func (m *jetStreamMsg) Data() []byte {
 	return m.msg.Data
 }
 
-// Headers returns a map of headers for a message
+// Headers returns a map of headers for a message.
 func (m *jetStreamMsg) Headers() nats.Header {
 	return m.msg.Header
 }
 
-// Subject returns a subject on which a message is published
+// Subject returns a subject on which a message is published.
 func (m *jetStreamMsg) Subject() string {
 	return m.msg.Subject
 }
 
-// Reply returns a reply subject for a JetStream message
+// Reply returns a reply subject for a JetStream message.
 func (m *jetStreamMsg) Reply() string {
 	return m.msg.Reply
 }
 
-// Ack acknowledges a message
-// This tells the server that the message was successfully processed and it can move on to the next message
+// Ack acknowledges a message. This tells the server that the message was
+// successfully processed and it can move on to the next message.
 func (m *jetStreamMsg) Ack() error {
 	return m.ackReply(context.Background(), ackAck, false, ackOpts{})
 }
 
-// DoubleAck acknowledges a message and waits for ack from server
+// DoubleAck acknowledges a message and waits for ack reply from the server.
+// While it impacts performance, it is useful for scenarios where
+// message loss is not acceptable.
 func (m *jetStreamMsg) DoubleAck(ctx context.Context) error {
 	return m.ackReply(ctx, ackAck, true, ackOpts{})
 }
 
-// Nak negatively acknowledges a message
-// This tells the server to redeliver the message
+// Nak negatively acknowledges a message. This tells the server to
+// redeliver the message.
 func (m *jetStreamMsg) Nak() error {
 	return m.ackReply(context.Background(), ackNak, false, ackOpts{})
 }
 
-// NakWithDelay negatively acknowledges a message
-// This tells the server to redeliver the message after the given `delay` duration
+// NakWithDelay negatively acknowledges a message. This tells the server
+// to redeliver the message after the given delay.
 func (m *jetStreamMsg) NakWithDelay(delay time.Duration) error {
 	return m.ackReply(context.Background(), ackNak, false, ackOpts{nakDelay: delay})
 }
 
-// InProgress tells the server that this message is being worked on
-// It resets the redelivery timer on the server
+// InProgress tells the server that this message is being worked on. It
+// resets the redelivery timer on the server.
 func (m *jetStreamMsg) InProgress() error {
 	return m.ackReply(context.Background(), ackProgress, false, ackOpts{})
 }
 
-// Term tells the server to not redeliver this message, regardless of the value of nats.MaxDeliver
+// Term tells the server to not redeliver this message, regardless of
+// the value of MaxDeliver.
 func (m *jetStreamMsg) Term() error {
 	return m.ackReply(context.Background(), ackTerm, false, ackOpts{})
 }
