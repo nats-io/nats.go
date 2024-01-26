@@ -535,11 +535,12 @@ func DecodeObjectDigest(data string) ([]byte, error) {
 // ObjectResult impl.
 type objResult struct {
 	sync.Mutex
-	info   *ObjectInfo
-	r      io.ReadCloser
-	err    error
-	ctx    context.Context
-	digest hash.Hash
+	info        *ObjectInfo
+	r           io.ReadCloser
+	err         error
+	ctx         context.Context
+	digest      hash.Hash
+	readTimeout time.Duration
 }
 
 func (info *ObjectInfo) isLink() bool {
@@ -623,7 +624,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 		return lobs.Get(info.ObjectMeta.Opts.Link.Name)
 	}
 
-	result := &objResult{info: info, ctx: ctx}
+	result := &objResult{info: info, ctx: ctx, readTimeout: obs.js.opts.wait}
 	if info.Size == 0 {
 		return result, nil
 	}
@@ -1242,7 +1243,11 @@ func (obs *obs) Status() (ObjectStoreStatus, error) {
 func (o *objResult) Read(p []byte) (n int, err error) {
 	o.Lock()
 	defer o.Unlock()
+	readDeadline := time.Now().Add(o.readTimeout)
 	if ctx := o.ctx; ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			readDeadline = deadline
+		}
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.Canceled {
@@ -1261,7 +1266,8 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	r.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fmt.Println("read deadline", o.readTimeout)
+	r.SetReadDeadline(readDeadline)
 	n, err = r.Read(p)
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		if ctx := o.ctx; ctx != nil {
