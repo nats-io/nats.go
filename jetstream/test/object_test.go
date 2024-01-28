@@ -1106,3 +1106,38 @@ func TestObjectStoreGetObjectContextTimeout(t *testing.T) {
 	expectErr(t, err, nats.ErrTimeout)
 	r.Close()
 }
+
+func TestObjectStoreCompression(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	objCompressed, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{
+		Bucket:      "A",
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatalf("Error creating object store: %v", err)
+	}
+
+	status, err := objCompressed.Status(ctx)
+	if err != nil {
+		t.Fatalf("Error getting bucket status: %v", err)
+	}
+
+	if !status.IsCompressed() {
+		t.Fatalf("Expected bucket to be compressed")
+	}
+
+	objStream, err := js.Stream(ctx, "OBJ_A")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+
+	if objStream.CachedInfo().Config.Compression != jetstream.S2Compression {
+		t.Fatalf("Expected stream to be compressed with S2")
+	}
+}
