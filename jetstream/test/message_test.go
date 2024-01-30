@@ -328,6 +328,43 @@ func TestAckVariants(t *testing.T) {
 			t.Fatalf("Invalid ack body: %q", string(ack.Data))
 		}
 	})
+	t.Run("term with reason", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv, nc, js, c := setup(ctx, t)
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		defer nc.Close()
+
+		if _, err := js.Publish(ctx, "FOO.1", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs, err := c.Fetch(1)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msg := <-msgs.Messages()
+		if msg == nil {
+			t.Fatalf("No messages available")
+		}
+		if err := msgs.Error(); err != nil {
+			t.Fatalf("unexpected error during fetch: %v", err)
+		}
+		sub, err := nc.SubscribeSync(msg.Reply())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if err := msg.TermWithReason("with reason"); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		ack, err := sub.NextMsgWithContext(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(ack.Data) != "+TERM with reason" {
+			t.Fatalf("Invalid ack body: %q", string(ack.Data))
+		}
+	})
 	t.Run("in progress", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
