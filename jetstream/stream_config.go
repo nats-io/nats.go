@@ -51,6 +51,9 @@ type (
 		// Sources is a list of source streams from which this stream collects
 		// data.
 		Sources []*StreamSourceInfo `json:"sources,omitempty"`
+
+		// TimeStamp indicates when the info was gathered by the server.
+		TimeStamp time.Time `json:"ts"`
 	}
 
 	// StreamConfig is the configuration of a JetStream stream.

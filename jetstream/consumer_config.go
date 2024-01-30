@@ -72,6 +72,9 @@ type (
 		// delivery subject of this consumer. This is only applicable to
 		// push-based consumers.
 		PushBound bool `json:"push_bound,omitempty"`
+
+		// TimeStamp indicates when the info was gathered by the server.
+		TimeStamp time.Time `json:"ts"`
 	}
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
