@@ -25,7 +25,7 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 }
 
 // IncludeHistory instructs the key watcher to include historical values as
-// well.
+// well (up to KeyValueMaxHistory).
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		if opts.updatesOnly {
@@ -75,7 +75,7 @@ func ResumeFromRevision(revision uint64) WatchOpt {
 }
 
 // DeleteMarkersOlderThan indicates that delete or purge markers older than that
-// will be deleted as part of PurgeDeletes() operation, otherwise, only the data
+// will be deleted as part of [KeyValue.PurgeDeletes] operation, otherwise, only the data
 // will be removed but markers that are recent will be kept.
 // Note that if no option is specified, the default is 30 minutes. You can set
 // this option to a negative value to instruct to always remove the markers,
@@ -93,7 +93,8 @@ func (opt deleteOptFn) configureDelete(opts *deleteOpts) error {
 	return opt(opts)
 }
 
-// LastRevision deletes if the latest revision matches.
+// LastRevision deletes if the latest revision matches the provided one. If the
+// provided revision is not the latest, the delete will return an error.
 func LastRevision(revision uint64) KVDeleteOpt {
 	return deleteOptFn(func(opts *deleteOpts) error {
 		opts.revision = revision
