@@ -74,7 +74,8 @@ type (
 		Get(ctx context.Context, key string) (KeyValueEntry, error)
 
 		// GetRevision returns a specific revision value for the key. If the key
-		// does not exist, ErrKeyNotFound will be returned.
+		// does not exist or the provided revision does not exists,
+		// ErrKeyNotFound will be returned.
 		GetRevision(ctx context.Context, key string, revision uint64) (KeyValueEntry, error)
 
 		// Put will place the new value for the key into the store. If the key
