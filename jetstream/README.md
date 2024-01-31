@@ -635,7 +635,7 @@ basic CRUD operations on keys.
 js, _ := jetstream.New(nc)
 ctx := context.Background()
 
-// Create a new bucket. Bucket name is required and has to be unique within a stream.
+// Create a new bucket. Bucket name is required and has to be unique within a JetStream account.
 kv, _ := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "profiles"})
 
 // Set a value for a given key
@@ -650,14 +650,16 @@ entry, _ := kv.Get(ctx, "sue.color")
 fmt.Printf("%s @ %d -> %q\n", entry.Key(), entry.Revision(), string(entry.Value()))
 
 // Update a value for a given key
-// Update will fail if the key does not exist or the revision is not up to date
+// Update will fail if the key does not exist or the revision has changed
 kv.Update(ctx, "sue.color", []byte("red"), 1)
 
 // Create will fail if the key already exists
 _, err := kv.Create(ctx, "sue.color", []byte("purple"))
 fmt.Println(err) // prints `nats: key exists`
 
-// Delete a value for a given key
+// Delete a value for a given key.
+// Delete is not destructive, it will add a delete marker for a given key
+// and all previous revisions will still be available
 kv.Delete(ctx, "sue.color")
 
 // getting a deleted key will return an error
@@ -684,9 +686,8 @@ for each key (up to KeyValueMaxHistory).
 - `IgnoreDeletes` will have the key watcher not pass any keys with
 delete markers.
 - `UpdatesOnly` will have the key watcher only pass updates on values
-(without latest values when started).
-- `MetaOnly` will have the key watcher retrieve only the entry meta
-data, not the entry value.
+(without values already present when starting).
+- `MetaOnly` will have the key watcher retrieve only the entry metadata, not the entry value.
 - `ResumeFromRevision` instructs the key watcher to resume from a
 specific revision number.
 
@@ -698,8 +699,7 @@ kv, _ := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "profiles"})
 kv.Put(ctx, "sue.color", []byte("blue"))
 
 // A watcher can be created to watch for changes on a given key or the whole bucket
-// Watcher will receive a notification on a channel when a change occurs
-// By default, watcher will return initial values for all matching keys.
+// By default, watcher will return most recent values for all matching keys.
 // Watcher can be configured to only return updates by using jetstream.UpdatesOnly() option.
 watcher, _ := kv.Watch(ctx, "sue.*")
 defer watcher.Stop()
@@ -707,13 +707,13 @@ defer watcher.Stop()
 kv.Put(ctx, "sue.age", []byte("43"))
 kv.Put(ctx, "sue.color", []byte("red"))
 
-// First, the watcher sends initial values for all matching keys
+// First, the watcher sends most recent values for all matching keys.
 // In this case, it will send a single entry for `sue.color`.
 entry := <-watcher.Updates()
 // Prints `sue.color @ 1 -> "blue"`
 fmt.Printf("%s @ %d -> %q\n", entry.Key(), entry.Revision(), string(entry.Value()))
 
-// After all initial values have been sent, watcher will send nil on the channel.
+// After all current values have been sent, watcher will send nil on the channel.
 entry = <-watcher.Updates()
 if entry != nil {
     fmt.Println("Unexpected entry received")
@@ -766,9 +766,10 @@ kv.Put(ctx, "sue.color", []byte("blue"))
 kv.Put(ctx, "sue.age", []byte("43"))
 kv.Put(ctx, "bucket", []byte("profiles"))
 
-// Purge will remove all keys from a bucket
+// Purge will remove all keys from a bucket.
 // The latest revision of each key will be kept
 // with a delete marker, all previous revisions will be removed
+// permanently.
 kv.Purge(ctx)
 
 // PurgeDeletes will remove all keys from a bucket

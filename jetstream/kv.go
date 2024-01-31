@@ -107,12 +107,18 @@ type (
 
 		// Delete will place a delete marker and leave all revisions. A history
 		// of a deleted key can still be retrieved by using the History method
-		// or a watch on the key. [LastRevision] option can be specified to only
-		// perform delete if the latest revision the provided one.
+		// or a watch on the key. [Delete] is a non-destructive operation and
+		// will not remove any previous revisions from the underlying stream.
+		//
+		// [LastRevision] option can be specified to only perform delete if the
+		// latest revision the provided one.
 		Delete(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Purge will place a delete marker and remove all previous revisions.
 		// Only the latest revision will be preserved (with a delete marker).
+		// Unlike [Delete], Purge is a destructive operation and will remove all
+		// previous revisions from the underlying streams.
+		//
 		// [LastRevision] option can be specified to only perform purge if the
 		// latest revision the provided one.
 		Purge(ctx context.Context, key string, opts ...KVDeleteOpt) error
@@ -157,9 +163,12 @@ type (
 		// PurgeDeletes will remove all current delete markers. It can be
 		// configured using DeleteMarkersOlderThan option to only remove delete
 		// markers older than a certain duration.
+		//
+		// [PurgeDeletes] is a destructive operation and will remove all entries
+		// with delete markers from the underlying stream.
 		PurgeDeletes(ctx context.Context, opts ...KVPurgeOpt) error
 
-		// Status retrieves the status and configuration of a bucket
+		// Status retrieves the status and configuration of a bucket.
 		Status(ctx context.Context) (KeyValueStatus, error)
 	}
 
