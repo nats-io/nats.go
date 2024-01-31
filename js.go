@@ -1167,6 +1167,9 @@ type ConsumerConfig struct {
 	// Keys starting with `_nats` are reserved.
 	// NOTE: Metadata requires nats-server v2.10.0+
 	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// PauseUntil is for suspending the consumer until the deadline.
+	PauseUntil time.Time `json:"pause_until,omitempty"`
 }
 
 // ConsumerInfo is the info from a JetStream consumer.
