@@ -1278,7 +1278,6 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 	}
 
 	r := o.r.(net.Conn)
-	fmt.Println("read deadline", o.readTimeout)
 	r.SetReadDeadline(readDeadline)
 	n, err = r.Read(p)
 	if err, ok := err.(net.Error); ok && err.Timeout() {

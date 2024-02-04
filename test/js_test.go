@@ -3100,10 +3100,12 @@ func TestAccountInfo(t *testing.T) {
 			`,
 			expected: &nats.AccountInfo{
 				Tier: nats.Tier{
-					Memory:    0,
-					Store:     0,
-					Streams:   0,
-					Consumers: 0,
+					Memory:         0,
+					Store:          0,
+					Streams:        0,
+					Consumers:      0,
+					ReservedMemory: 0,
+					ReservedStore:  0,
 					Limits: nats.AccountLimits{
 						MaxMemory:            -1,
 						MaxStore:             -1,
@@ -3144,10 +3146,12 @@ func TestAccountInfo(t *testing.T) {
 			`,
 			expected: &nats.AccountInfo{
 				Tier: nats.Tier{
-					Memory:    0,
-					Store:     0,
-					Streams:   0,
-					Consumers: 0,
+					Memory:         0,
+					Store:          0,
+					Streams:        0,
+					Consumers:      0,
+					ReservedMemory: 0,
+					ReservedStore:  0,
 					Limits: nats.AccountLimits{
 						MaxMemory:            67108864,
 						MaxStore:             33554432,
@@ -3209,7 +3213,7 @@ func TestAccountInfo(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Account info does not match; expected: %+v; got: %+v", test.expected, info)
 			}
 			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", MaxBytes: 1024})
 			if err != nil {
@@ -3229,9 +3233,12 @@ func TestAccountInfo(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			// ignore reserved store in comparison since this is dynamically
+			// assigned by the server
+			info.ReservedStore = test.expected.ReservedStore
 
 			if !reflect.DeepEqual(test.expected, info) {
-				t.Fatalf("Account info does not match; expected: %v; got: %v", test.expected, info)
+				t.Fatalf("Account info does not match; expected: %+v; got: %+v", test.expected, info)
 			}
 		})
 	}

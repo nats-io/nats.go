@@ -75,6 +75,15 @@ type (
 		// Term tells the server to not redeliver this message, regardless of
 		// the value of MaxDeliver.
 		Term() error
+
+		// TermWithReason tells the server to not redeliver this message, regardless of
+		// the value of MaxDeliver. The provided reason will be included in JetStream
+		// advisory event sent by the server.
+		//
+		// Note: This will only work with JetStream servers >= 2.10.4.
+		// For older servers, TermWithReason will be ignored by the server and the message
+		// will not be terminated.
+		TermWithReason(reason string) error
 	}
 
 	// MsgMetadata is the JetStream metadata associated with received messages.
@@ -123,7 +132,8 @@ type (
 	}
 
 	ackOpts struct {
-		nakDelay time.Duration
+		nakDelay   time.Duration
+		termReason string
 	}
 
 	ackType []byte
@@ -305,6 +315,17 @@ func (m *jetStreamMsg) Term() error {
 	return m.ackReply(context.Background(), ackTerm, false, ackOpts{})
 }
 
+// TermWithReason tells the server to not redeliver this message, regardless of
+// the value of MaxDeliver. The provided reason will be included in JetStream
+// advisory event sent by the server.
+//
+// Note: This will only work with JetStream servers >= 2.10.4.
+// For older servers, TermWithReason will be ignored by the server and the message
+// will not be terminated.
+func (m *jetStreamMsg) TermWithReason(reason string) error {
+	return m.ackReply(context.Background(), ackTerm, false, ackOpts{termReason: reason})
+}
+
 func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool, opts ackOpts) error {
 	err := m.checkReply()
 	if err != nil {
@@ -329,6 +350,8 @@ func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool,
 	var body []byte
 	if opts.nakDelay > 0 {
 		body = []byte(fmt.Sprintf("%s {\"delay\": %d}", ackType, opts.nakDelay.Nanoseconds()))
+	} else if opts.termReason != "" {
+		body = []byte(fmt.Sprintf("%s %s", ackType, opts.termReason))
 	} else {
 		body = ackType
 	}
