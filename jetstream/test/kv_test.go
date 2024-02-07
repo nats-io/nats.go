@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -111,6 +111,69 @@ func TestKeyValueBasics(t *testing.T) {
 	if si == nil {
 		t.Fatalf("StreamInfo not received")
 	}
+}
+
+func TestCreateKeyValue(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// invalid bucket name
+	_, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST.", Description: "Test KV"})
+	expectErr(t, err, jetstream.ErrInvalidBucketName)
+
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "Test KV"})
+	expectOk(t, err)
+
+	// Check that we can't overwrite existing bucket.
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "New KV"})
+	expectErr(t, err, jetstream.ErrBucketExists)
+
+	// assert that we're backwards compatible
+	expectErr(t, err, jetstream.ErrStreamNameAlreadyInUse)
+}
+
+func TestUpdateKeyValue(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// cannot update a non-existing bucket
+	_, err := js.UpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "Test KV"})
+	expectErr(t, err, jetstream.ErrBucketNotFound)
+
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "Test KV"})
+	expectOk(t, err)
+
+	// update the bucket
+	_, err = js.UpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "New KV"})
+	expectOk(t, err)
+}
+
+func TestCreateOrUpdateKeyValue(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// invalid bucket name
+	_, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST.", Description: "Test KV"})
+	expectErr(t, err, jetstream.ErrInvalidBucketName)
+
+	_, err = js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "Test KV"})
+	expectOk(t, err)
+
+	// update the bucket
+	_, err = js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", Description: "New KV"})
+	expectOk(t, err)
 }
 
 func TestKeyValueHistory(t *testing.T) {
@@ -565,8 +628,15 @@ func TestKeyValueDeleteStore(t *testing.T) {
 	err = js.DeleteKeyValue(ctx, "WATCH")
 	expectOk(t, err)
 
+	// delete again should fail
+	err = js.DeleteKeyValue(ctx, "WATCH")
+	expectErr(t, err, jetstream.ErrBucketNotFound)
+
+	// check that we're backwards compatible
+	expectErr(t, err, jetstream.ErrStreamNotFound)
+
 	_, err = js.KeyValue(ctx, "WATCH")
-	expectErr(t, err)
+	expectErr(t, err, jetstream.ErrBucketNotFound)
 }
 
 func TestKeyValueDeleteVsPurge(t *testing.T) {
@@ -1474,7 +1544,7 @@ func expectErr(t *testing.T, err error, expected ...error) {
 		return
 	}
 	for _, e := range expected {
-		if err == e || strings.Contains(e.Error(), err.Error()) {
+		if errors.Is(err, e) {
 			return
 		}
 	}
