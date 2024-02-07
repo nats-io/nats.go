@@ -52,6 +52,12 @@ type (
 		// defaults to 30 seconds and can be configured using FetchMaxWait
 		// option.
 		//
+		// By default, Fetch uses a 5s idle heartbeat for requests longer than
+		// 10 seconds. For shorter requests, the idle heartbeat is disabled.
+		// This can be configured using FetchHeartbeat option. If a client does
+		// not receive a heartbeat message from a stream for more than 2 times
+		// the idle heartbeat setting, Fetch will return [ErrNoHeartbeat].
+		//
 		// Fetch is non-blocking and returns MessageBatch, exposing a channel
 		// for delivered messages.
 		//
@@ -65,6 +71,12 @@ type (
 		// timeout defaults to 30 seconds and can be configured using
 		// FetchMaxWait option.
 		//
+		// By default, FetchBytes uses a 5s idle heartbeat for requests longer than
+		// 10 seconds. For shorter requests, the idle heartbeat is disabled.
+		// This can be configured using FetchHeartbeat option. If a client does
+		// not receive a heartbeat message from a stream for more than 2 times
+		// the idle heartbeat setting, Fetch will return ErrNoHeartbeat.
+		//
 		// FetchBytes is non-blocking and returns MessageBatch, exposing a channel
 		// for delivered messages.
 		//
@@ -75,9 +87,7 @@ type (
 		// FetchNoWait is used to retrieve up to a provided number of messages
 		// from a stream. Unlike Fetch, FetchNoWait will only deliver messages
 		// that are currently available in the stream and will not wait for new
-		// messages to arrive, even if batch size is not met. FetchNoWait
-		// timeout defaults to 30 seconds and can be configured using
-		// FetchMaxWait option.
+		// messages to arrive, even if batch size is not met.
 		//
 		// FetchNoWait is non-blocking and returns MessageBatch, exposing a
 		// channel for delivered messages.

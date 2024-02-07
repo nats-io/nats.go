@@ -260,12 +260,32 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 }
 
 // FetchMaxWait sets custom timeout for fetching predefined batch of messages.
+//
+// If not provided, a default of 30 seconds will be used.
 func FetchMaxWait(timeout time.Duration) FetchOpt {
 	return func(req *pullRequest) error {
 		if timeout <= 0 {
 			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
 		}
 		req.Expires = timeout
+		return nil
+	}
+}
+
+// FetchHeartbeat sets custom heartbeat for individual fetch request. If a
+// client does not receive a heartbeat message from a stream for more than 2
+// times the idle heartbeat setting, Fetch will return [ErrNoHeartbeat].
+//
+// Heartbeat value has to be lower than FetchMaxWait / 2.
+//
+// If not provided, heartbeat will is set to 5s for requests with FetchMaxWait > 30s
+// and disabled otherwise.
+func FetchHeartbeat(hb time.Duration) FetchOpt {
+	return func(req *pullRequest) error {
+		if hb <= 0 {
+			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
+		}
+		req.Heartbeat = hb
 		return nil
 	}
 }
