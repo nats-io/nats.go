@@ -384,7 +384,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		case <-time.After(obs.js.opts.wait):
 		}
 		if err := obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj}); err != nil {
-			return fmt.Errorf("could not cleanup bucket after erronous put operation: %w", err)
+			return fmt.Errorf("could not cleanup bucket after erroneous put operation: %w", err)
 		}
 		return nil
 	}

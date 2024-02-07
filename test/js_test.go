@@ -8622,7 +8622,7 @@ func TestJetStreamMsgSubjectRewrite(t *testing.T) {
 		t.Fatalf("Subject should be %q, got %q", "foo", msg.Subject)
 	}
 	if string(msg.Data) != "msg" {
-		t.Fatalf("Unexepcted data: %q", msg.Data)
+		t.Fatalf("Unexpected data: %q", msg.Data)
 	}
 }
 

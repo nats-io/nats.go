@@ -123,7 +123,7 @@ type (
 		//
 		// If set to true, publish methods from the JetStream client will not
 		// work as expected, since they rely on acknowledgements. Core NATS
-		// publish methods should be used instead. Note tha this will make
+		// publish methods should be used instead. Note that this will make
 		// message delivery less reliable.
 		NoAck bool `json:"no_ack,omitempty"`
 

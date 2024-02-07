@@ -2890,7 +2890,7 @@ func TestTLSHandshakeFirst(t *testing.T) {
 	tlsConf.ServerName = "localhost"
 
 	// Start a mockup server that will do the TLS handshake first
-	// and then send the INFO protcol.
+	// and then send the INFO protocol.
 	l, e := net.Listen("tcp", ":0")
 	if e != nil {
 		t.Fatal("Could not listen on an ephemeral port")

@@ -612,7 +612,7 @@ func ExampleSubOpt() {
 		nats.MaxDeliver(1),
 		// Activate Flow control algorithm from the server.
 		nats.EnableFlowControl(),
-		// Track heartbeats from the server fro missed sequences.
+		// Track heartbeats from the server for missed sequences.
 		nats.IdleHeartbeat(500*time.Millisecond),
 	)
 
