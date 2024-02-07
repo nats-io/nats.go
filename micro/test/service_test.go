@@ -181,7 +181,7 @@ func TestServiceBasics(t *testing.T) {
 
 	// Services should process 50 requests total
 	if requestsNum != 50 {
-		t.Fatalf("Expected a total fo 50 requests processed, got: %d", requestsNum)
+		t.Fatalf("Expected a total of 50 requests processed, got: %d", requestsNum)
 	}
 	// Reset stats for a service
 	svcs[0].Reset()

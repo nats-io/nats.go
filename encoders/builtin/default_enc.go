@@ -24,7 +24,7 @@ import (
 // DefaultEncoder implementation for EncodedConn.
 // This encoder will leave []byte and string untouched, but will attempt to
 // turn numbers into appropriate strings that can be decoded. It will also
-// propely encoded and decode bools. If will encode a struct, but if you want
+// properly encoded and decode bools. If will encode a struct, but if you want
 // to properly handle structures you should use JsonEncoder.
 type DefaultEncoder struct {
 	// Empty
