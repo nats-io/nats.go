@@ -116,6 +116,7 @@ type (
 		Storage     StorageType   `json:"storage,omitempty"`
 		Replicas    int           `json:"num_replicas,omitempty"`
 		Placement   *Placement    `json:"placement,omitempty"`
+		Compression bool          `json:"compression,omitempty"`
 
 		// Bucket-specific metadata
 		// NOTE: Metadata requires nats-server v2.10.0+
@@ -151,6 +152,8 @@ type (
 		BackingStore() string
 		// Metadata is the user supplied metadata for the bucket
 		Metadata() map[string]string
+		// IsCompressed indicates if the data is compressed on disk
+		IsCompressed() bool
 	}
 
 	// ObjectMetaOptions
@@ -271,7 +274,10 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 	if maxBytes == 0 {
 		maxBytes = -1
 	}
-
+	var compression StoreCompression
+	if cfg.Compression {
+		compression = S2Compression
+	}
 	scfg := StreamConfig{
 		Name:        fmt.Sprintf(objNameTmpl, name),
 		Description: cfg.Description,
@@ -285,6 +291,7 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 		AllowRollup: true,
 		AllowDirect: true,
 		Metadata:    cfg.Metadata,
+		Compression: compression,
 	}
 
 	// Create our stream.
@@ -1100,6 +1107,9 @@ func (s *ObjectBucketStatus) Metadata() map[string]string { return s.nfo.Config.
 
 // StreamInfo is the stream info retrieved to create the status
 func (s *ObjectBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
+
+// IsCompressed indicates if the data is compressed on disk
+func (s *ObjectBucketStatus) IsCompressed() bool { return s.nfo.Config.Compression != NoCompression }
 
 // Status retrieves run-time status about a bucket
 func (obs *obs) Status(ctx context.Context) (ObjectStoreStatus, error) {
