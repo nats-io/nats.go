@@ -35,180 +35,410 @@ import (
 )
 
 type (
-	// ObjectStoreManager creates, loads and deletes Object Stores
+	// ObjectStoreManager is used to manage object stores. It provides methods
+	// CRUD operations on object stores.
 	ObjectStoreManager interface {
-		// ObjectStore will look up and bind to an existing object store instance.
+		// ObjectStore will look up and bind to an existing object store
+		// instance.
+		//
+		// If the object store with given name does not exist, ErrBucketNotFound
+		// will be returned.
 		ObjectStore(ctx context.Context, bucket string) (ObjectStore, error)
-		// CreateObjectStore will create an object store.
+
+		// CreateObjectStore will create a new object store with the given
+		// configuration.
+		//
+		// If the object store with given name already exists, ErrBucketExists
+		// will be returned.
 		CreateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
-		// UpdateObjectStore will update an existing object store.
+
+		// UpdateObjectStore will update an existing object store with the given
+		// configuration.
+		//
+		// If the object store with given name does not exist, ErrBucketNotFound
+		// will be returned.
 		UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
-		// CreateOrUpdateObjectStore will create or update an object store.
+
+		// CreateOrUpdateObjectStore will create a new object store with the given
+		// configuration if it does not exist, or update an existing object store
+		// with the given configuration.
 		CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
-		// DeleteObjectStore will delete the underlying stream for the named object.
+
+		// DeleteObjectStore will delete the provided object store.
+		//
+		// If the object store with given name does not exist, ErrBucketNotFound
+		// will be returned.
 		DeleteObjectStore(ctx context.Context, bucket string) error
-		// ObjectStoreNames is used to retrieve a list of bucket names
+
+		// ObjectStoreNames is used to retrieve a list of bucket names.
+		// It returns an ObjectStoreNamesLister exposing a channel to receive
+		// the names of the object stores.
+		//
+		// The lister will always close the channel when done (either all names
+		// have been read or an error occurred) and therefore can be used in a
+		// for-range loop.
 		ObjectStoreNames(ctx context.Context) ObjectStoreNamesLister
-		// ObjectStores is used to retrieve a list of bucket statuses
+
+		// ObjectStores is used to retrieve a list of bucket statuses.
+		// It returns an ObjectStoresLister exposing a channel to receive
+		// the statuses of the object stores.
+		//
+		// The lister will always close the channel when done (either all statuses
+		// have been read or an error occurred) and therefore can be used in a
+		// for-range loop.
 		ObjectStores(ctx context.Context) ObjectStoresLister
 	}
 
-	// ObjectStore is a blob store capable of storing large objects efficiently in
-	// JetStream streams
+	// ObjectStore contains methods to operate on an object store.
+	// Using the ObjectStore interface, it is possible to:
+	//
+	// - Perform CRUD operations on objects (Get, Put, Delete).
+	//   Get and put expose convenience methods to work with
+	//   byte slices, strings and files, in addition to streaming [io.Reader]
+	// - Get information about an object without retrieving it.
+	// - Update the metadata of an object.
+	// - Add links to other objects or object stores.
+	// - Watch for updates to a store
+	// - List information about objects in a store
+	// - Retrieve status and configuration of an object store.
 	ObjectStore interface {
-		// Put will place the contents from the reader into a new object.
+		// Put will place the contents from the reader into a new object. If the
+		// object already exists, it will be overwritten. The object name is
+		// required and is taken from the ObjectMeta.Name field.
+		//
+		// The reader will be read until EOF. ObjectInfo will be returned, containing
+		// the object's metadata, digest and instance information.
 		Put(ctx context.Context, obj ObjectMeta, reader io.Reader) (*ObjectInfo, error)
-		// Get will pull the named object from the object store.
+
+		// PutBytes is convenience function to put a byte slice into this object
+		// store under the given name.
+		//
+		// ObjectInfo will be returned, containing the object's metadata, digest
+		// and instance information.
+		PutBytes(ctx context.Context, name string, data []byte) (*ObjectInfo, error)
+
+		// PutString is convenience function to put a string into this object
+		// store under the given name.
+		//
+		// ObjectInfo will be returned, containing the object's metadata, digest
+		// and instance information.
+		PutString(ctx context.Context, name string, data string) (*ObjectInfo, error)
+
+		// PutFile is convenience function to put a file contents into this
+		// object store. The name of the object will be the path of the file.
+		//
+		// ObjectInfo will be returned, containing the object's metadata, digest
+		// and instance information.
+		PutFile(ctx context.Context, file string) (*ObjectInfo, error)
+
+		// Get will pull the named object from the object store. If the object
+		// does not exist, ErrObjectNotFound will be returned.
+		//
+		// The returned ObjectResult will contain the object's metadata and a
+		// reader to read the object's contents. The reader will be closed when
+		// all data has been read or an error occurs.
+		//
+		// A GetObjectShowDeleted option can be supplied to return an object
+		// even if it was marked as deleted.
 		Get(ctx context.Context, name string, opts ...GetObjectOpt) (ObjectResult, error)
 
-		// PutBytes is convenience function to put a byte slice into this object store.
-		PutBytes(ctx context.Context, name string, data []byte) (*ObjectInfo, error)
-		// GetBytes is a convenience function to pull an object from this object store and return it as a byte slice.
+		// GetBytes is a convenience function to pull an object from this object
+		// store and return it as a byte slice.
+		//
+		// If the object does not exist, ErrObjectNotFound will be returned.
+		//
+		// A GetObjectShowDeleted option can be supplied to return an object
+		// even if it was marked as deleted.
 		GetBytes(ctx context.Context, name string, opts ...GetObjectOpt) ([]byte, error)
 
-		// PutString is convenience function to put a string into this object store.
-		PutString(ctx context.Context, name string, data string) (*ObjectInfo, error)
-		// GetString is a convenience function to pull an object from this object store and return it as a string.
+		// GetString is a convenience function to pull an object from this
+		// object store and return it as a string.
+		//
+		// If the object does not exist, ErrObjectNotFound will be returned.
+		//
+		// A GetObjectShowDeleted option can be supplied to return an object
+		// even if it was marked as deleted.
 		GetString(ctx context.Context, name string, opts ...GetObjectOpt) (string, error)
 
-		// PutFile is convenience function to put a file into this object store.
-		PutFile(ctx context.Context, file string) (*ObjectInfo, error)
-		// GetFile is a convenience function to pull an object from this object store and place it in a file.
+		// GetFile is a convenience function to pull an object from this object
+		// store and place it in a file. If the file already exists, it will be
+		// overwritten, otherwise it will be created.
+		//
+		// If the object does not exist, ErrObjectNotFound will be returned.
+		// A GetObjectShowDeleted option can be supplied to return an object
+		// even if it was marked as deleted.
 		GetFile(ctx context.Context, name, file string, opts ...GetObjectOpt) error
 
-		// GetInfo will retrieve the current information for the object.
+		// GetInfo will retrieve the current information for the object, containing
+		// the object's metadata and instance information.
+		//
+		// If the object does not exist, ErrObjectNotFound will be returned.
+		//
+		// A GetObjectInfoShowDeleted option can be supplied to return an object
+		// even if it was marked as deleted.
 		GetInfo(ctx context.Context, name string, opts ...GetObjectInfoOpt) (*ObjectInfo, error)
+
 		// UpdateMeta will update the metadata for the object.
+		//
+		// If the object does not exist, ErrUpdateMetaDeleted will be returned.
+		// If the new name is different from the old name, and an object with the
+		// new name already exists, ErrObjectAlreadyExists will be returned.
 		UpdateMeta(ctx context.Context, name string, meta ObjectMeta) error
 
-		// Delete will delete the named object.
+		// Delete will delete the named object from the object store. If the object
+		// does not exist, ErrObjectNotFound will be returned. If the object is
+		// already deleted, no error will be returned.
+		//
+		// All chunks for the object will be purged, and the object will be marked
+		// as deleted.
 		Delete(ctx context.Context, name string) error
 
-		// AddLink will add a link to another object.
+		// AddLink will add a link to another object. A link is a reference to
+		// another object. The provided name is the name of the link object.
+		// The provided ObjectInfo is the info of the object being linked to.
+		//
+		// If an object with given name already exists, ErrObjectAlreadyExists
+		// will be returned.
+		// If object being linked to is deleted, ErrNoLinkToDeleted will be
+		// returned.
+		// If the provided object is a link, ErrNoLinkToLink will be returned.
+		// If the provided object is nil or the name is empty, ErrObjectRequired
+		// will be returned.
 		AddLink(ctx context.Context, name string, obj *ObjectInfo) (*ObjectInfo, error)
 
-		// AddBucketLink will add a link to another object store.
+		// AddBucketLink will add a link to another object store. A link is a
+		// reference to another object store. The provided name is the name of
+		// the link object.
+		// The provided ObjectStore is the object store being linked to.
+		//
+		// If an object with given name already exists, ErrObjectAlreadyExists
+		// will be returned.
+		// If the provided object store is nil ErrBucketRequired will be returned.
 		AddBucketLink(ctx context.Context, name string, bucket ObjectStore) (*ObjectInfo, error)
 
 		// Seal will seal the object store, no further modifications will be allowed.
 		Seal(ctx context.Context) error
 
-		// Watch for changes in the underlying store and receive meta information updates.
+		// Watch for any updates to objects in the store. By default, the watcher will send the latest
+		// info for each object and all future updates. Watch will send a nil
+		// entry when it has received all initial values. There are a few ways
+		// to configure the watcher:
+		//
+		// - IncludeHistory will have the watcher send all historical information
+		// for each object.
+		// - IgnoreDeletes will have the watcher not pass any objects with
+		// delete markers.
+		// - UpdatesOnly will have the watcher only pass updates on objects
+		// (without latest info when started).
 		Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, error)
 
-		// List will list all the objects in this store.
+		// List will list information about objects in the store.
+		//
+		// If the object store is empty, ErrNoObjectsFound will be returned.
 		List(ctx context.Context, opts ...ListObjectsOpt) ([]*ObjectInfo, error)
 
-		// Status retrieves run-time status about the backing store of the bucket.
+		// Status retrieves the status and configuration of the bucket.
 		Status(ctx context.Context) (ObjectStoreStatus, error)
 	}
 
-	// ObjectWatcher is what is returned when doing a watch.
+	// ObjectWatcher is what is returned when doing a watch. It can be used to
+	// retrieve updates to objects in a bucket. If not using UpdatesOnly option,
+	// it will also send the latest value for each key. After all initial values
+	// have been sent, a nil entry will be sent. Stop can be used to stop the
+	// watcher and close the underlying channel. Watcher will not close the
+	// channel until Stop is called or connection is closed.
 	ObjectWatcher interface {
-		// Updates returns a channel to read any updates to entries.
 		Updates() <-chan *ObjectInfo
-		// Stop will stop this watcher.
 		Stop() error
 	}
 
-	// ObjectStoreConfig is the config for the object store.
+	// ObjectStoreConfig is the configuration for the object store.
 	ObjectStoreConfig struct {
-		Bucket      string        `json:"bucket"`
-		Description string        `json:"description,omitempty"`
-		TTL         time.Duration `json:"max_age,omitempty"`
-		MaxBytes    int64         `json:"max_bytes,omitempty"`
-		Storage     StorageType   `json:"storage,omitempty"`
-		Replicas    int           `json:"num_replicas,omitempty"`
-		Placement   *Placement    `json:"placement,omitempty"`
-		Compression bool          `json:"compression,omitempty"`
+		// Bucket is the name of the object store. Bucket name has to be
+		// unique and can only contain alphanumeric characters, dashes, and
+		// underscores.
+		Bucket string `json:"bucket"`
+
+		// Description is an optional description for the object store.
+		Description string `json:"description,omitempty"`
+
+		// TTL is the maximum age of objects in the store. If an object is not
+		// updated within this time, it will be removed from the store.
+		// By default, objects do not expire.
+		TTL time.Duration `json:"max_age,omitempty"`
+
+		// MaxBytes is the maximum size of the object store. If not specified,
+		// the default is -1 (unlimited).
+		MaxBytes int64 `json:"max_bytes,omitempty"`
+
+		// Storage is the type of storage to use for the object store. If not
+		// specified, the default is FileStorage.
+		Storage StorageType `json:"storage,omitempty"`
+
+		// Replicas is the number of replicas to keep for the object store in
+		// clustered jetstream. Defaults to 1, maximum is 5.
+		Replicas int `json:"num_replicas,omitempty"`
+
+		// Placement is used to declare where the object store should be placed via
+		// tags and/or an explicit cluster name.
+		Placement *Placement `json:"placement,omitempty"`
+
+		// Compression sets the underlying stream compression.
+		// NOTE: Compression is supported for nats-server 2.10.0+
+		Compression bool `json:"compression,omitempty"`
 
 		// Bucket-specific metadata
 		// NOTE: Metadata requires nats-server v2.10.0+
 		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
+	// ObjectStoresLister is used to retrieve a list of object stores. It returns
+	// a channel to read the bucket store statuses from. The lister will always
+	// close the channel when done (either all stores have been retrieved or an
+	// error occurred) and therefore can be used in range loops. Stop can be
+	// used to stop the lister when not all object stores have been read.
 	ObjectStoresLister interface {
 		Status() <-chan ObjectStoreStatus
 		Error() error
 	}
 
+	// ObjectStoreNamesLister is used to retrieve a list of object store names.
+	// It returns a channel to read the bucket names from. The lister will
+	// always close the channel when done (either all stores have been retrieved
+	// or an error occurred) and therefore can be used in range loops. Stop can
+	// be used to stop the lister when not all bucket names have been read.
 	ObjectStoreNamesLister interface {
 		Name() <-chan string
 		Error() error
 	}
 
+	// ObjectStoreStatus is run-time status about a bucket.
 	ObjectStoreStatus interface {
-		// Bucket is the name of the bucket
+		// Bucket returns the name of the object store.
 		Bucket() string
-		// Description is the description supplied when creating the bucket
+
+		// Description is the description supplied when creating the bucket.
 		Description() string
-		// TTL indicates how long objects are kept in the bucket
+
+		// TTL indicates how long objects are kept in the bucket.
 		TTL() time.Duration
-		// Storage indicates the underlying JetStream storage technology used to store data
+
+		// Storage indicates the underlying JetStream storage technology used to
+		// store data.
 		Storage() StorageType
-		// Replicas indicates how many storage replicas are kept for the data in the bucket
+
+		// Replicas indicates how many storage replicas are kept for the data in
+		// the bucket.
 		Replicas() int
-		// Sealed indicates the stream is sealed and cannot be modified in any way
+
+		// Sealed indicates the stream is sealed and cannot be modified in any
+		// way.
 		Sealed() bool
-		// Size is the combined size of all data in the bucket including metadata, in bytes
+
+		// Size is the combined size of all data in the bucket including
+		// metadata, in bytes.
 		Size() uint64
-		// BackingStore provides details about the underlying storage
+
+		// BackingStore indicates what technology is used for storage of the
+		// bucket. Currently only JetStream is supported.
 		BackingStore() string
-		// Metadata is the user supplied metadata for the bucket
+
+		// Metadata is the user supplied metadata for the bucket.
 		Metadata() map[string]string
-		// IsCompressed indicates if the data is compressed on disk
+
+		// IsCompressed indicates if the data is compressed on disk.
 		IsCompressed() bool
 	}
 
-	// ObjectMetaOptions
+	// ObjectMetaOptions is used to set additional options when creating an object.
 	ObjectMetaOptions struct {
-		Link      *ObjectLink `json:"link,omitempty"`
-		ChunkSize uint32      `json:"max_chunk_size,omitempty"`
+		// Link contains information about a link to another object or object store.
+		// It should not be set manually, but rather by using the AddLink or
+		// AddBucketLink methods.
+		Link *ObjectLink `json:"link,omitempty"`
+
+		// ChunkSize is the maximum size of each chunk in bytes. If not specified,
+		// the default is 128k.
+		ChunkSize uint32 `json:"max_chunk_size,omitempty"`
 	}
 
 	// ObjectMeta is high level information about an object.
 	ObjectMeta struct {
-		Name        string            `json:"name"`
-		Description string            `json:"description,omitempty"`
-		Headers     nats.Header       `json:"headers,omitempty"`
-		Metadata    map[string]string `json:"metadata,omitempty"`
+		// Name is the name of the object. The name is required when adding an
+		// object and has to be unique within the object store.
+		Name string `json:"name"`
 
-		// Additional options.
+		// Description is an optional description for the object.
+		Description string `json:"description,omitempty"`
+
+		// Headers is an optional set of user-defined headers for the object.
+		Headers nats.Header `json:"headers,omitempty"`
+
+		// Metadata is the user supplied metadata for the object.
+		Metadata map[string]string `json:"metadata,omitempty"`
+
+		// Additional options for the object.
 		Opts *ObjectMetaOptions `json:"options,omitempty"`
 	}
 
-	// ObjectInfo is meta plus instance information.
+	// ObjectInfo contains ObjectMeta and additional information about an
+	// object.
 	ObjectInfo struct {
+		// ObjectMeta contains high level information about the object.
 		ObjectMeta
-		Bucket  string    `json:"bucket"`
-		NUID    string    `json:"nuid"`
-		Size    uint64    `json:"size"`
+
+		// Bucket is the name of the object store.
+		Bucket string `json:"bucket"`
+
+		// NUID is the unique identifier for the object set when putting the
+		// object into the store.
+		NUID string `json:"nuid"`
+
+		// Size is the size of the object in bytes. It only includes the size of
+		// the object itself, not the metadata.
+		Size uint64 `json:"size"`
+
+		// ModTime is the last modification time of the object.
 		ModTime time.Time `json:"mtime"`
-		Chunks  uint32    `json:"chunks"`
-		Digest  string    `json:"digest,omitempty"`
-		Deleted bool      `json:"deleted,omitempty"`
+
+		// Chunks is the number of chunks the object is split into. Maximum size
+		// of each chunk can be specified in ObjectMetaOptions.
+		Chunks uint32 `json:"chunks"`
+
+		// Digest is the SHA-256 digest of the object. It is used to verify the
+		// integrity of the object.
+		Digest string `json:"digest,omitempty"`
+
+		// Deleted indicates if the object is marked as deleted.
+		Deleted bool `json:"deleted,omitempty"`
 	}
 
 	// ObjectLink is used to embed links to other buckets and objects.
 	ObjectLink struct {
-		// Bucket is the name of the other object store.
+		// Bucket is the name of the object store the link is pointing to.
 		Bucket string `json:"bucket"`
+
 		// Name can be used to link to a single object.
 		// If empty means this is a link to the whole store, like a directory.
 		Name string `json:"name,omitempty"`
 	}
 
-	// ObjectResult will return the underlying stream info and also be an io.ReadCloser.
+	// ObjectResult will return the object info and a reader to read the object's
+	// contents. The reader will be closed when all data has been read or an
+	// error occurs.
 	ObjectResult interface {
 		io.ReadCloser
 		Info() (*ObjectInfo, error)
 		Error() error
 	}
 
+	// GetObjectOpt is used to set additional options when getting an object.
 	GetObjectOpt func(opts *getObjectOpts) error
 
+	// GetObjectInfoOpt is used to set additional options when getting object info.
 	GetObjectInfoOpt func(opts *getObjectInfoOpts) error
 
+	// ListObjectsOpt is used to set additional options when listing objects.
 	ListObjectsOpt func(opts *listObjectOpts) error
 
 	getObjectOpts struct {

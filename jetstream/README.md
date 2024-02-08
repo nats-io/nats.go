@@ -797,6 +797,193 @@ fmt.Println(status.Bytes()) // prints the size of all values in bytes
 
 ## Object Store
 
+JetStream Object Stores offer a straightforward method for storing large objects
+within JetStream. These stores are backed by a specially configured streams,
+designed to efficiently and compactly store these objects.
+
+The Object Store, also known as a bucket, enables the execution of various
+operations:
+
+- create/update an object
+- get an object
+- delete an object
+- list all objects in a bucket
+- watch for changes on objects in a bucket
+- create links to other objects or other buckets
+
+### Basic usage of Object Store
+
+The most basic usage of Object bucket is to create or retrieve a bucket and
+perform basic CRUD operations on objects.
+
+```go
+js, _ := jetstream.New(nc)
+ctx := context.Background()
+
+// Create a new bucket. Bucket name is required and has to be unique within a JetStream account.
+os, _ := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "configs"})
+
+config1 := bytes.NewBufferString("first config")
+// Put an object in a bucket. Put expects an object metadata and a reader
+// to read the object data from.
+os.Put(ctx, jetstream.ObjectMeta{Name: "config-1"}, config1)
+
+// Objects can also be created using various helper methods
+
+// 1. As raw strings
+os.PutString(ctx, "config-2", "second config")
+
+// 2. As raw bytes
+os.PutBytes(ctx, "config-3", []byte("third config"))
+
+// 3. As a file
+os.PutFile(ctx, "config-4.txt")
+
+// Get an object
+// Get returns a reader and object info
+// Similar to Put, Get can also be used with helper methods
+// to retrieve object data as a string, bytes or to save it to a file
+object, _ := os.Get(ctx, "config-1")
+data, _ := io.ReadAll(object)
+info, _ := object.Info()
+
+// Prints `configs.config-1 -> "first config"`
+fmt.Printf("%s.%s -> %q\n", info.Bucket, info.Name, string(data))
+
+// Delete an object.
+// Delete will remove object data from stream, but object metadata will be kept
+// with a delete marker.
+os.Delete(ctx, "config-1")
+
+// getting a deleted object will return an error
+_, err := os.Get(ctx, "config-1")
+fmt.Println(err) // prints `nats: object not found`
+
+// A bucket can be deleted once it is no longer needed
+js.DeleteObjectStore(ctx, "configs")
+```
+
+### Watching for changes on a store
+
+Object Stores support Watchers, which can be used to watch for changes on
+objects in a given bucket. Watcher will receive a notification on a channel when
+a change occurs. By default, watcher will return latest information for all
+objects in a bucket. After sending all initial values, watcher will send nil on
+the channel to signal that all initial values have been sent and it will start
+sending updates when changes occur.
+
+>__NOTE:__ Watchers do not retrieve values for objects, only metadata (containing
+>information such as object name, bucket name, object size etc.). If object data
+>is required, `Get` method should be used.
+
+Watcher supports several configuration options:
+
+- `IncludeHistory` will have the watcher send historical updates for each
+  object.
+- `IgnoreDeletes` will have the watcher not pass any objects with delete
+  markers.
+- `UpdatesOnly` will have the watcher only pass updates on objects (without
+  objects already present when starting).
+
+```go
+js, _ := jetstream.New(nc)
+ctx := context.Background()
+os, _ := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "configs"})
+
+os.PutString(ctx, "config-1", "first config")
+
+// By default, watcher will return most recent values for all objects in a bucket.
+// Watcher can be configured to only return updates by using jetstream.UpdatesOnly() option.
+watcher, _ := os.Watch(ctx)
+defer watcher.Stop()
+
+// create a second object
+os.PutString(ctx, "config-2", "second config")
+
+// update metadata of the first object
+os.UpdateMeta(ctx, "config-1", jetstream.ObjectMeta{Name: "config-1", Description: "updated config"})
+
+// First, the watcher sends most recent values for all matching objects.
+// In this case, it will send a single entry for `config-1`.
+object := <-watcher.Updates()
+// Prints `configs.config-1 -> ""`
+fmt.Printf("%s.%s -> %q\n", object.Bucket, object.Name, object.Description)
+
+// After all current values have been sent, watcher will send nil on the channel.
+object = <-watcher.Updates()
+if object != nil {
+    fmt.Println("Unexpected object received")
+}
+
+// After that, watcher will send updates when changes occur
+// In this case, it will send an entry for `config-2` and `config-1`.
+object = <-watcher.Updates()
+// Prints `configs.config-2 -> ""`
+fmt.Printf("%s.%s -> %q\n", object.Bucket, object.Name, object.Description)
+
+object = <-watcher.Updates()
+// Prints `configs.config-1 -> "updated config"`
+fmt.Printf("%s.%s -> %q\n", object.Bucket, object.Name, object.Description)
+```
+
+### Additional operations on a store
+
+In addition to basic CRUD operations and watching for changes, Object Stores
+support several additional operations:
+
+- `UpdateMeta` for updating object metadata, such as name, description, etc.
+
+```go
+js, _ := jetstream.New(nc)
+ctx := context.Background()
+os, _ := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "configs"})
+
+os.PutString(ctx, "config", "data")
+
+// update metadata of the object to e.g. add a description
+os.UpdateMeta(ctx, "config", jetstream.ObjectMeta{Name: "config", Description: "this is a config"})
+
+// object can be moved under a new name (unless it already exists)
+os.UpdateMeta(ctx, "config", jetstream.ObjectMeta{Name: "config-1", Description: "updated config"})
+```
+
+- `List` for listing information about all objects in a bucket:
+
+```go
+js, _ := jetstream.New(nc)
+ctx := context.Background()
+os, _ := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "configs"})
+
+os.PutString(ctx, "config-1", "cfg1")
+os.PutString(ctx, "config-2", "cfg1")
+os.PutString(ctx, "config-3", "cfg1")
+
+// List will return information about all objects in a bucket
+objects, _ := os.List(ctx)
+
+// Prints all 3 objects
+for _, object := range objects {
+    fmt.Println(object.Name)
+}
+```
+
+- `Status` will return the current status of a bucket
+
+```go
+js, _ := jetstream.New(nc)
+ctx := context.Background()
+os, _ := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "configs"})
+
+os.PutString(ctx, "config-1", "cfg1")
+os.PutString(ctx, "config-2", "cfg1")
+os.PutString(ctx, "config-3", "cfg1")
+
+status, _ := os.Status(ctx)
+
+fmt.Println(status.Bucket()) // prints `configs`
+fmt.Println(status.Size()) // prints the size of the bucket in bytes
+```
+
 ## Examples
 
 You can find more examples of `jetstream` usage [here](https://github.com/nats-io/nats.go/tree/main/examples/jetstream).
