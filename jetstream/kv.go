@@ -526,15 +526,9 @@ func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueCon
 		return nil, err
 	}
 
-	stream, err := js.UpdateStream(ctx, scfg)
+	stream, err := js.CreateOrUpdateStream(ctx, scfg)
 	if err != nil {
-		if !errors.Is(err, ErrStreamNotFound) {
-			return nil, err
-		}
-		stream, err = js.CreateStream(ctx, scfg)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	pushJS, err := js.legacyJetStream()
 	if err != nil {
