@@ -31,16 +31,35 @@ type (
 	// KeyValueManager is used to manage KeyValue stores. It provides methods to
 	// create, delete, and retrieve KeyValue stores.
 	KeyValueManager interface {
-		// KeyValue will lookup and bind to an existing KeyValue store. If the
-		// KeyValue store with given name does not exist, ErrBucketNotFound will
-		// be returned.
+		// KeyValue will lookup and bind to an existing KeyValue store.
+		//
+		// If the KeyValue store with given name does not exist,
+		// ErrBucketNotFound will be returned.
 		KeyValue(ctx context.Context, bucket string) (KeyValue, error)
 
 		// CreateKeyValue will create a KeyValue store with the given
 		// configuration.
+		//
+		// If a KeyValue store with the same name already exists and the
+		// configuration is different, ErrBucketExists will be returned.
 		CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error)
 
+		// UpdateKeyValue will update an existing KeyValue store with the given
+		// configuration.
+		//
+		// If a KeyValue store with the given name does not exist, ErrBucketNotFound
+		// will be returned.
+		UpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error)
+
+		// CreateOrUpdateKeyValue will create a KeyValue store if it does not
+		// exist or update an existing KeyValue store with the given
+		// configuration (if possible).
+		CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error)
+
 		// DeleteKeyValue will delete this KeyValue store.
+		//
+		// If the KeyValue store with given name does not exist,
+		// ErrBucketNotFound will be returned.
 		DeleteKeyValue(ctx context.Context, bucket string) error
 
 		// KeyValueStoreNames is used to retrieve a list of key value store
@@ -457,20 +476,81 @@ func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, err
 	return mapStreamToKVS(js, pushJS, stream), nil
 }
 
-// CreateKeyValue will create a KeyValue store with the following configuration.
 func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
+	scfg, err := js.prepareKeyValueConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := js.CreateStream(ctx, scfg)
+	if err != nil {
+		if errors.Is(err, ErrStreamNameAlreadyInUse) {
+			// errors are joined so that backwards compatibility is retained
+			// and previous checks for ErrStreamNameAlreadyInUse will still work.
+			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketExists, cfg.Bucket), err)
+		}
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToKVS(js, pushJS, stream), nil
+}
+
+func (js *jetStream) UpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
+	scfg, err := js.prepareKeyValueConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := js.UpdateStream(ctx, scfg)
+	if err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			err = fmt.Errorf("%w: %s", ErrBucketNotFound, cfg.Bucket)
+		}
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToKVS(js, pushJS, stream), nil
+}
+
+func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
+	scfg, err := js.prepareKeyValueConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := js.CreateOrUpdateStream(ctx, scfg)
+	if err != nil {
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToKVS(js, pushJS, stream), nil
+}
+
+func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConfig) (StreamConfig, error) {
 	if !validBucketRe.MatchString(cfg.Bucket) {
-		return nil, ErrInvalidBucketName
+		return StreamConfig{}, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(ctx); err != nil {
-		return nil, err
+		return StreamConfig{}, err
 	}
 
 	// Default to 1 for history. Max is 64 for now.
 	history := int64(1)
 	if cfg.History > 0 {
 		if cfg.History > KeyValueMaxHistory {
-			return nil, ErrHistoryTooLarge
+			return StreamConfig{}, ErrHistoryTooLarge
 		}
 		history = int64(cfg.History)
 	}
@@ -551,16 +631,7 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 		scfg.Subjects = []string{fmt.Sprintf(kvSubjectsTmpl, cfg.Bucket)}
 	}
 
-	stream, err := js.CreateStream(ctx, scfg)
-	if err != nil {
-		return nil, err
-	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
-
-	return mapStreamToKVS(js, pushJS, stream), nil
+	return scfg, nil
 }
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
@@ -569,7 +640,13 @@ func (js *jetStream) DeleteKeyValue(ctx context.Context, bucket string) error {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
-	return js.DeleteStream(ctx, stream)
+	if err := js.DeleteStream(ctx, stream); err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketNotFound, bucket), err)
+		}
+		return err
+	}
+	return nil
 }
 
 // KeyValueStoreNames is used to retrieve a list of key value store names

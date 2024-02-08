@@ -67,7 +67,7 @@ const (
 )
 
 var (
-	// API errors
+	// JetStream API errors
 
 	// ErrJetStreamNotEnabled is an error returned when JetStream is not
 	// enabled.
@@ -283,6 +283,10 @@ var (
 	// ErrInvalidKey is returned when attempting to create a key with an invalid
 	// name.
 	ErrInvalidKey JetStreamError = &jsError{message: "invalid key"}
+
+	// ErrBucketExists is returned when attempting to create a bucket that
+	// already exists and has a different configuration.
+	ErrBucketExists JetStreamError = &jsError{message: "bucket name already in use"}
 
 	// ErrBucketNotFound is returned when attempting to access a bucket that
 	// does not exist.
