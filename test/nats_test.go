@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/jwt"
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
@@ -1138,4 +1139,53 @@ func TestInProcessConn(t *testing.T) {
 	if _, err := nc.RTT(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAuthExpiredReconnect(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", TEST_PORT)
+	_, err := nats.Connect(url)
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+	ukp, err := nkeys.FromSeed(uSeed)
+	if err != nil {
+		t.Fatalf("Error creating user key pair: %v", err)
+	}
+	upub, err := ukp.PublicKey()
+	if err != nil {
+		t.Fatalf("Error getting user public key: %v", err)
+	}
+	akp, err := nkeys.FromSeed(aSeed)
+	if err != nil {
+		t.Fatalf("Error creating account key pair: %v", err)
+	}
+
+	jwtCB := func() (string, error) {
+		claims := jwt.NewUserClaims("test")
+		claims.Expires = time.Now().Add(5 * time.Second).Unix()
+		claims.Subject = upub
+		jwt, err := claims.Encode(akp)
+		if err != nil {
+			return "", err
+		}
+		fmt.Println("new JWT:", jwt)
+		return jwt, nil
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, _ := nkeys.FromSeed(uSeed)
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	nc, err := nats.Connect(url, nats.UserJWT(jwtCB, sigCB), nats.ReconnectHandler(func(_ *nats.Conn) {
+		fmt.Println("Reconnected")
+	}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	time.Sleep(1 * time.Minute)
+	nc.Close()
 }
