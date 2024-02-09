@@ -729,17 +729,26 @@ func (s *pullSubscription) Drain() {
 // It will wait up to provided expiry time if not all messages are available.
 func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:   batch,
-		Expires: DefaultExpires,
+		Batch:     batch,
+		Expires:   DefaultExpires,
+		Heartbeat: unset,
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
 			return nil, err
 		}
 	}
-	// for longer pulls, set heartbeat value
-	if req.Expires >= 10*time.Second {
-		req.Heartbeat = 5 * time.Second
+	// if heartbeat was not explicitly set, set it to 5 seconds for longer pulls
+	// and disable it for shorter pulls
+	if req.Heartbeat == unset {
+		if req.Expires >= 10*time.Second {
+			req.Heartbeat = 5 * time.Second
+		} else {
+			req.Heartbeat = 0
+		}
+	}
+	if req.Expires < 2*req.Heartbeat {
+		return nil, fmt.Errorf("%w: expiry time should be at least 2 times the heartbeat", ErrInvalidOption)
 	}
 
 	return p.fetch(req)
@@ -748,26 +757,35 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 // FetchBytes is used to retrieve up to a provided bytes from the stream.
 func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:    1000000,
-		MaxBytes: maxBytes,
-		Expires:  DefaultExpires,
+		Batch:     1000000,
+		MaxBytes:  maxBytes,
+		Expires:   DefaultExpires,
+		Heartbeat: unset,
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
 			return nil, err
 		}
 	}
-	// for longer pulls, set heartbeat value
-	if req.Expires >= 10*time.Second {
-		req.Heartbeat = 5 * time.Second
+	// if heartbeat was not explicitly set, set it to 5 seconds for longer pulls
+	// and disable it for shorter pulls
+	if req.Heartbeat == unset {
+		if req.Expires >= 10*time.Second {
+			req.Heartbeat = 5 * time.Second
+		} else {
+			req.Heartbeat = 0
+		}
+	}
+	if req.Expires < 2*req.Heartbeat {
+		return nil, fmt.Errorf("%w: expiry time should be at least 2 times the heartbeat", ErrInvalidOption)
 	}
 
 	return p.fetch(req)
 }
 
 // FetchNoWait sends a single request to retrieve given number of messages.
-// If there are any messages available at the time of sending request,
-// FetchNoWait will return immediately.
+// FetchNoWait will only return messages that are available at the time of the
+// request. It will not wait for more messages to arrive.
 func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	req := &pullRequest{
 		Batch:  batch,
@@ -842,6 +860,10 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					return
 				}
 				p.Unlock()
+			case err := <-sub.errs:
+				res.err = err
+				res.done = true
+				return
 			case <-time.After(req.Expires + 1*time.Second):
 				res.done = true
 				return

@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -351,6 +351,130 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 		}
 	})
+
+	t.Run("with missing heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		publishTestMsgs(t, nc)
+		// fetch 5 messages, should return normally
+		msgs, err := c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		var i int
+		for range msgs.Messages() {
+			i++
+		}
+		if i != len(testMsgs) {
+			t.Fatalf("Expected 5 messages; got: %d", i)
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+
+		// fetch again, should timeout without any error
+		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		select {
+		case _, ok := <-msgs.Messages():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Expected channel to be closed")
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+
+		// delete the consumer, at this point server should stop sending heartbeats for pull requests
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		select {
+		case _, ok := <-msgs.Messages():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Expected channel to be closed")
+		}
+		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		}
+	})
+
+	t.Run("with invalid heartbeat value", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// default expiry (30s), hb too large
+		_, err = c.Fetch(5, jetstream.FetchHeartbeat(20*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+
+		// custom expiry, hb too large
+		_, err = c.Fetch(5, jetstream.FetchHeartbeat(2*time.Second), jetstream.FetchMaxWait(3*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+
+		// negative heartbeat
+		_, err = c.Fetch(5, jetstream.FetchHeartbeat(-2*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+	})
 }
 
 func TestPullConsumerFetchBytes(t *testing.T) {
@@ -540,6 +664,114 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+	})
+
+	t.Run("with missing heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// fetch again, should timeout without any error
+		msgs, err := c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		select {
+		case _, ok := <-msgs.Messages():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Expected channel to be closed")
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
+		}
+
+		// delete the consumer, at this point server should stop sending heartbeats for pull requests
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+		msgs, err = c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		select {
+		case _, ok := <-msgs.Messages():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Expected channel to be closed")
+		}
+		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		}
+	})
+
+	t.Run("with invalid heartbeat value", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// default expiry (30s), hb too large
+		_, err = c.FetchBytes(5, jetstream.FetchHeartbeat(20*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+
+		// custom expiry, hb too large
+		_, err = c.FetchBytes(5, jetstream.FetchHeartbeat(2*time.Second), jetstream.FetchMaxWait(3*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+
+		// negative heartbeat
+		_, err = c.FetchBytes(5, jetstream.FetchHeartbeat(-2*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 		}
 	})
 }
