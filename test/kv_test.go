@@ -362,6 +362,28 @@ func TestKeyValueWatch(t *testing.T) {
 		kv.Put("t.age", []byte("66"))
 		expectUpdate("t.age", "66", 12)
 	})
+
+	t.Run("invalid watchers", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		// empty keys
+		_, err = kv.Watch("")
+		expectErr(t, err, nats.ErrInvalidKey)
+
+		// invalid key
+		_, err = kv.Watch("a.>.b")
+		expectErr(t, err, nats.ErrInvalidKey)
+
+		_, err = kv.Watch("foo.")
+		expectErr(t, err, nats.ErrInvalidKey)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
@@ -1010,7 +1032,7 @@ func expectErr(t *testing.T, err error, expected ...error) {
 		return
 	}
 	for _, e := range expected {
-		if err == e || strings.Contains(e.Error(), err.Error()) {
+		if errors.Is(err, e) {
 			return
 		}
 	}

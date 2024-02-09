@@ -344,8 +344,9 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe    = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validBucketRe    = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
+	validKeyRe       = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validSearchKeyRe = regexp.MustCompile(`^[^ >]*[>]?$`)
 )
 
 // KeyValue will lookup and bind to an existing KeyValue store.
@@ -552,6 +553,13 @@ func keyValid(key string) bool {
 		return false
 	}
 	return validKeyRe.MatchString(key)
+}
+
+func searchKeyValid(key string) bool {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+		return false
+	}
+	return validSearchKeyRe.MatchString(key)
 }
 
 // Get returns the latest value for the key.
@@ -951,6 +959,9 @@ func (kv *kvs) WatchAll(opts ...WatchOpt) (KeyWatcher, error) {
 // Watch will fire the callback when a key that matches the keys pattern is updated.
 // keys needs to be a valid NATS subject.
 func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	if !searchKeyValid(keys) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+	}
 	var o watchOpts
 	for _, opt := range opts {
 		if opt != nil {

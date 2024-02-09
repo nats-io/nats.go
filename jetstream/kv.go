@@ -780,6 +780,13 @@ func keyValid(key string) bool {
 	return validKeyRe.MatchString(key)
 }
 
+func searchKeyValid(key string) bool {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+		return false
+	}
+	return subjectRegexp.MatchString(key)
+}
+
 func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
 	if !keyValid(key) {
 		return nil, ErrInvalidKey
@@ -1036,6 +1043,9 @@ func (w *watcher) Stop() error {
 // Watch for any updates to keys that match the keys argument which could include wildcards.
 // Watch will send a nil entry when it has received all initial values.
 func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	if !searchKeyValid(keys) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+	}
 	var o watchOpts
 	for _, opt := range opts {
 		if opt != nil {

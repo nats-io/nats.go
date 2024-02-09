@@ -514,6 +514,34 @@ func TestKeyValueWatch(t *testing.T) {
 		expectUpdate("age", "22", 3)
 		expectUpdate("name2", "ik", 4)
 	})
+
+	t.Run("invalid watchers", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		// empty keys
+		_, err = kv.Watch(ctx, "")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		// invalid key
+		_, err = kv.Watch(ctx, "a.>.b")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		_, err = kv.Watch(ctx, "foo.")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		// conflicting options
+		_, err = kv.Watch(ctx, "foo", jetstream.IncludeHistory(), jetstream.UpdatesOnly())
+		expectErr(t, err, jetstream.ErrInvalidOption)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
