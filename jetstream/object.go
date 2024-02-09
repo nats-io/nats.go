@@ -287,7 +287,6 @@ func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 	}
 
 	// Attempt to update the stream.
-	// If the stream does not exist, create it.
 	stream, err := js.UpdateStream(ctx, scfg)
 	if err != nil {
 		if errors.Is(err, ErrStreamNotFound) {
