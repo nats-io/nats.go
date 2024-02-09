@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -41,6 +41,10 @@ type (
 		ObjectStore(ctx context.Context, bucket string) (ObjectStore, error)
 		// CreateObjectStore will create an object store.
 		CreateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
+		// UpdateObjectStore will update an existing object store.
+		UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
+		// CreateOrUpdateObjectStore will create or update an object store.
+		CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error)
 		// DeleteObjectStore will delete the underlying stream for the named object.
 		DeleteObjectStore(ctx context.Context, bucket string) error
 		// ObjectStoreNames is used to retrieve a list of bucket names
@@ -253,10 +257,72 @@ const (
 	objDigestTmpl       = objDigestType + "%s"
 )
 
-// CreateObjectStore will create an object store.
 func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
+	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := js.CreateStream(ctx, scfg)
+	if err != nil {
+		if errors.Is(err, ErrStreamNameAlreadyInUse) {
+			// errors are joined so that backwards compatibility is retained
+			// and previous checks for ErrStreamNameAlreadyInUse will still work.
+			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketExists, cfg.Bucket), err)
+		}
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+}
+
+func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
+	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attempt to update the stream.
+	stream, err := js.UpdateStream(ctx, scfg)
+	if err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrBucketNotFound, cfg.Bucket)
+		}
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+}
+
+func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
+	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := js.CreateOrUpdateStream(ctx, scfg)
+	if err != nil {
+		return nil, err
+	}
+	pushJS, err := js.legacyJetStream()
+	if err != nil {
+		return nil, err
+	}
+
+	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+}
+
+func (js *jetStream) prepareObjectStoreConfig(ctx context.Context, cfg ObjectStoreConfig) (StreamConfig, error) {
 	if !validBucketRe.MatchString(cfg.Bucket) {
-		return nil, ErrInvalidStoreName
+		return StreamConfig{}, ErrInvalidStoreName
 	}
 
 	name := cfg.Bucket
@@ -294,17 +360,7 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 		Compression: compression,
 	}
 
-	// Create our stream.
-	stream, err := js.CreateStream(ctx, scfg)
-	if err != nil {
-		return nil, err
-	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
-
-	return mapStreamToObjectStore(js, pushJS, name, stream), nil
+	return scfg, nil
 }
 
 // ObjectStore will look up and bind to an existing object store instance.

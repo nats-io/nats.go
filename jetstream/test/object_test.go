@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -127,6 +127,69 @@ func TestObjectBasics(t *testing.T) {
 	expectOk(t, err)
 	_, err = js.ObjectStore(ctx, "BLOB")
 	expectErr(t, err, jetstream.ErrBucketNotFound)
+}
+
+func TestCreateObjectStore(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// invalid bucket name
+	_, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST.", Description: "Test store"})
+	expectErr(t, err, jetstream.ErrInvalidStoreName)
+
+	_, err = js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "Test store"})
+	expectOk(t, err)
+
+	// Check that we can't overwrite existing bucket.
+	_, err = js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "New store"})
+	expectErr(t, err, jetstream.ErrBucketExists)
+
+	// assert that we're backwards compatible
+	expectErr(t, err, jetstream.ErrStreamNameAlreadyInUse)
+}
+
+func TestUpdateObjectStore(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// cannot update a non-existing bucket
+	_, err := js.UpdateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "Test store"})
+	expectErr(t, err, jetstream.ErrBucketNotFound)
+
+	_, err = js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "Test store"})
+	expectOk(t, err)
+
+	// update the bucket
+	_, err = js.UpdateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "New store"})
+	expectOk(t, err)
+}
+
+func TestCreateOrUpdateObjectStore(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// invalid bucket name
+	_, err := js.CreateOrUpdateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST.", Description: "Test store"})
+	expectErr(t, err, jetstream.ErrInvalidStoreName)
+
+	_, err = js.CreateOrUpdateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "Test store"})
+	expectOk(t, err)
+
+	// update the bucket
+	_, err = js.CreateOrUpdateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "TEST", Description: "New store"})
+	expectOk(t, err)
 }
 
 func TestGetObjectDigestMismatch(t *testing.T) {
