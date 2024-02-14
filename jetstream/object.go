@@ -283,7 +283,7 @@ type (
 		// tags and/or an explicit cluster name.
 		Placement *Placement `json:"placement,omitempty"`
 
-		// Compression sets the underlying stream compression.
+		// Compression enables the underlying stream compression.
 		// NOTE: Compression is supported for nats-server 2.10.0+
 		Compression bool `json:"compression,omitempty"`
 
