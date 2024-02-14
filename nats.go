@@ -2370,6 +2370,7 @@ func (nc *Conn) processConnectInit() error {
 	}
 
 	// Process the INFO protocol received from the server
+	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
 	err := nc.processExpectedInfo()
 	if err != nil {
 		return err
@@ -2377,6 +2378,7 @@ func (nc *Conn) processConnectInit() error {
 
 	// Send the CONNECT protocol along with the initial PING protocol.
 	// Wait for the PONG response (or any error that we get from the server).
+	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
 	err = nc.sendConnect()
 	if err != nil {
 		return err
@@ -2409,6 +2411,7 @@ func (nc *Conn) processConnectInit() error {
 // Main connect function. Will connect to the nats-server.
 func (nc *Conn) connect() (bool, error) {
 	var err error
+	var authErr error
 	var connectionEstablished bool
 
 	// Create actual socket connection
@@ -2426,6 +2429,7 @@ func (nc *Conn) connect() (bool, error) {
 			// that function is now invoked from doReconnect() too.
 			nc.setup()
 
+			nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
 			err = nc.processConnectInit()
 
 			if err == nil {
@@ -2434,6 +2438,9 @@ func (nc *Conn) connect() (bool, error) {
 				nc.current.lastErr = nil
 				break
 			} else {
+				if errors.Is(err, ErrAuthorization) {
+					authErr = err
+				}
 				nc.mu.Unlock()
 				nc.close(DISCONNECTED, false, err)
 				nc.mu.Lock()
@@ -2467,6 +2474,16 @@ func (nc *Conn) connect() (bool, error) {
 		nc.current = nil
 	}
 
+	// When connecting to multiple servers prefer returning a auth failure
+	// hard errors that may have shown up during the connect attempts
+	// over network temporary i/o errors.
+	type timeout interface {
+		Timeout() bool
+	}
+	_, lastErrIsTimeout := err.(timeout)
+	if authErr != nil && lastErrIsTimeout {
+		return connectionEstablished, authErr
+	}
 	return connectionEstablished, err
 }
 
@@ -2511,8 +2528,12 @@ func (nc *Conn) processExpectedInfo() error {
 		return err
 	}
 
-	// The nats protocol should send INFO first always.
+	// The nats protocol should send INFO first, although -ERR can arrive
+	// first in some networks environments.
 	if c.op != _INFO_OP_ {
+		if c.op == _ERR_OP_ && strings.Contains(strings.ToLower(c.args), AUTHORIZATION_ERR) {
+			return ErrAuthorization
+		}
 		return ErrNoInfoReceived
 	}
 
