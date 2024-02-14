@@ -70,6 +70,10 @@ type JetStreamManager interface {
 	SecureDeleteMsg(name string, seq uint64, opts ...JSOpt) error
 
 	// AddConsumer adds a consumer to a stream.
+	// If the consumer already exists, and the configuration is the same, it
+	// will return the existing consumer.
+	// If the consumer already exists, and the configuration is different, it
+	// will return ErrConsumerNameAlreadyInUse.
 	AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error)
 
 	// UpdateConsumer updates an existing consumer.
@@ -329,7 +333,11 @@ type consumerResponse struct {
 	*ConsumerInfo
 }
 
-// AddConsumer will add a JetStream consumer.
+// AddConsumer adds a consumer to a stream.
+// If the consumer already exists, and the configuration is the same, it
+// will return the existing consumer.
+// If the consumer already exists, and the configuration is different, it
+// will return ErrConsumerNameAlreadyInUse.
 func (js *js) AddConsumer(stream string, cfg *ConsumerConfig, opts ...JSOpt) (*ConsumerInfo, error) {
 	if cfg == nil {
 		cfg = &ConsumerConfig{}
