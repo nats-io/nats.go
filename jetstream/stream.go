@@ -26,10 +26,11 @@ import (
 )
 
 type (
-	// Stream contains CRUD methods on a consumer, as well as operations on an existing stream.
-	// It allows fetching and removing messages from a stream, as well as purging a stream.
+	// Stream contains CRUD methods on a consumer via [ConsumerManager], as well
+	// as operations on an existing stream. It allows fetching and removing
+	// messages from a stream, as well as purging a stream.
 	Stream interface {
-		streamConsumerManager
+		ConsumerManager
 
 		// Info returns StreamInfo from the server.
 		Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, error)
@@ -60,7 +61,12 @@ type (
 		SecureDeleteMsg(ctx context.Context, seq uint64) error
 	}
 
-	streamConsumerManager interface {
+	// ConsumerManager provides CRUD API for managing consumers. It is
+	// available as a part of [Stream] interface. CreateConsumer,
+	// UpdateConsumer, CreateOrUpdateConsumer and Consumer methods return a
+	// [Consumer] interface, allowing to operate on a consumer (e.g. consume
+	// messages).
+	ConsumerManager interface {
 		// CreateOrUpdateConsumer creates a consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to operate on a
