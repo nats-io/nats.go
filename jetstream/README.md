@@ -29,6 +29,10 @@ This doc covers the basic usage of the `jetstream` package in `nats.go` client.
     - [Basic usage of KV bucket](#basic-usage-of-kv-bucket)
     - [Watching for changes on a bucket](#watching-for-changes-on-a-bucket)
     - [Additional operations on a bucket](#additional-operations-on-a-bucket)
+  - [Object Store](#object-store)
+    - [Basic usage of Object Store](#basic-usage-of-object-store)
+    - [Watching for changes on a store](#watching-for-changes-on-a-store)
+    - [Additional operations on a store](#additional-operations-on-a-store)
   - [Examples](#examples)
 
 ## Overview
