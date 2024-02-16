@@ -155,7 +155,7 @@ type ObjectStoreConfig struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// Enable underlying stream compression.
 	// NOTE: Compression is supported for nats-server 2.10.0+
-	Compression bool
+	Compression bool `json:"compression,omitempty"`
 }
 
 type ObjectStoreStatus interface {
