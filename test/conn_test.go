@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -231,6 +232,103 @@ func TestServerSecureConnections(t *testing.T) {
 	if err == nil {
 		nc2.Close()
 		t.Fatal("Was expecting an error!")
+	}
+}
+
+func TestClientTLSConfig(t *testing.T) {
+	s, opts := RunServerWithConfig("./configs/tlsverify.conf")
+	defer s.Shutdown()
+
+	endpoint := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	secureURL := fmt.Sprintf("nats://%s", endpoint)
+
+	// Make sure this fails
+	nc, err := nats.Connect(secureURL, nats.Secure())
+	if err == nil {
+		nc.Close()
+		t.Fatal("Should have failed (TLS) connection without client certificate")
+	}
+	cert, err := os.ReadFile("./configs/certs/client-cert.pem")
+	if err != nil {
+		t.Fatal("Failed to read client certificate")
+	}
+	key, err := os.ReadFile("./configs/certs/client-key.pem")
+	if err != nil {
+		t.Fatal("Failed to read client key")
+	}
+	rootCAs, err := os.ReadFile("./configs/certs/ca.pem")
+	if err != nil {
+		t.Fatal("Failed to read root CAs")
+	}
+
+	certCB := func() (tls.Certificate, error) {
+		cert, err := tls.X509KeyPair(cert, key)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("nats: error loading client certificate: %w", err)
+		}
+		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("nats: error parsing client certificate: %w", err)
+		}
+		return cert, nil
+	}
+
+	caCB := func() (*x509.CertPool, error) {
+		pool := x509.NewCertPool()
+		ok := pool.AppendCertsFromPEM(rootCAs)
+		if !ok {
+			return nil, fmt.Errorf("nats: failed to parse root certificate from")
+		}
+		return pool, nil
+	}
+
+	// Check parameters validity
+	_, err = nats.Connect(secureURL, nats.ClientTLSConfig(nil, nil))
+	if !errors.Is(err, nats.ErrClientCertOrRootCAsRequired) {
+		t.Fatalf("Expected error %q, got %q", nats.ErrClientCertOrRootCAsRequired, err)
+	}
+
+	certErr := &tls.CertificateVerificationError{}
+	// Should fail because of missing CA
+	_, err = nats.Connect(secureURL,
+		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+	if ok := errors.As(err, &certErr); !ok {
+		t.Fatalf("Expected error %q, got %q", nats.ErrClientCertOrRootCAsRequired, err)
+	}
+
+	// Should fail because of missing certificate
+	_, err = nats.Connect(secureURL,
+		nats.ClientTLSConfig(nil, caCB))
+	if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate required") {
+		t.Fatalf("Expected missing certificate error; got: %s", err)
+	}
+
+	nc, err = nats.Connect(secureURL,
+		nats.ClientTLSConfig(certCB, caCB))
+	if err != nil {
+		t.Fatalf("Failed to create (TLS) connection: %v", err)
+	}
+	defer nc.Close()
+
+	omsg := []byte("Hello!")
+	checkRecv := make(chan bool)
+
+	received := 0
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		received++
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+		checkRecv <- true
+	})
+	err = nc.Publish("foo", omsg)
+	if err != nil {
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
+	}
+	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed to receive message")
 	}
 }
 

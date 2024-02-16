@@ -90,55 +90,56 @@ const (
 
 // Errors
 var (
-	ErrConnectionClosed       = errors.New("nats: connection closed")
-	ErrConnectionDraining     = errors.New("nats: connection draining")
-	ErrDrainTimeout           = errors.New("nats: draining connection timed out")
-	ErrConnectionReconnecting = errors.New("nats: connection reconnecting")
-	ErrSecureConnRequired     = errors.New("nats: secure connection required")
-	ErrSecureConnWanted       = errors.New("nats: secure connection not available")
-	ErrBadSubscription        = errors.New("nats: invalid subscription")
-	ErrTypeSubscription       = errors.New("nats: invalid subscription type")
-	ErrBadSubject             = errors.New("nats: invalid subject")
-	ErrBadQueueName           = errors.New("nats: invalid queue name")
-	ErrSlowConsumer           = errors.New("nats: slow consumer, messages dropped")
-	ErrTimeout                = errors.New("nats: timeout")
-	ErrBadTimeout             = errors.New("nats: timeout invalid")
-	ErrAuthorization          = errors.New("nats: authorization violation")
-	ErrAuthExpired            = errors.New("nats: authentication expired")
-	ErrAuthRevoked            = errors.New("nats: authentication revoked")
-	ErrAccountAuthExpired     = errors.New("nats: account authentication expired")
-	ErrNoServers              = errors.New("nats: no servers available for connection")
-	ErrJsonParse              = errors.New("nats: connect message, json parse error")
-	ErrChanArg                = errors.New("nats: argument needs to be a channel type")
-	ErrMaxPayload             = errors.New("nats: maximum payload exceeded")
-	ErrMaxMessages            = errors.New("nats: maximum messages delivered")
-	ErrSyncSubRequired        = errors.New("nats: illegal call on an async subscription")
-	ErrMultipleTLSConfigs     = errors.New("nats: multiple tls.Configs not allowed")
-	ErrNoInfoReceived         = errors.New("nats: protocol exception, INFO not received")
-	ErrReconnectBufExceeded   = errors.New("nats: outbound buffer limit exceeded")
-	ErrInvalidConnection      = errors.New("nats: invalid connection")
-	ErrInvalidMsg             = errors.New("nats: invalid message or message nil")
-	ErrInvalidArg             = errors.New("nats: invalid argument")
-	ErrInvalidContext         = errors.New("nats: invalid context")
-	ErrNoDeadlineContext      = errors.New("nats: context requires a deadline")
-	ErrNoEchoNotSupported     = errors.New("nats: no echo option not supported by this server")
-	ErrClientIDNotSupported   = errors.New("nats: client ID not supported by this server")
-	ErrUserButNoSigCB         = errors.New("nats: user callback defined without a signature handler")
-	ErrNkeyButNoSigCB         = errors.New("nats: nkey defined without a signature handler")
-	ErrNoUserCB               = errors.New("nats: user callback not defined")
-	ErrNkeyAndUser            = errors.New("nats: user callback and nkey defined")
-	ErrNkeysNotSupported      = errors.New("nats: nkeys not supported by the server")
-	ErrStaleConnection        = errors.New("nats: " + STALE_CONNECTION)
-	ErrTokenAlreadySet        = errors.New("nats: token and token handler both set")
-	ErrMsgNotBound            = errors.New("nats: message is not bound to subscription/connection")
-	ErrMsgNoReply             = errors.New("nats: message does not have a reply")
-	ErrClientIPNotSupported   = errors.New("nats: client IP not supported by this server")
-	ErrDisconnected           = errors.New("nats: server is disconnected")
-	ErrHeadersNotSupported    = errors.New("nats: headers not supported by this server")
-	ErrBadHeaderMsg           = errors.New("nats: message could not decode headers")
-	ErrNoResponders           = errors.New("nats: no responders available for request")
-	ErrMaxConnectionsExceeded = errors.New("nats: server maximum connections exceeded")
-	ErrConnectionNotTLS       = errors.New("nats: connection is not tls")
+	ErrConnectionClosed            = errors.New("nats: connection closed")
+	ErrConnectionDraining          = errors.New("nats: connection draining")
+	ErrDrainTimeout                = errors.New("nats: draining connection timed out")
+	ErrConnectionReconnecting      = errors.New("nats: connection reconnecting")
+	ErrSecureConnRequired          = errors.New("nats: secure connection required")
+	ErrSecureConnWanted            = errors.New("nats: secure connection not available")
+	ErrBadSubscription             = errors.New("nats: invalid subscription")
+	ErrTypeSubscription            = errors.New("nats: invalid subscription type")
+	ErrBadSubject                  = errors.New("nats: invalid subject")
+	ErrBadQueueName                = errors.New("nats: invalid queue name")
+	ErrSlowConsumer                = errors.New("nats: slow consumer, messages dropped")
+	ErrTimeout                     = errors.New("nats: timeout")
+	ErrBadTimeout                  = errors.New("nats: timeout invalid")
+	ErrAuthorization               = errors.New("nats: authorization violation")
+	ErrAuthExpired                 = errors.New("nats: authentication expired")
+	ErrAuthRevoked                 = errors.New("nats: authentication revoked")
+	ErrAccountAuthExpired          = errors.New("nats: account authentication expired")
+	ErrNoServers                   = errors.New("nats: no servers available for connection")
+	ErrJsonParse                   = errors.New("nats: connect message, json parse error")
+	ErrChanArg                     = errors.New("nats: argument needs to be a channel type")
+	ErrMaxPayload                  = errors.New("nats: maximum payload exceeded")
+	ErrMaxMessages                 = errors.New("nats: maximum messages delivered")
+	ErrSyncSubRequired             = errors.New("nats: illegal call on an async subscription")
+	ErrMultipleTLSConfigs          = errors.New("nats: multiple tls.Configs not allowed")
+	ErrClientCertOrRootCAsRequired = errors.New("nats: at least one of certCB or rootCAsCB must be set")
+	ErrNoInfoReceived              = errors.New("nats: protocol exception, INFO not received")
+	ErrReconnectBufExceeded        = errors.New("nats: outbound buffer limit exceeded")
+	ErrInvalidConnection           = errors.New("nats: invalid connection")
+	ErrInvalidMsg                  = errors.New("nats: invalid message or message nil")
+	ErrInvalidArg                  = errors.New("nats: invalid argument")
+	ErrInvalidContext              = errors.New("nats: invalid context")
+	ErrNoDeadlineContext           = errors.New("nats: context requires a deadline")
+	ErrNoEchoNotSupported          = errors.New("nats: no echo option not supported by this server")
+	ErrClientIDNotSupported        = errors.New("nats: client ID not supported by this server")
+	ErrUserButNoSigCB              = errors.New("nats: user callback defined without a signature handler")
+	ErrNkeyButNoSigCB              = errors.New("nats: nkey defined without a signature handler")
+	ErrNoUserCB                    = errors.New("nats: user callback not defined")
+	ErrNkeyAndUser                 = errors.New("nats: user callback and nkey defined")
+	ErrNkeysNotSupported           = errors.New("nats: nkeys not supported by the server")
+	ErrStaleConnection             = errors.New("nats: " + STALE_CONNECTION)
+	ErrTokenAlreadySet             = errors.New("nats: token and token handler both set")
+	ErrMsgNotBound                 = errors.New("nats: message is not bound to subscription/connection")
+	ErrMsgNoReply                  = errors.New("nats: message does not have a reply")
+	ErrClientIPNotSupported        = errors.New("nats: client IP not supported by this server")
+	ErrDisconnected                = errors.New("nats: server is disconnected")
+	ErrHeadersNotSupported         = errors.New("nats: headers not supported by this server")
+	ErrBadHeaderMsg                = errors.New("nats: message could not decode headers")
+	ErrNoResponders                = errors.New("nats: no responders available for request")
+	ErrMaxConnectionsExceeded      = errors.New("nats: server maximum connections exceeded")
+	ErrConnectionNotTLS            = errors.New("nats: connection is not tls")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -860,6 +861,40 @@ func Secure(tls ...*tls.Config) Option {
 		if len(tls) == 1 {
 			o.TLSConfig = tls[0]
 		}
+		return nil
+	}
+}
+
+// ClientTLSConfig is an Option to set the TLS configuration for secure
+// connections. It can be used to e.g. set TLS config with cert and root CAs
+// from memory. For simple use case of loading cert and CAs from file,
+// ClientCert and RootCAs options are more convenient.
+// If Secure is not already set this will set it as well.
+func ClientTLSConfig(certCB TLSCertHandler, rootCAsCB RootCAsHandler) Option {
+	return func(o *Options) error {
+		o.Secure = true
+
+		if certCB == nil && rootCAsCB == nil {
+			return ErrClientCertOrRootCAsRequired
+		}
+
+		// Smoke test the callbacks to fail early
+		// if they are not valid.
+		if certCB != nil {
+			if _, err := certCB(); err != nil {
+				return err
+			}
+		}
+		if rootCAsCB != nil {
+			if _, err := rootCAsCB(); err != nil {
+				return err
+			}
+		}
+		if o.TLSConfig == nil {
+			o.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		o.TLSCertCB = certCB
+		o.RootCAsCB = rootCAsCB
 		return nil
 	}
 }
