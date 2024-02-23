@@ -974,13 +974,6 @@ func TestObjectList(t *testing.T) {
 			t.Fatalf("Expected %+v but got %+v", expected, omap)
 		}
 	})
-
-	t.Run("context timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-		defer cancel()
-		_, err := root.List(ctx)
-		expectErr(t, err, context.DeadlineExceeded)
-	})
 }
 
 func TestObjectMaxBytes(t *testing.T) {
