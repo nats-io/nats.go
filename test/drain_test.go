@@ -486,3 +486,273 @@ func TestDrainConnDuringReconnect(t *testing.T) {
 		t.Fatalf("Timeout waiting for closed state for connection")
 	}
 }
+
+func TestDrainStatus(t *testing.T) {
+	t.Run("subscribe", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL)
+		if err != nil {
+			t.Fatalf("Failed to create default connection: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.IsDraining() {
+			t.Fatalf("Expected IsDraining to be false")
+		}
+
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+			time.Sleep(10 * time.Millisecond)
+		})
+		if err != nil {
+			t.Fatalf("Error creating subscription; %v", err)
+		}
+		for i := 0; i < 100; i++ {
+			nc.Publish("foo", []byte("hello"))
+		}
+		time.Sleep(100 * time.Millisecond)
+		sub.Drain()
+		ds := sub.DrainStatus()
+
+		if !ds.Draining() {
+			t.Fatalf("Expected to be draining")
+		}
+		if ds.PendingMsgs() == 0 {
+			t.Fatalf("Expected pending messages")
+		}
+
+		select {
+		case <-ds.Complete():
+			if ds.PendingMsgs() != 0 {
+				t.Fatalf("Expected no pending messages")
+			}
+			if ds.Draining() {
+				t.Fatalf("Expected to be drained")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Timeout waiting for drain to complete")
+		}
+	})
+
+	t.Run("subscribe sync", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL)
+		if err != nil {
+			t.Fatalf("Failed to create default connection: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.IsDraining() {
+			t.Fatalf("Expected IsDraining to be false")
+		}
+
+		sub, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Error creating subscription; %v", err)
+		}
+		for i := 0; i < 100; i++ {
+			nc.Publish("foo", []byte("hello"))
+		}
+		time.Sleep(100 * time.Millisecond)
+		sub.Drain()
+		ds := sub.DrainStatus()
+
+		if !ds.Draining() {
+			t.Fatalf("Expected to be draining")
+		}
+		if ds.PendingMsgs() == 0 {
+			t.Fatalf("Expected pending messages")
+		}
+		for i := 0; i < 100; i++ {
+			_, err := sub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatalf("Error getting message: %v", err)
+			}
+		}
+
+		select {
+		case <-ds.Complete():
+			if ds.PendingMsgs() != 0 {
+				t.Fatalf("Expected no pending messages")
+			}
+			if ds.Draining() {
+				t.Fatalf("Expected to be drained")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Timeout waiting for drain to complete")
+		}
+	})
+
+	t.Run("chan subscribe", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL)
+		if err != nil {
+			t.Fatalf("Failed to create default connection: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.IsDraining() {
+			t.Fatalf("Expected IsDraining to be false")
+		}
+
+		ch := make(chan *nats.Msg, 100)
+		sub, err := nc.ChanSubscribe("foo", ch)
+		if err != nil {
+			t.Fatalf("Error creating subscription; %v", err)
+		}
+		for i := 0; i < 100; i++ {
+			nc.Publish("foo", []byte("hello"))
+		}
+		time.Sleep(100 * time.Millisecond)
+		sub.Drain()
+		ds := sub.DrainStatus()
+
+		select {
+		case <-ds.Complete():
+			if ds.PendingMsgs() != 0 {
+				t.Fatalf("Expected no pending messages")
+			}
+			if ds.Draining() {
+				t.Fatalf("Expected to be drained")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Timeout waiting for drain to complete")
+		}
+
+		// msgs should be available on the channel
+		for i := 0; i < 100; i++ {
+			select {
+			case <-ch:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("Timeout waiting for message")
+			}
+		}
+	})
+
+	t.Run("subscription not draining", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL)
+		if err != nil {
+			t.Fatalf("Failed to create default connection: %v", err)
+		}
+		defer nc.Close()
+
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+			time.Sleep(10 * time.Millisecond)
+		})
+		if err != nil {
+			t.Fatalf("Error creating subscription; %v", err)
+		}
+		ds := sub.DrainStatus()
+
+		if ds.Draining() {
+			t.Fatalf("Expected not to be draining")
+		}
+		if ds.PendingMsgs() != 0 {
+			t.Fatalf("Expected no pending messages")
+		}
+		select {
+		case <-ds.Complete():
+		default:
+			t.Fatalf("Expected to be complete")
+		}
+	})
+
+	t.Run("subscription already unsubscribed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL)
+		if err != nil {
+			t.Fatalf("Failed to create default connection: %v", err)
+		}
+		defer nc.Close()
+
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+		if err != nil {
+			t.Fatalf("Error creating subscription; %v", err)
+		}
+		sub.Unsubscribe()
+		ds := sub.DrainStatus()
+
+		if ds.Draining() {
+			t.Fatalf("Expected not to be draining")
+		}
+		if ds.PendingMsgs() != 0 {
+			t.Fatalf("Expected no pending messages")
+		}
+
+		select {
+		case <-ds.Complete():
+		default:
+			t.Fatalf("Expected to be complete")
+		}
+	})
+}
+
+func TestDrainStatus_ConcurrentComplete(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		t.Fatalf("Failed to create default connection: %v", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		time.Sleep(20 * time.Millisecond)
+	})
+	if err != nil {
+		t.Fatalf("Error creating subscription; %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		nc.Publish("foo", []byte("hello"))
+	}
+	time.Sleep(100 * time.Millisecond)
+	sub.Drain()
+	wg := sync.WaitGroup{}
+	wg.Add(10)
+	done := make(chan struct{})
+	errs := make(chan error)
+	for i := 0; i < 10; i++ {
+		go func() {
+			ds := sub.DrainStatus()
+			<-ds.Complete()
+			if ds.PendingMsgs() != 0 {
+				errs <- fmt.Errorf("Expected no pending messages")
+			}
+			if ds.Draining() {
+				errs <- fmt.Errorf("Expected to be drained")
+			}
+			wg.Done()
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// if !ds.Draining() {
+	// 	t.Fatalf("Expected to be draining")
+	// }
+	// if ds.PendingMsgs() == 0 {
+	// 	t.Fatalf("Expected pending messages")
+	// }
+
+	// Now test concurrent calls to DrainStatus
+	select {
+	case <-done:
+	case err := <-errs:
+		t.Fatal(err)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Timeout waiting for drain to complete")
+	}
+}

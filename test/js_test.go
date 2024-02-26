@@ -2112,6 +2112,56 @@ func TestJetStream_Drain(t *testing.T) {
 	}
 }
 
+func TestJetStreamSubDrain(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
+		time.Sleep(10 * time.Millisecond)
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		if _, err := js.Publish("foo", []byte("hello")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	sub.Drain()
+	ds := sub.DrainStatus()
+
+	if !ds.Draining() {
+		t.Fatalf("Expected to be draining")
+	}
+	if ds.PendingMsgs() == 0 {
+		t.Fatalf("Expected pending messages")
+	}
+
+	select {
+	case <-ds.Complete():
+		if ds.PendingMsgs() != 0 {
+			t.Fatalf("Expected no pending messages")
+		}
+		if ds.Draining() {
+			t.Fatalf("Expected to be drained")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Timeout waiting for drain to complete")
+	}
+}
+
 func TestAckForNonJetStream(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)

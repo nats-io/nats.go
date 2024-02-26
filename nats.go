@@ -608,14 +608,16 @@ type Subscription struct {
 	// For holding information about a JetStream consumer.
 	jsi *jsSub
 
-	delivered  uint64
-	max        uint64
-	conn       *Conn
-	mcb        MsgHandler
-	mch        chan *Msg
-	closed     bool
-	sc         bool
-	connClosed bool
+	delivered        uint64
+	max              uint64
+	conn             *Conn
+	mcb              MsgHandler
+	mch              chan *Msg
+	closed           bool
+	sc               bool
+	connClosed       bool
+	draining         bool
+	drainingComplete chan struct{}
 
 	// Type of Subscription
 	typ SubscriptionType
@@ -4410,6 +4412,65 @@ func (s *Subscription) Drain() error {
 	return conn.unsubscribe(s, 0, true)
 }
 
+type DrainStatus interface {
+	PendingMsgs() int
+	Draining() bool
+	Complete() <-chan struct{}
+}
+
+type drainStatus struct {
+	sub *Subscription
+}
+
+func (s *Subscription) DrainStatus() DrainStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &drainStatus{
+		sub: s,
+	}
+}
+
+func (s *drainStatus) Draining() bool {
+	if s.sub == nil {
+		return false
+	}
+	s.sub.mu.Lock()
+	defer s.sub.mu.Unlock()
+	return s.sub.draining
+}
+
+func (s *drainStatus) Complete() <-chan struct{} {
+	var drainCh chan struct{}
+	if s.sub == nil {
+		// if the subscription is nil, return a closed channel
+		// to avoid blocking on the caller side.
+		drainCh = make(chan struct{})
+		close(drainCh)
+		return drainCh
+	}
+	s.sub.mu.Lock()
+	defer s.sub.mu.Unlock()
+	if s.sub.drainingComplete == nil {
+		drainCh = make(chan struct{})
+		s.sub.drainingComplete = drainCh
+	} else {
+		drainCh = s.sub.drainingComplete
+	}
+	if !s.sub.draining {
+		// if the subscription is not draining, close the channel
+		// immediately to avoid blocking on the caller side.
+		close(drainCh)
+		s.sub.drainingComplete = nil
+	}
+	return drainCh
+}
+
+func (s *drainStatus) PendingMsgs() int {
+	s.sub.mu.Lock()
+	defer s.sub.mu.Unlock()
+	return s.sub.pMsgs
+}
+
 // Unsubscribe will remove interest in the given subject.
 //
 // For a JetStream subscription, if the library has created the JetStream
@@ -4448,6 +4509,15 @@ func (s *Subscription) Unsubscribe() error {
 // checkDrained will watch for a subscription to be fully drained
 // and then remove it.
 func (nc *Conn) checkDrained(sub *Subscription) {
+	defer func() {
+		sub.mu.Lock()
+		defer sub.mu.Unlock()
+		sub.draining = false
+		if sub.drainingComplete != nil {
+			close(sub.drainingComplete)
+			sub.drainingComplete = nil
+		}
+	}()
 	if nc == nil || sub == nil {
 		return
 	}
@@ -4557,6 +4627,7 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	}
 
 	if drainMode {
+		s.draining = true
 		go nc.checkDrained(sub)
 	}
 
