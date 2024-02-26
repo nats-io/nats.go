@@ -1269,18 +1269,23 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "foo",
+			Subjects: []string{"FOO.*"},
+			// disable stream acks
+			NoAck: true,
+		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		for i := 0; i < 5; i++ {
-			_, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond))
+			_, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(10*time.Millisecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 		}
-		if _, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(1*time.Nanosecond)); err == nil || !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+		if _, err = js.PublishAsync("FOO.1", []byte("msg"), jetstream.WithStallWait(10*time.Millisecond)); err == nil || !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrTooManyStalledMsgs, err)
 		}
 	})

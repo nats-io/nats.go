@@ -220,20 +220,28 @@ func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 		cancelCB()
 	})
 
-	nc.Subscribe("slow", func(m *nats.Msg) {
+	sub1, err := nc.Subscribe("slow", func(m *nats.Msg) {
 		// simulates latency into the client so that timeout is hit.
 		time.Sleep(40 * time.Millisecond)
 		nc.Publish(m.Reply, []byte("OK"))
 	})
-	nc.Subscribe("slower", func(m *nats.Msg) {
+	if err != nil {
+		t.Fatalf("Expected to be able to subscribe: %s", err)
+	}
+	defer sub1.Unsubscribe()
+	sub2, err := nc.Subscribe("slower", func(m *nats.Msg) {
 		// we know this request will take longer so extend the timeout
 		expirationTimer.Reset(100 * time.Millisecond)
 
 		// slower reply which would have hit original timeout
-		time.Sleep(90 * time.Millisecond)
+		time.Sleep(70 * time.Millisecond)
 
 		nc.Publish(m.Reply, []byte("Also OK"))
 	})
+	if err != nil {
+		t.Fatalf("Expected to be able to subscribe: %s", err)
+	}
+	defer sub2.Unsubscribe()
 
 	for i := 0; i < 2; i++ {
 		resp, err := nc.RequestWithContext(ctx, "slow", []byte(""))
@@ -263,7 +271,7 @@ func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 	}
 
 	// One more slow request will expire the timer and cause an error...
-	_, err := nc.RequestWithContext(ctx, "slow", []byte(""))
+	_, err = nc.RequestWithContext(ctx, "slow", []byte(""))
 	if err == nil {
 		t.Fatal("Expected request with cancellation context to fail")
 	}
@@ -1089,12 +1097,12 @@ func TestFlushWithContext(t *testing.T) {
 		t.Fatalf("Expected '%v', got '%v'", nats.ErrNoDeadlineContext, err)
 	}
 
-	dctx, cancel := context.WithTimeout(ctx, 0)
-	defer cancel()
+	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	cancel()
 
-	// A context with a deadline should return when expired.
-	if err := nc.FlushWithContext(dctx); err != context.DeadlineExceeded {
-		t.Fatalf("Expected '%v', got '%v'", context.DeadlineExceeded, err)
+	// A closed context should error.
+	if err := nc.FlushWithContext(dctx); err != context.Canceled {
+		t.Fatalf("Expected '%v', got '%v'", context.Canceled, err)
 	}
 }
 

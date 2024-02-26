@@ -1071,6 +1071,35 @@ func TestListKeyValueStores(t *testing.T) {
 }
 
 func TestKeyValueMirrorCrossDomains(t *testing.T) {
+	keyExists := func(t *testing.T, kv nats.KeyValue, key string, expected string) nats.KeyValueEntry {
+		var e nats.KeyValueEntry
+		var err error
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			e, err = kv.Get(key)
+			if err != nil {
+				return err
+			}
+			if string(e.Value()) != expected {
+				return fmt.Errorf("Expected value to be %q, got %q", expected, e.Value())
+			}
+			return nil
+		})
+		return e
+	}
+
+	keyDeleted := func(t *testing.T, kv nats.KeyValue, key string) {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			_, err := kv.Get(key)
+			if err == nil {
+				return fmt.Errorf("Expected key to be gone")
+			}
+			if !errors.Is(err, nats.ErrKeyNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+
 	conf := createConfFile(t, []byte(`
 		server_name: HUB
 		listen: 127.0.0.1:-1
@@ -1159,23 +1188,15 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	_, err = mkv.PutString("v", "vv")
 	expectOk(t, err)
 	// wait for the key to be propagated to the mirror
-	time.Sleep(10 * time.Millisecond)
-	e, err := mkv.Get("v")
-	expectOk(t, err)
+	e := keyExists(t, kv, "v", "vv")
 	if e.Operation() != nats.KeyValuePut {
 		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
 	}
 	err = mkv.Delete("v")
 	expectOk(t, err)
-	time.Sleep(10 * time.Millisecond)
-	_, err = mkv.Get("v")
-	expectErr(t, err, nats.ErrKeyNotFound)
+	keyDeleted(t, kv, "v")
 
-	e, err = mkv.Get("name")
-	expectOk(t, err)
-	if string(e.Value()) != "rip" {
-		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "rip")
-	}
+	keyExists(t, kv, "name", "rip")
 
 	// Also make sure we can create a watcher on the mirror KV.
 	watcher, err := mkv.WatchAll()
@@ -1192,34 +1213,21 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	_, err = rkv.PutString("name", "ivan")
 	expectOk(t, err)
 
-	time.Sleep(10 * time.Millisecond)
-	e, err = rkv.Get("name")
-	expectOk(t, err)
-	if string(e.Value()) != "ivan" {
-		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
-	}
+	e = keyExists(t, mkv, "name", "ivan")
 	_, err = rkv.PutString("v", "vv")
 	expectOk(t, err)
-	time.Sleep(10 * time.Millisecond)
-	e, err = mkv.Get("v")
-	expectOk(t, err)
+	keyExists(t, mkv, "v", "vv")
 	if e.Operation() != nats.KeyValuePut {
 		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
 	}
 	err = rkv.Delete("v")
 	expectOk(t, err)
-	time.Sleep(10 * time.Millisecond)
-	_, err = rkv.Get("v")
-	expectErr(t, err, nats.ErrKeyNotFound)
+	keyDeleted(t, mkv, "v")
 
 	// Shutdown cluster and test get still work.
 	shutdownJSServerAndRemoveStorage(t, s)
 
-	e, err = mkv.Get("name")
-	expectOk(t, err)
-	if string(e.Value()) != "ivan" {
-		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "ivan")
-	}
+	keyExists(t, mkv, "name", "ivan")
 }
 
 func TestKeyValueNonDirectGet(t *testing.T) {

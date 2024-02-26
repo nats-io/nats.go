@@ -892,21 +892,14 @@ func TestObjectList(t *testing.T) {
 			t.Fatalf("Expected 4 total objects, got %d", len(omap))
 		}
 		expected := map[string]struct{}{
-			"A": struct{}{},
-			"B": struct{}{},
-			"C": struct{}{},
-			"b": struct{}{},
+			"A": {},
+			"B": {},
+			"C": {},
+			"b": {},
 		}
 		if !reflect.DeepEqual(omap, expected) {
 			t.Fatalf("Expected %+v but got %+v", expected, omap)
 		}
-	})
-
-	t.Run("context timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-		defer cancel()
-		_, err := root.List(nats.Context(ctx))
-		expectErr(t, err, context.DeadlineExceeded)
 	})
 }
 

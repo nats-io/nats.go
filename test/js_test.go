@@ -593,17 +593,22 @@ func TestJetStreamSubscribe(t *testing.T) {
 
 	// If we are here we have received all of the messages.
 	// We hang the ConsumerInfo option off of the subscription, so we use that to check status.
-	info, _ := sub3.ConsumerInfo()
-	if info.Config.AckPolicy != nats.AckExplicitPolicy {
-		t.Fatalf("Expected ack explicit policy, got %q", info.Config.AckPolicy)
-	}
-	if info.Delivered.Consumer != uint64(toSend) {
-		t.Fatalf("Expected to have received all %d messages, got %d", toSend, info.Delivered.Consumer)
-	}
-	// Make sure we auto-ack'd
-	if info.AckFloor.Consumer != uint64(toSend) {
-		t.Fatalf("Expected to have ack'd all %d messages, got ack floor of %d", toSend, info.AckFloor.Consumer)
-	}
+	// We may need to retry this check since the acks sent by the client have to be processed
+	// on the server.
+	checkFor(t, 10*time.Second, 100*time.Millisecond, func() error {
+		info, _ := sub3.ConsumerInfo()
+		if info.Config.AckPolicy != nats.AckExplicitPolicy {
+			t.Fatalf("Expected ack explicit policy, got %q", info.Config.AckPolicy)
+		}
+		if info.Delivered.Consumer != uint64(toSend) {
+			return fmt.Errorf("Expected to have received all %d messages, got %d", toSend, info.Delivered.Consumer)
+		}
+		// Make sure we auto-ack'd
+		if info.AckFloor.Consumer != uint64(toSend) {
+			return fmt.Errorf("Expected to have ack'd all %d messages, got ack floor of %d", toSend, info.AckFloor.Consumer)
+		}
+		return nil
+	})
 	sub3.Unsubscribe()
 	sub2.Unsubscribe()
 	sub1.Unsubscribe()
@@ -619,7 +624,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	expectConsumers(t, 1)
 
 	// Make sure we registered as a durable.
-	info, _ = sub.ConsumerInfo()
+	info, _ := sub.ConsumerInfo()
 	if info.Config.Durable != dname {
 		t.Fatalf("Expected durable name to be set to %q, got %q", dname, info.Config.Durable)
 	}
