@@ -918,7 +918,13 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 	}
 
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, nats.OrderedConsumer(), nats.Context(ctx))
+	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	subscribeOpts := []nats.SubOpt{
+		nats.OrderedConsumer(),
+		nats.Context(ctx),
+		nats.BindStream(streamName),
+	}
+	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
 	if err != nil {
 		return nil, err
 	}
