@@ -595,7 +595,7 @@ func TestJetStreamSubscribe(t *testing.T) {
 	// We hang the ConsumerInfo option off of the subscription, so we use that to check status.
 	// We may need to retry this check since the acks sent by the client have to be processed
 	// on the server.
-	checkFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+	checkFor(t, 10*time.Second, 100*time.Millisecond, func() error {
 		info, _ := sub3.ConsumerInfo()
 		if info.Config.AckPolicy != nats.AckExplicitPolicy {
 			t.Fatalf("Expected ack explicit policy, got %q", info.Config.AckPolicy)

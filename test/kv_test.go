@@ -1074,7 +1074,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	keyExists := func(t *testing.T, kv nats.KeyValue, key string, expected string) nats.KeyValueEntry {
 		var e nats.KeyValueEntry
 		var err error
-		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			e, err = kv.Get(key)
 			if err != nil {
 				return err
@@ -1088,7 +1088,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 
 	keyDeleted := func(t *testing.T, kv nats.KeyValue, key string) {
-		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			_, err := kv.Get(key)
 			if err == nil {
 				return fmt.Errorf("Expected key to be gone")

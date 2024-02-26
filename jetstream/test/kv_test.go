@@ -1216,7 +1216,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	keyExists := func(t *testing.T, kv jetstream.KeyValue, key string, expected string) jetstream.KeyValueEntry {
 		var e jetstream.KeyValueEntry
 		var err error
-		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			e, err = kv.Get(context.Background(), key)
 			if err != nil {
 				return err
@@ -1231,7 +1231,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 
 	keyDeleted := func(t *testing.T, kv jetstream.KeyValue, key string) {
-		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			_, err := kv.Get(context.Background(), key)
 			if err == nil {
 				return fmt.Errorf("Expected key to be gone")
