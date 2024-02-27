@@ -2140,21 +2140,21 @@ func TestJetStreamSubDrain(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	sub.Drain()
-	ds := sub.DrainStatus()
 
-	if !ds.Draining() {
+	if !sub.IsDraining() {
 		t.Fatalf("Expected to be draining")
 	}
-	if ds.PendingMsgs() == 0 {
+	pMsgs, _, err := sub.Pending()
+	if err != nil {
+		t.Fatalf("Error getting pending messages: %v", err)
+	}
+	if pMsgs == 0 {
 		t.Fatalf("Expected pending messages")
 	}
 
 	select {
-	case <-ds.Complete():
-		if ds.PendingMsgs() != 0 {
-			t.Fatalf("Expected no pending messages")
-		}
-		if ds.Draining() {
+	case <-sub.DrainingComplete():
+		if sub.IsDraining() {
 			t.Fatalf("Expected to be drained")
 		}
 	case <-time.After(10 * time.Second):

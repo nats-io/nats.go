@@ -513,21 +513,21 @@ func TestDrainStatus(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 		sub.Drain()
-		ds := sub.DrainStatus()
 
-		if !ds.Draining() {
+		if !sub.IsDraining() {
 			t.Fatalf("Expected to be draining")
 		}
-		if ds.PendingMsgs() == 0 {
+		pMsgs, _, err := sub.Pending()
+		if err != nil {
+			t.Fatalf("Error getting pending messages: %v", err)
+		}
+		if pMsgs == 0 {
 			t.Fatalf("Expected pending messages")
 		}
 
 		select {
-		case <-ds.Complete():
-			if ds.PendingMsgs() != 0 {
-				t.Fatalf("Expected no pending messages")
-			}
-			if ds.Draining() {
+		case <-sub.DrainingComplete():
+			if sub.IsDraining() {
 				t.Fatalf("Expected to be drained")
 			}
 		case <-time.After(10 * time.Second):
@@ -558,12 +558,15 @@ func TestDrainStatus(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 		sub.Drain()
-		ds := sub.DrainStatus()
 
-		if !ds.Draining() {
+		if !sub.IsDraining() {
 			t.Fatalf("Expected to be draining")
 		}
-		if ds.PendingMsgs() == 0 {
+		pMsgs, _, err := sub.Pending()
+		if err != nil {
+			t.Fatalf("Error getting pending messages: %v", err)
+		}
+		if pMsgs == 0 {
 			t.Fatalf("Expected pending messages")
 		}
 		for i := 0; i < 100; i++ {
@@ -574,11 +577,8 @@ func TestDrainStatus(t *testing.T) {
 		}
 
 		select {
-		case <-ds.Complete():
-			if ds.PendingMsgs() != 0 {
-				t.Fatalf("Expected no pending messages")
-			}
-			if ds.Draining() {
+		case <-sub.DrainingComplete():
+			if sub.IsDraining() {
 				t.Fatalf("Expected to be drained")
 			}
 		case <-time.After(10 * time.Second):
@@ -610,14 +610,10 @@ func TestDrainStatus(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 		sub.Drain()
-		ds := sub.DrainStatus()
 
 		select {
-		case <-ds.Complete():
-			if ds.PendingMsgs() != 0 {
-				t.Fatalf("Expected no pending messages")
-			}
-			if ds.Draining() {
+		case <-sub.DrainingComplete():
+			if sub.IsDraining() {
 				t.Fatalf("Expected to be drained")
 			}
 		case <-time.After(10 * time.Second):
@@ -650,16 +646,19 @@ func TestDrainStatus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error creating subscription; %v", err)
 		}
-		ds := sub.DrainStatus()
 
-		if ds.Draining() {
+		if sub.IsDraining() {
 			t.Fatalf("Expected not to be draining")
 		}
-		if ds.PendingMsgs() != 0 {
-			t.Fatalf("Expected no pending messages")
+		pMsgs, _, err := sub.Pending()
+		if err != nil {
+			t.Fatalf("Error getting pending messages: %v", err)
+		}
+		if pMsgs != 0 {
+			t.Fatalf("Expected no pending messages; got: %d", pMsgs)
 		}
 		select {
-		case <-ds.Complete():
+		case <-sub.DrainingComplete():
 		default:
 			t.Fatalf("Expected to be complete")
 		}
@@ -680,17 +679,13 @@ func TestDrainStatus(t *testing.T) {
 			t.Fatalf("Error creating subscription; %v", err)
 		}
 		sub.Unsubscribe()
-		ds := sub.DrainStatus()
 
-		if ds.Draining() {
+		if sub.IsDraining() {
 			t.Fatalf("Expected not to be draining")
-		}
-		if ds.PendingMsgs() != 0 {
-			t.Fatalf("Expected no pending messages")
 		}
 
 		select {
-		case <-ds.Complete():
+		case <-sub.DrainingComplete():
 		default:
 			t.Fatalf("Expected to be complete")
 		}
@@ -724,12 +719,8 @@ func TestDrainStatus_ConcurrentComplete(t *testing.T) {
 	errs := make(chan error)
 	for i := 0; i < 10; i++ {
 		go func() {
-			ds := sub.DrainStatus()
-			<-ds.Complete()
-			if ds.PendingMsgs() != 0 {
-				errs <- fmt.Errorf("Expected no pending messages")
-			}
-			if ds.Draining() {
+			<-sub.DrainingComplete()
+			if sub.IsDraining() {
 				errs <- fmt.Errorf("Expected to be drained")
 			}
 			wg.Done()
@@ -739,13 +730,6 @@ func TestDrainStatus_ConcurrentComplete(t *testing.T) {
 		wg.Wait()
 		close(done)
 	}()
-
-	// if !ds.Draining() {
-	// 	t.Fatalf("Expected to be draining")
-	// }
-	// if ds.PendingMsgs() == 0 {
-	// 	t.Fatalf("Expected pending messages")
-	// }
 
 	// Now test concurrent calls to DrainStatus
 	select {

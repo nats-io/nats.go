@@ -608,16 +608,16 @@ type Subscription struct {
 	// For holding information about a JetStream consumer.
 	jsi *jsSub
 
-	delivered        uint64
-	max              uint64
-	conn             *Conn
-	mcb              MsgHandler
-	mch              chan *Msg
-	closed           bool
-	sc               bool
-	connClosed       bool
-	draining         bool
-	drainingComplete chan struct{}
+	delivered  uint64
+	max        uint64
+	conn       *Conn
+	mcb        MsgHandler
+	mch        chan *Msg
+	closed     bool
+	sc         bool
+	connClosed bool
+	draining   bool
+	drainCh    chan struct{}
 
 	// Type of Subscription
 	typ SubscriptionType
@@ -4412,63 +4412,47 @@ func (s *Subscription) Drain() error {
 	return conn.unsubscribe(s, 0, true)
 }
 
-type DrainStatus interface {
-	PendingMsgs() int
-	Draining() bool
-	Complete() <-chan struct{}
-}
-
-type drainStatus struct {
-	sub *Subscription
-}
-
-func (s *Subscription) DrainStatus() DrainStatus {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return &drainStatus{
-		sub: s,
-	}
-}
-
-func (s *drainStatus) Draining() bool {
-	if s.sub == nil {
+// IsDraining returns a boolean indicating whether the subscription
+// is being drained.
+// This will return false if the subscription has already been closed.
+// For blocking until the subscription is drained, use
+// [Subscription.DrainingComplete].
+func (s *Subscription) IsDraining() bool {
+	if s == nil {
 		return false
 	}
-	s.sub.mu.Lock()
-	defer s.sub.mu.Unlock()
-	return s.sub.draining
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.draining
 }
 
-func (s *drainStatus) Complete() <-chan struct{} {
+// DrainingComplete returns a channel that will be closed when the
+// subscription is fully drained. If the subscription is nil, a closed
+// channel will be returned to avoid blocking on the caller side.
+func (s *Subscription) DrainingComplete() <-chan struct{} {
 	var drainCh chan struct{}
-	if s.sub == nil {
+	if s == nil {
 		// if the subscription is nil, return a closed channel
 		// to avoid blocking on the caller side.
 		drainCh = make(chan struct{})
 		close(drainCh)
 		return drainCh
 	}
-	s.sub.mu.Lock()
-	defer s.sub.mu.Unlock()
-	if s.sub.drainingComplete == nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.drainCh == nil {
 		drainCh = make(chan struct{})
-		s.sub.drainingComplete = drainCh
+		s.drainCh = drainCh
 	} else {
-		drainCh = s.sub.drainingComplete
+		drainCh = s.drainCh
 	}
-	if !s.sub.draining {
+	if !s.draining {
 		// if the subscription is not draining, close the channel
 		// immediately to avoid blocking on the caller side.
 		close(drainCh)
-		s.sub.drainingComplete = nil
+		s.drainCh = nil
 	}
 	return drainCh
-}
-
-func (s *drainStatus) PendingMsgs() int {
-	s.sub.mu.Lock()
-	defer s.sub.mu.Unlock()
-	return s.sub.pMsgs
 }
 
 // Unsubscribe will remove interest in the given subject.
@@ -4513,9 +4497,9 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 		sub.mu.Lock()
 		defer sub.mu.Unlock()
 		sub.draining = false
-		if sub.drainingComplete != nil {
-			close(sub.drainingComplete)
-			sub.drainingComplete = nil
+		if sub.drainCh != nil {
+			close(sub.drainCh)
+			sub.drainCh = nil
 		}
 	}()
 	if nc == nil || sub == nil {
