@@ -76,5 +76,5 @@ go mod tidy -modfile=go_test.mod
 To the tests you can pass `-modfile=go_test.mod` flag to `go test` or instead you can also set `GOFLAGS="-modfile=go_test.mod"` as an environment variable:
 
 ```shell
-go test ./... -modfile=go_test.mod -v
+go test ./... -modfile=go_test.mod
 ```
