@@ -67,7 +67,7 @@ send your question to the [NATS Google Group](https://groups.google.com/forum/#!
 ## Testing
 
 You should use `go_test.mod` to manage your testing dependencies. Please use the following command to update your
-`go.mod` file:
+dependencies and avoid changing the main `go.mod` in a PR:
 
 ```shell
 go mod tidy -modfile=go_test.mod
