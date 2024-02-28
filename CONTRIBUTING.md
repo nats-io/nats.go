@@ -73,7 +73,7 @@ You should use `go_test.mod` to manage your testing dependencies. Please use the
 go mod tidy -modfile=go_test.mod
 ```
 
-We recommend using the following command to run your tests as well,
+To the tests you can pass `-modfile=go_test.mod` flag to `go test` or instead you can also set `GOFLAGS="-modfile=go_test.mod"` as an environment variable:
 
 ```shell
 go test ./... -modfile=go_test.mod -v
