@@ -117,6 +117,7 @@ var (
 	ErrClientCertOrRootCAsRequired = errors.New("nats: at least one of certCB or rootCAsCB must be set")
 	ErrNoInfoReceived              = errors.New("nats: protocol exception, INFO not received")
 	ErrReconnectBufExceeded        = errors.New("nats: outbound buffer limit exceeded")
+	ErrInvalidConnection           = errors.New("nats: invalid connection")
 	ErrInvalidMsg                  = errors.New("nats: invalid message or message nil")
 	ErrInvalidArg                  = errors.New("nats: invalid argument")
 	ErrInvalidContext              = errors.New("nats: invalid context")
