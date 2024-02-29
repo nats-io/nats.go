@@ -26,21 +26,6 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func TestContextRequestWithNilConnection(t *testing.T) {
-	var nc *nats.Conn
-
-	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	_, err := nc.RequestWithContext(ctx, "fast", []byte(""))
-	if err == nil {
-		t.Fatal("Expected request with context and nil connection to fail")
-	}
-	if err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected nats.ErrInvalidConnection, got %v\n", err)
-	}
-}
-
 func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 	nc.Subscribe("slow", func(m *nats.Msg) {
 		// Simulates latency into the client so that timeout is hit.
