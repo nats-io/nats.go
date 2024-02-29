@@ -566,7 +566,6 @@ type Conn struct {
 	respSub       string               // The wildcard subject
 	respSubPrefix string               // the wildcard prefix including trailing .
 	respSubLen    int                  // the length of the wildcard prefix excluding trailing .
-	respScanf     string               // The scanf template to extract mux token
 	respMux       *Subscription        // A single response subscription
 	respMap       map[string]chan *Msg // Request map for the response msg channels
 	respRand      *rand.Rand           // Used for generating suffix
@@ -3938,7 +3937,6 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 			nc.mu.Unlock()
 			return nil, token, err
 		}
-		nc.respScanf = strings.Replace(nc.respSub, "*", "%s", -1)
 		nc.respMux = s
 	}
 	nc.mu.Unlock()
@@ -4119,16 +4117,14 @@ func (nc *Conn) NewRespInbox() string {
 }
 
 // respToken will return the last token of a literal response inbox
-// which we use for the message channel lookup. This needs to do a
-// scan to protect itself against the server changing the subject.
+// which we use for the message channel lookup. This needs to verify the subject
+// prefix matches to protect itself against the server changing the subject.
 // Lock should be held.
 func (nc *Conn) respToken(respInbox string) string {
-	var token string
-	n, err := fmt.Sscanf(respInbox, nc.respScanf, &token)
-	if err != nil || n != 1 {
-		return ""
+	if token, found := strings.CutPrefix(respInbox, nc.respSubPrefix); found {
+		return token
 	}
-	return token
+	return ""
 }
 
 // Subscribe will express interest in the given subject. The subject
