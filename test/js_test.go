@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2020-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -2109,56 +2109,6 @@ func TestJetStream_Drain(t *testing.T) {
 		t.Fatalf("Error during drain: %+v", err)
 	case <-ctx.Done():
 		// OK!
-	}
-}
-
-func TestJetStreamSubDrain(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	_, err := js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
-		time.Sleep(10 * time.Millisecond)
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	for i := 0; i < 100; i++ {
-		if _, err := js.Publish("foo", []byte("hello")); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-	}
-	time.Sleep(100 * time.Millisecond)
-	sub.Drain()
-
-	if !sub.IsDraining() {
-		t.Fatalf("Expected to be draining")
-	}
-	pMsgs, _, err := sub.Pending()
-	if err != nil {
-		t.Fatalf("Error getting pending messages: %v", err)
-	}
-	if pMsgs == 0 {
-		t.Fatalf("Expected pending messages")
-	}
-
-	select {
-	case <-sub.DrainingComplete():
-		if sub.IsDraining() {
-			t.Fatalf("Expected to be drained")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("Timeout waiting for drain to complete")
 	}
 }
 
