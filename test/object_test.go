@@ -1163,4 +1163,22 @@ func TestObjectStoreMirror(t *testing.T) {
 		}
 		return nil
 	})
+
+	watcher, err := mirrorObs.Watch()
+	if err != nil {
+		t.Fatalf("Error creating watcher: %v", err)
+	}
+	defer watcher.Stop()
+
+	// expect to get one value and nil
+	for {
+		select {
+		case info := <-watcher.Updates():
+			if info == nil {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Expected to receive an update")
+		}
+	}
 }

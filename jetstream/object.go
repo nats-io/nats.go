@@ -1308,7 +1308,8 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 	}
 
 	// Used ordered consumer to deliver results.
-	subOpts := []nats.SubOpt{nats.OrderedConsumer()}
+	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	subOpts := []nats.SubOpt{nats.OrderedConsumer(), nats.BindStream(streamName)}
 	if !o.includeHistory {
 		subOpts = append(subOpts, nats.DeliverLastPerSubject())
 	}
