@@ -1115,7 +1115,8 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 	}
 
 	// Used ordered consumer to deliver results.
-	subOpts := []SubOpt{OrderedConsumer()}
+	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	subOpts := []SubOpt{OrderedConsumer(), BindStream(streamName)}
 	if !o.includeHistory {
 		subOpts = append(subOpts, DeliverLastPerSubject())
 	}
