@@ -1618,7 +1618,7 @@ func TestSubscribe_ClosedHandler(t *testing.T) {
 
 func TestSubscriptionEvents(t *testing.T) {
 
-	waitForStatus := func(t *testing.T, ch chan nats.SubStatus, expected nats.SubStatus) {
+	waitForStatus := func(t *testing.T, ch <-chan nats.SubStatus, expected nats.SubStatus) {
 		select {
 		case s := <-ch:
 			if s != expected {

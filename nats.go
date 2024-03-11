@@ -618,7 +618,7 @@ type Subscription struct {
 	connClosed    bool
 	draining      bool
 	status        SubStatus
-	statListeners map[SubStatus][]chan SubStatus
+	statListeners map[chan SubStatus][]SubStatus
 
 	// Type of Subscription
 	typ SubscriptionType
@@ -4461,7 +4461,8 @@ func (s *Subscription) IsDraining() bool {
 // changes will be sent. If no status is provided, all status changes will be sent.
 // Available statuses are SubscriptionActive, SubscriptionDraining, SubscriptionClosed,
 // and SubscriptionSlowConsumer.
-func (s *Subscription) StatusChanged(statuses ...SubStatus) chan SubStatus {
+// The returned channel will be closed when the subscription is closed.
+func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus {
 	if len(statuses) == 0 {
 		statuses = []SubStatus{SubscriptionActive, SubscriptionDraining, SubscriptionClosed, SubscriptionSlowConsumer}
 	}
@@ -4483,25 +4484,40 @@ func (s *Subscription) registerStatusChangeListener(status SubStatus, ch chan Su
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.statListeners == nil {
-		s.statListeners = make(map[SubStatus][]chan SubStatus)
+		s.statListeners = make(map[chan SubStatus][]SubStatus)
 	}
-	if _, ok := s.statListeners[status]; !ok {
-		s.statListeners[status] = make([]chan SubStatus, 0)
+	if _, ok := s.statListeners[ch]; !ok {
+		s.statListeners[ch] = make([]SubStatus, 0)
 	}
-	s.statListeners[status] = append(s.statListeners[status], ch)
+	s.statListeners[ch] = append(s.statListeners[ch], status)
 }
 
 // sendStatusEvent sends subscription status event to all channels.
 // If there is no listener, sendStatusEvent
 // will not block. Lock should be held entering.
 func (s *Subscription) sendStatusEvent(status SubStatus) {
-	for i := 0; i < len(s.statListeners[status]); i++ {
+	for ch, statuses := range s.statListeners {
+		if !containsStatus(statuses, status) {
+			continue
+		}
 		// only send event if someone's listening
 		select {
-		case s.statListeners[status][i] <- status:
+		case ch <- status:
 		default:
 		}
+		if status == SubscriptionClosed {
+			close(ch)
+		}
 	}
+}
+
+func containsStatus(statuses []SubStatus, status SubStatus) bool {
+	for _, s := range statuses {
+		if s == status {
+			return true
+		}
+	}
+	return false
 }
 
 // changeSubStatus changes subscription status and sends events
