@@ -4682,8 +4682,10 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	}
 
 	if drainMode {
+		s.mu.Lock()
 		s.draining = true
 		sub.changeSubStatus(SubscriptionDraining)
+		s.mu.Unlock()
 		go nc.checkDrained(sub)
 	}
 

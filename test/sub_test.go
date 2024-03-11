@@ -1619,6 +1619,7 @@ func TestSubscribe_ClosedHandler(t *testing.T) {
 func TestSubscriptionEvents(t *testing.T) {
 
 	waitForStatus := func(t *testing.T, ch <-chan nats.SubStatus, expected nats.SubStatus) {
+		t.Helper()
 		select {
 		case s := <-ch:
 			if s != expected {
@@ -1652,11 +1653,12 @@ func TestSubscriptionEvents(t *testing.T) {
 		// initial status
 		waitForStatus(t, status, nats.SubscriptionActive)
 
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 11; i++ {
 			nc.Publish("foo", []byte("Hello"))
 		}
 		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
 		close(blockChan)
+
 		sub.Drain()
 
 		waitForStatus(t, status, nats.SubscriptionDraining)
