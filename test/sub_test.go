@@ -1,4 +1,4 @@
-// Copyright 2013-2023 The NATS Authors
+// Copyright 2013-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -568,7 +569,7 @@ func TestAsyncErrHandler(t *testing.T) {
 		if s != sub {
 			t.Fatal("Did not receive proper subscription")
 		}
-		if e != nats.ErrSlowConsumer {
+		if !errors.Is(e, nats.ErrSlowConsumer) {
 			t.Fatalf("Did not receive proper error: %v vs %v", e, nats.ErrSlowConsumer)
 		}
 		// Suppress additional calls
@@ -636,7 +637,7 @@ func TestAsyncErrHandlerChanSubscription(t *testing.T) {
 
 	nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {
 		atomic.AddInt64(&aeCalled, 1)
-		if e != nats.ErrSlowConsumer {
+		if !errors.Is(e, nats.ErrSlowConsumer) {
 			t.Fatalf("Did not receive proper error: %v vs %v",
 				e, nats.ErrSlowConsumer)
 		}
@@ -1613,4 +1614,138 @@ func TestSubscribe_ClosedHandler(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Did not receive closed callback")
 	}
+}
+
+func TestSubscriptionEvents(t *testing.T) {
+
+	waitForStatus := func(t *testing.T, ch <-chan nats.SubStatus, expected nats.SubStatus) {
+		t.Helper()
+		select {
+		case s := <-ch:
+			if s != expected {
+				t.Fatalf("Expected status: %s; got: %s", expected, s)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for status %q", expected)
+		}
+	}
+	t.Run("default events", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc := NewDefaultConnection(t)
+		// disable slow consumer prints
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {})
+		defer nc.Close()
+
+		blockChan := make(chan struct{})
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+			// block in subscription callback
+			// to force slow consumer
+			<-blockChan
+		})
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		sub.SetPendingLimits(10, 1024)
+		status := sub.StatusChanged()
+
+		// initial status
+		waitForStatus(t, status, nats.SubscriptionActive)
+
+		for i := 0; i < 11; i++ {
+			nc.Publish("foo", []byte("Hello"))
+		}
+		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+		close(blockChan)
+
+		sub.Drain()
+
+		waitForStatus(t, status, nats.SubscriptionDraining)
+
+		waitForStatus(t, status, nats.SubscriptionClosed)
+	})
+
+	t.Run("slow consumer event only", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc := NewDefaultConnection(t)
+		defer nc.Close()
+
+		blockChan := make(chan struct{})
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+			// block in subscription callback
+			// to force slow consumer
+			<-blockChan
+		})
+		// disable slow consumer prints
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {})
+		defer sub.Unsubscribe()
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		sub.SetPendingLimits(10, 1024)
+		status := sub.StatusChanged(nats.SubscriptionSlowConsumer)
+
+		for i := 0; i < 20; i++ {
+			nc.Publish("foo", []byte("Hello"))
+		}
+		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+		close(blockChan)
+
+		// now try with sync sub
+		sub, err = nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+		sub.SetPendingLimits(10, 1024)
+		status = sub.StatusChanged(nats.SubscriptionSlowConsumer)
+
+		for i := 0; i < 20; i++ {
+			nc.Publish("foo", []byte("Hello"))
+		}
+		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+	})
+
+	t.Run("do not block channel if it's not read", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc := NewDefaultConnection(t)
+		// disable slow consumer prints
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {})
+		defer nc.Close()
+
+		blockChan := make(chan struct{})
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+			// block in subscription callback
+			// to force slow consumer
+			<-blockChan
+		})
+		defer sub.Unsubscribe()
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		sub.SetPendingLimits(10, 1024)
+		status := sub.StatusChanged()
+		waitForStatus(t, status, nats.SubscriptionActive)
+
+		// chan length is 10, so make sure we switch state more times
+		for i := 0; i < 20; i++ {
+			// subscription will enter slow consumer state
+			for i := 0; i < 11; i++ {
+				nc.Publish("foo", []byte("Hello"))
+			}
+
+			// messages flow normally, status flips to active
+			for i := 0; i < 10; i++ {
+				nc.Publish("foo", []byte("Hello"))
+				blockChan <- struct{}{}
+			}
+		}
+		// do not read from subscription
+		close(blockChan)
+	})
 }
