@@ -32,7 +32,7 @@ type (
 	// It is returned by [Consumer.Messages] method.
 	MessagesContext interface {
 		// Next retrieves next message on a stream. It will block until the next
-		// message is available. If the context is cancelled, Next will return
+		// message is available. If the context is canceled, Next will return
 		// ErrMsgIteratorClosed error.
 		Next() (Msg, error)
 
@@ -531,7 +531,7 @@ var (
 )
 
 // Next retrieves next message on a stream. It will block until the next
-// message is available. If the context is cancelled, Next will return
+// message is available. If the context is canceled, Next will return
 // ErrMsgIteratorClosed error.
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
@@ -1081,7 +1081,7 @@ type backoffOpts struct {
 	// for all subsequent retries after reaching the limit
 	customBackoff []time.Duration
 	// cancel channel
-	// if set, retry will be cancelled when this channel is closed
+	// if set, retry will be canceled when this channel is closed
 	cancel <-chan struct{}
 }
 
