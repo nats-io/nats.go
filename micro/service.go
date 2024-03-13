@@ -101,6 +101,8 @@ type (
 		Metadata map[string]string `json:"metadata"`
 	}
 
+	Middleware func(Handler) Handler
+
 	// Stats is the type returned by STATS monitoring endpoint.
 	// It contains stats of all registered endpoints.
 	Stats struct {
@@ -195,6 +197,9 @@ type (
 
 		// ErrorHandler is invoked on any nats-related service error.
 		ErrorHandler ErrHandler
+
+		// Middleware is a slice of handlers that should be run on every request
+		Middleware []Middleware
 	}
 
 	EndpointConfig struct {
@@ -400,6 +405,9 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 		subject = options.subject
 	}
 	queueGroup := queueGroupName(options.queueGroup, s.Config.QueueGroup)
+	for _, v := range s.Middleware {
+		handler = v(handler)
+	}
 	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup)
 }
 

@@ -56,6 +56,9 @@ type (
 		// Headers returns request headers.
 		Headers() Headers
 
+		// SetHeader sets a specific header
+		SetHeader(key, value string)
+
 		// Subject returns underlying NATS message subject.
 		Subject() string
 	}
@@ -179,6 +182,17 @@ func (r *request) Data() []byte {
 // Headers returns request headers.
 func (r *request) Headers() Headers {
 	return Headers(r.msg.Header)
+}
+
+func (r *request) SetHeader(key string, value string) {
+	if len(r.msg.Header) != 0 {
+		r.msg.Header.Set(key, value)
+		return
+	}
+	headers := nats.Header{
+		key: []string{value},
+	}
+	r.msg.Header = headers
 }
 
 // Subject returns underlying NATS message subject.

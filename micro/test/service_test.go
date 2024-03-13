@@ -1018,6 +1018,64 @@ func TestContextHandler(t *testing.T) {
 	}
 }
 
+func TestMiddleware(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	handler := func(req micro.Request) {
+		headers := micro.Headers{
+			"request-id":  []string{req.Headers().Get("request-id")},
+			"other-value": []string{req.Headers().Get("other-value")},
+		}
+		req.Respond(req.Data(), micro.WithHeaders(headers))
+	}
+
+	middle := func(h micro.Handler) micro.Handler {
+		return micro.HandlerFunc(func(r micro.Request) {
+			r.SetHeader("request-id", "1234")
+			r.SetHeader("other-value", "testing")
+			h.Handle(r)
+		})
+	}
+
+	config := micro.Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "test.func",
+			Handler: micro.HandlerFunc(handler),
+		},
+		Middleware: []micro.Middleware{middle},
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer srv.Stop()
+
+	resp, err := nc.Request("test.func", []byte("test"), 1*time.Second)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	if string(resp.Data) != "test" {
+		t.Fatalf("Invalid response; want: %q; got: %q", "val", string(resp.Data))
+	}
+	if resp.Header.Get("request-id") != "1234" {
+		t.Fatalf("Invalid response; want: %v; got %v", "1234", resp.Header.Get("request-id"))
+	}
+	if resp.Header.Get("other-value") != "testing" {
+		t.Fatalf("Invalid response; want: %v; got %v", "testing", resp.Header.Get("other-value"))
+	}
+
+}
+
 func TestAddEndpoint_Concurrency(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()

@@ -306,6 +306,39 @@ func ExampleContextHandler() {
 	defer srv.Stop()
 }
 
+func ExampleMiddleware() {
+	middle := func(h micro.Handler) micro.Handler {
+		return micro.HandlerFunc(func(r micro.Request) {
+			log.Println("in middleware")
+			r.SetHeader("request-id", "1234")
+			h.Handle(r)
+		})
+	}
+
+	nc, err := nats.Connect("127.0.0.1:4222")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer nc.Close()
+
+	handler := func(req micro.Request) {
+		log.Println(req.Headers().Get("request-id"))
+		req.Respond(req.Data())
+	}
+	config := micro.Config{
+		Name:    "MiddlewareExample",
+		Version: "0.1.0",
+		Endpoint: &micro.EndpointConfig{
+			Subject: "middleware",
+			Handler: micro.HandlerFunc(handler),
+		},
+		Middleware: []micro.Middleware{middle},
+	}
+
+	srv, _ := micro.AddService(nc, config)
+	defer srv.Stop()
+}
+
 func ExampleControlSubject() {
 
 	// subject used to get PING from all services
