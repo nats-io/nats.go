@@ -632,7 +632,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		handler(&request{msg: msg})
 	})
 	if err != nil {
-		if stopErr := s.Stop(); err != nil {
+		if stopErr := s.Stop(); stopErr != nil {
 			return errors.Join(err, fmt.Errorf("stopping service: %w", stopErr))
 		}
 		return err
