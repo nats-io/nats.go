@@ -1239,6 +1239,64 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	}
 }
 
+func TestPullSubscribeFetchDrain(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	defer js.PurgeStream("TEST")
+	sub, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	for i := 0; i < 100; i++ {
+		if _, err := js.Publish("foo", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+	}
+	// fill buffer with messages
+	cinfo, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	nextSubject := fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.TEST.%s", cinfo.Name)
+	replySubject := strings.Replace(sub.Subject, "*", "abc", 1)
+	payload := `{"batch":10,"no_wait":true}`
+	if err := nc.PublishRequest(nextSubject, replySubject, []byte(payload)); err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// now drain the subscription, messages should be in the buffer
+	sub.Drain()
+	msgs, err := sub.Fetch(100)
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	for _, msg := range msgs {
+		msg.Ack()
+	}
+	if len(msgs) != 10 {
+		t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+	}
+
+	// subsequent fetch should return error, subscription is already drained
+	_, err = sub.Fetch(10, nats.MaxWait(100*time.Millisecond))
+	if !errors.Is(err, nats.ErrSubscriptionClosed) {
+		t.Fatalf("Expected error: %s; got: %s", nats.ErrSubscriptionClosed, err)
+	}
+}
+
 func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -1759,6 +1817,55 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 		_, err = sub.FetchBatch(10, nats.Context(context.Background()))
 		if !errors.Is(err, nats.ErrNoDeadlineContext) {
 			t.Errorf("Expected error: %s; got: %s", nats.ErrNoDeadlineContext, err)
+		}
+	})
+
+	t.Run("close subscription", func(t *testing.T) {
+		defer js.PurgeStream("TEST")
+		sub, err := js.PullSubscribe("foo", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		for i := 0; i < 100; i++ {
+			if _, err := js.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+		}
+		// fill buffer with messages
+		cinfo, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		nextSubject := fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.TEST.%s", cinfo.Name)
+		replySubject := strings.Replace(sub.Subject, "*", "abc", 1)
+		payload := `{"batch":10,"no_wait":true}`
+		if err := nc.PublishRequest(nextSubject, replySubject, []byte(payload)); err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+
+		// now drain the subscription, messages should be in the buffer
+		sub.Drain()
+		res, err := sub.FetchBatch(100)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		msgs := make([]*nats.Msg, 0)
+		for msg := range res.Messages() {
+			msgs = append(msgs, msg)
+			msg.Ack()
+		}
+		if res.Error() != nil {
+			t.Fatalf("Unexpected error: %s", res.Error())
+		}
+		if len(msgs) != 10 {
+			t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
+		}
+
+		// subsequent fetch should return error, subscription is already drained
+		_, err = sub.FetchBatch(10, nats.MaxWait(100*time.Millisecond))
+		if !errors.Is(err, nats.ErrSubscriptionClosed) {
+			t.Fatalf("Expected error: %s; got: %s", nats.ErrSubscriptionClosed, err)
 		}
 	})
 }
@@ -7646,7 +7753,7 @@ func testJetStreamFetchOptions(t *testing.T, srvs ...*jsServer) {
 		if err == nil {
 			t.Fatal("Unexpected success")
 		}
-		if err != nats.ErrBadSubscription {
+		if !errors.Is(err, nats.ErrBadSubscription) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	})
