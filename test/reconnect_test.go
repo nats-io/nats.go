@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -22,8 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/jwt"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nkeys"
 )
 
 func startReconnectServer(t *testing.T) *server.Server {
@@ -825,4 +828,77 @@ func TestReconnectBufSizeDisable(t *testing.T) {
 	if got != 0 {
 		t.Errorf("Unexpected buffered bytes: %v", got)
 	}
+}
+
+func TestAuthExpiredReconnect(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	_, err := nats.Connect(ts.ClientURL())
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+	ukp, err := nkeys.FromSeed(uSeed)
+	if err != nil {
+		t.Fatalf("Error creating user key pair: %v", err)
+	}
+	upub, err := ukp.PublicKey()
+	if err != nil {
+		t.Fatalf("Error getting user public key: %v", err)
+	}
+	akp, err := nkeys.FromSeed(aSeed)
+	if err != nil {
+		t.Fatalf("Error creating account key pair: %v", err)
+	}
+
+	jwtCB := func() (string, error) {
+		claims := jwt.NewUserClaims("test")
+		claims.Expires = time.Now().Add(500 * time.Millisecond).Unix()
+		claims.Subject = upub
+		jwt, err := claims.Encode(akp)
+		if err != nil {
+			return "", err
+		}
+		return jwt, nil
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, _ := nkeys.FromSeed(uSeed)
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	errCh := make(chan error, 1)
+	nc, err := nats.Connect(ts.ClientURL(), nats.UserJWT(jwtCB, sigCB), nats.ReconnectWait(100*time.Millisecond),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			errCh <- err
+		}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	stasusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, nats.ErrAuthExpired) {
+			t.Fatalf("Expected auth expired error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Did not get the auth expired error")
+	}
+	select {
+	case s := <-stasusCh:
+		if s != nats.RECONNECTING {
+			t.Fatalf("Expected to be in reconnecting state after jwt expires, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Did not get the status change")
+	}
+	select {
+	case s := <-stasusCh:
+		if s != nats.CONNECTED {
+			t.Fatalf("Expected to reconnect, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Did not get the status change")
+	}
+	nc.Close()
 }
