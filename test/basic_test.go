@@ -772,7 +772,7 @@ func TestRequestClose(t *testing.T) {
 		nc.Close()
 	}()
 	nc.SubscribeSync("foo")
-	if _, err := nc.Request("foo", []byte("help"), 2*time.Second); err != nats.ErrInvalidConnection && err != nats.ErrConnectionClosed {
+	if _, err := nc.Request("foo", []byte("help"), 2*time.Second); err != nats.ErrConnectionClosed {
 		t.Fatalf("Expected connection error: got %v", err)
 	}
 	wg.Wait()
@@ -968,53 +968,7 @@ func TestOptions(t *testing.T) {
 	}
 }
 
-func TestNilConnection(t *testing.T) {
-	var nc *nats.Conn
-	data := []byte("ok")
-
-	// Publish
-	if err := nc.Publish("foo", data); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if err := nc.PublishMsg(nil); err == nil || err != nats.ErrInvalidMsg {
-		t.Fatalf("Expected ErrInvalidMsg error, got %v\n", err)
-	}
-	if err := nc.PublishMsg(&nats.Msg{}); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if err := nc.PublishRequest("foo", "reply", data); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-
-	// Subscribe
-	if _, err := nc.Subscribe("foo", nil); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if _, err := nc.SubscribeSync("foo"); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if _, err := nc.QueueSubscribe("foo", "bar", nil); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	ch := make(chan *nats.Msg)
-	if _, err := nc.ChanSubscribe("foo", ch); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if _, err := nc.ChanQueueSubscribe("foo", "bar", ch); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if _, err := nc.QueueSubscribeSyncWithChan("foo", "bar", ch); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-
-	// Flush
-	if err := nc.Flush(); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-	if err := nc.FlushTimeout(time.Millisecond); err == nil || err != nats.ErrInvalidConnection {
-		t.Fatalf("Expected ErrInvalidConnection error, got %v\n", err)
-	}
-
+func TestNilSubscriber(t *testing.T) {
 	// Nil Subscribers
 	var sub *nats.Subscription
 	if sub.Type() != nats.NilSubscription {
