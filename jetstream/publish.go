@@ -378,7 +378,9 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		cb := js.publisher.asyncPublisherOpts.aecb
 		js.publisher.Unlock()
 		if cb != nil {
-			cb(js, paf.msg, err)
+			msgCopy := *paf.msg
+			msgCopy.Reply = ""
+			cb(js, &msgCopy, err)
 		}
 	}
 
@@ -453,10 +455,22 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			return
 		}
 		js.publisher.Lock()
-		for _, paf := range js.publisher.acks {
+		errCb := js.publisher.asyncPublisherOpts.aecb
+		for id, paf := range js.publisher.acks {
 			paf.err = nats.ErrDisconnected
+			if paf.errCh != nil {
+				paf.errCh <- paf.err
+			}
+			if errCb != nil {
+				// clear reply subject so that new one is created on republish
+				msgCopy := *paf.msg
+				msgCopy.Reply = ""
+				js.publisher.Unlock()
+				errCb(js, &msgCopy, nats.ErrDisconnected)
+				js.publisher.Lock()
+			}
+			delete(js.publisher.acks, id)
 		}
-		js.publisher.acks = nil
 		if js.publisher.doneCh != nil {
 			close(js.publisher.doneCh)
 			js.publisher.doneCh = nil
