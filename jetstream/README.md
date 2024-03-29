@@ -113,14 +113,20 @@ func main() {
 
     // Get 10 messages from the consumer
     messageCounter := 0
-    msgs, _ := c.Fetch(10)
+    msgs, err := c.Fetch(10)
+	if err != nil {
+		// handle error
+    }
+	
     for msg := range msgs.Messages() {
         msg.Ack()
         fmt.Printf("Received a JetStream message via fetch: %s\n", string(msg.Data()))
         messageCounter++
     }
+	
     fmt.Printf("received %d messages\n", messageCounter)
-    if msgs.Error() != nil {
+    
+	if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
 
