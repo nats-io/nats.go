@@ -131,6 +131,7 @@ var (
 	ErrNkeysNotSupported           = errors.New("nats: nkeys not supported by the server")
 	ErrStaleConnection             = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet             = errors.New("nats: token and token handler both set")
+	ErrUserInfoAlreadySet          = errors.New("nats: user info and user info handler both set")
 	ErrMsgNotBound                 = errors.New("nats: message is not bound to subscription/connection")
 	ErrMsgNoReply                  = errors.New("nats: message does not have a reply")
 	ErrClientIPNotSupported        = errors.New("nats: client IP not supported by this server")
@@ -229,6 +230,9 @@ type SignatureHandler func([]byte) ([]byte, error)
 
 // AuthTokenHandler is used to generate a new token.
 type AuthTokenHandler func() string
+
+// AuthUserInfoHandler is used to fetch username and password.
+type AuthUserInfoHandler func() (string, string)
 
 // ReconnectDelayHandler is used to get from the user the desired
 // delay the library should pause before attempting to reconnect
@@ -442,6 +446,10 @@ type Options struct {
 
 	// Password sets the password to be used when connecting to a server.
 	Password string
+
+	// UserInfoHandler designates the function used to fetch the username and
+	// password to be used when connecting to a server.
+	UserInfoHandler AuthUserInfoHandler
 
 	// Token sets the token to be used when connecting to a server.
 	Token string
@@ -1162,6 +1170,15 @@ func UserInfo(user, password string) Option {
 	return func(o *Options) error {
 		o.User = user
 		o.Password = password
+		return nil
+	}
+}
+
+// UserInfoHandler is an Option to set the user info handler to use when a
+// username and password is not otherwise specified.
+func UserInfoHandler(cb AuthUserInfoHandler) Option {
+	return func(o *Options) error {
+		o.UserInfoHandler = cb
 		return nil
 	}
 }
@@ -2555,6 +2572,13 @@ func (nc *Conn) connectProto() (string, error) {
 			return _EMPTY_, ErrTokenAlreadySet
 		}
 		token = nc.Opts.TokenHandler()
+	}
+
+	if nc.Opts.UserInfoHandler != nil {
+		if user != _EMPTY_ || pass != _EMPTY_ {
+			return _EMPTY_, ErrUserInfoAlreadySet
+		}
+		user, pass = nc.Opts.UserInfoHandler()
 	}
 
 	// If our server does not support headers then we can't do them or no responders.
