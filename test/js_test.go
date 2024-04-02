@@ -8076,6 +8076,70 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	}
 }
 
+func TestPublishAsyncRetryInErrHandler(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	streamCreated := make(chan struct{})
+	errCB := func(js nats.JetStream, m *nats.Msg, e error) {
+		<-streamCreated
+		_, err := js.PublishMsgAsync(m)
+		if err != nil {
+			t.Fatalf("Unexpected error when republishing: %v", err)
+		}
+	}
+
+	js, err := nc.JetStream(nats.PublishAsyncErrHandler(errCB))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	errs := make(chan error, 1)
+	done := make(chan struct{}, 1)
+	go func() {
+		for i := 0; i < 10; i++ {
+			if _, err := js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+				errs <- err
+				return
+			}
+		}
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case err := <-errs:
+		t.Fatalf("Unexpected error during publish: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+	_, err = js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	close(streamCreated)
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+
+	info, err := js.StreamInfo("foo")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if info.State.Msgs != 10 {
+		t.Fatalf("Expected 10 messages in the stream; got: %d", info.State.Msgs)
+	}
+}
+
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	// Comment out below to run this benchmark.
 	t.SkipNow()

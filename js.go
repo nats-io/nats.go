@@ -712,10 +712,20 @@ func (js *js) resetPendingAcksOnReconnect() {
 			return
 		}
 		js.mu.Lock()
-		for _, paf := range js.pafs {
+		errCb := js.opts.aecb
+		for id, paf := range js.pafs {
 			paf.err = ErrDisconnected
+			if paf.errCh != nil {
+				paf.errCh <- paf.err
+			}
+			if errCb != nil {
+				// clear reply subject so that new one is created on republish
+				js.mu.Unlock()
+				errCb(js, paf.msg, ErrDisconnected)
+				js.mu.Lock()
+			}
+			delete(js.pafs, id)
 		}
-		js.pafs = nil
 		if js.dch != nil {
 			close(js.dch)
 			js.dch = nil
