@@ -288,9 +288,13 @@ type accountInfoResponse struct {
 	AccountInfo
 }
 
-// AccountInfo retrieves info about the JetStream usage from the current account.
-// If JetStream is not enabled, this will return ErrJetStreamNotEnabled
-// Other errors can happen but are generally considered retryable
+// AccountInfo fetches account information from the server, containing details
+// about the account associated with this JetStream connection. If account is
+// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned.
+//
+// If the server does not have JetStream enabled, ErrJetStreamNotEnabled is
+// returned (for a single server setup). For clustered topologies, AccountInfo
+// will time out.
 func (js *js) AccountInfo(opts ...JSOpt) (*AccountInfo, error) {
 	o, cancel, err := getJSContextOpts(js.opts, opts...)
 	if err != nil {
