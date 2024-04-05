@@ -811,9 +811,11 @@ func validateSubject(subject string) error {
 
 // AccountInfo fetches account information from the server, containing details
 // about the account associated with this JetStream connection. If account is
-// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned. If
-// the server does not have JetStream enabled, ErrJetStreamNotEnabled is
-// returned.
+// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned.
+//
+// If the server does not have JetStream enabled, ErrJetStreamNotEnabled is
+// returned (for a single server setup). For clustered topologies, AccountInfo
+// will time out.
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
