@@ -474,6 +474,19 @@ resp := &response{}
 err := c.RequestWithContext(ctx, "foo", req, resp)
 ```
 
+## Backwards compatibility
+
+In the development of nats.go, we are committed to maintaining backward compatibility and ensuring a stable and reliable  experience for all users. In general, we follow the standard go compatibility guidelines.
+However, it's important to clarify our stance on certain types of changes:
+
+- **Expanding structures:**
+Adding new fields to structs is not considered a breaking change.
+
+- **Adding methods to exported interfaces:**
+Extending public interfaces with new methods is also not viewed as a breaking change within the context of this project. It is important to note that no unexported methods will be added to interfaces allowing users to implement them.
+
+Additionally, this library always supports at least 2 latest minor Go versions. For example, if the latest Go version is 1.22, the library will support Go 1.21 and 1.22.
+
 ## License
 
 Unless otherwise noted, the NATS source files are distributed
