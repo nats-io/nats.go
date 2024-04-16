@@ -86,9 +86,10 @@ func main() {
 			for _, stream := range acc.Streams {
 				var ok bool
 				var m map[string]*streamDetail
-				if m, ok = streams[stream.Name]; !ok {
+				key := fmt.Sprintf("%s|%s", acc.Name, stream.Name)
+				if m, ok = streams[key]; !ok {
 					m = make(map[string]*streamDetail)
-					streams[stream.Name] = m
+					streams[key] = m
 				}
 				m[server.Name] = &streamDetail{
 					ServerID:   server.ID,
@@ -116,21 +117,33 @@ func main() {
 	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SEQUENCES", "STATUS"}
 	fmt.Printf("%-20s %-15s %-10s %-15s %-15s %-15s %-30s %-30s\n", fields...)
 
-	var prev string
+	var prev, prevAccount string
 	for i, k := range keys {
 		var unsynced bool
-		v := strings.Split(k, "/")
+		av := strings.Split(k, "|")
+		accName := av[0]
+		v := strings.Split(av[1], "/")
 		streamName, serverName := v[0], v[1]
 		if sname != "" && streamName != sname {
 			continue
 		}
-		stream := streams[streamName]
+
+		key := fmt.Sprintf("%s|%s", accName, streamName)
+		stream := streams[key]
 		replica := stream[serverName]
 		status := "IN SYNC"
 
 		// Make comparisons against other peers.
 		for _, peer := range stream {
 			if peer.State.Msgs != replica.State.Msgs && peer.State.Bytes != replica.State.Bytes {
+				status = "UNSYNCED"
+				unsynced = true
+			}
+			if peer.State.FirstSeq != replica.State.FirstSeq && peer.State.FirstSeq != replica.State.FirstSeq {
+				status = "UNSYNCED"
+				unsynced = true
+			}
+			if peer.State.LastSeq != replica.State.LastSeq && peer.State.LastSeq != replica.State.LastSeq {
 				status = "UNSYNCED"
 				unsynced = true
 			}
@@ -144,11 +157,16 @@ func main() {
 		if unsyncedFilter && !unsynced {
 			continue
 		}
-		if i > 0 && prev != streamName {
+		if i > 0 && prev != streamName || prevAccount != accName {
 			fmt.Println(line)
 		}
 
 		sf := make([]any, 0)
+		if replica == nil {
+			status = "?"
+			unsynced = true
+			continue
+		}
 		sf = append(sf, replica.StreamName)
 		sf = append(sf, replica.RaftGroup)
 		sf = append(sf, replica.Account)
@@ -194,6 +212,7 @@ func main() {
 		fmt.Printf("%-20s %-15s %-10s %-15s %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
 
 		prev = streamName
+		prevAccount = accName
 	}
 }
 
