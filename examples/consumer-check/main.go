@@ -100,9 +100,10 @@ func main() {
 				for _, consumer := range stream.Consumer {
 					var ok bool
 					var m map[string]*ConsumerDetail
-					if m, ok = consumers[consumer.Name]; !ok {
+					key := fmt.Sprintf("%s|%s", acc.Name, consumer.Name)
+					if m, ok = consumers[key]; !ok {
 						m = make(map[string]*ConsumerDetail)
-						consumers[consumer.Name] = m
+						consumers[key] = m
 					}
 					var raftGroup string
 					for _, cr := range stream.ConsumerRaftGroups {
@@ -150,15 +151,20 @@ func main() {
 	fields := []any{"CONSUMER", "STREAM", "RAFT", "ACCOUNT", "NODE", "DELIVERED", "ACK_FLOOR", "COUNTERS", "STATUS"}
 	fmt.Printf("%-10s %-15s %-15s %-10s %-15s | %-20s | %-20s | %-25s | %-30s\n", fields...)
 
-	var prev string
+	var prev, prevAccount string
 	for i, k := range keys {
 		var unsynced bool
-		v := strings.Split(k, "/")
+		// v := strings.Split(k, "/")
+		av := strings.Split(k, "|")
+		accName := av[0]
+		v := strings.Split(av[1], "/")
 		consumerName, serverName := v[0], v[1]
 		if cname != "" && consumerName != cname {
 			continue
 		}
-		consumer := consumers[consumerName]
+
+		key := fmt.Sprintf("%s|%s", accName, consumerName)
+		consumer := consumers[key]
 		replica := consumer[serverName]
 		var status string
 		statuses := make(map[string]bool)
@@ -191,8 +197,8 @@ func main() {
 		}
 		if replica.AckFloorStreamSeq == 0 || replica.AckFloorConsumerSeq == 0 ||
 			replica.DeliveredConsumerSeq == 0 || replica.DeliveredStreamSeq == 0 {
-			statuses["NO STATE"] = true
-			unsynced = true
+			statuses["EMPTY"] = true
+			// unsynced = true
 		}
 		if len(statuses) > 0 {
 			for k, _ := range statuses {
@@ -205,7 +211,7 @@ func main() {
 		if unsyncedFilter && !unsynced {
 			continue
 		}
-		if i > 0 && prev != consumerName {
+		if i > 0 && prev != consumerName || prevAccount != accName {
 			fmt.Println(line)
 		}
 
@@ -258,6 +264,7 @@ func main() {
 		fmt.Printf("%-10s %-15s %-15s %-10s %-15s | %-20s | %-20s | %-25s | %-12s | %s \n", sf...)
 
 		prev = consumerName
+		prevAccount = accName
 	}
 }
 
