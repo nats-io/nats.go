@@ -30,12 +30,16 @@ func main() {
 		timeout            int
 		unsyncedFilter     bool
 		health             bool
+		expected           int
+		readTimeout        int
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
 	flag.StringVar(&sname, "stream", "", "Select a single stream")
 	flag.BoolVar(&health, "health", false, "Check health from streams")
-	flag.IntVar(&timeout, "timeout", 30, "Connect timeout")
+	flag.IntVar(&timeout, "timeout", 30, "Connect timeout in seconds")
+	flag.IntVar(&readTimeout, "read-timeout", 5, "Read timeout in seconds")
+	flag.IntVar(&expected, "expected", 3, "Expected number of servers")
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
 	flag.Parse()
 
@@ -53,24 +57,28 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("Connected in %.3fs", time.Since(start).Seconds())
-	sys := NewSysClient(nc)
 
 	start = time.Now()
+	sys := Sys(nc)
+	fetchTimeout := FetchTimeout(time.Duration(timeout) * time.Second)
+	fetchExpected := FetchExpected(expected)
+	fetchReadTimeout := FetchReadTimeout(time.Duration(readTimeout) * time.Second)
 	servers, err := sys.JszPing(JszEventOptions{
 		JszOptions: JszOptions{
 			Streams:    true,
 			RaftGroups: true,
 		},
-	})
-	log.Printf("Response took %.3fs", time.Since(start).Seconds())
+	}, fetchTimeout, fetchReadTimeout, fetchExpected)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("Response took %.3fs", time.Since(start).Seconds())
+
 	header := fmt.Sprintf("Servers: %d", len(servers))
 	fmt.Println(header)
 
-	streams := make(map[string]map[string]*streamDetail)
 	// Collect all info from servers.
+	streams := make(map[string]map[string]*streamDetail)
 	for _, resp := range servers {
 		server := resp.Server
 		jsz := resp.JSInfo
@@ -190,9 +198,6 @@ func main() {
 }
 
 const (
-	srvVarzSubj    = "$SYS.REQ.SERVER.%s.VARZ"
-	srvConnzSubj   = "$SYS.REQ.SERVER.%s.CONNZ"
-	srvSubszSubj   = "$SYS.REQ.SERVER.%s.SUBSZ"
 	srvHealthzSubj = "$SYS.REQ.SERVER.%s.HEALTHZ"
 	srvJszSubj     = "$SYS.REQ.SERVER.%s.JSZ"
 )
@@ -202,81 +207,83 @@ var (
 	ErrInvalidServerID = errors.New("server with given ID does not exist")
 )
 
-// System can be used to request monitoring data from the server
-type System struct {
+// SysClient can be used to request monitoring data from the server.
+type SysClient struct {
 	nc *nats.Conn
 }
 
-// ServerInfo identifies remote servers.
-type ServerInfo struct {
-	Name      string    `json:"name"`
-	Host      string    `json:"host"`
-	ID        string    `json:"id"`
-	Cluster   string    `json:"cluster,omitempty"`
-	Domain    string    `json:"domain,omitempty"`
-	Version   string    `json:"ver"`
-	Tags      []string  `json:"tags,omitempty"`
-	Seq       uint64    `json:"seq"`
-	JetStream bool      `json:"jetstream"`
-	Time      time.Time `json:"time"`
-}
-
-func NewSysClient(nc *nats.Conn) System {
-	return System{
+func Sys(nc *nats.Conn) SysClient {
+	return SysClient{
 		nc: nc,
 	}
 }
 
-type requestManyOpts struct {
-	maxWait     time.Duration
-	maxInterval time.Duration
-	count       int
+func (s *SysClient) JszPing(opts JszEventOptions, fopts ...FetchOpt) ([]JSZResp, error) {
+	subj := fmt.Sprintf(srvJszSubj, "PING")
+	payload, err := json.Marshal(opts)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.Fetch(subj, payload, fopts...)
+	if err != nil {
+		return nil, err
+	}
+	srvJsz := make([]JSZResp, 0, len(resp))
+	for _, msg := range resp {
+		var jszResp JSZResp
+		if err := json.Unmarshal(msg.Data, &jszResp); err != nil {
+			return nil, err
+		}
+		srvJsz = append(srvJsz, jszResp)
+	}
+	return srvJsz, nil
 }
 
-type RequestManyOpt func(*requestManyOpts) error
+type FetchOpts struct {
+	Timeout     time.Duration
+	ReadTimeout time.Duration
+	Expected    int
+}
 
-func WithRequestManyMaxWait(maxWait time.Duration) RequestManyOpt {
-	return func(opts *requestManyOpts) error {
-		if maxWait <= 0 {
-			return fmt.Errorf("%w: max wait has to be greater than 0", ErrValidation)
+type FetchOpt func(*FetchOpts) error
+
+func FetchTimeout(timeout time.Duration) FetchOpt {
+	return func(opts *FetchOpts) error {
+		if timeout <= 0 {
+			return fmt.Errorf("%w: timeout has to be greater than 0", ErrValidation)
 		}
-		opts.maxWait = maxWait
+		opts.Timeout = timeout
 		return nil
 	}
 }
 
-func WithRequestManyMaxInterval(interval time.Duration) RequestManyOpt {
-	return func(opts *requestManyOpts) error {
-		if interval <= 0 {
-			return fmt.Errorf("%w: max interval has to be greater than 0", ErrValidation)
+func FetchReadTimeout(timeout time.Duration) FetchOpt {
+	return func(opts *FetchOpts) error {
+		if timeout <= 0 {
+			return fmt.Errorf("%w: read timeout has to be greater than 0", ErrValidation)
 		}
-		opts.maxInterval = interval
+		opts.ReadTimeout = timeout
 		return nil
 	}
 }
 
-func WithRequestManyCount(count int) RequestManyOpt {
-	return func(opts *requestManyOpts) error {
-		if count <= 0 {
+func FetchExpected(expected int) FetchOpt {
+	return func(opts *FetchOpts) error {
+		if expected <= 0 {
 			return fmt.Errorf("%w: expected request count has to be greater than 0", ErrValidation)
 		}
-		opts.count = count
+		opts.Expected = expected
 		return nil
 	}
 }
 
-func (s *System) RequestMany(subject string, data []byte, opts ...RequestManyOpt) ([]*nats.Msg, error) {
+func (s *SysClient) Fetch(subject string, data []byte, opts ...FetchOpt) ([]*nats.Msg, error) {
 	if subject == "" {
 		return nil, fmt.Errorf("%w: expected subject 0", ErrValidation)
 	}
 
 	conn := s.nc
-	reqOpts := &requestManyOpts{
-		maxWait:     DefaultRequestTimeout,
-		maxInterval: 30 * time.Second,
-		count:       5,
-	}
-
+	reqOpts := &FetchOpts{}
 	for _, opt := range opts {
 		if err := opt(reqOpts); err != nil {
 			return nil, err
@@ -287,9 +294,9 @@ func (s *System) RequestMany(subject string, data []byte, opts ...RequestManyOpt
 	res := make([]*nats.Msg, 0)
 	msgsChan := make(chan *nats.Msg, 100)
 
-	intervalTimer := time.NewTimer(reqOpts.maxInterval)
+	readTimer := time.NewTimer(reqOpts.ReadTimeout)
 	sub, err := conn.Subscribe(inbox, func(msg *nats.Msg) {
-		intervalTimer.Reset(reqOpts.maxInterval)
+		readTimer.Reset(reqOpts.ReadTimeout)
 		msgsChan <- msg
 	})
 	defer sub.Unsubscribe()
@@ -305,12 +312,12 @@ func (s *System) RequestMany(subject string, data []byte, opts ...RequestManyOpt
 				return nil, fmt.Errorf("server request on subject %q failed: %w", subject, err)
 			}
 			res = append(res, msg)
-			if reqOpts.count != -1 && len(res) == reqOpts.count {
+			if reqOpts.Expected != -1 && len(res) == reqOpts.Expected {
 				return res, nil
 			}
-		case <-intervalTimer.C:
+		case <-readTimer.C:
 			return res, nil
-		case <-time.After(reqOpts.maxWait):
+		case <-time.After(reqOpts.Timeout):
 			return res, nil
 		}
 	}
@@ -391,7 +398,9 @@ func (hs HealthStatus) String() string {
 }
 
 // Healthz checks server health status.
-func (s *System) Healthz(id string, opts HealthzOptions) (*HealthzResp, error) {
+const DefaultRequestTimeout = 60 * time.Second
+
+func (s *SysClient) Healthz(id string, opts HealthzOptions) (*HealthzResp, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: server id cannot be empty", ErrValidation)
 	}
@@ -416,28 +425,22 @@ func (s *System) Healthz(id string, opts HealthzOptions) (*HealthzResp, error) {
 	return &healthzResp, nil
 }
 
-func (s *System) HealthzPing(opts HealthzOptions) ([]HealthzResp, error) {
-	subj := fmt.Sprintf(srvHealthzSubj, "PING")
-	payload, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.RequestMany(subj, payload)
-	if err != nil {
-		return nil, err
-	}
-	srvHealthz := make([]HealthzResp, 0, len(resp))
-	for _, msg := range resp {
-		var healthzResp HealthzResp
-		if err := json.Unmarshal(msg.Data, &healthzResp); err != nil {
-			return nil, err
-		}
-		srvHealthz = append(srvHealthz, healthzResp)
-	}
-	return srvHealthz, nil
-}
-
 type (
+
+	// ServerInfo identifies remote servers.
+	ServerInfo struct {
+		Name      string    `json:"name"`
+		Host      string    `json:"host"`
+		ID        string    `json:"id"`
+		Cluster   string    `json:"cluster,omitempty"`
+		Domain    string    `json:"domain,omitempty"`
+		Version   string    `json:"ver"`
+		Tags      []string  `json:"tags,omitempty"`
+		Seq       uint64    `json:"seq"`
+		JetStream bool      `json:"jetstream"`
+		Time      time.Time `json:"time"`
+	}
+
 	JSZResp struct {
 		Server ServerInfo `json:"server"`
 		JSInfo JSInfo     `json:"data"`
@@ -502,215 +505,7 @@ type (
 	}
 )
 
-// Jsz returns server jetstream details
-func (s *System) Jsz(id string, opts JszEventOptions) (*JSZResp, error) {
-	if id == "" {
-		return nil, fmt.Errorf("%w: server id cannot be empty", ErrValidation)
-	}
-	conn := s.nc
-	subj := fmt.Sprintf(srvJszSubj, id)
-	payload, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := conn.Request(subj, payload, DefaultRequestTimeout)
-	if err != nil {
-		if errors.Is(err, nats.ErrNoResponders) {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidServerID, id)
-		}
-		return nil, err
-	}
-
-	var jszResp JSZResp
-	if err := json.Unmarshal(resp.Data, &jszResp); err != nil {
-		return nil, err
-	}
-
-	return &jszResp, nil
-}
-
-func (s *System) JszPing(opts JszEventOptions) ([]JSZResp, error) {
-	subj := fmt.Sprintf(srvJszSubj, "PING")
-	payload, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.RequestMany(subj, payload)
-	if err != nil {
-		return nil, err
-	}
-	srvJsz := make([]JSZResp, 0, len(resp))
-	for _, msg := range resp {
-		var jszResp JSZResp
-		if err := json.Unmarshal(msg.Data, &jszResp); err != nil {
-			return nil, err
-		}
-		srvJsz = append(srvJsz, jszResp)
-	}
-	return srvJsz, nil
-}
-
-const (
-	DefaultRequestTimeout = 60 * time.Second
-)
-
 type (
-	VarzResp struct {
-		Server ServerInfo `json:"server"`
-		Varz   Varz       `json:"data"`
-	}
-
-	// VarzResp is a server response from VARZ endpoint, containing general information about the server.
-	Varz struct {
-		ID                  string            `json:"server_id"`
-		Name                string            `json:"server_name"`
-		Version             string            `json:"version"`
-		Proto               int               `json:"proto"`
-		GitCommit           string            `json:"git_commit,omitempty"`
-		GoVersion           string            `json:"go"`
-		Host                string            `json:"host"`
-		Port                int               `json:"port"`
-		AuthRequired        bool              `json:"auth_required,omitempty"`
-		TLSRequired         bool              `json:"tls_required,omitempty"`
-		TLSVerify           bool              `json:"tls_verify,omitempty"`
-		IP                  string            `json:"ip,omitempty"`
-		ClientConnectURLs   []string          `json:"connect_urls,omitempty"`
-		WSConnectURLs       []string          `json:"ws_connect_urls,omitempty"`
-		MaxConn             int               `json:"max_connections"`
-		MaxSubs             int               `json:"max_subscriptions,omitempty"`
-		PingInterval        time.Duration     `json:"ping_interval"`
-		MaxPingsOut         int               `json:"ping_max"`
-		HTTPHost            string            `json:"http_host"`
-		HTTPPort            int               `json:"http_port"`
-		HTTPBasePath        string            `json:"http_base_path"`
-		HTTPSPort           int               `json:"https_port"`
-		AuthTimeout         float64           `json:"auth_timeout"`
-		MaxControlLine      int32             `json:"max_control_line"`
-		MaxPayload          int               `json:"max_payload"`
-		MaxPending          int64             `json:"max_pending"`
-		Cluster             ClusterOptsVarz   `json:"cluster,omitempty"`
-		Gateway             GatewayOptsVarz   `json:"gateway,omitempty"`
-		LeafNode            LeafNodeOptsVarz  `json:"leaf,omitempty"`
-		MQTT                MQTTOptsVarz      `json:"mqtt,omitempty"`
-		Websocket           WebsocketOptsVarz `json:"websocket,omitempty"`
-		JetStream           JetStreamVarz     `json:"jetstream,omitempty"`
-		TLSTimeout          float64           `json:"tls_timeout"`
-		WriteDeadline       time.Duration     `json:"write_deadline"`
-		Start               time.Time         `json:"start"`
-		Now                 time.Time         `json:"now"`
-		Uptime              string            `json:"uptime"`
-		Mem                 int64             `json:"mem"`
-		Cores               int               `json:"cores"`
-		MaxProcs            int               `json:"gomaxprocs"`
-		CPU                 float64           `json:"cpu"`
-		Connections         int               `json:"connections"`
-		TotalConnections    uint64            `json:"total_connections"`
-		Routes              int               `json:"routes"`
-		Remotes             int               `json:"remotes"`
-		Leafs               int               `json:"leafnodes"`
-		InMsgs              int64             `json:"in_msgs"`
-		OutMsgs             int64             `json:"out_msgs"`
-		InBytes             int64             `json:"in_bytes"`
-		OutBytes            int64             `json:"out_bytes"`
-		SlowConsumers       int64             `json:"slow_consumers"`
-		Subscriptions       uint32            `json:"subscriptions"`
-		HTTPReqStats        map[string]uint64 `json:"http_req_stats"`
-		ConfigLoadTime      time.Time         `json:"config_load_time"`
-		TrustedOperatorsJwt []string          `json:"trusted_operators_jwt,omitempty"`
-		SystemAccount       string            `json:"system_account,omitempty"`
-		PinnedAccountFail   uint64            `json:"pinned_account_fails,omitempty"`
-	}
-
-	// ClusterOptsVarz contains monitoring cluster information
-	ClusterOptsVarz struct {
-		Name        string   `json:"name,omitempty"`
-		Host        string   `json:"addr,omitempty"`
-		Port        int      `json:"cluster_port,omitempty"`
-		AuthTimeout float64  `json:"auth_timeout,omitempty"`
-		URLs        []string `json:"urls,omitempty"`
-		TLSTimeout  float64  `json:"tls_timeout,omitempty"`
-		TLSRequired bool     `json:"tls_required,omitempty"`
-		TLSVerify   bool     `json:"tls_verify,omitempty"`
-	}
-
-	// GatewayOptsVarz contains monitoring gateway information
-	GatewayOptsVarz struct {
-		Name           string                  `json:"name,omitempty"`
-		Host           string                  `json:"host,omitempty"`
-		Port           int                     `json:"port,omitempty"`
-		AuthTimeout    float64                 `json:"auth_timeout,omitempty"`
-		TLSTimeout     float64                 `json:"tls_timeout,omitempty"`
-		TLSRequired    bool                    `json:"tls_required,omitempty"`
-		TLSVerify      bool                    `json:"tls_verify,omitempty"`
-		Advertise      string                  `json:"advertise,omitempty"`
-		ConnectRetries int                     `json:"connect_retries,omitempty"`
-		Gateways       []RemoteGatewayOptsVarz `json:"gateways,omitempty"`
-		RejectUnknown  bool                    `json:"reject_unknown,omitempty"` // config got renamed to reject_unknown_cluster
-	}
-
-	// RemoteGatewayOptsVarz contains monitoring remote gateway information
-	RemoteGatewayOptsVarz struct {
-		Name       string   `json:"name"`
-		TLSTimeout float64  `json:"tls_timeout,omitempty"`
-		URLs       []string `json:"urls,omitempty"`
-	}
-
-	// LeafNodeOptsVarz contains monitoring leaf node information
-	LeafNodeOptsVarz struct {
-		Host        string               `json:"host,omitempty"`
-		Port        int                  `json:"port,omitempty"`
-		AuthTimeout float64              `json:"auth_timeout,omitempty"`
-		TLSTimeout  float64              `json:"tls_timeout,omitempty"`
-		TLSRequired bool                 `json:"tls_required,omitempty"`
-		TLSVerify   bool                 `json:"tls_verify,omitempty"`
-		Remotes     []RemoteLeafOptsVarz `json:"remotes,omitempty"`
-	}
-
-	// RemoteLeafOptsVarz contains monitoring remote leaf node information
-	RemoteLeafOptsVarz struct {
-		LocalAccount string     `json:"local_account,omitempty"`
-		TLSTimeout   float64    `json:"tls_timeout,omitempty"`
-		URLs         []string   `json:"urls,omitempty"`
-		Deny         *DenyRules `json:"deny,omitempty"`
-	}
-
-	// DenyRules Contains lists of subjects not allowed to be imported/exported
-	DenyRules struct {
-		Exports []string `json:"exports,omitempty"`
-		Imports []string `json:"imports,omitempty"`
-	}
-
-	// MQTTOptsVarz contains monitoring MQTT information
-	MQTTOptsVarz struct {
-		Host           string        `json:"host,omitempty"`
-		Port           int           `json:"port,omitempty"`
-		NoAuthUser     string        `json:"no_auth_user,omitempty"`
-		AuthTimeout    float64       `json:"auth_timeout,omitempty"`
-		TLSMap         bool          `json:"tls_map,omitempty"`
-		TLSTimeout     float64       `json:"tls_timeout,omitempty"`
-		TLSPinnedCerts []string      `json:"tls_pinned_certs,omitempty"`
-		JsDomain       string        `json:"js_domain,omitempty"`
-		AckWait        time.Duration `json:"ack_wait,omitempty"`
-		MaxAckPending  uint16        `json:"max_ack_pending,omitempty"`
-	}
-
-	// WebsocketOptsVarz contains monitoring websocket information
-	WebsocketOptsVarz struct {
-		Host             string        `json:"host,omitempty"`
-		Port             int           `json:"port,omitempty"`
-		Advertise        string        `json:"advertise,omitempty"`
-		NoAuthUser       string        `json:"no_auth_user,omitempty"`
-		JWTCookie        string        `json:"jwt_cookie,omitempty"`
-		HandshakeTimeout time.Duration `json:"handshake_timeout,omitempty"`
-		AuthTimeout      float64       `json:"auth_timeout,omitempty"`
-		NoTLS            bool          `json:"no_tls,omitempty"`
-		TLSMap           bool          `json:"tls_map,omitempty"`
-		TLSPinnedCerts   []string      `json:"tls_pinned_certs,omitempty"`
-		SameOrigin       bool          `json:"same_origin,omitempty"`
-		AllowedOrigins   []string      `json:"allowed_origins,omitempty"`
-		Compression      bool          `json:"compression,omitempty"`
-	}
-
 	// JetStreamVarz contains basic runtime information about jetstream
 	JetStreamVarz struct {
 		Config *JetStreamConfig `json:"config,omitempty"`
@@ -766,11 +561,6 @@ type (
 		Peer    string        `json:"peer"`
 	}
 
-	// In the context of system events, VarzEventOptions are options passed to Varz
-	VarzEventOptions struct {
-		EventFilterOptions
-	}
-
 	// Common filter options for system requests STATSZ VARZ SUBSZ CONNZ ROUTEZ GATEWAYZ LEAFZ
 	EventFilterOptions struct {
 		Name    string   `json:"server_name,omitempty"` // filter by server name
@@ -780,45 +570,3 @@ type (
 		Domain  string   `json:"domain,omitempty"`      // filter by JS domain
 	}
 )
-
-// Varz returns general server information
-func (s *System) Varz(id string, opts VarzEventOptions) (*VarzResp, error) {
-	conn := s.nc
-	subj := fmt.Sprintf(srvVarzSubj, id)
-	payload, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := conn.Request(subj, payload, DefaultRequestTimeout)
-	if err != nil {
-		return nil, err
-	}
-
-	var varzResp VarzResp
-	if err := json.Unmarshal(resp.Data, &varzResp); err != nil {
-		return nil, err
-	}
-
-	return &varzResp, nil
-}
-
-func (s *System) VarzPing(opts VarzEventOptions) ([]VarzResp, error) {
-	subj := fmt.Sprintf(srvVarzSubj, "PING")
-	payload, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.RequestMany(subj, payload)
-	if err != nil {
-		return nil, err
-	}
-	srvVarz := make([]VarzResp, 0, len(resp))
-	for _, msg := range resp {
-		var varzResp VarzResp
-		if err := json.Unmarshal(msg.Data, &varzResp); err != nil {
-			return nil, err
-		}
-		srvVarz = append(srvVarz, varzResp)
-	}
-	return srvVarz, nil
-}
