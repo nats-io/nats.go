@@ -447,8 +447,9 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe    = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
 func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, error) {
@@ -784,7 +785,7 @@ func searchKeyValid(key string) bool {
 	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
 		return false
 	}
-	return subjectRegexp.MatchString(key)
+	return validSearchKeyRe.MatchString(key)
 }
 
 func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {

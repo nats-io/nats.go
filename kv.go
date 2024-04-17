@@ -344,9 +344,9 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe    = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe       = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
-	validSearchKeyRe = regexp.MustCompile(`^[^ >]*[>]?$`)
+	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
 // KeyValue will lookup and bind to an existing KeyValue store.
