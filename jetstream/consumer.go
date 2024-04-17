@@ -208,6 +208,9 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 
 	var ccSubj string
 	if cfg.FilterSubject != "" && len(cfg.FilterSubjects) == 0 {
+		if err := validateSubject(cfg.FilterSubject); err != nil {
+			return nil, err
+		}
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject))
 	} else {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream, consumerName))

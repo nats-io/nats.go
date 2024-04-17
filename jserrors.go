@@ -124,6 +124,9 @@ var (
 	// ErrInvalidConsumerName is returned when the provided consumer name is invalid (contains '.' or ' ').
 	ErrInvalidConsumerName JetStreamError = &jsError{message: "invalid consumer name"}
 
+	// ErrInvalidFilterSubject is returned when the provided filter subject is invalid.
+	ErrInvalidFilterSubject JetStreamError = &jsError{message: "invalid filter subject"}
+
 	// ErrNoMatchingStream is returned when stream lookup by subject is unsuccessful.
 	ErrNoMatchingStream JetStreamError = &jsError{message: "no stream matches subject"}
 
