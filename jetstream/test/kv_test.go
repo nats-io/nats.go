@@ -1481,9 +1481,44 @@ func TestKeyValueCreate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST"})
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:       "TEST",
+		Description:  "Test KV",
+		MaxValueSize: 128,
+		History:      10,
+		TTL:          1 * time.Hour,
+		MaxBytes:     1024,
+		Storage:      jetstream.FileStorage,
+	})
 	if err != nil {
 		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	expectedStreamConfig := jetstream.StreamConfig{
+		Name:              "KV_TEST",
+		Description:       "Test KV",
+		Subjects:          []string{"$KV.TEST.>"},
+		MaxMsgs:           -1,
+		MaxBytes:          1024,
+		Discard:           jetstream.DiscardNew,
+		MaxAge:            1 * time.Hour,
+		MaxMsgsPerSubject: 10,
+		MaxMsgSize:        128,
+		Storage:           jetstream.FileStorage,
+		DenyDelete:        true,
+		AllowRollup:       true,
+		AllowDirect:       true,
+		MaxConsumers:      -1,
+		Replicas:          1,
+		Duplicates:        2 * time.Minute,
+	}
+
+	stream, err := js.Stream(ctx, "KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream: %v", err)
+	}
+	if !reflect.DeepEqual(stream.CachedInfo().Config, expectedStreamConfig) {
+		t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, stream.CachedInfo().Config)
 	}
 
 	_, err = kv.Create(ctx, "key", []byte("1"))
