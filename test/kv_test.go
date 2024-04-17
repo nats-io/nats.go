@@ -1376,9 +1376,44 @@ func TestKeyValueCreate(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+		Bucket:       "TEST",
+		Description:  "Test KV",
+		MaxValueSize: 128,
+		History:      10,
+		TTL:          1 * time.Hour,
+		MaxBytes:     1024,
+		Storage:      nats.FileStorage,
+	})
 	if err != nil {
 		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	expectedStreamConfig := nats.StreamConfig{
+		Name:              "KV_TEST",
+		Description:       "Test KV",
+		Subjects:          []string{"$KV.TEST.>"},
+		MaxMsgs:           -1,
+		MaxBytes:          1024,
+		Discard:           nats.DiscardNew,
+		MaxAge:            1 * time.Hour,
+		MaxMsgsPerSubject: 10,
+		MaxMsgSize:        128,
+		Storage:           nats.FileStorage,
+		DenyDelete:        true,
+		AllowRollup:       true,
+		AllowDirect:       true,
+		MaxConsumers:      -1,
+		Replicas:          1,
+		Duplicates:        2 * time.Minute,
+	}
+
+	si, err := js.StreamInfo("KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+	if !reflect.DeepEqual(si.Config, expectedStreamConfig) {
+		t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, si.Config)
 	}
 
 	_, err = kv.Create("key", []byte("1"))
