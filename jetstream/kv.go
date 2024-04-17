@@ -601,6 +601,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 		AllowDirect:       true,
 		RePublish:         cfg.RePublish,
 		Compression:       compression,
+		Discard:           DiscardNew,
 	}
 	if cfg.Mirror != nil {
 		// Copy in case we need to make changes so we do not change caller's version.
