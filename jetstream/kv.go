@@ -453,7 +453,7 @@ var (
 )
 
 func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, error) {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	streamName := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -540,7 +540,7 @@ func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueCon
 }
 
 func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConfig) (StreamConfig, error) {
-	if !validBucketRe.MatchString(cfg.Bucket) {
+	if !bucketValid(cfg.Bucket) {
 		return StreamConfig{}, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(ctx); err != nil {
@@ -637,7 +637,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
 func (js *jetStream) DeleteKeyValue(ctx context.Context, bucket string) error {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -772,6 +772,13 @@ func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 		})
 	}
 	return js.conn.JetStream(opts...)
+}
+
+func bucketValid(bucket string) bool {
+	if len(bucket) == 0 {
+		return false
+	}
+	return validBucketRe.MatchString(bucket)
 }
 
 func keyValid(key string) bool {

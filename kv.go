@@ -354,7 +354,7 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 	if !js.nc.serverMinVersion(2, 6, 2) {
 		return nil, errors.New("nats: key-value requires at least server version 2.6.2")
 	}
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -382,7 +382,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 	if cfg == nil {
 		return nil, ErrKeyValueConfigRequired
 	}
-	if !validBucketRe.MatchString(cfg.Bucket) {
+	if !bucketValid(cfg.Bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(); err != nil {
@@ -508,7 +508,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
 func (js *js) DeleteKeyValue(bucket string) error {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -547,6 +547,13 @@ func (e *kve) Revision() uint64      { return e.revision }
 func (e *kve) Created() time.Time    { return e.created }
 func (e *kve) Delta() uint64         { return e.delta }
 func (e *kve) Operation() KeyValueOp { return e.op }
+
+func bucketValid(bucket string) bool {
+	if len(bucket) == 0 {
+		return false
+	}
+	return validBucketRe.MatchString(bucket)
+}
 
 func keyValid(key string) bool {
 	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
