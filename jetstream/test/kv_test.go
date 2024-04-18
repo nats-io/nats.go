@@ -1635,7 +1635,7 @@ func TestKeyValueCompression(t *testing.T) {
 	}
 }
 
-func TestKeyValueCreateRepairDiscardPolicy(t *testing.T) {
+func TestKeyValueCreateRepairOldKV(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -1651,15 +1651,16 @@ func TestKeyValueCreateRepairDiscardPolicy(t *testing.T) {
 		t.Fatalf("Error creating kv: %v", err)
 	}
 
-	// get stream config and set discard policy to old
+	// get stream config and set discard policy to old and AllowDirect to false
 	stream, err := js.Stream(ctx, "KV_A")
 	if err != nil {
 		t.Fatalf("Error getting stream info: %v", err)
 	}
 	streamCfg := stream.CachedInfo().Config
 	streamCfg.Discard = jetstream.DiscardOld
+	streamCfg.AllowDirect = false
 
-	// create a new kv with the same name - client should fix the discard policy
+	// create a new kv with the same name - client should fix the config
 	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
 		Bucket: "A",
 	})
@@ -1674,6 +1675,9 @@ func TestKeyValueCreateRepairDiscardPolicy(t *testing.T) {
 	}
 	if stream.CachedInfo().Config.Discard != jetstream.DiscardNew {
 		t.Fatalf("Expected stream to have discard policy set to new")
+	}
+	if !stream.CachedInfo().Config.AllowDirect {
+		t.Fatalf("Expected stream to have AllowDirect set to true")
 	}
 
 	// attempting to create a new kv with the same name and different settings should fail

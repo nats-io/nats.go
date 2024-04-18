@@ -495,9 +495,12 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 			// that changed the value of discard policy.
 			// We will check if the stream exists and if the only difference
 			// is the discard policy, we will update the stream.
+			// The same logic applies for KVs created pre 2.9.x and
+			// the AllowDirect setting.
 			if stream, _ = js.Stream(ctx, scfg.Name); stream != nil {
 				cfg := stream.CachedInfo().Config
 				cfg.Discard = scfg.Discard
+				cfg.AllowDirect = scfg.AllowDirect
 				if reflect.DeepEqual(cfg, scfg) {
 					stream, err = js.UpdateStream(ctx, scfg)
 				}
