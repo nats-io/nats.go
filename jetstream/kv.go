@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -488,8 +489,26 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 			// errors are joined so that backwards compatibility is retained
 			// and previous checks for ErrStreamNameAlreadyInUse will still work.
 			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketExists, cfg.Bucket), err)
+
+			// If we have a failure to add, it could be because we have
+			// a config change if the KV was created against before a bug fix
+			// that changed the value of discard policy.
+			// We will check if the stream exists and if the only difference
+			// is the discard policy, we will update the stream.
+			// The same logic applies for KVs created pre 2.9.x and
+			// the AllowDirect setting.
+			if stream, _ = js.Stream(ctx, scfg.Name); stream != nil {
+				cfg := stream.CachedInfo().Config
+				cfg.Discard = scfg.Discard
+				cfg.AllowDirect = scfg.AllowDirect
+				if reflect.DeepEqual(cfg, scfg) {
+					stream, err = js.UpdateStream(ctx, scfg)
+				}
+			}
 		}
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 	pushJS, err := js.legacyJetStream()
 	if err != nil {
