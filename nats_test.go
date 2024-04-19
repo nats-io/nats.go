@@ -94,7 +94,7 @@ func checkErrChannel(t *testing.T, errCh chan error) {
 }
 
 func TestVersionMatchesTag(t *testing.T) {
-	tag := os.Getenv("TRAVIS_TAG")
+	tag := os.Getenv("GITHUB_ACTIONS")
 	if tag == "" {
 		t.SkipNow()
 	}
