@@ -1094,16 +1094,21 @@ func TestCallbacksOrder(t *testing.T) {
 }
 
 func TestConnectHandler(t *testing.T) {
+	handler := func(ch chan bool) func(*nats.Conn) {
+		return func(*nats.Conn) {
+			ch <- true
+		}
+	}
 	t.Run("with RetryOnFailedConnect, connection established", func(t *testing.T) {
 		s := RunDefaultServer()
 		defer s.Shutdown()
 
 		connected := make(chan bool)
-		connHandler := func(*nats.Conn) {
-			connected <- true
-		}
+		reconnected := make(chan bool)
+
 		nc, err := nats.Connect(nats.DefaultURL,
-			nats.ConnectHandler(connHandler),
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true))
 
 		if err != nil {
@@ -1113,24 +1118,28 @@ func TestConnectHandler(t *testing.T) {
 		if err = Wait(connected); err != nil {
 			t.Fatal("Timeout waiting for connect handler")
 		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
+		}
 	})
 	t.Run("with RetryOnFailedConnect, connection failed", func(t *testing.T) {
 		connected := make(chan bool)
-		connHandler := func(*nats.Conn) {
-			connected <- true
-		}
+		reconnected := make(chan bool)
+
 		nc, err := nats.Connect(nats.DefaultURL,
-			nats.ConnectHandler(connHandler),
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true))
 
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer nc.Close()
-		select {
-		case <-connected:
-			t.Fatalf("ConnectedCB invoked when no connection established")
-		case <-time.After(100 * time.Millisecond):
+		if err = WaitTime(connected, 100*time.Millisecond); err == nil {
+			t.Fatal("Connected handler should not have been invoked")
+		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
 		}
 	})
 	t.Run("no RetryOnFailedConnect, connection established", func(t *testing.T) {
@@ -1138,11 +1147,11 @@ func TestConnectHandler(t *testing.T) {
 		defer s.Shutdown()
 
 		connected := make(chan bool)
-		connHandler := func(*nats.Conn) {
-			connected <- true
-		}
+		reconnected := make(chan bool)
 		nc, err := nats.Connect(nats.DefaultURL,
-			nats.ConnectHandler(connHandler))
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)))
+
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1150,22 +1159,94 @@ func TestConnectHandler(t *testing.T) {
 		if err = Wait(connected); err != nil {
 			t.Fatal("Timeout waiting for connect handler")
 		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
+		}
 	})
 	t.Run("no RetryOnFailedConnect, connection failed", func(t *testing.T) {
 		connected := make(chan bool)
-		connHandler := func(*nats.Conn) {
-			connected <- true
-		}
+		reconnected := make(chan bool)
 		_, err := nats.Connect(nats.DefaultURL,
-			nats.ConnectHandler(connHandler))
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)))
 
 		if err == nil {
 			t.Fatalf("Expected error on connect, got nil")
 		}
-		select {
-		case <-connected:
-			t.Fatalf("ConnectedCB invoked when no connection established")
-		case <-time.After(100 * time.Millisecond):
+		if err = WaitTime(connected, 100*time.Millisecond); err == nil {
+			t.Fatal("Connected handler should not have been invoked")
+		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
+		}
+	})
+	t.Run("with RetryOnFailedConnect, initial connection failed, reconnect successful", func(t *testing.T) {
+		connected := make(chan bool)
+		reconnected := make(chan bool)
+
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)),
+			nats.RetryOnFailedConnect(true),
+			nats.ReconnectWait(100*time.Millisecond))
+
+		if err != nil {
+			t.Fatalf("Expected error on connect, got nil")
+		}
+
+		defer nc.Close()
+
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		if err != nil {
+			t.Fatalf("Expected error on connect, got nil")
+		}
+		if err = Wait(connected); err != nil {
+			t.Fatal("Timeout waiting for reconnect handler")
+		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
+		}
+	})
+	t.Run("with RetryOnFailedConnect, initial connection successful, server restart", func(t *testing.T) {
+		connected := make(chan bool)
+		reconnected := make(chan bool)
+
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.ConnectHandler(handler(connected)),
+			nats.ReconnectHandler(handler(reconnected)),
+			nats.RetryOnFailedConnect(true),
+			nats.ReconnectWait(100*time.Millisecond))
+
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if err = Wait(connected); err != nil {
+			t.Fatal("Timeout waiting for connect handler")
+		}
+		if err = WaitTime(reconnected, 100*time.Millisecond); err == nil {
+			t.Fatal("Reconnect handler should not have been invoked")
+		}
+
+		s.Shutdown()
+
+		s = RunDefaultServer()
+		defer s.Shutdown()
+
+		if err = Wait(reconnected); err != nil {
+			t.Fatal("Timeout waiting for reconnect handler")
+		}
+		if err = WaitTime(connected, 100*time.Millisecond); err == nil {
+			t.Fatal("Connected handler should not have been invoked")
 		}
 	})
 }
