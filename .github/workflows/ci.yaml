@@ -1,0 +1,32 @@
+name: Testing
+on: [push, pull_request]
+
+jobs:
+    lint:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+      
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                go-version: 1.22
+                cache: false
+
+            - name: Install deps
+              shell: bash --noprofile --norc -x -eo pipefail {0}
+              run: |
+                go get -t ./...
+                go install honnef.co/go/tools/cmd/staticcheck@latest
+                go install github.com/client9/misspell/cmd/misspell@latest
+                go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+            
+            - name: Run linters
+              shell: bash --noprofile --norc -x -eo pipefail {0}
+              run: |
+                $(exit $(go fmt -modfile=go_test.mod  ./... | wc -l))
+                go vet -modfile=go_test.mod ./... 
+                GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
+                find . -type f -name "*.go" | xargs misspell -error -locale US
+                golangci-lint run --timeout 5m0s ./jetstream/...
