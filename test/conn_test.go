@@ -2790,7 +2790,8 @@ func TestRetryOnFailedConnect(t *testing.T) {
 		nc.Close()
 		t.Fatal("Expected error, did not get one")
 	}
-	ch := make(chan bool, 1)
+	reconnectedCh := make(chan bool, 1)
+	connectedCh := make(chan bool, 1)
 	dch := make(chan bool, 1)
 	nc, err = nats.Connect(nats.DefaultURL,
 		nats.RetryOnFailedConnect(true),
@@ -2799,8 +2800,11 @@ func TestRetryOnFailedConnect(t *testing.T) {
 		nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) {
 			dch <- true
 		}),
+		nats.ConnectHandler(func(_ *nats.Conn) {
+			connectedCh <- true
+		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
-			ch <- true
+			reconnectedCh <- true
 		}),
 		nats.NoCallbacksAfterClientClose())
 	if err != nil {
@@ -2818,19 +2822,19 @@ func TestRetryOnFailedConnect(t *testing.T) {
 		s := RunDefaultServer()
 		defer s.Shutdown()
 
-		var action string
 		switch i {
 		case 0:
-			action = "connected"
+			select {
+			case <-connectedCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Should have connected")
+			}
 		case 1:
-			action = "reconnected"
-		}
-
-		// Wait for the reconnect CB which in this context means that we connected ok
-		select {
-		case <-ch:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("Should have %s", action)
+			select {
+			case <-reconnectedCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Should have reconnected")
+			}
 		}
 
 		// Now make sure that the pub worked and sub worked.
@@ -2863,7 +2867,7 @@ func TestRetryOnFailedConnect(t *testing.T) {
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(15*time.Millisecond),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
-			ch <- true
+			reconnectedCh <- true
 		}),
 		nats.ClosedHandler(func(_ *nats.Conn) {
 			closedCh <- true
@@ -2888,7 +2892,7 @@ func TestRetryOnFailedConnect(t *testing.T) {
 	}
 	// Make sure that we did not get the (re)connected CB
 	select {
-	case <-ch:
+	case <-reconnectedCh:
 		t.Fatal("(re)connected callback should not have been invoked")
 	default:
 	}
@@ -2911,14 +2915,14 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	s := RunServerWithOptions(&opts)
 	defer s.Shutdown()
 
-	ch := make(chan bool, 1)
+	connectedCh := make(chan bool, 1)
 	nc, err := nats.Connect(nats.DefaultURL,
 		nats.Secure(&tls.Config{InsecureSkipVerify: true}),
 		nats.RetryOnFailedConnect(true),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(15*time.Millisecond),
-		nats.ReconnectHandler(func(_ *nats.Conn) {
-			ch <- true
+		nats.ConnectHandler(func(_ *nats.Conn) {
+			connectedCh <- true
 		}),
 		nats.NoCallbacksAfterClientClose())
 	if err != nil {
@@ -2935,7 +2939,7 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	defer s.Shutdown()
 
 	select {
-	case <-ch:
+	case <-connectedCh:
 	case <-time.After(time.Second):
 		t.Fatal("Should have connected")
 	}
