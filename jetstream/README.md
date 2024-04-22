@@ -113,13 +113,19 @@ func main() {
 
     // Get 10 messages from the consumer
     messageCounter := 0
-    msgs, _ := c.Fetch(10)
+    msgs, err := c.Fetch(10)
+    if err != nil {
+        // handle error
+    }
+	
     for msg := range msgs.Messages() {
         msg.Ack()
         fmt.Printf("Received a JetStream message via fetch: %s\n", string(msg.Data()))
         messageCounter++
     }
+	
     fmt.Printf("received %d messages\n", messageCounter)
+	
     if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
@@ -391,19 +397,29 @@ of messages/bytes. By default, `Fetch()` will wait 30 seconds before timing out
 
 ```go
 // receive up to 10 messages from the stream
-msgs, _ := c.Fetch(10)
+msgs, err := c.Fetch(10)
+if err != nil {
+	// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }
 
 // receive up to 1024 B of data
-msgs, _ := c.FetchBytes(1024)
+msgs, err := c.FetchBytes(1024)
+if err != nil {
+// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }
@@ -414,10 +430,15 @@ stream available at the time of sending request:
 
 ```go
 // FetchNoWait will not wait for new messages if the whole batch is not available at the time of sending request.
-msgs, _ := c.FetchNoWait(10)
+msgs, err := c.FetchNoWait(10)
+if err != nil {
+// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }
