@@ -2875,14 +2875,18 @@ func (nc *Conn) doReconnect(err error) {
 		// This is where we are truly connected.
 		nc.status = CONNECTED
 
+		// Queue up the correct callback. If we are in initial connect state
+		// (using retry on failed connect), we will call the ConnectedCB,
+		// otherwise the ReconnectedCB.
+		if nc.Opts.ReconnectedCB != nil && !nc.initc {
+			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
+		} else if nc.Opts.ConnectedCB != nil && nc.initc {
+			nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
+		}
+
 		// If we are here with a retry on failed connect, indicate that the
 		// initial connect is now complete.
 		nc.initc = false
-
-		// Queue up the reconnect callback.
-		if nc.Opts.ReconnectedCB != nil {
-			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
-		}
 
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
