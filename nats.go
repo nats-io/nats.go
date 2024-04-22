@@ -2881,7 +2881,6 @@ func (nc *Conn) doReconnect(err error) {
 		if nc.Opts.ReconnectedCB != nil && !nc.initc {
 			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
 		} else if nc.Opts.ConnectedCB != nil && nc.initc {
-			fmt.Println()
 			nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
 		}
 
