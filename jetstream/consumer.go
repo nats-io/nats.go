@@ -209,6 +209,9 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 
 	var ccSubj string
 	if cfg.FilterSubject != "" && len(cfg.FilterSubjects) == 0 {
+		if err := validateSubject(cfg.FilterSubject); err != nil {
+			return nil, err
+		}
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject))
 	} else {
 		ccSubj = apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerCreateT, stream, consumerName))
@@ -356,8 +359,11 @@ func resumeConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 }
 
 func validateConsumerName(dur string) error {
-	if strings.Contains(dur, ".") {
-		return fmt.Errorf("%w: %q", ErrInvalidConsumerName, dur)
+	if dur == "" {
+		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, "name is required")
+	}
+	if strings.ContainsAny(dur, ">*. /\\") {
+		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, dur)
 	}
 	return nil
 }

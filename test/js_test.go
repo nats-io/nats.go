@@ -2604,6 +2604,15 @@ func TestJetStreamManagement(t *testing.T) {
 			}
 		})
 
+		t.Run("with invalid filter subject", func(t *testing.T) {
+			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Name: "tc", FilterSubject: ".foo"}); !errors.Is(err, nats.ErrInvalidFilterSubject) {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidFilterSubject, err)
+			}
+			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Name: "tc", FilterSubject: "foo."}); !errors.Is(err, nats.ErrInvalidFilterSubject) {
+				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidFilterSubject, err)
+			}
+		})
+
 		t.Run("with invalid consumer name", func(t *testing.T) {
 			if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "test.durable"}); err != nats.ErrInvalidConsumerName {
 				t.Fatalf("Expected: %v; got: %v", nats.ErrInvalidConsumerName, err)
