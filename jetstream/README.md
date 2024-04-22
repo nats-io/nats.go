@@ -114,8 +114,8 @@ func main() {
     // Get 10 messages from the consumer
     messageCounter := 0
     msgs, err := c.Fetch(10)
-	if err != nil {
-		// handle error
+    if err != nil {
+        // handle error
     }
 	
     for msg := range msgs.Messages() {
@@ -126,7 +126,7 @@ func main() {
 	
     fmt.Printf("received %d messages\n", messageCounter)
 	
-	if msgs.Error() != nil {
+    if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
 
