@@ -125,7 +125,7 @@ func main() {
     }
 	
     fmt.Printf("received %d messages\n", messageCounter)
-    
+	
 	if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
