@@ -414,6 +414,10 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 			// if filter subject is empty or ">", use the endpoint without filter subject
 			ccSubj = fmt.Sprintf(apiConsumerCreateT, stream, consumerName)
 		} else {
+			// safeguard against passing invalid filter subject in request subject
+			if cfg.FilterSubject[0] == '.' || cfg.FilterSubject[len(cfg.FilterSubject)-1] == '.' {
+				return nil, fmt.Errorf("%w: %q", ErrInvalidFilterSubject, cfg.FilterSubject)
+			}
 			// if filter subject is not empty, use the endpoint with filter subject
 			ccSubj = fmt.Sprintf(apiConsumerCreateWithFilterSubjectT, stream, consumerName, cfg.FilterSubject)
 		}
