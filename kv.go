@@ -344,8 +344,9 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe    = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
 // KeyValue will lookup and bind to an existing KeyValue store.
@@ -353,7 +354,7 @@ func (js *js) KeyValue(bucket string) (KeyValue, error) {
 	if !js.nc.serverMinVersion(2, 6, 2) {
 		return nil, errors.New("nats: key-value requires at least server version 2.6.2")
 	}
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -381,7 +382,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 	if cfg == nil {
 		return nil, ErrKeyValueConfigRequired
 	}
-	if !validBucketRe.MatchString(cfg.Bucket) {
+	if !bucketValid(cfg.Bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(); err != nil {
@@ -507,7 +508,7 @@ func (js *js) CreateKeyValue(cfg *KeyValueConfig) (KeyValue, error) {
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
 func (js *js) DeleteKeyValue(bucket string) error {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -547,11 +548,25 @@ func (e *kve) Created() time.Time    { return e.created }
 func (e *kve) Delta() uint64         { return e.delta }
 func (e *kve) Operation() KeyValueOp { return e.op }
 
+func bucketValid(bucket string) bool {
+	if len(bucket) == 0 {
+		return false
+	}
+	return validBucketRe.MatchString(bucket)
+}
+
 func keyValid(key string) bool {
 	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
 		return false
 	}
 	return validKeyRe.MatchString(key)
+}
+
+func searchKeyValid(key string) bool {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+		return false
+	}
+	return validSearchKeyRe.MatchString(key)
 }
 
 // Get returns the latest value for the key.
@@ -951,6 +966,9 @@ func (kv *kvs) WatchAll(opts ...WatchOpt) (KeyWatcher, error) {
 // Watch will fire the callback when a key that matches the keys pattern is updated.
 // keys needs to be a valid NATS subject.
 func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	if !searchKeyValid(keys) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+	}
 	var o watchOpts
 	for _, opt := range opts {
 		if opt != nil {

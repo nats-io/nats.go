@@ -793,7 +793,7 @@ func validateStreamName(stream string) error {
 	if stream == "" {
 		return ErrStreamNameRequired
 	}
-	if strings.Contains(stream, ".") {
+	if strings.ContainsAny(stream, ">*. /\\") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidStreamName, stream)
 	}
 	return nil
@@ -803,7 +803,7 @@ func validateSubject(subject string) error {
 	if subject == "" {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, "subject cannot be empty")
 	}
-	if !subjectRegexp.MatchString(subject) {
+	if subject[0] == '.' || subject[len(subject)-1] == '.' || !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, subject)
 	}
 	return nil

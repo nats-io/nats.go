@@ -448,12 +448,13 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe    = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
 func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, error) {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	streamName := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -558,7 +559,7 @@ func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueCon
 }
 
 func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConfig) (StreamConfig, error) {
-	if !validBucketRe.MatchString(cfg.Bucket) {
+	if !bucketValid(cfg.Bucket) {
 		return StreamConfig{}, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(ctx); err != nil {
@@ -656,7 +657,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
 func (js *jetStream) DeleteKeyValue(ctx context.Context, bucket string) error {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -793,11 +794,25 @@ func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 	return js.conn.JetStream(opts...)
 }
 
+func bucketValid(bucket string) bool {
+	if len(bucket) == 0 {
+		return false
+	}
+	return validBucketRe.MatchString(bucket)
+}
+
 func keyValid(key string) bool {
 	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
 		return false
 	}
 	return validKeyRe.MatchString(key)
+}
+
+func searchKeyValid(key string) bool {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+		return false
+	}
+	return validSearchKeyRe.MatchString(key)
 }
 
 func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
@@ -1056,6 +1071,9 @@ func (w *watcher) Stop() error {
 // Watch for any updates to keys that match the keys argument which could include wildcards.
 // Watch will send a nil entry when it has received all initial values.
 func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	if !searchKeyValid(keys) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+	}
 	var o watchOpts
 	for _, opt := range opts {
 		if opt != nil {

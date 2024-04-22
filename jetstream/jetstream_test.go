@@ -456,3 +456,96 @@ func TestPullConsumer_checkPending(t *testing.T) {
 		})
 	}
 }
+
+func TestKV_keyValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "foo.bar", ok: true},
+		{key: "Foo.123=bar_baz-abc", ok: true},
+		{key: "foo.*.bar", ok: false},
+		{key: "foo.>", ok: false},
+		{key: ">", ok: false},
+		{key: "*", ok: false},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := keyValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
+		})
+	}
+}
+
+func TestKV_searchKeyValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "foo.bar", ok: true},
+		{key: "Foo.123=bar_baz-abc", ok: true},
+		{key: "foo.*.bar", ok: true},
+		{key: "foo.>", ok: true},
+		{key: ">", ok: true},
+		{key: "*", ok: true},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := searchKeyValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
+		})
+	}
+}
+
+func TestKV_bucketValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "Foo123-bar_baz", ok: true},
+		{key: "foo.bar", ok: false},
+		{key: "foo.*.bar", ok: false},
+		{key: "foo.>", ok: false},
+		{key: ">", ok: false},
+		{key: "*", ok: false},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := bucketValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
+		})
+	}
+}
