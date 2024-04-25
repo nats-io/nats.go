@@ -98,19 +98,20 @@ func main() {
 		for _, acc := range jsz.AccountDetails {
 			for _, stream := range acc.Streams {
 				for _, consumer := range stream.Consumer {
-					var ok bool
-					var m map[string]*ConsumerDetail
-					key := fmt.Sprintf("%s|%s", acc.Name, consumer.Name)
-					if m, ok = consumers[key]; !ok {
-						m = make(map[string]*ConsumerDetail)
-						consumers[key] = m
-					}
 					var raftGroup string
 					for _, cr := range stream.ConsumerRaftGroups {
 						if cr.Name == consumer.Name {
 							raftGroup = cr.RaftGroup
 							break
 						}
+					}
+
+					var ok bool
+					var m map[string]*ConsumerDetail
+					key := fmt.Sprintf("%s|%s", acc.Name, raftGroup)
+					if m, ok = consumers[key]; !ok {
+						m = make(map[string]*ConsumerDetail)
+						consumers[key] = m
 					}
 
 					m[server.Name] = &ConsumerDetail{
