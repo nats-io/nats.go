@@ -1617,18 +1617,6 @@ func TestSubscribe_ClosedHandler(t *testing.T) {
 }
 
 func TestSubscriptionEvents(t *testing.T) {
-
-	waitForStatus := func(t *testing.T, ch <-chan nats.SubStatus, expected nats.SubStatus) {
-		t.Helper()
-		select {
-		case s := <-ch:
-			if s != expected {
-				t.Fatalf("Expected status: %s; got: %s", expected, s)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Timeout waiting for status %q", expected)
-		}
-	}
 	t.Run("default events", func(t *testing.T) {
 		s := RunDefaultServer()
 		defer s.Shutdown()
@@ -1651,19 +1639,19 @@ func TestSubscriptionEvents(t *testing.T) {
 		status := sub.StatusChanged()
 
 		// initial status
-		waitForStatus(t, status, nats.SubscriptionActive)
+		WaitOnChannel(t, status, nats.SubscriptionActive)
 
 		for i := 0; i < 11; i++ {
 			nc.Publish("foo", []byte("Hello"))
 		}
-		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+		WaitOnChannel(t, status, nats.SubscriptionSlowConsumer)
 		close(blockChan)
 
 		sub.Drain()
 
-		waitForStatus(t, status, nats.SubscriptionDraining)
+		WaitOnChannel(t, status, nats.SubscriptionDraining)
 
-		waitForStatus(t, status, nats.SubscriptionClosed)
+		WaitOnChannel(t, status, nats.SubscriptionClosed)
 	})
 
 	t.Run("slow consumer event only", func(t *testing.T) {
@@ -1691,7 +1679,7 @@ func TestSubscriptionEvents(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			nc.Publish("foo", []byte("Hello"))
 		}
-		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+		WaitOnChannel(t, status, nats.SubscriptionSlowConsumer)
 		close(blockChan)
 
 		// now try with sync sub
@@ -1706,7 +1694,7 @@ func TestSubscriptionEvents(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			nc.Publish("foo", []byte("Hello"))
 		}
-		waitForStatus(t, status, nats.SubscriptionSlowConsumer)
+		WaitOnChannel(t, status, nats.SubscriptionSlowConsumer)
 	})
 
 	t.Run("do not block channel if it's not read", func(t *testing.T) {
@@ -1730,7 +1718,7 @@ func TestSubscriptionEvents(t *testing.T) {
 		}
 		sub.SetPendingLimits(10, 1024)
 		status := sub.StatusChanged()
-		waitForStatus(t, status, nats.SubscriptionActive)
+		WaitOnChannel(t, status, nats.SubscriptionActive)
 
 		// chan length is 10, so make sure we switch state more times
 		for i := 0; i < 20; i++ {

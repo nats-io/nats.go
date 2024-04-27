@@ -54,6 +54,18 @@ func WaitTime(ch chan bool, timeout time.Duration) error {
 	return errors.New("timeout")
 }
 
+func WaitOnChannel[T comparable](t *testing.T, ch <-chan T, expected T) {
+	t.Helper()
+	select {
+	case s := <-ch:
+		if s != expected {
+			t.Fatalf("Expected result: %v; got: %v", expected, s)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Timeout waiting for result %v", expected)
+	}
+}
+
 func stackFatalf(t tLogger, f string, args ...any) {
 	lines := make([]string, 0, 32)
 	msg := fmt.Sprintf(f, args...)
