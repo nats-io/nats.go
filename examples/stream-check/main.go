@@ -86,7 +86,7 @@ func main() {
 			for _, stream := range acc.Streams {
 				var ok bool
 				var m map[string]*streamDetail
-				key := fmt.Sprintf("%s|%s", acc.Name, stream.Name)
+				key := fmt.Sprintf("%s|%s", acc.Name, stream.RaftGroup)
 				if m, ok = streams[key]; !ok {
 					m = make(map[string]*streamDetail)
 					streams[key] = m
@@ -114,8 +114,8 @@ func main() {
 	fmt.Printf("Streams: %d\n", len(keys))
 	fmt.Println()
 
-	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SEQUENCES", "STATUS"}
-	fmt.Printf("%-20s %-15s %-10s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
+	fmt.Printf("%-40s %-15s %-10s %-35s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -167,9 +167,15 @@ func main() {
 			unsynced = true
 			continue
 		}
+		var alen int
+		if len(replica.Account) > 10 {
+			alen = 10
+		} else {
+			alen = len(replica.Account)
+		}
 		sf = append(sf, replica.StreamName)
 		sf = append(sf, replica.RaftGroup)
-		sf = append(sf, replica.Account)
+		sf = append(sf, strings.Replace(replica.Account[:alen], " ", "_", -1))
 
 		// Mark it in case it is a leader.
 		var suffix string
@@ -183,6 +189,9 @@ func main() {
 		sf = append(sf, s)
 		sf = append(sf, replica.State.Msgs)
 		sf = append(sf, replica.State.Bytes)
+		sf = append(sf, replica.State.NumSubjects)
+		sf = append(sf, replica.State.NumDeleted)
+		sf = append(sf, replica.State.Consumers)
 		sf = append(sf, replica.State.FirstSeq)
 		sf = append(sf, replica.State.LastSeq)
 		sf = append(sf, status)
@@ -209,7 +218,7 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-20s %-15s %-10s %-15s %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
+		fmt.Printf("%-40s %-15s %-10s %-35s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
 
 		prev = streamName
 		prevAccount = accName
