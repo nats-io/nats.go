@@ -970,6 +970,61 @@ func TestForceReconnect(t *testing.T) {
 	nc.Close()
 }
 
+func TestForceReconnectDisallowReconnect(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.NoReconnect())
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+	// Force a reconnect
+	err = nc.Reconnect()
+	if err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+}
+
 func TestAuthExpiredForceReconnect(t *testing.T) {
 	ts := runTrustServer()
 	defer ts.Shutdown()
