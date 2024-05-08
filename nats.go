@@ -2161,14 +2161,14 @@ func (nc *Conn) waitForExits() {
 	nc.wg.Wait()
 }
 
-// Reconnect forces a reconnect attempt to the server.
+// ForceReconnect forces a reconnect attempt to the server.
 // This is a non-blocking call and will start the reconnect
 // process without waiting for it to complete.
 //
 // If the connection is already in the process of reconnecting,
 // this call will force an immediate reconnect attempt (bypassing
 // the current reconnect delay).
-func (nc *Conn) Reconnect() error {
+func (nc *Conn) ForceReconnect() error {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 

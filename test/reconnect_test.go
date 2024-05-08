@@ -924,7 +924,7 @@ func TestForceReconnect(t *testing.T) {
 	}
 
 	// Force a reconnect
-	err = nc.Reconnect()
+	err = nc.ForceReconnect()
 	if err != nil {
 		t.Fatalf("Unexpected error on reconnect: %v", err)
 	}
@@ -952,7 +952,7 @@ func TestForceReconnect(t *testing.T) {
 	s = RunDefaultServer()
 	defer s.Shutdown()
 
-	if err := nc.Reconnect(); err != nil {
+	if err := nc.ForceReconnect(); err != nil {
 		t.Fatalf("Unexpected error on reconnect: %v", err)
 	}
 	// wait for the reconnect
@@ -1007,7 +1007,7 @@ func TestForceReconnectDisallowReconnect(t *testing.T) {
 	}
 
 	// Force a reconnect
-	err = nc.Reconnect()
+	err = nc.ForceReconnect()
 	if err != nil {
 		t.Fatalf("Unexpected error on reconnect: %v", err)
 	}
@@ -1093,7 +1093,7 @@ func TestAuthExpiredForceReconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Did not get the auth expired error")
 	}
-	if err := nc.Reconnect(); err != nil {
+	if err := nc.ForceReconnect(); err != nil {
 		t.Fatalf("Unexpected error on reconnect: %v", err)
 	}
 	WaitOnChannel(t, newStatus, nats.RECONNECTING)

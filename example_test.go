@@ -89,7 +89,7 @@ func ExampleConn_Subscribe() {
 	})
 }
 
-func ExampleConn_Reconnect() {
+func ExampleConn_ForceReconnect() {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	defer nc.Close()
 
@@ -99,7 +99,7 @@ func ExampleConn_Reconnect() {
 
 	// Reconnect to the server.
 	// the subscription will be recreated after the reconnect.
-	nc.Reconnect()
+	nc.ForceReconnect()
 }
 
 // This Example shows a synchronous subscriber.
