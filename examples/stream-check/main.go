@@ -16,6 +16,7 @@ import (
 type streamDetail struct {
 	StreamName   string
 	Account      string
+	AccountID    string
 	RaftGroup    string
 	State        nats.StreamState
 	Cluster      *nats.ClusterInfo
@@ -95,6 +96,7 @@ func main() {
 					ServerID:   server.ID,
 					StreamName: stream.Name,
 					Account:    acc.Name,
+					AccountID:  acc.Id,
 					RaftGroup:  stream.RaftGroup,
 					State:      stream.State,
 					Cluster:    stream.Cluster,
@@ -114,8 +116,8 @@ func main() {
 	fmt.Printf("Streams: %d\n", len(keys))
 	fmt.Println()
 
-	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-	fmt.Printf("%-40s %-15s %-10s %-35s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
+	fmt.Printf("%-40s %-15s %-10s %-35s %-35s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -176,6 +178,7 @@ func main() {
 		sf = append(sf, replica.StreamName)
 		sf = append(sf, replica.RaftGroup)
 		sf = append(sf, strings.Replace(replica.Account[:alen], " ", "_", -1))
+		sf = append(sf, replica.AccountID)
 
 		// Mark it in case it is a leader.
 		var suffix string
@@ -218,7 +221,7 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-40s %-15s %-10s %-35s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
+		fmt.Printf("%-40s %-15s %-10s %-35s %-35s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
 
 		prev = streamName
 		prevAccount = accName
