@@ -249,22 +249,22 @@ func purge() DeleteOpt {
 
 // KeyValueConfig is for configuring a KeyValue store.
 type KeyValueConfig struct {
-	Bucket       string
-	Description  string
-	MaxValueSize int32
-	History      uint8
-	TTL          time.Duration
-	MaxBytes     int64
-	Storage      StorageType
-	Replicas     int
-	Placement    *Placement
-	RePublish    *RePublish
-	Mirror       *StreamSource
-	Sources      []*StreamSource
+	Bucket       string          `json:"bucket"`
+	Description  string          `json:"description,omitempty"`
+	MaxValueSize int32           `json:"max_value_size,omitempty"`
+	History      uint8           `json:"history"`
+	TTL          time.Duration   `json:"ttl,omitempty"`
+	MaxBytes     int64           `json:"max_bytes"`
+	Storage      StorageType     `json:"storage"`
+	Replicas     int             `json:"replicas"`
+	Placement    *Placement      `json:"placement,omitempty"`
+	RePublish    *RePublish      `json:"republish,omitempty"`
+	Mirror       *StreamSource   `json:"mirror,omitempty"`
+	Sources      []*StreamSource `json:"sources,omitempty"`
 
 	// Enable underlying stream compression.
 	// NOTE: Compression is supported for nats-server 2.10.0+
-	Compression bool
+	Compression bool `json:"compression"`
 }
 
 // Used to watch all keys.
