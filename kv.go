@@ -252,11 +252,11 @@ type KeyValueConfig struct {
 	Bucket       string          `json:"bucket"`
 	Description  string          `json:"description,omitempty"`
 	MaxValueSize int32           `json:"max_value_size,omitempty"`
-	History      uint8           `json:"history"`
-	TTL          time.Duration   `json:"ttl,omitempty"`
-	MaxBytes     int64           `json:"max_bytes"`
-	Storage      StorageType     `json:"storage"`
-	Replicas     int             `json:"replicas"`
+	History      uint8           `json:"history,omitempty"`
+	TTL          time.Duration   `json:"ttl,omitempty,omitempty"`
+	MaxBytes     int64           `json:"max_bytes,omitempty"`
+	Storage      StorageType     `json:"storage,omitempty"`
+	Replicas     int             `json:"num_replicas,omitempty"`
 	Placement    *Placement      `json:"placement,omitempty"`
 	RePublish    *RePublish      `json:"republish,omitempty"`
 	Mirror       *StreamSource   `json:"mirror,omitempty"`
@@ -264,7 +264,7 @@ type KeyValueConfig struct {
 
 	// Enable underlying stream compression.
 	// NOTE: Compression is supported for nats-server 2.10.0+
-	Compression bool `json:"compression"`
+	Compression bool `json:"compression,omitempty"`
 }
 
 // Used to watch all keys.

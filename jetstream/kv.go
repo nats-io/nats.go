@@ -208,22 +208,22 @@ type (
 
 		// History is the number of historical values to keep per key. If not
 		// specified, the default is 1. Max is 64.
-		History uint8 `json:"history"`
+		History uint8 `json:"history,omitempty"`
 
 		// TTL is the expiry time for keys. By default, keys do not expire.
 		TTL time.Duration `json:"ttl,omitempty"`
 
 		// MaxBytes is the maximum size in bytes of the KeyValue store. If not
 		// specified, the default is -1 (unlimited).
-		MaxBytes int64 `json:"max_bytes"`
+		MaxBytes int64 `json:"max_bytes,omitempty"`
 
 		// Storage is the type of storage to use for the KeyValue store. If not
 		// specified, the default is FileStorage.
-		Storage StorageType `json:"storage"`
+		Storage StorageType `json:"storage,omitempty"`
 
 		// Replicas is the number of replicas to keep for the KeyValue store in
 		// clustered jetstream. Defaults to 1, maximum is 5.
-		Replicas int `json:"replicas"`
+		Replicas int `json:"num_replicas,omitempty"`
 
 		// Placement is used to declare where the stream should be placed via
 		// tags and/or an explicit cluster name.
@@ -242,7 +242,7 @@ type (
 
 		// Compression sets the underlying stream compression.
 		// NOTE: Compression is supported for nats-server 2.10.0+
-		Compression bool `json:"compression"`
+		Compression bool `json:"compression,omitempty"`
 	}
 
 	// KeyLister is used to retrieve a list of key value store keys. It returns
