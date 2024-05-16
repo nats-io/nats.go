@@ -197,52 +197,52 @@ type (
 		// Bucket is the name of the KeyValue store. Bucket name has to be
 		// unique and can only contain alphanumeric characters, dashes, and
 		// underscores.
-		Bucket string
+		Bucket string `json:"bucket"`
 
 		// Description is an optional description for the KeyValue store.
-		Description string
+		Description string `json:"description,omitempty"`
 
 		// MaxValueSize is the maximum size of a value in bytes. If not
 		// specified, the default is -1 (unlimited).
-		MaxValueSize int32
+		MaxValueSize int32 `json:"max_value_size,omitempty"`
 
 		// History is the number of historical values to keep per key. If not
 		// specified, the default is 1. Max is 64.
-		History uint8
+		History uint8 `json:"history,omitempty"`
 
 		// TTL is the expiry time for keys. By default, keys do not expire.
-		TTL time.Duration
+		TTL time.Duration `json:"ttl,omitempty"`
 
 		// MaxBytes is the maximum size in bytes of the KeyValue store. If not
 		// specified, the default is -1 (unlimited).
-		MaxBytes int64
+		MaxBytes int64 `json:"max_bytes,omitempty"`
 
 		// Storage is the type of storage to use for the KeyValue store. If not
 		// specified, the default is FileStorage.
-		Storage StorageType
+		Storage StorageType `json:"storage,omitempty"`
 
 		// Replicas is the number of replicas to keep for the KeyValue store in
 		// clustered jetstream. Defaults to 1, maximum is 5.
-		Replicas int
+		Replicas int `json:"num_replicas,omitempty"`
 
 		// Placement is used to declare where the stream should be placed via
 		// tags and/or an explicit cluster name.
-		Placement *Placement
+		Placement *Placement `json:"placement,omitempty"`
 
 		// RePublish allows immediate republishing a message to the configured
 		// subject after it's stored.
-		RePublish *RePublish
+		RePublish *RePublish `json:"republish,omitempty"`
 
 		// Mirror defines the consiguration for mirroring another KeyValue
 		// store.
-		Mirror *StreamSource
+		Mirror *StreamSource `json:"mirror,omitempty"`
 
 		// Sources defines the configuration for sources of a KeyValue store.
-		Sources []*StreamSource
+		Sources []*StreamSource `json:"sources,omitempty"`
 
 		// Compression sets the underlying stream compression.
 		// NOTE: Compression is supported for nats-server 2.10.0+
-		Compression bool
+		Compression bool `json:"compression,omitempty"`
 	}
 
 	// KeyLister is used to retrieve a list of key value store keys. It returns
