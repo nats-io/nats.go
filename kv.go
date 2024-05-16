@@ -253,7 +253,7 @@ type KeyValueConfig struct {
 	Description  string          `json:"description,omitempty"`
 	MaxValueSize int32           `json:"max_value_size,omitempty"`
 	History      uint8           `json:"history,omitempty"`
-	TTL          time.Duration   `json:"ttl,omitempty,omitempty"`
+	TTL          time.Duration   `json:"ttl,omitempty"`
 	MaxBytes     int64           `json:"max_bytes,omitempty"`
 	Storage      StorageType     `json:"storage,omitempty"`
 	Replicas     int             `json:"num_replicas,omitempty"`
