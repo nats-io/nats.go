@@ -89,6 +89,19 @@ func ExampleConn_Subscribe() {
 	})
 }
 
+func ExampleConn_ForceReconnect() {
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+
+	// Reconnect to the server.
+	// the subscription will be recreated after the reconnect.
+	nc.ForceReconnect()
+}
+
 // This Example shows a synchronous subscriber.
 func ExampleConn_SubscribeSync() {
 	nc, _ := nats.Connect(nats.DefaultURL)
