@@ -2161,6 +2161,47 @@ func (nc *Conn) waitForExits() {
 	nc.wg.Wait()
 }
 
+// ForceReconnect forces a reconnect attempt to the server.
+// This is a non-blocking call and will start the reconnect
+// process without waiting for it to complete.
+//
+// If the connection is already in the process of reconnecting,
+// this call will force an immediate reconnect attempt (bypassing
+// the current reconnect delay).
+func (nc *Conn) ForceReconnect() error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+	if nc.isReconnecting() {
+		// if we're already reconnecting, force a reconnect attempt
+		// even if we're in the middle of a backoff
+		if nc.rqch != nil {
+			close(nc.rqch)
+		}
+		return nil
+	}
+
+	// Clear any queued pongs
+	nc.clearPendingFlushCalls()
+
+	// Clear any queued and blocking requests.
+	nc.clearPendingRequestCalls()
+
+	// Stop ping timer if set.
+	nc.stopPingTimer()
+
+	// Go ahead and make sure we have flushed the outbound
+	nc.bw.flush()
+	nc.conn.Close()
+
+	nc.changeConnStatus(RECONNECTING)
+	go nc.doReconnect(nil, true)
+	return nil
+}
+
 // ConnectedUrl reports the connected server's URL
 func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
@@ -2420,7 +2461,7 @@ func (nc *Conn) connect() (bool, error) {
 		nc.setup()
 		nc.changeConnStatus(RECONNECTING)
 		nc.bw.switchToPending()
-		go nc.doReconnect(ErrNoServers)
+		go nc.doReconnect(ErrNoServers, false)
 		err = nil
 	} else {
 		nc.current = nil
@@ -2720,7 +2761,7 @@ func (nc *Conn) stopPingTimer() {
 
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
-func (nc *Conn) doReconnect(err error) {
+func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	// We want to make sure we have the other watchers shutdown properly
 	// here before we proceed past this point.
 	nc.waitForExits()
@@ -2776,7 +2817,8 @@ func (nc *Conn) doReconnect(err error) {
 			break
 		}
 
-		doSleep := i+1 >= len(nc.srvPool)
+		doSleep := i+1 >= len(nc.srvPool) && !forceReconnect
+		forceReconnect = false
 		nc.mu.Unlock()
 
 		if !doSleep {
@@ -2803,6 +2845,12 @@ func (nc *Conn) doReconnect(err error) {
 			select {
 			case <-rqch:
 				rt.Stop()
+
+				// we need to reset the rqch channel to avoid
+				// closing a closed channel in the next iteration
+				nc.mu.Lock()
+				nc.rqch = make(chan struct{})
+				nc.mu.Unlock()
 			case <-rt.C:
 			}
 		}
@@ -2872,9 +2920,6 @@ func (nc *Conn) doReconnect(err error) {
 		// Done with the pending buffer
 		nc.bw.doneWithPending()
 
-		// This is where we are truly connected.
-		nc.status = CONNECTED
-
 		// Queue up the correct callback. If we are in initial connect state
 		// (using retry on failed connect), we will call the ConnectedCB,
 		// otherwise the ReconnectedCB.
@@ -2930,7 +2975,7 @@ func (nc *Conn) processOpErr(err error) {
 		// Clear any queued pongs, e.g. pending flush calls.
 		nc.clearPendingFlushCalls()
 
-		go nc.doReconnect(err)
+		go nc.doReconnect(err, false)
 		nc.mu.Unlock()
 		return
 	}

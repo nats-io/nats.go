@@ -2946,16 +2946,6 @@ func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 }
 
 func TestConnStatusChangedEvents(t *testing.T) {
-	waitForStatus := func(t *testing.T, ch chan nats.Status, expected nats.Status) {
-		select {
-		case s := <-ch:
-			if s != expected {
-				t.Fatalf("Expected status: %s; got: %s", expected, s)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Timeout waiting for status %q", expected)
-		}
-	}
 	t.Run("default events", func(t *testing.T) {
 		s := RunDefaultServer()
 		nc, err := nats.Connect(s.ClientURL())
@@ -2978,15 +2968,15 @@ func TestConnStatusChangedEvents(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		s.Shutdown()
-		waitForStatus(t, newStatus, nats.RECONNECTING)
+		WaitOnChannel(t, newStatus, nats.RECONNECTING)
 
 		s = RunDefaultServer()
 		defer s.Shutdown()
 
-		waitForStatus(t, newStatus, nats.CONNECTED)
+		WaitOnChannel(t, newStatus, nats.CONNECTED)
 
 		nc.Close()
-		waitForStatus(t, newStatus, nats.CLOSED)
+		WaitOnChannel(t, newStatus, nats.CLOSED)
 
 		select {
 		case s := <-newStatus:
@@ -3019,7 +3009,7 @@ func TestConnStatusChangedEvents(t *testing.T) {
 		s = RunDefaultServer()
 		defer s.Shutdown()
 		nc.Close()
-		waitForStatus(t, newStatus, nats.CLOSED)
+		WaitOnChannel(t, newStatus, nats.CLOSED)
 
 		select {
 		case s := <-newStatus:
