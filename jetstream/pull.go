@@ -596,6 +596,12 @@ func (s *pullSubscription) Next() (Msg, error) {
 			if errors.Is(err, errConnected) {
 				if !isConnected {
 					isConnected = true
+
+					if hbMonitor != nil {
+						// we are not going to get a heartbeat while reconnecting
+						hbMonitor.Stop()
+					}
+
 					// try fetching consumer info several times to make sure consumer is available after reconnect
 					backoffOpts := backoffOpts{
 						attempts:                10,
