@@ -537,7 +537,7 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		cfg.FilterSubjects = c.cfg.FilterSubjects
 	}
 
-	if seq > c.cfg.OptStartSeq {
+	if seq > c.cfg.OptStartSeq && seq != 1 {
 		return cfg
 	}
 
