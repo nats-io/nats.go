@@ -559,7 +559,6 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		cfg.DeliverPolicy = DeliverByStartTimePolicy
 		cfg.OptStartTime = c.cfg.OptStartTime
 	}
-
 	if c.cfg.InactiveThreshold != 0 {
 		cfg.InactiveThreshold = c.cfg.InactiveThreshold
 	}
