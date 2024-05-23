@@ -37,6 +37,7 @@ func main() {
 	log.SetFlags(0)
 	var (
 		urls, sname, cname string
+		user, pass         string
 		creds              string
 		timeout            int
 		health             bool
@@ -46,6 +47,8 @@ func main() {
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
+	flag.StringVar(&user, "user", "", "User")
+	flag.StringVar(&pass, "pass", "", "Pass")
 	flag.StringVar(&sname, "stream", "", "Select a single stream")
 	flag.StringVar(&cname, "consumer", "", "Select a single consumer")
 	flag.BoolVar(&health, "health", false, "Check health from consumers")
@@ -62,6 +65,9 @@ func main() {
 	}
 	if creds != "" {
 		opts = append(opts, nats.UserCredentials(creds))
+	}
+	if user != "" && pass != "" {
+		opts = append(opts, nats.UserInfo(user, pass))
 	}
 
 	nc, err := nats.Connect(urls, opts...)
