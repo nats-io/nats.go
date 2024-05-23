@@ -30,13 +30,16 @@ type Encoder interface {
 	Decode(subject string, data []byte, vPtr any) error
 }
 
-var encMap map[string]Encoder
-var encLock sync.Mutex
+var (
+	encMap  map[string]Encoder
+	encLock sync.Mutex
+)
 
 // Indexed names into the Registered Encoders.
 const (
 	JSON_ENCODER    = "json"
 	GOB_ENCODER     = "gob"
+	MSGPACK_ENCODER = "msgpack"
 	DEFAULT_ENCODER = "default"
 )
 
@@ -45,6 +48,7 @@ func init() {
 	// Register json, gob and default encoder
 	RegisterEncoder(JSON_ENCODER, &builtin.JsonEncoder{})
 	RegisterEncoder(GOB_ENCODER, &builtin.GobEncoder{})
+	RegisterEncoder(MSGPACK_ENCODER, &builtin.MsgpackEncoder{})
 	RegisterEncoder(DEFAULT_ENCODER, &builtin.DefaultEncoder{})
 }
 
