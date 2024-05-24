@@ -45,10 +45,7 @@ type objectStepConfig[T any] struct {
 
 func TestCompatibilityObjectStoreDefaultBucket(t *testing.T) {
 	t.Parallel()
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -85,10 +82,7 @@ func TestCompatibilityObjectStoreDefaultBucket(t *testing.T) {
 
 func TestCompatibilityObjectStoreCustomBucket(t *testing.T) {
 	t.Parallel()
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -131,10 +125,7 @@ func TestCompatibilityObjectStoreGetObject(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -186,10 +177,7 @@ func TestCompatibilityObjectStoreGetObject(t *testing.T) {
 func TestCompatibilityObjectStorePutObject(t *testing.T) {
 	t.Parallel()
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -239,10 +227,7 @@ func TestCompatibilityObjectStorePutObject(t *testing.T) {
 func TestCompatibilityObjectStoreUpdateMetadata(t *testing.T) {
 	t.Parallel()
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -287,10 +272,7 @@ func TestCompatibilityObjectStoreWatch(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -365,10 +347,7 @@ func TestCompatibilityObjectStoreWatchUpdates(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -421,10 +400,7 @@ func TestCompatibilityObjectStoreGetLink(t *testing.T) {
 		Object string `json:"object"`
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
@@ -481,10 +457,7 @@ func TestCompatibilityObjectStorePutLink(t *testing.T) {
 		LinkName string `json:"link_name"`
 	}
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.Timeout(1*time.Hour))
-	if err != nil {
-		t.Fatalf("Error connecting to NATS: %v", err)
-	}
+	nc := connect(t)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Error connecting to NATS: %v", err)
