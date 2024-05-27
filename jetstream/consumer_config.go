@@ -172,8 +172,8 @@ type (
 
 		// MaxAckPending is a maximum number of outstanding unacknowledged
 		// messages. Once this limit is reached, the server will suspend sending
-		// messages to the consumer.  If not set, server default is 1000
-		// seconds. Set to -1 for unlimited.
+		// messages to the consumer. If not set, server default is 1000.
+		// Set to -1 for unlimited.
 		MaxAckPending int `json:"max_ack_pending,omitempty"`
 
 		// HeadersOnly indicates whether only headers of messages should be sent
