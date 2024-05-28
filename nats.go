@@ -5483,7 +5483,7 @@ func (nc *Conn) drainConnection() {
 // Drain will put a connection into a drain state. All subscriptions will
 // immediately be put into a drain state. Upon completion, the publishers
 // will be drained and can not publish any additional messages. Upon draining
-// of the publishers, the connection will be closed. Use the ClosedCB()
+// of the publishers, the connection will be closed. Use the ClosedCB
 // option to know when the connection has moved from draining to closed.
 //
 // See note in Subscription.Drain for JetStream subscriptions.
