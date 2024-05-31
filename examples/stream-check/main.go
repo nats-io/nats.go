@@ -124,7 +124,7 @@ func main() {
 	fmt.Println()
 
 	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-	fmt.Printf("%-40s %-15s %-10s %-35s %-56s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -236,7 +236,7 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-40s %-15s %-10s %-35s %-56s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
 
 		prev = streamName
 		prevAccount = accName
