@@ -124,7 +124,7 @@ func main() {
 	fmt.Println()
 
 	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-	fmt.Printf("%-40s %-15s %-10s %-35s %-35s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	fmt.Printf("%-40s %-15s %-10s %-35s %-56s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -189,12 +189,25 @@ func main() {
 
 		// Mark it in case it is a leader.
 		var suffix string
+		var isStreamLeader bool
 		if serverName == replica.Cluster.Leader {
+			isStreamLeader = true
 			suffix = "*"
 		} else if replica.Cluster.Leader == "" {
 			status = "LEADERLESS"
 			unsynced = true
 		}
+
+		var replicasInfo string
+		for _, r := range replica.Cluster.Replicas {
+			if isStreamLeader && r.Name == replica.Cluster.Leader {
+				status = "LEADER_IS_FOLLOWER"
+				unsynced = true
+			}
+			info := fmt.Sprintf("%s(current=%-5v,offline=%v)", r.Name, r.Current, r.Offline)
+			replicasInfo = fmt.Sprintf("%-40s %s", info, replicasInfo)
+		}
+
 		s := fmt.Sprintf("%s%s", serverName, suffix)
 		sf = append(sf, s)
 		sf = append(sf, replica.State.Msgs)
@@ -206,11 +219,6 @@ func main() {
 		sf = append(sf, replica.State.LastSeq)
 		sf = append(sf, status)
 		sf = append(sf, replica.Cluster.Leader)
-		var replicasInfo string
-		for _, r := range replica.Cluster.Replicas {
-			info := fmt.Sprintf("%s(current=%-5v,offline=%v)", r.Name, r.Current, r.Offline)
-			replicasInfo = fmt.Sprintf("%-40s %s", info, replicasInfo)
-		}
 
 		// Include Healthz if option added.
 		var healthStatus string
@@ -228,7 +236,7 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-40s %-15s %-10s %-35s %-35s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | %s\n", sf...)
+		fmt.Printf("%-40s %-15s %-10s %-35s %-56s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
 
 		prev = streamName
 		prevAccount = accName
