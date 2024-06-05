@@ -88,6 +88,34 @@ func TestConsumerInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("consumer for a catchall stream", func(t *testing.T) {
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{">"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable:     "cons",
+			AckPolicy:   jetstream.AckExplicitPolicy,
+			Description: "test consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
 	t.Run("consumer does not exist", func(t *testing.T) {
 		nc, err := nats.Connect(srv.ClientURL())
 		if err != nil {
