@@ -183,12 +183,12 @@ func main() {
 	}
 	sort.Strings(keys)
 
-	line := strings.Repeat("-", 170)
+	line := strings.Repeat("-", 232)
 	fmt.Printf("Consumers: %d\n", len(keys))
 	fmt.Println()
 
 	fields := []any{"CONSUMER", "STREAM", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "DELIVERED (S,C)", "ACK_FLOOR (S,C)", "COUNTERS", "STATUS"}
-	fmt.Printf("%-10s %-15s %-15s %-15s %-35s %-15s | %-20s | %-20s | %-25s | %-30s\n", fields...)
+	fmt.Printf("%-10s %-15s %-15s %-15s %-35s %-15s | %-40s | %-20s | %-20s | %-25s\n", fields...)
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -260,6 +260,10 @@ func main() {
 			status = "IN SYNC"
 		}
 
+		if serverName == replica.Cluster.Leader && replica.Cluster.Leader == replica.StreamCluster.Leader {
+			status += " / INTERSECT"
+		}
+
 		if unsyncedFilter && !unsynced {
 			continue
 		}
@@ -283,7 +287,10 @@ func main() {
 
 		// Mark it in case it is a leader.
 		var suffix string
-		if serverName == replica.Cluster.Leader {
+		if replica.Cluster == nil {
+			status = "NO_CLUSTER"
+			unsynced = true
+		} else if serverName == replica.Cluster.Leader {
 			suffix = "*"
 		} else if replica.Cluster.Leader == "" {
 			status = "LEADERLESS"
@@ -297,7 +304,8 @@ func main() {
 			result := (replica.DeliveredStreamSeq / replica.State.LastSeq) * 100
 			progress = fmt.Sprintf("%v%%", result)
 		}
-		sf = append(sf, fmt.Sprintf("%d / %d (%v) | %d", replica.DeliveredStreamSeq, replica.State.LastSeq, progress, replica.DeliveredConsumerSeq))
+		sf = append(sf, fmt.Sprintf("%d [%d, %d] %-3s | %d",
+			replica.DeliveredStreamSeq, replica.State.FirstSeq, replica.State.LastSeq, progress, replica.DeliveredConsumerSeq))
 		sf = append(sf, fmt.Sprintf("%d | %d", replica.AckFloorStreamSeq, replica.AckFloorConsumerSeq))
 		sf = append(sf, fmt.Sprintf("(ap:%d, nr:%d, nw:%d, np:%d)",
 			replica.NumAckPending,
@@ -307,7 +315,11 @@ func main() {
 		))
 
 		var replicasInfo string
-		replicasInfo = fmt.Sprintf("leader: %q", replica.Cluster.Leader)
+		for _, r := range replica.Cluster.Replicas {
+			info := fmt.Sprintf("%s(current=%-5v,offline=%v)", r.Name, r.Current, r.Offline)
+			replicasInfo = fmt.Sprintf("%-40s %s", info, replicasInfo)
+		}
+		// replicasInfo = fmt.Sprintf("leader: %q", replica.Cluster.Leader)
 
 		// Include Healthz if option added.
 		var healthStatus string
@@ -324,10 +336,11 @@ func main() {
 			}
 			replicasInfo = fmt.Sprintf("%s health:%q", replicasInfo, healthStatus)
 		}
-		sf = append(sf, replicasInfo)
-
 		sf = append(sf, status)
-		fmt.Printf("%-10s %-15s %-15s %-15s %-35s %-15s | %-20s | %-20s | %-25s | %-12s | %s \n", sf...)
+		sf = append(sf, replica.Cluster.Leader)
+		sf = append(sf, replica.StreamCluster.Leader)
+		sf = append(sf, replicasInfo)
+		fmt.Printf("%-10s %-15s %-15s %-15s %-35s %-15s | %-40s | %-20s | %-20s | %-25s | leader: %s | stream: %s | peers: %s \n", sf...)
 
 		prev = consumerName
 		prevAccount = accName
