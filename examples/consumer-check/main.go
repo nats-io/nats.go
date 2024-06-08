@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +59,7 @@ func main() {
 		unsyncedFilter     bool
 		expected           int
 		readTimeout        int
+		stdin              bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -68,6 +72,7 @@ func main() {
 	flag.IntVar(&readTimeout, "read-timeout", 5, "Read timeout in seconds")
 	flag.IntVar(&expected, "expected", 3, "Expected number of servers")
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
+	flag.BoolVar(&stdin, "stdin", false, "Process the contents from STDIN")
 	flag.Parse()
 
 	start := time.Now()
@@ -81,29 +86,55 @@ func main() {
 	if user != "" && pass != "" {
 		opts = append(opts, nats.UserInfo(user, pass))
 	}
+	log.Println(stdin)
 
-	nc, err := nats.Connect(urls, opts...)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Connected in %.3fs", time.Since(start).Seconds())
+	var (
+		nc      *nats.Conn
+		servers []JSZResp
+		err     error
+		sys     SysClient
+	)
+	if stdin {
+		servers = make([]JSZResp, 0)
+		reader := bufio.NewReader(os.Stdin)
 
-	start = time.Now()
-	sys := Sys(nc)
-	fetchTimeout := FetchTimeout(time.Duration(timeout) * time.Second)
-	fetchExpected := FetchExpected(expected)
-	fetchReadTimeout := FetchReadTimeout(time.Duration(readTimeout) * time.Second)
-	servers, err := sys.JszPing(JszEventOptions{
-		JszOptions: JszOptions{
-			Streams:    true,
-			Consumer:   true,
-			RaftGroups: true,
-		},
-	}, fetchTimeout, fetchReadTimeout, fetchExpected)
-	if err != nil {
-		log.Fatal(err)
+		for i := 0; i < expected; i++ {
+			data, err := reader.ReadString('\n')
+			if err != nil && err != io.EOF {
+				log.Fatal(err)
+			}
+			if len(data) > 0 {
+				var jszResp JSZResp
+				if err := json.Unmarshal([]byte(data), &jszResp); err != nil {
+					log.Fatal(err)
+				}
+				servers = append(servers, jszResp)
+			}
+		}
+	} else {
+		nc, err = nats.Connect(urls, opts...)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Connected in %.3fs", time.Since(start).Seconds())
+
+		start = time.Now()
+		sys = Sys(nc)
+		fetchTimeout := FetchTimeout(time.Duration(timeout) * time.Second)
+		fetchExpected := FetchExpected(expected)
+		fetchReadTimeout := FetchReadTimeout(time.Duration(readTimeout) * time.Second)
+		servers, err = sys.JszPing(JszEventOptions{
+			JszOptions: JszOptions{
+				Streams:    true,
+				Consumer:   true,
+				RaftGroups: true,
+			},
+		}, fetchTimeout, fetchReadTimeout, fetchExpected)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Response took %.3fs", time.Since(start).Seconds())
 	}
-	log.Printf("Response took %.3fs", time.Since(start).Seconds())
 
 	header := fmt.Sprintf("Servers: %d", len(servers))
 	fmt.Println(header)
