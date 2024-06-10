@@ -178,11 +178,11 @@ func main() {
 				status = "UNSYNCED"
 				unsynced = true
 			}
-			if peer.State.FirstSeq != replica.State.FirstSeq && peer.State.FirstSeq != replica.State.FirstSeq {
+			if peer.State.FirstSeq != replica.State.FirstSeq {
 				status = "UNSYNCED"
 				unsynced = true
 			}
-			if peer.State.LastSeq != replica.State.LastSeq && peer.State.LastSeq != replica.State.LastSeq {
+			if peer.State.LastSeq != replica.State.LastSeq {
 				status = "UNSYNCED"
 				unsynced = true
 			}
