@@ -306,7 +306,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						isConnected = true
 						// try fetching consumer info several times to make sure consumer is available after reconnect
 						backoffOpts := backoffOpts{
-							attempts:                10,
+							attempts:                -1,
 							initialInterval:         1 * time.Second,
 							disableInitialExecution: true,
 							factor:                  2,
@@ -324,9 +324,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							if err != nil {
 								if sub.consumeOpts.ErrHandler != nil {
 									err = fmt.Errorf("[%d] attempting to fetch consumer info after reconnect: %w", attempt, err)
-									if attempt == backoffOpts.attempts-1 {
-										err = errors.Join(err, fmt.Errorf("maximum retry attempts reached"))
-									}
 									sub.consumeOpts.ErrHandler(sub, err)
 								}
 								return true, err
@@ -598,7 +595,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 					isConnected = true
 					// try fetching consumer info several times to make sure consumer is available after reconnect
 					backoffOpts := backoffOpts{
-						attempts:                10,
+						attempts:                -1,
 						initialInterval:         1 * time.Second,
 						disableInitialExecution: true,
 						factor:                  2,
@@ -616,9 +613,6 @@ func (s *pullSubscription) Next() (Msg, error) {
 						if err != nil {
 							if errors.Is(err, ErrConsumerNotFound) {
 								return false, err
-							}
-							if attempt == backoffOpts.attempts-1 {
-								return true, fmt.Errorf("could not get consumer info after server reconnect: %w", err)
 							}
 							return true, err
 						}
@@ -638,7 +632,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+					hbMonitor.Stop()
 				}
 				isConnected = false
 			}
