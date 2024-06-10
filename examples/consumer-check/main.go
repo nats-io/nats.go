@@ -331,8 +331,8 @@ func main() {
 
 		progress := "0%"
 		if replica.State.LastSeq > 0 {
-			result := (replica.DeliveredStreamSeq / replica.State.LastSeq) * 100
-			progress = fmt.Sprintf("%v%%", result)
+			result := (float64(replica.DeliveredStreamSeq) / float64(replica.State.LastSeq)) * 100
+			progress = fmt.Sprintf("%-3.0f%%", result)
 		}
 		sf = append(sf, fmt.Sprintf("%d [%d, %d] %-3s | %d",
 			replica.DeliveredStreamSeq, replica.State.FirstSeq, replica.State.LastSeq, progress, replica.DeliveredConsumerSeq))
