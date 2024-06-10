@@ -86,7 +86,6 @@ func main() {
 	if user != "" && pass != "" {
 		opts = append(opts, nats.UserInfo(user, pass))
 	}
-	log.Println(stdin)
 
 	var (
 		nc      *nats.Conn
@@ -254,15 +253,15 @@ func main() {
 
 		// Make comparisons against other peers.
 		for _, peer := range consumer {
-			if peer.DeliveredStreamSeq != replica.DeliveredStreamSeq &&
+			if peer.DeliveredStreamSeq != replica.DeliveredStreamSeq ||
 				peer.DeliveredConsumerSeq != replica.DeliveredConsumerSeq {
 				statuses["UNSYNCED:DELIVERED"] = true
 				unsynced = true
 			}
-			if peer.AckFloorStreamSeq != replica.AckFloorStreamSeq &&
+			if peer.AckFloorStreamSeq != replica.AckFloorStreamSeq ||
 				peer.AckFloorConsumerSeq != replica.AckFloorConsumerSeq {
 				statuses["UNSYNCED:ACK_FLOOR"] = true
-				unsynced = false
+				unsynced = true
 			}
 			if peer.Cluster == nil {
 				statuses["NO_CLUSTER"] = true
