@@ -746,7 +746,7 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 		doReset:    make(chan struct{}, 1),
 	}
 	if cfg.OptStartSeq != 0 {
-		oc.cursor.streamSeq = cfg.OptStartSeq - 1
+		oc.cursor.streamSeq = cfg.OptStartSeq
 	}
 	err := oc.reset()
 	if err != nil {

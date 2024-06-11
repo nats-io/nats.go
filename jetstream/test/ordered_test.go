@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -1546,5 +1547,140 @@ func TestOrderedConsumerNextOrder(t *testing.T) {
 		if meta.Sequence.Stream != uint64(i+1) {
 			t.Fatalf("Unexpected sequence number: %d", meta.Sequence.Stream)
 		}
+	}
+}
+
+func TestOrderedConsumerConfig(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		config   jetstream.OrderedConsumerConfig
+		expected jetstream.ConsumerConfig
+	}{
+		{
+			name:   "default config",
+			config: jetstream.OrderedConsumerConfig{},
+			expected: jetstream.ConsumerConfig{
+				DeliverPolicy:     jetstream.DeliverAllPolicy,
+				AckPolicy:         jetstream.AckNonePolicy,
+				MaxDeliver:        -1,
+				MaxWaiting:        512,
+				InactiveThreshold: 5 * time.Minute,
+				Replicas:          1,
+				MemoryStorage:     true,
+			},
+		},
+		{
+			name: "custom inactive threshold",
+			config: jetstream.OrderedConsumerConfig{
+				InactiveThreshold: 10 * time.Second,
+			},
+			expected: jetstream.ConsumerConfig{
+				DeliverPolicy:     jetstream.DeliverAllPolicy,
+				AckPolicy:         jetstream.AckNonePolicy,
+				MaxDeliver:        -1,
+				MaxWaiting:        512,
+				InactiveThreshold: 10 * time.Second,
+				Replicas:          1,
+				MemoryStorage:     true,
+			},
+		},
+		{
+			name: "custom opt start seq and inactive threshold",
+			config: jetstream.OrderedConsumerConfig{
+				DeliverPolicy:     jetstream.DeliverByStartSequencePolicy,
+				OptStartSeq:       10,
+				InactiveThreshold: 10 * time.Second,
+			},
+			expected: jetstream.ConsumerConfig{
+				OptStartSeq:       10,
+				DeliverPolicy:     jetstream.DeliverByStartSequencePolicy,
+				AckPolicy:         jetstream.AckNonePolicy,
+				MaxDeliver:        -1,
+				MaxWaiting:        512,
+				InactiveThreshold: 10 * time.Second,
+				Replicas:          1,
+				MemoryStorage:     true,
+			},
+		},
+		{
+			name: "all fields customized, start with custom seq",
+			config: jetstream.OrderedConsumerConfig{
+				FilterSubjects:    []string{"foo.a", "foo.b"},
+				DeliverPolicy:     jetstream.DeliverByStartSequencePolicy,
+				OptStartSeq:       10,
+				ReplayPolicy:      jetstream.ReplayOriginalPolicy,
+				InactiveThreshold: 10 * time.Second,
+				HeadersOnly:       true,
+			},
+			expected: jetstream.ConsumerConfig{
+				FilterSubjects:    []string{"foo.a", "foo.b"},
+				OptStartSeq:       10,
+				DeliverPolicy:     jetstream.DeliverByStartSequencePolicy,
+				AckPolicy:         jetstream.AckNonePolicy,
+				MaxDeliver:        -1,
+				MaxWaiting:        512,
+				InactiveThreshold: 10 * time.Second,
+				Replicas:          1,
+				MemoryStorage:     true,
+				HeadersOnly:       true,
+			},
+		},
+		{
+			name: "all fields customized, start with custom time",
+			config: jetstream.OrderedConsumerConfig{
+				FilterSubjects:    []string{"foo.a", "foo.b"},
+				DeliverPolicy:     jetstream.DeliverByStartTimePolicy,
+				OptStartTime:      &time.Time{},
+				ReplayPolicy:      jetstream.ReplayOriginalPolicy,
+				InactiveThreshold: 10 * time.Second,
+				HeadersOnly:       true,
+			},
+			expected: jetstream.ConsumerConfig{
+				FilterSubjects:    []string{"foo.a", "foo.b"},
+				OptStartTime:      &time.Time{},
+				DeliverPolicy:     jetstream.DeliverByStartTimePolicy,
+				AckPolicy:         jetstream.AckNonePolicy,
+				MaxDeliver:        -1,
+				MaxWaiting:        512,
+				InactiveThreshold: 10 * time.Second,
+				Replicas:          1,
+				MemoryStorage:     true,
+				HeadersOnly:       true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, err := s.OrderedConsumer(context.Background(), test.config)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			cfg := c.CachedInfo().Config
+			test.expected.Name = cfg.Name
+
+			if !reflect.DeepEqual(test.expected, cfg) {
+				t.Fatalf("Expected config %+v, got %+v", test.expected, cfg)
+			}
+		})
 	}
 }

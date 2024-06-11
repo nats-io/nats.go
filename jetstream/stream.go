@@ -298,7 +298,7 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 		doReset:    make(chan struct{}, 1),
 	}
 	if cfg.OptStartSeq != 0 {
-		oc.cursor.streamSeq = cfg.OptStartSeq - 1
+		oc.cursor.streamSeq = cfg.OptStartSeq
 	}
 	err := oc.reset()
 	if err != nil {

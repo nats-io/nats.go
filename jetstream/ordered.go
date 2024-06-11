@@ -487,6 +487,7 @@ func (c *orderedConsumer) reset() error {
 			break
 		}
 	}
+
 	seq := c.cursor.streamSeq + 1
 	c.cursor.deliverSeq = 0
 	consumerConfig := c.getConsumerConfigForSeq(seq)
@@ -549,6 +550,8 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		c.cfg.DeliverPolicy == DeliverAllPolicy {
 
 		cfg.OptStartSeq = 0
+	} else {
+		cfg.OptStartSeq = c.cfg.OptStartSeq
 	}
 
 	if cfg.DeliverPolicy == DeliverLastPerSubjectPolicy && len(c.cfg.FilterSubjects) == 0 {
