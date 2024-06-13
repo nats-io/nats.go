@@ -28,9 +28,9 @@ import (
 func TestPullConsumerFetch(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -61,7 +61,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -107,7 +107,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs, err := c.Fetch(10)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -184,7 +184,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}()
 
 		time.Sleep(10 * time.Millisecond)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		select {
 		case err := <-errs:
 			t.Fatalf("Unexpected error: %v", err)
@@ -230,7 +230,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 
 		msg := <-msgs.Messages()
 		if msg != nil {
@@ -263,14 +263,14 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		time.Sleep(50 * time.Millisecond)
 		msgs, err := c.FetchNoWait(10)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 
 		var msgsNum int
 		for range msgs.Messages() {
@@ -376,7 +376,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		// fetch 5 messages, should return normally
 		msgs, err := c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
 		if err != nil {
@@ -480,14 +480,13 @@ func TestPullConsumerFetch(t *testing.T) {
 func TestPullConsumerFetchBytes(t *testing.T) {
 	testSubject := "FOO.123"
 	msg := [10]byte{}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn, count int) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream, count int) {
 		for i := 0; i < count; i++ {
-			if err := nc.Publish(testSubject, msg[:]); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, msg[:]); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
 	}
-
 	t.Run("no options, exact byte count received", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -513,7 +512,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc, 5)
+		publishTestMsgs(t, js, 5)
 		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 		msgs, err := c.FetchBytes(300)
 		if err != nil {
@@ -558,7 +557,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc, 5)
+		publishTestMsgs(t, js, 5)
 		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 		msgs, err := c.FetchBytes(250)
 		if err != nil {
@@ -602,7 +601,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc, 5)
+		publishTestMsgs(t, js, 5)
 		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 		msgs, err := c.FetchBytes(30)
 		if err != nil {
@@ -647,7 +646,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc, 5)
+		publishTestMsgs(t, js, 5)
 		// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 		msgs, err := c.FetchBytes(1000, jetstream.FetchMaxWait(50*time.Millisecond))
 		if err != nil {
@@ -779,9 +778,9 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 func TestPullConsumerFetch_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -819,7 +818,7 @@ func TestPullConsumerFetch_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			publishTestMsgs(t, nc)
+			publishTestMsgs(t, js)
 			msgs, err := c.Fetch(5)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -867,7 +866,7 @@ func TestPullConsumerFetch_WithCluster(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			time.Sleep(100 * time.Millisecond)
-			publishTestMsgs(t, nc)
+			publishTestMsgs(t, js)
 
 			msg := <-msgs.Messages()
 			if msg != nil {
@@ -880,9 +879,9 @@ func TestPullConsumerFetch_WithCluster(t *testing.T) {
 func TestPullConsumerMessages(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -919,7 +918,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -981,7 +980,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1042,7 +1041,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1110,7 +1109,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 		defer it.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1133,7 +1132,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		if !errors.Is(err, jetstream.ErrConsumerDeleted) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerDeleted, err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		time.Sleep(50 * time.Millisecond)
 		_, err = it.Next()
 		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
@@ -1180,7 +1179,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1249,7 +1248,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1490,7 +1489,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -1506,7 +1505,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		it.Stop()
 		time.Sleep(10 * time.Millisecond)
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		it, err = c.Messages()
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -1599,7 +1598,7 @@ func TestPullConsumerMessages(t *testing.T) {
 
 		done := make(chan struct{})
 		errs := make(chan error)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		go func() {
 			for i := 0; i < 2*len(testMsgs); i++ {
 				msg, err := it.Next()
@@ -1617,7 +1616,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		srv = restartBasicJSServer(t, srv)
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		time.Sleep(10 * time.Millisecond)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 
 		select {
 		case <-done:
@@ -1667,7 +1666,7 @@ func TestPullConsumerMessages(t *testing.T) {
 					t.Fatalf("Unexpected error: %v", err)
 				}
 
-				publishTestMsgs(t, nc)
+				publishTestMsgs(t, js)
 
 				errs := make(chan error)
 				msgs := make([]jetstream.Msg, 0)
@@ -1737,7 +1736,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			it.Stop()
@@ -1792,7 +1791,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			it.Drain()
@@ -1820,9 +1819,9 @@ func TestPullConsumerMessages(t *testing.T) {
 func TestPullConsumerConsume(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -1865,7 +1864,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -1924,7 +1923,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		defer l2.Stop()
 
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		if len(msgs1)+len(msgs2) != len(testMsgs) {
@@ -1974,7 +1973,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		l.Stop()
 
@@ -1991,7 +1990,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer l.Stop()
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		if len(msgs) != 2*len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -2041,7 +2040,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		if len(msgs) != len(testMsgs) {
@@ -2091,7 +2090,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		if len(msgs) != len(testMsgs) {
@@ -2144,7 +2143,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -2160,7 +2159,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("Timeout waiting for %v", jetstream.ErrConsumerDeleted)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		time.Sleep(50 * time.Millisecond)
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -2197,7 +2196,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			t.Fatalf("Error on subscribe: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs := make([]jetstream.Msg, 0)
 		wg := &sync.WaitGroup{}
 		wg.Add(len(testMsgs))
@@ -2359,7 +2358,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		if len(msgs) != len(testMsgs) {
@@ -2441,7 +2440,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		if len(msgs) != len(testMsgs) {
 			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
@@ -2480,7 +2479,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		wg := &sync.WaitGroup{}
 		wg.Add(2 * len(testMsgs))
 		msgs := make([]jetstream.Msg, 0)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		l, err := c.Consume(func(msg jetstream.Msg) {
 			msgs = append(msgs, msg)
 			wg.Done()
@@ -2494,7 +2493,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		srv = restartBasicJSServer(t, srv)
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		time.Sleep(10 * time.Millisecond)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 	})
 
@@ -2524,7 +2523,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		wg := &sync.WaitGroup{}
 		wg.Add(2)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs := make([]jetstream.Msg, 0)
 		cc, err := c.Consume(func(msg jetstream.Msg) {
 			time.Sleep(80 * time.Millisecond)
@@ -2572,7 +2571,7 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		wg := &sync.WaitGroup{}
 		wg.Add(5)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		cc, err := c.Consume(func(msg jetstream.Msg) {
 			time.Sleep(50 * time.Millisecond)
 			msg.Ack()
@@ -2809,9 +2808,9 @@ func TestPullConsumerConsume_WithCluster(t *testing.T) {
 func TestPullConsumerNext(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -2842,7 +2841,7 @@ func TestPullConsumerNext(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs := make([]jetstream.Msg, 0)
 
 		var i int
