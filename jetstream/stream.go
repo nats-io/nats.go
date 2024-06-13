@@ -297,13 +297,12 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 		namePrefix: nuid.Next(),
 		doReset:    make(chan struct{}, 1),
 	}
-	if cfg.OptStartSeq != 0 {
-		oc.cursor.streamSeq = cfg.OptStartSeq
-	}
-	err := oc.reset()
+	consCfg := oc.getConsumerConfig()
+	cons, err := s.CreateOrUpdateConsumer(ctx, *consCfg)
 	if err != nil {
 		return nil, err
 	}
+	oc.currentConsumer = cons.(*pullConsumer)
 
 	return oc, nil
 }

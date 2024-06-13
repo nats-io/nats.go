@@ -745,13 +745,12 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 		namePrefix: nuid.Next(),
 		doReset:    make(chan struct{}, 1),
 	}
-	if cfg.OptStartSeq != 0 {
-		oc.cursor.streamSeq = cfg.OptStartSeq
-	}
-	err := oc.reset()
+	consCfg := oc.getConsumerConfig()
+	cons, err := js.CreateOrUpdateConsumer(ctx, stream, *consCfg)
 	if err != nil {
 		return nil, err
 	}
+	oc.currentConsumer = cons.(*pullConsumer)
 
 	return oc, nil
 }
