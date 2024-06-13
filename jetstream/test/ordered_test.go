@@ -86,6 +86,105 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		l.Stop()
 	})
 
+	t.Run("reset consumer before receiving any messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := &sync.WaitGroup{}
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			wg.Done()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		name := c.CachedInfo().Name
+		if err := s.DeleteConsumer(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		l.Stop()
+	})
+
+	t.Run("reset consumer before receiving any messages with custom start seq", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{DeliverPolicy: jetstream.DeliverByStartSequencePolicy, OptStartSeq: 3})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := &sync.WaitGroup{}
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			wg.Done()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		name := c.CachedInfo().Name
+		if err := s.DeleteConsumer(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+		// should receive messages with sequences 3, 4 and 5
+		wg.Add(len(testMsgs) - 2)
+		publishTestMsgs(t, nc)
+		wg.Wait()
+
+		// now delete consumer again and publish some more messages, all should be received normally
+		name = c.CachedInfo().Name
+		if err := s.DeleteConsumer(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(len(testMsgs))
+		publishTestMsgs(t, nc)
+		wg.Wait()
+		l.Stop()
+	})
+
 	t.Run("base usage, server shutdown", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
