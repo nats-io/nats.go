@@ -29,9 +29,9 @@ import (
 func TestOrderedConsumerConsume(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -72,7 +72,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		name := c.CachedInfo().Name
@@ -80,7 +80,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatal(err)
 		}
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		l.Stop()
@@ -125,13 +125,13 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatal(err)
 		}
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		l.Stop()
 	})
 
-	t.Run("reset consumer before receiving any messages with custom start seq", func(t *testing.T) {
+	t.Run("with custom start seq", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -151,38 +151,37 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		publishTestMsgs(t, js)
 		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{DeliverPolicy: jetstream.DeliverByStartSequencePolicy, OptStartSeq: 3})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		wg := &sync.WaitGroup{}
+		wg.Add(len(testMsgs) - 2)
 		l, err := c.Consume(func(msg jetstream.Msg) {
 			wg.Done()
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		time.Sleep(500 * time.Millisecond)
+		defer l.Stop()
 
-		name := c.CachedInfo().Name
-		if err := s.DeleteConsumer(ctx, name); err != nil {
-			t.Fatal(err)
-		}
-		// should receive messages with sequences 3, 4 and 5
-		wg.Add(len(testMsgs) - 2)
-		publishTestMsgs(t, nc)
 		wg.Wait()
 
+		time.Sleep(500 * time.Millisecond)
 		// now delete consumer again and publish some more messages, all should be received normally
-		name = c.CachedInfo().Name
-		if err := s.DeleteConsumer(ctx, name); err != nil {
+		info, err := c.Info(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if err := s.DeleteConsumer(ctx, info.Config.Name); err != nil {
 			t.Fatal(err)
 		}
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
-		l.Stop()
 	})
 
 	t.Run("base usage, server shutdown", func(t *testing.T) {
@@ -226,21 +225,13 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		srv = restartBasicJSServer(t, srv)
 		defer shutdownJSServerAndRemoveStorage(t, srv)
-		select {
-		case err := <-errs:
-			if !errors.Is(err, jetstream.ErrConsumerNotFound) {
-				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for error")
-		}
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 
 		l.Stop()
@@ -290,7 +281,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		select {
 		case err := <-errs:
 			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
@@ -302,7 +293,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		wg.Wait()
 
 		wg.Add(len(testMsgs))
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		wg.Wait()
 		l.Stop()
 	})
@@ -332,7 +323,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -535,7 +526,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		}
 		wg := &sync.WaitGroup{}
 		wg.Add(5)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		cc, err := c.Consume(func(msg jetstream.Msg) {
 			time.Sleep(50 * time.Millisecond)
 			msg.Ack()
@@ -553,9 +544,9 @@ func TestOrderedConsumerConsume(t *testing.T) {
 func TestOrderedConsumerMessages(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -592,7 +583,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		defer it.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -604,7 +595,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -649,7 +640,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		defer it.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -659,7 +650,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		srv = restartBasicJSServer(t, srv)
 		defer shutdownJSServerAndRemoveStorage(t, srv)
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -708,7 +699,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		}
 		defer it.Stop()
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -716,7 +707,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			}
 			msgs = append(msgs, msg)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		for i := 0; i < 5; i++ {
 			msg, err := it.Next()
 			if err != nil {
@@ -916,7 +907,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msgs, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -994,7 +985,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			it.Drain()
@@ -1022,9 +1013,9 @@ func TestOrderedConsumerMessages(t *testing.T) {
 func TestOrderedConsumerFetch(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -1056,7 +1047,7 @@ func TestOrderedConsumerFetch(t *testing.T) {
 
 		msgs := make([]jetstream.Msg, 0)
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1072,7 +1063,7 @@ func TestOrderedConsumerFetch(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err = c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1150,7 +1141,7 @@ func TestOrderedConsumerFetch(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err := c.Fetch(1, jetstream.FetchMaxWait(100*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1168,9 +1159,9 @@ func TestOrderedConsumerFetch(t *testing.T) {
 func TestOrderedConsumerFetchBytes(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -1202,7 +1193,7 @@ func TestOrderedConsumerFetchBytes(t *testing.T) {
 
 		msgs := make([]jetstream.Msg, 0)
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err := c.FetchBytes(500, jetstream.FetchMaxWait(100*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1218,7 +1209,7 @@ func TestOrderedConsumerFetchBytes(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err = c.Fetch(500, jetstream.FetchMaxWait(100*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1296,7 +1287,7 @@ func TestOrderedConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err := c.FetchBytes(500, jetstream.FetchMaxWait(100*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1314,9 +1305,9 @@ func TestOrderedConsumerFetchBytes(t *testing.T) {
 func TestOrderedConsumerNext(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -1346,7 +1337,7 @@ func TestOrderedConsumerNext(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		msg, err := c.Next()
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1404,9 +1395,9 @@ func TestOrderedConsumerNext(t *testing.T) {
 func TestOrderedConsumerFetchNoWait(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
-	publishTestMsgs := func(t *testing.T, nc *nats.Conn) {
+	publishTestMsgs := func(t *testing.T, js jetstream.JetStream) {
 		for _, msg := range testMsgs {
-			if err := nc.Publish(testSubject, []byte(msg)); err != nil {
+			if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
 				t.Fatalf("Unexpected error during publish: %s", err)
 			}
 		}
@@ -1438,7 +1429,7 @@ func TestOrderedConsumerFetchNoWait(t *testing.T) {
 
 		msgs := make([]jetstream.Msg, 0)
 
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err := c.FetchNoWait(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
@@ -1454,7 +1445,7 @@ func TestOrderedConsumerFetchNoWait(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
 		}
-		publishTestMsgs(t, nc)
+		publishTestMsgs(t, js)
 		res, err = c.FetchNoWait(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)

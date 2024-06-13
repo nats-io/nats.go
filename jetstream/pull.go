@@ -14,7 +14,6 @@
 package jetstream
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +102,7 @@ type (
 		ThresholdBytes          int
 		StopAfter               int
 		stopAfterMsgsLeft       chan int
+		notifyOnReconnect       bool
 	}
 
 	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
@@ -304,42 +304,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					sub.Lock()
 					if !isConnected {
 						isConnected = true
-						// try fetching consumer info several times to make sure consumer is available after reconnect
-						backoffOpts := backoffOpts{
-							attempts:                10,
-							initialInterval:         1 * time.Second,
-							disableInitialExecution: true,
-							factor:                  2,
-							maxInterval:             10 * time.Second,
-							cancel:                  sub.done,
-						}
-						err = retryWithBackoff(func(attempt int) (bool, error) {
-							isClosed := atomic.LoadUint32(&sub.closed) == 1
-							if isClosed {
-								return false, nil
-							}
-							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-							defer cancel()
-							_, err := p.Info(ctx)
-							if err != nil {
-								if sub.consumeOpts.ErrHandler != nil {
-									err = fmt.Errorf("[%d] attempting to fetch consumer info after reconnect: %w", attempt, err)
-									if attempt == backoffOpts.attempts-1 {
-										err = errors.Join(err, fmt.Errorf("maximum retry attempts reached"))
-									}
-									sub.consumeOpts.ErrHandler(sub, err)
-								}
-								return true, err
-							}
-							return false, nil
-						}, backoffOpts)
-						if err != nil {
-							if sub.consumeOpts.ErrHandler != nil {
-								sub.consumeOpts.ErrHandler(sub, err)
-							}
-							sub.Unlock()
-							sub.cleanup()
-							return
+						if sub.consumeOpts.notifyOnReconnect {
+							sub.errs <- errConnected
 						}
 
 						sub.fetchNext <- &pullRequest{
@@ -596,39 +562,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 			if errors.Is(err, errConnected) {
 				if !isConnected {
 					isConnected = true
-					// try fetching consumer info several times to make sure consumer is available after reconnect
-					backoffOpts := backoffOpts{
-						attempts:                10,
-						initialInterval:         1 * time.Second,
-						disableInitialExecution: true,
-						factor:                  2,
-						maxInterval:             10 * time.Second,
-						cancel:                  s.done,
-					}
-					err = retryWithBackoff(func(attempt int) (bool, error) {
-						isClosed := atomic.LoadUint32(&s.closed) == 1
-						if isClosed {
-							return false, nil
-						}
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						defer cancel()
-						_, err := s.consumer.Info(ctx)
-						if err != nil {
-							if errors.Is(err, ErrConsumerNotFound) {
-								return false, err
-							}
-							if attempt == backoffOpts.attempts-1 {
-								return true, fmt.Errorf("could not get consumer info after server reconnect: %w", err)
-							}
-							return true, err
-						}
-						return false, nil
-					}, backoffOpts)
-					if err != nil {
-						s.Stop()
-						return nil, err
-					}
 
+					if s.consumeOpts.notifyOnReconnect {
+						return nil, errConnected
+					}
 					s.pending.msgCount = 0
 					s.pending.byteCount = 0
 					if hbMonitor != nil {
@@ -638,7 +575,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+					hbMonitor.Stop()
 				}
 				isConnected = false
 			}
@@ -1056,94 +993,6 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		return fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry")
 	}
 	return nil
-}
-
-type backoffOpts struct {
-	// total retry attempts
-	// -1 for unlimited
-	attempts int
-	// initial interval after which first retry will be performed
-	// defaults to 1s
-	initialInterval time.Duration
-	// determines whether first function execution should be performed immediately
-	disableInitialExecution bool
-	// multiplier on each attempt
-	// defaults to 2
-	factor float64
-	// max interval between retries
-	// after reaching this value, all subsequent
-	// retries will be performed with this interval
-	// defaults to 1 minute
-	maxInterval time.Duration
-	// custom backoff intervals
-	// if set, overrides all other options except attempts
-	// if attempts are set, then the last interval will be used
-	// for all subsequent retries after reaching the limit
-	customBackoff []time.Duration
-	// cancel channel
-	// if set, retry will be canceled when this channel is closed
-	cancel <-chan struct{}
-}
-
-func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
-	var err error
-	var shouldContinue bool
-	// if custom backoff is set, use it instead of other options
-	if len(opts.customBackoff) > 0 {
-		if opts.attempts != 0 {
-			return fmt.Errorf("cannot use custom backoff intervals when attempts are set")
-		}
-		for i, interval := range opts.customBackoff {
-			select {
-			case <-opts.cancel:
-				return nil
-			case <-time.After(interval):
-			}
-			shouldContinue, err = f(i)
-			if !shouldContinue {
-				return err
-			}
-		}
-		return err
-	}
-
-	// set default options
-	if opts.initialInterval == 0 {
-		opts.initialInterval = 1 * time.Second
-	}
-	if opts.factor == 0 {
-		opts.factor = 2
-	}
-	if opts.maxInterval == 0 {
-		opts.maxInterval = 1 * time.Minute
-	}
-	if opts.attempts == 0 {
-		return fmt.Errorf("retry attempts have to be set when not using custom backoff intervals")
-	}
-	interval := opts.initialInterval
-	for i := 0; ; i++ {
-		if i == 0 && opts.disableInitialExecution {
-			time.Sleep(interval)
-			continue
-		}
-		shouldContinue, err = f(i)
-		if !shouldContinue {
-			return err
-		}
-		if opts.attempts > 0 && i >= opts.attempts-1 {
-			break
-		}
-		select {
-		case <-opts.cancel:
-			return nil
-		case <-time.After(interval):
-		}
-		interval = time.Duration(float64(interval) * opts.factor)
-		if interval >= opts.maxInterval {
-			interval = opts.maxInterval
-		}
-	}
-	return err
 }
 
 func (c *pullConsumer) getSubscription(id string) (*pullSubscription, bool) {
