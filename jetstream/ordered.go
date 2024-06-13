@@ -488,9 +488,8 @@ func (c *orderedConsumer) reset() error {
 		}
 	}
 
-	seq := c.cursor.streamSeq + 1
 	c.cursor.deliverSeq = 0
-	consumerConfig := c.getConsumerConfigForSeq(seq)
+	consumerConfig := c.getConsumerConfig()
 
 	var err error
 	var cons Consumer
@@ -519,13 +518,27 @@ func (c *orderedConsumer) reset() error {
 	return nil
 }
 
-func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
+func (c *orderedConsumer) getConsumerConfig() *ConsumerConfig {
 	c.serial++
+	var nextSeq uint64
+
+	// if stream sequence is not initialized, no message was consumed yet
+	// therefore, start from the beginning (either from 1 or from the provided sequence)
+	if c.cursor.streamSeq == 0 {
+		if c.cfg.OptStartSeq != 0 {
+			nextSeq = c.cfg.OptStartSeq
+		} else {
+			nextSeq = 1
+		}
+	} else {
+		// otherwise, start from the next sequence
+		nextSeq = c.cursor.streamSeq + 1
+	}
 	name := fmt.Sprintf("%s_%d", c.namePrefix, c.serial)
 	cfg := &ConsumerConfig{
 		Name:              name,
 		DeliverPolicy:     DeliverByStartSequencePolicy,
-		OptStartSeq:       seq,
+		OptStartSeq:       nextSeq,
 		AckPolicy:         AckNonePolicy,
 		InactiveThreshold: 5 * time.Minute,
 		Replicas:          1,
@@ -538,7 +551,7 @@ func (c *orderedConsumer) getConsumerConfigForSeq(seq uint64) *ConsumerConfig {
 		cfg.FilterSubjects = c.cfg.FilterSubjects
 	}
 
-	if seq != c.cfg.OptStartSeq+1 {
+	if c.serial != 1 {
 		return cfg
 	}
 
