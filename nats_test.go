@@ -229,6 +229,7 @@ func TestSimplifiedURLs(t *testing.T) {
 		{
 			"nats",
 			[]string{
+				"nats://host1:1234/",
 				"nats://host1:1234",
 				"nats://host2:",
 				"nats://host3",
@@ -242,6 +243,7 @@ func TestSimplifiedURLs(t *testing.T) {
 				"[17:18:19:20]:1234",
 			},
 			[]string{
+				"nats://host1:1234/",
 				"nats://host1:1234",
 				"nats://host2:4222",
 				"nats://host3:4222",
@@ -434,6 +436,7 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222 ", oneExpected)
 	check(" nats://localhost:1222", oneExpected)
 	check(" nats://localhost:1222 ", oneExpected)
+	check("nats://localhost:1222/", oneExpected)
 
 	var multiExpected = []string{
 		"nats://localhost:1222",
@@ -445,6 +448,7 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222, nats://localhost:1223, nats://localhost:1224", multiExpected)
 	check(" nats://localhost:1222, nats://localhost:1223, nats://localhost:1224 ", multiExpected)
 	check("nats://localhost:1222,   nats://localhost:1223  ,nats://localhost:1224", multiExpected)
+	check("nats://localhost:1222/,nats://localhost:1223/,nats://localhost:1224/", multiExpected)
 }
 
 func TestParserPing(t *testing.T) {
