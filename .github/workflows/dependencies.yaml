@@ -1,0 +1,44 @@
+name: License Check
+
+on:
+  push:
+    paths:
+      - 'go.mod'
+    branches:
+      - dependencies-auto
+      jobs:
+        license-check:
+          runs-on: ubuntu-latest
+          steps:
+            - name: Checkout repository
+              uses: actions/checkout@v3
+
+            - name: Install go-licenses
+              run: go get -u github.com/google/go-licenses
+
+            - name: Run license check
+              run: go-licenses report . > dependencies.txt
+
+            - name: Configure git
+              run: |
+                git config user.name 'github-actions[bot]'
+                git config user.email 'github-actions[bot]@users.noreply.github.com'
+            - name: Check for changes
+              id: git_diff
+              run: |
+                git fetch
+                git diff --exit-code reports/report.txt || echo "has_changes=true" >> $GITHUB_ENV
+            - name: Commit changes
+              if: env.changes == 'true'
+              run: |
+                git checkout -b update-report-branch
+                git add reports/report.txt
+                git commit -m "Update dependencies.md"
+                git push -u origin update-report-branch
+
+            - name: Create Pull Request
+              if: env.changes == 'true'
+              env:
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                gh pr create --title "Update dependencies.md" --body "This PR updates the report file" --head update-report-branch --base main
