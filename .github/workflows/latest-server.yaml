@@ -1,0 +1,27 @@
+name: Test nats-server@main
+on:
+  schedule:
+    - cron: "30 8 * * *"
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+      
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                go-version: 'stable'
+                
+            - name: Get latest server
+              shell: bash --noprofile --norc -x -eo pipefail {0}
+              run: |
+                go get -modfile go_test.mod github.com/nats-io/nats-server/v2@main
+
+            - name: Test
+              shell: bash --noprofile --norc -x -eo pipefail {0}
+              run: |
+                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
+                go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
