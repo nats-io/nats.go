@@ -1,0 +1,61 @@
+name: License Check
+
+on:
+  push:
+    paths:
+      - 'go.mod'
+    branches:
+      - main
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+
+    env:
+      BRANCH_NAME: update-report-branch-${{ github.run_id }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+        # We need this step because of test dependencies and how they are handled in nats.go
+      - name: Run go mod tidy
+        run: go mod tidy
+      - name: Run license check
+        run: go-licenses report ./... --template dependencies.tpl > dependencies.md
+
+      - name: Configure git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Check for changes
+        id: git_diff
+        run: |
+          git fetch
+          git diff --exit-code dependencies.md || echo "has_changes=true" >> $GITHUB_ENV
+
+      - name: Commit changes
+        if: env.has_changes == 'true'
+        run: |
+          git checkout -b "$BRANCH_NAME"
+          git add dependencies.md
+          git commit -m "Update dependencies.md"
+          git push -u origin "$BRANCH_NAME"
+
+      - name: Create Pull Request
+        if: env.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create --title "Update dependencies.md" --body "This PR updates the dependencies report" --head "$BRANCH_NAME" --base main
+
