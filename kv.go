@@ -77,6 +77,14 @@ type KeyValue interface {
 	PurgeDeletes(opts ...PurgeOpt) error
 	// Status retrieves the status and configuration of a bucket
 	Status() (KeyValueStatus, error)
+	// KeysWithFilter returns a filtered list of keys in the bucket.
+    KeysWithFilter(filter string) ([]string, error)
+    // KeysWithFilters returns a filtered list of keys in the bucket.
+    KeysWithFilters(filter []string) ([]string, error)
+    // And for the new, iterable API:
+    ListKeysWithFilter(filter string) (KeyLister, error)
+    ListKeysWithFilters(filter []string) (KeyLister, error)
+
 }
 
 // KeyValueStatus is run-time status about a Key-Value bucket
