@@ -484,6 +484,63 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 		return nil, err
 	}
 
+// KeysWithFilters returns a filtered list of keys in the bucket.
+func (js *jetStream) KeysWithFilters(filter []string) ([]string, error) {
+    // Fetch all keys.
+    allKeys := []string{/* list of all keys */}
+    var filteredKeys []string
+
+    for _, key := range allKeys {
+        if matchesFilters(key, filter) {
+            filteredKeys = append(filteredKeys, key)
+        }
+    }
+
+    return filteredKeys, nil
+}
+
+// ListKeysWithFilters returns an iterable list of keys in the bucket that match the given filters.
+func (js *jetStream) ListKeysWithFilters(filter []string) (KeyLister, error) {
+    keys, err := js.KeysWithFilters(filter)
+    if err != nil {
+        return nil, err
+    }
+
+    return NewKeyIterator(keys), nil
+}
+
+// matchesFilters checks if a key matches all provided filters.
+func matchesFilters(key string, filters []string) bool {
+    for _, filter := range filters {
+        if !strings.Contains(key, filter) {
+            return false
+        }
+    }
+    return true
+}
+
+// KeyIterator is a simple iterator for keys.
+type KeyIterator struct {
+    keys []string
+    index int
+}
+
+// NewKeyIterator creates a new KeyIterator.
+func NewKeyIterator(keys []string) *KeyIterator {
+    return &KeyIterator{keys: keys, index: -1}
+}
+
+// Next advances the iterator and returns the next key.
+func (it *KeyIterator) Next() (string, bool) {
+    it.index++
+    if it.index >= len(it.keys) {
+        return "", false
+    }
+    return it.keys[it.index], true
+}
+
+
+
 	stream, err := js.CreateStream(ctx, scfg)
 	if err != nil {
 		if errors.Is(err, ErrStreamNameAlreadyInUse) {
