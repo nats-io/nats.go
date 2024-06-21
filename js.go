@@ -452,13 +452,14 @@ func (opt pubOptFn) configurePublish(opts *pubOpts) error {
 }
 
 type pubOpts struct {
-	ctx context.Context
-	ttl time.Duration
-	id  string
-	lid string  // Expected last msgId
-	str string  // Expected stream name
-	seq *uint64 // Expected last sequence
-	lss *uint64 // Expected last sequence per subject
+	ctx  context.Context
+	ttl  time.Duration
+	id   string
+	lid  string  // Expected last msgId
+	str  string  // Expected stream name
+	seq  *uint64 // Expected last sequence
+	lss  *uint64 // Expected last sequence per subject
+	lsss string  // Expected subject to be used for last sequence per subject
 
 	// Publish retries for NoResponders err.
 	rwait time.Duration // Retry wait between attempts
@@ -484,12 +485,13 @@ type PubAck struct {
 
 // Headers for published messages.
 const (
-	MsgIdHdr               = "Nats-Msg-Id"
-	ExpectedStreamHdr      = "Nats-Expected-Stream"
-	ExpectedLastSeqHdr     = "Nats-Expected-Last-Sequence"
-	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
-	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
-	MsgRollup              = "Nats-Rollup"
+	MsgIdHdr                   = "Nats-Msg-Id"
+	ExpectedStreamHdr          = "Nats-Expected-Stream"
+	ExpectedLastSeqHdr         = "Nats-Expected-Last-Sequence"
+	ExpectedLastSubjSeqHdr     = "Nats-Expected-Last-Subject-Sequence"
+	ExpectedLastSubjSeqSubjHdr = "Nats-Expected-Last-Subject-Sequence-Subject"
+	ExpectedLastMsgIdHdr       = "Nats-Expected-Last-Msg-Id"
+	MsgRollup                  = "Nats-Rollup"
 )
 
 // Headers for republished messages and direct gets.
@@ -548,6 +550,9 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
+	}
+	if o.lsss != "" {
+		m.Header.Set(ExpectedLastSubjSeqSubjHdr, o.lsss)
 	}
 
 	var resp *Msg
@@ -931,6 +936,9 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
 	}
+	if o.lsss != "" {
+		m.Header.Set(ExpectedLastSubjSeqSubjHdr, o.lsss)
+	}
 
 	// Reply
 	if m.Reply != _EMPTY_ {
@@ -1007,6 +1015,15 @@ func ExpectLastSequence(seq uint64) PubOpt {
 func ExpectLastSequencePerSubject(seq uint64) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		opts.lss = &seq
+		return nil
+	})
+}
+
+// ExpectLastSequencePerSubjectForSubject sets subject to be used for the expected sequence per subject in the
+// response from the publish.
+func ExpectLastSequencePerSubjectForSubject(subj string) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.lsss = subj
 		return nil
 	})
 }
