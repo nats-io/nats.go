@@ -539,6 +539,9 @@ func (c *orderedConsumer) reset() error {
 	if err != nil {
 		return err
 	}
+	if cons == nil {
+		return nats.ErrSubscriptionClosed
+	}
 	c.currentConsumer = cons.(*pullConsumer)
 	return nil
 }
