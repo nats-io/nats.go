@@ -120,6 +120,123 @@ func TestConsumerInfo(t *testing.T) {
 	})
 }
 
+func TestConsumerPinned(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:        "cons",
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		Description:    "test consumer",
+		PriorityPolicy: jetstream.PriorityPolicyPinned,
+		PinnedTTL:      2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check that consumer got proper priority policy and TTL
+	info := c.CachedInfo()
+	if info.Config.PriorityPolicy != jetstream.PriorityPolicyPinned {
+		t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPinned, info.Config.PriorityPolicy)
+	}
+	if info.Config.PinnedTTL != 2*time.Second {
+		t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", 2*time.Second, info.Config.PinnedTTL)
+	}
+
+	for i := 0; i < 100; i++ {
+		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+	}
+
+	// Initial fetch.
+	// Should get all messages and get a Pin ID.
+	msgs, err := c.Fetch(10)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	count := 0
+	id := ""
+	for msg := range msgs.Messages() {
+		if msg == nil {
+			break
+		}
+		msg.Ack()
+		count++
+		natsMsgId := msg.Headers().Get("Nats-Pin-Id")
+		if id == "" {
+			id = natsMsgId
+		} else {
+			if id != natsMsgId {
+				t.Fatalf("Expected Nats-Msg-Id to be the same for all messages")
+			}
+		}
+	}
+	if count != 10 {
+		t.Fatalf("Expected 10 messages, got %d", count)
+
+	}
+
+	// Different
+	msgs2, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	count = 0
+	for msg := range msgs2.Messages() {
+		if msg == nil {
+			break
+		}
+		msg.Ack()
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("Expected 0 messages, got %d", count)
+	}
+	if msgs2.Error() != nil {
+		t.Fatalf("Unexpected error: %v", msgs2.Error())
+	}
+
+	msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for msg := range msgs3.Messages() {
+		if msg == nil {
+			break
+		}
+		newId := msg.Headers().Get("Nats-Pin-Id")
+		if newId == id {
+			t.Fatalf("Expected new pull to have different ID")
+		}
+		msg.Ack()
+		count++
+	}
+	if count != 10 {
+		t.Fatalf("Expected 10 messages, got %d", count)
+	}
+	if msgs3.Error() != nil {
+		t.Fatalf("Unexpected error: %v", msgs3.Error())
+	}
+}
+
 func TestConsumerCachedInfo(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)

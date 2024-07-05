@@ -81,14 +81,18 @@ type (
 		name          string
 		info          *ConsumerInfo
 		subscriptions map[string]*pullSubscription
+		PinId         string
 	}
 
 	pullRequest struct {
-		Expires   time.Duration `json:"expires,omitempty"`
-		Batch     int           `json:"batch,omitempty"`
-		MaxBytes  int           `json:"max_bytes,omitempty"`
-		NoWait    bool          `json:"no_wait,omitempty"`
-		Heartbeat time.Duration `json:"idle_heartbeat,omitempty"`
+		Expires       time.Duration `json:"expires,omitempty"`
+		Batch         int           `json:"batch,omitempty"`
+		MaxBytes      int           `json:"max_bytes,omitempty"`
+		NoWait        bool          `json:"no_wait,omitempty"`
+		Heartbeat     time.Duration `json:"idle_heartbeat,omitempty"`
+		MinPending    int64         `json:"min_pending,omitempty"`
+		MinAckPending int64         `json:"min_ack_pending,omitempty"`
+		PinId         string        `json:"id,omitempty"`
 	}
 
 	consumeOpts struct {
@@ -725,8 +729,7 @@ func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch,
 // request. It will not wait for more messages to arrive.
 func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:  batch,
-		NoWait: true,
+		Batch: batch,
 	}
 
 	return p.fetch(req)
@@ -751,6 +754,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.PinId = p.PinId
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
@@ -767,6 +771,13 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
+				// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
+				// check of `Status` header.
+				if status := msg.Header.Get("Status"); status != "" {
+					if status == pinIdMismatch {
+						res.err = err
+					}
+				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
 					errNotTimeoutOrNoMsgs := !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages)
@@ -780,6 +791,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if !userMsg {
 					p.Unlock()
 					continue
+				}
+				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+					p.PinId = pinId
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
 				meta, err := msg.Metadata()

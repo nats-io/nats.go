@@ -195,6 +195,10 @@ var (
 	// consumer.
 	ErrNoMessages JetStreamError = &jsError{message: "no messages"}
 
+	// ErrPinIdMismatch is returned when Pin ID sent in ther request does not match
+	// the currently pinned consumer subscriber ID on the server.
+	ErrPinIdMismatch JetStreamError = &jsError{message: "pin ID mismatch"}
+
 	// ErrMaxBytesExceeded is returned when a message would exceed MaxBytes set
 	// on a pull request.
 	ErrMaxBytesExceeded JetStreamError = &jsError{message: "message size exceeds max bytes"}

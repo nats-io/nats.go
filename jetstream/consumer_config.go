@@ -217,6 +217,9 @@ type (
 		// associating metadata on the consumer. This feature requires
 		// nats-server v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
+
+		PriorityPolicy PriorityPolicy `json:"priority_policy,omitempty"`
+		PinnedTTL      time.Duration  `json:"priority_timeout,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream
@@ -283,7 +286,41 @@ type (
 		Stream   uint64     `json:"stream_seq"`
 		Last     *time.Time `json:"last_active,omitempty"`
 	}
+
+	PriorityPolicy int
 )
+
+const (
+	PriorityPolicyNone PriorityPolicy = iota
+	PriorityPolicyPinned
+	PriorityPolicyOverflow
+)
+
+func (p *PriorityPolicy) UnmarshalJSON(data []byte) error {
+	switch string(data) {
+	case jsonString(""):
+		*p = PriorityPolicyNone
+	case jsonString("pinned_client"):
+		*p = PriorityPolicyPinned
+	case jsonString("overflow"):
+		*p = PriorityPolicyOverflow
+	default:
+		return fmt.Errorf("nats: can not unmarshal %q", data)
+	}
+	return nil
+}
+
+func (p PriorityPolicy) MarshalJSON() ([]byte, error) {
+	switch p {
+	case PriorityPolicyNone:
+		return json.Marshal("")
+	case PriorityPolicyPinned:
+		return json.Marshal("pinned_client")
+	case PriorityPolicyOverflow:
+		return json.Marshal("overflow")
+	}
+	return nil, fmt.Errorf("nats: unknown priority policy %v", p)
+}
 
 const (
 	// DeliverAllPolicy starts delivering messages from the very beginning of a
