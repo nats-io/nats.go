@@ -147,6 +147,7 @@ const (
 	reqTimeout       = "408"
 	maxBytesExceeded = "409"
 	noResponders     = "503"
+	pinIdMismatch    = "423"
 )
 
 // Headers used when publishing messages.
@@ -418,6 +419,8 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		return false, nats.ErrTimeout
 	case controlMsg:
 		return false, nil
+	case pinIdMismatch:
+		return false, ErrPinIdMismatch
 	case maxBytesExceeded:
 		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
 			return false, ErrMaxBytesExceeded

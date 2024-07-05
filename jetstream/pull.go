@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,14 +88,19 @@ type (
 		name    string
 		info    *ConsumerInfo
 		subs    syncx.Map[string, *pullSubscription]
+		PinId         string
 	}
 
 	pullRequest struct {
-		Expires   time.Duration `json:"expires,omitempty"`
-		Batch     int           `json:"batch,omitempty"`
-		MaxBytes  int           `json:"max_bytes,omitempty"`
-		NoWait    bool          `json:"no_wait,omitempty"`
-		Heartbeat time.Duration `json:"idle_heartbeat,omitempty"`
+		Expires       time.Duration `json:"expires,omitempty"`
+		Batch         int           `json:"batch,omitempty"`
+		MaxBytes      int           `json:"max_bytes,omitempty"`
+		NoWait        bool          `json:"no_wait,omitempty"`
+		Heartbeat     time.Duration `json:"idle_heartbeat,omitempty"`
+		MinPending    int64         `json:"min_pending,omitempty"`
+		MinAckPending int64         `json:"min_ack_pending,omitempty"`
+		PinId         string        `json:"id,omitempty"`
+		Group         string        `json:"group,omitempty"`
 	}
 
 	consumeOpts struct {
@@ -102,6 +108,9 @@ type (
 		MaxMessages             int
 		MaxBytes                int
 		LimitSize               bool
+		MinPending              int64
+		MinAckPending           int64
+		Group                   string
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandlerFunc
 		ReportMissingHeartbeats bool
@@ -187,6 +196,19 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
+
+	if len(p.info.Config.PriorityGroups) != 0 {
+		if consumeOpts.Group == "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
+		}
+
+		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
+		}
+	} else if consumeOpts.Group != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is not supported for this consumer")
+	}
+
 	p.Lock()
 
 	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
@@ -210,6 +232,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	internalHandler := func(msg *nats.Msg) {
 		if sub.hbMonitor != nil {
 			sub.hbMonitor.Stop()
+		}
+		// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
+		// check of `Status` header.
+		if status := msg.Header.Get("Status"); status != "" {
+			if status == pinIdMismatch {
+				p.PinId = ""
+			}
 		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
@@ -247,6 +276,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
+		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+			// TODO(jrm): do we need a lock here?
+			p.PinId = pinId
+		}
 		handler(p.js.toJSMsg(msg))
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
@@ -283,10 +316,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 	}
 	if err := sub.pull(&pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     batchSize,
-		MaxBytes:  consumeOpts.MaxBytes,
-		Heartbeat: consumeOpts.Heartbeat,
+		Expires:       consumeOpts.Expires,
+		Batch:         batchSize,
+		MaxBytes:      consumeOpts.MaxBytes,
+		Heartbeat:     consumeOpts.Heartbeat,
+		MinPending:    consumeOpts.MinPending,
+		MinAckPending: consumeOpts.MinAckPending,
+		Group:         consumeOpts.Group,
+		PinId:         p.PinId,
 	}, subject); err != nil {
 		sub.errs <- err
 	}
@@ -318,10 +355,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						}
 
 						sub.fetchNext <- &pullRequest{
-							Expires:   sub.consumeOpts.Expires,
-							Batch:     sub.consumeOpts.MaxMessages,
-							MaxBytes:  sub.consumeOpts.MaxBytes,
-							Heartbeat: sub.consumeOpts.Heartbeat,
+							Expires:       sub.consumeOpts.Expires,
+							Batch:         sub.consumeOpts.MaxMessages,
+							MaxBytes:      sub.consumeOpts.MaxBytes,
+							Heartbeat:     sub.consumeOpts.Heartbeat,
+							MinPending:    sub.consumeOpts.MinPending,
+							MinAckPending: sub.consumeOpts.MinAckPending,
+							Group:         sub.consumeOpts.Group,
+							PinId:         p.PinId,
 						}
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -341,10 +382,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 					}
 					sub.fetchNext <- &pullRequest{
-						Expires:   sub.consumeOpts.Expires,
-						Batch:     batchSize,
-						MaxBytes:  sub.consumeOpts.MaxBytes,
-						Heartbeat: sub.consumeOpts.Heartbeat,
+						Expires:       sub.consumeOpts.Expires,
+						Batch:         batchSize,
+						MaxBytes:      sub.consumeOpts.MaxBytes,
+						Heartbeat:     sub.consumeOpts.Heartbeat,
+						MinPending:    sub.consumeOpts.MinPending,
+						MinAckPending: sub.consumeOpts.MinAckPending,
+						Group:         sub.consumeOpts.Group,
+						PinId:         p.PinId,
 					}
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -417,6 +462,8 @@ func (s *pullSubscription) checkPending() {
 				Batch:     batchSize,
 				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
+				PinId:     s.consumer.PinId,
+				Group:     s.consumeOpts.Group,
 			}
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
@@ -750,8 +797,7 @@ func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch,
 // request. It will not wait for more messages to arrive.
 func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:  batch,
-		NoWait: true,
+		Batch: batch,
 	}
 
 	return p.fetch(req)
@@ -776,6 +822,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("setting request pin id: %s\n", p.PinId)
+	req.PinId = p.PinId
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
@@ -792,6 +840,13 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
+				// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
+				// check of `Status` header.
+				if status := msg.Header.Get("Status"); status != "" {
+					if status == pinIdMismatch {
+						res.err = err
+					}
+				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
 					errNotTimeoutOrNoMsgs := !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages)
@@ -805,6 +860,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if !userMsg {
 					res.Unlock()
 					continue
+				}
+				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+					p.PinId = pinId
 				}
 				res.msgs <- p.js.toJSMsg(msg)
 				meta, err := msg.Metadata()
@@ -946,8 +1004,9 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	if err != nil {
 		return err
 	}
-
 	reply := s.subscription.Subject
+	fmt.Printf("sending json for reply %s %s\n", reply, string(reqJSON))
+
 	if err := s.consumer.js.conn.PublishRequest(subject, reply, reqJSON); err != nil {
 		return err
 	}

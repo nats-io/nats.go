@@ -297,6 +297,54 @@ func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+type PullMinPending int
+
+func (min PullMinPending) configureConsume(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+func (min PullMinPending) configureMessages(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+type PullMinAckPending int
+
+func (min PullMinAckPending) configureConsume(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+type PriorityGroup string
+
+func (group PriorityGroup) configureConsume(opts *consumeOpts) error {
+	opts.Group = string(group)
+	return nil
+}
+
+func (group PriorityGroup) configureMessages(opts *consumeOpts) error {
+	opts.Group = string(group)
+	return nil
+}
+
 // PullHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat message from a stream for more
 // than the idle heartbeat setting, the subscription will be removed
@@ -366,6 +414,33 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 		cfg.ReportMissingHeartbeats = hbErr
 		return nil
 	})
+}
+
+func FetchMinPending(min int64) FetchOpt {
+	return func(req *pullRequest) error {
+		if min < 1 {
+			return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+		}
+		req.MinPending = min
+		return nil
+	}
+}
+
+func FetchMinAckPending(min int64) FetchOpt {
+	return func(req *pullRequest) error {
+		if min < 1 {
+			return fmt.Errorf("%w: min ack pending should be more than 0", ErrInvalidOption)
+		}
+		req.MinAckPending = min
+		return nil
+	}
+}
+
+func WithPriorityGroup(group string) FetchOpt {
+	return func(req *pullRequest) error {
+		req.Group = group
+		return nil
+	}
 }
 
 // FetchMaxWait sets custom timeout for fetching predefined batch of messages.
