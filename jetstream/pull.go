@@ -754,6 +754,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("setting request pin id: %s\n", p.PinId)
 	req.PinId = p.PinId
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
@@ -793,6 +794,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					continue
 				}
 				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+					fmt.Printf("setting new pin id: %s\n", pinId)
 					p.PinId = pinId
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
@@ -918,6 +920,7 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("sending json: %s\n", string(reqJSON))
 
 	reply := s.subscription.Subject
 	if err := s.consumer.jetStream.conn.PublishRequest(subject, reply, reqJSON); err != nil {

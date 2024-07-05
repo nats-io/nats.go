@@ -16,6 +16,7 @@ package test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -147,7 +148,7 @@ func TestConsumerPinned(t *testing.T) {
 		AckPolicy:      jetstream.AckExplicitPolicy,
 		Description:    "test consumer",
 		PriorityPolicy: jetstream.PriorityPolicyPinned,
-		PinnedTTL:      2 * time.Second,
+		PinnedTTL:      5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -158,7 +159,7 @@ func TestConsumerPinned(t *testing.T) {
 	if info.Config.PriorityPolicy != jetstream.PriorityPolicyPinned {
 		t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPinned, info.Config.PriorityPolicy)
 	}
-	if info.Config.PinnedTTL != 2*time.Second {
+	if info.Config.PinnedTTL != 5*time.Second {
 		t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", 2*time.Second, info.Config.PinnedTTL)
 	}
 
@@ -168,6 +169,7 @@ func TestConsumerPinned(t *testing.T) {
 
 	// Initial fetch.
 	// Should get all messages and get a Pin ID.
+	fmt.Println("Fetching messages nr1")
 	msgs, err := c.Fetch(10)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -175,9 +177,6 @@ func TestConsumerPinned(t *testing.T) {
 	count := 0
 	id := ""
 	for msg := range msgs.Messages() {
-		if msg == nil {
-			break
-		}
 		msg.Ack()
 		count++
 		natsMsgId := msg.Headers().Get("Nats-Pin-Id")
@@ -195,15 +194,14 @@ func TestConsumerPinned(t *testing.T) {
 	}
 
 	// Different
-	msgs2, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+	fmt.Println("Fetching messages nr2")
+	cdiff, err := js.Consumer(ctx, "foo", "cons")
+	msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	count = 0
 	for msg := range msgs2.Messages() {
-		if msg == nil {
-			break
-		}
 		msg.Ack()
 		count++
 	}
@@ -214,18 +212,17 @@ func TestConsumerPinned(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", msgs2.Error())
 	}
 
+	count = 0
+
+	fmt.Println("Fetching messages nr3")
+	// the same again, should be fine
 	msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	for msg := range msgs3.Messages() {
-		if msg == nil {
-			break
-		}
-		newId := msg.Headers().Get("Nats-Pin-Id")
-		if newId == id {
-			t.Fatalf("Expected new pull to have different ID")
-		}
+		pinId := msg.Headers().Get("Nats-Pin-Id")
+		fmt.Printf("pinId: %s\n", pinId)
 		msg.Ack()
 		count++
 	}
@@ -234,6 +231,33 @@ func TestConsumerPinned(t *testing.T) {
 	}
 	if msgs3.Error() != nil {
 		t.Fatalf("Unexpected error: %v", msgs3.Error())
+	}
+
+	// Wait for the TTL to expire, expect different ID
+	count = 0
+	time.Sleep(10 * time.Second)
+	// The same instance, should work fine.
+	fmt.Printf("Fetching messages nr4\n")
+	msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for msg := range msgs4.Messages() {
+		if msg == nil {
+			break
+		}
+		newId := msg.Headers().Get("Nats-Pin-Id")
+		if newId == id {
+			t.Fatalf("Expected new pull to have different ID. old: %s, new: %s", id, newId)
+		}
+		msg.Ack()
+		count++
+	}
+	if count != 10 {
+		t.Fatalf("Expected 10 messages, got %d", count)
+	}
+	if msgs4.Error() != nil {
+		t.Fatalf("Unexpected error: %v", msgs4.Error())
 	}
 }
 
