@@ -121,6 +121,76 @@ func TestConsumerInfo(t *testing.T) {
 	})
 }
 
+func TestConsumerOverflow(t *testing.T) {
+
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:        "cons",
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		Description:    "test consumer",
+		PriorityPolicy: jetstream.PriorityPolicyOverflow,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Check that consumer got proper priority policy and TTL
+	info := c.CachedInfo()
+	if info.Config.PriorityPolicy != jetstream.PriorityPolicyOverflow {
+		t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyOverflow, info.Config.PriorityPolicy)
+	}
+
+	for i := 0; i < 100; i++ {
+		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+	}
+
+	// We are below overflow, so we should not get any moessages.
+	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second))
+	count := 0
+	for msg := range msgs.Messages() {
+		msg.Ack()
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("Expected 0 messages, got %d", count)
+	}
+
+	// Add more messages
+	for i := 0; i < 100; i++ {
+		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+	}
+
+	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110))
+	count = 0
+	for msg := range msgs.Messages() {
+		msg.Ack()
+		count++
+	}
+	if count != 10 {
+		t.Fatalf("Expected 10 messages, got %d", count)
+	}
+}
+
 func TestConsumerPinned(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)

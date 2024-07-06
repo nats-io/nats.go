@@ -259,6 +259,26 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	})
 }
 
+func FetchMinPending(min int64) FetchOpt {
+	return func(req *pullRequest) error {
+		if min < 1 {
+			return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+		}
+		req.MinPending = min
+		return nil
+	}
+}
+
+func FetchMinAckPending(min int64) FetchOpt {
+	return func(req *pullRequest) error {
+		if min < 1 {
+			return fmt.Errorf("%w: min ack pending should be more than 0", ErrInvalidOption)
+		}
+		req.MinAckPending = min
+		return nil
+	}
+}
+
 // FetchMaxWait sets custom timeout for fetching predefined batch of messages.
 //
 // If not provided, a default of 30 seconds will be used.
