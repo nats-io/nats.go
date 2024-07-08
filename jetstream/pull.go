@@ -99,6 +99,8 @@ type (
 		Expires                 time.Duration
 		MaxMessages             int
 		MaxBytes                int
+		MinPending              int64
+		MinAckPending           int64
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandlerFunc
 		ReportMissingHeartbeats bool
@@ -210,6 +212,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		if sub.hbMonitor != nil {
 			sub.hbMonitor.Stop()
 		}
+		// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
+		// check of `Status` header.
+		if status := msg.Header.Get("Status"); status != "" {
+			if status == pinIdMismatch {
+				p.PinId = ""
+			}
+		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
 			if sub.hbMonitor != nil {
@@ -246,6 +255,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
+		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+			// TODO(jrm): do we need a lock here?
+			p.PinId = pinId
+		}
 		handler(p.jetStream.toJSMsg(msg))
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
@@ -278,10 +291,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 	}
 	if err := sub.pull(&pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     batchSize,
-		MaxBytes:  consumeOpts.MaxBytes,
-		Heartbeat: consumeOpts.Heartbeat,
+		Expires:       consumeOpts.Expires,
+		Batch:         batchSize,
+		MaxBytes:      consumeOpts.MaxBytes,
+		Heartbeat:     consumeOpts.Heartbeat,
+		MinPending:    consumeOpts.MinPending,
+		MinAckPending: consumeOpts.MinAckPending,
+		PinId:         p.PinId,
+		// TODO(jrm): add min pending and min ack pending
 	}, subject); err != nil {
 		sub.errs <- err
 	}
@@ -313,10 +330,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						}
 
 						sub.fetchNext <- &pullRequest{
-							Expires:   sub.consumeOpts.Expires,
-							Batch:     sub.consumeOpts.MaxMessages,
-							MaxBytes:  sub.consumeOpts.MaxBytes,
-							Heartbeat: sub.consumeOpts.Heartbeat,
+							Expires:       sub.consumeOpts.Expires,
+							Batch:         sub.consumeOpts.MaxMessages,
+							MaxBytes:      sub.consumeOpts.MaxBytes,
+							Heartbeat:     sub.consumeOpts.Heartbeat,
+							MinPending:    sub.consumeOpts.MinPending,
+							MinAckPending: sub.consumeOpts.MinAckPending,
+							PinId:         p.PinId,
 						}
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -336,10 +356,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 					}
 					sub.fetchNext <- &pullRequest{
-						Expires:   sub.consumeOpts.Expires,
-						Batch:     batchSize,
-						MaxBytes:  sub.consumeOpts.MaxBytes,
-						Heartbeat: sub.consumeOpts.Heartbeat,
+						Expires:       sub.consumeOpts.Expires,
+						Batch:         batchSize,
+						MaxBytes:      sub.consumeOpts.MaxBytes,
+						Heartbeat:     sub.consumeOpts.Heartbeat,
+						MinPending:    sub.consumeOpts.MinPending,
+						MinAckPending: sub.consumeOpts.MinAckPending,
+						PinId:         p.PinId,
 					}
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -407,6 +430,7 @@ func (s *pullSubscription) checkPending() {
 				Batch:     batchSize,
 				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
+				PinId:     s.consumer.PinId,
 			}
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
@@ -867,6 +891,7 @@ func (s *pullSubscription) pullMessages(subject string) {
 			}
 			atomic.StoreUint32(&s.fetchInProgress, 0)
 		case <-s.done:
+			fmt.Printf("!!!!!!!done\n")
 			s.cleanup()
 			return
 		}
@@ -920,9 +945,9 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("sending json: %s\n", string(reqJSON))
-
 	reply := s.subscription.Subject
+	fmt.Printf("sending json for reply %s %s\n", reply, string(reqJSON))
+
 	if err := s.consumer.jetStream.conn.PublishRequest(subject, reply, reqJSON); err != nil {
 		return err
 	}

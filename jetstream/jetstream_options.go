@@ -194,6 +194,42 @@ func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+type PullMinPending int
+
+func (min PullMinPending) configureConsume(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+func (min PullMinPending) configureMessages(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+type PullMinAckPending int
+
+func (min PullMinAckPending) configureConsume(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
+func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
+	if min < 1 {
+		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
+	}
+	opts.MinPending = int64(min)
+	return nil
+}
+
 // PullHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat message from a stream for more
 // than the idle heartbeat setting, the subscription will be removed
