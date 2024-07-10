@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nats-io/nats.go/internal/syncx"
 	"github.com/nats-io/nuid"
 )
 
@@ -233,12 +234,12 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 	}
 
 	return &pullConsumer{
-		jetStream:     js,
-		stream:        stream,
-		name:          resp.Name,
-		durable:       cfg.Durable != "",
-		info:          resp.ConsumerInfo,
-		subscriptions: make(map[string]*pullSubscription),
+		jetStream: js,
+		stream:    stream,
+		name:      resp.Name,
+		durable:   cfg.Durable != "",
+		info:      resp.ConsumerInfo,
+		subs:      syncx.Map[string, *pullSubscription]{},
 	}, nil
 }
 
@@ -285,12 +286,12 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 	}
 
 	cons := &pullConsumer{
-		jetStream:     js,
-		stream:        stream,
-		name:          name,
-		durable:       resp.Config.Durable != "",
-		info:          resp.ConsumerInfo,
-		subscriptions: make(map[string]*pullSubscription, 0),
+		jetStream: js,
+		stream:    stream,
+		name:      name,
+		durable:   resp.Config.Durable != "",
+		info:      resp.ConsumerInfo,
+		subs:      syncx.Map[string, *pullSubscription]{},
 	}
 
 	return cons, nil
