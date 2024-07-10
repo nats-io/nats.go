@@ -116,7 +116,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				sub, ok := c.currentConsumer.getSubscription("")
+				sub, ok := c.currentConsumer.subs.Load("")
 				if !ok {
 					return
 				}
@@ -125,7 +125,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
-				sub, ok := c.currentConsumer.getSubscription("")
+				sub, ok := c.currentConsumer.subs.Load("")
 				if !ok {
 					return
 				}
@@ -148,7 +148,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			select {
 			case <-c.doReset:
 				if err := c.reset(); err != nil {
-					sub, ok := c.currentConsumer.getSubscription("")
+					sub, ok := c.currentConsumer.subs.Load("")
 					if !ok {
 						return
 					}
@@ -176,7 +176,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 					opts = append(opts, consumeStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 				}
 				if _, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
-					sub, ok := c.currentConsumer.getSubscription("")
+					sub, ok := c.currentConsumer.subs.Load("")
 					if !ok {
 						return
 					}
@@ -268,7 +268,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 func (s *orderedSubscription) Next() (Msg, error) {
 	for {
 		currentConsumer := s.consumer.currentConsumer
-		sub, ok := currentConsumer.getSubscription("")
+		sub, ok := currentConsumer.subs.Load("")
 		if !ok {
 			return nil, ErrMsgIteratorClosed
 		}
@@ -328,7 +328,7 @@ func (s *orderedSubscription) Stop() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	sub, ok := s.consumer.currentConsumer.getSubscription("")
+	sub, ok := s.consumer.currentConsumer.subs.Load("")
 	if !ok {
 		return
 	}
@@ -342,7 +342,7 @@ func (s *orderedSubscription) Drain() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	sub, ok := s.consumer.currentConsumer.getSubscription("")
+	sub, ok := s.consumer.currentConsumer.subs.Load("")
 	if !ok {
 		return
 	}
@@ -495,7 +495,7 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
-		sub, ok := c.currentConsumer.getSubscription("")
+		sub, ok := c.currentConsumer.subs.Load("")
 		c.currentConsumer.Lock()
 		if ok {
 			sub.Stop()

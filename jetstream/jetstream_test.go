@@ -16,6 +16,7 @@ package jetstream
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -276,6 +277,11 @@ func TestRetryWithBackoff(t *testing.T) {
 }
 
 func TestPullConsumer_checkPending(t *testing.T) {
+	atomic0 := atomic.Uint32{}
+	atomic0.Store(0)
+	atomic1 := atomic.Uint32{}
+	atomic1.Store(1)
+
 	tests := []struct {
 		name                string
 		givenSub            *pullSubscription
@@ -292,7 +298,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic.Uint32{},
 			},
 			shouldSend: false,
 		},
@@ -307,7 +313,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -325,7 +331,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 1,
+				fetchInProgress: atomic1,
 			},
 			shouldSend: false,
 		},
@@ -341,7 +347,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -359,7 +365,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic0,
 			},
 			shouldSend: false,
 		},
@@ -373,7 +379,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 1,
+				fetchInProgress: atomic1,
 			},
 			shouldSend: false,
 		},
@@ -388,7 +394,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         8,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic0,
 				delivered:       2,
 			},
 			shouldSend: true,
@@ -408,7 +414,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         6,
 				},
-				fetchInProgress: 0,
+				fetchInProgress: atomic0,
 				delivered:       0,
 			},
 			shouldSend: false,
