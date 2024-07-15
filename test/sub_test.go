@@ -1120,7 +1120,7 @@ func TestAsyncSubscriptionPending(t *testing.T) {
 	}
 
 	// Test old way
-	q, _ := sub.QueuedMsgs()
+	q, _, _ := sub.Pending()
 	if q != total && q != total-1 {
 		t.Fatalf("Expected %d or %d, got %d", total, total-1, q)
 	}
@@ -1271,7 +1271,7 @@ func TestSyncSubscriptionPending(t *testing.T) {
 	nc.Flush()
 
 	// Test old way
-	q, _ := sub.QueuedMsgs()
+	q, _, _ := sub.Pending()
 	if q != total && q != total-1 {
 		t.Fatalf("Expected %d or %d, got %d", total, total-1, q)
 	}
