@@ -1076,7 +1076,7 @@ func TestContextEncodedRequestWithDeadline(t *testing.T) {
 	}
 }
 
-func TestContextInvalid(t *testing.T) {
+func TestEncodedContextInvalid(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
@@ -1086,29 +1086,6 @@ func TestContextInvalid(t *testing.T) {
 		t.Fatalf("Unable to create encoded connection: %v", err)
 	}
 	defer c.Close()
-
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err = nc.RequestWithContext(nil, "foo", []byte(""))
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
-
-	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err = sub.NextMsgWithContext(nil)
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
 
 	type request struct {
 		Message string `json:"message"`
