@@ -182,12 +182,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
-	// for single consume, use empty string as id
-	// this is useful for ordered consumer, where only a single subscription is valid
-	var consumeID string
-	if p.subs.Len() > 0 {
-		consumeID = nuid.Next()
-	}
+	consumeID := nuid.Next()
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,
@@ -426,12 +421,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 
 	msgs := make(chan *nats.Msg, consumeOpts.MaxMessages)
 
-	// for single consume, use empty string as id
-	// this is useful for ordered consumer, where only a single subscription is valid
-	var consumeID string
-	if p.subs.Len() > 0 {
-		consumeID = nuid.Next()
-	}
+	consumeID := nuid.Next()
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,

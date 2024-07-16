@@ -150,18 +150,3 @@ func TestMapSwap(t *testing.T) {
 		t.Errorf("Load(1) after Swap = %v; want 'uno'", v)
 	}
 }
-
-func TestMapLen(t *testing.T) {
-	var m Map[int, string]
-	m.Store(1, "one")
-	m.Store(2, "two")
-
-	if length := m.Len(); length != 2 {
-		t.Errorf("Len() = %d; want 2", length)
-	}
-
-	m.Delete(1)
-	if length := m.Len(); length != 1 {
-		t.Errorf("Len() after Delete(1) = %d; want 1", length)
-	}
-}

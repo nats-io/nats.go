@@ -71,12 +71,3 @@ func (m *Map[K, V]) Swap(key K, value V) (V, bool) {
 	previous, loaded := m.m.Swap(key, value)
 	return previous.(V), loaded
 }
-
-func (m *Map[K, V]) Len() int {
-	count := 0
-	m.m.Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	return count
-}
