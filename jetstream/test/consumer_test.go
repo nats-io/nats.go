@@ -458,8 +458,9 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		for msg := range msgs3.Messages() {
-			pinId := msg.Headers().Get("Nats-Pin-Id")
-			fmt.Printf("pinId: %s\n", pinId)
+			if pinId := msg.Headers().Get("Nats-Pin-Id"); pinId == "" {
+				t.Fatalf("missing Nats-Pin-Id header")
+			}
 			msg.Ack()
 			count++
 		}

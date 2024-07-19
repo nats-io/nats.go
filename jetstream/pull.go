@@ -818,7 +818,6 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					continue
 				}
 				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-					fmt.Printf("setting new pin id: %s\n", pinId)
 					p.PinId = pinId
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
@@ -891,7 +890,6 @@ func (s *pullSubscription) pullMessages(subject string) {
 			}
 			atomic.StoreUint32(&s.fetchInProgress, 0)
 		case <-s.done:
-			fmt.Printf("!!!!!!!done\n")
 			s.cleanup()
 			return
 		}
