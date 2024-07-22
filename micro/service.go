@@ -74,9 +74,10 @@ type (
 	GroupOpt    func(*groupOpts)
 
 	endpointOpts struct {
-		subject    string
-		metadata   map[string]string
-		queueGroup string
+		subject           string
+		metadata          map[string]string
+		queueGroup        string
+		disableQueueGroup bool
 	}
 
 	groupOpts struct {
@@ -115,6 +116,7 @@ type (
 		Name                  string          `json:"name"`
 		Subject               string          `json:"subject"`
 		QueueGroup            string          `json:"queue_group"`
+		DisableQueueGroup     bool            `json:"disable_queue_group"`
 		NumRequests           int             `json:"num_requests"`
 		NumErrors             int             `json:"num_errors"`
 		LastError             string          `json:"last_error"`
@@ -186,6 +188,9 @@ type (
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
 
+		// DisableQueueGroup can be used to disable queue groups entirely, so each service is unique.
+		DisableQueueGroup bool `json:"disable_queue_group"`
+
 		// StatsHandler is a user-defined custom function.
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
@@ -209,6 +214,9 @@ type (
 
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
+
+		// DisableQueueGroup can be used to disable queue groups entirely, so each service is unique.
+		DisableQueueGroup bool `json:"disable_queue_group"`
 	}
 
 	// NATSError represents an error returned by a NATS Subscription.
@@ -345,14 +353,22 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		if config.Endpoint.Metadata != nil {
 			opts = append(opts, WithEndpointMetadata(config.Endpoint.Metadata))
 		}
-		if config.Endpoint.QueueGroup != "" {
-			opts = append(opts, WithEndpointQueueGroup(config.Endpoint.QueueGroup))
-		} else if config.QueueGroup != "" {
-			opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
+		if !config.Endpoint.DisableQueueGroup {
+			if config.Endpoint.QueueGroup != "" {
+				opts = append(opts, WithEndpointQueueGroup(config.Endpoint.QueueGroup))
+			} else if config.QueueGroup != "" {
+				opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
+			}
+			if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
+				return nil, err
+			}
+		} else {
+			opts = append(opts, WithDisableQueueGroup(config.DisableQueueGroup))
+			if err := svc.AddEndpoint(config.Endpoint.Subject, config.Endpoint.Handler, opts...); err != nil {
+				return nil, err
+			}
 		}
-		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
-			return nil, err
-		}
+
 	}
 
 	// Setup internal subscriptions.
@@ -400,12 +416,18 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 		subject = options.subject
 	}
 	queueGroup := queueGroupName(options.queueGroup, s.Config.QueueGroup)
-	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup)
+
+	disableQueueGroup := options.disableQueueGroup
+
+	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup, disableQueueGroup)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string) error {
-	if !nameRegexp.MatchString(name) {
-		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
+func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string, disableQueueGroup bool) error {
+
+	if !disableQueueGroup {
+		if !nameRegexp.MatchString(name) {
+			return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
+		}
 	}
 	if !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: invalid endpoint subject", ErrConfigValidation)
@@ -416,21 +438,36 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	endpoint := &Endpoint{
 		service: s,
 		EndpointConfig: EndpointConfig{
-			Subject:    subject,
-			Handler:    handler,
-			Metadata:   metadata,
-			QueueGroup: queueGroup,
+			Subject:           subject,
+			Handler:           handler,
+			Metadata:          metadata,
+			QueueGroup:        queueGroup,
+			DisableQueueGroup: disableQueueGroup,
 		},
 		Name: name,
 	}
 
-	sub, err := s.nc.QueueSubscribe(
-		subject,
-		queueGroup,
-		func(m *nats.Msg) {
-			s.reqHandler(endpoint, &request{msg: m})
-		},
-	)
+	var sub *nats.Subscription
+	var err error
+
+	if !s.DisableQueueGroup {
+
+		sub, err = s.nc.QueueSubscribe(
+			subject,
+			queueGroup,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	} else {
+		sub, err = s.nc.Subscribe(
+			subject,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -438,12 +475,14 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
 	endpoint.stats = EndpointStats{
-		Name:       name,
-		Subject:    subject,
-		QueueGroup: queueGroup,
+		Name:              name,
+		Subject:           subject,
+		QueueGroup:        queueGroup,
+		DisableQueueGroup: disableQueueGroup,
 	}
 	s.m.Unlock()
 	return nil
+
 }
 
 func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
@@ -789,7 +828,9 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	}
 	queueGroup := queueGroupName(options.queueGroup, g.queueGroup)
 
-	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup)
+	disableQueueGroup := options.disableQueueGroup
+
+	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup, disableQueueGroup)
 }
 
 func queueGroupName(customQG, parentQG string) string {
@@ -898,5 +939,12 @@ func WithEndpointQueueGroup(queueGroup string) EndpointOpt {
 func WithGroupQueueGroup(queueGroup string) GroupOpt {
 	return func(g *groupOpts) {
 		g.queueGroup = queueGroup
+	}
+}
+
+func WithDisableQueueGroup(disableQueueGroup bool) EndpointOpt {
+	return func(e *endpointOpts) error {
+		e.disableQueueGroup = disableQueueGroup
+		return nil
 	}
 }
