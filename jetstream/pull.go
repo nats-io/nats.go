@@ -298,7 +298,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		MinPending:    consumeOpts.MinPending,
 		MinAckPending: consumeOpts.MinAckPending,
 		PinId:         p.PinId,
-		// TODO(jrm): add min pending and min ack pending
 	}, subject); err != nil {
 		sub.errs <- err
 	}

@@ -220,6 +220,7 @@ type (
 
 		PriorityPolicy PriorityPolicy `json:"priority_policy,omitempty"`
 		PinnedTTL      time.Duration  `json:"priority_timeout,omitempty"`
+		PriorityGroups []string       `json:"priority_groups,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream

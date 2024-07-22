@@ -149,6 +149,7 @@ func TestConsumerOverflow(t *testing.T) {
 		AckPolicy:      jetstream.AckExplicitPolicy,
 		Description:    "test consumer",
 		PriorityPolicy: jetstream.PriorityPolicyOverflow,
+		PriorityGroups: []string{"A"},
 	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -221,6 +222,7 @@ func TestConsumerPinned(t *testing.T) {
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
 			PinnedTTL:      50 * time.Second,
+			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -307,6 +309,7 @@ func TestConsumerPinned(t *testing.T) {
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
 			PinnedTTL:      50 * time.Second,
+			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -389,6 +392,7 @@ func TestConsumerPinned(t *testing.T) {
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
 			PinnedTTL:      5 * time.Second,
+			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
