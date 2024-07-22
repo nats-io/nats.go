@@ -1,4 +1,5 @@
-# JetStream Simplified Client
+
+# JetStream Simplified Client [![JetStream API Reference](https://pkg.go.dev/badge/github.com/nats-io/nats.go/jetstream.svg)](https://pkg.go.dev/github.com/nats-io/nats.go/jetstream)
 
 This doc covers the basic usage of the `jetstream` package in `nats.go` client.
 

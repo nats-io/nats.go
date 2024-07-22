@@ -93,10 +93,12 @@ nc.Close()
 ```
 
 ## JetStream
+[![JetStream API Reference](https://pkg.go.dev/badge/github.com/nats-io/nats.go/jetstream.svg)](https://pkg.go.dev/github.com/nats-io/nats.go/jetstream)
 
 JetStream is the built-in NATS persistence system. `nats.go` provides a built-in
 API enabling both managing JetStream assets as well as publishing/consuming
 persistent messages.
+
 
 ### Basic usage
 
