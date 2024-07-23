@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -178,19 +179,15 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v\n", err)
 	}
 	defer nc.Close()
-	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
 
 	testString := "bar"
-	ec.Subscribe("foo", func(s string) {
-		if s != testString {
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		if string(m.Data) != testString {
 			t.Fatal("String doesn't match")
 		}
 		ch <- true
 	})
-	ec.Flush()
+	nc.Flush()
 
 	ts.Shutdown()
 	// server is stopped here...
@@ -199,14 +196,14 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Did not get the disconnected callback on time\n")
 	}
 
-	if err := ec.Publish("foo", testString); err != nil {
+	if err := nc.Publish("foo", []byte("bar")); err != nil {
 		t.Fatalf("Failed to publish message: %v\n", err)
 	}
 
 	ts = startReconnectServer(t)
 	defer ts.Shutdown()
 
-	if err := ec.FlushTimeout(5 * time.Second); err != nil {
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		t.Fatalf("Error on Flush: %v", err)
 	}
 
@@ -215,7 +212,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	reconnectCount := ec.Conn.Stats().Reconnects
+	reconnectCount := nc.Stats().Reconnects
 
 	if reconnectCount != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
@@ -241,23 +238,20 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	defer nc.Close()
-	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
+
 	testString := "bar"
 	received := int32(0)
 
-	ec.Subscribe("foo", func(s string) {
+	nc.Subscribe("foo", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
-	sub, _ := ec.Subscribe("foobar", func(s string) {
+	sub, _ := nc.Subscribe("foobar", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
-	ec.Publish("foo", testString)
-	ec.Flush()
+	nc.Publish("foo", []byte(testString))
+	nc.Flush()
 
 	ts.Shutdown()
 	// server is stopped here..
@@ -268,18 +262,18 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	}
 
 	// Sub while disconnected
-	ec.Subscribe("bar", func(s string) {
+	nc.Subscribe("bar", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
 	// Unsub foobar while disconnected
 	sub.Unsubscribe()
 
-	if err = ec.Publish("foo", testString); err != nil {
+	if err = nc.Publish("foo", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
-	if err = ec.Publish("bar", testString); err != nil {
+	if err = nc.Publish("bar", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
@@ -292,19 +286,19 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatal("Did not receive a reconnect callback message")
 	}
 
-	if err = ec.Publish("foobar", testString); err != nil {
+	if err = nc.Publish("foobar", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
-	if err = ec.Publish("foo", testString); err != nil {
+	if err = nc.Publish("foo", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
 	ch := make(chan bool)
-	ec.Subscribe("done", func(b bool) {
+	nc.Subscribe("done", func(*nats.Msg) {
 		ch <- true
 	})
-	ec.Publish("done", true)
+	nc.Publish("done", nil)
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
@@ -337,11 +331,6 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
-
 	// To hold results.
 	results := make(map[int]int)
 	var mu sync.Mutex
@@ -364,25 +353,29 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 	subj := "foo.bar"
 	qgroup := "workers"
 
-	cb := func(seqno int) {
+	cb := func(m *nats.Msg) {
 		mu.Lock()
 		defer mu.Unlock()
+		seqno, err := strconv.Atoi(string(m.Data))
+		if err != nil {
+			t.Fatalf("Received an invalid sequence number: %v\n", err)
+		}
 		results[seqno] = results[seqno] + 1
 	}
 
 	// Create Queue Subscribers
-	ec.QueueSubscribe(subj, qgroup, cb)
-	ec.QueueSubscribe(subj, qgroup, cb)
+	nc.QueueSubscribe(subj, qgroup, cb)
+	nc.QueueSubscribe(subj, qgroup, cb)
 
-	ec.Flush()
+	nc.Flush()
 
 	// Helper function to send messages and check results.
 	sendAndCheckMsgs := func(numToSend int) {
 		for i := 0; i < numToSend; i++ {
-			ec.Publish(subj, i)
+			nc.Publish(subj, []byte(fmt.Sprint(i)))
 		}
 		// Wait for processing.
-		ec.Flush()
+		nc.Flush()
 		time.Sleep(50 * time.Millisecond)
 
 		// Check Results

@@ -20,6 +20,17 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+//lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
+
+// NewEConn
+func NewEConn(t tLogger) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(NewDefaultConnection(t), nats.DEFAULT_ENCODER)
+	if err != nil {
+		t.Fatalf("Failed to create an encoded connection: %v\n", err)
+	}
+	return ec
+}
+
 func TestBadChan(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
