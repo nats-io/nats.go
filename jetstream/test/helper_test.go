@@ -82,15 +82,6 @@ func NewConnection(t *testing.T, port int) *nats.Conn {
 	return nc
 }
 
-// NewEConn
-func NewEConn(t *testing.T) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(NewDefaultConnection(t), nats.DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
-	return ec
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // Running nats server in separate Go routines
 ////////////////////////////////////////////////////////////////////////////////

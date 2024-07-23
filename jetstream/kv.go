@@ -165,8 +165,8 @@ type (
 		// with the same options as Watch.
 		WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, error)
 
-		// Keys will return all keys. DEPRECATED: Use ListKeys instead to avoid
-		// memory issues.
+		// Keys will return all keys.
+		// Deprecated: Use ListKeys instead to avoid memory issues.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
 		// ListKeys will return KeyLister, allowing to retrieve all keys from

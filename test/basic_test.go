@@ -464,8 +464,8 @@ func TestQueueSubscriber(t *testing.T) {
 	omsg := []byte("Hello World")
 	nc.Publish("foo", omsg)
 	nc.Flush()
-	r1, _ := s1.QueuedMsgs()
-	r2, _ := s2.QueuedMsgs()
+	r1, _, _ := s1.Pending()
+	r2, _, _ := s2.Pending()
 	if (r1 + r2) != 1 {
 		t.Fatal("Received too many messages for multiple queue subscribers")
 	}
@@ -479,8 +479,8 @@ func TestQueueSubscriber(t *testing.T) {
 	}
 	nc.Flush()
 	v := uint(float32(total) * 0.15)
-	r1, _ = s1.QueuedMsgs()
-	r2, _ = s2.QueuedMsgs()
+	r1, _, _ = s1.Pending()
+	r2, _, _ = s2.Pending()
 	if r1+r2 != total {
 		t.Fatalf("Incorrect number of messages: %d vs %d", (r1 + r2), total)
 	}
@@ -1032,7 +1032,7 @@ func TestNilConnection(t *testing.T) {
 	if _, err := sub.NextMsg(time.Millisecond); err == nil || err != nats.ErrBadSubscription {
 		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
 	}
-	if _, err := sub.QueuedMsgs(); err == nil || err != nats.ErrBadSubscription {
+	if _, _, err := sub.Pending(); err == nil || err != nats.ErrBadSubscription {
 		t.Fatalf("Expected ErrBadSubscription error, got %v\n", err)
 	}
 	if _, _, err := sub.Pending(); err == nil || err != nats.ErrBadSubscription {
