@@ -20,6 +20,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+//lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
+
 // Additional index for registered Encoders.
 const (
 	PROTOBUF_ENCODER = "protobuf"
@@ -33,6 +35,8 @@ func init() {
 // ProtobufEncoder is a protobuf implementation for EncodedConn
 // This encoder will use the builtin protobuf lib to Marshal
 // and Unmarshal structs.
+//
+// Deprecated: Encoded connections are no longer supported.
 type ProtobufEncoder struct {
 	// Empty
 }
@@ -43,6 +47,8 @@ var (
 )
 
 // Encode
+//
+// Deprecated: Encoded connections are no longer supported.
 func (pb *ProtobufEncoder) Encode(subject string, v any) ([]byte, error) {
 	if v == nil {
 		return nil, nil
@@ -60,6 +66,8 @@ func (pb *ProtobufEncoder) Encode(subject string, v any) ([]byte, error) {
 }
 
 // Decode
+//
+// Deprecated: Encoded connections are no longer supported.
 func (pb *ProtobufEncoder) Decode(subject string, data []byte, vPtr any) error {
 	if _, ok := vPtr.(*any); ok {
 		return nil

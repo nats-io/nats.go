@@ -1847,8 +1847,8 @@ func TestDefaultOptionsDialer(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
 
-	opts1 := nats.DefaultOptions
-	opts2 := nats.DefaultOptions
+	opts1 := nats.GetDefaultOptions()
+	opts2 := nats.GetDefaultOptions()
 
 	nc1, err := opts1.Connect()
 	if err != nil {
