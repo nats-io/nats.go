@@ -967,6 +967,7 @@ func TestKeyValueListKeys(t *testing.T) {
 
 func TestKeyValueCrossAccounts(t *testing.T) {
 	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
         jetstream: enabled
         accounts: {
            A: {
