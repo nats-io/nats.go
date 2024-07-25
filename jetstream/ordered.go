@@ -181,9 +181,9 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			case <-sub.done:
 				s := sub.consumer.currentSub
 				if s != nil {
-					s.consumer.Lock()
+					sub.consumer.Lock()
 					s.Stop()
-					s.consumer.Unlock()
+					sub.consumer.Unlock()
 				}
 				return
 			case msgsLeft, ok := <-c.stopAfterMsgsLeft:
@@ -334,10 +334,10 @@ func (s *orderedSubscription) Stop() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
+	s.consumer.Lock()
+	defer s.consumer.Unlock()
 	if s.consumer.currentSub != nil {
-		s.consumer.currentConsumer.Lock()
 		s.consumer.currentSub.Stop()
-		s.consumer.currentConsumer.Unlock()
 	}
 	close(s.done)
 }
