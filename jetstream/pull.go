@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/syncx"
 	"github.com/nats-io/nuid"
 )
 
@@ -75,12 +76,12 @@ type (
 
 	pullConsumer struct {
 		sync.Mutex
-		jetStream     *jetStream
-		stream        string
-		durable       bool
-		name          string
-		info          *ConsumerInfo
-		subscriptions map[string]*pullSubscription
+		jetStream *jetStream
+		stream    string
+		durable   bool
+		name      string
+		info      *ConsumerInfo
+		subs      syncx.Map[string, *pullSubscription]
 	}
 
 	pullRequest struct {
@@ -116,9 +117,9 @@ type (
 		errs              chan error
 		pending           pendingMsgs
 		hbMonitor         *hbMonitor
-		fetchInProgress   uint32
-		closed            uint32
-		draining          uint32
+		fetchInProgress   atomic.Uint32
+		closed            atomic.Uint32
+		draining          atomic.Uint32
 		done              chan struct{}
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
@@ -181,12 +182,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
-	// for single consume, use empty string as id
-	// this is useful for ordered consumer, where only a single subscription is valid
-	var consumeID string
-	if len(p.subscriptions) > 0 {
-		consumeID = nuid.Next()
-	}
+	consumeID := nuid.Next()
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,
@@ -199,7 +195,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 
-	p.subscriptions[sub.id] = sub
+	p.subs.Store(sub.id, sub)
 	p.Unlock()
 
 	internalHandler := func(msg *nats.Msg) {
@@ -232,7 +228,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			sub.Unlock()
 
 			if err != nil {
-				if atomic.LoadUint32(&sub.closed) == 1 {
+				if sub.closed.Load() == 1 {
 					return
 				}
 				if sub.consumeOpts.ErrHandler != nil {
@@ -259,10 +255,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
 		return func(subject string) {
-			p.Lock()
-			defer p.Unlock()
-			delete(p.subscriptions, sid)
-			atomic.CompareAndSwapUint32(&sub.draining, 1, 0)
+			p.subs.Delete(sid)
+			sub.draining.CompareAndSwap(1, 0)
 		}
 	}(sub.id))
 
@@ -286,7 +280,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	go func() {
 		isConnected := true
 		for {
-			if atomic.LoadUint32(&sub.closed) == 1 {
+			if sub.closed.Load() == 1 {
 				return
 			}
 			select {
@@ -383,7 +377,7 @@ func (s *pullSubscription) incrementDeliveredMsgs() {
 func (s *pullSubscription) checkPending() {
 	if (s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
 		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0)) &&
-		atomic.LoadUint32(&s.fetchInProgress) == 0 {
+		s.fetchInProgress.Load() == 0 {
 
 		var batchSize, maxBytes int
 		if s.consumeOpts.MaxBytes == 0 {
@@ -427,12 +421,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 
 	msgs := make(chan *nats.Msg, consumeOpts.MaxMessages)
 
-	// for single consume, use empty string as id
-	// this is useful for ordered consumer, where only a single subscription is valid
-	var consumeID string
-	if len(p.subscriptions) > 0 {
-		consumeID = nuid.Next()
-	}
+	consumeID := nuid.Next()
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,
@@ -451,20 +440,18 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
 		return func(subject string) {
-			p.Lock()
-			defer p.Unlock()
-			if atomic.LoadUint32(&sub.draining) != 1 {
+			if sub.draining.Load() != 1 {
 				// if we're not draining, subscription can be closed as soon
 				// as closed handler is called
 				// otherwise, we need to wait until all messages are drained
 				// in Next
-				delete(p.subscriptions, sid)
+				p.subs.Delete(sid)
 			}
 			close(msgs)
 		}
 	}(sub.id))
 
-	p.subscriptions[sub.id] = sub
+	p.subs.Store(sub.id, sub)
 	p.Unlock()
 
 	go sub.pullMessages(subject)
@@ -502,8 +489,8 @@ var (
 func (s *pullSubscription) Next() (Msg, error) {
 	s.Lock()
 	defer s.Unlock()
-	drainMode := atomic.LoadUint32(&s.draining) == 1
-	closed := atomic.LoadUint32(&s.closed) == 1
+	drainMode := s.draining.Load() == 1
+	closed := s.closed.Load() == 1
 	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
@@ -526,8 +513,8 @@ func (s *pullSubscription) Next() (Msg, error) {
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
-				delete(s.consumer.subscriptions, s.id)
-				atomic.CompareAndSwapUint32(&s.draining, 1, 0)
+				s.consumer.subs.Delete(s.id)
+				s.draining.CompareAndSwap(1, 0)
 				return nil, ErrMsgIteratorClosed
 			}
 			if hbMonitor != nil {
@@ -630,7 +617,7 @@ func (hb *hbMonitor) Reset(dur time.Duration) {
 // Next after calling Stop will return ErrMsgIteratorClosed error.
 // All messages that are already in the buffer are discarded.
 func (s *pullSubscription) Stop() {
-	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
 	close(s.done)
@@ -648,10 +635,10 @@ func (s *pullSubscription) Stop() {
 // subsequent calls to Next. After the buffer is drained, Next will
 // return ErrMsgIteratorClosed error.
 func (s *pullSubscription) Drain() {
-	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
-	atomic.StoreUint32(&s.draining, 1)
+	s.draining.Store(1)
 	close(s.done)
 	if s.consumeOpts.stopAfterMsgsLeft != nil {
 		if s.delivered >= s.consumeOpts.StopAfter {
@@ -840,7 +827,7 @@ func (s *pullSubscription) pullMessages(subject string) {
 	for {
 		select {
 		case req := <-s.fetchNext:
-			atomic.StoreUint32(&s.fetchInProgress, 1)
+			s.fetchInProgress.Store(1)
 
 			if err := s.pull(req, subject); err != nil {
 				if errors.Is(err, ErrMsgIteratorClosed) {
@@ -849,7 +836,7 @@ func (s *pullSubscription) pullMessages(subject string) {
 				}
 				s.errs <- err
 			}
-			atomic.StoreUint32(&s.fetchInProgress, 0)
+			s.fetchInProgress.Store(0)
 		case <-s.done:
 			s.cleanup()
 			return
@@ -880,13 +867,13 @@ func (s *pullSubscription) cleanup() {
 	if s.hbMonitor != nil {
 		s.hbMonitor.Stop()
 	}
-	drainMode := atomic.LoadUint32(&s.draining) == 1
+	drainMode := s.draining.Load() == 1
 	if drainMode {
 		s.subscription.Drain()
 	} else {
 		s.subscription.Unsubscribe()
 	}
-	atomic.StoreUint32(&s.closed, 1)
+	s.closed.Store(1)
 }
 
 // pull sends a pull request to the server and waits for messages using a subscription from [pullSubscription].
@@ -894,7 +881,7 @@ func (s *pullSubscription) cleanup() {
 func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	s.consumer.Lock()
 	defer s.consumer.Unlock()
-	if atomic.LoadUint32(&s.closed) == 1 {
+	if s.closed.Load() == 1 {
 		return ErrMsgIteratorClosed
 	}
 	if req.Batch < 1 {
@@ -993,11 +980,4 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		return fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry")
 	}
 	return nil
-}
-
-func (c *pullConsumer) getSubscription(id string) (*pullSubscription, bool) {
-	c.Lock()
-	defer c.Unlock()
-	sub, ok := c.subscriptions[id]
-	return sub, ok
 }

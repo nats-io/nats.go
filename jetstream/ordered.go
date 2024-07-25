@@ -32,6 +32,7 @@ type (
 		cfg               *OrderedConsumerConfig
 		stream            string
 		currentConsumer   *pullConsumer
+		currentSub        ConsumeContext
 		cursor            cursor
 		namePrefix        string
 		serial            int
@@ -116,19 +117,11 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				sub, ok := c.currentConsumer.getSubscription("")
-				if !ok {
-					return
-				}
-				c.errHandler(serial)(sub, err)
+				c.errHandler(serial)(c.currentSub, err)
 				return
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
-				sub, ok := c.currentConsumer.getSubscription("")
-				if !ok {
-					return
-				}
 				c.errHandler(serial)(sub, errOrderedSequenceMismatch)
 				return
 			}
@@ -138,21 +131,18 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 		}
 	}
 
-	_, err = c.currentConsumer.Consume(internalHandler(c.serial), opts...)
+	cc, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...)
 	if err != nil {
 		return nil, err
 	}
+	c.currentSub = cc
 
 	go func() {
 		for {
 			select {
 			case <-c.doReset:
 				if err := c.reset(); err != nil {
-					sub, ok := c.currentConsumer.getSubscription("")
-					if !ok {
-						return
-					}
-					c.errHandler(c.serial)(sub, err)
+					c.errHandler(c.serial)(c.currentSub, err)
 				}
 				if c.withStopAfter {
 					select {
@@ -175,12 +165,12 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				if c.withStopAfter {
 					opts = append(opts, consumeStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 				}
-				if _, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
-					sub, ok := c.currentConsumer.getSubscription("")
-					if !ok {
-						return
-					}
-					c.errHandler(c.serial)(sub, err)
+				if cc, err := c.currentConsumer.Consume(internalHandler(c.serial), opts...); err != nil {
+					c.errHandler(c.serial)(cc, err)
+				} else {
+					c.Lock()
+					c.currentSub = cc
+					c.Unlock()
 				}
 			case <-sub.done:
 				return
@@ -250,10 +240,11 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	if c.stopAfter > 0 {
 		opts = append(opts, messagesStopAfterNotify(c.stopAfter, c.stopAfterMsgsLeft))
 	}
-	_, err = c.currentConsumer.Messages(opts...)
+	cc, err := c.currentConsumer.Messages(opts...)
 	if err != nil {
 		return nil, err
 	}
+	c.currentSub = cc
 
 	sub := &orderedSubscription{
 		consumer: c,
@@ -267,12 +258,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 
 func (s *orderedSubscription) Next() (Msg, error) {
 	for {
-		currentConsumer := s.consumer.currentConsumer
-		sub, ok := currentConsumer.getSubscription("")
-		if !ok {
-			return nil, ErrMsgIteratorClosed
-		}
-		msg, err := sub.Next()
+		msg, err := s.consumer.currentSub.(*pullSubscription).Next()
 		if err != nil {
 			if errors.Is(err, ErrMsgIteratorClosed) {
 				s.Stop()
@@ -292,10 +278,11 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			if err := s.consumer.reset(); err != nil {
 				return nil, err
 			}
-			_, err := s.consumer.currentConsumer.Messages(s.opts...)
+			cc, err := s.consumer.currentConsumer.Messages(s.opts...)
 			if err != nil {
 				return nil, err
 			}
+			s.consumer.currentSub = cc
 			continue
 		}
 
@@ -312,10 +299,11 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			if err := s.consumer.reset(); err != nil {
 				return nil, err
 			}
-			_, err := s.consumer.currentConsumer.Messages(s.opts...)
+			cc, err := s.consumer.currentConsumer.Messages(s.opts...)
 			if err != nil {
 				return nil, err
 			}
+			s.consumer.currentSub = cc
 			continue
 		}
 		s.consumer.cursor.deliverSeq = dseq
@@ -328,13 +316,9 @@ func (s *orderedSubscription) Stop() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	sub, ok := s.consumer.currentConsumer.getSubscription("")
-	if !ok {
-		return
-	}
-	s.consumer.currentConsumer.Lock()
-	defer s.consumer.currentConsumer.Unlock()
-	sub.Stop()
+	s.consumer.Lock()
+	defer s.consumer.Unlock()
+	s.consumer.currentSub.Stop()
 	close(s.done)
 }
 
@@ -342,13 +326,9 @@ func (s *orderedSubscription) Drain() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	sub, ok := s.consumer.currentConsumer.getSubscription("")
-	if !ok {
-		return
-	}
 	s.consumer.currentConsumer.Lock()
 	defer s.consumer.currentConsumer.Unlock()
-	sub.Drain()
+	s.consumer.currentSub.Drain()
 	close(s.done)
 }
 
@@ -495,10 +475,9 @@ func (c *orderedConsumer) reset() error {
 	defer c.Unlock()
 	defer atomic.StoreUint32(&c.resetInProgress, 0)
 	if c.currentConsumer != nil {
-		sub, ok := c.currentConsumer.getSubscription("")
 		c.currentConsumer.Lock()
-		if ok {
-			sub.Stop()
+		if c.currentSub != nil {
+			c.currentSub.Stop()
 		}
 		consName := c.currentConsumer.CachedInfo().Name
 		c.currentConsumer.Unlock()

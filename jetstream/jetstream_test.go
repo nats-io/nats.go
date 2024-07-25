@@ -276,9 +276,11 @@ func TestRetryWithBackoff(t *testing.T) {
 }
 
 func TestPullConsumer_checkPending(t *testing.T) {
+
 	tests := []struct {
 		name                string
 		givenSub            *pullSubscription
+		fetchInProgress     bool
 		shouldSend          bool
 		expectedPullRequest *pullRequest
 	}{
@@ -292,7 +294,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: false,
 		},
@@ -307,7 +308,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -325,9 +325,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 1,
 			},
-			shouldSend: false,
+			fetchInProgress: true,
+			shouldSend:      false,
 		},
 		{
 			name: "pending bytes below threshold, send pull request",
@@ -341,7 +341,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -359,7 +358,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: false,
 		},
@@ -373,9 +371,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 1,
 			},
-			shouldSend: false,
+			fetchInProgress: true,
+			shouldSend:      false,
 		},
 		{
 			name: "StopAfter set, pending msgs below StopAfter, send pull request",
@@ -388,8 +386,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         8,
 				},
-				fetchInProgress: 0,
-				delivered:       2,
+				delivered: 2,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -408,8 +405,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         6,
 				},
-				fetchInProgress: 0,
-				delivered:       0,
+				delivered: 0,
 			},
 			shouldSend: false,
 		},
@@ -419,6 +415,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			prChan := make(chan *pullRequest, 1)
 			test.givenSub.fetchNext = prChan
+			if test.fetchInProgress {
+				test.givenSub.fetchInProgress.Store(1)
+			}
 			errs := make(chan error, 1)
 			ok := make(chan struct{}, 1)
 			go func() {
