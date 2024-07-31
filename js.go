@@ -58,6 +58,19 @@ type JetStream interface {
 	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
 	PublishAsyncComplete() <-chan struct{}
 
+	// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+	//
+	// This will unsubscribe from the internal reply subject if needed.
+	// All pending async publishes will fail with ErrJetStreamContextClosed.
+	//
+	// If an error handler was provided, it will be called for each pending async
+	// publish and PublishAsyncComplete will be closed.
+	//
+	// After completing JetStreamContext is still usable - internal subscription
+	// will be recreated on next publish, but the acks from previous publishes will
+	// be lost.
+	CleanupPublisher()
+
 	// Subscribe creates an async Subscription for JetStream.
 	// The stream and consumer names can be provided with the nats.Bind() option.
 	// For creating an ephemeral (where the consumer name is picked by the server),
@@ -732,6 +745,41 @@ func (js *js) resetPendingAcksOnReconnect() {
 		}
 		js.mu.Unlock()
 	}
+}
+
+// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+//
+// This will unsubscribe from the internal reply subject if needed.
+// All pending async publishes will fail with ErrJetStreamContextClosed.
+//
+// If an error handler was provided, it will be called for each pending async
+// publish and PublishAsyncComplete will be closed.
+//
+// After completing JetStreamContext is still usable - internal subscription
+// will be recreated on next publish, but the acks from previous publishes will
+// be lost.
+func (js *js) CleanupPublisher() {
+	js.cleanupReplySub()
+	js.mu.Lock()
+	errCb := js.opts.aecb
+	for id, paf := range js.pafs {
+		paf.err = ErrJetStreamPublisherClosed
+		if paf.errCh != nil {
+			paf.errCh <- paf.err
+		}
+		if errCb != nil {
+			// clear reply subject so that new one is created on republish
+			js.mu.Unlock()
+			errCb(js, paf.msg, ErrJetStreamPublisherClosed)
+			js.mu.Lock()
+		}
+		delete(js.pafs, id)
+	}
+	if js.dch != nil {
+		close(js.dch)
+		js.dch = nil
+	}
+	js.mu.Unlock()
 }
 
 func (js *js) cleanupReplySub() {
