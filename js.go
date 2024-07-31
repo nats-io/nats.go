@@ -61,7 +61,7 @@ type JetStream interface {
 	// CleanupPublisher will cleanup the publishing side of JetStreamContext.
 	//
 	// This will unsubscribe from the internal reply subject if needed.
-	// All pending async publishes will fail with ErrJetStreamContextClosed.
+	// All pending async publishes will fail with ErrJetStreamPublisherClosed.
 	//
 	// If an error handler was provided, it will be called for each pending async
 	// publish and PublishAsyncComplete will be closed.
