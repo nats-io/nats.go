@@ -539,6 +539,45 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		cc.Drain()
 		wg.Wait()
 	})
+
+	t.Run("stop consume during reset", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for i := 0; i < 10; i++ {
+			c, err := s.OrderedConsumer(context.Background(), jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc, err := c.Consume(func(msg jetstream.Msg) {
+				msg.Ack()
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if err := s.DeleteConsumer(context.Background(), c.CachedInfo().Name); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc.Stop()
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
 }
 
 func TestOrderedConsumerMessages(t *testing.T) {
