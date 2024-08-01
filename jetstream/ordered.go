@@ -69,7 +69,10 @@ const (
 	consumerTypeFetch
 )
 
-var errOrderedSequenceMismatch = errors.New("sequence mismatch")
+var (
+	errOrderedSequenceMismatch = errors.New("sequence mismatch")
+	errOrderedConsumerClosed   = errors.New("ordered consumer closed")
+)
 
 // Consume can be used to continuously receive messages and handle them
 // with the provided callback function. Consume cannot be used concurrently
@@ -142,6 +145,9 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			select {
 			case <-c.doReset:
 				if err := c.reset(); err != nil {
+					if errors.Is(err, errOrderedConsumerClosed) {
+						continue
+					}
 					c.errHandler(c.serial)(c.currentSub, err)
 				}
 				if c.withStopAfter {
@@ -173,6 +179,12 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 					c.Unlock()
 				}
 			case <-sub.done:
+				s := sub.consumer.currentSub
+				if s != nil {
+					sub.consumer.Lock()
+					s.Stop()
+					sub.consumer.Unlock()
+				}
 				return
 			case msgsLeft, ok := <-c.stopAfterMsgsLeft:
 				if !ok {
@@ -276,6 +288,9 @@ func (s *orderedSubscription) Next() (Msg, error) {
 				s.opts[len(s.opts)-1] = StopAfter(s.consumer.stopAfter)
 			}
 			if err := s.consumer.reset(); err != nil {
+				if errors.Is(err, errOrderedConsumerClosed) {
+					return nil, ErrMsgIteratorClosed
+				}
 				return nil, err
 			}
 			cc, err := s.consumer.currentConsumer.Messages(s.opts...)
@@ -297,6 +312,9 @@ func (s *orderedSubscription) Next() (Msg, error) {
 		dseq := meta.Sequence.Consumer
 		if dseq != s.consumer.cursor.deliverSeq+1 {
 			if err := s.consumer.reset(); err != nil {
+				if errors.Is(err, errOrderedConsumerClosed) {
+					return nil, ErrMsgIteratorClosed
+				}
 				return nil, err
 			}
 			cc, err := s.consumer.currentConsumer.Messages(s.opts...)
@@ -318,7 +336,9 @@ func (s *orderedSubscription) Stop() {
 	}
 	s.consumer.Lock()
 	defer s.consumer.Unlock()
-	s.consumer.currentSub.Stop()
+	if s.consumer.currentSub != nil {
+		s.consumer.currentSub.Stop()
+	}
 	close(s.done)
 }
 
@@ -326,9 +346,11 @@ func (s *orderedSubscription) Drain() {
 	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
 		return
 	}
-	s.consumer.currentConsumer.Lock()
-	defer s.consumer.currentConsumer.Unlock()
-	s.consumer.currentSub.Drain()
+	if s.consumer.currentSub != nil {
+		s.consumer.currentConsumer.Lock()
+		s.consumer.currentSub.Drain()
+		s.consumer.currentConsumer.Unlock()
+	}
 	close(s.done)
 }
 
@@ -504,7 +526,7 @@ func (c *orderedConsumer) reset() error {
 	err = retryWithBackoff(func(attempt int) (bool, error) {
 		isClosed := atomic.LoadUint32(&c.subscription.closed) == 1
 		if isClosed {
-			return false, nil
+			return false, errOrderedConsumerClosed
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -512,7 +534,6 @@ func (c *orderedConsumer) reset() error {
 		if err != nil {
 			return true, err
 		}
-		c.currentConsumer = cons.(*pullConsumer)
 		return false, nil
 	}, backoffOpts)
 	if err != nil {
