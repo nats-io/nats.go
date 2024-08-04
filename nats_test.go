@@ -94,10 +94,11 @@ func checkErrChannel(t *testing.T, errCh chan error) {
 }
 
 func TestVersionMatchesTag(t *testing.T) {
-	tag := os.Getenv("TRAVIS_TAG")
-	if tag == "" {
+	refType := os.Getenv("GITHUB_REF_TYPE")
+	if refType != "tag" {
 		t.SkipNow()
 	}
+	tag := os.Getenv("GITHUB_REF_NAME")
 	// We expect a tag of the form vX.Y.Z. If that's not the case,
 	// we need someone to have a look. So fail if first letter is not
 	// a `v`
