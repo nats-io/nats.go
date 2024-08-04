@@ -381,6 +381,8 @@ msg, err := nc.RequestWithContext(ctx, "foo", []byte("bar"))
 sub, err := nc.SubscribeSync("foo")
 msg, err := sub.NextMsgWithContext(ctx)
 
+```
+
 ## Backwards compatibility
 
 In the development of nats.go, we are committed to maintaining backward compatibility and ensuring a stable and reliable  experience for all users. In general, we follow the standard go compatibility guidelines.
