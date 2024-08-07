@@ -583,7 +583,8 @@ func (c *orderedConsumer) getConsumerConfig() *ConsumerConfig {
 		cfg.InactiveThreshold = c.cfg.InactiveThreshold
 	}
 
-	if c.serial != 1 {
+	// if the cursor is not yet set, use the provided deliver policy
+	if c.cursor.streamSeq != 0 {
 		return cfg
 	}
 
