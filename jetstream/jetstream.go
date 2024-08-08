@@ -1066,10 +1066,8 @@ func (js *jetStream) CleanupPublisher() {
 			paf.errCh <- paf.err
 		}
 		if errCb != nil {
-			// clear reply subject so that new one is created on republish
-			js.publisher.Unlock()
-			errCb(js, paf.msg, ErrJetStreamPublisherClosed)
-			js.publisher.Lock()
+			// call error handler after releasing the mutex to avoid contention
+			defer errCb(js, paf.msg, ErrJetStreamPublisherClosed)
 		}
 		delete(js.publisher.acks, id)
 	}
