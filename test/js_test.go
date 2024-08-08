@@ -7964,7 +7964,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
+		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB"), nats.RetryWait(5*time.Millisecond)); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if np := js.PublishAsyncPending(); np > 10 {
@@ -7979,7 +7979,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	for i := 0; i < 500; i++ {
-		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
+		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB"), nats.RetryWait(5*time.Millisecond)); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
@@ -8047,7 +8047,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	acks := make(chan nats.PubAckFuture, 100)
 	go func() {
 		for i := 0; i < 100; i++ {
-			if ack, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
+			if ack, err := js.PublishAsync("FOO", []byte("hello"), nats.RetryAttempts(0)); err != nil {
 				errs <- err
 				return
 			} else {

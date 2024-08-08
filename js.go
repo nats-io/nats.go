@@ -870,7 +870,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 		delete(js.pafs, id)
 		closeStc()
 		closeDch()
-		doErr(ErrNoStreamResponse)
+		doErr(ErrNoResponders)
 		return
 	}
 
@@ -984,7 +984,6 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	// register new paf if not retrying
 	if paf == nil {
 		m.Reply = js.newAsyncReply()
-		defer func() { m.Reply = _EMPTY_ }()
 
 		if m.Reply == _EMPTY_ {
 			return nil, errors.New("nats: error creating async reply handler")
