@@ -2584,6 +2584,154 @@ func TestPullConsumerConsume(t *testing.T) {
 		cc.Drain()
 		wg.Wait()
 	})
+
+	t.Run("wait for closed after drain", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs := make([]jetstream.Msg, 0)
+		lock := sync.Mutex{}
+		publishTestMsgs(t, js)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			time.Sleep(50 * time.Millisecond)
+			msg.Ack()
+			lock.Lock()
+			msgs = append(msgs, msg)
+			lock.Unlock()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		closed := cc.Closed()
+		time.Sleep(100 * time.Millisecond)
+
+		cc.Drain()
+
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for consume to be closed")
+		}
+
+		if len(msgs) != len(testMsgs) {
+			t.Fatalf("Unexpected received message count after consume closed; want %d; got %d", len(testMsgs), len(msgs))
+		}
+	})
+
+	t.Run("wait for closed after stop", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgs := make([]jetstream.Msg, 0)
+		lock := sync.Mutex{}
+		publishTestMsgs(t, js)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			time.Sleep(50 * time.Millisecond)
+			msg.Ack()
+			lock.Lock()
+			msgs = append(msgs, msg)
+			lock.Unlock()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		closed := cc.Closed()
+
+		cc.Stop()
+
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for consume to be closed")
+		}
+
+		if len(msgs) < 1 || len(msgs) > 3 {
+			t.Fatalf("Unexpected received message count after consume closed; want 1-3; got %d", len(msgs))
+		}
+	})
+
+	t.Run("wait for closed on already closed consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		publishTestMsgs(t, js)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			time.Sleep(50 * time.Millisecond)
+			msg.Ack()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+
+		cc.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+
+		select {
+		case <-cc.Closed():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for consume to be closed")
+		}
+	})
 }
 
 func TestPullConsumerConsume_WithCluster(t *testing.T) {
