@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -1962,4 +1962,126 @@ func TestConsumerConfigMatches(t *testing.T) {
 	if !reflect.DeepEqual(c.CachedInfo().Config, cfg) {
 		t.Fatalf("ConsumerConfig doesn't match")
 	}
+}
+
+func TestJetStreamCleanupPublisher(t *testing.T) {
+
+	t.Run("cleanup js publisher", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		// Create a stream
+		if _, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		numSubs := nc.NumSubscriptions()
+		if _, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+
+		if numSubs+1 != nc.NumSubscriptions() {
+			t.Fatalf("Expected an additional subscription after publish, got %d", nc.NumSubscriptions())
+		}
+
+		js.CleanupPublisher()
+
+		if numSubs != nc.NumSubscriptions() {
+			t.Fatalf("Expected subscriptions to be back to original count")
+		}
+	})
+
+	t.Run("cleanup js publisher, cancel pending acks", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		cbErr := make(chan error, 10)
+		js, err := jetstream.New(nc, jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, m *nats.Msg, err error) {
+			cbErr <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Create a stream with NoAck so that we can test that we cancel ack futures.
+		if _, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}, NoAck: true}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		numSubs := nc.NumSubscriptions()
+
+		var acks []jetstream.PubAckFuture
+		for i := 0; i < 10; i++ {
+			ack, err := js.PublishAsync("FOO", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			acks = append(acks, ack)
+		}
+
+		asyncComplete := js.PublishAsyncComplete()
+		select {
+		case <-asyncComplete:
+			t.Fatalf("Should not complete, NoAck is set")
+		case <-time.After(200 * time.Millisecond):
+		}
+
+		if numSubs+1 != nc.NumSubscriptions() {
+			t.Fatalf("Expected an additional subscription after publish, got %d", nc.NumSubscriptions())
+		}
+
+		js.CleanupPublisher()
+
+		if numSubs != nc.NumSubscriptions() {
+			t.Fatalf("Expected subscriptions to be back to original count")
+		}
+
+		// check that PublishAsyncComplete channel is closed
+		select {
+		case <-asyncComplete:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+
+		// check that all ack futures are cancelled
+		for _, ack := range acks {
+			select {
+			case err := <-ack.Err():
+				if !errors.Is(err, jetstream.ErrJetStreamPublisherClosed) {
+					t.Fatalf("Expected JetStreamContextClosed error, got %v", err)
+				}
+			case <-ack.Ok():
+				t.Fatalf("Expected error on the ack future")
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("Expected an error on the ack future")
+			}
+		}
+
+		// check that async error handler is called for each pending ack
+		for i := 0; i < 10; i++ {
+			select {
+			case err := <-cbErr:
+				if !errors.Is(err, jetstream.ErrJetStreamPublisherClosed) {
+					t.Fatalf("Expected JetStreamContextClosed error, got %v", err)
+				}
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("Expected errors to be passed from the async handler")
+			}
+		}
+	})
+
 }

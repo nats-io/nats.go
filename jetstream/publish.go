@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -467,11 +467,7 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 				paf.errCh <- paf.err
 			}
 			if errCb != nil {
-				js.publisher.Unlock()
-				// clear reply subject so that new one is created on republish
-				paf.msg.Reply = ""
-				errCb(js, paf.msg, nats.ErrDisconnected)
-				js.publisher.Lock()
+				defer errCb(js, paf.msg, nats.ErrDisconnected)
 			}
 			delete(js.publisher.acks, id)
 		}
