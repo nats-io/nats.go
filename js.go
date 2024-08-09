@@ -821,13 +821,20 @@ func (js *js) handleAsyncReply(m *Msg) {
 		}
 	}
 
-	closeDch := func() {
+	closeDchFn := func() func() {
+		var dch chan struct{}
 		// Check on anyone one waiting on done status.
 		if js.dch != nil && len(js.pafs) == 0 {
-			dch := js.dch
+			dch = js.dch
 			js.dch = nil
-			// Defer here so error is processed and can be checked.
-			defer close(dch)
+		}
+		// Return function to close done channel which
+		// should be deferred so that error is processed and
+		// can be checked.
+		return func() {
+			if dch != nil {
+				close(dch)
+			}
 		}
 	}
 
@@ -839,6 +846,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 		cb := js.opts.aecb
 		js.mu.Unlock()
 		if cb != nil {
+			paf.msg.Reply = _EMPTY_
 			cb(paf.js, paf.msg, err)
 		}
 	}
@@ -869,7 +877,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 		}
 		delete(js.pafs, id)
 		closeStc()
-		closeDch()
+		defer closeDchFn()()
 		doErr(ErrNoResponders)
 		return
 	}
@@ -877,7 +885,7 @@ func (js *js) handleAsyncReply(m *Msg) {
 	//remove
 	delete(js.pafs, id)
 	closeStc()
-	closeDch()
+	defer closeDchFn()()
 
 	var pa pubAckResponse
 	if err := json.Unmarshal(m.Data, &pa); err != nil {
@@ -933,10 +941,7 @@ func (js *js) PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFutu
 const defaultStallWait = 200 * time.Millisecond
 
 func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
-	var o = pubOpts{
-		rwait: DefaultPubRetryWait,
-		rnum:  DefaultPubRetryAttempts,
-	}
+	var o pubOpts
 	if len(opts) > 0 {
 		if m.Header == nil {
 			m.Header = Header{}
@@ -993,7 +998,7 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 		paf = &pubAckFuture{msg: m, st: time.Now(), maxRetries: o.rnum, retryWait: o.rwait}
 		numPending, maxPending := js.registerPAF(id, paf)
 
-		if maxPending > 0 && numPending >= maxPending {
+		if maxPending > 0 && numPending > maxPending {
 			select {
 			case <-js.asyncStall():
 			case <-time.After(stallWait):

@@ -7964,7 +7964,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB"), nats.RetryWait(5*time.Millisecond)); err != nil {
+		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if np := js.PublishAsyncPending(); np > 10 {
@@ -7979,7 +7979,7 @@ func TestJetStreamPublishAsync(t *testing.T) {
 	}
 
 	for i := 0; i < 500; i++ {
-		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB"), nats.RetryWait(5*time.Millisecond)); err != nil {
+		if _, err = js.PublishAsync("bar", []byte("Hello JS ASYNC PUB")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 	}
@@ -8047,7 +8047,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	acks := make(chan nats.PubAckFuture, 100)
 	go func() {
 		for i := 0; i < 100; i++ {
-			if ack, err := js.PublishAsync("FOO", []byte("hello"), nats.RetryAttempts(0)); err != nil {
+			if ack, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
 				errs <- err
 				return
 			} else {
@@ -8205,6 +8205,83 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	tt := time.Since(start)
 	fmt.Printf("Took %v to send %d msgs\n", tt, toSend)
 	fmt.Printf("%.0f msgs/sec\n\n", float64(toSend)/tt.Seconds())
+}
+
+func TestPublishAsyncRetry(t *testing.T) {
+	tests := []struct {
+		name     string
+		pubOpts  []nats.PubOpt
+		ackError error
+	}{
+		{
+			name: "retry until stream is ready",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(10),
+				nats.RetryWait(100 * time.Millisecond),
+			},
+		},
+		{
+			name: "fail after max retries",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(2),
+				nats.RetryWait(50 * time.Millisecond),
+			},
+			ackError: nats.ErrNoResponders,
+		},
+		{
+			name:     "no retries",
+			pubOpts:  nil,
+			ackError: nats.ErrNoResponders,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// set max pending to 1 so that we can test if retries don't cause stall
+			js, err := nc.JetStream(nats.PublishAsyncMaxPending(1))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			test.pubOpts = append(test.pubOpts, nats.StallWait(1*time.Nanosecond))
+			ack, err := js.PublishAsync("foo", []byte("hello"), test.pubOpts...)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			errs := make(chan error, 1)
+			go func() {
+				// create stream with delay so that publish will receive no responders
+				time.Sleep(300 * time.Millisecond)
+				if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST", Subjects: []string{"foo"}}); err != nil {
+					errs <- err
+				}
+			}()
+			select {
+			case <-ack.Ok():
+			case err := <-ack.Err():
+				if test.ackError != nil {
+					if !errors.Is(err, test.ackError) {
+						t.Fatalf("Expected error: %v; got: %v", test.ackError, err)
+					}
+				} else {
+					t.Fatalf("Unexpected ack error: %v", err)
+				}
+			case err := <-errs:
+				t.Fatalf("Error creating stream: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for ack")
+			}
+		})
+	}
 }
 
 func TestJetStreamPublishExpectZero(t *testing.T) {
