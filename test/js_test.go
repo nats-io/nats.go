@@ -8212,6 +8212,7 @@ func TestPublishAsyncRetry(t *testing.T) {
 		name     string
 		pubOpts  []nats.PubOpt
 		ackError error
+		pubErr   error
 	}{
 		{
 			name: "retry until stream is ready",
@@ -8232,6 +8233,13 @@ func TestPublishAsyncRetry(t *testing.T) {
 			name:     "no retries",
 			pubOpts:  nil,
 			ackError: nats.ErrNoResponders,
+		},
+		{
+			name: "invalid retry attempts",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(-1),
+			},
+			pubErr: nats.ErrInvalidArg,
 		},
 	}
 
@@ -8254,8 +8262,11 @@ func TestPublishAsyncRetry(t *testing.T) {
 
 			test.pubOpts = append(test.pubOpts, nats.StallWait(1*time.Nanosecond))
 			ack, err := js.PublishAsync("foo", []byte("hello"), test.pubOpts...)
+			if !errors.Is(err, test.pubErr) {
+				t.Fatalf("Expected error: %v; got: %v", test.pubErr, err)
+			}
 			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
+				return
 			}
 			errs := make(chan error, 1)
 			go func() {

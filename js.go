@@ -953,6 +953,10 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 		}
 	}
 
+	if o.rnum < 0 {
+		return nil, fmt.Errorf("%w: retry attempts cannot be negative", ErrInvalidArg)
+	}
+
 	// Timeouts and contexts do not make sense for these.
 	if o.ttl != 0 || o.ctx != nil {
 		return nil, ErrContextAndTimeout
