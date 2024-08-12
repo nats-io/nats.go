@@ -368,10 +368,14 @@ func (s *orderedSubscription) Closed() <-chan struct{} {
 			if s.consumer.currentSub == nil {
 				return
 			}
+
 			closed := s.consumer.currentSub.Closed()
 			s.consumer.Unlock()
 
+			// wait until the underlying pull consumer is closed
 			<-closed
+			// if the subscription is closed and ordered consumer is closed as well,
+			// send a signal that the Consume() is fully stopped
 			if s.closed.Load() == 1 {
 				close(closedCh)
 				return
