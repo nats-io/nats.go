@@ -2899,10 +2899,11 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			}
 
 			// Make our request expiration a bit shorter than the current timeout.
-			expires := ttl
-			if ttl >= 20*time.Millisecond {
-				expires = ttl - 10*time.Millisecond
+			expiresDiff := time.Duration(float64(ttl) * 0.1)
+			if expiresDiff > 5*time.Second {
+				expiresDiff = 5 * time.Second
 			}
+			expires := ttl - expiresDiff
 
 			nr.Batch = batch - len(msgs)
 			nr.Expires = expires
@@ -3166,10 +3167,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	ttl = time.Until(deadline)
 
 	// Make our request expiration a bit shorter than the current timeout.
-	expires := ttl
-	if ttl >= 20*time.Millisecond {
-		expires = ttl - 10*time.Millisecond
+	expiresDiff := time.Duration(float64(ttl) * 0.1)
+	if expiresDiff > 5*time.Second {
+		expiresDiff = 5 * time.Second
 	}
+	expires := ttl - expiresDiff
 
 	requestBatch := batch - len(result.msgs)
 	req := nextRequest{
