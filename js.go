@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2020-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -57,6 +57,19 @@ type JetStream interface {
 
 	// PublishAsyncComplete returns a channel that will be closed when all outstanding messages are ack'd.
 	PublishAsyncComplete() <-chan struct{}
+
+	// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+	//
+	// This will unsubscribe from the internal reply subject if needed.
+	// All pending async publishes will fail with ErrJetStreamPublisherClosed.
+	//
+	// If an error handler was provided, it will be called for each pending async
+	// publish and PublishAsyncComplete will be closed.
+	//
+	// After completing JetStreamContext is still usable - internal subscription
+	// will be recreated on next publish, but the acks from previous publishes will
+	// be lost.
+	CleanupPublisher()
 
 	// Subscribe creates an async Subscription for JetStream.
 	// The stream and consumer names can be provided with the nats.Bind() option.
@@ -719,10 +732,7 @@ func (js *js) resetPendingAcksOnReconnect() {
 				paf.errCh <- paf.err
 			}
 			if errCb != nil {
-				// clear reply subject so that new one is created on republish
-				js.mu.Unlock()
-				errCb(js, paf.msg, ErrDisconnected)
-				js.mu.Lock()
+				defer errCb(js, paf.msg, ErrDisconnected)
 			}
 			delete(js.pafs, id)
 		}
@@ -732,6 +742,38 @@ func (js *js) resetPendingAcksOnReconnect() {
 		}
 		js.mu.Unlock()
 	}
+}
+
+// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+//
+// This will unsubscribe from the internal reply subject if needed.
+// All pending async publishes will fail with ErrJetStreamContextClosed.
+//
+// If an error handler was provided, it will be called for each pending async
+// publish and PublishAsyncComplete will be closed.
+//
+// After completing JetStreamContext is still usable - internal subscription
+// will be recreated on next publish, but the acks from previous publishes will
+// be lost.
+func (js *js) CleanupPublisher() {
+	js.cleanupReplySub()
+	js.mu.Lock()
+	errCb := js.opts.aecb
+	for id, paf := range js.pafs {
+		paf.err = ErrJetStreamPublisherClosed
+		if paf.errCh != nil {
+			paf.errCh <- paf.err
+		}
+		if errCb != nil {
+			defer errCb(js, paf.msg, ErrJetStreamPublisherClosed)
+		}
+		delete(js.pafs, id)
+	}
+	if js.dch != nil {
+		close(js.dch)
+		js.dch = nil
+	}
+	js.mu.Unlock()
 }
 
 func (js *js) cleanupReplySub() {

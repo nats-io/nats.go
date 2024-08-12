@@ -270,6 +270,9 @@ var (
 	// of an ordered consumer which was not yet created.
 	ErrOrderedConsumerNotCreated JetStreamError = &jsError{message: "consumer instance not yet created"}
 
+	// ErrJetStreamPublisherClosed is returned for each unfinished ack future when JetStream.Cleanup is called.
+	ErrJetStreamPublisherClosed JetStreamError = &jsError{message: "jetstream context closed"}
+
 	// KeyValue Errors
 
 	// ErrKeyExists is returned when attempting to create a key that already
