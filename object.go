@@ -398,7 +398,7 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return nil
 	}
 
-	h := sha256.New()
+	m, h := NewMsg(chunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, meta.Opts.ChunkSize), 0, uint64(0)
 
 	// set up the info object. The chunk upload sets the size and digest
@@ -438,7 +438,6 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		// Add chunk only if we received data
 		if n > 0 {
 			// Chunk processing.
-			m := NewMsg(chunkSubj)
 			m.Data = chunk[:n]
 			h.Write(m.Data)
 

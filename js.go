@@ -633,6 +633,7 @@ type pubAckFuture struct {
 	retries    int
 	maxRetries int
 	retryWait  time.Duration
+	reply      string
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
@@ -846,7 +847,6 @@ func (js *js) handleAsyncReply(m *Msg) {
 		cb := js.opts.aecb
 		js.mu.Unlock()
 		if cb != nil {
-			paf.msg.Reply = _EMPTY_
 			cb(paf.js, paf.msg, err)
 		}
 	}
@@ -855,7 +855,6 @@ func (js *js) handleAsyncReply(m *Msg) {
 	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
 		if paf.retries < paf.maxRetries {
 			paf.retries++
-			paf.msg.Reply = m.Subject
 			time.AfterFunc(paf.retryWait, func() {
 				js.mu.Lock()
 				paf := js.getPAF(id)
@@ -989,17 +988,18 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 		return nil, errors.New("nats: reply subject should be empty")
 	}
 	var id string
+	var reply string
 
 	// register new paf if not retrying
 	if paf == nil {
-		m.Reply = js.newAsyncReply()
+		reply = js.newAsyncReply()
 
-		if m.Reply == _EMPTY_ {
+		if reply == _EMPTY_ {
 			return nil, errors.New("nats: error creating async reply handler")
 		}
 
-		id := m.Reply[js.replyPrefixLen:]
-		paf = &pubAckFuture{msg: m, st: time.Now(), maxRetries: o.rnum, retryWait: o.rwait}
+		id = reply[js.replyPrefixLen:]
+		paf = &pubAckFuture{msg: m, st: time.Now(), maxRetries: o.rnum, retryWait: o.rwait, reply: reply}
 		numPending, maxPending := js.registerPAF(id, paf)
 
 		if maxPending > 0 && numPending > maxPending {
@@ -1011,9 +1011,14 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 			}
 		}
 	} else {
-		id = m.Reply[js.replyPrefixLen:]
+		reply = paf.reply
+		id = reply[js.replyPrefixLen:]
 	}
-	if err := js.nc.PublishMsg(m); err != nil {
+	hdr, err := m.headerBytes()
+	if err != nil {
+		return nil, err
+	}
+	if err := js.nc.publish(m.Subject, reply, hdr, m.Data); err != nil {
 		js.clearPAF(id)
 		return nil, err
 	}
