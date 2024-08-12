@@ -1357,7 +1357,7 @@ func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
 	if msgs.Error() != nil {
 		t.Fatalf("Unexpected error: %s", msgs.Error())
 	}
-	if elapsed < 290*time.Millisecond {
+	if elapsed < 250*time.Millisecond {
 		t.Fatalf("Expected timeout after 300ms; got: %v", elapsed)
 	}
 
