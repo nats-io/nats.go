@@ -2085,3 +2085,79 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 	})
 
 }
+
+func TestConsumerPausing(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect("nats://localhost:4222")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error getting JetStream context: %v", err)
+	}
+
+	//nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	ctx := context.Background()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"test"},
+		Storage:  jetstream.MemoryStorage,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		err = nc.Publish("test", []byte("1"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	cons, err := js.CreateConsumer(ctx, "TEST", jetstream.ConsumerConfig{Durable: "cons", AckPolicy: jetstream.AckExplicitPolicy})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	cpResp, err := cons.Pause(ctx, time.Now().Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if cpResp.Paused == false {
+		t.Fatalf("Consumer not paused")
+	}
+
+	if cpResp.PauseRemaining > 5*time.Second {
+		t.Fatalf("PauseRemaining not set correctly = %v", cpResp.PauseRemaining)
+	}
+
+	_, err = cons.Next(jetstream.FetchMaxWait(3 * time.Second))
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ci, err := cons.Info(ctx)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if ci.Paused == false {
+		t.Fatalf("Consumer not paused")
+	}
+
+	msg, err := cons.Next(jetstream.FetchMaxWait(3 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	err = msg.DoubleAck(ctx)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+}

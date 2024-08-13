@@ -73,6 +73,12 @@ type (
 		// push-based consumers.
 		PushBound bool `json:"push_bound,omitempty"`
 
+		// Paused indicated whether the consumer is paused.
+		Paused bool `json:"paused,omitempty"`
+
+		// PauseRemaining if paused, this indicates the pause time remaining.
+		PauseRemaining time.Duration `json:"pause_remaining,omitempty"`
+
 		// TimeStamp indicates when the info was gathered by the server.
 		TimeStamp time.Time `json:"ts"`
 	}
@@ -282,6 +288,14 @@ type (
 		Consumer uint64     `json:"consumer_seq"`
 		Stream   uint64     `json:"stream_seq"`
 		Last     *time.Time `json:"last_active,omitempty"`
+	}
+
+	// ConsumerPauseResponse is the response from the server when sending a
+	// consumer pause request.
+	ConsumerPauseResponse struct {
+		Paused         bool          `json:"paused"`
+		PauseUntil     time.Time     `json:"pause_until"`
+		PauseRemaining time.Duration `json:"pause_remaining,omitempty"`
 	}
 )
 

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go/internal/syncx"
 	"github.com/nats-io/nuid"
@@ -40,8 +41,8 @@ type (
 	//   method on Stream or JetStream interface. They are managed by the library
 	//   and provide a simple way to consume messages from a stream. Ordered
 	//   consumers are ephemeral in-memory pull consumers and are resilient to
-	//   deletes and restarts. They provide limited configuration options
-	//   using [OrderedConsumerConfig].
+	//   disconnections, deletes and restarts. They provide limited configuration
+	//   options using [OrderedConsumerConfig].
 	//
 	// Consumer provides method for optimized continuous consumption of messages
 	// using Consume and Messages methods, as well as simple one-off messages
@@ -138,12 +139,19 @@ type (
 		// This method does not perform any network requests. The cached
 		// ConsumerInfo is updated on every call to Info and Update.
 		CachedInfo() *ConsumerInfo
+
+		// Pause pauses the consumer until the specified time.
+		Pause(context.Context, time.Time) (*ConsumerPauseResponse, error)
 	}
 
 	createConsumerRequest struct {
 		Stream string          `json:"stream_name"`
 		Config *ConsumerConfig `json:"config"`
 		Action string          `json:"action"`
+	}
+
+	pauseConsumerRequest struct {
+		PauseUntil time.Time `json:"pause_until,omitempty"`
 	}
 )
 
@@ -178,6 +186,58 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 // ConsumerInfo is updated on every call to Info and Update.
 func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
+}
+
+func (p *pullConsumer) Pause(ctx context.Context, until time.Time) (*ConsumerPauseResponse, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	pauseSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerPauseT, p.stream, p.name))
+	var resp consumerPauseResponse
+
+	req := pauseConsumerRequest{PauseUntil: until}
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := p.jetStream.apiRequestJSON(ctx, pauseSubject, &resp, reqJSON); err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
+			return nil, ErrConsumerNotFound
+		}
+		return nil, resp.Error
+	}
+	return resp.ConsumerPauseResponse, nil
+}
+
+func (p *orderedConsumer) Pause(ctx context.Context, until time.Time) (*ConsumerPauseResponse, error) {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	pauseSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerPauseT, p.stream, fmt.Sprintf("%s_%d", p.namePrefix, p.serial)))
+	var resp consumerPauseResponse
+
+	req := pauseConsumerRequest{PauseUntil: until}
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := p.jetStream.apiRequestJSON(ctx, pauseSubject, &resp, reqJSON); err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
+			return nil, ErrConsumerNotFound
+		}
+		return nil, resp.Error
+	}
+	return resp.ConsumerPauseResponse, nil
 }
 
 func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {

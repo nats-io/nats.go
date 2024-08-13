@@ -69,6 +69,9 @@ const (
 	// apiConsumerNamesT is used to return a list with all consumer names for the stream.
 	apiConsumerNamesT = "CONSUMER.NAMES.%s"
 
+	// apiConsumerPauseT is used to pause a consumer.
+	apiConsumerPauseT = "CONSUMER.PAUSE.%s.%s"
+
 	// apiStreams can lookup a stream by subject.
 	apiStreams = "STREAM.NAMES"
 

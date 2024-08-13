@@ -138,6 +138,11 @@ type (
 		*ConsumerInfo
 	}
 
+	consumerPauseResponse struct {
+		apiResponse
+		*ConsumerPauseResponse
+	}
+
 	// StreamPurgeOpt is a function setting options for [Stream.Purge]
 	StreamPurgeOpt func(*StreamPurgeRequest) error
 
