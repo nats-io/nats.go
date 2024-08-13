@@ -32,13 +32,13 @@ type (
 		cfg               *OrderedConsumerConfig
 		stream            string
 		currentConsumer   *pullConsumer
-		currentSub        ConsumeContext
+		currentSub        *pullSubscription
 		cursor            cursor
 		namePrefix        string
 		serial            int
 		consumerType      consumerType
 		doReset           chan struct{}
-		resetInProgress   uint32
+		resetInProgress   atomic.Uint32
 		userErrHandler    ConsumeErrHandlerFunc
 		stopAfter         int
 		stopAfterMsgsLeft chan int
@@ -52,7 +52,7 @@ type (
 		consumer *orderedConsumer
 		opts     []PullMessagesOpt
 		done     chan struct{}
-		closed   uint32
+		closed   atomic.Uint32
 	}
 
 	cursor struct {
@@ -138,7 +138,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	if err != nil {
 		return nil, err
 	}
-	c.currentSub = cc
+	c.currentSub = cc.(*pullSubscription)
 
 	go func() {
 		for {
@@ -175,7 +175,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 					c.errHandler(c.serial)(cc, err)
 				} else {
 					c.Lock()
-					c.currentSub = cc
+					c.currentSub = cc.(*pullSubscription)
 					c.Unlock()
 				}
 			case <-sub.done:
@@ -210,8 +210,8 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 			errors.Is(err, ErrConsumerDeleted) ||
 			errors.Is(err, errConnected) {
 			// only reset if serial matches the current consumer serial and there is no reset in progress
-			if serial == c.serial && atomic.LoadUint32(&c.resetInProgress) == 0 {
-				atomic.StoreUint32(&c.resetInProgress, 1)
+			if serial == c.serial && c.resetInProgress.Load() == 0 {
+				c.resetInProgress.Store(1)
 				c.doReset <- struct{}{}
 			}
 		}
@@ -256,7 +256,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	if err != nil {
 		return nil, err
 	}
-	c.currentSub = cc
+	c.currentSub = cc.(*pullSubscription)
 
 	sub := &orderedSubscription{
 		consumer: c,
@@ -270,7 +270,7 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 
 func (s *orderedSubscription) Next() (Msg, error) {
 	for {
-		msg, err := s.consumer.currentSub.(*pullSubscription).Next()
+		msg, err := s.consumer.currentSub.Next()
 		if err != nil {
 			if errors.Is(err, ErrMsgIteratorClosed) {
 				s.Stop()
@@ -297,7 +297,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			if err != nil {
 				return nil, err
 			}
-			s.consumer.currentSub = cc
+			s.consumer.currentSub = cc.(*pullSubscription)
 			continue
 		}
 
@@ -321,7 +321,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 			if err != nil {
 				return nil, err
 			}
-			s.consumer.currentSub = cc
+			s.consumer.currentSub = cc.(*pullSubscription)
 			continue
 		}
 		s.consumer.cursor.deliverSeq = dseq
@@ -331,7 +331,7 @@ func (s *orderedSubscription) Next() (Msg, error) {
 }
 
 func (s *orderedSubscription) Stop() {
-	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
 	s.consumer.Lock()
@@ -343,7 +343,7 @@ func (s *orderedSubscription) Stop() {
 }
 
 func (s *orderedSubscription) Drain() {
-	if !atomic.CompareAndSwapUint32(&s.closed, 0, 1) {
+	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
 	if s.consumer.currentSub != nil {
@@ -352,6 +352,37 @@ func (s *orderedSubscription) Drain() {
 		s.consumer.currentConsumer.Unlock()
 	}
 	close(s.done)
+}
+
+// Closed returns a channel that is closed when the consuming is
+// fully stopped/drained. When the channel is closed, no more messages
+// will be received and processing is complete.
+func (s *orderedSubscription) Closed() <-chan struct{} {
+	s.consumer.Lock()
+	defer s.consumer.Unlock()
+	closedCh := make(chan struct{})
+
+	go func() {
+		for {
+			s.consumer.Lock()
+			if s.consumer.currentSub == nil {
+				return
+			}
+
+			closed := s.consumer.currentSub.Closed()
+			s.consumer.Unlock()
+
+			// wait until the underlying pull consumer is closed
+			<-closed
+			// if the subscription is closed and ordered consumer is closed as well,
+			// send a signal that the Consume() is fully stopped
+			if s.closed.Load() == 1 {
+				close(closedCh)
+				return
+			}
+		}
+	}()
+	return closedCh
 }
 
 // Fetch is used to retrieve up to a provided number of messages from a
@@ -495,7 +526,7 @@ func serialNumberFromConsumer(name string) int {
 func (c *orderedConsumer) reset() error {
 	c.Lock()
 	defer c.Unlock()
-	defer atomic.StoreUint32(&c.resetInProgress, 0)
+	defer c.resetInProgress.Store(0)
 	if c.currentConsumer != nil {
 		c.currentConsumer.Lock()
 		if c.currentSub != nil {
@@ -524,7 +555,7 @@ func (c *orderedConsumer) reset() error {
 		cancel:          c.subscription.done,
 	}
 	err = retryWithBackoff(func(attempt int) (bool, error) {
-		isClosed := atomic.LoadUint32(&c.subscription.closed) == 1
+		isClosed := c.subscription.closed.Load() == 1
 		if isClosed {
 			return false, errOrderedConsumerClosed
 		}
