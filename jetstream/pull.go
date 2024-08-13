@@ -59,6 +59,11 @@ type (
 		// Drain unsubscribes from the stream and cancels subscription.
 		// All messages that are already in the buffer will be processed in callback function.
 		Drain()
+
+		// Closed returns a channel that is closed when the consuming is
+		// fully stopped/drained. When the channel is closed, no more messages
+		// will be received and processing is complete.
+		Closed() <-chan struct{}
 	}
 
 	// MessageHandler is a handler function used as callback in [Consume].
@@ -125,6 +130,7 @@ type (
 		fetchNext         chan *pullRequest
 		consumeOpts       *consumeOpts
 		delivered         int
+		closedCh          chan struct{}
 	}
 
 	pendingMsgs struct {
@@ -257,6 +263,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		return func(subject string) {
 			p.subs.Delete(sid)
 			sub.draining.CompareAndSwap(1, 0)
+			sub.Lock()
+			if sub.closedCh != nil {
+				close(sub.closedCh)
+				sub.closedCh = nil
+			}
+			sub.Unlock()
 		}
 	}(sub.id))
 
@@ -647,6 +659,24 @@ func (s *pullSubscription) Drain() {
 			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
 		}
 	}
+}
+
+// Closed returns a channel that is closed when consuming is
+// fully stopped/drained. When the channel is closed, no more messages
+// will be received and processing is complete.
+func (s *pullSubscription) Closed() <-chan struct{} {
+	s.Lock()
+	defer s.Unlock()
+	closedCh := s.closedCh
+	if closedCh == nil {
+		closedCh = make(chan struct{})
+		s.closedCh = closedCh
+	}
+	if !s.subscription.IsValid() {
+		close(s.closedCh)
+		s.closedCh = nil
+	}
+	return closedCh
 }
 
 // Fetch sends a single request to retrieve given number of messages.
