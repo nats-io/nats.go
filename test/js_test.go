@@ -8207,6 +8207,93 @@ func TestJetStreamPublishAsyncPerf(t *testing.T) {
 	fmt.Printf("%.0f msgs/sec\n\n", float64(toSend)/tt.Seconds())
 }
 
+func TestPublishAsyncRetry(t *testing.T) {
+	tests := []struct {
+		name     string
+		pubOpts  []nats.PubOpt
+		ackError error
+		pubErr   error
+	}{
+		{
+			name: "retry until stream is ready",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(10),
+				nats.RetryWait(100 * time.Millisecond),
+			},
+		},
+		{
+			name: "fail after max retries",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(2),
+				nats.RetryWait(50 * time.Millisecond),
+			},
+			ackError: nats.ErrNoResponders,
+		},
+		{
+			name:     "no retries",
+			pubOpts:  nil,
+			ackError: nats.ErrNoResponders,
+		},
+		{
+			name: "invalid retry attempts",
+			pubOpts: []nats.PubOpt{
+				nats.RetryAttempts(-1),
+			},
+			pubErr: nats.ErrInvalidArg,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, err := nats.Connect(s.ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// set max pending to 1 so that we can test if retries don't cause stall
+			js, err := nc.JetStream(nats.PublishAsyncMaxPending(1))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			test.pubOpts = append(test.pubOpts, nats.StallWait(1*time.Nanosecond))
+			ack, err := js.PublishAsync("foo", []byte("hello"), test.pubOpts...)
+			if !errors.Is(err, test.pubErr) {
+				t.Fatalf("Expected error: %v; got: %v", test.pubErr, err)
+			}
+			if err != nil {
+				return
+			}
+			errs := make(chan error, 1)
+			go func() {
+				// create stream with delay so that publish will receive no responders
+				time.Sleep(300 * time.Millisecond)
+				if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST", Subjects: []string{"foo"}}); err != nil {
+					errs <- err
+				}
+			}()
+			select {
+			case <-ack.Ok():
+			case err := <-ack.Err():
+				if test.ackError != nil {
+					if !errors.Is(err, test.ackError) {
+						t.Fatalf("Expected error: %v; got: %v", test.ackError, err)
+					}
+				} else {
+					t.Fatalf("Unexpected ack error: %v", err)
+				}
+			case err := <-errs:
+				t.Fatalf("Error creating stream: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for ack")
+			}
+		})
+	}
+}
 func TestJetStreamCleanupPublisher(t *testing.T) {
 
 	t.Run("cleanup js publisher", func(t *testing.T) {
