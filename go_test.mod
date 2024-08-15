@@ -8,7 +8,7 @@ require (
 	github.com/golang/protobuf v1.4.2
 	github.com/klauspost/compress v1.17.9
 	github.com/nats-io/jwt v1.2.2
-	github.com/nats-io/nats-server/v2 v2.10.17
+	github.com/nats-io/nats-server/v2 v2.11.0-preview.2
 	github.com/nats-io/nkeys v0.4.7
 	github.com/nats-io/nuid v1.0.1
 	go.uber.org/goleak v1.3.0
@@ -17,6 +17,7 @@ require (
 )
 
 require (
+	github.com/google/go-tpm v0.9.0 // indirect
 	github.com/minio/highwayhash v1.0.2 // indirect
 	github.com/nats-io/jwt/v2 v2.5.7 // indirect
 	golang.org/x/crypto v0.24.0 // indirect
