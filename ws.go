@@ -237,8 +237,8 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 		case wsPingMessage, wsPongMessage, wsCloseMessage:
 			if rem > wsMaxControlPayloadSize {
 				return 0, fmt.Errorf(
-					fmt.Sprintf("control frame length bigger than maximum allowed of %v bytes",
-						wsMaxControlPayloadSize))
+					"control frame length bigger than maximum allowed of %v bytes",
+					wsMaxControlPayloadSize)
 			}
 			if compressed {
 				return 0, errors.New("control frame should not be compressed")
