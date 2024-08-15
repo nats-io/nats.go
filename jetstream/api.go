@@ -63,9 +63,6 @@ const (
 	// apiConsumerDeleteT is used to delete consumers.
 	apiConsumerDeleteT = "CONSUMER.DELETE.%s.%s"
 
-	// apiConsumerPauseT is used to pause a consumer.
-	apiConsumerPauseT = "CONSUMER.PAUSE.%s.%s"
-
 	// apiConsumerListT is used to return all detailed consumer information
 	apiConsumerListT = "CONSUMER.LIST.%s"
 
