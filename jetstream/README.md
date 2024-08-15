@@ -1,4 +1,5 @@
-# JetStream Simplified Client
+
+# JetStream Simplified Client [![JetStream API Reference](https://pkg.go.dev/badge/github.com/nats-io/nats.go/jetstream.svg)](https://pkg.go.dev/github.com/nats-io/nats.go/jetstream)
 
 This doc covers the basic usage of the `jetstream` package in `nats.go` client.
 
@@ -29,6 +30,10 @@ This doc covers the basic usage of the `jetstream` package in `nats.go` client.
     - [Basic usage of KV bucket](#basic-usage-of-kv-bucket)
     - [Watching for changes on a bucket](#watching-for-changes-on-a-bucket)
     - [Additional operations on a bucket](#additional-operations-on-a-bucket)
+  - [Object Store](#object-store)
+    - [Basic usage of Object Store](#basic-usage-of-object-store)
+    - [Watching for changes on a store](#watching-for-changes-on-a-store)
+    - [Additional operations on a store](#additional-operations-on-a-store)
   - [Examples](#examples)
 
 ## Overview
@@ -109,13 +114,19 @@ func main() {
 
     // Get 10 messages from the consumer
     messageCounter := 0
-    msgs, _ := c.Fetch(10)
+    msgs, err := c.Fetch(10)
+    if err != nil {
+        // handle error
+    }
+	
     for msg := range msgs.Messages() {
         msg.Ack()
         fmt.Printf("Received a JetStream message via fetch: %s\n", string(msg.Data()))
         messageCounter++
     }
+	
     fmt.Printf("received %d messages\n", messageCounter)
+	
     if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
     }
@@ -387,19 +398,29 @@ of messages/bytes. By default, `Fetch()` will wait 30 seconds before timing out
 
 ```go
 // receive up to 10 messages from the stream
-msgs, _ := c.Fetch(10)
+msgs, err := c.Fetch(10)
+if err != nil {
+	// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }
 
 // receive up to 1024 B of data
-msgs, _ := c.FetchBytes(1024)
+msgs, err := c.FetchBytes(1024)
+if err != nil {
+// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }
@@ -410,10 +431,15 @@ stream available at the time of sending request:
 
 ```go
 // FetchNoWait will not wait for new messages if the whole batch is not available at the time of sending request.
-msgs, _ := c.FetchNoWait(10)
+msgs, err := c.FetchNoWait(10)
+if err != nil {
+// handle error
+}
+
 for msg := range msgs.Messages() {
     fmt.Printf("Received a JetStream message: %s\n", string(msg.Data()))
 }
+
 if msgs.Error() != nil {
     // handle error
 }

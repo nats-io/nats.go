@@ -654,324 +654,6 @@ func TestContextSubNextMsgWithDeadline(t *testing.T) {
 	}
 }
 
-func TestContextEncodedRequestWithTimeout(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Unable to create encoded connection: %v", err)
-	}
-	defer c.Close()
-
-	deadline := time.Now().Add(100 * time.Millisecond)
-	ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	type request struct {
-		Message string `json:"message"`
-	}
-	type response struct {
-		Code int `json:"code"`
-	}
-	c.Subscribe("slow", func(_, reply string, req *request) {
-		got := req.Message
-		expected := "Hello"
-		if got != expected {
-			t.Errorf("Expected to receive request with %q, got %q", got, expected)
-		}
-
-		// simulates latency into the client so that timeout is hit.
-		time.Sleep(40 * time.Millisecond)
-		c.Publish(reply, &response{Code: 200})
-	})
-
-	for i := 0; i < 2; i++ {
-		req := &request{Message: "Hello"}
-		resp := &response{}
-		err := c.RequestWithContext(ctx, "slow", req, resp)
-		if err != nil {
-			t.Fatalf("Expected encoded request with context to not fail: %s", err)
-		}
-		got := resp.Code
-		expected := 200
-		if got != expected {
-			t.Errorf("Expected to receive %v, got: %v", expected, got)
-		}
-	}
-
-	// A third request with latency would make the context
-	// reach the deadline.
-	req := &request{Message: "Hello"}
-	resp := &response{}
-	err = c.RequestWithContext(ctx, "slow", req, resp)
-	if err == nil {
-		t.Fatal("Expected request with context to reach deadline")
-	}
-
-	// Reported error is "context deadline exceeded" from Context package,
-	// which implements net.Error Timeout interface.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	timeoutErr, ok := err.(timeoutError)
-	if !ok || !timeoutErr.Timeout() {
-		t.Errorf("Expected to have a timeout error")
-	}
-	expected := `context deadline exceeded`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
-}
-
-func TestContextEncodedRequestWithTimeoutCanceled(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Unable to create encoded connection: %v", err)
-	}
-	defer c.Close()
-
-	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	type request struct {
-		Message string `json:"message"`
-	}
-	type response struct {
-		Code int `json:"code"`
-	}
-
-	c.Subscribe("fast", func(_, reply string, req *request) {
-		got := req.Message
-		expected := "Hello"
-		if got != expected {
-			t.Errorf("Expected to receive request with %q, got %q", got, expected)
-		}
-
-		// simulates latency into the client so that timeout is hit.
-		time.Sleep(40 * time.Millisecond)
-
-		c.Publish(reply, &response{Code: 200})
-	})
-
-	// Fast request should not fail
-	req := &request{Message: "Hello"}
-	resp := &response{}
-	c.RequestWithContext(ctx, "fast", req, resp)
-	expectedCode := 200
-	if resp.Code != expectedCode {
-		t.Errorf("Expected to receive %d, got: %d", expectedCode, resp.Code)
-	}
-
-	// Cancel the context already so that rest of requests fail.
-	cancelCB()
-
-	err = c.RequestWithContext(ctx, "fast", req, resp)
-	if err == nil {
-		t.Fatal("Expected request with timeout context to fail")
-	}
-
-	// Reported error is "context canceled" from Context package,
-	// which is not a timeout error.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	if _, ok := err.(timeoutError); ok {
-		t.Errorf("Expected to not have a timeout error")
-	}
-	expected := `context canceled`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
-
-	// 2nd request should fail again even if fast because context has already been canceled
-	err = c.RequestWithContext(ctx, "fast", req, resp)
-	if err == nil {
-		t.Fatal("Expected request with timeout context to fail")
-	}
-}
-
-func TestContextEncodedRequestWithCancel(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Unable to create encoded connection: %v", err)
-	}
-	defer c.Close()
-
-	ctx, cancelCB := context.WithCancel(context.Background())
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	// timer which cancels the context though can also be arbitrarily extended
-	expirationTimer := time.AfterFunc(100*time.Millisecond, func() {
-		cancelCB()
-	})
-
-	type request struct {
-		Message string `json:"message"`
-	}
-	type response struct {
-		Code int `json:"code"`
-	}
-	c.Subscribe("slow", func(_, reply string, req *request) {
-		got := req.Message
-		expected := "Hello"
-		if got != expected {
-			t.Errorf("Expected to receive request with %q, got %q", got, expected)
-		}
-
-		// simulates latency into the client so that timeout is hit.
-		time.Sleep(40 * time.Millisecond)
-		c.Publish(reply, &response{Code: 200})
-	})
-	c.Subscribe("slower", func(_, reply string, req *request) {
-		got := req.Message
-		expected := "World"
-		if got != expected {
-			t.Errorf("Expected to receive request with %q, got %q", got, expected)
-		}
-
-		// we know this request will take longer so extend the timeout
-		expirationTimer.Reset(100 * time.Millisecond)
-
-		// slower reply which would have hit original timeout
-		time.Sleep(90 * time.Millisecond)
-		c.Publish(reply, &response{Code: 200})
-	})
-
-	for i := 0; i < 2; i++ {
-		req := &request{Message: "Hello"}
-		resp := &response{}
-		err := c.RequestWithContext(ctx, "slow", req, resp)
-		if err != nil {
-			t.Fatalf("Expected encoded request with context to not fail: %s", err)
-		}
-		got := resp.Code
-		expected := 200
-		if got != expected {
-			t.Errorf("Expected to receive %v, got: %v", expected, got)
-		}
-	}
-
-	// A third request with latency would make the context
-	// get canceled, but these reset the timer so deadline
-	// gets extended:
-	for i := 0; i < 10; i++ {
-		req := &request{Message: "World"}
-		resp := &response{}
-		err := c.RequestWithContext(ctx, "slower", req, resp)
-		if err != nil {
-			t.Fatalf("Expected request with context to not fail: %s", err)
-		}
-		got := resp.Code
-		expected := 200
-		if got != expected {
-			t.Errorf("Expected to receive %d, got: %d", expected, got)
-		}
-	}
-
-	req := &request{Message: "Hello"}
-	resp := &response{}
-
-	// One more slow request will expire the timer and cause an error...
-	err = c.RequestWithContext(ctx, "slow", req, resp)
-	if err == nil {
-		t.Fatal("Expected request with cancellation context to fail")
-	}
-
-	// ...though reported error is "context canceled" from Context package,
-	// which is not a timeout error.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	if _, ok := err.(timeoutError); ok {
-		t.Errorf("Expected to not have a timeout error")
-	}
-	expected := `context canceled`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
-}
-
-func TestContextEncodedRequestWithDeadline(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Unable to create encoded connection: %v", err)
-	}
-	defer c.Close()
-
-	deadline := time.Now().Add(100 * time.Millisecond)
-	ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	type request struct {
-		Message string `json:"message"`
-	}
-	type response struct {
-		Code int `json:"code"`
-	}
-	c.Subscribe("slow", func(_, reply string, req *request) {
-		got := req.Message
-		expected := "Hello"
-		if got != expected {
-			t.Errorf("Expected to receive request with %q, got %q", got, expected)
-		}
-
-		// simulates latency into the client so that timeout is hit.
-		time.Sleep(40 * time.Millisecond)
-		c.Publish(reply, &response{Code: 200})
-	})
-
-	for i := 0; i < 2; i++ {
-		req := &request{Message: "Hello"}
-		resp := &response{}
-		err := c.RequestWithContext(ctx, "slow", req, resp)
-		if err != nil {
-			t.Fatalf("Expected encoded request with context to not fail: %s", err)
-		}
-		got := resp.Code
-		expected := 200
-		if got != expected {
-			t.Errorf("Expected to receive %v, got: %v", expected, got)
-		}
-	}
-
-	// A third request with latency would make the context
-	// reach the deadline.
-	req := &request{Message: "Hello"}
-	resp := &response{}
-	err = c.RequestWithContext(ctx, "slow", req, resp)
-	if err == nil {
-		t.Fatal("Expected request with context to reach deadline")
-	}
-
-	// Reported error is "context deadline exceeded" from Context package,
-	// which implements net.Error Timeout interface.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	timeoutErr, ok := err.(timeoutError)
-	if !ok || !timeoutErr.Timeout() {
-		t.Errorf("Expected to have a timeout error")
-	}
-	expected := `context deadline exceeded`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
-}
-
 func TestContextRequestConnClosed(t *testing.T) {
 	s := RunDefaultServer()
 	defer s.Shutdown()
@@ -1023,58 +705,6 @@ func TestContextBadSubscription(t *testing.T) {
 
 	if err != nats.ErrBadSubscription {
 		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
-}
-
-func TestContextInvalid(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Unable to create encoded connection: %v", err)
-	}
-	defer c.Close()
-
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err = nc.RequestWithContext(nil, "foo", []byte(""))
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
-
-	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err = sub.NextMsgWithContext(nil)
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
-
-	type request struct {
-		Message string `json:"message"`
-	}
-	type response struct {
-		Code int `json:"code"`
-	}
-	req := &request{Message: "Hello"}
-	resp := &response{}
-	//lint:ignore SA1012 testing that passing nil fails
-	err = c.RequestWithContext(nil, "slow", req, resp)
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with invalid context: %s", err)
 	}
 }
 
@@ -1147,4 +777,35 @@ func TestUnsubscribeAndNextMsgWithContext(t *testing.T) {
 		t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err)
 	}
 	wg.Wait()
+}
+
+func TestContextInvalid(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc := NewDefaultConnection(t)
+	defer nc.Close()
+
+	//lint:ignore SA1012 testing that passing nil fails
+	_, err := nc.RequestWithContext(nil, "foo", []byte(""))
+	if err == nil {
+		t.Fatal("Expected request to fail with error")
+	}
+	if err != nats.ErrInvalidContext {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Expected to be able to subscribe: %s", err)
+	}
+
+	//lint:ignore SA1012 testing that passing nil fails
+	_, err = sub.NextMsgWithContext(nil)
+	if err == nil {
+		t.Fatal("Expected request to fail with error")
+	}
+	if err != nats.ErrInvalidContext {
+		t.Errorf("Expected request to fail with connection closed error: %s", err)
+	}
 }

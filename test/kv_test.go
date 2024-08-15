@@ -362,6 +362,28 @@ func TestKeyValueWatch(t *testing.T) {
 		kv.Put("t.age", []byte("66"))
 		expectUpdate("t.age", "66", 12)
 	})
+
+	t.Run("invalid watchers", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		// empty keys
+		_, err = kv.Watch("")
+		expectErr(t, err, nats.ErrInvalidKey)
+
+		// invalid key
+		_, err = kv.Watch("a.>.b")
+		expectErr(t, err, nats.ErrInvalidKey)
+
+		_, err = kv.Watch("foo.")
+		expectErr(t, err, nats.ErrInvalidKey)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
@@ -1010,7 +1032,7 @@ func expectErr(t *testing.T, err error, expected ...error) {
 		return
 	}
 	for _, e := range expected {
-		if err == e || strings.Contains(e.Error(), err.Error()) {
+		if errors.Is(err, e) {
 			return
 		}
 	}
@@ -1376,9 +1398,44 @@ func TestKeyValueCreate(t *testing.T) {
 	nc, js := jsClient(t, s)
 	defer nc.Close()
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+		Bucket:       "TEST",
+		Description:  "Test KV",
+		MaxValueSize: 128,
+		History:      10,
+		TTL:          1 * time.Hour,
+		MaxBytes:     1024,
+		Storage:      nats.FileStorage,
+	})
 	if err != nil {
 		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	expectedStreamConfig := nats.StreamConfig{
+		Name:              "KV_TEST",
+		Description:       "Test KV",
+		Subjects:          []string{"$KV.TEST.>"},
+		MaxMsgs:           -1,
+		MaxBytes:          1024,
+		Discard:           nats.DiscardNew,
+		MaxAge:            1 * time.Hour,
+		MaxMsgsPerSubject: 10,
+		MaxMsgSize:        128,
+		Storage:           nats.FileStorage,
+		DenyDelete:        true,
+		AllowRollup:       true,
+		AllowDirect:       true,
+		MaxConsumers:      -1,
+		Replicas:          1,
+		Duplicates:        2 * time.Minute,
+	}
+
+	si, err := js.StreamInfo("KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+	if !reflect.DeepEqual(si.Config, expectedStreamConfig) {
+		t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, si.Config)
 	}
 
 	_, err = kv.Create("key", []byte("1"))
@@ -1452,7 +1509,6 @@ func TestKeyValueSourcing(t *testing.T) {
 		t.Fatalf("Error creating kv: %v", err)
 	}
 
-	// Wait half a second to make sure it has time to populate the stream from it's sources
 	i := 0
 	for {
 		status, err := kvC.Status()
@@ -1463,11 +1519,11 @@ func TestKeyValueSourcing(t *testing.T) {
 			break
 		} else {
 			i++
-			if i > 3 {
+			if i > 10 {
 				t.Fatalf("Error sourcing bucket does not contain the expected number of values")
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	if _, err := kvC.Get("keyA"); err != nil {

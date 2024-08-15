@@ -71,6 +71,10 @@ var (
 
 	// ErrJetStreamNotEnabled is an error returned when JetStream is not
 	// enabled.
+	//
+	// Note: This error will not be returned in clustered mode, even if each
+	// server in the cluster does not have JetStream enabled. In clustered mode,
+	// requests will time out instead.
 	ErrJetStreamNotEnabled JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabled, Description: "jetstream not enabled", Code: 503}}
 
 	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is
@@ -265,6 +269,9 @@ var (
 	// ErrOrderedConsumerNotCreated is returned when trying to get consumer info
 	// of an ordered consumer which was not yet created.
 	ErrOrderedConsumerNotCreated JetStreamError = &jsError{message: "consumer instance not yet created"}
+
+	// ErrJetStreamPublisherClosed is returned for each unfinished ack future when JetStream.Cleanup is called.
+	ErrJetStreamPublisherClosed JetStreamError = &jsError{message: "jetstream context closed"}
 
 	// KeyValue Errors
 

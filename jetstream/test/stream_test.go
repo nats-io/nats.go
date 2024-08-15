@@ -194,6 +194,16 @@ func TestCreateConsumer(t *testing.T) {
 			withError:      jetstream.ErrEmptyFilter,
 		},
 		{
+			name:           "with invalid filter subject, leading dot",
+			consumerConfig: jetstream.ConsumerConfig{FilterSubject: ".foo"},
+			withError:      jetstream.ErrInvalidSubject,
+		},
+		{
+			name:           "with invalid filter subject, trailing dot",
+			consumerConfig: jetstream.ConsumerConfig{FilterSubject: "foo."},
+			withError:      jetstream.ErrInvalidSubject,
+		},
+		{
 			name:           "consumer already exists, error",
 			consumerConfig: jetstream.ConsumerConfig{Durable: "dur", Description: "test consumer"},
 			withError:      jetstream.ErrConsumerExists,

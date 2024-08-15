@@ -276,9 +276,11 @@ func TestRetryWithBackoff(t *testing.T) {
 }
 
 func TestPullConsumer_checkPending(t *testing.T) {
+
 	tests := []struct {
 		name                string
 		givenSub            *pullSubscription
+		fetchInProgress     bool
 		shouldSend          bool
 		expectedPullRequest *pullRequest
 	}{
@@ -292,7 +294,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: false,
 		},
@@ -307,7 +308,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -325,9 +325,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdMessages: 5,
 					MaxMessages:       10,
 				},
-				fetchInProgress: 1,
 			},
-			shouldSend: false,
+			fetchInProgress: true,
+			shouldSend:      false,
 		},
 		{
 			name: "pending bytes below threshold, send pull request",
@@ -341,7 +341,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -359,7 +358,6 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 0,
 			},
 			shouldSend: false,
 		},
@@ -373,9 +371,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					ThresholdBytes: 500,
 					MaxBytes:       1000,
 				},
-				fetchInProgress: 1,
 			},
-			shouldSend: false,
+			fetchInProgress: true,
+			shouldSend:      false,
 		},
 		{
 			name: "StopAfter set, pending msgs below StopAfter, send pull request",
@@ -388,8 +386,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         8,
 				},
-				fetchInProgress: 0,
-				delivered:       2,
+				delivered: 2,
 			},
 			shouldSend: true,
 			expectedPullRequest: &pullRequest{
@@ -408,8 +405,7 @@ func TestPullConsumer_checkPending(t *testing.T) {
 					MaxMessages:       10,
 					StopAfter:         6,
 				},
-				fetchInProgress: 0,
-				delivered:       0,
+				delivered: 0,
 			},
 			shouldSend: false,
 		},
@@ -419,6 +415,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			prChan := make(chan *pullRequest, 1)
 			test.givenSub.fetchNext = prChan
+			if test.fetchInProgress {
+				test.givenSub.fetchInProgress.Store(1)
+			}
 			errs := make(chan error, 1)
 			ok := make(chan struct{}, 1)
 			go func() {
@@ -453,6 +452,99 @@ func TestPullConsumer_checkPending(t *testing.T) {
 				t.Fatal(err)
 			}
 
+		})
+	}
+}
+
+func TestKV_keyValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "foo.bar", ok: true},
+		{key: "Foo.123=bar_baz-abc", ok: true},
+		{key: "foo.*.bar", ok: false},
+		{key: "foo.>", ok: false},
+		{key: ">", ok: false},
+		{key: "*", ok: false},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := keyValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
+		})
+	}
+}
+
+func TestKV_searchKeyValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "foo.bar", ok: true},
+		{key: "Foo.123=bar_baz-abc", ok: true},
+		{key: "foo.*.bar", ok: true},
+		{key: "foo.>", ok: true},
+		{key: ">", ok: true},
+		{key: "*", ok: true},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := searchKeyValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
+		})
+	}
+}
+
+func TestKV_bucketValid(t *testing.T) {
+	tests := []struct {
+		key string
+		ok  bool
+	}{
+		{key: "foo123", ok: true},
+		{key: "Foo123-bar_baz", ok: true},
+		{key: "foo.bar", ok: false},
+		{key: "foo.*.bar", ok: false},
+		{key: "foo.>", ok: false},
+		{key: ">", ok: false},
+		{key: "*", ok: false},
+		{key: "foo!", ok: false},
+		{key: "foo bar", ok: false},
+		{key: "", ok: false},
+		{key: " ", ok: false},
+		{key: ".", ok: false},
+		{key: ".foo", ok: false},
+		{key: "foo.", ok: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			res := bucketValid(test.key)
+			if res != test.ok {
+				t.Fatalf("Invalid result; want: %v; got: %v", test.ok, res)
+			}
 		})
 	}
 }

@@ -101,6 +101,19 @@ type (
 		// outstanding asynchronously published messages are acknowledged by the
 		// server.
 		PublishAsyncComplete() <-chan struct{}
+
+		// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+		//
+		// This will unsubscribe from the internal reply subject if needed.
+		// All pending async publishes will fail with ErrJetStreamContextClosed.
+		//
+		// If an error handler was provided, it will be called for each pending async
+		// publish and PublishAsyncComplete will be closed.
+		//
+		// After completing JetStreamContext is still usable - internal subscription
+		// will be recreated on next publish, but the acks from previous publishes will
+		// be lost.
+		CleanupPublisher()
 	}
 
 	// StreamManager provides CRUD API for managing streams. It is available as
@@ -745,13 +758,12 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 		namePrefix: nuid.Next(),
 		doReset:    make(chan struct{}, 1),
 	}
-	if cfg.OptStartSeq != 0 {
-		oc.cursor.streamSeq = cfg.OptStartSeq - 1
-	}
-	err := oc.reset()
+	consCfg := oc.getConsumerConfig()
+	cons, err := js.CreateOrUpdateConsumer(ctx, stream, *consCfg)
 	if err != nil {
 		return nil, err
 	}
+	oc.currentConsumer = cons.(*pullConsumer)
 
 	return oc, nil
 }
@@ -793,7 +805,7 @@ func validateStreamName(stream string) error {
 	if stream == "" {
 		return ErrStreamNameRequired
 	}
-	if strings.Contains(stream, ".") {
+	if strings.ContainsAny(stream, ">*. /\\") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidStreamName, stream)
 	}
 	return nil
@@ -803,7 +815,7 @@ func validateSubject(subject string) error {
 	if subject == "" {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, "subject cannot be empty")
 	}
-	if !subjectRegexp.MatchString(subject) {
+	if subject[0] == '.' || subject[len(subject)-1] == '.' || !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: %s", ErrInvalidSubject, subject)
 	}
 	return nil
@@ -811,9 +823,11 @@ func validateSubject(subject string) error {
 
 // AccountInfo fetches account information from the server, containing details
 // about the account associated with this JetStream connection. If account is
-// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned. If
-// the server does not have JetStream enabled, ErrJetStreamNotEnabled is
-// returned.
+// not enabled for JetStream, ErrJetStreamNotEnabledForAccount is returned.
+//
+// If the server does not have JetStream enabled, ErrJetStreamNotEnabled is
+// returned (for a single server setup). For clustered topologies, AccountInfo
+// will time out.
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	ctx, cancel := wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
@@ -1049,6 +1063,39 @@ func wrapContextWithoutDeadline(ctx context.Context) (context.Context, context.C
 		return ctx, nil
 	}
 	return context.WithTimeout(ctx, defaultAPITimeout)
+}
+
+// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+//
+// This will unsubscribe from the internal reply subject if needed.
+// All pending async publishes will fail with ErrJetStreamContextClosed.
+//
+// If an error handler was provided, it will be called for each pending async
+// publish and PublishAsyncComplete will be closed.
+//
+// After completing JetStreamContext is still usable - internal subscription
+// will be recreated on next publish, but the acks from previous publishes will
+// be lost.
+func (js *jetStream) CleanupPublisher() {
+	js.cleanupReplySub()
+	js.publisher.Lock()
+	errCb := js.publisher.aecb
+	for id, paf := range js.publisher.acks {
+		paf.err = ErrJetStreamPublisherClosed
+		if paf.errCh != nil {
+			paf.errCh <- paf.err
+		}
+		if errCb != nil {
+			// call error handler after releasing the mutex to avoid contention
+			defer errCb(js, paf.msg, ErrJetStreamPublisherClosed)
+		}
+		delete(js.publisher.acks, id)
+	}
+	if js.publisher.doneCh != nil {
+		close(js.publisher.doneCh)
+		js.publisher.doneCh = nil
+	}
+	js.publisher.Unlock()
 }
 
 func (js *jetStream) cleanupReplySub() {

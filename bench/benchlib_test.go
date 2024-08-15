@@ -116,7 +116,7 @@ func TestGroupThoughput(t *testing.T) {
 	sg.AddSample(millionMessagesSecondSample(2))
 	sg.AddSample(millionMessagesSecondSample(3))
 	if sg.Throughput() != 2*Million*MsgSize {
-		t.Fatalf("Expected througput at %d million bytes/sec", 2*MsgSize)
+		t.Fatalf("Expected throughput at %d million bytes/sec", 2*MsgSize)
 	}
 }
 

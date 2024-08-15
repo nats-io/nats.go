@@ -1197,3 +1197,72 @@ func TestObjectStoreCompression(t *testing.T) {
 		t.Fatalf("Expected stream to be compressed with S2")
 	}
 }
+
+func TestObjectStoreMirror(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	bucketName := "test-bucket"
+
+	ctx := context.Background()
+	obs, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: bucketName, Description: "testing"})
+	expectOk(t, err)
+
+	mirrorBucketName := "mirror-test-bucket"
+
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name: fmt.Sprintf("OBJ_%s", mirrorBucketName),
+		Mirror: &jetstream.StreamSource{
+			Name: fmt.Sprintf("OBJ_%s", bucketName),
+			SubjectTransforms: []jetstream.SubjectTransformConfig{
+				{
+					Source:      fmt.Sprintf("$O.%s.>", bucketName),
+					Destination: fmt.Sprintf("$O.%s.>", mirrorBucketName),
+				},
+			},
+		},
+		AllowRollup: true, // meta messages are always rollups
+	})
+	if err != nil {
+		t.Fatalf("Error creating object store bucket mirror: %v", err)
+	}
+
+	_, err = obs.PutString(ctx, "A", "abc")
+	expectOk(t, err)
+
+	mirrorObs, err := js.ObjectStore(ctx, mirrorBucketName)
+	expectOk(t, err)
+
+	// Make sure we sync.
+	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		mirrorValue, err := mirrorObs.GetString(ctx, "A")
+		if err != nil {
+			return err
+		}
+		if mirrorValue != "abc" {
+			t.Fatalf("Expected mirrored object store value to be the same as original")
+		}
+		return nil
+	})
+
+	watcher, err := mirrorObs.Watch(ctx)
+	if err != nil {
+		t.Fatalf("Error creating watcher: %v", err)
+	}
+	defer watcher.Stop()
+
+	// expect to get one value and nil
+	for {
+		select {
+		case info := <-watcher.Updates():
+			if info == nil {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Expected to receive an update")
+		}
+	}
+}

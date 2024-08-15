@@ -58,6 +58,9 @@ type (
 
 		// Subject returns underlying NATS message subject.
 		Subject() string
+
+		// Reply returns underlying NATS message reply subject.
+		Reply() string
 	}
 
 	// Headers is a wrapper around [*nats.Header]
@@ -184,6 +187,11 @@ func (r *request) Headers() Headers {
 // Subject returns underlying NATS message subject.
 func (r *request) Subject() string {
 	return r.msg.Subject
+}
+
+// Reply returns underlying NATS message reply subject.
+func (r *request) Reply() string {
+	return r.msg.Reply
 }
 
 // Get gets the first value associated with the given key.

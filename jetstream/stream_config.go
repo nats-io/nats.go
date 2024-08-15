@@ -192,8 +192,8 @@ type (
 		// v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
 
-		// Template identifies the template that manages the Stream. DEPRECATED:
-		// This feature is no longer supported.
+		// Template identifies the template that manages the Stream.
+		// Deprecated: This feature is no longer supported.
 		Template string `json:"template_owner,omitempty"`
 	}
 

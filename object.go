@@ -694,7 +694,12 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 	}
 
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	_, err = obs.js.Subscribe(chunkSubj, processChunk, OrderedConsumer())
+	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	subscribeOpts := []SubOpt{
+		OrderedConsumer(),
+		BindStream(streamName),
+	}
+	_, err = obs.js.Subscribe(chunkSubj, processChunk, subscribeOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1110,7 +1115,8 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 	}
 
 	// Used ordered consumer to deliver results.
-	subOpts := []SubOpt{OrderedConsumer()}
+	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	subOpts := []SubOpt{OrderedConsumer(), BindStream(streamName)}
 	if !o.includeHistory {
 		subOpts = append(subOpts, DeliverLastPerSubject())
 	}

@@ -14,16 +14,20 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/nats-io/jwt"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nkeys"
 )
 
 func startReconnectServer(t *testing.T) *server.Server {
@@ -175,19 +179,15 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v\n", err)
 	}
 	defer nc.Close()
-	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
 
 	testString := "bar"
-	ec.Subscribe("foo", func(s string) {
-		if s != testString {
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		if string(m.Data) != testString {
 			t.Fatal("String doesn't match")
 		}
 		ch <- true
 	})
-	ec.Flush()
+	nc.Flush()
 
 	ts.Shutdown()
 	// server is stopped here...
@@ -196,14 +196,14 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Did not get the disconnected callback on time\n")
 	}
 
-	if err := ec.Publish("foo", testString); err != nil {
+	if err := nc.Publish("foo", []byte("bar")); err != nil {
 		t.Fatalf("Failed to publish message: %v\n", err)
 	}
 
 	ts = startReconnectServer(t)
 	defer ts.Shutdown()
 
-	if err := ec.FlushTimeout(5 * time.Second); err != nil {
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		t.Fatalf("Error on Flush: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestBasicReconnectFunctionality(t *testing.T) {
 	}
 
 	expectedReconnectCount := uint64(1)
-	reconnectCount := ec.Conn.Stats().Reconnects
+	reconnectCount := nc.Stats().Reconnects
 
 	if reconnectCount != expectedReconnectCount {
 		t.Fatalf("Reconnect count incorrect: %d vs %d\n",
@@ -238,23 +238,20 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatalf("Should have connected ok: %v", err)
 	}
 	defer nc.Close()
-	ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
+
 	testString := "bar"
 	received := int32(0)
 
-	ec.Subscribe("foo", func(s string) {
+	nc.Subscribe("foo", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
-	sub, _ := ec.Subscribe("foobar", func(s string) {
+	sub, _ := nc.Subscribe("foobar", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
-	ec.Publish("foo", testString)
-	ec.Flush()
+	nc.Publish("foo", []byte(testString))
+	nc.Flush()
 
 	ts.Shutdown()
 	// server is stopped here..
@@ -265,18 +262,18 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 	}
 
 	// Sub while disconnected
-	ec.Subscribe("bar", func(s string) {
+	nc.Subscribe("bar", func(*nats.Msg) {
 		atomic.AddInt32(&received, 1)
 	})
 
 	// Unsub foobar while disconnected
 	sub.Unsubscribe()
 
-	if err = ec.Publish("foo", testString); err != nil {
+	if err = nc.Publish("foo", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
-	if err = ec.Publish("bar", testString); err != nil {
+	if err = nc.Publish("bar", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after disconnect: %v\n", err)
 	}
 
@@ -289,19 +286,19 @@ func TestExtendedReconnectFunctionality(t *testing.T) {
 		t.Fatal("Did not receive a reconnect callback message")
 	}
 
-	if err = ec.Publish("foobar", testString); err != nil {
+	if err = nc.Publish("foobar", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
-	if err = ec.Publish("foo", testString); err != nil {
+	if err = nc.Publish("foo", []byte(testString)); err != nil {
 		t.Fatalf("Received an error after server restarted: %v\n", err)
 	}
 
 	ch := make(chan bool)
-	ec.Subscribe("done", func(b bool) {
+	nc.Subscribe("done", func(*nats.Msg) {
 		ch <- true
 	})
-	ec.Publish("done", true)
+	nc.Publish("done", nil)
 
 	if e := Wait(ch); e != nil {
 		t.Fatal("Did not receive our message")
@@ -334,11 +331,6 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 	}
 	defer nc.Close()
 
-	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		t.Fatalf("Failed to create an encoded connection: %v\n", err)
-	}
-
 	// To hold results.
 	results := make(map[int]int)
 	var mu sync.Mutex
@@ -361,25 +353,29 @@ func TestQueueSubsOnReconnect(t *testing.T) {
 	subj := "foo.bar"
 	qgroup := "workers"
 
-	cb := func(seqno int) {
+	cb := func(m *nats.Msg) {
 		mu.Lock()
 		defer mu.Unlock()
+		seqno, err := strconv.Atoi(string(m.Data))
+		if err != nil {
+			t.Fatalf("Received an invalid sequence number: %v\n", err)
+		}
 		results[seqno] = results[seqno] + 1
 	}
 
 	// Create Queue Subscribers
-	ec.QueueSubscribe(subj, qgroup, cb)
-	ec.QueueSubscribe(subj, qgroup, cb)
+	nc.QueueSubscribe(subj, qgroup, cb)
+	nc.QueueSubscribe(subj, qgroup, cb)
 
-	ec.Flush()
+	nc.Flush()
 
 	// Helper function to send messages and check results.
 	sendAndCheckMsgs := func(numToSend int) {
 		for i := 0; i < numToSend; i++ {
-			ec.Publish(subj, i)
+			nc.Publish(subj, []byte(fmt.Sprint(i)))
 		}
 		// Wait for processing.
-		ec.Flush()
+		nc.Flush()
 		time.Sleep(50 * time.Millisecond)
 
 		// Check Results
@@ -825,4 +821,274 @@ func TestReconnectBufSizeDisable(t *testing.T) {
 	if got != 0 {
 		t.Errorf("Unexpected buffered bytes: %v", got)
 	}
+}
+
+func TestAuthExpiredReconnect(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	_, err := nats.Connect(ts.ClientURL())
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+	ukp, err := nkeys.FromSeed(uSeed)
+	if err != nil {
+		t.Fatalf("Error creating user key pair: %v", err)
+	}
+	upub, err := ukp.PublicKey()
+	if err != nil {
+		t.Fatalf("Error getting user public key: %v", err)
+	}
+	akp, err := nkeys.FromSeed(aSeed)
+	if err != nil {
+		t.Fatalf("Error creating account key pair: %v", err)
+	}
+
+	jwtCB := func() (string, error) {
+		claims := jwt.NewUserClaims("test")
+		claims.Expires = time.Now().Add(time.Second).Unix()
+		claims.Subject = upub
+		jwt, err := claims.Encode(akp)
+		if err != nil {
+			return "", err
+		}
+		return jwt, nil
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, _ := nkeys.FromSeed(uSeed)
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	errCh := make(chan error, 1)
+	nc, err := nats.Connect(ts.ClientURL(), nats.UserJWT(jwtCB, sigCB), nats.ReconnectWait(100*time.Millisecond),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			errCh <- err
+		}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	stasusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, nats.ErrAuthExpired) {
+			t.Fatalf("Expected auth expired error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Did not get the auth expired error")
+	}
+	WaitOnChannel(t, stasusCh, nats.RECONNECTING)
+	WaitOnChannel(t, stasusCh, nats.CONNECTED)
+	nc.Close()
+}
+
+func TestForceReconnect(t *testing.T) {
+	s := RunDefaultServer()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.ReconnectWait(10*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+
+	statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+	// Force a reconnect
+	err = nc.ForceReconnect()
+	if err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+	// shutdown server and then force a reconnect
+	s.Shutdown()
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	_, err = sub.NextMsg(100 * time.Millisecond)
+	if err == nil {
+		t.Fatal("Expected error getting message")
+	}
+
+	// restart server
+	s = RunDefaultServer()
+	defer s.Shutdown()
+
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+	// wait for the reconnect
+	// because the connection has long ReconnectWait,
+	// if force reconnect does not work, the test will timeout
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+	nc.Close()
+}
+
+func TestForceReconnectDisallowReconnect(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.NoReconnect())
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error on subscribe: %v", err)
+	}
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+	// Force a reconnect
+	err = nc.ForceReconnect()
+	if err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+
+	if err := nc.Publish("foo", []byte("msg")); err != nil {
+		t.Fatalf("Error on publish: %v", err)
+	}
+	_, err = sub.NextMsg(time.Second)
+	if err != nil {
+		t.Fatalf("Error getting message: %v", err)
+	}
+
+}
+
+func TestAuthExpiredForceReconnect(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	_, err := nats.Connect(ts.ClientURL())
+	if err == nil {
+		t.Fatalf("Expecting an error on connect")
+	}
+	ukp, err := nkeys.FromSeed(uSeed)
+	if err != nil {
+		t.Fatalf("Error creating user key pair: %v", err)
+	}
+	upub, err := ukp.PublicKey()
+	if err != nil {
+		t.Fatalf("Error getting user public key: %v", err)
+	}
+	akp, err := nkeys.FromSeed(aSeed)
+	if err != nil {
+		t.Fatalf("Error creating account key pair: %v", err)
+	}
+
+	jwtCB := func() (string, error) {
+		claims := jwt.NewUserClaims("test")
+		claims.Expires = time.Now().Add(time.Second).Unix()
+		claims.Subject = upub
+		jwt, err := claims.Encode(akp)
+		if err != nil {
+			return "", err
+		}
+		return jwt, nil
+	}
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, _ := nkeys.FromSeed(uSeed)
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	errCh := make(chan error, 1)
+	nc, err := nats.Connect(ts.ClientURL(), nats.UserJWT(jwtCB, sigCB), nats.ReconnectWait(10*time.Second),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			errCh <- err
+		}))
+	if err != nil {
+		t.Fatalf("Expected to connect, got %v", err)
+	}
+	defer nc.Close()
+	statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, nats.ErrAuthExpired) {
+			t.Fatalf("Expected auth expired error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Did not get the auth expired error")
+	}
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
 }

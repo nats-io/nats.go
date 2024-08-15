@@ -514,6 +514,34 @@ func TestKeyValueWatch(t *testing.T) {
 		expectUpdate("age", "22", 3)
 		expectUpdate("name2", "ik", 4)
 	})
+
+	t.Run("invalid watchers", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		// empty keys
+		_, err = kv.Watch(ctx, "")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		// invalid key
+		_, err = kv.Watch(ctx, "a.>.b")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		_, err = kv.Watch(ctx, "foo.")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		// conflicting options
+		_, err = kv.Watch(ctx, "foo", jetstream.IncludeHistory(), jetstream.UpdatesOnly())
+		expectErr(t, err, jetstream.ErrInvalidOption)
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
@@ -939,6 +967,7 @@ func TestKeyValueListKeys(t *testing.T) {
 
 func TestKeyValueCrossAccounts(t *testing.T) {
 	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
         jetstream: enabled
         accounts: {
            A: {
@@ -1481,9 +1510,44 @@ func TestKeyValueCreate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST"})
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:       "TEST",
+		Description:  "Test KV",
+		MaxValueSize: 128,
+		History:      10,
+		TTL:          1 * time.Hour,
+		MaxBytes:     1024,
+		Storage:      jetstream.FileStorage,
+	})
 	if err != nil {
 		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	expectedStreamConfig := jetstream.StreamConfig{
+		Name:              "KV_TEST",
+		Description:       "Test KV",
+		Subjects:          []string{"$KV.TEST.>"},
+		MaxMsgs:           -1,
+		MaxBytes:          1024,
+		Discard:           jetstream.DiscardNew,
+		MaxAge:            1 * time.Hour,
+		MaxMsgsPerSubject: 10,
+		MaxMsgSize:        128,
+		Storage:           jetstream.FileStorage,
+		DenyDelete:        true,
+		AllowRollup:       true,
+		AllowDirect:       true,
+		MaxConsumers:      -1,
+		Replicas:          1,
+		Duplicates:        2 * time.Minute,
+	}
+
+	stream, err := js.Stream(ctx, "KV_TEST")
+	if err != nil {
+		t.Fatalf("Error getting stream: %v", err)
+	}
+	if !reflect.DeepEqual(stream.CachedInfo().Config, expectedStreamConfig) {
+		t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, stream.CachedInfo().Config)
 	}
 
 	_, err = kv.Create(ctx, "key", []byte("1"))
@@ -1597,5 +1661,60 @@ func TestKeyValueCompression(t *testing.T) {
 
 	if kvStream.CachedInfo().Config.Compression != jetstream.S2Compression {
 		t.Fatalf("Expected stream to be compressed with S2")
+	}
+}
+
+func TestKeyValueCreateRepairOldKV(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	// create a standard kv
+	_, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket: "A",
+	})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	// get stream config and set discard policy to old and AllowDirect to false
+	stream, err := js.Stream(ctx, "KV_A")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+	streamCfg := stream.CachedInfo().Config
+	streamCfg.Discard = jetstream.DiscardOld
+	streamCfg.AllowDirect = false
+
+	// create a new kv with the same name - client should fix the config
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket: "A",
+	})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	// get stream config again and check if the discard policy is set to new
+	stream, err = js.Stream(ctx, "KV_A")
+	if err != nil {
+		t.Fatalf("Error getting stream info: %v", err)
+	}
+	if stream.CachedInfo().Config.Discard != jetstream.DiscardNew {
+		t.Fatalf("Expected stream to have discard policy set to new")
+	}
+	if !stream.CachedInfo().Config.AllowDirect {
+		t.Fatalf("Expected stream to have AllowDirect set to true")
+	}
+
+	// attempting to create a new kv with the same name and different settings should fail
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:      "A",
+		Description: "New KV",
+	})
+	if !errors.Is(err, jetstream.ErrBucketExists) {
+		t.Fatalf("Expected error to be ErrBucketExists, got: %v", err)
 	}
 }

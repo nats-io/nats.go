@@ -1,4 +1,4 @@
-FROM golang:1.20
+FROM golang:1.22
 WORKDIR /usr/src/nats.go
 COPY . /usr/src/nats.go
 RUN go mod tidy -modfile go_test.mod

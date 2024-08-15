@@ -16,8 +16,10 @@ package test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -1330,7 +1332,6 @@ func TestPublishMsgAsyncWithPendingMsgs(t *testing.T) {
 
 func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
 
 	nc, err := nats.Connect(s.ClientURL())
 	if err != nil {
@@ -1352,6 +1353,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	errs := make(chan error, 1)
 	done := make(chan struct{}, 1)
 	acks := make(chan jetstream.PubAckFuture, 100)
+	wg := sync.WaitGroup{}
 	go func() {
 		for i := 0; i < 100; i++ {
 			if ack, err := js.PublishAsync("FOO.A", []byte("hello")); err != nil {
@@ -1360,6 +1362,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 			} else {
 				acks <- ack
 			}
+			wg.Add(1)
 		}
 		close(acks)
 		done <- struct{}{}
@@ -1371,28 +1374,32 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("Did not receive completion signal")
 	}
-	s.Shutdown()
-	time.Sleep(100 * time.Millisecond)
-	if pending := js.PublishAsyncPending(); pending != 0 {
-		t.Fatalf("Expected no pending messages after server shutdown; got: %d", pending)
+	for ack := range acks {
+		go func(paf jetstream.PubAckFuture) {
+			select {
+			case <-paf.Ok():
+			case err := <-paf.Err():
+				if !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrNoResponders) {
+					errs <- fmt.Errorf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
+				}
+			case <-time.After(5 * time.Second):
+				errs <- fmt.Errorf("Did not receive completion signal")
+			}
+			wg.Done()
+		}(ack)
 	}
-	s = RunBasicJetStreamServer()
+	s = restartBasicJSServer(t, s)
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
-	for ack := range acks {
-		select {
-		case <-ack.Ok():
-		case err := <-ack.Err():
-			if !errors.Is(err, nats.ErrDisconnected) && !errors.Is(err, nats.ErrNoResponders) {
-				t.Fatalf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Did not receive completion signal")
-		}
+	wg.Wait()
+	select {
+	case err := <-errs:
+		t.Fatalf("Unexpected error: %v", err)
+	default:
 	}
 }
 
-func TestAsyncPublishRetry(t *testing.T) {
+func TestPublishAsyncRetry(t *testing.T) {
 	tests := []struct {
 		name     string
 		pubOpts  []jetstream.PublishOpt
@@ -1470,5 +1477,71 @@ func TestAsyncPublishRetry(t *testing.T) {
 				t.Fatalf("Timeout waiting for ack")
 			}
 		})
+	}
+}
+
+func TestPublishAsyncRetryInErrHandler(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	streamCreated := make(chan struct{})
+	errCB := func(js jetstream.JetStream, m *nats.Msg, e error) {
+		<-streamCreated
+		_, err := js.PublishMsgAsync(m)
+		if err != nil {
+			t.Fatalf("Unexpected error when republishing: %v", err)
+		}
+	}
+
+	js, err := jetstream.New(nc, jetstream.WithPublishAsyncErrHandler(errCB))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errs := make(chan error, 1)
+	done := make(chan struct{}, 1)
+	go func() {
+		for i := 0; i < 10; i++ {
+			if _, err := js.PublishAsync("FOO.A", []byte("hello"), jetstream.WithRetryAttempts(0)); err != nil {
+				errs <- err
+				return
+			}
+		}
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case err := <-errs:
+		t.Fatalf("Unexpected error during publish: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	close(streamCreated)
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+
+	info, err := stream.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if info.State.Msgs != 10 {
+		t.Fatalf("Expected 10 messages in the stream; got: %d", info.State.Msgs)
 	}
 }

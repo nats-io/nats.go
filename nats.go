@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -47,7 +47,7 @@ import (
 
 // Default Constants
 const (
-	Version                   = "1.33.0"
+	Version                   = "1.37.0"
 	DefaultURL                = "nats://127.0.0.1:4222"
 	DefaultPort               = 4222
 	DefaultMaxReconnect       = 60
@@ -160,7 +160,7 @@ func GetDefaultOptions() Options {
 	}
 }
 
-// DEPRECATED: Use GetDefaultOptions() instead.
+// Deprecated: Use GetDefaultOptions() instead.
 // DefaultOptions is not safe for use by multiple clients.
 // For details see #308.
 var DefaultOptions = GetDefaultOptions()
@@ -386,7 +386,7 @@ type Options struct {
 	// DisconnectedCB sets the disconnected handler that is called
 	// whenever the connection is disconnected.
 	// Will not be called if DisconnectedErrCB is set
-	// DEPRECATED. Use DisconnectedErrCB which passes error that caused
+	// Deprecated. Use DisconnectedErrCB which passes error that caused
 	// the disconnect event.
 	DisconnectedCB ConnHandler
 
@@ -450,7 +450,7 @@ type Options struct {
 	TokenHandler AuthTokenHandler
 
 	// Dialer allows a custom net.Dialer when forming connections.
-	// DEPRECATED: should use CustomDialer instead.
+	// Deprecated: should use CustomDialer instead.
 	Dialer *net.Dialer
 
 	// CustomDialer allows to specify a custom dialer (not necessarily
@@ -566,7 +566,6 @@ type Conn struct {
 	respSub       string               // The wildcard subject
 	respSubPrefix string               // the wildcard prefix including trailing .
 	respSubLen    int                  // the length of the wildcard prefix excluding trailing .
-	respScanf     string               // The scanf template to extract mux token
 	respMux       *Subscription        // A single response subscription
 	respMap       map[string]chan *Msg // Request map for the response msg channels
 	respRand      *rand.Rand           // Used for generating suffix
@@ -608,14 +607,17 @@ type Subscription struct {
 	// For holding information about a JetStream consumer.
 	jsi *jsSub
 
-	delivered  uint64
-	max        uint64
-	conn       *Conn
-	mcb        MsgHandler
-	mch        chan *Msg
-	closed     bool
-	sc         bool
-	connClosed bool
+	delivered     uint64
+	max           uint64
+	conn          *Conn
+	mcb           MsgHandler
+	mch           chan *Msg
+	closed        bool
+	sc            bool
+	connClosed    bool
+	draining      bool
+	status        SubStatus
+	statListeners map[chan SubStatus][]SubStatus
 
 	// Type of Subscription
 	typ SubscriptionType
@@ -634,6 +636,30 @@ type Subscription struct {
 	pMsgsLimit  int
 	pBytesLimit int
 	dropped     int
+}
+
+// Status represents the state of the connection.
+type SubStatus int
+
+const (
+	SubscriptionActive = SubStatus(iota)
+	SubscriptionDraining
+	SubscriptionClosed
+	SubscriptionSlowConsumer
+)
+
+func (s SubStatus) String() string {
+	switch s {
+	case SubscriptionActive:
+		return "Active"
+	case SubscriptionDraining:
+		return "Draining"
+	case SubscriptionClosed:
+		return "Closed"
+	case SubscriptionSlowConsumer:
+		return "SlowConsumer"
+	}
+	return "unknown status"
 }
 
 // Msg represents a message delivered by NATS. This structure is used
@@ -1082,7 +1108,7 @@ func DisconnectErrHandler(cb ConnErrHandler) Option {
 }
 
 // DisconnectHandler is an Option to set the disconnected handler.
-// DEPRECATED: Use DisconnectErrHandler.
+// Deprecated: Use DisconnectErrHandler.
 func DisconnectHandler(cb ConnHandler) Option {
 	return func(o *Options) error {
 		o.DisconnectedCB = cb
@@ -1254,7 +1280,7 @@ func SyncQueueLen(max int) Option {
 
 // Dialer is an Option to set the dialer which will be used when
 // attempting to establish a connection.
-// DEPRECATED: Should use CustomDialer instead.
+// Deprecated: Should use CustomDialer instead.
 func Dialer(dialer *net.Dialer) Option {
 	return func(o *Options) error {
 		o.Dialer = dialer
@@ -1371,7 +1397,7 @@ func TLSHandshakeFirst() Option {
 // Handler processing
 
 // SetDisconnectHandler will set the disconnect event handler.
-// DEPRECATED: Use SetDisconnectErrHandler
+// Deprecated: Use SetDisconnectErrHandler
 func (nc *Conn) SetDisconnectHandler(dcb ConnHandler) {
 	if nc == nil {
 		return
@@ -1487,7 +1513,7 @@ func processUrlString(url string) []string {
 	urls := strings.Split(url, ",")
 	var j int
 	for _, s := range urls {
-		u := strings.TrimSpace(s)
+		u := strings.TrimSuffix(strings.TrimSpace(s), "/")
 		if len(u) > 0 {
 			urls[j] = u
 			j++
@@ -2135,6 +2161,47 @@ func (nc *Conn) waitForExits() {
 	nc.wg.Wait()
 }
 
+// ForceReconnect forces a reconnect attempt to the server.
+// This is a non-blocking call and will start the reconnect
+// process without waiting for it to complete.
+//
+// If the connection is already in the process of reconnecting,
+// this call will force an immediate reconnect attempt (bypassing
+// the current reconnect delay).
+func (nc *Conn) ForceReconnect() error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+	if nc.isReconnecting() {
+		// if we're already reconnecting, force a reconnect attempt
+		// even if we're in the middle of a backoff
+		if nc.rqch != nil {
+			close(nc.rqch)
+		}
+		return nil
+	}
+
+	// Clear any queued pongs
+	nc.clearPendingFlushCalls()
+
+	// Clear any queued and blocking requests.
+	nc.clearPendingRequestCalls()
+
+	// Stop ping timer if set.
+	nc.stopPingTimer()
+
+	// Go ahead and make sure we have flushed the outbound
+	nc.bw.flush()
+	nc.conn.Close()
+
+	nc.changeConnStatus(RECONNECTING)
+	go nc.doReconnect(nil, true)
+	return nil
+}
+
 // ConnectedUrl reports the connected server's URL
 func (nc *Conn) ConnectedUrl() string {
 	if nc == nil {
@@ -2394,7 +2461,7 @@ func (nc *Conn) connect() (bool, error) {
 		nc.setup()
 		nc.changeConnStatus(RECONNECTING)
 		nc.bw.switchToPending()
-		go nc.doReconnect(ErrNoServers)
+		go nc.doReconnect(ErrNoServers, false)
 		err = nil
 	} else {
 		nc.current = nil
@@ -2694,7 +2761,7 @@ func (nc *Conn) stopPingTimer() {
 
 // Try to reconnect using the option parameters.
 // This function assumes we are allowed to reconnect.
-func (nc *Conn) doReconnect(err error) {
+func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	// We want to make sure we have the other watchers shutdown properly
 	// here before we proceed past this point.
 	nc.waitForExits()
@@ -2750,7 +2817,8 @@ func (nc *Conn) doReconnect(err error) {
 			break
 		}
 
-		doSleep := i+1 >= len(nc.srvPool)
+		doSleep := i+1 >= len(nc.srvPool) && !forceReconnect
+		forceReconnect = false
 		nc.mu.Unlock()
 
 		if !doSleep {
@@ -2777,6 +2845,12 @@ func (nc *Conn) doReconnect(err error) {
 			select {
 			case <-rqch:
 				rt.Stop()
+
+				// we need to reset the rqch channel to avoid
+				// closing a closed channel in the next iteration
+				nc.mu.Lock()
+				nc.rqch = make(chan struct{})
+				nc.mu.Unlock()
 			case <-rt.C:
 			}
 		}
@@ -2846,17 +2920,18 @@ func (nc *Conn) doReconnect(err error) {
 		// Done with the pending buffer
 		nc.bw.doneWithPending()
 
-		// This is where we are truly connected.
-		nc.status = CONNECTED
+		// Queue up the correct callback. If we are in initial connect state
+		// (using retry on failed connect), we will call the ConnectedCB,
+		// otherwise the ReconnectedCB.
+		if nc.Opts.ReconnectedCB != nil && !nc.initc {
+			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
+		} else if nc.Opts.ConnectedCB != nil && nc.initc {
+			nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
+		}
 
 		// If we are here with a retry on failed connect, indicate that the
 		// initial connect is now complete.
 		nc.initc = false
-
-		// Queue up the reconnect callback.
-		if nc.Opts.ReconnectedCB != nil {
-			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
-		}
 
 		// Release lock here, we will return below.
 		nc.mu.Unlock()
@@ -2900,7 +2975,7 @@ func (nc *Conn) processOpErr(err error) {
 		// Clear any queued pongs, e.g. pending flush calls.
 		nc.clearPendingFlushCalls()
 
-		go nc.doReconnect(err)
+		go nc.doReconnect(err, false)
 		nc.mu.Unlock()
 		return
 	}
@@ -3292,6 +3367,9 @@ func (nc *Conn) processMsg(data []byte) {
 	}
 
 	// Clear any SlowConsumer status.
+	if sub.sc {
+		sub.changeSubStatus(SubscriptionActive)
+	}
 	sub.sc = false
 	sub.mu.Unlock()
 
@@ -3315,8 +3393,9 @@ slowConsumer:
 		sub.pMsgs--
 		sub.pBytes -= len(m.Data)
 	}
-	sub.mu.Unlock()
 	if sc {
+		sub.changeSubStatus(SubscriptionSlowConsumer)
+		sub.mu.Unlock()
 		// Now we need connection's lock and we may end-up in the situation
 		// that we were trying to avoid, except that in this case, the client
 		// is already experiencing client-side slow consumer situation.
@@ -3326,6 +3405,8 @@ slowConsumer:
 			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, sub, ErrSlowConsumer) })
 		}
 		nc.mu.Unlock()
+	} else {
+		sub.mu.Unlock()
 	}
 }
 
@@ -3721,7 +3802,7 @@ func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
 		}
 
 		// Process key fetching original case.
-		i := bytes.IndexByte([]byte(kv), ':')
+		i := strings.IndexByte(kv, ':')
 		if i < 0 {
 			return nil, ErrBadHeaderMsg
 		}
@@ -3734,8 +3815,7 @@ func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
 		for i < len(kv) && (kv[i] == ' ' || kv[i] == '\t') {
 			i++
 		}
-		value := string(kv[i:])
-		m[key] = append(m[key], value)
+		m[key] = append(m[key], kv[i:])
 		if err != nil {
 			return m, err
 		}
@@ -3938,7 +4018,6 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 			nc.mu.Unlock()
 			return nil, token, err
 		}
-		nc.respScanf = strings.Replace(nc.respSub, "*", "%s", -1)
 		nc.respMux = s
 	}
 	nc.mu.Unlock()
@@ -4119,16 +4198,14 @@ func (nc *Conn) NewRespInbox() string {
 }
 
 // respToken will return the last token of a literal response inbox
-// which we use for the message channel lookup. This needs to do a
-// scan to protect itself against the server changing the subject.
+// which we use for the message channel lookup. This needs to verify the subject
+// prefix matches to protect itself against the server changing the subject.
 // Lock should be held.
 func (nc *Conn) respToken(respInbox string) string {
-	var token string
-	n, err := fmt.Sscanf(respInbox, nc.respScanf, &token)
-	if err != nil || n != 1 {
-		return ""
+	if token, found := strings.CutPrefix(respInbox, nc.respSubPrefix); found {
+		return token
 	}
-	return token
+	return ""
 }
 
 // Subscribe will express interest in the given subject. The subject
@@ -4298,6 +4375,7 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 		nc.kickFlusher()
 	}
 
+	sub.changeSubStatus(SubscriptionActive)
 	return sub, nil
 }
 
@@ -4341,6 +4419,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 	}
 	// Mark as invalid
 	s.closed = true
+	s.changeSubStatus(SubscriptionClosed)
 	if s.pCond != nil {
 		s.pCond.Broadcast()
 	}
@@ -4410,6 +4489,91 @@ func (s *Subscription) Drain() error {
 	return conn.unsubscribe(s, 0, true)
 }
 
+// IsDraining returns a boolean indicating whether the subscription
+// is being drained.
+// This will return false if the subscription has already been closed.
+func (s *Subscription) IsDraining() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.draining
+}
+
+// StatusChanged returns a channel on which given list of subscription status
+// changes will be sent. If no status is provided, all status changes will be sent.
+// Available statuses are SubscriptionActive, SubscriptionDraining, SubscriptionClosed,
+// and SubscriptionSlowConsumer.
+// The returned channel will be closed when the subscription is closed.
+func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus {
+	if len(statuses) == 0 {
+		statuses = []SubStatus{SubscriptionActive, SubscriptionDraining, SubscriptionClosed, SubscriptionSlowConsumer}
+	}
+	ch := make(chan SubStatus, 10)
+	for _, status := range statuses {
+		s.registerStatusChangeListener(status, ch)
+		// initial status
+		if status == s.status {
+			ch <- status
+		}
+	}
+	return ch
+}
+
+// registerStatusChangeListener registers a channel waiting for a specific status change event.
+// Status change events are non-blocking - if no receiver is waiting for the status change,
+// it will not be sent on the channel. Closed channels are ignored.
+func (s *Subscription) registerStatusChangeListener(status SubStatus, ch chan SubStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statListeners == nil {
+		s.statListeners = make(map[chan SubStatus][]SubStatus)
+	}
+	if _, ok := s.statListeners[ch]; !ok {
+		s.statListeners[ch] = make([]SubStatus, 0)
+	}
+	s.statListeners[ch] = append(s.statListeners[ch], status)
+}
+
+// sendStatusEvent sends subscription status event to all channels.
+// If there is no listener, sendStatusEvent
+// will not block. Lock should be held entering.
+func (s *Subscription) sendStatusEvent(status SubStatus) {
+	for ch, statuses := range s.statListeners {
+		if !containsStatus(statuses, status) {
+			continue
+		}
+		// only send event if someone's listening
+		select {
+		case ch <- status:
+		default:
+		}
+		if status == SubscriptionClosed {
+			close(ch)
+		}
+	}
+}
+
+func containsStatus(statuses []SubStatus, status SubStatus) bool {
+	for _, s := range statuses {
+		if s == status {
+			return true
+		}
+	}
+	return false
+}
+
+// changeSubStatus changes subscription status and sends events
+// to all listeners. Lock should be held entering.
+func (s *Subscription) changeSubStatus(status SubStatus) {
+	if s == nil {
+		return
+	}
+	s.sendStatusEvent(status)
+	s.status = status
+}
+
 // Unsubscribe will remove interest in the given subject.
 //
 // For a JetStream subscription, if the library has created the JetStream
@@ -4448,6 +4612,11 @@ func (s *Subscription) Unsubscribe() error {
 // checkDrained will watch for a subscription to be fully drained
 // and then remove it.
 func (nc *Conn) checkDrained(sub *Subscription) {
+	defer func() {
+		sub.mu.Lock()
+		defer sub.mu.Unlock()
+		sub.draining = false
+	}()
 	if nc == nil || sub == nil {
 		return
 	}
@@ -4557,6 +4726,10 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	}
 
 	if drainMode {
+		s.mu.Lock()
+		s.draining = true
+		sub.changeSubStatus(SubscriptionDraining)
+		s.mu.Unlock()
 		go nc.checkDrained(sub)
 	}
 
@@ -4659,6 +4832,7 @@ func (s *Subscription) validateNextMsgState(pullSubInternal bool) error {
 		return ErrSyncSubRequired
 	}
 	if s.sc {
+		s.changeSubStatus(SubscriptionActive)
 		s.sc = false
 		return ErrSlowConsumer
 	}
@@ -4728,7 +4902,8 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 }
 
 // Queued returns the number of queued messages in the client for this subscription.
-// DEPRECATED: Use Pending()
+//
+// Deprecated: Use Pending()
 func (s *Subscription) QueuedMsgs() (int, error) {
 	m, _, err := s.Pending()
 	return int(m), err
@@ -5309,7 +5484,7 @@ func (nc *Conn) drainConnection() {
 // Drain will put a connection into a drain state. All subscriptions will
 // immediately be put into a drain state. Upon completion, the publishers
 // will be drained and can not publish any additional messages. Upon draining
-// of the publishers, the connection will be closed. Use the ClosedCB()
+// of the publishers, the connection will be closed. Use the ClosedCB
 // option to know when the connection has moved from draining to closed.
 //
 // See note in Subscription.Drain for JetStream subscriptions.

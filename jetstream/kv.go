@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -164,8 +165,8 @@ type (
 		// with the same options as Watch.
 		WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, error)
 
-		// Keys will return all keys. DEPRECATED: Use ListKeys instead to avoid
-		// memory issues.
+		// Keys will return all keys.
+		// Deprecated: Use ListKeys instead to avoid memory issues.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
@@ -196,52 +197,52 @@ type (
 		// Bucket is the name of the KeyValue store. Bucket name has to be
 		// unique and can only contain alphanumeric characters, dashes, and
 		// underscores.
-		Bucket string
+		Bucket string `json:"bucket"`
 
 		// Description is an optional description for the KeyValue store.
-		Description string
+		Description string `json:"description,omitempty"`
 
 		// MaxValueSize is the maximum size of a value in bytes. If not
 		// specified, the default is -1 (unlimited).
-		MaxValueSize int32
+		MaxValueSize int32 `json:"max_value_size,omitempty"`
 
 		// History is the number of historical values to keep per key. If not
 		// specified, the default is 1. Max is 64.
-		History uint8
+		History uint8 `json:"history,omitempty"`
 
 		// TTL is the expiry time for keys. By default, keys do not expire.
-		TTL time.Duration
+		TTL time.Duration `json:"ttl,omitempty"`
 
 		// MaxBytes is the maximum size in bytes of the KeyValue store. If not
 		// specified, the default is -1 (unlimited).
-		MaxBytes int64
+		MaxBytes int64 `json:"max_bytes,omitempty"`
 
 		// Storage is the type of storage to use for the KeyValue store. If not
 		// specified, the default is FileStorage.
-		Storage StorageType
+		Storage StorageType `json:"storage,omitempty"`
 
 		// Replicas is the number of replicas to keep for the KeyValue store in
 		// clustered jetstream. Defaults to 1, maximum is 5.
-		Replicas int
+		Replicas int `json:"num_replicas,omitempty"`
 
 		// Placement is used to declare where the stream should be placed via
 		// tags and/or an explicit cluster name.
-		Placement *Placement
+		Placement *Placement `json:"placement,omitempty"`
 
 		// RePublish allows immediate republishing a message to the configured
 		// subject after it's stored.
-		RePublish *RePublish
+		RePublish *RePublish `json:"republish,omitempty"`
 
 		// Mirror defines the consiguration for mirroring another KeyValue
 		// store.
-		Mirror *StreamSource
+		Mirror *StreamSource `json:"mirror,omitempty"`
 
 		// Sources defines the configuration for sources of a KeyValue store.
-		Sources []*StreamSource
+		Sources []*StreamSource `json:"sources,omitempty"`
 
 		// Compression sets the underlying stream compression.
 		// NOTE: Compression is supported for nats-server 2.10.0+
-		Compression bool
+		Compression bool `json:"compression,omitempty"`
 	}
 
 	// KeyLister is used to retrieve a list of key value store keys. It returns
@@ -447,12 +448,13 @@ const (
 
 // Regex for valid keys and buckets.
 var (
-	validBucketRe = regexp.MustCompile(`\A[a-zA-Z0-9_-]+\z`)
-	validKeyRe    = regexp.MustCompile(`\A[-/_=\.a-zA-Z0-9]+\z`)
+	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
 func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, error) {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return nil, ErrInvalidBucketName
 	}
 	streamName := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -488,8 +490,26 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 			// errors are joined so that backwards compatibility is retained
 			// and previous checks for ErrStreamNameAlreadyInUse will still work.
 			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketExists, cfg.Bucket), err)
+
+			// If we have a failure to add, it could be because we have
+			// a config change if the KV was created against before a bug fix
+			// that changed the value of discard policy.
+			// We will check if the stream exists and if the only difference
+			// is the discard policy, we will update the stream.
+			// The same logic applies for KVs created pre 2.9.x and
+			// the AllowDirect setting.
+			if stream, _ = js.Stream(ctx, scfg.Name); stream != nil {
+				cfg := stream.CachedInfo().Config
+				cfg.Discard = scfg.Discard
+				cfg.AllowDirect = scfg.AllowDirect
+				if reflect.DeepEqual(cfg, scfg) {
+					stream, err = js.UpdateStream(ctx, scfg)
+				}
+			}
 		}
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
 	pushJS, err := js.legacyJetStream()
 	if err != nil {
@@ -539,7 +559,7 @@ func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueCon
 }
 
 func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConfig) (StreamConfig, error) {
-	if !validBucketRe.MatchString(cfg.Bucket) {
+	if !bucketValid(cfg.Bucket) {
 		return StreamConfig{}, ErrInvalidBucketName
 	}
 	if _, err := js.AccountInfo(ctx); err != nil {
@@ -601,6 +621,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 		AllowDirect:       true,
 		RePublish:         cfg.RePublish,
 		Compression:       compression,
+		Discard:           DiscardNew,
 	}
 	if cfg.Mirror != nil {
 		// Copy in case we need to make changes so we do not change caller's version.
@@ -636,7 +657,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 
 // DeleteKeyValue will delete this KeyValue store (JetStream stream).
 func (js *jetStream) DeleteKeyValue(ctx context.Context, bucket string) error {
-	if !validBucketRe.MatchString(bucket) {
+	if !bucketValid(bucket) {
 		return ErrInvalidBucketName
 	}
 	stream := fmt.Sprintf(kvBucketNameTmpl, bucket)
@@ -773,11 +794,25 @@ func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 	return js.conn.JetStream(opts...)
 }
 
+func bucketValid(bucket string) bool {
+	if len(bucket) == 0 {
+		return false
+	}
+	return validBucketRe.MatchString(bucket)
+}
+
 func keyValid(key string) bool {
 	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
 		return false
 	}
 	return validKeyRe.MatchString(key)
+}
+
+func searchKeyValid(key string) bool {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+		return false
+	}
+	return validSearchKeyRe.MatchString(key)
 }
 
 func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
@@ -1036,6 +1071,9 @@ func (w *watcher) Stop() error {
 // Watch for any updates to keys that match the keys argument which could include wildcards.
 // Watch will send a nil entry when it has received all initial values.
 func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	if !searchKeyValid(keys) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+	}
 	var o watchOpts
 	for _, opt := range opts {
 		if opt != nil {
