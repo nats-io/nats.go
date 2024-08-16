@@ -2057,7 +2057,7 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 			t.Fatalf("Did not receive completion signal")
 		}
 
-		// check that all ack futures are cancelled
+		// check that all ack futures are canceled
 		for _, ack := range acks {
 			select {
 			case err := <-ack.Err():
