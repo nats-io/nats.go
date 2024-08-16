@@ -1,3 +1,5 @@
+github.com/antithesishq/antithesis-sdk-go v0.4.0 h1:LoIaSOJfaiwLt1WsZyJQEdaENewAR6G+F+aN8I6Sy7E=
+github.com/antithesishq/antithesis-sdk-go v0.4.0/go.mod h1:IUpT2DPAKh6i/YhSbt6Gl3v2yvUZjmKncl7U91fup7E=
 github.com/klauspost/compress v1.17.2 h1:RlWWUY/Dr4fL8qk9YG7DTZ7PDgME2V4csBXA8L/ixi4=
 github.com/klauspost/compress v1.17.2/go.mod h1:ntbaceVETuRiXiv4DpjP66DpAtAGkEQskQzEyD//IeE=
 github.com/nats-io/nkeys v0.4.6 h1:IzVe95ru2CT6ta874rt9saQRkWfe2nFj1NtvYSLqMzY=

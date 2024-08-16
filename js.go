@@ -27,8 +27,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nats-io/nats.go/internal/parser"
+	"github.com/antithesishq/antithesis-sdk-go/assert"
 	"github.com/nats-io/nuid"
+
+	"github.com/nats-io/nats.go/internal/parser"
 )
 
 // JetStream allows persistent messaging through JetStream.
@@ -612,6 +614,16 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	if pa.PubAck == nil || pa.PubAck.Stream == _EMPTY_ {
 		return nil, ErrInvalidJSAck
 	}
+
+	assert.AlwaysOrUnreachable(
+		pa.PubAck.Sequence > 0,
+		"Sequence number is zero",
+		map[string]any{
+			"seq":          pa.PubAck.Sequence,
+			"stream":       pa.PubAck.Stream,
+			"resp_headers": len(resp.Header),
+		},
+	)
 	return pa.PubAck, nil
 }
 
