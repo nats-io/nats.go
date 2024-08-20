@@ -574,6 +574,8 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 		resp, err = js.nc.RequestMsgWithContext(o.ctx, m)
 	}
 
+	var err1, err2 error
+	err1 = err
 	if err != nil {
 		for r, ttl := 0, o.ttl; errors.Is(err, ErrNoResponders) && (r < o.rnum || o.rnum < 0); r++ {
 			// To protect against small blips in leadership changes etc, if we get a no responders here retry.
@@ -596,6 +598,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 				resp, err = js.nc.RequestMsgWithContext(o.ctx, m)
 			}
 		}
+		err2 = err
 		if err != nil {
 			if errors.Is(err, ErrNoResponders) {
 				err = ErrNoStreamResponse
@@ -622,6 +625,9 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 			"seq":          pa.PubAck.Sequence,
 			"stream":       pa.PubAck.Stream,
 			"resp_headers": len(resp.Header),
+			"resp_raw":     string(resp.Data),
+			"err1":         err1,
+			"err2":         err2,
 		},
 	)
 	return pa.PubAck, nil
