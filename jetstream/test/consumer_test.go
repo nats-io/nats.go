@@ -166,7 +166,7 @@ func TestConsumerOverflow(t *testing.T) {
 	}
 
 	// We are below overflow, so we should not get any moessages.
-	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second))
+	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second), jetstream.FetchGroup("A"))
 	count := 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
@@ -181,7 +181,7 @@ func TestConsumerOverflow(t *testing.T) {
 		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 	}
 
-	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110))
+	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchGroup("A"))
 	count = 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
