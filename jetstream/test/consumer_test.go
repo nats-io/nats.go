@@ -232,7 +232,7 @@ func TestConsumerPinned(t *testing.T) {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 		}
 
-		msgs, err := c.Messages()
+		msgs, err := c.Messages(jetstream.PullGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -251,7 +251,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		noMsgs, err := second.Messages()
+		noMsgs, err := second.Messages(jetstream.PullGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -331,7 +331,7 @@ func TestConsumerPinned(t *testing.T) {
 			m.Ack()
 			count++
 			gcount <- struct{}{}
-		}, jetstream.PullThresholdMessages(10))
+		}, jetstream.PullThresholdMessages(10), jetstream.PullGroup("A"))
 		defer ip.Stop()
 
 		// Second consume instance that should remain passive.
@@ -340,7 +340,7 @@ func TestConsumerPinned(t *testing.T) {
 			m.Ack()
 			notPinnedC++
 			gcount <- struct{}{}
-		})
+		}, jetstream.PullGroup("A"))
 		defer np.Stop()
 
 	outer:
@@ -413,7 +413,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Initial fetch.
 		// Should get all messages and get a Pin ID.
-		msgs, err := c.Fetch(10)
+		msgs, err := c.Fetch(10, jetstream.FetchGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -438,7 +438,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Different
 		cdiff, err := js.Consumer(ctx, "foo", "cons")
-		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second))
+		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second), jetstream.FetchGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -457,7 +457,7 @@ func TestConsumerPinned(t *testing.T) {
 		count = 0
 
 		// the same again, should be fine
-		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.FetchGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -479,7 +479,7 @@ func TestConsumerPinned(t *testing.T) {
 		count = 0
 		time.Sleep(10 * time.Second)
 		// The same instance, should work fine.
-		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second))
+		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.FetchGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}

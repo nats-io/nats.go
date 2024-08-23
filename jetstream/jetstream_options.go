@@ -230,6 +230,18 @@ func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+type PullGroup string
+
+func (group PullGroup) configureConsume(opts *consumeOpts) error {
+	opts.Group = string(group)
+	return nil
+}
+
+func (group PullGroup) configureMessages(opts *consumeOpts) error {
+	opts.Group = string(group)
+	return nil
+}
+
 // PullHeartbeat sets the idle heartbeat duration for a pull subscription
 // If a client does not receive a heartbeat message from a stream for more
 // than the idle heartbeat setting, the subscription will be removed
@@ -311,6 +323,13 @@ func FetchMinAckPending(min int64) FetchOpt {
 			return fmt.Errorf("%w: min ack pending should be more than 0", ErrInvalidOption)
 		}
 		req.MinAckPending = min
+		return nil
+	}
+}
+
+func FetchGroup(group string) FetchOpt {
+	return func(req *pullRequest) error {
+		req.Group = group
 		return nil
 	}
 }

@@ -93,6 +93,7 @@ type (
 		MinPending    int64         `json:"min_pending,omitempty"`
 		MinAckPending int64         `json:"min_ack_pending,omitempty"`
 		PinId         string        `json:"id,omitempty"`
+		Group         string        `json:"group,omitempty"`
 	}
 
 	consumeOpts struct {
@@ -101,6 +102,7 @@ type (
 		MaxBytes                int
 		MinPending              int64
 		MinAckPending           int64
+		Group                   string
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandlerFunc
 		ReportMissingHeartbeats bool
@@ -297,6 +299,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		Heartbeat:     consumeOpts.Heartbeat,
 		MinPending:    consumeOpts.MinPending,
 		MinAckPending: consumeOpts.MinAckPending,
+		Group:         consumeOpts.Group,
 		PinId:         p.PinId,
 	}, subject); err != nil {
 		sub.errs <- err
@@ -335,6 +338,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							Heartbeat:     sub.consumeOpts.Heartbeat,
 							MinPending:    sub.consumeOpts.MinPending,
 							MinAckPending: sub.consumeOpts.MinAckPending,
+							Group:         sub.consumeOpts.Group,
 							PinId:         p.PinId,
 						}
 						if sub.hbMonitor != nil {
@@ -361,6 +365,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						Heartbeat:     sub.consumeOpts.Heartbeat,
 						MinPending:    sub.consumeOpts.MinPending,
 						MinAckPending: sub.consumeOpts.MinAckPending,
+						Group:         sub.consumeOpts.Group,
 						PinId:         p.PinId,
 					}
 					if sub.hbMonitor != nil {
@@ -430,6 +435,7 @@ func (s *pullSubscription) checkPending() {
 				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
 				PinId:     s.consumer.PinId,
+				Group:     s.consumeOpts.Group,
 			}
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
