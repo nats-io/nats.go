@@ -230,14 +230,14 @@ func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-type PullGroup string
+type PriorityGroup string
 
-func (group PullGroup) configureConsume(opts *consumeOpts) error {
+func (group PriorityGroup) configureConsume(opts *consumeOpts) error {
 	opts.Group = string(group)
 	return nil
 }
 
-func (group PullGroup) configureMessages(opts *consumeOpts) error {
+func (group PriorityGroup) configureMessages(opts *consumeOpts) error {
 	opts.Group = string(group)
 	return nil
 }
@@ -327,7 +327,7 @@ func FetchMinAckPending(min int64) FetchOpt {
 	}
 }
 
-func FetchGroup(group string) FetchOpt {
+func WithPriorityGroup(group string) FetchOpt {
 	return func(req *pullRequest) error {
 		req.Group = group
 		return nil

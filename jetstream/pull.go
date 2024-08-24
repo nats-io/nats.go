@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -185,6 +186,19 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
+
+	if len(p.info.Config.PriorityGroups) != 0 {
+		if consumeOpts.Group == "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
+		}
+
+		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
+		}
+	} else if consumeOpts.Group != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is not supported for this consumer")
+	}
+
 	p.Lock()
 
 	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))

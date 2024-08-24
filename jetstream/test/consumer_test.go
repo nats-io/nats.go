@@ -166,7 +166,7 @@ func TestConsumerOverflow(t *testing.T) {
 	}
 
 	// We are below overflow, so we should not get any moessages.
-	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second), jetstream.FetchGroup("A"))
+	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
 	count := 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
@@ -181,7 +181,7 @@ func TestConsumerOverflow(t *testing.T) {
 		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 	}
 
-	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchGroup("A"))
+	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.WithPriorityGroup("A"))
 	count = 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
@@ -232,7 +232,7 @@ func TestConsumerPinned(t *testing.T) {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 		}
 
-		msgs, err := c.Messages(jetstream.PullGroup("A"))
+		msgs, err := c.Messages(jetstream.PriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -251,7 +251,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		noMsgs, err := second.Messages(jetstream.PullGroup("A"))
+		noMsgs, err := second.Messages(jetstream.PriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -326,12 +326,28 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+
+		// test priority group validation
+		// invalid priority group
+		_, err = initialyPinned.Consume(func(m jetstream.Msg) {
+		}, jetstream.PriorityGroup("BAD"))
+		if err == nil || err.Error() != "nats: invalid jetstream option: invalid priority group" {
+			t.Fatalf("Expected invalid priority group error")
+		}
+
+		// no priority group
+		_, err = initialyPinned.Consume(func(m jetstream.Msg) {
+		})
+		if err == nil || err.Error() != "nats: invalid jetstream option: priority group is required for priority consumer" {
+			t.Fatalf("Expected invalid priority group error")
+		}
+
 		count := 0
 		ip, err := initialyPinned.Consume(func(m jetstream.Msg) {
 			m.Ack()
 			count++
 			gcount <- struct{}{}
-		}, jetstream.PullThresholdMessages(10), jetstream.PullGroup("A"))
+		}, jetstream.PullThresholdMessages(10), jetstream.PriorityGroup("A"))
 		defer ip.Stop()
 
 		// Second consume instance that should remain passive.
@@ -340,7 +356,7 @@ func TestConsumerPinned(t *testing.T) {
 			m.Ack()
 			notPinnedC++
 			gcount <- struct{}{}
-		}, jetstream.PullGroup("A"))
+		}, jetstream.PriorityGroup("A"))
 		defer np.Stop()
 
 	outer:
@@ -413,7 +429,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Initial fetch.
 		// Should get all messages and get a Pin ID.
-		msgs, err := c.Fetch(10, jetstream.FetchGroup("A"))
+		msgs, err := c.Fetch(10, jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -438,7 +454,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Different
 		cdiff, err := js.Consumer(ctx, "foo", "cons")
-		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second), jetstream.FetchGroup("A"))
+		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -457,7 +473,7 @@ func TestConsumerPinned(t *testing.T) {
 		count = 0
 
 		// the same again, should be fine
-		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.FetchGroup("A"))
+		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -479,7 +495,7 @@ func TestConsumerPinned(t *testing.T) {
 		count = 0
 		time.Sleep(10 * time.Second)
 		// The same instance, should work fine.
-		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.FetchGroup("A"))
+		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
