@@ -1571,21 +1571,19 @@ func TestOrderedConsumerNext(t *testing.T) {
 		}
 
 		publishTestMsgs(t, js)
-		msg, err := c.Next()
+		_, err = c.Next()
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
 		}
-		msg.Ack()
 
 		name := c.CachedInfo().Name
 		if err := s.DeleteConsumer(ctx, name); err != nil {
 			t.Fatal(err)
 		}
-		msg, err = c.Next()
+		_, err = c.Next()
 		if err != nil {
 			t.Fatalf("Unexpected error: %s", err)
 		}
-		msg.Ack()
 	})
 
 	t.Run("consumer used as consume", func(t *testing.T) {
@@ -1621,6 +1619,70 @@ func TestOrderedConsumerNext(t *testing.T) {
 		_, err = c.Next()
 		if !errors.Is(err, jetstream.ErrOrderConsumerUsedAsConsume) {
 			t.Fatalf("Expected error: %s; got: %s", jetstream.ErrOrderConsumerUsedAsConsume, err)
+		}
+	})
+
+	t.Run("preserve sequence after fetch error", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+		msg, err := c.Next()
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if meta.Sequence.Stream != 1 {
+			t.Fatalf("Expected sequence: %d; got: %d", 1, meta.Sequence.Stream)
+		}
+
+		// get next message, it should time out (no more messages on stream)
+		_, err = c.Next(jetstream.FetchMaxWait(100 * time.Millisecond))
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected error: %s; got: %s", nats.ErrTimeout, err)
+		}
+
+		if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+
+		// get next message, it should have stream sequence 2
+		msg, err = c.Next()
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		meta, err = msg.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if meta.Sequence.Stream != 2 {
+			t.Fatalf("Expected sequence: %d; got: %d", 2, meta.Sequence.Stream)
 		}
 	})
 }
