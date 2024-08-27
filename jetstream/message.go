@@ -16,6 +16,7 @@ package jetstream
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -434,7 +435,7 @@ func parsePending(msg *nats.Msg) (int, int, error) {
 	if msgsLeftStr != "" {
 		msgsLeft, err = strconv.Atoi(msgsLeftStr)
 		if err != nil {
-			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Messages")
+			return 0, 0, errors.New("nats: invalid format of Nats-Pending-Messages")
 		}
 	}
 	bytesLeftStr := msg.Header.Get("Nats-Pending-Bytes")
@@ -442,7 +443,7 @@ func parsePending(msg *nats.Msg) (int, int, error) {
 	if bytesLeftStr != "" {
 		bytesLeft, err = strconv.Atoi(bytesLeftStr)
 		if err != nil {
-			return 0, 0, fmt.Errorf("nats: invalid format of Nats-Pending-Bytes")
+			return 0, 0, errors.New("nats: invalid format of Nats-Pending-Bytes")
 		}
 	}
 	return msgsLeft, bytesLeft, nil

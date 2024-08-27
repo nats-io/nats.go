@@ -504,7 +504,7 @@ func TestAddService(t *testing.T) {
 			}
 
 			if test.givenConfig.ErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, fmt.Errorf("oops"))
+				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
 				select {
 				case <-errService:
 				case <-time.After(1 * time.Second):
@@ -536,7 +536,7 @@ func TestAddService(t *testing.T) {
 				}
 			}
 			if test.natsErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, fmt.Errorf("oops"))
+				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
 				select {
 				case <-errService:
 					t.Fatalf("Expected to restore nats error handler")
@@ -634,7 +634,7 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 				}
 				defer svc.Stop()
 
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.errSubject}, fmt.Errorf("oops"))
+				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.errSubject}, errors.New("oops"))
 				if test.expectServiceErr {
 					select {
 					case <-errChan:

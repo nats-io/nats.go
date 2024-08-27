@@ -1113,7 +1113,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			_, err := kv.Get(key)
 			if err == nil {
-				return fmt.Errorf("Expected key to be gone")
+				return errors.New("Expected key to be gone")
 			}
 			if !errors.Is(err, nats.ErrKeyNotFound) {
 				return err

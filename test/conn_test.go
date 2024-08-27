@@ -277,7 +277,7 @@ func TestClientTLSConfig(t *testing.T) {
 		pool := x509.NewCertPool()
 		ok := pool.AppendCertsFromPEM(rootCAs)
 		if !ok {
-			return nil, fmt.Errorf("nats: failed to parse root certificate from")
+			return nil, errors.New("nats: failed to parse root certificate from")
 		}
 		return pool, nil
 	}
@@ -614,7 +614,7 @@ func TestErrOnConnectAndDeadlock(t *testing.T) {
 		nc, err := nats.Connect(natsURL)
 		if err == nil {
 			nc.Close()
-			errCh <- fmt.Errorf("expected bad INFO err, got none")
+			errCh <- errors.New("expected bad INFO err, got none")
 			return
 		}
 		errCh <- nil
@@ -1749,7 +1749,7 @@ type customDialer struct {
 
 func (cd *customDialer) Dial(network, address string) (net.Conn, error) {
 	cd.ch <- true
-	return nil, fmt.Errorf("on purpose")
+	return nil, errors.New("on purpose")
 }
 
 func TestUseCustomDialer(t *testing.T) {
