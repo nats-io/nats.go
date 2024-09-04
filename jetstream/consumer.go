@@ -329,3 +329,37 @@ func validateConsumerName(dur string) error {
 	}
 	return nil
 }
+
+func unpinConsumer(ctx context.Context, js *jetStream, stream, consumer, group string) error {
+	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	if err := validateConsumerName(consumer); err != nil {
+		return err
+	}
+	unpinSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerUnpinT, stream, consumer))
+
+	var req = consumerUnpinRequest{
+		Group: group,
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	var resp apiResponse
+
+	if _, err := js.apiRequestJSON(ctx, unpinSubject, &resp, reqJSON); err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
+			return ErrConsumerNotFound
+		}
+		return resp.Error
+	}
+
+	return nil
+}
