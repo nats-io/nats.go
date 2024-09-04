@@ -169,9 +169,16 @@ type (
 		// Deprecated: Use ListKeys instead to avoid memory issues.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
+		// KeysWithFilters returns a filtered list of keys in the bucket.
+		// It returns a complete slice of matching keys.
+		KeysWithFilters(ctx context.Context, filters []string, opts ...WatchOpt) ([]string, error)
+
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
 		// the key value store in a streaming fashion (on a channel).
 		ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error)
+
+		// ListKeysWithFilters returns a KeyLister for filtered keys in the bucket.
+		ListKeysWithFilters(ctx context.Context, filters []string, opts ...WatchOpt) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
 		// KeyValueMaxHistory).
@@ -1240,6 +1247,97 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 			}
 		}
 	}()
+	return kl, nil
+}
+
+// KeysWithFilters returns a filtered list of keys in the bucket.
+// It returns a complete slice of matching keys.
+func (kv *kvs) KeysWithFilters(ctx context.Context, filters []string, opts ...WatchOpt) ([]string, error) {
+	opts = append(opts, IgnoreDeletes(), MetaOnly())
+
+	watcher, err := kv.WatchAll(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	defer watcher.Stop()
+
+	var keys []string
+
+	for {
+		select {
+		case entry := <-watcher.Updates():
+			if entry == nil {
+				return keys, nil
+			}
+
+			// Apply filters: we will only include the key if it matches one of the filters
+			if len(filters) > 0 {
+				matched := false
+				for _, filter := range filters {
+					if strings.Contains(entry.Key(), filter) {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					keys = append(keys, entry.Key())
+				}
+			} else {
+				// No filters, append all keys
+				keys = append(keys, entry.Key())
+			}
+
+		case <-ctx.Done():
+			return keys, ctx.Err()
+		}
+	}
+}
+
+// ListKeysWithFilters returns a KeyLister for filtered keys in the bucket.
+func (kv *kvs) ListKeysWithFilters(ctx context.Context, filters []string, opts ...WatchOpt) (KeyLister, error) {
+	// Add options to ignore deletes and fetch metadata only
+	opts = append(opts, IgnoreDeletes(), MetaOnly())
+
+	// Start watching all keys
+	watcher, err := kv.WatchAll(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a KeyLister
+	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
+
+	// Start a goroutine to filter and list the keys
+	go func() {
+		defer close(kl.keys)
+		defer watcher.Stop()
+
+		for {
+			select {
+			case entry := <-watcher.Updates():
+				// If entry is nil, we're done
+				if entry == nil {
+					return
+				}
+
+				// Apply filters if any were provided
+				if len(filters) > 0 {
+					for _, filter := range filters {
+						if strings.Contains(entry.Key(), filter) {
+							kl.keys <- entry.Key()
+							break
+						}
+					}
+				} else {
+					// No filters provided, send all keys
+					kl.keys <- entry.Key()
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	return kl, nil
 }
 
