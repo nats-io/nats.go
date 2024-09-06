@@ -34,6 +34,7 @@ jobs:
         runs-on: ubuntu-latest
 
         strategy:
+            fail-fast: false
             matrix:
               go: [ "1.21", "1.22" ]
         steps:
