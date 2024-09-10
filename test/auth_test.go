@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -376,4 +378,76 @@ func TestConnectMissingCreds(t *testing.T) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Expected not exists error, got: %v", err)
 	}
+}
+
+func TestUserInfoHandler(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+	listen: 127.0.0.1:-1
+	accounts: {
+	  A {
+		users: [{ user: "pp", password: "foo" }]
+	  }
+	}
+`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	user, pass := "pp", "foo"
+	userInfoCB := func() (string, string) {
+		return user, pass
+	}
+
+	// check that we cannot set the user info twice
+	_, err := nats.Connect(s.ClientURL(), nats.UserInfo("pp", "foo"), nats.UserInfoHandler(userInfoCB))
+	if !errors.Is(err, nats.ErrUserInfoAlreadySet) {
+		t.Fatalf("Expected ErrUserInfoAlreadySet, got: %v", err)
+	}
+
+	addr, ok := s.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("Expected a TCP address, got %T", addr)
+	}
+
+	// check that user/pass from url takes precedence
+	_, err = nats.Connect(fmt.Sprintf("nats://bad:bad@localhost:%d", addr.Port),
+		nats.UserInfoHandler(userInfoCB))
+	if !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected ErrAuthorization, got: %v", err)
+	}
+
+	// connect using the handler
+	nc, err := nats.Connect(s.ClientURL(),
+		nats.ReconnectWait(100*time.Millisecond),
+		nats.UserInfoHandler(userInfoCB))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	// now change the password and reload the server
+	newConfig := []byte(`
+	listen: 127.0.0.1:-1
+	accounts: {
+	  A {
+		users: [{ user: "dd", password: "bar" }]
+	  }
+	}
+`)
+	if err := os.WriteFile(conf, newConfig, 0666); err != nil {
+		t.Fatalf("Error writing conf file: %v", err)
+	}
+
+	// update the user info used by the callback
+	user, pass = "dd", "bar"
+
+	status := nc.StatusChanged(nats.CONNECTED)
+
+	if err := s.Reload(); err != nil {
+		t.Fatalf("Error on reload: %v", err)
+	}
+
+	// we should get a reconnected event meaning the new credentials were used
+	WaitOnChannel(t, status, nats.CONNECTED)
 }
