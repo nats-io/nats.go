@@ -1383,7 +1383,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 					errs <- fmt.Errorf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
 				}
 			case <-time.After(5 * time.Second):
-				errs <- fmt.Errorf("Did not receive completion signal")
+				errs <- errors.New("Did not receive completion signal")
 			}
 			wg.Done()
 		}(ack)

@@ -504,16 +504,16 @@ func convertDirectGetMsgResponseToMsg(name string, r *nats.Msg) (*RawStreamMsg, 
 	// Check for headers that give us the required information to
 	// reconstruct the message.
 	if len(r.Header) == 0 {
-		return nil, fmt.Errorf("nats: response should have headers")
+		return nil, errors.New("nats: response should have headers")
 	}
 	stream := r.Header.Get(StreamHeader)
 	if stream == "" {
-		return nil, fmt.Errorf("nats: missing stream header")
+		return nil, errors.New("nats: missing stream header")
 	}
 
 	seqStr := r.Header.Get(SequenceHeader)
 	if seqStr == "" {
-		return nil, fmt.Errorf("nats: missing sequence header")
+		return nil, errors.New("nats: missing sequence header")
 	}
 	seq, err := strconv.ParseUint(seqStr, 10, 64)
 	if err != nil {
@@ -521,7 +521,7 @@ func convertDirectGetMsgResponseToMsg(name string, r *nats.Msg) (*RawStreamMsg, 
 	}
 	timeStr := r.Header.Get(TimeStampHeaer)
 	if timeStr == "" {
-		return nil, fmt.Errorf("nats: missing timestamp header")
+		return nil, errors.New("nats: missing timestamp header")
 	}
 
 	tm, err := time.Parse(time.RFC3339Nano, timeStr)
@@ -530,7 +530,7 @@ func convertDirectGetMsgResponseToMsg(name string, r *nats.Msg) (*RawStreamMsg, 
 	}
 	subj := r.Header.Get(SubjectHeader)
 	if subj == "" {
-		return nil, fmt.Errorf("nats: missing subject header")
+		return nil, errors.New("nats: missing subject header")
 	}
 	return &RawStreamMsg{
 		Subject:  subj,

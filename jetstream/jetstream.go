@@ -435,7 +435,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 		}
 	}
 	if apiPrefix == "" {
-		return nil, fmt.Errorf("API prefix cannot be empty")
+		return nil, errors.New("API prefix cannot be empty")
 	}
 	if !strings.HasSuffix(apiPrefix, ".") {
 		jsOpts.apiPrefix = fmt.Sprintf("%s.", apiPrefix)

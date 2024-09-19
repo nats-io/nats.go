@@ -1359,7 +1359,7 @@ func ProxyPath(path string) Option {
 func CustomInboxPrefix(p string) Option {
 	return func(o *Options) error {
 		if p == "" || strings.Contains(p, ">") || strings.Contains(p, "*") || strings.HasSuffix(p, ".") {
-			return fmt.Errorf("nats: invalid custom prefix")
+			return errors.New("nats: invalid custom prefix")
 		}
 		o.InboxPrefix = p
 		return nil
@@ -1814,7 +1814,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	if len(nc.srvPool) == 0 {
 		nc.ws = isWS
 	} else if isWS && !nc.ws || !isWS && nc.ws {
-		return fmt.Errorf("mixing of websocket and non websocket URLs is not allowed")
+		return errors.New("mixing of websocket and non websocket URLs is not allowed")
 	}
 
 	var tlsName string
@@ -5792,7 +5792,7 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 		return nil, err
 	}
 	if !nkeys.IsValidPublicUserKey(pub) {
-		return nil, fmt.Errorf("nats: Not a valid nkey user seed")
+		return nil, errors.New("nats: Not a valid nkey user seed")
 	}
 	sigCB := func(nonce []byte) ([]byte, error) {
 		return sigHandler(nonce, seedFile)
