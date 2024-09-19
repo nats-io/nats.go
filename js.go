@@ -547,7 +547,7 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 		o.ttl = js.opts.wait
 	}
 	if o.stallWait > 0 {
-		return nil, fmt.Errorf("nats: stall wait cannot be set to sync publish")
+		return nil, errors.New("nats: stall wait cannot be set to sync publish")
 	}
 
 	if o.id != _EMPTY_ {
@@ -1143,7 +1143,7 @@ func RetryAttempts(num int) PubOpt {
 func StallWait(ttl time.Duration) PubOpt {
 	return pubOptFn(func(opts *pubOpts) error {
 		if ttl <= 0 {
-			return fmt.Errorf("nats: stall wait should be more than 0")
+			return errors.New("nats: stall wait should be more than 0")
 		}
 		opts.stallWait = ttl
 		return nil
@@ -1501,11 +1501,11 @@ func processConsInfo(info *ConsumerInfo, userCfg *ConsumerConfig, isPullMode boo
 		// Prevent an user from attempting to create a queue subscription on
 		// a JS consumer that was not created with a deliver group.
 		if queue != _EMPTY_ {
-			return _EMPTY_, fmt.Errorf("cannot create a queue subscription for a consumer without a deliver group")
+			return _EMPTY_, errors.New("cannot create a queue subscription for a consumer without a deliver group")
 		} else if info.PushBound {
 			// Need to reject a non queue subscription to a non queue consumer
 			// if the consumer is already bound.
-			return _EMPTY_, fmt.Errorf("consumer is already bound to a subscription")
+			return _EMPTY_, errors.New("consumer is already bound to a subscription")
 		}
 	} else {
 		// If the JS consumer has a deliver group, we need to fail a non queue
@@ -1607,7 +1607,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 
 	// If no stream name is specified, the subject cannot be empty.
 	if subj == _EMPTY_ && o.stream == _EMPTY_ {
-		return nil, fmt.Errorf("nats: subject required")
+		return nil, errors.New("nats: subject required")
 	}
 
 	// Note that these may change based on the consumer info response we may get.
@@ -1629,7 +1629,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		// would subscribe to and server would send on.
 		if o.cfg.Heartbeat > 0 || o.cfg.FlowControl {
 			// Not making this a public ErrXXX in case we allow in the future.
-			return nil, fmt.Errorf("nats: queue subscription doesn't support idle heartbeat nor flow control")
+			return nil, errors.New("nats: queue subscription doesn't support idle heartbeat nor flow control")
 		}
 
 		// If this is a queue subscription and no consumer nor durable name was specified,
@@ -1667,31 +1667,31 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if o.ordered {
 		// Make sure we are not durable.
 		if isDurable {
-			return nil, fmt.Errorf("nats: durable can not be set for an ordered consumer")
+			return nil, errors.New("nats: durable can not be set for an ordered consumer")
 		}
 		// Check ack policy.
 		if o.cfg.AckPolicy != ackPolicyNotSet {
-			return nil, fmt.Errorf("nats: ack policy can not be set for an ordered consumer")
+			return nil, errors.New("nats: ack policy can not be set for an ordered consumer")
 		}
 		// Check max deliver.
 		if o.cfg.MaxDeliver != 1 && o.cfg.MaxDeliver != 0 {
-			return nil, fmt.Errorf("nats: max deliver can not be set for an ordered consumer")
+			return nil, errors.New("nats: max deliver can not be set for an ordered consumer")
 		}
 		// No deliver subject, we pick our own.
 		if o.cfg.DeliverSubject != _EMPTY_ {
-			return nil, fmt.Errorf("nats: deliver subject can not be set for an ordered consumer")
+			return nil, errors.New("nats: deliver subject can not be set for an ordered consumer")
 		}
 		// Queue groups not allowed.
 		if queue != _EMPTY_ {
-			return nil, fmt.Errorf("nats: queues not be set for an ordered consumer")
+			return nil, errors.New("nats: queues not be set for an ordered consumer")
 		}
 		// Check for bound consumers.
 		if consumer != _EMPTY_ {
-			return nil, fmt.Errorf("nats: can not bind existing consumer for an ordered consumer")
+			return nil, errors.New("nats: can not bind existing consumer for an ordered consumer")
 		}
 		// Check for pull mode.
 		if isPullMode {
-			return nil, fmt.Errorf("nats: can not use pull mode for an ordered consumer")
+			return nil, errors.New("nats: can not use pull mode for an ordered consumer")
 		}
 		// Setup how we need it to be here.
 		o.cfg.FlowControl = true
@@ -2425,7 +2425,7 @@ func Description(description string) SubOpt {
 func Durable(consumer string) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		if opts.cfg.Durable != _EMPTY_ {
-			return fmt.Errorf("nats: option Durable set more than once")
+			return errors.New("nats: option Durable set more than once")
 		}
 		if opts.consumer != _EMPTY_ && opts.consumer != consumer {
 			return fmt.Errorf("nats: duplicate consumer names (%s and %s)", opts.consumer, consumer)
@@ -3950,7 +3950,7 @@ func (alg StoreCompression) MarshalJSON() ([]byte, error) {
 	case NoCompression:
 		str = "none"
 	default:
-		return nil, fmt.Errorf("unknown compression algorithm")
+		return nil, errors.New("unknown compression algorithm")
 	}
 	return json.Marshal(str)
 }
@@ -3966,7 +3966,7 @@ func (alg *StoreCompression) UnmarshalJSON(b []byte) error {
 	case "none":
 		*alg = NoCompression
 	default:
-		return fmt.Errorf("unknown compression algorithm")
+		return errors.New("unknown compression algorithm")
 	}
 	return nil
 }

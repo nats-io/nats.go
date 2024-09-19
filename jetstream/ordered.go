@@ -747,7 +747,7 @@ func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
 	// if custom backoff is set, use it instead of other options
 	if len(opts.customBackoff) > 0 {
 		if opts.attempts != 0 {
-			return fmt.Errorf("cannot use custom backoff intervals when attempts are set")
+			return errors.New("cannot use custom backoff intervals when attempts are set")
 		}
 		for i, interval := range opts.customBackoff {
 			select {
@@ -774,7 +774,7 @@ func retryWithBackoff(f func(int) (bool, error), opts backoffOpts) error {
 		opts.maxInterval = 1 * time.Minute
 	}
 	if opts.attempts == 0 {
-		return fmt.Errorf("retry attempts have to be set when not using custom backoff intervals")
+		return errors.New("retry attempts have to be set when not using custom backoff intervals")
 	}
 	interval := opts.initialInterval
 	for i := 0; ; i++ {

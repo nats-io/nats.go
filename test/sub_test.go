@@ -1319,10 +1319,10 @@ func TestSetPendingLimits(t *testing.T) {
 	// Check for invalid values
 	invalid := func() error {
 		if err := sub.SetPendingLimits(0, 1); err == nil {
-			return fmt.Errorf("Setting limit with 0 should fail")
+			return errors.New("Setting limit with 0 should fail")
 		}
 		if err := sub.SetPendingLimits(1, 0); err == nil {
-			return fmt.Errorf("Setting limit with 0 should fail")
+			return errors.New("Setting limit with 0 should fail")
 		}
 		return nil
 	}

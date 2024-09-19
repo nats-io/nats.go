@@ -971,7 +971,7 @@ func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, err
 
 func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset {
-		return fmt.Errorf("only one of MaxMessages and MaxBytes can be specified")
+		return errors.New("only one of MaxMessages and MaxBytes can be specified")
 	}
 	if consumeOpts.MaxBytes != unset {
 		// when max_bytes is used, set batch size to a very large number
@@ -1007,7 +1007,7 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
-		return fmt.Errorf("the value of Heartbeat must be less than 50%% of expiry")
+		return errors.New("the value of Heartbeat must be less than 50%% of expiry")
 	}
 	return nil
 }

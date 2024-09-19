@@ -14,6 +14,7 @@
 package test
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -225,7 +226,7 @@ func TestDrainSlowSubscriber(t *testing.T) {
 		// Wait for it to become invalid. Once drained it is unsubscribed.
 		_, _, err := sub.Pending()
 		if err != nats.ErrBadSubscription {
-			return fmt.Errorf("Still valid")
+			return errors.New("Still valid")
 		}
 		r := int(atomic.LoadInt32(&received))
 		if r != total {
@@ -478,7 +479,7 @@ func TestDrainConnDuringReconnect(t *testing.T) {
 		if nc.IsReconnecting() {
 			return nil
 		}
-		return fmt.Errorf("Not reconnecting yet")
+		return errors.New("Not reconnecting yet")
 	})
 
 	// This should work correctly.
