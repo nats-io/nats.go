@@ -7,8 +7,8 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 [License-Image]: https://img.shields.io/badge/License-Apache2-blue.svg
 [ReportCard-Url]: https://goreportcard.com/report/github.com/nats-io/nats.go
 [ReportCard-Image]: https://goreportcard.com/badge/github.com/nats-io/nats.go
-[Build-Status-Url]: https://travis-ci.com/github/nats-io/nats.go
-[Build-Status-Image]: https://travis-ci.com/nats-io/nats.go.svg?branch=main
+[Build-Status-Url]: https://github.com/nats-io/nats.go/actions
+[Build-Status-Image]: https://github.com/nats-io/nats.go/actions/workflows/ci.yaml/badge.svg?branch=main
 [GoDoc-Url]: https://pkg.go.dev/github.com/nats-io/nats.go
 [GoDoc-Image]: https://img.shields.io/badge/GoDoc-reference-007d9c
 [Coverage-Url]: https://coveralls.io/r/nats-io/nats.go?branch=main
