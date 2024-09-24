@@ -206,35 +206,69 @@ Service IDs can be discovered by:
 ```sh
 nats req '$SRV.PING.EchoService' '' --replies=3
 
-8:59:41 Sending request on "$SRV.PING.EchoService"
-18:59:41 Received with rtt 688.042µs
-{"name":"EchoService","id":"tNoopzL5Sp1M4qJZdhdxqC","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
+13:03:04 Sending request on "$SRV.PING.EchoService"
+13:03:04 Received with rtt 1.302208ms
+{"name":"EchoService","id":"x3Yuiq7g7MoxhXdxk7i4K7","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
 
-18:59:41 Received with rtt 704.167µs
-{"name":"EchoService","id":"tNoopzL5Sp1M4qJZdhdxvO","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
+13:03:04 Received with rtt 1.317ms
+{"name":"EchoService","id":"x3Yuiq7g7MoxhXdxk7i4Kt","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
 
-18:59:41 Received with rtt 707.875µs
-{"name":"EchoService","id":"tNoopzL5Sp1M4qJZdhdy0a","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
+13:03:04 Received with rtt 1.320291ms
+{"name":"EchoService","id":"x3Yuiq7g7MoxhXdxk7i4Lf","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.ping_response"}
 ```
 
 A specific service instance info can be retrieved:
 
 ```sh
-nats req '$SRV.INFO.EchoService.tNoopzL5Sp1M4qJZdhdxqC' ''
+nats req '$SRV.INFO.EchoService.x3Yuiq7g7MoxhXdxk7i4K7' '' | jq
 
-19:40:06 Sending request on "$SRV.INFO.EchoService.tNoopzL5Sp1M4qJZdhdxqC"
-19:40:06 Received with rtt 282.375µs
-{"name":"EchoService","id":"tNoopzL5Sp1M4qJZdhdxqC","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.info_response","description":"","subjects":["svc.echo"]}
+13:04:19 Sending request on "$SRV.INFO.EchoService.x3Yuiq7g7MoxhXdxk7i4K7"
+13:04:19 Received with rtt 318.875µs
+{
+  "name": "EchoService",
+  "id": "x3Yuiq7g7MoxhXdxk7i4K7",
+  "version": "1.0.0",
+  "metadata": {},
+  "type": "io.nats.micro.v1.info_response",
+  "description": "",
+  "endpoints": [
+    {
+      "name": "default",
+      "subject": "svc.echo",
+      "queue_group": "q",
+      "metadata": null
+    }
+  ]
+}
 ```
 
 To get statistics for this service:
 
 ```sh
-nats req '$SRV.STATS.EchoService.tNoopzL5Sp1M4qJZdhdxqC' ''
+nats req '$SRV.STATS.EchoService.x3Yuiq7g7MoxhXdxk7i4K7' '' | jq
 
-19:40:47 Sending request on "$SRV.STATS.EchoService.tNoopzL5Sp1M4qJZdhdxqC"
-19:40:47 Received with rtt 421.666µs
-{"name":"EchoService","id":"tNoopzL5Sp1M4qJZdhdxqC","version":"1.0.0","metadata":{},"type":"io.nats.micro.v1.stats_response","started":"2023-05-22T16:59:39.938514Z","endpoints":[{"name":"default","subject":"svc.echo","metadata":null,"num_requests":0,"num_errors":0,"last_error":"","processing_time":0,"average_processing_time":0}]}
+13:04:46 Sending request on "$SRV.STATS.EchoService.x3Yuiq7g7MoxhXdxk7i4K7"
+13:04:46 Received with rtt 678.25µs
+{
+  "name": "EchoService",
+  "id": "x3Yuiq7g7MoxhXdxk7i4K7",
+  "version": "1.0.0",
+  "metadata": {},
+  "type": "io.nats.micro.v1.stats_response",
+  "started": "2024-09-24T11:02:55.564771Z",
+  "endpoints": [
+    {
+      "name": "default",
+      "subject": "svc.echo",
+      "queue_group": "q",
+      "num_requests": 0,
+      "num_errors": 0,
+      "last_error": "",
+      "processing_time": 0,
+      "average_processing_time": 0
+    }
+  ]
+}
 ```
 
 ## Examples
