@@ -402,7 +402,9 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 			c.currentConsumer.Unlock()
 			return nil, ErrOrderedConsumerConcurrentRequests
 		}
-		c.cursor.streamSeq = c.runningFetch.sseq
+		if c.runningFetch.sseq != 0 {
+			c.cursor.streamSeq = c.runningFetch.sseq
+		}
 	}
 	c.currentConsumer.Unlock()
 	c.consumerType = consumerTypeFetch
@@ -438,7 +440,9 @@ func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBat
 		if !c.runningFetch.done {
 			return nil, ErrOrderedConsumerConcurrentRequests
 		}
-		c.cursor.streamSeq = c.runningFetch.sseq
+		if c.runningFetch.sseq != 0 {
+			c.cursor.streamSeq = c.runningFetch.sseq
+		}
 	}
 	c.consumerType = consumerTypeFetch
 	sub := orderedSubscription{
