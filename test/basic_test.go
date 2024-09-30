@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2024 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,6 +16,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -799,105 +800,232 @@ func TestRequestCloseTimeout(t *testing.T) {
 }
 
 func TestRequestMany(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	f := []string{"RequestMany", "RequestManyMsg"}
 
-	nc, err := nats.Connect(s.ClientURL(), nats.Timeout(400*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
+	for _, name := range f {
+		t.Run(name, func(t *testing.T) {
 
-	response := []byte("I will help you")
-	for i := 0; i < 5; i++ {
-		sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
-			nc.Publish(m.Reply, response)
-		})
-		if err != nil {
-			t.Fatalf("Received an error on subscribe: %s", err)
-		}
-		defer sub.Unsubscribe()
-	}
+			s := RunDefaultServer()
+			defer s.Shutdown()
 
-	tests := []struct {
-		name         string
-		subject      string
-		opts         []nats.RequestManyOpt
-		minTime      time.Duration
-		expectedMsgs int
-	}{
-		{
-			name:         "default",
-			subject:      "foo",
-			opts:         nil,
-			minTime:      300 * time.Millisecond,
-			expectedMsgs: 5,
-		},
-		{
-			name:    "with max wait",
-			subject: "foo",
-			opts: []nats.RequestManyOpt{
-				nats.WithRequestManyMaxWait(500 * time.Millisecond),
-			},
-			minTime:      500 * time.Millisecond,
-			expectedMsgs: 5,
-		},
-		{
-			name:    "with count reached",
-			subject: "foo",
-			opts: []nats.RequestManyOpt{
-				nats.WithRequestManyCount(3),
-			},
-			minTime:      0,
-			expectedMsgs: 3,
-		},
-		{
-			name:    "with max wait and limit",
-			subject: "foo",
-			opts: []nats.RequestManyOpt{
-				nats.WithRequestManyMaxWait(500 * time.Millisecond),
-				nats.WithRequestManyCount(3),
-			},
-			minTime:      0,
-			expectedMsgs: 3,
-		},
-		{
-			name:    "with count timeout",
-			subject: "foo",
-			opts: []nats.RequestManyOpt{
-				nats.WithRequestManyCount(6),
-			},
-			minTime:      300 * time.Millisecond,
-			expectedMsgs: 5,
-		},
-		{
-			name:    "with no responses",
-			subject: "bar",
-			minTime: 300,
-			// no responders
-			expectedMsgs: 1,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			now := time.Now()
-			msgs, err := nc.RequestMany(test.subject, nil, test.opts...)
+			nc, err := nats.Connect(s.ClientURL(), nats.Timeout(400*time.Millisecond))
 			if err != nil {
-				t.Fatalf("Received an error on Request test: %s", err)
+				t.Fatalf("Failed to connect: %v", err)
+			}
+			defer nc.Close()
+
+			tests := []struct {
+				name         string
+				subject      string
+				opts         []nats.RequestManyOpt
+				minTime      time.Duration
+				expectedMsgs int
+				withError    error
+			}{
+				{
+					name:         "default, only max wait",
+					subject:      "foo",
+					opts:         nil,
+					minTime:      400 * time.Millisecond,
+					expectedMsgs: 6,
+				},
+				{
+					name:    "with stall, short circuit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyStallTimer(100*time.Millisecond, 50*time.Millisecond),
+					},
+					minTime:      50 * time.Millisecond,
+					expectedMsgs: 5,
+				},
+				{
+					name:    "with custom wait",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(500 * time.Millisecond),
+					},
+					minTime:      500 * time.Millisecond,
+					expectedMsgs: 6,
+				},
+				{
+					name:    "with count reached",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxMessages(3),
+					},
+					minTime:      0,
+					expectedMsgs: 3,
+				},
+				{
+					name:    "with max wait and limit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(500 * time.Millisecond),
+						nats.RequestManyMaxMessages(3),
+					},
+					minTime:      0,
+					expectedMsgs: 3,
+				},
+				{
+					name:    "with count timeout",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxMessages(10),
+					},
+					minTime:      400 * time.Millisecond,
+					expectedMsgs: 6,
+				},
+				{
+					name:    "sentinel",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManySentinel(),
+					},
+					minTime:      100 * time.Millisecond,
+					expectedMsgs: 5,
+				},
+				{
+					name:    "all options provided, stall timer short circuit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(500 * time.Millisecond),
+						nats.RequestManyStallTimer(100*time.Millisecond, 50*time.Millisecond),
+						nats.RequestManyMaxMessages(10),
+						nats.RequestManySentinel(),
+					},
+					minTime:      50 * time.Millisecond,
+					expectedMsgs: 5,
+				},
+				{
+					name:    "all options provided, msg count short circuit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(500 * time.Millisecond),
+						nats.RequestManyStallTimer(100*time.Millisecond, 50*time.Millisecond),
+						nats.RequestManyMaxMessages(3),
+						nats.RequestManySentinel(),
+					},
+					minTime:      0,
+					expectedMsgs: 3,
+				},
+				{
+					name:    "all options provided, max wait short circuit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(50 * time.Millisecond),
+						nats.RequestManyStallTimer(100*time.Millisecond, 100*time.Millisecond),
+						nats.RequestManyMaxMessages(10),
+						nats.RequestManySentinel(),
+					},
+					minTime:      0,
+					expectedMsgs: 5,
+				},
+				{
+					name:    "all options provided, sentinel short circuit",
+					subject: "foo",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(500 * time.Millisecond),
+						nats.RequestManyStallTimer(100*time.Millisecond, 150*time.Millisecond),
+						nats.RequestManyMaxMessages(10),
+						nats.RequestManySentinel(),
+					},
+					minTime:      100 * time.Millisecond,
+					expectedMsgs: 5,
+				},
+				{
+					name:    "with no responses",
+					subject: "bar",
+					minTime: 400 * time.Millisecond,
+					// no responders
+					expectedMsgs: 1,
+				},
+				{
+					name: "invalid options - max wait",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxWait(-1),
+					},
+					subject:   "foo",
+					withError: nats.ErrInvalidArg,
+				},
+				{
+					name: "invalid options - stall timer initial",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyStallTimer(-1, 100*time.Millisecond),
+					},
+					subject:   "foo",
+					withError: nats.ErrInvalidArg,
+				},
+				{
+					name: "invalid options - stall timer interval",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyStallTimer(100*time.Millisecond, -1),
+					},
+					subject:   "foo",
+					withError: nats.ErrInvalidArg,
+				},
+				{
+					name: "invalid options - max messages",
+					opts: []nats.RequestManyOpt{
+						nats.RequestManyMaxMessages(-1),
+					},
+					subject:   "foo",
+					withError: nats.ErrInvalidArg,
+				},
 			}
 
-			var i int
-			for msg := range msgs {
-				fmt.Println(string(msg.Data))
-				fmt.Println(msg.Header)
-				i++
-			}
-			if i != test.expectedMsgs {
-				t.Fatalf("Expected %d messages, got %d", test.expectedMsgs, i)
-			}
-			if time.Since(now) < test.minTime || time.Since(now) > test.minTime+100*time.Millisecond {
-				t.Fatalf("Expected to receive all messages between %v and %v, got %v", test.minTime, test.minTime+100*time.Millisecond, time.Since(now))
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					response := []byte("I will help you")
+					for i := 0; i < 5; i++ {
+						sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
+							nc.Publish(m.Reply, response)
+						})
+						if err != nil {
+							t.Fatalf("Received an error on subscribe: %s", err)
+						}
+						defer sub.Unsubscribe()
+					}
+					// after short delay, send sentinel (should come in last)
+					sub, err := nc.Subscribe("foo", func(m *nats.Msg) {
+						time.Sleep(100 * time.Millisecond)
+						nc.Publish(m.Reply, []byte(""))
+					})
+					if err != nil {
+						t.Fatalf("Received an error on subscribe: %s", err)
+					}
+					defer sub.Unsubscribe()
+
+					now := time.Now()
+					var msgs *nats.RequestManyResponse
+					if name == "RequestMany" {
+						msgs, err = nc.RequestMany(test.subject, nil, test.opts...)
+					} else {
+						msgs, err = nc.RequestManyMsg(&nats.Msg{Subject: test.subject}, test.opts...)
+					}
+					if test.withError != nil {
+						if !errors.Is(err, test.withError) {
+							t.Fatalf("Expected error %v, got %v", test.withError, err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("Received an error on Request test: %s", err)
+					}
+
+					var i int
+					for _ = range msgs.Msgs {
+						i++
+					}
+					if msgs.Err != nil {
+						t.Fatalf("Received an error on Request test: %s", msgs.Err)
+					}
+					if i != test.expectedMsgs {
+						t.Fatalf("Expected %d messages, got %d", test.expectedMsgs, i)
+					}
+					if time.Since(now) < test.minTime || time.Since(now) > test.minTime+100*time.Millisecond {
+						t.Fatalf("Expected to receive all messages between %v and %v, got %v", test.minTime, test.minTime+100*time.Millisecond, time.Since(now))
+					}
+				})
 			}
 		})
 	}
