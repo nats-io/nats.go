@@ -122,7 +122,8 @@ type (
 	// to operate on a stream.
 	StreamManager interface {
 		// CreateStream creates a new stream with given config and returns an
-		// interface to operate on it. If stream with given name already exists,
+		// interface to operate on it. If stream with given name already exists
+		// and its configuration differs from the provided one,
 		// ErrStreamNameAlreadyInUse is returned.
 		CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
