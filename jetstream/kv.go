@@ -123,6 +123,7 @@ type (
 
 		// Update will update the value if the latest revision matches.
 		// If the provided revision is not the latest, Update will return an error.
+		// Update also resets the TTL associated with the key (if any).
 		Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
 
 		// Delete will place a delete marker and leave all revisions. A history
