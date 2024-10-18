@@ -1839,7 +1839,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		ocb := cb
 		cb = func(m *Msg) { ocb(m); m.Ack() }
 	}
-	sub, err := nc.subscribe(deliver, queue, cb, ch, isSync, jsi)
+	sub, err := nc.subscribe(deliver, queue, cb, ch, nil, isSync, jsi)
 	if err != nil {
 		return nil, err
 	}
@@ -1910,7 +1910,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				jsi.hbi = info.Config.Heartbeat
 
 				// Recreate the subscription here.
-				sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, isSync, jsi)
+				sub, err = nc.subscribe(jsi.deliver, queue, cb, ch, nil, isSync, jsi)
 				if err != nil {
 					return nil, err
 				}

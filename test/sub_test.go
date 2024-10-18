@@ -1770,3 +1770,92 @@ func TestMaxSubscriptionsExceeded(t *testing.T) {
 	// wait for the server to process the SUBs
 	time.Sleep(100 * time.Millisecond)
 }
+
+func TestSubscribeSyncPermissionError(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+	listen: 127.0.0.1:-1
+	authorization: {
+		users = [
+			{
+				user: test
+				password: test
+				permissions: {
+					subscribe: {
+						deny: "foo"
+					}
+				}
+			}
+		]
+	}
+`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	t.Run("PermissionErrOnSubscribe enabled", func(t *testing.T) {
+
+		nc, err := nats.Connect(s.ClientURL(),
+			nats.UserInfo("test", "test"),
+			nats.PermissionErrOnSubscribe(true),
+			nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		subs := make([]*nats.Subscription, 0, 100)
+		for i := 0; i < 10; i++ {
+			var subject string
+			if i%2 == 0 {
+				subject = "foo"
+			} else {
+				subject = "bar"
+			}
+			sub, err := nc.SubscribeSync(subject)
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			subs = append(subs, sub)
+		}
+
+		for _, sub := range subs {
+			_, err = sub.NextMsg(100 * time.Millisecond)
+			if sub.Subject == "foo" {
+				if !errors.Is(err, nats.ErrPermissionViolation) {
+					t.Fatalf("Expected permissions violation error, got %v", err)
+				}
+				// subsequent calls should return the same error
+				_, err = sub.NextMsg(100 * time.Millisecond)
+				if !errors.Is(err, nats.ErrPermissionViolation) {
+					t.Fatalf("Expected permissions violation error, got %v", err)
+				}
+			} else {
+				if !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("Expected timeout error, got %v", err)
+				}
+			}
+		}
+	})
+
+	t.Run("PermissionErrOnSubscribe disabled", func(t *testing.T) {
+		nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("test", "test"))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		// Cause a subscribe error
+		sub, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		_, err = sub.NextMsg(100 * time.Millisecond)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error, got %v", err)
+		}
+	})
+}
