@@ -16,6 +16,7 @@ package test
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1736,4 +1737,36 @@ func TestSubscriptionEvents(t *testing.T) {
 		// do not read from subscription
 		close(blockChan)
 	})
+}
+
+func TestMaxSubscriptionsExceeded(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+	listen: 127.0.0.1:-1
+	max_subscriptions: 5
+	`))
+	defer os.Remove(conf)
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	ch := make(chan error)
+	nc, err := nats.Connect(s.ClientURL(), nats.ErrorHandler(func(c *nats.Conn, s *nats.Subscription, err error) {
+		ch <- err
+	}))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	for i := 0; i < 6; i++ {
+		s, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer s.Unsubscribe()
+	}
+
+	WaitOnChannel(t, ch, nats.ErrMaxSubscriptionsExceeded)
+
+	// wait for the server to process the SUBs
+	time.Sleep(100 * time.Millisecond)
 }
