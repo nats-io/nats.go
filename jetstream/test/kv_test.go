@@ -965,6 +965,102 @@ func TestKeyValueListKeys(t *testing.T) {
 	}
 }
 
+func TestKeysWithFilters(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
+	expectOk(t, err)
+
+	put := func(key, value string) {
+		t.Helper()
+		_, err := kv.Put(ctx, key, []byte(value))
+		expectOk(t, err)
+	}
+
+	// Put in a few key-value pairs.
+	put("apple", "fruit")
+	put("banana", "fruit")
+	put("carrot", "vegetable")
+
+	// Retrieve all keys without filters.
+	_, err = kv.KeysWithFilters(ctx, nil)
+	expectOk(t, err)
+
+	// Test with a filter (only keys containing "pp").
+	filteredKeys, err := kv.KeysWithFilters(ctx, []string{"pp"})
+	expectOk(t, err)
+
+	if len(filteredKeys) != 1 {
+		t.Fatalf("Expected 1 filtered key, got %d", len(filteredKeys))
+	}
+
+	expectedFiltered := []string{"apple"}
+	for _, key := range expectedFiltered {
+		if !contains(filteredKeys, key) {
+			t.Fatalf("Expected filtered key %s to be present", key)
+		}
+	}
+}
+
+func TestListKeysWithFilters(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
+	expectOk(t, err)
+
+	put := func(key, value string) {
+		t.Helper()
+		_, err := kv.Put(ctx, key, []byte(value))
+		expectOk(t, err)
+	}
+
+	// Put in a few key-value pairs.
+	put("apple", "fruit")
+	put("banana", "fruit")
+	put("carrot", "vegetable")
+
+	// Retrieve filtered keys (only keys containing "pp").
+	keyLister, err := kv.ListKeysWithFilters(ctx, []string{"pp"})
+	expectOk(t, err)
+
+	var filteredKeys []string
+	for key := range keyLister.Keys() {
+		filteredKeys = append(filteredKeys, key)
+	}
+
+	if len(filteredKeys) != 1 {
+		t.Fatalf("Expected 1 filtered key, got %d", len(filteredKeys))
+	}
+
+	expectedFiltered := []string{"apple"}
+	for _, key := range expectedFiltered {
+		if !contains(filteredKeys, key) {
+			t.Fatalf("Expected filtered key %s to be present", key)
+		}
+	}
+}
+
+func contains(slice []string, key string) bool {
+	for _, k := range slice {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 func TestKeyValueCrossAccounts(t *testing.T) {
 	conf := createConfFile(t, []byte(`
 		listen: 127.0.0.1:-1
