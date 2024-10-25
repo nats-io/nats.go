@@ -140,6 +140,7 @@ var (
 	ErrNoResponders                = errors.New("nats: no responders available for request")
 	ErrMaxConnectionsExceeded      = errors.New("nats: server maximum connections exceeded")
 	ErrConnectionNotTLS            = errors.New("nats: connection is not tls")
+	ErrBadInboxLength              = errors.New("nats: invalid inbox length")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -4029,6 +4030,43 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	return mch, token, nil
 }
 
+func (nc *Conn) createNewRequestAndSendInbox(subj string, respInbox string, hdr, data []byte) (chan *Msg, string, error) {
+	nc.mu.Lock()
+	// Check respInbox length
+	if len(respInbox) < nc.respSubLen {
+		nc.mu.Unlock()
+		return nil, _EMPTY_, ErrBadInboxLength
+	}
+
+	// Do setup for the new style if needed.
+	if nc.respMap == nil {
+		nc.initNewResp()
+	}
+	// Create new literal Inbox and map to a chan msg.
+	mch := make(chan *Msg, RequestChanLen)
+	token := respInbox[nc.respSubLen:]
+
+	nc.respMap[token] = mch
+	if nc.respMux == nil {
+		// Create the response subscription we will use for all new style responses.
+		// This will be on an _INBOX with an additional terminal token. The subscription
+		// will be on a wildcard.
+		s, err := nc.subscribeLocked(nc.respSub, _EMPTY_, nc.respHandler, nil, false, nil)
+		if err != nil {
+			nc.mu.Unlock()
+			return nil, token, err
+		}
+		nc.respMux = s
+	}
+	nc.mu.Unlock()
+
+	if err := nc.publish(subj, respInbox, hdr, data); err != nil {
+		return nil, token, err
+	}
+
+	return mch, token, nil
+}
+
 // RequestMsg will send a request payload including optional headers and deliver
 // the response message, or an error, including a timeout if no message was received properly.
 func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
@@ -4041,6 +4079,18 @@ func (nc *Conn) RequestMsg(msg *Msg, timeout time.Duration) (*Msg, error) {
 	}
 
 	return nc.request(msg.Subject, hdr, msg.Data, timeout)
+}
+
+func (nc *Conn) RequestMsgInbox(msg *Msg, timeout time.Duration) (*Msg, error) {
+	if msg == nil {
+		return nil, ErrInvalidMsg
+	}
+	hdr, err := msg.headerBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	return nc.requestinbox(msg.Subject, msg.Reply, hdr, msg.Data, timeout)
 }
 
 // Request will send a request payload and deliver the response message,
@@ -4075,6 +4125,50 @@ func (nc *Conn) request(subj string, hdr, data []byte, timeout time.Duration) (*
 		m, err = nil, ErrNoResponders
 	}
 	return m, err
+}
+
+func (nc *Conn) requestinbox(subj string, inbox string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
+	if nc == nil {
+		return nil, ErrInvalidConnection
+	}
+
+	var m *Msg
+	var err error
+
+	m, err = nc.newRequestInbox(subj, inbox, hdr, data, timeout)
+
+	// Check for no responder status.
+	if err == nil && len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
+		m, err = nil, ErrNoResponders
+	}
+	return m, err
+}
+
+func (nc *Conn) newRequestInbox(subj string, inbox string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
+	mch, token, err := nc.createNewRequestAndSendInbox(subj, inbox, hdr, data)
+	if err != nil {
+		return nil, err
+	}
+
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
+
+	var ok bool
+	var msg *Msg
+
+	select {
+	case msg, ok = <-mch:
+		if !ok {
+			return nil, ErrConnectionClosed
+		}
+	case <-t.C:
+		nc.mu.Lock()
+		delete(nc.respMap, token)
+		nc.mu.Unlock()
+		return nil, ErrTimeout
+	}
+
+	return msg, nil
 }
 
 func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
