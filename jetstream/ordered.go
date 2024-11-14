@@ -604,6 +604,7 @@ func (c *orderedConsumer) getConsumerConfig() *ConsumerConfig {
 		Replicas:          1,
 		HeadersOnly:       c.cfg.HeadersOnly,
 		MemoryStorage:     true,
+		Metadata:          c.cfg.Metadata,
 	}
 	if len(c.cfg.FilterSubjects) == 1 {
 		cfg.FilterSubject = c.cfg.FilterSubjects[0]

@@ -263,6 +263,11 @@ type (
 		// Maximum number of attempts for the consumer to be recreated in a
 		// single recreation cycle. Defaults to unlimited.
 		MaxResetAttempts int
+
+		// Metadata is a set of application-defined key-value pairs for
+		// associating metadata on the consumer. This feature requires
+		// nats-server v2.10.0 or later.
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// DeliverPolicy determines from which point to start delivering messages.
