@@ -631,17 +631,15 @@ func (c *orderedConsumer) getConsumerConfig() *ConsumerConfig {
 		c.cfg.DeliverPolicy == DeliverAllPolicy {
 
 		cfg.OptStartSeq = 0
+	} else if c.cfg.DeliverPolicy == DeliverByStartTimePolicy {
+		cfg.OptStartSeq = 0
+		cfg.OptStartTime = c.cfg.OptStartTime
 	} else {
 		cfg.OptStartSeq = c.cfg.OptStartSeq
 	}
 
 	if cfg.DeliverPolicy == DeliverLastPerSubjectPolicy && len(c.cfg.FilterSubjects) == 0 {
 		cfg.FilterSubjects = []string{">"}
-	}
-	if c.cfg.OptStartTime != nil {
-		cfg.OptStartSeq = 0
-		cfg.DeliverPolicy = DeliverByStartTimePolicy
-		cfg.OptStartTime = c.cfg.OptStartTime
 	}
 
 	return cfg
