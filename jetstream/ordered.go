@@ -600,14 +600,16 @@ func (c *orderedConsumer) getConsumerConfig() *ConsumerConfig {
 	}
 	name := fmt.Sprintf("%s_%d", c.namePrefix, c.serial)
 	cfg := &ConsumerConfig{
-		Name:              name,
-		DeliverPolicy:     DeliverByStartSequencePolicy,
-		OptStartSeq:       nextSeq,
-		AckPolicy:         AckNonePolicy,
-		InactiveThreshold: 5 * time.Minute,
-		Replicas:          1,
-		HeadersOnly:       c.cfg.HeadersOnly,
-		MemoryStorage:     true,
+		Name:               name,
+		DeliverPolicy:      DeliverByStartSequencePolicy,
+		OptStartSeq:        nextSeq,
+		AckPolicy:          AckNonePolicy,
+		InactiveThreshold:  5 * time.Minute,
+		Replicas:           1,
+		HeadersOnly:        c.cfg.HeadersOnly,
+		MemoryStorage:      true,
+		MaxRequestMaxBytes: c.cfg.MaxRequestMaxBytes,
+		Metadata:           c.cfg.Metadata,
 	}
 	if len(c.cfg.FilterSubjects) == 1 {
 		cfg.FilterSubject = c.cfg.FilterSubjects[0]

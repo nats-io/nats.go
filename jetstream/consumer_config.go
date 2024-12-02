@@ -263,6 +263,16 @@ type (
 		// Maximum number of attempts for the consumer to be recreated in a
 		// single recreation cycle. Defaults to unlimited.
 		MaxResetAttempts int
+
+		// MaxRequestMaxBytes is the optional maximum total bytes that can be
+		// requested in a given batch. When set with MaxRequestBatch, the batch
+		// size will be constrained by whichever limit is hit first.
+		MaxRequestMaxBytes int `json:"max_bytes,omitempty"`
+
+		// Metadata is a set of application-defined key-value pairs for
+		// associating metadata on the consumer. This feature requires
+		// nats-server v2.10.0 or later.
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// DeliverPolicy determines from which point to start delivering messages.
