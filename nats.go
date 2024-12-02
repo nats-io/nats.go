@@ -3642,9 +3642,6 @@ func (nc *Conn) processAsyncInfo(info []byte) {
 // It can be used reliably within ClosedCB in order to find out reason
 // why connection was closed for example.
 func (nc *Conn) LastError() error {
-	if nc == nil {
-		return ErrInvalidConnection
-	}
 	nc.mu.RLock()
 	err := nc.err
 	nc.mu.RUnlock()
@@ -3878,9 +3875,6 @@ const digits = "0123456789"
 // Sends a protocol data message by queuing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
 func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
-	if nc == nil {
-		return ErrInvalidConnection
-	}
 	if subj == "" {
 		return ErrBadSubject
 	}
@@ -4086,10 +4080,6 @@ func (nc *Conn) useOldRequestStyle() bool {
 }
 
 func (nc *Conn) request(subj string, hdr, data []byte, timeout time.Duration) (*Msg, error) {
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
-
 	var m *Msg
 	var err error
 
@@ -4269,9 +4259,6 @@ func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscript
 // SubscribeSync will express interest on the given subject. Messages will
 // be received synchronously using Subscription.NextMsg().
 func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
 	mch := make(chan *Msg, nc.Opts.SubChanLen)
 	return nc.subscribe(subj, _EMPTY_, nil, mch, true, nil)
 }
@@ -4325,18 +4312,12 @@ func badQueue(qname string) bool {
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
 func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, js *jsSub) (*Subscription, error) {
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	return nc.subscribeLocked(subj, queue, cb, ch, isSync, js)
 }
 
 func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, isSync bool, js *jsSub) (*Subscription, error) {
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
 	if badSubject(subj) {
 		return nil, ErrBadSubject
 	}
@@ -5149,9 +5130,6 @@ func (nc *Conn) processPingTimer() {
 
 // FlushTimeout allows a Flush operation to have an associated timeout.
 func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
-	if nc == nil {
-		return ErrInvalidConnection
-	}
 	if timeout <= 0 {
 		return ErrBadTimeout
 	}

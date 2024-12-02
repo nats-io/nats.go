@@ -41,9 +41,6 @@ func (nc *Conn) requestWithContext(ctx context.Context, subj string, hdr, data [
 	if ctx == nil {
 		return nil, ErrInvalidContext
 	}
-	if nc == nil {
-		return nil, ErrInvalidConnection
-	}
 	// Check whether the context is done already before making
 	// the request.
 	if ctx.Err() != nil {
@@ -172,9 +169,6 @@ func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 // of a Flush() call. This context should be non-nil and should
 // have a deadline set. We will return an error if none is present.
 func (nc *Conn) FlushWithContext(ctx context.Context) error {
-	if nc == nil {
-		return ErrInvalidConnection
-	}
 	if ctx == nil {
 		return ErrInvalidContext
 	}
