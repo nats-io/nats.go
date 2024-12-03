@@ -19,25 +19,14 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 ## Installation
 
 ```bash
-# Go client
-go get github.com/nats-io/nats.go/
+# To get the latest released Go client:
+go get github.com/nats-io/nats.go@latest
 
-# Server
-go get github.com/nats-io/nats-server
-```
+# To get a specific version:
+go get github.com/nats-io/nats.go@v1.37.0
 
-When using or transitioning to Go modules support:
-
-```bash
-# Go client latest or explicit version
-go get github.com/nats-io/nats.go/@latest
-go get github.com/nats-io/nats.go/@v1.37.0
-
-# For latest NATS Server, add /v2 at the end
-go get github.com/nats-io/nats-server/v2
-
-# NATS Server v1 is installed otherwise
-# go get github.com/nats-io/nats-server
+# Note that the latest major version for NATS Server is v2:
+go get github.com/nats-io/nats-server/v2@latest
 ```
 
 ## Basic Usage
