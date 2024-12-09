@@ -205,6 +205,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	p.Unlock()
 
 	internalHandler := func(msg *nats.Msg) {
+		if msg.Header == nil {
+			msg.Header = make(nats.Header)
+		}
 		if sub.hbMonitor != nil {
 			sub.hbMonitor.Stop()
 		}
@@ -781,6 +784,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 			select {
 			case msg := <-msgs:
 				p.Lock()
+				if msg.Header == nil {
+					msg.Header = make(nats.Header)
+				}
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
