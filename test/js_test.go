@@ -10788,3 +10788,83 @@ func TestJetStreamTransform(t *testing.T) {
 	}
 
 }
+
+func TestPullConsumerFetchRace(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := js.Publish("FOO.123", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+	}
+	sub, err := js.PullSubscribe("FOO.123", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cons, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msgs, err := sub.FetchBatch(5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	errCh := make(chan error)
+	go func() {
+		for {
+			err := msgs.Error()
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	deleteErrCh := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		if err := js.DeleteConsumer("foo", cons.Name); err != nil {
+			deleteErrCh <- err
+		}
+		close(deleteErrCh)
+	}()
+
+	var i int
+	for msg := range msgs.Messages() {
+		if string(msg.Data) != fmt.Sprintf("msg-%d", i) {
+			t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, fmt.Sprintf("msg-%d", i), string(msg.Data))
+		}
+		i++
+	}
+	if i != 3 {
+		t.Fatalf("Invalid number of messages received; want: %d; got: %d", 5, i)
+	}
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, nats.ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrConsumerDeleted, err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrConsumerDeleted, nil)
+	}
+
+	// wait until the consumer is deleted, otherwise we may close the connection
+	// before the consumer delete response is received
+	select {
+	case ert, ok := <-deleteErrCh:
+		if !ok {
+			break
+		}
+		t.Fatalf("Error deleting consumer: %s", ert)
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Expected done to be closed")
+	}
+}

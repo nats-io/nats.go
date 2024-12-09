@@ -3114,20 +3114,27 @@ type MessageBatch interface {
 }
 
 type messageBatch struct {
+	sync.Mutex
 	msgs chan *Msg
 	err  error
 	done chan struct{}
 }
 
 func (mb *messageBatch) Messages() <-chan *Msg {
+	mb.Lock()
+	defer mb.Unlock()
 	return mb.msgs
 }
 
 func (mb *messageBatch) Error() error {
+	mb.Lock()
+	defer mb.Unlock()
 	return mb.err
 }
 
 func (mb *messageBatch) Done() <-chan struct{} {
+	mb.Lock()
+	defer mb.Unlock()
 	return mb.done
 }
 
@@ -3302,12 +3309,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	}
 	var hbTimer *time.Timer
 	var hbErr error
-	hbLock := sync.Mutex{}
 	if o.hb > 0 {
 		hbTimer = time.AfterFunc(2*o.hb, func() {
-			hbLock.Lock()
+			result.Lock()
 			hbErr = ErrNoHeartbeat
-			hbLock.Unlock()
+			result.Unlock()
 			cancel()
 		})
 	}
@@ -3338,21 +3344,25 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 				break
 			}
 			if usrMsg {
+				result.Lock()
 				result.msgs <- msg
+				result.Unlock()
 				requestMsgs++
 			}
 		}
 		if err != nil {
-			hbLock.Lock()
+			result.Lock()
 			if hbErr != nil {
 				result.err = hbErr
 			} else {
 				result.err = o.checkCtxErr(err)
 			}
-			hbLock.Unlock()
+			result.Unlock()
 		}
 		close(result.msgs)
+		result.Lock()
 		result.done <- struct{}{}
+		result.Unlock()
 	}()
 	return result, nil
 }

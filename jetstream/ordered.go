@@ -393,26 +393,26 @@ func (s *orderedSubscription) Closed() <-chan struct{} {
 // reset the consumer for each subsequent Fetch call.
 // Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
+	c.Lock()
 	if c.consumerType == consumerTypeConsume {
+		c.Unlock()
 		return nil, ErrOrderConsumerUsedAsConsume
 	}
-	c.currentConsumer.Lock()
 	if c.runningFetch != nil {
-		if !c.runningFetch.done {
-			c.currentConsumer.Unlock()
+		if !c.runningFetch.closed() {
 			return nil, ErrOrderedConsumerConcurrentRequests
 		}
 		if c.runningFetch.sseq != 0 {
 			c.cursor.streamSeq = c.runningFetch.sseq
 		}
 	}
-	c.currentConsumer.Unlock()
 	c.consumerType = consumerTypeFetch
 	sub := orderedSubscription{
 		consumer: c,
 		done:     make(chan struct{}),
 	}
 	c.subscription = &sub
+	c.Unlock()
 	err := c.reset()
 	if err != nil {
 		return nil, err
@@ -433,11 +433,13 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 // reset the consumer for each subsequent Fetch call.
 // Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
+	c.Lock()
 	if c.consumerType == consumerTypeConsume {
+		c.Unlock()
 		return nil, ErrOrderConsumerUsedAsConsume
 	}
 	if c.runningFetch != nil {
-		if !c.runningFetch.done {
+		if !c.runningFetch.closed() {
 			return nil, ErrOrderedConsumerConcurrentRequests
 		}
 		if c.runningFetch.sseq != 0 {
@@ -450,6 +452,7 @@ func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBat
 		done:     make(chan struct{}),
 	}
 	c.subscription = &sub
+	c.Unlock()
 	err := c.reset()
 	if err != nil {
 		return nil, err
