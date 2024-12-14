@@ -1046,36 +1046,40 @@ func TestKeysWithFilters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Create Key-Value store.
 	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
 	expectOk(t, err)
 
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(ctx, key, []byte(value))
-		expectOk(t, err)
+	// Helper function to add key-value pairs.
+	put := func(data map[string]string) {
+		for key, value := range data {
+			t.Helper()
+			_, err := kv.Put(ctx, key, []byte(value))
+			expectOk(t, err)
+		}
 	}
 
-	// Put in a few key-value pairs.
-	put("apple", "fruit")
-	put("banana", "fruit")
-	put("carrot", "vegetable")
+	// Add key-value pairs.
+	put(map[string]string{
+		"apple":  "fruit",
+		"banana": "fruit",
+		"carrot": "vegetable",
+	})
 
-	// Retrieve all keys without filters.
-	_, err = kv.KeysWithFilters(ctx, nil)
+	// Test filtering keys that match "apple".
+	filters := []string{"apple"}
+	filteredKeys, err := kv.KeysWithFilters(ctx, kv, filters...)
 	expectOk(t, err)
 
-	// Test with a filter (only keys containing "pp").
-	filteredKeys, err := kv.KeysWithFilters(ctx, []string{"pp"})
-	expectOk(t, err)
-
-	if len(filteredKeys) != 1 {
-		t.Fatalf("Expected 1 filtered key, got %d", len(filteredKeys))
+	// Validate expected keys.
+	expectedKeys := []string{"apple"}
+	if len(filteredKeys) != len(expectedKeys) {
+		t.Fatalf("Expected %d filtered key(s), got %d", len(expectedKeys), len(filteredKeys))
 	}
 
-	expectedFiltered := []string{"apple"}
-	for _, key := range expectedFiltered {
+	for _, key := range expectedKeys {
 		if !contains(filteredKeys, key) {
-			t.Fatalf("Expected filtered key %s to be present", key)
+			t.Fatalf("Expected key %s in filtered keys, but not found", key)
 		}
 	}
 }
@@ -1089,37 +1093,46 @@ func TestListKeysWithFilters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Create Key-Value store.
 	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
 	expectOk(t, err)
 
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(ctx, key, []byte(value))
-		expectOk(t, err)
+	// Helper function to add key-value pairs.
+	putKeys := func(data map[string]string) {
+		for key, value := range data {
+			t.Helper()
+			_, err := kv.Put(ctx, key, []byte(value))
+			expectOk(t, err)
+		}
 	}
 
-	// Put in a few key-value pairs.
-	put("apple", "fruit")
-	put("banana", "fruit")
-	put("carrot", "vegetable")
+	// Add key-value pairs.
+	putKeys(map[string]string{
+		"apple":  "fruit",
+		"banana": "fruit",
+		"carrot": "vegetable",
+	})
 
-	// Retrieve filtered keys (only keys containing "pp").
-	keyLister, err := kv.ListKeysWithFilters(ctx, []string{"pp"})
+	// Use filters to list keys matching "apple".
+	filters := []string{"apple"}
+	keyLister, err := kv.ListKeysWithFilters(ctx, kv, filters...)
 	expectOk(t, err)
 
+	// Collect filtered keys.
 	var filteredKeys []string
-	for key := range keyLister.Keys() {
+	for key := range keyLister {
 		filteredKeys = append(filteredKeys, key)
 	}
 
-	if len(filteredKeys) != 1 {
-		t.Fatalf("Expected 1 filtered key, got %d", len(filteredKeys))
+	// Validate expected keys.
+	expectedKeys := []string{"apple"}
+	if len(filteredKeys) != len(expectedKeys) {
+		t.Fatalf("Expected %d filtered key(s), got %d", len(expectedKeys), len(filteredKeys))
 	}
 
-	expectedFiltered := []string{"apple"}
-	for _, key := range expectedFiltered {
+	for _, key := range expectedKeys {
 		if !contains(filteredKeys, key) {
-			t.Fatalf("Expected filtered key %s to be present", key)
+			t.Fatalf("Expected key %s in filtered keys, but not found", key)
 		}
 	}
 }
