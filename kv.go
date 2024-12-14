@@ -54,6 +54,7 @@ type KeyValue interface {
 	// Create will add the key/value pair iff it does not exist.
 	Create(key string, value []byte) (revision uint64, err error)
 	// Update will update the value iff the latest revision matches.
+	// Update also resets the TTL associated with the key (if any).
 	Update(key string, value []byte, last uint64) (revision uint64, err error)
 	// Delete will place a delete marker and leave all revisions.
 	Delete(key string, opts ...DeleteOpt) error
@@ -64,6 +65,9 @@ type KeyValue interface {
 	Watch(keys string, opts ...WatchOpt) (KeyWatcher, error)
 	// WatchAll will invoke the callback for all updates.
 	WatchAll(opts ...WatchOpt) (KeyWatcher, error)
+	// WatchFiltered will watch for any updates to keys that match the keys
+	// argument. It can be configured with the same options as Watch.
+	WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error)
 	// Keys will return all keys.
 	// Deprecated: Use ListKeys instead to avoid memory issues.
 	Keys(opts ...WatchOpt) ([]string, error)
@@ -963,11 +967,11 @@ func (kv *kvs) WatchAll(opts ...WatchOpt) (KeyWatcher, error) {
 	return kv.Watch(AllKeys, opts...)
 }
 
-// Watch will fire the callback when a key that matches the keys pattern is updated.
-// keys needs to be a valid NATS subject.
-func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
-	if !searchKeyValid(keys) {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error) {
+	for _, key := range keys {
+		if !searchKeyValid(key) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "key cannot be empty and must be a valid NATS subject")
+		}
 	}
 	var o watchOpts
 	for _, opt := range opts {
@@ -979,10 +983,20 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	}
 
 	// Could be a pattern so don't check for validity as we normally do.
-	var b strings.Builder
-	b.WriteString(kv.pre)
-	b.WriteString(keys)
-	keys = b.String()
+	for i, key := range keys {
+		var b strings.Builder
+		b.WriteString(kv.pre)
+		b.WriteString(key)
+		keys[i] = b.String()
+	}
+
+	// if no keys are provided, watch all keys
+	if len(keys) == 0 {
+		var b strings.Builder
+		b.WriteString(kv.pre)
+		b.WriteString(AllKeys)
+		keys = []string{b.String()}
+	}
 
 	// We will block below on placing items on the chan. That is by design.
 	w := &watcher{updates: make(chan KeyValueEntry, 256), ctx: o.ctx}
@@ -1055,7 +1069,14 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 	// update() callback.
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	sub, err := kv.js.Subscribe(keys, update, subOpts...)
+	var sub *Subscription
+	var err error
+	if len(keys) == 1 {
+		sub, err = kv.js.Subscribe(keys[0], update, subOpts...)
+	} else {
+		subOpts = append(subOpts, ConsumerFilterSubjects(keys...))
+		sub, err = kv.js.Subscribe("", update, subOpts...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1080,6 +1101,12 @@ func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
 
 	w.sub = sub
 	return w, nil
+}
+
+// Watch will fire the callback when a key that matches the keys pattern is updated.
+// keys needs to be a valid NATS subject.
+func (kv *kvs) Watch(keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	return kv.WatchFiltered([]string{keys}, opts...)
 }
 
 // Bucket returns the current bucket name (JetStream stream).

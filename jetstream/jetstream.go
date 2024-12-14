@@ -122,7 +122,8 @@ type (
 	// to operate on a stream.
 	StreamManager interface {
 		// CreateStream creates a new stream with given config and returns an
-		// interface to operate on it. If stream with given name already exists,
+		// interface to operate on it. If stream with given name already exists
+		// and its configuration differs from the provided one,
 		// ErrStreamNameAlreadyInUse is returned.
 		CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
@@ -435,7 +436,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 		}
 	}
 	if apiPrefix == "" {
-		return nil, fmt.Errorf("API prefix cannot be empty")
+		return nil, errors.New("API prefix cannot be empty")
 	}
 	if !strings.HasSuffix(apiPrefix, ".") {
 		jsOpts.apiPrefix = fmt.Sprintf("%s.", apiPrefix)

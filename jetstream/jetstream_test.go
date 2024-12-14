@@ -430,13 +430,13 @@ func TestPullConsumer_checkPending(t *testing.T) {
 						}
 						ok <- struct{}{}
 					case <-time.After(1 * time.Second):
-						errs <- fmt.Errorf("Timeout")
+						errs <- errors.New("Timeout")
 						return
 					}
 				} else {
 					select {
 					case <-prChan:
-						errs <- fmt.Errorf("Unexpected pull request")
+						errs <- errors.New("Unexpected pull request")
 					case <-time.After(100 * time.Millisecond):
 						ok <- struct{}{}
 						return

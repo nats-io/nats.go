@@ -622,7 +622,7 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 			!strings.EqualFold(resp.Header.Get("Connection"), "upgrade") ||
 			resp.Header.Get("Sec-Websocket-Accept") != wsAcceptKey(wsKey)) {
 
-		err = fmt.Errorf("invalid websocket connection")
+		err = errors.New("invalid websocket connection")
 	}
 	// Check compression extension...
 	if err == nil && compress {
@@ -634,7 +634,7 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 		if !srvCompress {
 			compress = false
 		} else if !noCtxTakeover {
-			err = fmt.Errorf("compression negotiation error")
+			err = errors.New("compression negotiation error")
 		}
 	}
 	if resp != nil {

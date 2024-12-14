@@ -15,6 +15,7 @@ package jetstream
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -584,7 +585,7 @@ func (alg StoreCompression) MarshalJSON() ([]byte, error) {
 	case NoCompression:
 		str = "none"
 	default:
-		return nil, fmt.Errorf("unknown compression algorithm")
+		return nil, errors.New("unknown compression algorithm")
 	}
 	return json.Marshal(str)
 }
@@ -600,7 +601,7 @@ func (alg *StoreCompression) UnmarshalJSON(b []byte) error {
 	case "none":
 		*alg = NoCompression
 	default:
-		return fmt.Errorf("unknown compression algorithm")
+		return errors.New("unknown compression algorithm")
 	}
 	return nil
 }

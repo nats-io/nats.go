@@ -9426,7 +9426,7 @@ func TestJetStreamClusterStreamLeaderChangeClientErr(t *testing.T) {
 						return err
 					}
 					if si.Cluster.Leader == "" {
-						return fmt.Errorf("No leader yet")
+						return errors.New("No leader yet")
 					}
 					return nil
 				})

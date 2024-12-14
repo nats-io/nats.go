@@ -86,6 +86,9 @@ const (
 
 	// MAX_CONNECTIONS_ERR is for when nats server denies the connection due to server max_connections limit
 	MAX_CONNECTIONS_ERR = "maximum connections exceeded"
+
+	// MAX_SUBSCRIPTIONS_ERR is for when nats server denies the connection due to server subscriptions limit
+	MAX_SUBSCRIPTIONS_ERR = "maximum subscriptions exceeded"
 )
 
 // Errors
@@ -131,6 +134,7 @@ var (
 	ErrNkeysNotSupported           = errors.New("nats: nkeys not supported by the server")
 	ErrStaleConnection             = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet             = errors.New("nats: token and token handler both set")
+	ErrUserInfoAlreadySet          = errors.New("nats: cannot set user info callback and user/pass")
 	ErrMsgNotBound                 = errors.New("nats: message is not bound to subscription/connection")
 	ErrMsgNoReply                  = errors.New("nats: message does not have a reply")
 	ErrClientIPNotSupported        = errors.New("nats: client IP not supported by this server")
@@ -140,6 +144,7 @@ var (
 	ErrNoResponders                = errors.New("nats: no responders available for request")
 	ErrMaxConnectionsExceeded      = errors.New("nats: server maximum connections exceeded")
 	ErrConnectionNotTLS            = errors.New("nats: connection is not tls")
+	ErrMaxSubscriptionsExceeded    = errors.New("nats: server maximum subscriptions exceeded")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -229,6 +234,9 @@ type SignatureHandler func([]byte) ([]byte, error)
 
 // AuthTokenHandler is used to generate a new token.
 type AuthTokenHandler func() string
+
+// UserInfoCB is used to pass the username and password when establishing connection.
+type UserInfoCB func() (string, string)
 
 // ReconnectDelayHandler is used to get from the user the desired
 // delay the library should pause before attempting to reconnect
@@ -442,6 +450,9 @@ type Options struct {
 
 	// Password sets the password to be used when connecting to a server.
 	Password string
+
+	// UserInfo sets the callback handler that will fetch the username and password.
+	UserInfo UserInfoCB
 
 	// Token sets the token to be used when connecting to a server.
 	Token string
@@ -1166,6 +1177,13 @@ func UserInfo(user, password string) Option {
 	}
 }
 
+func UserInfoHandler(cb UserInfoCB) Option {
+	return func(o *Options) error {
+		o.UserInfo = cb
+		return nil
+	}
+}
+
 // Token is an Option to set the token to use
 // when a token is not included directly in the URLs
 // and when a token handler is not provided.
@@ -1359,7 +1377,7 @@ func ProxyPath(path string) Option {
 func CustomInboxPrefix(p string) Option {
 	return func(o *Options) error {
 		if p == "" || strings.Contains(p, ">") || strings.Contains(p, "*") || strings.HasSuffix(p, ".") {
-			return fmt.Errorf("nats: invalid custom prefix")
+			return errors.New("nats: invalid custom prefix")
 		}
 		o.InboxPrefix = p
 		return nil
@@ -1814,7 +1832,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	if len(nc.srvPool) == 0 {
 		nc.ws = isWS
 	} else if isWS && !nc.ws || !isWS && nc.ws {
-		return fmt.Errorf("mixing of websocket and non websocket URLs is not allowed")
+		return errors.New("mixing of websocket and non websocket URLs is not allowed")
 	}
 
 	var tlsName string
@@ -2563,6 +2581,13 @@ func (nc *Conn) connectProto() (string, error) {
 		pass = o.Password
 		token = o.Token
 		nkey = o.Nkey
+
+		if nc.Opts.UserInfo != nil {
+			if user != _EMPTY_ || pass != _EMPTY_ {
+				return _EMPTY_, ErrUserInfoAlreadySet
+			}
+			user, pass = nc.Opts.UserInfo()
+		}
 	}
 
 	// Look for user jwt.
@@ -2952,11 +2977,11 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 
 // processOpErr handles errors from reading or parsing the protocol.
 // The lock should not be held entering this function.
-func (nc *Conn) processOpErr(err error) {
+func (nc *Conn) processOpErr(err error) bool {
 	nc.mu.Lock()
+	defer nc.mu.Unlock()
 	if nc.isConnecting() || nc.isClosed() || nc.isReconnecting() {
-		nc.mu.Unlock()
-		return
+		return false
 	}
 
 	if nc.Opts.AllowReconnect && nc.status == CONNECTED {
@@ -2976,14 +3001,12 @@ func (nc *Conn) processOpErr(err error) {
 		nc.clearPendingFlushCalls()
 
 		go nc.doReconnect(err, false)
-		nc.mu.Unlock()
-		return
+		return false
 	}
 
 	nc.changeConnStatus(DISCONNECTED)
 	nc.err = err
-	nc.mu.Unlock()
-	nc.close(CLOSED, true, nil)
+	return true
 }
 
 // dispatch is responsible for calling any async callbacks
@@ -3080,7 +3103,9 @@ func (nc *Conn) readLoop() {
 			err = nc.parse(buf)
 		}
 		if err != nil {
-			nc.processOpErr(err)
+			if shouldClose := nc.processOpErr(err); shouldClose {
+				nc.close(CLOSED, true, nil)
+			}
 			break
 		}
 	}
@@ -3410,15 +3435,17 @@ slowConsumer:
 	}
 }
 
-// processPermissionsViolation is called when the server signals a subject
-// permissions violation on either publish or subscribe.
-func (nc *Conn) processPermissionsViolation(err string) {
+// processTransientError is called when the server signals a non terminal error
+// which does not close the connection or trigger a reconnect.
+// This will trigger the async error callback if set.
+// These errors include the following:
+// - permissions violation on publish or subscribe
+// - maximum subscriptions exceeded
+func (nc *Conn) processTransientError(err error) {
 	nc.mu.Lock()
-	// create error here so we can pass it as a closure to the async cb dispatcher.
-	e := errors.New("nats: " + err)
-	nc.err = e
+	nc.err = err
 	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, e) })
+		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
 	}
 	nc.mu.Unlock()
 }
@@ -3650,15 +3677,17 @@ func (nc *Conn) processErr(ie string) {
 	// convert to lower case.
 	e := strings.ToLower(ne)
 
-	close := false
+	var close bool
 
 	// FIXME(dlc) - process Slow Consumer signals special.
 	if e == STALE_CONNECTION {
-		nc.processOpErr(ErrStaleConnection)
+		close = nc.processOpErr(ErrStaleConnection)
 	} else if e == MAX_CONNECTIONS_ERR {
-		nc.processOpErr(ErrMaxConnectionsExceeded)
+		close = nc.processOpErr(ErrMaxConnectionsExceeded)
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
-		nc.processPermissionsViolation(ne)
+		nc.processTransientError(fmt.Errorf("nats: %s", ne))
+	} else if strings.HasPrefix(e, MAX_SUBSCRIPTIONS_ERR) {
+		nc.processTransientError(ErrMaxSubscriptionsExceeded)
 	} else if authErr := checkAuthError(e); authErr != nil {
 		nc.mu.Lock()
 		close = nc.processAuthError(authErr)
@@ -5107,7 +5136,9 @@ func (nc *Conn) processPingTimer() {
 	nc.pout++
 	if nc.pout > nc.Opts.MaxPingsOut {
 		nc.mu.Unlock()
-		nc.processOpErr(ErrStaleConnection)
+		if shouldClose := nc.processOpErr(ErrStaleConnection); shouldClose {
+			nc.close(CLOSED, true, nil)
+		}
 		return
 	}
 
@@ -5792,7 +5823,7 @@ func NkeyOptionFromSeed(seedFile string) (Option, error) {
 		return nil, err
 	}
 	if !nkeys.IsValidPublicUserKey(pub) {
-		return nil, fmt.Errorf("nats: Not a valid nkey user seed")
+		return nil, errors.New("nats: Not a valid nkey user seed")
 	}
 	sigCB := func(nonce []byte) ([]byte, error) {
 		return sigHandler(nonce, seedFile)

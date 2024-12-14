@@ -179,6 +179,22 @@ func TestKeyValueWatch(t *testing.T) {
 			}
 		}
 	}
+	expectPurgeF := func(t *testing.T, watcher nats.KeyWatcher) func(key string, revision uint64) {
+		return func(key string, revision uint64) {
+			t.Helper()
+			select {
+			case v := <-watcher.Updates():
+				if v.Operation() != nats.KeyValuePurge {
+					t.Fatalf("Expected a delete operation but got %+v", v)
+				}
+				if v.Revision() != revision {
+					t.Fatalf("Did not get expected revision: %d vs %d", revision, v.Revision())
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("Did not receive an update like expected")
+			}
+		}
+	}
 	expectInitDoneF := func(t *testing.T, watcher nats.KeyWatcher) func() {
 		return func() {
 			t.Helper()
@@ -237,13 +253,27 @@ func TestKeyValueWatch(t *testing.T) {
 
 		watcher, err = kv.Watch("t.*")
 		expectOk(t, err)
-		defer watcher.Stop()
 
 		expectInitDone = expectInitDoneF(t, watcher)
 		expectUpdate = expectUpdateF(t, watcher)
 		expectUpdate("t.name", "ik", 8)
 		expectUpdate("t.age", "44", 10)
 		expectInitDone()
+		watcher.Stop()
+
+		// test watcher with multiple filters
+		watcher, err = kv.WatchFiltered([]string{"t.name", "name"})
+		expectOk(t, err)
+		expectInitDone = expectInitDoneF(t, watcher)
+		expectUpdate = expectUpdateF(t, watcher)
+		expectPurge := expectPurgeF(t, watcher)
+		expectUpdate("name", "ik", 3)
+		expectUpdate("t.name", "ik", 8)
+		expectInitDone()
+		err = kv.Purge("name")
+		expectOk(t, err)
+		expectPurge("name", 11)
+		defer watcher.Stop()
 	})
 
 	t.Run("watcher with history included", func(t *testing.T) {
@@ -383,6 +413,46 @@ func TestKeyValueWatch(t *testing.T) {
 
 		_, err = kv.Watch("foo.")
 		expectErr(t, err, nats.ErrInvalidKey)
+	})
+
+	t.Run("filtered watch with no filters", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		// this should behave like WatchAll
+		watcher, err := kv.WatchFiltered([]string{})
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectUpdate := expectUpdateF(t, watcher)
+		expectDelete := expectDeleteF(t, watcher)
+		// Make sure we already got an initial value marker.
+		expectInitDone()
+
+		_, err = kv.Create("name", []byte("derek"))
+		expectOk(t, err)
+		expectUpdate("name", "derek", 1)
+		_, err = kv.Put("name", []byte("rip"))
+		expectOk(t, err)
+		expectUpdate("name", "rip", 2)
+		_, err = kv.Put("name", []byte("ik"))
+		expectOk(t, err)
+		expectUpdate("name", "ik", 3)
+		_, err = kv.Put("age", []byte("22"))
+		expectOk(t, err)
+		expectUpdate("age", "22", 4)
+		_, err = kv.Put("age", []byte("33"))
+		expectOk(t, err)
+		expectUpdate("age", "33", 5)
+		expectOk(t, kv.Delete("age"))
+		expectDelete("age", 6)
 	})
 }
 
@@ -1113,7 +1183,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
 			_, err := kv.Get(key)
 			if err == nil {
-				return fmt.Errorf("Expected key to be gone")
+				return errors.New("Expected key to be gone")
 			}
 			if !errors.Is(err, nats.ErrKeyNotFound) {
 				return err

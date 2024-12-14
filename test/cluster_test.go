@@ -682,7 +682,7 @@ func (d *checkPoolUpdatedDialer) Dial(network, address string) (net.Conn, error)
 		doReal = true
 	} else if d.final {
 		d.ra++
-		return nil, fmt.Errorf("On purpose")
+		return nil, errors.New("On purpose")
 	} else {
 		d.ra++
 		if d.ra == 15 {
@@ -698,7 +698,7 @@ func (d *checkPoolUpdatedDialer) Dial(network, address string) (net.Conn, error)
 		d.conn = c
 		return c, nil
 	}
-	return nil, fmt.Errorf("On purpose")
+	return nil, errors.New("On purpose")
 }
 
 func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {

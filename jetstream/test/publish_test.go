@@ -1383,7 +1383,7 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 					errs <- fmt.Errorf("Expected error: %v or %v; got: %v", nats.ErrDisconnected, nats.ErrNoResponders, err)
 				}
 			case <-time.After(5 * time.Second):
-				errs <- fmt.Errorf("Did not receive completion signal")
+				errs <- errors.New("Did not receive completion signal")
 			}
 			wg.Done()
 		}(ack)
@@ -1453,6 +1453,7 @@ func TestPublishAsyncRetry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			publishComplete := js.PublishAsyncComplete()
 			errs := make(chan error, 1)
 			go func() {
 				// create stream with delay so that publish will receive no responders
@@ -1475,6 +1476,12 @@ func TestPublishAsyncRetry(t *testing.T) {
 				t.Fatalf("Error creating stream: %v", err)
 			case <-time.After(5 * time.Second):
 				t.Fatalf("Timeout waiting for ack")
+			}
+
+			select {
+			case <-publishComplete:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive completion signal")
 			}
 		})
 	}

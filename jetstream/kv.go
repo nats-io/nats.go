@@ -123,6 +123,7 @@ type (
 
 		// Update will update the value if the latest revision matches.
 		// If the provided revision is not the latest, Update will return an error.
+		// Update also resets the TTL associated with the key (if any).
 		Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
 
 		// Delete will place a delete marker and leave all revisions. A history
@@ -164,6 +165,10 @@ type (
 		// WatchAll will watch for any updates to all keys. It can be configured
 		// with the same options as Watch.
 		WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, error)
+
+		// WatchFiltered will watch for any updates to keys that match the keys
+		// argument. It can be configured with the same options as Watch.
+		WatchFiltered(ctx context.Context, keys []string, opts ...WatchOpt) (KeyWatcher, error)
 
 		// Keys will return all keys.
 		// Deprecated: Use ListKeys instead to avoid memory issues.
@@ -1075,11 +1080,11 @@ func (w *watcher) Stop() error {
 	return w.sub.Unsubscribe()
 }
 
-// Watch for any updates to keys that match the keys argument which could include wildcards.
-// Watch will send a nil entry when it has received all initial values.
-func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
-	if !searchKeyValid(keys) {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "keys cannot be empty and must be a valid NATS subject")
+func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOpt) (KeyWatcher, error) {
+	for _, key := range keys {
+		if !searchKeyValid(key) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "key cannot be empty and must be a valid NATS subject")
+		}
 	}
 	var o watchOpts
 	for _, opt := range opts {
@@ -1091,10 +1096,20 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	}
 
 	// Could be a pattern so don't check for validity as we normally do.
-	var b strings.Builder
-	b.WriteString(kv.pre)
-	b.WriteString(keys)
-	keys = b.String()
+	for i, key := range keys {
+		var b strings.Builder
+		b.WriteString(kv.pre)
+		b.WriteString(key)
+		keys[i] = b.String()
+	}
+
+	// if no keys are provided, watch all keys
+	if len(keys) == 0 {
+		var b strings.Builder
+		b.WriteString(kv.pre)
+		b.WriteString(AllKeys)
+		keys = []string{b.String()}
+	}
 
 	// We will block below on placing items on the chan. That is by design.
 	w := &watcher{updates: make(chan KeyValueEntry, 256)}
@@ -1167,7 +1182,14 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	// update() callback.
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	sub, err := kv.pushJS.Subscribe(keys, update, subOpts...)
+	var sub *nats.Subscription
+	var err error
+	if len(keys) == 1 {
+		sub, err = kv.pushJS.Subscribe(keys[0], update, subOpts...)
+	} else {
+		subOpts = append(subOpts, nats.ConsumerFilterSubjects(keys...))
+		sub, err = kv.pushJS.Subscribe("", update, subOpts...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1189,6 +1211,12 @@ func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWat
 	}
 	w.sub = sub
 	return w, nil
+}
+
+// Watch for any updates to keys that match the keys argument which could include wildcards.
+// Watch will send a nil entry when it has received all initial values.
+func (kv *kvs) Watch(ctx context.Context, keys string, opts ...WatchOpt) (KeyWatcher, error) {
+	return kv.WatchFiltered(ctx, []string{keys}, opts...)
 }
 
 // WatchAll will invoke the callback for all updates.

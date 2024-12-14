@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -524,7 +525,7 @@ func TestWSStress(t *testing.T) {
 					return
 				}
 				if !bytes.Equal(m.Data[4:4+ps], mainPayload[:ps]) {
-					pushErr(fmt.Errorf("invalid content"))
+					pushErr(errors.New("invalid content"))
 					return
 				}
 				if atomic.AddInt64(&count, 1) == totalRecv {
