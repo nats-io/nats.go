@@ -4028,10 +4028,6 @@ func (nc *Conn) respHandler(m *Msg) {
 // Helper to setup and send new request style requests. Return the chan to receive the response.
 func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Msg, string, error) {
 	nc.mu.Lock()
-	// Do setup for the new style if needed.
-	if nc.respMap == nil {
-		nc.initNewResp()
-	}
 	// Create new literal Inbox and map to a chan msg.
 	mch := make(chan *Msg, RequestChanLen)
 	respInbox := nc.newRespInbox()
@@ -5273,9 +5269,6 @@ func (nc *Conn) clearPendingFlushCalls() {
 // This will clear any pending Request calls.
 // Lock is assumed to be held by the caller.
 func (nc *Conn) clearPendingRequestCalls() {
-	if nc.respMap == nil {
-		return
-	}
 	for key, ch := range nc.respMap {
 		if ch != nil {
 			close(ch)
