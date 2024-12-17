@@ -477,6 +477,91 @@ func TestPullConsumerFetch(t *testing.T) {
 	})
 }
 
+func TestPullConsumerFetchRace(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := js.Publish(context.Background(), "FOO.123", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+	}
+	msgs, err := c.Fetch(5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	errCh := make(chan error)
+	go func() {
+		for {
+			err := msgs.Error()
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	deleteErrCh := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			deleteErrCh <- err
+		}
+		close(deleteErrCh)
+	}()
+
+	var i int
+	for msg := range msgs.Messages() {
+		if string(msg.Data()) != fmt.Sprintf("msg-%d", i) {
+			t.Fatalf("Invalid msg on index %d; expected: %s; got: %s", i, fmt.Sprintf("msg-%d", i), string(msg.Data()))
+		}
+		i++
+	}
+	if i != 3 {
+		t.Fatalf("Invalid number of messages received; want: %d; got: %d", 5, i)
+	}
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, jetstream.ErrConsumerDeleted) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerDeleted, err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerDeleted, nil)
+	}
+
+	// wait until the consumer is deleted, otherwise we may close the connection
+	// before the consumer delete response is received
+	select {
+	case ert, ok := <-deleteErrCh:
+		if !ok {
+			break
+		}
+		t.Fatalf("Error deleting consumer: %s", ert)
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Expected done to be closed")
+	}
+}
+
 func TestPullConsumerFetchBytes(t *testing.T) {
 	testSubject := "FOO.123"
 	msg := [10]byte{}

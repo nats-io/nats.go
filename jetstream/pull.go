@@ -144,6 +144,7 @@ type (
 	}
 
 	fetchResult struct {
+		sync.Mutex
 		msgs chan Msg
 		err  error
 		done bool
@@ -780,7 +781,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		for {
 			select {
 			case msg := <-msgs:
-				p.Lock()
+				res.Lock()
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
@@ -791,11 +792,11 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 						res.err = err
 					}
 					res.done = true
-					p.Unlock()
+					res.Unlock()
 					return
 				}
 				if !userMsg {
-					p.Unlock()
+					res.Unlock()
 					continue
 				}
 				res.msgs <- p.jetStream.toJSMsg(msg)
@@ -810,16 +811,20 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				}
 				if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes >= req.MaxBytes) {
 					res.done = true
-					p.Unlock()
+					res.Unlock()
 					return
 				}
-				p.Unlock()
+				res.Unlock()
 			case err := <-sub.errs:
+				res.Lock()
 				res.err = err
 				res.done = true
+				res.Unlock()
 				return
 			case <-time.After(req.Expires + 1*time.Second):
+				res.Lock()
 				res.done = true
+				res.Unlock()
 				return
 			}
 		}
@@ -828,11 +833,21 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 }
 
 func (fr *fetchResult) Messages() <-chan Msg {
+	fr.Lock()
+	defer fr.Unlock()
 	return fr.msgs
 }
 
 func (fr *fetchResult) Error() error {
+	fr.Lock()
+	defer fr.Unlock()
 	return fr.err
+}
+
+func (fr *fetchResult) closed() bool {
+	fr.Lock()
+	defer fr.Unlock()
+	return fr.done
 }
 
 // Next is used to retrieve the next message from the stream. This
