@@ -1527,7 +1527,7 @@ func processConsInfo(info *ConsumerInfo, userCfg *ConsumerConfig, isPullMode boo
 
 func checkConfig(s, u *ConsumerConfig) error {
 	makeErr := func(fieldName string, usrVal, srvVal any) error {
-		return fmt.Errorf("configuration requests %s to be %v, but consumer's value is %v", fieldName, usrVal, srvVal)
+		return fmt.Errorf("nats: configuration requests %s to be %v, but consumer's value is %v", fieldName, usrVal, srvVal)
 	}
 
 	if u.Durable != _EMPTY_ && u.Durable != s.Durable {
