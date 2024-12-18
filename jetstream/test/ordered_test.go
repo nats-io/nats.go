@@ -2006,6 +2006,7 @@ func TestOrderedConsumerConfig(t *testing.T) {
 				ReplayPolicy:      jetstream.ReplayOriginalPolicy,
 				InactiveThreshold: 10 * time.Second,
 				HeadersOnly:       true,
+				Metadata:          map[string]string{"foo": "a"},
 			},
 			expected: jetstream.ConsumerConfig{
 				FilterSubjects:    []string{"foo.a", "foo.b"},
@@ -2018,6 +2019,7 @@ func TestOrderedConsumerConfig(t *testing.T) {
 				Replicas:          1,
 				MemoryStorage:     true,
 				HeadersOnly:       true,
+				Metadata:          map[string]string{"foo": "a"},
 			},
 		},
 		{
@@ -2029,6 +2031,7 @@ func TestOrderedConsumerConfig(t *testing.T) {
 				ReplayPolicy:      jetstream.ReplayOriginalPolicy,
 				InactiveThreshold: 10 * time.Second,
 				HeadersOnly:       true,
+				Metadata:          map[string]string{"foo": "a"},
 			},
 			expected: jetstream.ConsumerConfig{
 				FilterSubjects:    []string{"foo.a", "foo.b"},
@@ -2041,6 +2044,7 @@ func TestOrderedConsumerConfig(t *testing.T) {
 				Replicas:          1,
 				MemoryStorage:     true,
 				HeadersOnly:       true,
+				Metadata:          map[string]string{"foo": "a"},
 			},
 		},
 		{
