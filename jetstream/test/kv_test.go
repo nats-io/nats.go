@@ -1037,54 +1037,7 @@ func TestKeyValueListKeys(t *testing.T) {
 	}
 }
 
-func TestKeysWithFilters(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Create Key-Value store.
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", History: 2})
-	expectOk(t, err)
-
-	// Helper function to add key-value pairs.
-	put := func(data map[string]string) {
-		for key, value := range data {
-			t.Helper()
-			_, err := kv.Put(ctx, key, []byte(value))
-			expectOk(t, err)
-		}
-	}
-
-	// Add key-value pairs.
-	put(map[string]string{
-		"apple":  "fruit",
-		"banana": "fruit",
-		"carrot": "vegetable",
-	})
-
-	// Test filtering keys that match "apple".
-	filters := []string{"apple"}
-	filteredKeys, err := kv.KeysWithFilters(ctx, kv, filters...)
-	expectOk(t, err)
-
-	// Validate expected keys.
-	expectedKeys := []string{"apple"}
-	if len(filteredKeys) != len(expectedKeys) {
-		t.Fatalf("Expected %d filtered key(s), got %d", len(expectedKeys), len(filteredKeys))
-	}
-
-	for _, key := range expectedKeys {
-		if !contains(filteredKeys, key) {
-			t.Fatalf("Expected key %s in filtered keys, but not found", key)
-		}
-	}
-}
-
-func TestListKeysWithFilters(t *testing.T) {
+func TestListKeysFiltered(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -1115,12 +1068,12 @@ func TestListKeysWithFilters(t *testing.T) {
 
 	// Use filters to list keys matching "apple".
 	filters := []string{"apple"}
-	keyLister, err := kv.ListKeysWithFilters(ctx, kv, filters...)
+	keyLister, err := kv.ListKeysFiltered(ctx, filters...)
 	expectOk(t, err)
 
-	// Collect filtered keys.
+	// Collect filtered keys from KeyLister
 	var filteredKeys []string
-	for key := range keyLister {
+	for key := range keyLister.Keys() {
 		filteredKeys = append(filteredKeys, key)
 	}
 

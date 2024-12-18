@@ -174,16 +174,12 @@ type (
 		// Deprecated: Use ListKeys instead to avoid memory issues.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
-		// KeysWithFilters returns a filtered list of keys in the bucket.
-		// It returns a complete slice of matching keys.
-		KeysWithFilters(ctx context.Context, kv KeyValue, filters ...string) ([]string, error)
-
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
 		// the key value store in a streaming fashion (on a channel).
 		ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error)
 
-		// ListKeysWithFilters returns a KeyLister for filtered keys in the bucket.
-		ListKeysWithFilters(ctx context.Context, kv KeyValue, filters ...string) (<-chan string, error)
+		// ListKeysFiltered ListKeysWithFilters returns a KeyLister for filtered keys in the bucket.
+		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
 		// KeyValueMaxHistory).
@@ -1278,53 +1274,34 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 	return kl, nil
 }
 
-// KeysWithFilters retrieves keys that match the provided filters using WatchFiltered.
-func (kv *kvs) KeysWithFilters(ctx context.Context, _ KeyValue, filters ...string) ([]string, error) {
-	if len(filters) == 0 {
-		return nil, errors.New("filters cannot be empty")
-	}
-
-	watcher, err := kv.WatchFiltered(ctx, filters, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer watcher.Stop()
-
-	var keys []string
-	for entry := range watcher.Updates() {
-		if entry == nil { // Indicates all initial values are received
-			break
-		}
-		keys = append(keys, entry.Key())
-	}
-	return keys, nil
-}
-
 // ListKeysWithFilters returns a channel of keys matching the provided filters using WatchFiltered.
-func (kv *kvs) ListKeysWithFilters(ctx context.Context, _ KeyValue, filters ...string) (<-chan string, error) {
-	if len(filters) == 0 {
-		return nil, errors.New("filters cannot be empty")
-	}
-
-	watcher, err := kv.WatchFiltered(ctx, filters, nil)
+func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error) {
+	watcher, err := kv.WatchFiltered(ctx, filters)
 	if err != nil {
 		return nil, err
 	}
 
-	keysCh := make(chan string)
-	go func() {
-		defer watcher.Stop()
-		defer close(keysCh)
+	// Reuse the existing keyLister implementation
+	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
 
-		for entry := range watcher.Updates() {
-			if entry == nil { // Indicates all initial values are received
-				break
+	go func() {
+		defer close(kl.keys)
+		defer watcher.Stop()
+
+		for {
+			select {
+			case entry := <-watcher.Updates():
+				if entry == nil { // Indicates all initial values are received
+					return
+				}
+				kl.keys <- entry.Key()
+			case <-ctx.Done():
+				return
 			}
-			keysCh <- entry.Key()
 		}
 	}()
 
-	return keysCh, nil
+	return kl, nil
 }
 
 func (kl *keyLister) Keys() <-chan string {
