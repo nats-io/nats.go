@@ -762,7 +762,7 @@ fmt.Printf("%s @ %d -> %q\n", entry.Key(), entry.Revision(), string(entry.Value(
 In addition to basic CRUD operations and watching for changes, KV buckets
 support several additional operations:
 
-- `ListKeys` will return all keys in a bucket"
+- `ListKeys` will return all keys in a bucket
 
 ```go
 js, _ := jetstream.New(nc)
