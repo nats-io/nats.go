@@ -616,8 +616,17 @@ func (js *jetStream) ObjectStore(ctx context.Context, bucket string) (ObjectStor
 
 // DeleteObjectStore will delete the underlying stream for the named object.
 func (js *jetStream) DeleteObjectStore(ctx context.Context, bucket string) error {
+	if !validBucketRe.MatchString(bucket) {
+		return ErrInvalidStoreName
+	}
 	stream := fmt.Sprintf(objNameTmpl, bucket)
-	return js.DeleteStream(ctx, stream)
+	if err := js.DeleteStream(ctx, stream); err != nil {
+		if errors.Is(err, ErrStreamNotFound) {
+			err = errors.Join(fmt.Errorf("%w: %s", ErrBucketNotFound, bucket), err)
+		}
+		return err
+	}
+	return nil
 }
 
 func encodeName(name string) string {
