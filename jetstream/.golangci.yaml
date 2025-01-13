@@ -1,25 +1,16 @@
-run:
-  concurrency: 4
-  issues-exit-code: 1
-  tests: true
-  modules-download-mode: readonly
-  timeout: 5m
-
-output:
-  formats:
-    - format: colored-line-number
-      path: stdout
-  print-issued-lines: true
-  print-linter-name: true
-
-linters:
-  disable-all: true
-  enable:
-    - gofmt
-    - govet
-    - staticcheck
-    - misspell
-
-linters-settings:
-  misspell:
-    locale: US
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - linters:
+      - errcheck
+      text: "Unsubscribe"
+    - linters:
+      - errcheck
+      text: "Drain"
+    - linters:
+      - errcheck
+      text: "msg.Ack"
+    - linters:
+      - errcheck
+      text: "watcher.Stop"
