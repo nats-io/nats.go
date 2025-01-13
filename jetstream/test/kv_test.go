@@ -905,7 +905,7 @@ func TestKeyValueKeys(t *testing.T) {
 	}
 
 	//lint:ignore SA1019 testing deprecated api
-	_, err = kv.Keys(ctx)
+	_, err = kv.Keys(ctx) //nolint:staticcheck // testing deprecated api
 	expectErr(t, err, jetstream.ErrNoKeysFound)
 
 	// Put in a few names and ages.
