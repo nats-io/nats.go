@@ -3,6 +3,7 @@ run:
   issues-exit-code: 1
   tests: true
   modules-download-mode: readonly
+  timeout: 5m
 
 output:
   formats:
@@ -22,7 +23,3 @@ linters:
 linters-settings:
   misspell:
     locale: US
-
-run:
-  timeout: 5m
-  modules-download-mode: mod
