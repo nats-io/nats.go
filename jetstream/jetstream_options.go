@@ -105,8 +105,8 @@ func WithGetMsgSubject(subject string) GetMsgOpt {
 // If not provided, a default of 500 messages will be used.
 // This option is exclusive with PullMaxBytes.
 //
-// PullMaxMessages implements PullConsumeOpt and PullMessagesOpt and thus can
-// be used to configure both Consumer.Consume and Consumer.Messages.
+// PullMaxMessages implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullMaxMessages int
 
 func (max PullMaxMessages) configureConsume(opts *consumeOpts) error {
@@ -129,8 +129,8 @@ func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
 // message is available.
 // If not provided, a default of 30 seconds will be used.
 //
-// PullExpiry implements PullConsumeOpt and PullMessagesOpt and thus can
-// be used to configure both Consumer.Consume and Consumer.Messages.
+// PullExpiry implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullExpiry time.Duration
 
 func (exp PullExpiry) configureConsume(opts *consumeOpts) error {
@@ -155,8 +155,8 @@ func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
 // If not provided, the limit is not set (max messages will be used instead).
 // This option is exclusive with PullMaxMessages.
 //
-// PullMaxBytes implements PullConsumeOpt and PullMessagesOpt and thus can
-// be used to configure both Consumer.Consume and Consumer.Messages.
+// PullMaxBytes implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullMaxBytes int
 
 func (max PullMaxBytes) configureConsume(opts *consumeOpts) error {
@@ -178,8 +178,8 @@ func (max PullMaxBytes) configureMessages(opts *consumeOpts) error {
 // PullThresholdMessages sets the message count on which consuming will trigger
 // new pull request to the server. Defaults to 50% of MaxMessages.
 //
-// PullThresholdMessages implements PullConsumeOpt and PullMessagesOpt and thus
-// can be used to configure both Consumer.Consume and Consumer.Messages.
+// PullThresholdMessages implements both PullConsumeOpt and PullMessagesOpt,
+// allowing it to configure Consumer.Consume and Consumer.Messages.
 type PullThresholdMessages int
 
 func (t PullThresholdMessages) configureConsume(opts *consumeOpts) error {
@@ -195,8 +195,8 @@ func (t PullThresholdMessages) configureMessages(opts *consumeOpts) error {
 // PullThresholdBytes sets the byte count on which consuming will trigger
 // new pull request to the server. Defaults to 50% of MaxBytes (if set).
 //
-// PullThresholdBytes implements PullConsumeOpt and PullMessagesOpt and thus
-// can be used to configure both Consumer.Consume and Consumer.Messages.
+// PullThresholdBytes implements both PullConsumeOpt and PullMessagesOpt,
+// allowing it to configure Consumer.Consume and Consumer.Messages.
 type PullThresholdBytes int
 
 func (t PullThresholdBytes) configureConsume(opts *consumeOpts) error {
@@ -215,8 +215,8 @@ func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 // and error will be passed to the message handler.
 // If not provided, a default PullExpiry / 2 will be used (capped at 30 seconds)
 //
-// PullHeartbeat implements PullConsumeOpt and PullMessagesOpt and thus can
-// be used to configure both Consumer.Consume and Consumer.Messages.
+// PullHeartbeat implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullHeartbeat time.Duration
 
 func (hb PullHeartbeat) configureConsume(opts *consumeOpts) error {
@@ -240,8 +240,8 @@ func (hb PullHeartbeat) configureMessages(opts *consumeOpts) error {
 // StopAfter sets the number of messages after which the consumer is
 // automatically stopped and no more messages are pulled from the server.
 //
-// StopAfter implements PullConsumeOpt and PullMessagesOpt and thus can
-// be used to configure both Consumer.Consume and Consumer.Messages.
+// StopAfter implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type StopAfter int
 
 func (nMsgs StopAfter) configureConsume(opts *consumeOpts) error {
