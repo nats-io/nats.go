@@ -27,8 +27,6 @@ import (
 	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
 )
 
-//lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
-
 func NewDefaultEConn(t *testing.T) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(NewConnection(t, TEST_PORT), nats.DEFAULT_ENCODER)
 	if err != nil {

@@ -39,3 +39,30 @@ linters-settings:
       - "-ST1020"
       - "-ST1021"
       - "-ST1022"
+
+issues:
+  exclude-rules:
+    - path: enc.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
+    - path: enc_test.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
+    - path: gob_test.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
+    - path: json_test.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
+    - path: netchan_test.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
+    - path: protobuf_test.go
+      linters:
+        - staticcheck
+      text: "SA1019:"
