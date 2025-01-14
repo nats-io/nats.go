@@ -1095,7 +1095,7 @@ func TestEncodedContextInvalid(t *testing.T) {
 	}
 	req := &request{Message: "Hello"}
 	resp := &response{}
-	//lint:ignore SA1012 testing that passing nil fails
+	//nolint:staticcheck // SA1012 testing that passing nil fails
 	err = c.RequestWithContext(nil, "slow", req, resp)
 	if err == nil {
 		t.Fatal("Expected request to fail with error")
