@@ -23,3 +23,6 @@ linters:
 linters-settings:
   misspell:
     locale: US
+  gofmt:
+    # Simplify code: gofmt with `-s` option.
+    simplify: false
