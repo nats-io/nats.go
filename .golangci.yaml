@@ -26,3 +26,16 @@ linters-settings:
   gofmt:
     # Simplify code: gofmt with `-s` option.
     simplify: false
+
+  staticcheck:
+    # SAxxxx checks in https://staticcheck.dev/docs/configuration/options/#checks
+    # Example (to disable some checks): [ "all", "-SA1000", "-SA1001"]
+    # Default: ["*"]
+    checks:
+      - "all"
+      - "-SA1000"
+      - "-ST1003"
+      - "-ST1016"
+      - "-ST1020"
+      - "-ST1021"
+      - "-ST1022"
