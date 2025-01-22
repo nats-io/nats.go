@@ -28,37 +28,50 @@ import (
 func TestConsumerInfo(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)
-	t.Run("get consumer info, ok", func(t *testing.T) {
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	for _, consType := range []string{"pull", "push"} {
 		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:     "cons",
-			AckPolicy:   jetstream.AckExplicitPolicy,
-			Description: "test consumer",
-		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
 
-		info, err := c.Info(ctx)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		t.Run(fmt.Sprintf("get %s consumer info, ok", consType), func(t *testing.T) {
+			var c consInfoConstraint
+			if consType == "pull" {
+				c, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+					Durable:     "cons",
+					AckPolicy:   jetstream.AckExplicitPolicy,
+					Description: "test consumer",
+				})
+			} else {
+				c, err = s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
+					DeliverSubject: "inbox",
+					Durable:        "cons",
+					AckPolicy:      jetstream.AckExplicitPolicy,
+					Description:    "test consumer",
+				})
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			info, err := c.Info(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
 		if info.Stream != "foo" {
 			t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
@@ -76,59 +89,65 @@ func TestConsumerInfo(t *testing.T) {
 			t.Fatalf("Consumer should not be paused")
 		}
 
-		// update consumer and see if info is updated
-		_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:     "cons",
-			AckPolicy:   jetstream.AckExplicitPolicy,
-			Description: "updated consumer",
+			// update consumer and see if info is updated
+
+			if consType == "pull" {
+				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+					Durable:     "cons",
+					AckPolicy:   jetstream.AckExplicitPolicy,
+					Description: "updated consumer",
+				})
+			} else {
+				_, err = s.CreateOrUpdatePushConsumer(ctx, jetstream.ConsumerConfig{
+					DeliverSubject: "inbox",
+					Durable:        "cons",
+					AckPolicy:      jetstream.AckExplicitPolicy,
+					Description:    "updated consumer",
+				})
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			info, err = c.Info(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if info.Stream != "foo" {
+				t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
+			}
+			if info.Config.Description != "updated consumer" {
+				t.Fatalf("Invalid consumer description; expected: 'updated consumer'; got: %s", info.Config.Description)
+			}
 		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
 
-		info, err = c.Info(ctx)
-		if err != nil {
+		t.Run(fmt.Sprintf("%s consumer does not exist", consType), func(t *testing.T) {
+			s, err := js.Stream(ctx, "foo")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			var c consInfoConstraint
+			if consType == "pull" {
+				c, err = s.Consumer(ctx, "cons")
+			} else {
+				c, err = s.PushConsumer(ctx, "cons")
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if err := s.DeleteConsumer(ctx, "cons"); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			_, err = c.Info(ctx)
+			if err == nil || !errors.Is(err, jetstream.ErrConsumerNotFound) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
+			}
+		})
+		if err := js.DeleteStream(ctx, "foo"); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-
-		if info.Stream != "foo" {
-			t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
-		}
-		if info.Config.Description != "updated consumer" {
-			t.Fatalf("Invalid consumer description; expected: 'updated consumer'; got: %s", info.Config.Description)
-		}
-	})
-
-	t.Run("consumer does not exist", func(t *testing.T) {
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		s, err := js.Stream(ctx, "foo")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.Consumer(ctx, "cons")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if err := s.DeleteConsumer(ctx, "cons"); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		_, err = c.Info(ctx)
-		if err == nil || !errors.Is(err, jetstream.ErrConsumerNotFound) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConsumerNotFound, err)
-		}
-	})
+	}
 }
 
 func TestConsumerOverflow(t *testing.T) {
@@ -1154,47 +1173,73 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 	defer nc.Close()
 
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:     "cons",
-		AckPolicy:   jetstream.AckExplicitPolicy,
-		Description: "test consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	for _, consType := range []string{"pull", "push"} {
+		t.Run(consType, func(t *testing.T) {
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			var c consInfoConstraint
+			if consType == "pull" {
+				c, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+					Durable:     "cons",
+					AckPolicy:   jetstream.AckExplicitPolicy,
+					Description: "test consumer",
+				})
+			} else {
+				c, err = s.CreateOrUpdatePushConsumer(ctx, jetstream.ConsumerConfig{
+					DeliverSubject: "inbox",
+					Durable:        "cons",
+					AckPolicy:      jetstream.AckExplicitPolicy,
+					Description:    "test consumer",
+				})
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
-	info := c.CachedInfo()
+			info := c.CachedInfo()
 
-	if info.Stream != "foo" {
-		t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
-	}
-	if info.Config.Description != "test consumer" {
-		t.Fatalf("Invalid consumer description; expected: 'test consumer'; got: %s", info.Config.Description)
-	}
+			if info.Stream != "foo" {
+				t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
+			}
+			if info.Config.Description != "test consumer" {
+				t.Fatalf("Invalid consumer description; expected: 'test consumer'; got: %s", info.Config.Description)
+			}
 
-	// update consumer and see if info is updated
-	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:     "cons",
-		AckPolicy:   jetstream.AckExplicitPolicy,
-		Description: "updated consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+			// update consumer and see if info is updated
+			if consType == "pull" {
+				_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+					Durable:     "cons",
+					AckPolicy:   jetstream.AckExplicitPolicy,
+					Description: "updated consumer",
+				})
+			} else {
+				_, err = s.CreateOrUpdatePushConsumer(ctx, jetstream.ConsumerConfig{
+					DeliverSubject: "inbox",
+					Durable:        "cons",
+					AckPolicy:      jetstream.AckExplicitPolicy,
+					Description:    "updated consumer",
+				})
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
-	info = c.CachedInfo()
+			info = c.CachedInfo()
 
-	if info.Stream != "foo" {
-		t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
-	}
+			if info.Stream != "foo" {
+				t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
+			}
 
-	// description should not be updated when using cached values
-	if info.Config.Description != "test consumer" {
-		t.Fatalf("Invalid consumer description; expected: 'updated consumer'; got: %s", info.Config.Description)
+			// description should not be updated when using cached values
+			if info.Config.Description != "test consumer" {
+				t.Fatalf("Invalid consumer description; expected: 'updated consumer'; got: %s", info.Config.Description)
+			}
+		})
+		if err := js.DeleteStream(ctx, "foo"); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 	}
 
 }

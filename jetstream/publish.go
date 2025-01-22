@@ -478,7 +478,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 	}
 
 	// Process no responders etc.
-	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
+	if len(m.Data) == 0 && m.Header.Get(statusHdr) == statusNoResponders {
 		if paf.retries < paf.maxRetries {
 			paf.retries++
 			time.AfterFunc(paf.retryWait, func() {

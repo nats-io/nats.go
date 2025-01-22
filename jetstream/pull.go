@@ -112,7 +112,7 @@ type (
 		MinAckPending           int64
 		Group                   string
 		Heartbeat               time.Duration
-		ErrHandler              ConsumeErrHandlerFunc
+		ErrHandler              ConsumeErrHandler
 		ReportMissingHeartbeats bool
 		ThresholdMessages       int
 		ThresholdBytes          int
@@ -701,15 +701,15 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 }
 
 func (hb *hbMonitor) Stop() {
-	hb.Mutex.Lock()
+	hb.Lock()
 	hb.timer.Stop()
-	hb.Mutex.Unlock()
+	hb.Unlock()
 }
 
 func (hb *hbMonitor) Reset(dur time.Duration) {
-	hb.Mutex.Lock()
+	hb.Lock()
 	hb.timer.Reset(dur)
-	hb.Mutex.Unlock()
+	hb.Unlock()
 }
 
 // Stop unsubscribes from the stream and cancels subscription. Calling
