@@ -67,13 +67,13 @@ type (
 	// [Consumer] interface, allowing to operate on a consumer (e.g. consume
 	// messages).
 	ConsumerManager interface {
-		// CreateOrUpdateConsumer creates a consumer on a given stream with
+		// CreateOrUpdateConsumer creates a pull consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to operate on a
 		// consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
-		// CreateConsumer creates a consumer on a given stream with given
+		// CreateConsumer creates a pull consumer on a given stream with given
 		// config. If consumer already exists and the provided configuration
 		// differs from its configuration, ErrConsumerExists is returned. If the
 		// provided configuration is the same as the existing consumer, the
@@ -81,7 +81,7 @@ type (
 		// allowing to operate on a consumer (e.g. fetch messages).
 		CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
 
-		// UpdateConsumer updates an existing consumer. If consumer does not
+		// UpdateConsumer updates an existing pull consumer. If consumer does not
 		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
 		// returned, allowing to operate on a consumer (e.g. fetch messages).
 		UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error)
@@ -95,6 +95,8 @@ type (
 		// Consumer returns an interface to an existing consumer, allowing processing
 		// of messages. If consumer does not exist, ErrConsumerNotFound is
 		// returned.
+		//
+		// It returns ErrNotPullConsumer if the consumer is not a pull consumer (deliver subject is not set).
 		Consumer(ctx context.Context, consumer string) (Consumer, error)
 
 		// DeleteConsumer removes a consumer with given name from a stream.
@@ -118,6 +120,32 @@ type (
 		// UnpinConsumer unpins the currently pinned client for a consumer for the given group name.
 		// If consumer does not exist, ErrConsumerNotFound is returned.
 		UnpinConsumer(ctx context.Context, consumer string, group string) error
+
+		// CreateOrUpdateConsumer creates a push consumer on a given stream with
+		// given config. If consumer already exists, it will be updated (if
+		// possible). Consumer interface is returned, allowing to operate on a
+		// consumer (e.g. fetch messages).
+		CreateOrUpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error)
+
+		// CreateConsumer creates a push consumer on a given stream with given
+		// config. If consumer already exists and the provided configuration
+		// differs from its configuration, ErrConsumerExists is returned. If the
+		// provided configuration is the same as the existing consumer, the
+		// existing consumer is returned. Consumer interface is returned,
+		// allowing to consume messages.
+		CreatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error)
+
+		// UpdateConsumer updates an existing push consumer. If consumer does not
+		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+		// returned, allowing to consume messages.
+		UpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error)
+
+		// PushConsumer returns an interface to an existing push consumer, allowing processing
+		// of messages. If consumer does not exist, ErrConsumerNotFound is
+		// returned.
+		//
+		// It returns ErrNotPushConsumer if the consumer is not a push consumer (deliver subject is not set).
+		PushConsumer(ctx context.Context, consumer string) (PushConsumer, error)
 	}
 
 	RawStreamMsg struct {
@@ -273,7 +301,7 @@ type (
 // possible). Consumer interface is returned, allowing to operate on a
 // consumer (e.g. fetch messages).
 func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.js, s.name, cfg, consumerActionCreateOrUpdate)
+	return upsertPullConsumer(ctx, s.js, s.name, cfg, consumerActionCreateOrUpdate)
 }
 
 // CreateConsumer creates a consumer on a given stream with given
@@ -283,14 +311,39 @@ func (s *stream) CreateOrUpdateConsumer(ctx context.Context, cfg ConsumerConfig)
 // existing consumer is returned. Consumer interface is returned,
 // allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) CreateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.js, s.name, cfg, consumerActionCreate)
+	return upsertPullConsumer(ctx, s.js, s.name, cfg, consumerActionCreate)
 }
 
 // UpdateConsumer updates an existing consumer. If consumer does not
 // exist, ErrConsumerDoesNotExist is returned. Consumer interface is
 // returned, allowing to operate on a consumer (e.g. fetch messages).
 func (s *stream) UpdateConsumer(ctx context.Context, cfg ConsumerConfig) (Consumer, error) {
-	return upsertConsumer(ctx, s.js, s.name, cfg, consumerActionUpdate)
+	return upsertPullConsumer(ctx, s.js, s.name, cfg, consumerActionUpdate)
+}
+
+// CreateOrUpdateConsumer creates a consumer on a given stream with
+// given config. If consumer already exists, it will be updated (if
+// possible). Consumer interface is returned, allowing to operate on a
+// consumer (e.g. fetch messages).
+func (s *stream) CreateOrUpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error) {
+	return upsertPushConsumer(ctx, s.js, s.name, cfg, consumerActionCreateOrUpdate)
+}
+
+// CreateConsumer creates a consumer on a given stream with given
+// config. If consumer already exists and the provided configuration
+// differs from its configuration, ErrConsumerExists is returned. If the
+// provided configuration is the same as the existing consumer, the
+// existing consumer is returned. Consumer interface is returned,
+// allowing to operate on a consumer (e.g. fetch messages).
+func (s *stream) CreatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error) {
+	return upsertPushConsumer(ctx, s.js, s.name, cfg, consumerActionCreate)
+}
+
+// UpdateConsumer updates an existing consumer. If consumer does not
+// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+// returned, allowing to operate on a consumer (e.g. fetch messages).
+func (s *stream) UpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error) {
+	return upsertPushConsumer(ctx, s.js, s.name, cfg, consumerActionUpdate)
 }
 
 // OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
@@ -320,6 +373,10 @@ func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig)
 // returned.
 func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {
 	return getConsumer(ctx, s.js, s.name, name)
+}
+
+func (s *stream) PushConsumer(ctx context.Context, name string) (PushConsumer, error) {
+	return getPushConsumer(ctx, s.jetStream, s.name, name)
 }
 
 // DeleteConsumer removes a consumer with given name from a stream.
@@ -532,7 +589,7 @@ func convertDirectGetMsgResponseToMsg(r *nats.Msg) (*RawStreamMsg, error) {
 		val := r.Header.Get(statusHdr)
 		if val != "" {
 			switch val {
-			case noMessages:
+			case statusNoMsgs:
 				return nil, ErrMsgNotFound
 			default:
 				desc := r.Header.Get("Description")
