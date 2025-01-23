@@ -30,11 +30,20 @@ jobs:
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                $(exit $(go fmt -modfile=go_test.mod  ./... | wc -l))
-                go vet -modfile=go_test.mod ./... 
-                GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
+                MODULE_DIRS=(
+                  "."
+                  "test"
+                  "jetstream/test"
+                  "micro/test"
+                )
+                for modDir in "${MODULE_DIRS[@]}"; do
+                  $(exit $(cd "$modDir" && go fmt ./... | wc -l))
+                done
+                $(exit $(go fmt ./... | wc -l))
+                go vet ./... ./test/... ./jetstream/test/... ./micro/test/...
+                staticcheck ./... ./test/... ./jetstream/test/... ./micro/test/...
                 find . -type f -name "*.go" | xargs misspell -error -locale US
-                golangci-lint run --timeout 5m0s ./jetstream/...
+                golangci-lint run --timeout 5m0s ./jetstream/... ./jetstream/test/...
 
     test:
         runs-on: ubuntu-latest-8-cores
@@ -60,11 +69,14 @@ jobs:
             - name: Test and coverage
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
+                go test -v -run=TestNoRace -p=1 ./test/... --failfast -vet=off
                 if [ "${{ matrix.go }}" = "1.25" ]; then
                   ./scripts/cov.sh CI
                 else
-                  go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
+                  go test -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
+                  go test -race -v -p=1 ./test/... --failfast -vet=off
+                  go test -race -v -p=1 ./jetstream/test/... --failfast -vet=off
+                  go test -race -v -p=1 ./micro/test/... --failfast -vet=off
                 fi
 
             - name: Coveralls
