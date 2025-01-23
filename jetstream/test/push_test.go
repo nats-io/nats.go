@@ -146,11 +146,6 @@ func TestPushConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		// delete consumer to simulate missing heartbeats
-		if err := s.DeleteConsumer(context.Background(), c.CachedInfo().Name); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
 		errs := make(chan error, 1)
 		l, err := c.Consume(func(msg jetstream.Msg) {},
 			jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
@@ -160,13 +155,18 @@ func TestPushConsumerConsume(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer l.Stop()
+		time.Sleep(300 * time.Millisecond)
+		// delete consumer to simulate missing heartbeats
+		if err := s.DeleteConsumer(context.Background(), c.CachedInfo().Name); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
 		select {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Expected error; got none")
 		case err := <-errs:
 			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
-				t.Fatalf("Expected error; got none")
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
 			}
 		}
 	})
@@ -261,6 +261,7 @@ func TestPushConsumerConsume(t *testing.T) {
 		c, err := s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
 			DeliverSubject: nats.NewInbox(),
 			AckPolicy:      jetstream.AckExplicitPolicy,
+			IdleHeartbeat:  time.Second,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -310,6 +311,7 @@ func TestPushConsumerConsume(t *testing.T) {
 		c, err := s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
 			AckPolicy:      jetstream.AckExplicitPolicy,
 			DeliverSubject: nats.NewInbox(),
+			IdleHeartbeat:  time.Second,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -430,5 +432,76 @@ func TestPushConsumerConsume(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("Timeout waiting for consume to be closed")
 		}
+	})
+
+	t.Run("empty handler", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			DeliverSubject: nats.NewInbox(),
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = c.Consume(nil)
+		if !errors.Is(err, jetstream.ErrHandlerRequired) {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("stop and drain idempotent", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			DeliverSubject: nats.NewInbox(),
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			time.Sleep(50 * time.Millisecond)
+			msg.Ack()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cc.Stop()
+		cc.Stop()
+		cc.Drain()
+		cc.Drain()
 	})
 }
