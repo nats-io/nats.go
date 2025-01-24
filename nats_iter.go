@@ -12,7 +12,6 @@
 // limitations under the License.
 
 //go:build go1.23
-// +build go1.23
 
 package nats
 

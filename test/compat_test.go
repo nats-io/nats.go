@@ -12,7 +12,6 @@
 // limitations under the License.
 
 //go:build compat
-// +build compat
 
 package test
 
