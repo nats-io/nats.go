@@ -507,7 +507,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 	if closed && !drainMode {
 		return nil, ErrMsgIteratorClosed
 	}
-	hbMonitor := s.scheduleHeartbeatCheck(2 * s.consumeOpts.Heartbeat)
+	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
 	defer func() {
 		if hbMonitor != nil {
 			hbMonitor.Stop()
