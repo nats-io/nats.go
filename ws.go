@@ -316,7 +316,7 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 		// Add to the pending list if dealing with uncompressed frames or
 		// after we have received the full compressed message and decompressed it.
 		if addToPending {
-			r.pending = append(r.pending, b)
+			r.pending = append(r.pending, bytes.Clone(b))
 		}
 	}
 	// In case of compression, there may be nothing to drain
