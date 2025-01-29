@@ -127,7 +127,7 @@ type (
 		// consumer (e.g. fetch messages).
 		CreateOrUpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (PushConsumer, error)
 
-		// CreateConsumer creates a push consumer on a given stream with given
+		// CreatePushConsumer creates a push consumer on a given stream with given
 		// config. If consumer already exists and the provided configuration
 		// differs from its configuration, ErrConsumerExists is returned. If the
 		// provided configuration is the same as the existing consumer, the
