@@ -14,6 +14,7 @@
 package test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1945,6 +1946,115 @@ func TestPullConsumerMessages(t *testing.T) {
 			t.Fatalf("Unexpected received message count after drain; want %d; got %d", len(testMsgs), len(msgs))
 		}
 	})
+
+	t.Run("with max messages and per fetch size limit", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// subscribe to next request subject to verify how many next requests were sent
+		// and whether both thresholds work as expected
+		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		it, err := c.Messages(jetstream.PullMaxMessagesWithFetchSizeLimit(10, 1024))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		smallMsg := nats.Msg{
+			Subject: "FOO.A",
+			Data:    []byte("msg"),
+		}
+		// publish 10 small messages
+		for i := 0; i < 10; i++ {
+			if _, err := js.PublishMsg(ctx, &smallMsg); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+
+		for i := 0; i < 10; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg.Ack()
+		}
+
+		// we should get 2 pull requests
+		for range 2 {
+			fetchReq, err := sub.NextMsg(100 * time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on next msg: %v", err)
+			}
+			if !bytes.Contains(fetchReq.Data, []byte(`"max_bytes":1024`)) {
+				t.Fatalf("Unexpected fetch request: %s", fetchReq.Data)
+			}
+		}
+		// make sure no more requests were sent
+		_, err = sub.NextMsg(100 * time.Millisecond)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+
+		// now publish 10 large messages, almost hitting the limit
+		// we need to account for the total message size (which includes js ack reply subject)
+		largeMsg := nats.Msg{
+			Subject: "FOO.B",
+			Data:    make([]byte, 950),
+		}
+		for range 10 {
+			if _, err := js.PublishMsg(ctx, &largeMsg); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+
+		for i := 0; i < 10; i++ {
+			msg, err := it.Next()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			msg.Ack()
+		}
+		// we expect 10 pull requests
+		for range 9 {
+			fetchReq, err := sub.NextMsg(100 * time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on next msg: %v", err)
+			}
+			if !bytes.Contains(fetchReq.Data, []byte(`"max_bytes":1024`)) {
+				t.Fatalf("Unexpected fetch request: %s", fetchReq.Data)
+			}
+		}
+		_, err = sub.NextMsg(100 * time.Millisecond)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+
+		it.Stop()
+	})
 }
 
 func TestPullConsumerConsume(t *testing.T) {
@@ -2870,6 +2980,157 @@ func TestPullConsumerConsume(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("Timeout waiting for consume to be closed")
 		}
+	})
+
+	t.Run("with max messages and per fetch size limit", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// subscribe to next request subject to verify how many next requests were sent
+		// and whether both thresholds work as expected
+		sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
+		if err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		wg := &sync.WaitGroup{}
+		msgs := make([]jetstream.Msg, 0)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			msg.Ack()
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, jetstream.PullMaxMessagesWithFetchSizeLimit(10, 1024))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		smallMsg := nats.Msg{
+			Subject: "FOO.A",
+			Data:    []byte("msg"),
+		}
+		wg.Add(10)
+		// publish 10 small messages
+		for i := 0; i < 10; i++ {
+			if _, err := js.PublishMsg(ctx, &smallMsg); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+		wg.Wait()
+
+		// we should get 2 pull requests
+		for range 2 {
+			fetchReq, err := sub.NextMsg(100 * time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on next msg: %v", err)
+			}
+			if !bytes.Contains(fetchReq.Data, []byte(`"max_bytes":1024`)) {
+				t.Fatalf("Unexpected fetch request: %s", fetchReq.Data)
+			}
+		}
+		// make sure no more requests were sent
+		_, err = sub.NextMsg(100 * time.Millisecond)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+
+		// now publish 10 large messages, almost hitting the limit
+		// we need to account for the total message size (which includes js ack reply subject)
+		largeMsg := nats.Msg{
+			Subject: "FOO.B",
+			Data:    make([]byte, 950),
+		}
+		wg.Add(10)
+		for range 10 {
+			if _, err := js.PublishMsg(ctx, &largeMsg); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+		wg.Wait()
+
+		// we expect 10 pull requests
+		for range 10 {
+			fetchReq, err := sub.NextMsg(100 * time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on next msg: %v", err)
+			}
+			if !bytes.Contains(fetchReq.Data, []byte(`"max_bytes":1024`)) {
+				t.Fatalf("Unexpected fetch request: %s", fetchReq.Data)
+			}
+		}
+		_, err = sub.NextMsg(100 * time.Millisecond)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+
+		cc.Stop()
+	})
+
+	t.Run("avoid stall on batch completed status", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := &sync.WaitGroup{}
+		msgs := make([]jetstream.Msg, 0)
+		// use consume with small max messages and large max bytes
+		// to make sure we don't stall on batch completed status
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			msg.Ack()
+			msgs = append(msgs, msg)
+			wg.Done()
+		}, jetstream.PullMaxMessagesWithFetchSizeLimit(2, 1024))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg.Add(10)
+		for i := 0; i < 10; i++ {
+			if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error during publish: %s", err)
+			}
+		}
+		wg.Wait()
+		cc.Stop()
 	})
 }
 

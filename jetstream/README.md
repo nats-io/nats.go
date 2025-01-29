@@ -494,6 +494,10 @@ request. An error will be triggered if at least 2 heartbeats are missed
 - `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a
   custom error handler on `Consume()`, allowing e.g. tracking missing
   heartbeats.
+- `PullMaxMessagesWithFetchSizeLimit` - up to the provided number of messages
+  will be buffered and a single fetch size will be limited to the provided
+  value. This is an advanced option and should be used with caution. Most of the
+  time, `PullMaxMessages` or `PullMaxBytes` should be used instead.
 
 > __NOTE__: `Stop()` should always be called on `ConsumeContext` to avoid
 > leaking goroutines.
@@ -536,6 +540,10 @@ type PullThresholdMessages int
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
+- `PullMaxMessagesWithFetchSizeLimit` - up to the provided number of messages
+  will be buffered and a single fetch size will be limited to the provided
+  value. This is an advanced option and should be used with caution. Most of the
+  time, `PullMaxMessages` or `PullMaxBytes` should be used instead.
 
 ##### Using `Messages()` to fetch single messages one by one
 

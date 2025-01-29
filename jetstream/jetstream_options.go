@@ -125,6 +125,60 @@ func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+type pullMaxMessagesWithFetchSizeLimit struct {
+	maxMessages int
+	maxBytes    int
+}
+
+// PullMaxMessagesWithFetchSizeLimit limits the number of messages to be buffered
+// in the client. Additionally, it sets the maximum size a single fetch request
+// can have. Note that this will not limit the total size of messages buffered
+// in the client, but rather can serve as a way to limit what nats server will
+// have to internally buffer for a single fetch request.
+//
+// This is an advanced option and should be used with caution. Most users should
+// use [PullMaxMessages] or [PullMaxBytes] instead.
+//
+// PullMaxMessagesWithFetchSizeLimit implements both PullConsumeOpt and
+// PullMessagesOpt, allowing it to configure Consumer.Consume and Consumer.Messages.
+func PullMaxMessagesWithFetchSizeLimit(maxMessages, byteLimit int) pullMaxMessagesWithFetchSizeLimit {
+	return pullMaxMessagesWithFetchSizeLimit{maxMessages, byteLimit}
+}
+
+func (m pullMaxMessagesWithFetchSizeLimit) configureConsume(opts *consumeOpts) error {
+	if m.maxMessages <= 0 {
+		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
+	}
+	if m.maxBytes <= 0 {
+		return fmt.Errorf("%w: maxBytes size must be at least 1", ErrInvalidOption)
+	}
+	if opts.MaxMessages > 0 {
+		return fmt.Errorf("%w: maxMessages already set", ErrInvalidOption)
+	}
+	opts.MaxMessages = m.maxMessages
+	opts.MaxBytes = m.maxBytes
+	opts.LimitSize = true
+
+	return nil
+}
+
+func (m pullMaxMessagesWithFetchSizeLimit) configureMessages(opts *consumeOpts) error {
+	if m.maxMessages <= 0 {
+		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
+	}
+	if m.maxBytes <= 0 {
+		return fmt.Errorf("%w: maxBytes size must be at least 1", ErrInvalidOption)
+	}
+	if opts.MaxMessages > 0 {
+		return fmt.Errorf("%w: maxMessages already set", ErrInvalidOption)
+	}
+	opts.MaxMessages = m.maxMessages
+	opts.MaxBytes = m.maxBytes
+	opts.LimitSize = true
+
+	return nil
+}
+
 // PullExpiry sets timeout on a single pull request, waiting until at least one
 // message is available.
 // If not provided, a default of 30 seconds will be used.

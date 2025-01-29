@@ -199,6 +199,11 @@ var (
 	// on a pull request.
 	ErrMaxBytesExceeded JetStreamError = &jsError{message: "message size exceeds max bytes"}
 
+	// ErrBatchCompleted is returned when a fetch request sent the whole batch,
+	// but there are still bytes left. This is applicable only when MaxBytes is
+	// set on a pull request.
+	ErrBatchCompleted JetStreamError = &jsError{message: "batch completed"}
+
 	// ErrConsumerDeleted is returned when attempting to send pull request to a
 	// consumer which does not exist.
 	ErrConsumerDeleted JetStreamError = &jsError{message: "consumer deleted"}
