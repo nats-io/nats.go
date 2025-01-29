@@ -1123,7 +1123,7 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
-		return fmt.Errorf("%w: the value of Heartbeat must be less than 50% of expiry", ErrInvalidOption)
+		return fmt.Errorf("%w: the value of Heartbeat must be less than 50%% of expiry", ErrInvalidOption)
 	}
 	return nil
 }

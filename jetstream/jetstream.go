@@ -215,8 +215,7 @@ type (
 
 		// CreateOrUpdateConsumer creates a push consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
-		// possible). Consumer interface is returned, allowing to operate on a
-		// consumer (e.g. fetch messages).
+		// possible). Consumer interface is returned, allowing to consume messages.
 		CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
 
 		// CreatePushConsumer creates a push consumer on a given stream with given
