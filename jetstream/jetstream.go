@@ -206,6 +206,7 @@ type (
 		// If consumer does not exist, ErrConsumerNotFound is returned.
 		DeleteConsumer(ctx context.Context, stream string, consumer string) error
 
+		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
 		// PauseConsumer pauses a consumer until the given time.
 		PauseConsumer(ctx context.Context, stream string, consumer string, pauseUntil time.Time) (*ConsumerPauseResponse, error)
 
@@ -218,7 +219,7 @@ type (
 		// consumer (e.g. fetch messages).
 		CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
 
-		// CreateConsumer creates a push consumer on a given stream with given
+		// CreatePushConsumer creates a push consumer on a given stream with given
 		// config. If consumer already exists and the provided configuration
 		// differs from its configuration, ErrConsumerExists is returned. If the
 		// provided configuration is the same as the existing consumer, the
@@ -226,7 +227,7 @@ type (
 		// allowing to consume messages.
 		CreatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
 
-		// UpdateConsumer updates an existing push consumer. If consumer does not
+		// UpdatePushConsumer updates an existing push consumer. If consumer does not
 		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
 		// returned, allowing to consume messages.
 		UpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
@@ -883,7 +884,7 @@ func (js *jetStream) DeleteConsumer(ctx context.Context, stream string, name str
 	return deleteConsumer(ctx, js, stream, name)
 }
 
-// CreateOrUpdateConsumer creates a push consumer on a given stream with
+// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
 // given config. If consumer already exists, it will be updated (if
 // possible). Consumer interface is returned, allowing to consume messages.
 func (js *jetStream) CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
@@ -906,7 +907,7 @@ func (js *jetStream) CreatePushConsumer(ctx context.Context, stream string, cfg 
 	return upsertPushConsumer(ctx, js, stream, cfg, consumerActionCreate)
 }
 
-// UpdateConsumer updates an existing push consumer. If consumer does not
+// UpdatePushConsumer updates an existing push consumer. If consumer does not
 // exist, ErrConsumerDoesNotExist is returned. Consumer interface is
 // returned, allowing to consume messages.
 func (js *jetStream) UpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
@@ -916,7 +917,7 @@ func (js *jetStream) UpdatePushConsumer(ctx context.Context, stream string, cfg 
 	return upsertPushConsumer(ctx, js, stream, cfg, consumerActionUpdate)
 }
 
-// Consumer returns an interface to an existing consumer, allowing processing
+// PushConsumer returns an interface to an existing consumer, allowing processing
 // of messages. If consumer does not exist, ErrConsumerNotFound is
 // returned.
 func (js *jetStream) PushConsumer(ctx context.Context, stream string, name string) (PushConsumer, error) {
