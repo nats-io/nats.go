@@ -116,12 +116,13 @@ func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp an
 
 // a RequestWithContext with tracing via TraceCB
 func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte) (*jetStreamMsg, error) {
+	subj = js.apiSubject(subj)
 	var req []byte
 	if len(data) > 0 {
 		req = data[0]
 	}
-	if js.clientTrace != nil {
-		ctrace := js.clientTrace
+	if js.opts.clientTrace != nil {
+		ctrace := js.opts.clientTrace
 		if ctrace.RequestSent != nil {
 			ctrace.RequestSent(subj, req)
 		}
@@ -130,8 +131,8 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	if err != nil {
 		return nil, err
 	}
-	if js.clientTrace != nil {
-		ctrace := js.clientTrace
+	if js.opts.clientTrace != nil {
+		ctrace := js.opts.clientTrace
 		if ctrace.ResponseReceived != nil {
 			ctrace.ResponseReceived(subj, resp.Data, resp.Header)
 		}
@@ -140,12 +141,12 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	return js.toJSMsg(resp), nil
 }
 
-func apiSubj(prefix, subject string) string {
-	if prefix == "" {
-		return subject
+func (js *jetStream) apiSubject(subj string) string {
+	if js.opts.apiPrefix == "" {
+		return subj
 	}
 	var b strings.Builder
-	b.WriteString(prefix)
-	b.WriteString(subject)
+	b.WriteString(js.opts.apiPrefix)
+	b.WriteString(subj)
 	return b.String()
 }

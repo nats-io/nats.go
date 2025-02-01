@@ -30,7 +30,7 @@ func (fn pullOptFunc) configureMessages(opts *consumeOpts) error {
 
 // WithClientTrace enables request/response API calls tracing.
 func WithClientTrace(ct *ClientTrace) JetStreamOpt {
-	return func(opts *jsOpts) error {
+	return func(opts *JetStreamOptions) error {
 		opts.clientTrace = ct
 		return nil
 	}
@@ -38,7 +38,7 @@ func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 
 // WithPublishAsyncErrHandler sets error handler for async message publish.
 func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
-	return func(opts *jsOpts) error {
+	return func(opts *JetStreamOptions) error {
 		opts.publisherOpts.aecb = cb
 		return nil
 	}
@@ -47,7 +47,7 @@ func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 // WithPublishAsyncMaxPending sets the maximum outstanding async publishes that
 // can be inflight at one time.
 func WithPublishAsyncMaxPending(max int) JetStreamOpt {
-	return func(opts *jsOpts) error {
+	return func(opts *JetStreamOptions) error {
 		if max < 1 {
 			return fmt.Errorf("%w: max ack pending should be >= 1", ErrInvalidOption)
 		}

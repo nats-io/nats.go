@@ -154,7 +154,7 @@ func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts
 // ack from server. It accepts subject name (which must be bound to a
 // stream) and nats.Message.
 func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -290,7 +290,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		if err != nil {
 			return nil, fmt.Errorf("nats: error creating async reply handler: %s", err)
 		}
-		id = reply[js.replyPrefixLen:]
+		id = reply[js.opts.replyPrefixLen:]
 		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
 		numPending, maxPending := js.registerPAF(id, paf)
 
@@ -305,7 +305,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 	} else {
 		// when retrying, get the ID from existing reply subject
 		reply = paf.reply
-		id = reply[js.replyPrefixLen:]
+		id = reply[js.opts.replyPrefixLen:]
 	}
 
 	pubMsg := &nats.Msg{
@@ -337,7 +337,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		for i := 0; i < aReplyTokensize; i++ {
 			b[i] = rdigits[int(b[i]%base)]
 		}
-		js.publisher.replyPrefix = fmt.Sprintf("%s%s.", js.replyPrefix, b[:aReplyTokensize])
+		js.publisher.replyPrefix = fmt.Sprintf("%s%s.", js.opts.replyPrefix, b[:aReplyTokensize])
 		sub, err := js.conn.Subscribe(fmt.Sprintf("%s*", js.publisher.replyPrefix), js.handleAsyncReply)
 		if err != nil {
 			js.publisher.Unlock()
@@ -365,10 +365,10 @@ func (js *jetStream) newAsyncReply() (string, error) {
 
 // Handle an async reply from PublishAsync.
 func (js *jetStream) handleAsyncReply(m *nats.Msg) {
-	if len(m.Subject) <= js.replyPrefixLen {
+	if len(m.Subject) <= js.opts.replyPrefixLen {
 		return
 	}
-	id := m.Subject[js.replyPrefixLen:]
+	id := m.Subject[js.opts.replyPrefixLen:]
 
 	js.publisher.Lock()
 

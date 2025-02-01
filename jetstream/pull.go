@@ -81,12 +81,12 @@ type (
 
 	pullConsumer struct {
 		sync.Mutex
-		jetStream *jetStream
-		stream    string
-		durable   bool
-		name      string
-		info      *ConsumerInfo
-		subs      syncx.Map[string, *pullSubscription]
+		js      *jetStream
+		stream  string
+		durable bool
+		name    string
+		info    *ConsumerInfo
+		subs    syncx.Map[string, *pullSubscription]
 	}
 
 	pullRequest struct {
@@ -187,7 +187,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	}
 	p.Lock()
 
-	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
+	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	consumeID := nuid.Next()
 	sub := &pullSubscription{
@@ -198,7 +198,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
-	sub.connStatusChanged = p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
+	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 
@@ -245,7 +245,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
-		handler(p.jetStream.toJSMsg(msg))
+		handler(p.js.toJSMsg(msg))
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
 		sub.incrementDeliveredMsgs()
@@ -255,8 +255,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			sub.Stop()
 		}
 	}
-	inbox := p.jetStream.conn.NewInbox()
-	sub.subscription, err = p.jetStream.conn.Subscribe(inbox, internalHandler)
+	inbox := p.js.conn.NewInbox()
+	sub.subscription, err = p.js.conn.Subscribe(inbox, internalHandler)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +430,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	}
 
 	p.Lock()
-	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
+	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	msgs := make(chan *nats.Msg, consumeOpts.MaxMessages)
 
@@ -444,9 +444,9 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
-	sub.connStatusChanged = p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
-	inbox := p.jetStream.conn.NewInbox()
-	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
+	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
+	inbox := p.js.conn.NewInbox()
+	sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		p.Unlock()
 		return nil, err
@@ -547,7 +547,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 			}
 			s.decrementPendingMsgs(msg)
 			s.incrementDeliveredMsgs()
-			return s.consumer.jetStream.toJSMsg(msg), nil
+			return s.consumer.js.toJSMsg(msg), nil
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
@@ -755,7 +755,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		msgs: make(chan Msg, req.Batch),
 	}
 	msgs := make(chan *nats.Msg, 2*req.Batch)
-	subject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiRequestNextT, p.stream, p.name))
+	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	sub := &pullSubscription{
 		consumer: p,
@@ -763,9 +763,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		msgs:     msgs,
 		errs:     make(chan error, 1),
 	}
-	inbox := p.jetStream.conn.NewInbox()
+	inbox := p.js.conn.NewInbox()
 	var err error
-	sub.subscription, err = p.jetStream.conn.ChanSubscribe(inbox, sub.msgs)
+	sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		return nil, err
 	}
@@ -799,7 +799,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					res.Unlock()
 					continue
 				}
-				res.msgs <- p.jetStream.toJSMsg(msg)
+				res.msgs <- p.js.toJSMsg(msg)
 				meta, err := msg.Metadata()
 				if err != nil {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
@@ -938,7 +938,7 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	}
 
 	reply := s.subscription.Subject
-	if err := s.consumer.jetStream.conn.PublishRequest(subject, reply, reqJSON); err != nil {
+	if err := s.consumer.js.conn.PublishRequest(subject, reply, reqJSON); err != nil {
 		return err
 	}
 	return nil

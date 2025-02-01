@@ -342,7 +342,7 @@ func (m *jetStreamMsg) ackReply(ctx context.Context, ackType ackType, sync bool,
 
 	if sync {
 		var cancel context.CancelFunc
-		ctx, cancel = wrapContextWithoutDeadline(ctx)
+		ctx, cancel = m.js.wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
 		}

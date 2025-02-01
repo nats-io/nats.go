@@ -790,13 +790,13 @@ func (kl *kvLister) Error() error {
 
 func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 	opts := make([]nats.JSOpt, 0)
-	if js.apiPrefix != "" {
-		opts = append(opts, nats.APIPrefix(js.apiPrefix))
+	if js.opts.apiPrefix != "" {
+		opts = append(opts, nats.APIPrefix(js.opts.apiPrefix))
 	}
-	if js.clientTrace != nil {
+	if js.opts.clientTrace != nil {
 		opts = append(opts, nats.ClientTrace{
-			RequestSent:      js.clientTrace.RequestSent,
-			ResponseReceived: js.clientTrace.ResponseReceived,
+			RequestSent:      js.opts.clientTrace.RequestSent,
+			ResponseReceived: js.opts.clientTrace.ResponseReceived,
 		})
 	}
 	return js.conn.JetStream(opts...)
@@ -928,7 +928,7 @@ func (kv *kvs) Put(ctx context.Context, key string, value []byte) (uint64, error
 
 	var b strings.Builder
 	if kv.useJSPfx {
-		b.WriteString(kv.js.apiPrefix)
+		b.WriteString(kv.js.opts.apiPrefix)
 	}
 	if kv.putPre != "" {
 		b.WriteString(kv.putPre)
@@ -978,7 +978,7 @@ func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision ui
 
 	var b strings.Builder
 	if kv.useJSPfx {
-		b.WriteString(kv.js.apiPrefix)
+		b.WriteString(kv.js.opts.apiPrefix)
 	}
 	b.WriteString(kv.pre)
 	b.WriteString(key)
@@ -1001,7 +1001,7 @@ func (kv *kvs) Delete(ctx context.Context, key string, opts ...KVDeleteOpt) erro
 
 	var b strings.Builder
 	if kv.useJSPfx {
-		b.WriteString(kv.js.apiPrefix)
+		b.WriteString(kv.js.opts.apiPrefix)
 	}
 	if kv.putPre != "" {
 		b.WriteString(kv.putPre)
@@ -1416,7 +1416,7 @@ func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) 
 		pushJS:     pushJS,
 		stream:     stream,
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx:  js.apiPrefix != DefaultAPIPrefix,
+		useJSPfx:  js.opts.apiPrefix != DefaultAPIPrefix,
 		useDirect: info.Config.AllowDirect,
 	}
 

@@ -28,7 +28,7 @@ import (
 
 type (
 	orderedConsumer struct {
-		jetStream         *jetStream
+		js                *jetStream
 		cfg               *OrderedConsumerConfig
 		stream            string
 		currentConsumer   *pullConsumer
@@ -543,7 +543,7 @@ func (c *orderedConsumer) reset() error {
 		c.currentConsumer.Unlock()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = c.jetStream.DeleteConsumer(ctx, c.stream, consName)
+			_ = c.js.DeleteConsumer(ctx, c.stream, consName)
 			cancel()
 		}()
 	}
@@ -568,7 +568,7 @@ func (c *orderedConsumer) reset() error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		cons, err = c.jetStream.CreateOrUpdateConsumer(ctx, c.stream, *consumerConfig)
+		cons, err = c.js.CreateOrUpdateConsumer(ctx, c.stream, *consumerConfig)
 		if err != nil {
 			return true, err
 		}
@@ -688,10 +688,10 @@ func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 	if c.currentConsumer == nil {
 		return nil, ErrOrderedConsumerNotCreated
 	}
-	infoSubject := apiSubj(c.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, c.stream, c.currentConsumer.name))
+	infoSubject := fmt.Sprintf(apiConsumerInfoT, c.stream, c.currentConsumer.name)
 	var resp consumerInfoResponse
 
-	if _, err := c.jetStream.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+	if _, err := c.js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {

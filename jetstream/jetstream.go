@@ -49,6 +49,13 @@ type (
 		// returned.
 		AccountInfo(ctx context.Context) (*AccountInfo, error)
 
+		// Conn returns the underlying NATS connection.
+		Conn() *nats.Conn
+
+		// Options returns read-only JetStreamOptions used
+		// when making requests to JetStream.
+		Options() JetStreamOptions
+
 		StreamConsumerManager
 		StreamManager
 		Publisher
@@ -274,17 +281,27 @@ type (
 
 	jetStream struct {
 		conn *nats.Conn
-		jsOpts
+		opts JetStreamOptions
 
 		publisher *jetStreamClient
 	}
 
 	// JetStreamOpt is a functional option for [New], [NewWithAPIPrefix] and
 	// [NewWithDomain] methods.
-	JetStreamOpt func(*jsOpts) error
+	JetStreamOpt func(*JetStreamOptions) error
 
-	jsOpts struct {
-		publisherOpts  asyncPublisherOpts
+	// JetStreamOptions are used to configure JetStream.
+	JetStreamOptions struct {
+		// APIPrefix is the prefix used for JetStream API requests.
+		APIPrefix string
+
+		// Domain is the domain name token used when sending JetStream requests.
+		Domain string
+
+		publisherOpts asyncPublisherOpts
+
+		// this is the actual prefix used in the API requests
+		// it is either APIPrefix or a domain specific prefix
 		apiPrefix      string
 		replyPrefix    string
 		replyPrefixLen int
@@ -379,7 +396,7 @@ var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
-	jsOpts := jsOpts{
+	jsOpts := JetStreamOptions{
 		apiPrefix: DefaultAPIPrefix,
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
@@ -393,7 +410,7 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 	}
 	js := &jetStream{
 		conn:      nc,
-		jsOpts:    jsOpts,
+		opts:      jsOpts,
 		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 
@@ -405,7 +422,7 @@ const (
 	defaultAsyncPubAckInflight = 4000
 )
 
-func setReplyPrefix(nc *nats.Conn, jsOpts *jsOpts) {
+func setReplyPrefix(nc *nats.Conn, jsOpts *JetStreamOptions) {
 	jsOpts.replyPrefix = nats.InboxPrefix
 	if nc.Opts.InboxPrefix != "" {
 		jsOpts.replyPrefix = nc.Opts.InboxPrefix + "."
@@ -424,10 +441,11 @@ func setReplyPrefix(nc *nats.Conn, jsOpts *jsOpts) {
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
-	jsOpts := jsOpts{
+	jsOpts := JetStreamOptions{
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
+		APIPrefix: apiPrefix,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -440,10 +458,12 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 	}
 	if !strings.HasSuffix(apiPrefix, ".") {
 		jsOpts.apiPrefix = fmt.Sprintf("%s.", apiPrefix)
+	} else {
+		jsOpts.apiPrefix = apiPrefix
 	}
 	js := &jetStream{
 		conn:      nc,
-		jsOpts:    jsOpts,
+		opts:      jsOpts,
 		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 	return js, nil
@@ -458,10 +478,11 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
-	jsOpts := jsOpts{
+	jsOpts := JetStreamOptions{
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
+		Domain: domain,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -475,10 +496,19 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 	jsOpts.apiPrefix = fmt.Sprintf(jsDomainT, domain)
 	js := &jetStream{
 		conn:      nc,
-		jsOpts:    jsOpts,
+		opts:      jsOpts,
 		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
 	}
 	return js, nil
+}
+
+// Conn returns the underlying NATS connection.
+func (js *jetStream) Conn() *nats.Conn {
+	return js.conn
+}
+
+func (js *jetStream) Options() JetStreamOptions {
+	return js.opts
 }
 
 // CreateStream creates a new stream with given config and returns an
@@ -488,7 +518,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -520,7 +550,7 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 
-	createSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamCreateT, cfg.Name))
+	createSubject := fmt.Sprintf(apiStreamCreateT, cfg.Name)
 	var resp streamInfoResponse
 
 	if _, err = js.apiRequestJSON(ctx, createSubject, &resp, req); err != nil {
@@ -550,9 +580,9 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}
 
 	return &stream{
-		jetStream: js,
-		name:      cfg.Name,
-		info:      resp.StreamInfo,
+		js:   js,
+		name: cfg.Name,
+		info: resp.StreamInfo,
 	}, nil
 }
 
@@ -590,7 +620,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if err := validateStreamName(cfg.Name); err != nil {
 		return nil, err
 	}
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -600,7 +630,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		return nil, err
 	}
 
-	updateSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamUpdateT, cfg.Name))
+	updateSubject := fmt.Sprintf(apiStreamUpdateT, cfg.Name)
 	var resp streamInfoResponse
 
 	if _, err = js.apiRequestJSON(ctx, updateSubject, &resp, req); err != nil {
@@ -630,9 +660,9 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}
 
 	return &stream{
-		jetStream: js,
-		name:      cfg.Name,
-		info:      resp.StreamInfo,
+		js:   js,
+		name: cfg.Name,
+		info: resp.StreamInfo,
 	}, nil
 }
 
@@ -656,11 +686,11 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if err := validateStreamName(name); err != nil {
 		return nil, err
 	}
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
-	infoSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamInfoT, name))
+	infoSubject := fmt.Sprintf(apiStreamInfoT, name)
 
 	var resp streamInfoResponse
 
@@ -674,9 +704,9 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 		return nil, resp.Error
 	}
 	return &stream{
-		jetStream: js,
-		name:      name,
-		info:      resp.StreamInfo,
+		js:   js,
+		name: name,
+		info: resp.StreamInfo,
 	}, nil
 }
 
@@ -685,11 +715,11 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 	if err := validateStreamName(name); err != nil {
 		return err
 	}
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
-	deleteSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiStreamDeleteT, name))
+	deleteSubject := fmt.Sprintf(apiStreamDeleteT, name)
 	var resp streamDeleteResponse
 
 	if _, err := js.apiRequestJSON(ctx, deleteSubject, &resp); err != nil {
@@ -747,7 +777,7 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 		return nil, err
 	}
 	oc := &orderedConsumer{
-		jetStream:  js,
+		js:         js,
 		cfg:        &cfg,
 		stream:     stream,
 		namePrefix: nuid.Next(),
@@ -810,14 +840,13 @@ func validateSubject(subject string) error {
 // returned (for a single server setup). For clustered topologies, AccountInfo
 // will time out.
 func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
 	var resp accountInfoResponse
 
-	infoSubject := apiSubj(js.apiPrefix, apiAccountInfo)
-	if _, err := js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+	if _, err := js.apiRequestJSON(ctx, apiAccountInfo, &resp); err != nil {
 		if errors.Is(err, nats.ErrNoResponders) {
 			return nil, ErrJetStreamNotEnabled
 		}
@@ -853,7 +882,7 @@ func (js *jetStream) ListStreams(ctx context.Context, opts ...StreamListOpt) Str
 	}
 	go func() {
 		defer close(l.streams)
-		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
 		}
@@ -906,7 +935,7 @@ func (js *jetStream) StreamNames(ctx context.Context, opts ...StreamListOpt) Str
 		}
 	}
 	go func() {
-		ctx, cancel := wrapContextWithoutDeadline(ctx)
+		ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 		if cancel != nil {
 			defer cancel()
 		}
@@ -938,14 +967,13 @@ func (js *jetStream) StreamNames(ctx context.Context, opts ...StreamListOpt) Str
 // subject. If no stream is bound to given subject, ErrStreamNotFound
 // is returned.
 func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (string, error) {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
 	if err := validateSubject(subject); err != nil {
 		return "", err
 	}
-	streamsSubject := apiSubj(js.apiPrefix, apiStreams)
 
 	r := &streamsRequest{Subject: subject}
 	req, err := json.Marshal(r)
@@ -953,7 +981,7 @@ func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (s
 		return "", err
 	}
 	var resp streamNamesResponse
-	_, err = js.apiRequestJSON(ctx, streamsSubject, &resp, req)
+	_, err = js.apiRequestJSON(ctx, apiStreams, &resp, req)
 	if err != nil {
 		return "", err
 	}
@@ -989,9 +1017,8 @@ func (s *streamLister) streamInfos(ctx context.Context, streamsReq streamsReques
 		return nil, err
 	}
 
-	slSubj := apiSubj(s.js.apiPrefix, apiStreamListT)
 	var resp streamListResponse
-	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, reqJSON)
+	_, err = s.js.apiRequestJSON(ctx, apiStreamListT, &resp, reqJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -1021,9 +1048,8 @@ func (s *streamLister) streamNames(ctx context.Context, streamsReq streamsReques
 		return nil, err
 	}
 
-	slSubj := apiSubj(s.js.apiPrefix, apiStreams)
 	var resp streamNamesResponse
-	_, err = s.js.apiRequestJSON(ctx, slSubj, &resp, reqJSON)
+	_, err = s.js.apiRequestJSON(ctx, apiStreams, &resp, reqJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,7 +1065,7 @@ func (s *streamLister) streamNames(ctx context.Context, streamsReq streamsReques
 // wrapContextWithoutDeadline wraps context without deadline with default timeout.
 // If deadline is already set, it will be returned as is, and cancel() will be nil.
 // Caller should check if cancel() is nil before calling it.
-func wrapContextWithoutDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+func (js *jetStream) wrapContextWithoutDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {
 		return ctx, nil
 	}
