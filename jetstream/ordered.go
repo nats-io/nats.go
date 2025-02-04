@@ -39,7 +39,7 @@ type (
 		consumerType      consumerType
 		doReset           chan struct{}
 		resetInProgress   atomic.Uint32
-		userErrHandler    ConsumeErrHandlerFunc
+		userErrHandler    ConsumeErrHandler
 		stopAfter         int
 		stopAfterMsgsLeft chan int
 		withStopAfter     bool

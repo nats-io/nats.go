@@ -77,7 +77,8 @@ type (
 		TimeStamp time.Time `json:"ts"`
 	}
 
-	// ConsumerConfig is the configuration of a JetStream consumer.
+	// ConsumerConfig represents the configuration of a JetStream consumer,
+	// encompassing both push and pull consumer settings
 	ConsumerConfig struct {
 		// Name is an optional name for the consumer. If not set, one is
 		// generated automatically.
@@ -217,6 +218,26 @@ type (
 		// associating metadata on the consumer. This feature requires
 		// nats-server v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
+
+		// Fields specific for push consumers:
+
+		// DeliverSubject is the subject to deliver messages to for push consumers
+		DeliverSubject string `json:"deliver_subject,omitempty"`
+
+		// DeliverGroup is the group name for push consumers
+		DeliverGroup string `json:"deliver_group,omitempty"`
+
+		// FlowControl is a flag to enable flow control for the consumer.
+		// When set, server will regularly send an empty message with Status
+		// header 100 and a reply subject, consumers must reply to these
+		// messages to control the rate of message delivery
+		FlowControl bool `json:"flow_control,omitempty"`
+
+		// IdleHeartbeat enables push consumer idle heartbeat messages.
+		// If the Consumer is idle for more than the set value, an empty message
+		// with Status header 100 will be sent indicating the consumer is still
+		// alive.
+		IdleHeartbeat time.Duration `json:"idle_heartbeat,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream
