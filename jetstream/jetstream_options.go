@@ -136,6 +136,11 @@ type pullMaxMessagesWithBytesLimit struct {
 // in the client, but rather can serve as a way to limit what nats server will
 // have to internally buffer for a single fetch request.
 //
+// The byte limit should never be set to a value lower than the maximum message
+// size that can be expected from the server. If the byte limit is lower than
+// the maximum message size, the consumer will stall and not be able to consume
+// messages.
+//
 // This is an advanced option and should be used with caution. Most users should
 // use [PullMaxMessages] or [PullMaxBytes] instead.
 //
@@ -208,6 +213,13 @@ func (exp PullExpiry) configureMessages(opts *consumeOpts) error {
 // PullMaxBytes limits the number of bytes to be buffered in the client.
 // If not provided, the limit is not set (max messages will be used instead).
 // This option is exclusive with PullMaxMessages.
+//
+// The value should be set to a high enough value to accommodate the largest
+// message expected from the server. Note that it may not be sufficient to set
+// this value to the maximum message size, as this setting controls the client
+// buffer size, not the max bytes requested from the server within a single pull
+// request. If the value is set too low, the consumer will stall and not be able
+// to consume messages.
 //
 // PullMaxBytes implements both PullConsumeOpt and PullMessagesOpt, allowing
 // it to configure Consumer.Consume and Consumer.Messages.

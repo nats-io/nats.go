@@ -482,7 +482,13 @@ the behavior of a single pull request:
 
 - `PullMaxMessages(int)` - up to provided number of messages will be buffered
 - `PullMaxBytes(int)` - up to provided number of bytes will be buffered. This
-setting and `PullMaxMessages` are mutually exclusive
+  setting and `PullMaxMessages` are mutually exclusive.
+  The value should be set to a high enough value to accommodate the largest
+  message expected from the server. Note that it may not be sufficient to set
+  this value to the maximum message size, as this setting controls the client
+  buffer size, not the max bytes requested from the server within a single pull
+  request. If the value is set too low, the consumer will stall and not be able
+  to consume messages.
 - `PullExpiry(time.Duration)` - timeout on a single pull request to the server
 type PullThresholdMessages int
 - `PullThresholdMessages(int)` - amount of messages which triggers refilling the
@@ -494,10 +500,13 @@ request. An error will be triggered if at least 2 heartbeats are missed
 - `WithConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a
   custom error handler on `Consume()`, allowing e.g. tracking missing
   heartbeats.
-- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages
-  will be buffered and a single fetch size will be limited to the provided
-  value. This is an advanced option and should be used with caution. Most of the
-  time, `PullMaxMessages` or `PullMaxBytes` should be used instead.
+- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages will
+  be buffered and a single fetch size will be limited to the provided value.
+  This is an advanced option and should be used with caution. Most of the time,
+  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that he byte
+  limit should never be set to a value lower than the maximum message size that
+  can be expected from the server. If the byte limit is lower than the maximum
+  message size, the consumer will stall and not be able to consume messages.
 
 > __NOTE__: `Stop()` should always be called on `ConsumeContext` to avoid
 > leaking goroutines.
@@ -530,7 +539,13 @@ iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1
 
 - `PullMaxMessages(int)` - up to provided number of messages will be buffered
 - `PullMaxBytes(int)` - up to provided number of bytes will be buffered. This
-setting and `PullMaxMessages` are mutually exclusive
+  setting and `PullMaxMessages` are mutually exclusive.
+  The value should be set to a high enough value to accommodate the largest
+  message expected from the server. Note that it may not be sufficient to set
+  this value to the maximum message size, as this setting controls the client
+  buffer size, not the max bytes requested from the server within a single pull
+  request. If the value is set too low, the consumer will stall and not be able
+  to consume messages.
 - `PullExpiry(time.Duration)` - timeout on a single pull request to the server
 type PullThresholdMessages int
 - `PullThresholdMessages(int)` - amount of messages which triggers refilling the
@@ -540,10 +555,13 @@ type PullThresholdMessages int
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
-- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages
-  will be buffered and a single fetch size will be limited to the provided
-  value. This is an advanced option and should be used with caution. Most of the
-  time, `PullMaxMessages` or `PullMaxBytes` should be used instead.
+- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages will
+  be buffered and a single fetch size will be limited to the provided value.
+  This is an advanced option and should be used with caution. Most of the time,
+  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that he byte
+  limit should never be set to a value lower than the maximum message size that
+  can be expected from the server. If the byte limit is lower than the maximum
+  message size, the consumer will stall and not be able to consume messages.
 
 ##### Using `Messages()` to fetch single messages one by one
 
