@@ -390,6 +390,9 @@ func (s *pullSubscription) incrementDeliveredMsgs() {
 // the buffer to trigger a new pull request.
 // lock should be held before calling this method
 func (s *pullSubscription) checkPending() {
+	// check if we went below any threshold
+	// we don't want to track bytes threshold if either it's not set or we used
+	// PullMaxMessagesWithFetchSizeLimit
 	if (s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
 		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0 && !s.consumeOpts.LimitSize)) &&
 		s.fetchInProgress.Load() == 0 {
@@ -994,10 +997,13 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		return errors.New("only one of MaxMessages and MaxBytes can be specified")
 	}
 	if consumeOpts.MaxBytes != unset && !consumeOpts.LimitSize {
+		// we used PullMaxBytes setting, set MaxMessages to a high value
 		consumeOpts.MaxMessages = defaultBatchMaxBytesOnly
 	} else if consumeOpts.MaxMessages == unset {
+		// otherwise, if max messages is not set, set it to default value
 		consumeOpts.MaxMessages = DefaultMaxMessages
 	}
+	// if user did not set max bytes, set it to 0
 	if consumeOpts.MaxBytes == unset {
 		consumeOpts.MaxBytes = 0
 	}
@@ -1010,15 +1016,20 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		// half of the max bytes, rounded up
 		consumeOpts.ThresholdBytes = int(math.Ceil(float64(consumeOpts.MaxBytes) / 2))
 	}
+
+	// set default heartbeats
 	if consumeOpts.Heartbeat == unset {
+		// by default, use 50% of expiry time
 		consumeOpts.Heartbeat = consumeOpts.Expires / 2
 		if ordered {
+			// for ordered consumers, the default heartbeat is 5 seconds
 			if consumeOpts.Expires < 10*time.Second {
 				consumeOpts.Heartbeat = consumeOpts.Expires / 2
 			} else {
 				consumeOpts.Heartbeat = 5 * time.Second
 			}
 		} else if consumeOpts.Heartbeat > 30*time.Second {
+			// cap the heartbeat to 30 seconds
 			consumeOpts.Heartbeat = 30 * time.Second
 		}
 	}
