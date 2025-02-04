@@ -418,6 +418,9 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
 			return false, ErrMaxBytesExceeded
 		}
+		if strings.Contains(strings.ToLower(descr), "batch completed") {
+			return false, ErrBatchCompleted
+		}
 		if strings.Contains(strings.ToLower(descr), "consumer deleted") {
 			return false, ErrConsumerDeleted
 		}

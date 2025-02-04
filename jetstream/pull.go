@@ -101,6 +101,7 @@ type (
 		Expires                 time.Duration
 		MaxMessages             int
 		MaxBytes                int
+		LimitSize               bool
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandlerFunc
 		ReportMissingHeartbeats bool
@@ -160,9 +161,10 @@ type (
 )
 
 const (
-	DefaultMaxMessages = 500
-	DefaultExpires     = 30 * time.Second
-	unset              = -1
+	DefaultMaxMessages       = 500
+	DefaultExpires           = 30 * time.Second
+	defaultBatchMaxBytesOnly = 1_000_000
+	unset                    = -1
 )
 
 func min(x, y int) int {
@@ -193,7 +195,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,
-		errs:        make(chan error, 1),
+		errs:        make(chan error, 10),
 		done:        make(chan struct{}, 1),
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
@@ -373,7 +375,7 @@ func (s *pullSubscription) resetPendingMsgs() {
 // lock should be held before calling this method
 func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 	s.pending.msgCount--
-	if s.consumeOpts.MaxBytes != 0 {
+	if s.consumeOpts.MaxBytes != 0 && !s.consumeOpts.LimitSize {
 		s.pending.byteCount -= msg.Size()
 	}
 }
@@ -388,18 +390,23 @@ func (s *pullSubscription) incrementDeliveredMsgs() {
 // the buffer to trigger a new pull request.
 // lock should be held before calling this method
 func (s *pullSubscription) checkPending() {
+	// check if we went below any threshold
+	// we don't want to track bytes threshold if either it's not set or we used
+	// PullMaxMessagesWithBytesLimit
 	if (s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
-		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0)) &&
+		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0 && !s.consumeOpts.LimitSize)) &&
 		s.fetchInProgress.Load() == 0 {
 
 		var batchSize, maxBytes int
-		if s.consumeOpts.MaxBytes == 0 {
-			// if using messages, calculate appropriate batch size
-			batchSize = s.consumeOpts.MaxMessages - s.pending.msgCount
-		} else {
-			// if using bytes, use the max value
-			batchSize = s.consumeOpts.MaxMessages
-			maxBytes = s.consumeOpts.MaxBytes - s.pending.byteCount
+		batchSize = s.consumeOpts.MaxMessages - s.pending.msgCount
+		if s.consumeOpts.MaxBytes != 0 {
+			if s.consumeOpts.LimitSize {
+				maxBytes = s.consumeOpts.MaxBytes
+			} else {
+				maxBytes = s.consumeOpts.MaxBytes - s.pending.byteCount
+				// when working with max bytes only, always ask for full batch
+				batchSize = s.consumeOpts.MaxMessages
+			}
 		}
 		if s.consumeOpts.StopAfter > 0 {
 			batchSize = min(batchSize, s.consumeOpts.StopAfter-s.delivered-s.pending.msgCount)
@@ -440,7 +447,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		consumer:    p,
 		done:        make(chan struct{}, 1),
 		msgs:        msgs,
-		errs:        make(chan error, 1),
+		errs:        make(chan error, 10),
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
@@ -584,7 +591,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 }
 
 func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
-	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) {
+	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) && !errors.Is(msgErr, ErrBatchCompleted) {
 		if errors.Is(msgErr, ErrConsumerDeleted) || errors.Is(msgErr, ErrBadRequest) {
 			return msgErr
 		}
@@ -605,7 +612,7 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 	if s.pending.msgCount < 0 {
 		s.pending.msgCount = 0
 	}
-	if s.consumeOpts.MaxBytes > 0 {
+	if s.consumeOpts.MaxBytes > 0 && !s.consumeOpts.LimitSize {
 		s.pending.byteCount -= bytesLeft
 		if s.pending.byteCount < 0 {
 			s.pending.byteCount = 0
@@ -712,7 +719,7 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 // FetchBytes is used to retrieve up to a provided bytes from the stream.
 func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:     1000000,
+		Batch:     defaultBatchMaxBytesOnly,
 		MaxBytes:  maxBytes,
 		Expires:   DefaultExpires,
 		Heartbeat: unset,
@@ -761,7 +768,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		consumer: p,
 		done:     make(chan struct{}, 1),
 		msgs:     msgs,
-		errs:     make(chan error, 1),
+		errs:     make(chan error, 10),
 	}
 	inbox := p.js.conn.NewInbox()
 	var err error
@@ -985,40 +992,45 @@ func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, err
 }
 
 func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
-	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset {
+	// we cannot use both max messages and max bytes unless we're using max bytes as fetch size limiter
+	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset && !consumeOpts.LimitSize {
 		return errors.New("only one of MaxMessages and MaxBytes can be specified")
 	}
-	if consumeOpts.MaxBytes != unset {
-		// when max_bytes is used, set batch size to a very large number
-		consumeOpts.MaxMessages = 1000000
-	} else if consumeOpts.MaxMessages != unset {
+	if consumeOpts.MaxBytes != unset && !consumeOpts.LimitSize {
+		// we used PullMaxBytes setting, set MaxMessages to a high value
+		consumeOpts.MaxMessages = defaultBatchMaxBytesOnly
+	} else if consumeOpts.MaxMessages == unset {
+		// otherwise, if max messages is not set, set it to default value
+		consumeOpts.MaxMessages = DefaultMaxMessages
+	}
+	// if user did not set max bytes, set it to 0
+	if consumeOpts.MaxBytes == unset {
 		consumeOpts.MaxBytes = 0
-	} else {
-		if consumeOpts.MaxBytes == unset {
-			consumeOpts.MaxBytes = 0
-		}
-		if consumeOpts.MaxMessages == unset {
-			consumeOpts.MaxMessages = DefaultMaxMessages
-		}
 	}
 
 	if consumeOpts.ThresholdMessages == 0 {
+		// half of the max messages, rounded up
 		consumeOpts.ThresholdMessages = int(math.Ceil(float64(consumeOpts.MaxMessages) / 2))
 	}
 	if consumeOpts.ThresholdBytes == 0 {
+		// half of the max bytes, rounded up
 		consumeOpts.ThresholdBytes = int(math.Ceil(float64(consumeOpts.MaxBytes) / 2))
 	}
+
+	// set default heartbeats
 	if consumeOpts.Heartbeat == unset {
+		// by default, use 50% of expiry time
+		consumeOpts.Heartbeat = consumeOpts.Expires / 2
 		if ordered {
-			consumeOpts.Heartbeat = 5 * time.Second
+			// for ordered consumers, the default heartbeat is 5 seconds
 			if consumeOpts.Expires < 10*time.Second {
 				consumeOpts.Heartbeat = consumeOpts.Expires / 2
+			} else {
+				consumeOpts.Heartbeat = 5 * time.Second
 			}
-		} else {
-			consumeOpts.Heartbeat = consumeOpts.Expires / 2
-			if consumeOpts.Heartbeat > 30*time.Second {
-				consumeOpts.Heartbeat = 30 * time.Second
-			}
+		} else if consumeOpts.Heartbeat > 30*time.Second {
+			// cap the heartbeat to 30 seconds
+			consumeOpts.Heartbeat = 30 * time.Second
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
