@@ -195,7 +195,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	sub := &pullSubscription{
 		id:          consumeID,
 		consumer:    p,
-		errs:        make(chan error, 1),
+		errs:        make(chan error, 10),
 		done:        make(chan struct{}, 1),
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
@@ -392,7 +392,7 @@ func (s *pullSubscription) incrementDeliveredMsgs() {
 func (s *pullSubscription) checkPending() {
 	// check if we went below any threshold
 	// we don't want to track bytes threshold if either it's not set or we used
-	// PullMaxMessagesWithFetchSizeLimit
+	// PullMaxMessagesWithBytesLimit
 	if (s.pending.msgCount < s.consumeOpts.ThresholdMessages ||
 		(s.pending.byteCount < s.consumeOpts.ThresholdBytes && s.consumeOpts.MaxBytes != 0 && !s.consumeOpts.LimitSize)) &&
 		s.fetchInProgress.Load() == 0 {
@@ -447,7 +447,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		consumer:    p,
 		done:        make(chan struct{}, 1),
 		msgs:        msgs,
-		errs:        make(chan error, 1),
+		errs:        make(chan error, 10),
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
@@ -768,7 +768,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 		consumer: p,
 		done:     make(chan struct{}, 1),
 		msgs:     msgs,
-		errs:     make(chan error, 1),
+		errs:     make(chan error, 10),
 	}
 	inbox := p.js.conn.NewInbox()
 	var err error

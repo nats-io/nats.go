@@ -125,12 +125,12 @@ func (max PullMaxMessages) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
-type pullMaxMessagesWithFetchSizeLimit struct {
+type pullMaxMessagesWithBytesLimit struct {
 	maxMessages int
 	maxBytes    int
 }
 
-// PullMaxMessagesWithFetchSizeLimit limits the number of messages to be buffered
+// PullMaxMessagesWithBytesLimit limits the number of messages to be buffered
 // in the client. Additionally, it sets the maximum size a single fetch request
 // can have. Note that this will not limit the total size of messages buffered
 // in the client, but rather can serve as a way to limit what nats server will
@@ -139,13 +139,13 @@ type pullMaxMessagesWithFetchSizeLimit struct {
 // This is an advanced option and should be used with caution. Most users should
 // use [PullMaxMessages] or [PullMaxBytes] instead.
 //
-// PullMaxMessagesWithFetchSizeLimit implements both PullConsumeOpt and
+// PullMaxMessagesWithBytesLimit implements both PullConsumeOpt and
 // PullMessagesOpt, allowing it to configure Consumer.Consume and Consumer.Messages.
-func PullMaxMessagesWithFetchSizeLimit(maxMessages, byteLimit int) pullMaxMessagesWithFetchSizeLimit {
-	return pullMaxMessagesWithFetchSizeLimit{maxMessages, byteLimit}
+func PullMaxMessagesWithBytesLimit(maxMessages, byteLimit int) pullMaxMessagesWithBytesLimit {
+	return pullMaxMessagesWithBytesLimit{maxMessages, byteLimit}
 }
 
-func (m pullMaxMessagesWithFetchSizeLimit) configureConsume(opts *consumeOpts) error {
+func (m pullMaxMessagesWithBytesLimit) configureConsume(opts *consumeOpts) error {
 	if m.maxMessages <= 0 {
 		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 	}
@@ -162,7 +162,7 @@ func (m pullMaxMessagesWithFetchSizeLimit) configureConsume(opts *consumeOpts) e
 	return nil
 }
 
-func (m pullMaxMessagesWithFetchSizeLimit) configureMessages(opts *consumeOpts) error {
+func (m pullMaxMessagesWithBytesLimit) configureMessages(opts *consumeOpts) error {
 	if m.maxMessages <= 0 {
 		return fmt.Errorf("%w: maxMessages size must be at least 1", ErrInvalidOption)
 	}

@@ -1979,7 +1979,7 @@ func TestPullConsumerMessages(t *testing.T) {
 		}
 		defer sub.Unsubscribe()
 
-		it, err := c.Messages(jetstream.PullMaxMessagesWithFetchSizeLimit(10, 1024))
+		it, err := c.Messages(jetstream.PullMaxMessagesWithBytesLimit(10, 1024))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -3020,7 +3020,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			msg.Ack()
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, jetstream.PullMaxMessagesWithFetchSizeLimit(10, 1024))
+		}, jetstream.PullMaxMessagesWithBytesLimit(10, 1024))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -3118,7 +3118,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			msg.Ack()
 			msgs = append(msgs, msg)
 			wg.Done()
-		}, jetstream.PullMaxMessagesWithFetchSizeLimit(2, 1024))
+		}, jetstream.PullMaxMessagesWithBytesLimit(2, 1024))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
