@@ -245,6 +245,7 @@ type (
 
 	asyncCallbacksHandler struct {
 		cbQueue chan func()
+		closed  bool
 	}
 )
 
@@ -351,6 +352,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
 		}
 		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
+			svc.asyncDispatcher.close()
 			return nil, err
 		}
 	}
@@ -462,8 +464,8 @@ func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 // dispatch is responsible for calling any async callbacks
 func (ac *asyncCallbacksHandler) run() {
 	for {
-		f := <-ac.cbQueue
-		if f == nil {
+		f, ok := <-ac.cbQueue
+		if !ok || f == nil {
 			return
 		}
 		f()
@@ -476,7 +478,11 @@ func (ac *asyncCallbacksHandler) push(f func()) {
 }
 
 func (ac *asyncCallbacksHandler) close() {
+	if ac.closed {
+		return
+	}
 	close(ac.cbQueue)
+	ac.closed = true
 }
 
 func (c *Config) valid() error {
@@ -565,6 +571,9 @@ func (s *service) wrapConnectionEventCallbacks() {
 }
 
 func unwrapConnectionEventCallbacks(nc *nats.Conn, handlers handlers) {
+	if nc.IsClosed() {
+		return
+	}
 	nc.SetClosedHandler(handlers.closed)
 	nc.SetErrorHandler(handlers.asyncErr)
 }
@@ -666,6 +675,7 @@ func (s *service) Stop() error {
 	}
 	for _, e := range s.endpoints {
 		if err := e.stop(); err != nil {
+			fmt.Println("Error stopping endpoint: ", err)
 			return err
 		}
 	}
@@ -673,6 +683,10 @@ func (s *service) Stop() error {
 	for key, sub := range s.verbSubs {
 		keys = append(keys, key)
 		if err := sub.Drain(); err != nil {
+			// connection is closed so draining is not possible
+			if errors.Is(err, nats.ErrConnectionClosed) {
+				break
+			}
 			return fmt.Errorf("draining subscription for subject %q: %w", sub.Subject, err)
 		}
 	}
@@ -828,7 +842,9 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 }
 
 func (e *Endpoint) stop() error {
-	if err := e.subscription.Drain(); err != nil {
+	// Drain the subscription. If the connection is closed, draining is not possible
+	// but we should still remove the endpoint from the service.
+	if err := e.subscription.Drain(); err != nil && !errors.Is(err, nats.ErrConnectionClosed) {
 		return fmt.Errorf("draining subscription for request handler: %w", err)
 	}
 	for i := 0; i < len(e.service.endpoints); i++ {
