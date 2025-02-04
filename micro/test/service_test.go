@@ -444,6 +444,9 @@ func TestAddService(t *testing.T) {
 				t.Fatalf("Expected to connect to server, got %v", err)
 			}
 			defer nc.Close()
+			// cleanup handlers since we invoke them manually
+			defer nc.SetClosedHandler(nil)
+			defer nc.SetErrorHandler(nil)
 
 			srv, err := micro.AddService(nc, test.givenConfig)
 			if test.withError != nil {
@@ -1389,6 +1392,9 @@ func TestRequestRespond(t *testing.T) {
 				Header:  nats.Header{"key": []string{"value"}},
 			}, 50*time.Millisecond)
 			if test.withRespondError != nil {
+				if err == nil {
+					t.Fatalf("Expected error when receiving response")
+				}
 				return
 			}
 			if err != nil {

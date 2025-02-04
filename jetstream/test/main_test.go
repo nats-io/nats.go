@@ -14,7 +14,6 @@
 package test
 
 import (
-	"os"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -22,9 +21,4 @@ import (
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
-	if os.Getenv("CI") == "" {
-		goleak.VerifyTestMain(m)
-	} else {
-		m.Run()
-	}
 }
