@@ -81,6 +81,13 @@ func TestNewWithAPIPrefix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		opts := jsTest.Options()
+		if opts.APIPrefix != "main" {
+			t.Fatalf("Invalid API prefix; want: %v, got: %v", "main", opts.APIPrefix)
+		}
+		if opts.Domain != "" {
+			t.Fatalf("Invalid domain; want: %v, got: %v", "", opts.Domain)
+		}
 
 		_, err = jsTest.Publish(ctx, "foo", []byte("msg"))
 		if err != nil {
@@ -134,6 +141,14 @@ func TestNewWithDomain(t *testing.T) {
 			t.Errorf("Invalid domain; want %v, got: %v", "ABC", accInfo.Domain)
 		}
 
+		opts := js.Options()
+		if opts.APIPrefix != "" {
+			t.Fatalf("Invalid API prefix; want: %v, got: %v", "main", opts.APIPrefix)
+		}
+		if opts.Domain != "ABC" {
+			t.Fatalf("Invalid domain; want: %v, got: %v", "", opts.Domain)
+		}
+
 		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
 			Name:     "TEST",
 			Subjects: []string{"foo"},
@@ -162,6 +177,32 @@ func TestNewWithDomain(t *testing.T) {
 			t.Fatalf(`Expected error: "domain cannot be empty"; got: %v`, err)
 		}
 	})
+}
+
+func TestJetStreamOptionsReadOnly(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	opts := js.Options()
+	opts.APIPrefix = "foo"
+	opts.Domain = "bar"
+
+	opts = js.Options()
+	if opts.APIPrefix != "" {
+		t.Fatalf("Invalid API prefix; want: %v, got: %v", "", opts.APIPrefix)
+	}
+	if opts.Domain != "" {
+		t.Fatalf("Invalid domain; want: %v, got: %v", "", opts.Domain)
+	}
 }
 
 func TestWithClientTrace(t *testing.T) {
