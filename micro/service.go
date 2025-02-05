@@ -77,10 +77,12 @@ type (
 		subject    string
 		metadata   map[string]string
 		queueGroup string
+		qgDisabled bool
 	}
 
 	groupOpts struct {
 		queueGroup string
+		qgDisabled bool
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -156,9 +158,10 @@ type (
 	}
 
 	group struct {
-		service    *service
-		prefix     string
-		queueGroup string
+		service            *service
+		prefix             string
+		queueGroup         string
+		queueGroupDisabled bool
 	}
 
 	// Verb represents a name of the monitoring service.
@@ -186,6 +189,9 @@ type (
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
 
+		// QueueGroupDisabled disables the queue group for the service.
+		QueueGroupDisabled bool `json:"queue_group_disabled"`
+
 		// StatsHandler is a user-defined custom function.
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
@@ -209,6 +215,9 @@ type (
 
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
+
+		// QueueGroupDisabled disables the queue group for the endpoint.
+		QueueGroupDisabled bool `json:"queue_group_disabled"`
 	}
 
 	// NATSError represents an error returned by a NATS Subscription.
@@ -401,11 +410,11 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 	if options.subject != "" {
 		subject = options.subject
 	}
-	queueGroup := queueGroupName(options.queueGroup, s.Config.QueueGroup)
-	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, s.Config.QueueGroup, options.qgDisabled, s.Config.QueueGroupDisabled)
+	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup, noQueue)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string) error {
+func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string, noQueue bool) error {
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
 	}
@@ -418,21 +427,34 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	endpoint := &Endpoint{
 		service: s,
 		EndpointConfig: EndpointConfig{
-			Subject:    subject,
-			Handler:    handler,
-			Metadata:   metadata,
-			QueueGroup: queueGroup,
+			Subject:            subject,
+			Handler:            handler,
+			Metadata:           metadata,
+			QueueGroup:         queueGroup,
+			QueueGroupDisabled: noQueue,
 		},
 		Name: name,
 	}
 
-	sub, err := s.nc.QueueSubscribe(
-		subject,
-		queueGroup,
-		func(m *nats.Msg) {
-			s.reqHandler(endpoint, &request{msg: m})
-		},
-	)
+	var sub *nats.Subscription
+	var err error
+
+	if !noQueue {
+		sub, err = s.nc.QueueSubscribe(
+			subject,
+			queueGroup,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	} else {
+		sub, err = s.nc.Subscribe(
+			subject,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -453,11 +475,12 @@ func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	queueGroup := queueGroupName(o.queueGroup, s.Config.QueueGroup)
+	queueGroup, noQueue := resolveQueueGroup(o.queueGroup, s.Config.QueueGroup, o.qgDisabled, s.Config.QueueGroupDisabled)
 	return &group{
-		service:    s,
-		prefix:     name,
-		queueGroup: queueGroup,
+		service:            s,
+		prefix:             name,
+		queueGroup:         queueGroup,
+		queueGroupDisabled: noQueue,
 	}
 }
 
@@ -801,21 +824,25 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	if g.prefix == "" {
 		endpointSubject = subject
 	}
-	queueGroup := queueGroupName(options.queueGroup, g.queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, g.queueGroup, options.qgDisabled, g.queueGroupDisabled)
 
-	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup)
+	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup, noQueue)
 }
 
-func queueGroupName(customQG, parentQG string) string {
-	queueGroup := customQG
-	if queueGroup == "" {
-		if parentQG != "" {
-			queueGroup = parentQG
-		} else {
-			queueGroup = DefaultQueueGroup
-		}
+func resolveQueueGroup(customQG, parentQG string, disabled, parentDisabled bool) (string, bool) {
+	if disabled {
+		return "", true
 	}
-	return queueGroup
+	if customQG != "" {
+		return customQG, false
+	}
+	if parentDisabled {
+		return "", true
+	}
+	if parentQG != "" {
+		return parentQG, false
+	}
+	return DefaultQueueGroup, false
 }
 
 func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
@@ -823,7 +850,7 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	queueGroup := queueGroupName(o.queueGroup, g.queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(o.queueGroup, g.queueGroup, o.qgDisabled, g.queueGroupDisabled)
 
 	parts := make([]string, 0, 2)
 	if g.prefix != "" {
@@ -835,9 +862,10 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	prefix := strings.Join(parts, ".")
 
 	return &group{
-		service:    g.service,
-		prefix:     prefix,
-		queueGroup: queueGroup,
+		service:            g.service,
+		prefix:             prefix,
+		queueGroup:         queueGroup,
+		queueGroupDisabled: noQueue,
 	}
 }
 
@@ -911,8 +939,21 @@ func WithEndpointQueueGroup(queueGroup string) EndpointOpt {
 	}
 }
 
+func WithEndpointQueueGroupDisabled() EndpointOpt {
+	return func(e *endpointOpts) error {
+		e.qgDisabled = true
+		return nil
+	}
+}
+
 func WithGroupQueueGroup(queueGroup string) GroupOpt {
 	return func(g *groupOpts) {
 		g.queueGroup = queueGroup
+	}
+}
+
+func WithGroupQueueGroupDisabled() GroupOpt {
+	return func(g *groupOpts) {
+		g.qgDisabled = true
 	}
 }

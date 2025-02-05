@@ -1575,6 +1575,59 @@ func TestCustomQueueGroup(t *testing.T) {
 			},
 		},
 		{
+			name: "disable queue group on service config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:               "test_service",
+					Version:            "0.0.1",
+					QueueGroupDisabled: true,
+					Endpoint: &micro.EndpointConfig{
+						Subject: "foo",
+						Handler: micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on service directly, should have inherited disabled queue group
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add group with queue group from service config
+				g1 := srv.AddGroup("g1")
+
+				// add endpoint on group, should have queue group disabled
+				err = g1.AddEndpoint("baz", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on a service with queue group enabled
+				err = srv.AddEndpoint("qux", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-qux"))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on group and set custom queue group
+				err = g1.AddEndpoint("quux", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-quux"))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"default": "",
+				"bar":     "",
+				"baz":     "",
+				"qux":     "q-qux",
+				"quux":    "q-quux",
+			},
+		},
+		{
 			name: "overwriting queue groups",
 			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
 				srv, err := micro.AddService(nc, micro.Config{
@@ -1597,6 +1650,9 @@ func TestCustomQueueGroup(t *testing.T) {
 
 				// overwrite parent group queue group
 				g3 := g2.AddGroup("g3", micro.WithGroupQueueGroup("q-g3"))
+
+				// disable queue group on group
+				g4 := g2.AddGroup("g4", micro.WithGroupQueueGroupDisabled())
 
 				// add endpoint on service directly, overwriting the queue group
 				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q-bar"))
@@ -1621,14 +1677,20 @@ func TestCustomQueueGroup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
+
+				err = g4.AddEndpoint("foo-disabled", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 				return srv
 			},
 			expectedQueueGroups: map[string]string{
-				"default": "q-default",
-				"bar":     "q-bar",
-				"baz":     "q-g1",
-				"qux":     "q-qux",
-				"quux":    "q-g3",
+				"default":      "q-default",
+				"bar":          "q-bar",
+				"baz":          "q-g1",
+				"qux":          "q-qux",
+				"quux":         "q-g3",
+				"foo-disabled": "",
 			},
 		},
 		{
@@ -1804,4 +1866,47 @@ func TestCustomQueueGroupMultipleResponses(t *testing.T) {
 			t.Fatalf("Did not receive response from service %s", k)
 		}
 	}
+}
+
+func TestDisableQueueGroup(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+	wg := sync.WaitGroup{}
+
+	// Create 5 service responders.
+	config := micro.Config{
+		Name:        "CoolAddService",
+		Version:     "0.1.0",
+		Description: "Add things together",
+		Metadata:    map[string]string{"basic": "metadata"},
+		Endpoint: &micro.EndpointConfig{
+			Subject: "svc.add",
+			Handler: micro.HandlerFunc(func(r micro.Request) {
+				r.Respond(nil)
+				wg.Done()
+			}),
+		},
+		QueueGroupDisabled: true,
+	}
+
+	for range 10 {
+		srv, err := micro.AddService(nc, config)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+	}
+	wg.Add(10)
+	// Send a request to the service.
+	if err = nc.PublishRequest("svc.add", "rply", []byte("req")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	wg.Wait()
+
 }
