@@ -1276,7 +1276,7 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 
 // ListKeysWithFilters returns a channel of keys matching the provided filters using WatchFiltered.
 func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error) {
-	watcher, err := kv.WatchFiltered(ctx, filters)
+	watcher, err := kv.WatchFiltered(ctx, filters, IgnoreDeletes(), MetaOnly())
 	if err != nil {
 		return nil, err
 	}
