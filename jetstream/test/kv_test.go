@@ -1093,6 +1093,7 @@ func TestListKeysFiltered(t *testing.T) {
 	err = kv.Delete(ctx, "apple")
 	expectOk(t, err)
 
+	filters = []string{"apple"}
 	keyLister, err = kv.ListKeysFiltered(ctx, filters...)
 	expectOk(t, err)
 
