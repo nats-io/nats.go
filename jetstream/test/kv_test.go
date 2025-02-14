@@ -1088,6 +1088,22 @@ func TestListKeysFiltered(t *testing.T) {
 			t.Fatalf("Expected key %s in filtered keys, but not found", key)
 		}
 	}
+
+	// delete apple so we can ensure we do not see it later after another filtered search
+	err = kv.Delete(ctx, "apple")
+	expectOk(t, err)
+
+	keyLister, err = kv.ListKeysFiltered(ctx, filters...)
+	expectOk(t, err)
+
+	// reset filtered keys
+	filteredKeys = nil
+	for key := range keyLister.Keys() {
+		filteredKeys = append(filteredKeys, key)
+	}
+	if len(filteredKeys) != 0 {
+		t.Fatalf("Expected 0 deleted keys, but %d was found", len(filteredKeys))
+	}
 }
 
 func contains(slice []string, key string) bool {
