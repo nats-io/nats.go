@@ -100,7 +100,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	ts := RunServerOnPort(23232)
 	defer ts.Shutdown()
 
-	var servers = []string{
+	servers := []string{
 		"nats://127.0.0.1:23232",
 		"nats://127.0.0.1:23233",
 		"nats://127.0.0.1:23234",
@@ -162,7 +162,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 }
 
 func TestTokenHandlerReconnect(t *testing.T) {
-	var servers = []string{
+	servers := []string{
 		"nats://127.0.0.1:8232",
 		"nats://127.0.0.1:8233",
 	}
@@ -450,4 +450,35 @@ func TestUserInfoHandler(t *testing.T) {
 
 	// we should get a reconnected event meaning the new credentials were used
 	WaitOnChannel(t, status, nats.CONNECTED)
+}
+
+func TestAuthErrHandler(t *testing.T) {
+	handler := func(ch chan bool) func(*nats.Conn, *nats.Subscription, error) {
+		return func(*nats.Conn, *nats.Subscription, error) {
+			ch <- true
+		}
+	}
+	t.Run("with RetryOnFailedConnect, MaxReconnects(-1), no connection, auth error", func(t *testing.T) {
+		opts := test.DefaultTestOptions
+		opts.Port = 4222
+		// Setting a username/password but connecting without credentials
+		opts.Username = "bob"
+		opts.Password = "foo"
+		s := RunServerWithOptions(&opts)
+		defer s.Shutdown()
+
+		authErr := make(chan bool)
+
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.AuthErrHandler(handler(authErr)),
+			nats.RetryOnFailedConnect(true),
+			nats.MaxReconnects(-1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		if err = Wait(authErr); err != nil {
+			t.Fatal("Timeout waiting for auth error handler")
+		}
+	})
 }
