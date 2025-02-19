@@ -26,10 +26,6 @@ import (
 	"github.com/nats-io/nuid"
 )
 
-// Notice: Experimental Preview
-//
-// This functionality is EXPERIMENTAL and may be changed in later releases.
-
 type (
 
 	// Service exposes methods to operate on a service instance.
