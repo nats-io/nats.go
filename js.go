@@ -2206,6 +2206,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 				// retry for insufficient resources, as it may mean that client is connected to a running
 				// server in cluster while the server hosting R1 JetStream resources is restarting
 				return
+			} else if errors.As(err, &apiErr) && apiErr.ErrorCode == JSErrCodeJetStreamNotAvailable {
+				// retry if JetStream meta leader is temporarily unavailable
+				return
 			}
 			pushErr(err)
 			return

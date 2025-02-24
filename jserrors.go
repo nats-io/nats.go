@@ -166,6 +166,7 @@ const (
 	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
 	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
 	JSErrCodeInsufficientResourcesErr      ErrorCode = 10023
+	JSErrCodeJetStreamNotAvailable         ErrorCode = 10008
 
 	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
