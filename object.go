@@ -242,6 +242,10 @@ type obs struct {
 	name   string
 	stream string
 	js     *js
+	// If true, it means that APIPrefix/Domain was set in the context
+	// and we need to add something to some of our high level protocols
+	// (such as Put, etc..)
+	useJSPfx bool
 }
 
 // CreateObjectStore will create an object store.
@@ -297,7 +301,12 @@ func (js *js) CreateObjectStore(cfg *ObjectStoreConfig) (ObjectStore, error) {
 		return nil, err
 	}
 
-	return &obs{name: name, stream: scfg.Name, js: js}, nil
+	return &obs{name: name,
+		stream: scfg.Name,
+		js:     js,
+		// Determine if we need to use the JS prefix
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
+	}, nil
 }
 
 // ObjectStore will look up and bind to an existing object store instance.
@@ -314,7 +323,13 @@ func (js *js) ObjectStore(bucket string) (ObjectStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &obs{name: bucket, stream: si.Config.Name, js: js}, nil
+	return &obs{
+		name:   bucket,
+		stream: si.Config.Name,
+		js:     js,
+		// Determine if we need to use the JS prefix
+		useJSPfx: js.opts.pre != defaultAPIPrefix,
+	}, nil
 }
 
 // DeleteObjectStore will delete the underlying stream for the named object.
@@ -379,7 +394,11 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 	}
 
 	// Create our own JS context to handle errors etc.
-	jetStream, err := obs.js.nc.JetStream(PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) }))
+	eOpts := []JSOpt{PublishAsyncErrHandler(func(js JetStream, _ *Msg, err error) { setErr(err) })}
+	if obs.useJSPfx {
+		eOpts = append(eOpts, APIPrefix(obs.js.opts.pre))
+	}
+	jetStream, err := obs.js.nc.JetStream(eOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +417,12 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		return nil
 	}
 
-	m, h := NewMsg(chunkSubj), sha256.New()
+	// If a custom API Prefix is set we use it to traverse boundaries
+	pubSubChunkSubj := chunkSubj
+	if obs.useJSPfx {
+		pubSubChunkSubj = obs.js.apiSubj(chunkSubj)
+	}
+	m, h := NewMsg(pubSubChunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, meta.Opts.ChunkSize), 0, uint64(0)
 
 	// set up the info object. The chunk upload sets the size and digest
@@ -468,8 +492,13 @@ func (obs *obs) Put(meta *ObjectMeta, r io.Reader, opts ...ObjectOpt) (*ObjectIn
 		}
 	}
 
-	// Prepare the meta message
+	// If a custom API Prefix is set we use it to traverse boundaries
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
+	if obs.useJSPfx {
+		metaSubj = obs.js.apiSubj(metaSubj)
+	}
+
+	// Prepare the meta message
 	mm := NewMsg(metaSubj)
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data, err = json.Marshal(info)
@@ -731,7 +760,7 @@ func (obs *obs) Delete(name string) error {
 	return obs.js.purgeStream(obs.stream, &StreamPurgeRequest{Subject: chunkSubj})
 }
 
-func publishMeta(info *ObjectInfo, js JetStreamContext) error {
+func publishMeta(info *ObjectInfo, jsc JetStreamContext) error {
 	// marshal the object into json, don't store an actual time
 	info.ModTime = time.Time{}
 	data, err := json.Marshal(info)
@@ -739,11 +768,17 @@ func publishMeta(info *ObjectInfo, js JetStreamContext) error {
 		return err
 	}
 
+	// If a custom API Prefix is set we use it to traverse boundaries
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name))
+	if assertJs, ok := jsc.(*js); ok && assertJs.opts.pre != defaultAPIPrefix {
+		metaSubj = assertJs.opts.pre + metaSubj
+	}
+
 	// Prepare and publish the message.
-	mm := NewMsg(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+	mm := NewMsg(metaSubj)
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
-	if _, err := js.PublishMsg(mm); err != nil {
+	if _, err := jsc.PublishMsg(mm); err != nil {
 		return err
 	}
 

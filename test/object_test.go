@@ -1184,3 +1184,97 @@ func TestObjectStoreMirror(t *testing.T) {
 		}
 	}
 }
+
+func TestObjectStoreCrossDomains(t *testing.T) {
+	expectSameContent := func(t *testing.T, a []byte, b []byte) {
+		t.Helper()
+		if !bytes.Equal(a, b) {
+			t.Fatalf("content mismatch")
+		}
+	}
+
+	hubFileContent := []byte("hub_file content")
+	leafFileContent := []byte("leaf_file content")
+
+	hconf := createConfFile(t, []byte(`
+		server_name: HUB
+		listen: 127.0.0.1:-1
+		jetstream: { domain: HUB, store_dir: 'hub_js' }
+		leafnodes { listen: 127.0.0.1:7422}
+		mappings {
+    	'$JS.HUB.API.$O.>': '$O.>'
+		}
+	}`))
+	defer os.Remove(hconf)
+	hs, _ := RunServerWithConfig(hconf)
+	defer shutdownJSServerAndRemoveStorage(t, hs)
+
+	lconf := createConfFile(t, []byte(`
+		server_name: LEAF
+		listen: 127.0.0.1:-1
+ 		jetstream: { domain:LEAF, store_dir: 'leaf_js' }
+ 		leafnodes {
+ 		 	remotes = [	{	url: "leaf://127.0.0.1"	}	]
+ 		}
+		mappings {
+    	'$JS.LEAF.API.$O.>': '$O.>'
+		}
+	}`))
+	defer os.Remove(lconf)
+	ls, _ := RunServerWithConfig(lconf)
+	defer shutdownJSServerAndRemoveStorage(t, ls)
+
+	// Create OjectStore on HUB
+	hnc, hjs := jsClient(t, hs)
+	defer hnc.Close()
+
+	_, err := hjs.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "HUB_BUCKET"})
+	expectOk(t, err)
+
+	// Create ObjectStore on Leafnode
+	lnc, ljs := jsClient(t, ls)
+	defer lnc.Close()
+
+	_, err = ljs.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "LEAF_BUCKET"})
+	expectOk(t, err)
+
+	// Put an object cross-domain (HUB -> LEAF)
+	hljs, err := hnc.JetStream(nats.Domain("LEAF"))
+	expectOk(t, err)
+	hlos, err := hljs.ObjectStore("LEAF_BUCKET")
+	expectOk(t, err)
+	_, err = hlos.PutBytes("leaf_file", leafFileContent)
+	expectOk(t, err)
+
+	// Put an object cross-domain (LEAF -> HUB)
+	lhjs, err := lnc.JetStream(nats.Domain("HUB"))
+	expectOk(t, err)
+	lhos, err := lhjs.ObjectStore("HUB_BUCKET")
+	expectOk(t, err)
+	_, err = lhos.PutBytes("hub_file", hubFileContent)
+	expectOk(t, err)
+
+	// Read an object cross-domain (HUB <- LEAF)
+	hlb, err := hlos.GetBytes("leaf_file")
+	expectOk(t, err)
+	expectSameContent(t, leafFileContent, hlb)
+
+	// Read an object cross-domain (LEAF <- HUB)
+	lhb, err := lhos.GetBytes("hub_file")
+	expectOk(t, err)
+	expectSameContent(t, hubFileContent, lhb)
+
+	// Open local bucket using domainified JetStreamContext (expected to fail)
+	_, err = hljs.ObjectStore("HUB_BUCKET")
+	expectErr(t, err)
+	_, err = lhjs.ObjectStore("LEAF_BUCKET")
+	expectErr(t, err)
+
+	// Delete an object cross-domain (HUB -> LEAF)
+	err = hlos.Delete("leaf_file")
+	expectOk(t, err)
+
+	// Delete an object cross-domain (LEAF -> HUB)
+	err = lhos.Delete("hub_file")
+	expectOk(t, err)
+}

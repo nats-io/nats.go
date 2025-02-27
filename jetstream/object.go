@@ -462,6 +462,10 @@ type (
 		stream     Stream
 		pushJS     nats.JetStreamContext
 		js         *jetStream
+		// If true, it means that APIPrefix/Domain was set in the context
+		// and we need to add something to some of our high level protocols
+		// (such as Put, etc..)
+		useJSPfx bool
 	}
 
 	// ObjectResult impl.
@@ -675,7 +679,12 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 	}
 
 	// Create our own JS context to handle errors etc.
-	pubJS, err := New(obs.js.conn, WithPublishAsyncErrHandler(func(js JetStream, _ *nats.Msg, err error) { setErr(err) }))
+	var pubJS JetStream
+	if obs.useJSPfx {
+		pubJS, err = NewWithAPIPrefix(obs.js.conn, obs.js.opts.apiPrefix, WithPublishAsyncErrHandler(func(js JetStream, _ *nats.Msg, err error) { setErr(err) }))
+	} else {
+		pubJS, err = New(obs.js.conn, WithPublishAsyncErrHandler(func(js JetStream, _ *nats.Msg, err error) { setErr(err) }))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +700,12 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 		_ = obs.stream.Purge(ctx, WithPurgeSubject(chunkSubj))
 	}
 
-	m, h := nats.NewMsg(chunkSubj), sha256.New()
+	// If a custom API Prefix is set we use it to traverse boundaries
+	pubSubChunkSubj := chunkSubj
+	if obs.useJSPfx {
+		pubSubChunkSubj = obs.js.apiSubject(chunkSubj)
+	}
+	m, h := nats.NewMsg(pubSubChunkSubj), sha256.New()
 	chunk, sent, total := make([]byte, meta.Opts.ChunkSize), 0, uint64(0)
 
 	// set up the info object. The chunk upload sets the size and digest
@@ -753,8 +767,13 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 		}
 	}
 
-	// Prepare the meta message
+	// If a custom API Prefix is set we use it to traverse boundaries
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
+	if obs.useJSPfx {
+		metaSubj = obs.js.apiSubject(metaSubj)
+	}
+
+	// Prepare the meta message
 	mm := nats.NewMsg(metaSubj)
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data, err = json.Marshal(info)
@@ -973,8 +992,14 @@ func publishMeta(ctx context.Context, info *ObjectInfo, js *jetStream) error {
 		return err
 	}
 
+	// If a custom API Prefix is set we use it to traverse boundaries
+	metaSubj := fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name))
+	if js.opts.apiPrefix != DefaultAPIPrefix {
+		metaSubj = js.apiSubject(metaSubj)
+	}
+
 	// Prepare and publish the message.
-	mm := nats.NewMsg(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+	mm := nats.NewMsg(metaSubj)
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
 	if _, err := js.PublishMsg(ctx, mm); err != nil {
@@ -1610,6 +1635,8 @@ func mapStreamToObjectStore(js *jetStream, pushJS nats.JetStreamContext, bucket 
 		pushJS:     pushJS,
 		streamName: info.Config.Name,
 		stream:     stream,
+		// Determine if we need to use the JS prefix
+		useJSPfx: js.opts.apiPrefix != DefaultAPIPrefix,
 	}
 
 	return obs
