@@ -22,7 +22,7 @@ import (
 // in bytes and request expecting a single response.
 func (nc *Conn) RequestMsgWithContext(ctx context.Context, msg *Msg) (*Msg, error) {
 	if msg == nil {
-		return nil, ErrInvalidMsg
+		return nil, ErrInvalid
 	}
 	hdr, err := msg.headerBytes()
 	if err != nil {
