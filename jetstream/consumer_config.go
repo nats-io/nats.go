@@ -75,6 +75,15 @@ type (
 
 		// TimeStamp indicates when the info was gathered by the server.
 		TimeStamp time.Time `json:"ts"`
+
+		// PriorityPolicy contains the information about the currently defined priority groups
+		PriorityGroups []PriorityGroupState `json:"priority_groups,omitempty"`
+	}
+
+	PriorityGroupState struct {
+		Group          string    `json:"group"`
+		PinnedClientID string    `json:"pinned_client_id,omitempty"`
+		PinnedTS       time.Time `json:"pinned_ts,omitempty"`
 	}
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
