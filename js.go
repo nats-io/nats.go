@@ -712,13 +712,19 @@ func (js *js) newAsyncReply() string {
 	}
 	var sb strings.Builder
 	sb.WriteString(js.rpre)
-	rn := js.rr.Int63()
-	var b [aReplyTokensize]byte
-	for i, l := 0, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
-		l /= base
+	for {
+		rn := js.rr.Int63()
+		var b [aReplyTokensize]byte
+		for i, l := 0, rn; i < len(b); i++ {
+			b[i] = rdigits[l%base]
+			l /= base
+		}
+		if _, ok := js.pafs[string(b[:])]; ok {
+			continue
+		}
+		sb.Write(b[:])
+		break
 	}
-	sb.Write(b[:])
 	js.mu.Unlock()
 	return sb.String()
 }
