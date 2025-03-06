@@ -349,7 +349,7 @@ const (
 // Regex for valid keys and buckets.
 var (
 	validBucketRe    = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	validKeyRe       = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9]+$`)
+	validKeyRe       = regexp.MustCompile(`^[-\/_=\.a-zA-Z0-9$:]+$`)
 	validSearchKeyRe = regexp.MustCompile(`^[-/_=\.a-zA-Z0-9*]*[>]?$`)
 )
 
