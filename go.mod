@@ -1,17 +1,24 @@
-module github.com/nats-io/nats.go
+module github.com/leandrofars/nats.go
 
-go 1.22.0
+go 1.23.4
 
 require (
-	github.com/klauspost/compress v1.17.9
-	github.com/nats-io/nkeys v0.4.9
+	github.com/klauspost/compress v1.18.0
+	github.com/nats-io/jwt v1.2.2
+	github.com/nats-io/nats-server/v2 v2.10.26
+	github.com/nats-io/nats.go v1.39.1
+	github.com/nats-io/nkeys v0.4.10
 	github.com/nats-io/nuid v1.0.1
-	golang.org/x/text v0.21.0
+	go.uber.org/goleak v1.3.0
+	golang.org/x/text v0.23.0
+	google.golang.org/protobuf v1.36.5
 )
 
 require (
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	github.com/golang/protobuf v1.5.0 // indirect
+	github.com/minio/highwayhash v1.0.3 // indirect
+	github.com/nats-io/jwt/v2 v2.7.3 // indirect
+	golang.org/x/crypto v0.34.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/time v0.10.0 // indirect
 )
-
-replace github.com/nats-io/nats.go v1.39.1 => github.com/leandrofars/nats.go v1.39.2
