@@ -329,14 +329,14 @@ func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 }
 
 func pauseConsumer(ctx context.Context, js *jetStream, stream, consumer string, pauseUntil *time.Time) (*ConsumerPauseResponse, error) {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
 	if err := validateConsumerName(consumer); err != nil {
 		return nil, err
 	}
-	subject := apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerPauseT, stream, consumer))
+	subject := fmt.Sprintf(apiConsumerPauseT, stream, consumer)
 
 	var resp consumerPauseApiResponse
 	req, err := json.Marshal(consumerPauseRequest{
