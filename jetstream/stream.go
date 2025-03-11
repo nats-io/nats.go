@@ -322,12 +322,12 @@ func (s *stream) DeleteConsumer(ctx context.Context, name string) error {
 
 // PauseConsumer pauses a consumer.
 func (s *stream) PauseConsumer(ctx context.Context, name string, pauseUntil time.Time) (*ConsumerPauseResponse, error) {
-	return pauseConsumer(ctx, s.jetStream, s.name, name, &pauseUntil)
+	return pauseConsumer(ctx, s.js, s.name, name, &pauseUntil)
 }
 
 // ResumeConsumer resumes a consumer.
 func (s *stream) ResumeConsumer(ctx context.Context, name string) (*ConsumerPauseResponse, error) {
-	return resumeConsumer(ctx, s.jetStream, s.name, name)
+	return resumeConsumer(ctx, s.js, s.name, name)
 }
 
 // Info returns StreamInfo from the server.
