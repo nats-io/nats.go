@@ -4704,6 +4704,21 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 	dc := sub.jsi != nil && sub.jsi.dc
 	sub.mu.Unlock()
 
+	remove := func() {
+		nc.mu.Lock()
+		nc.removeSub(sub)
+		nc.mu.Unlock()
+		if dc {
+			if err := sub.deleteConsumer(); err != nil {
+				nc.mu.Lock()
+				if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
+					nc.ach.push(func() { errCB(nc, sub, err) })
+				}
+				nc.mu.Unlock()
+			}
+		}
+	}
+
 	// Once we are here we just wait for Pending to reach 0 or
 	// any other state to exit this go routine.
 	for {
@@ -4719,19 +4734,25 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 		pMsgs := sub.pMsgs
 		sub.mu.Unlock()
 
+		if conn == nil || closed {
+			remove()
+			return
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		if pMsgs != 0 {
+			continue
+		}
+
+		// Check subscription state again to confirm.
+		sub.mu.Lock()
+		conn = sub.conn
+		closed = sub.closed
+		pMsgs = sub.pMsgs
+		sub.mu.Unlock()
+
 		if conn == nil || closed || pMsgs == 0 {
-			nc.mu.Lock()
-			nc.removeSub(sub)
-			nc.mu.Unlock()
-			if dc {
-				if err := sub.deleteConsumer(); err != nil {
-					nc.mu.Lock()
-					if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
-						nc.ach.push(func() { errCB(nc, sub, err) })
-					}
-					nc.mu.Unlock()
-				}
-			}
+			remove()
 			return
 		}
 
