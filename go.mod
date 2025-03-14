@@ -1,12 +1,12 @@
 module github.com/nats-io/nats.go
 
-go 1.22.0
+go 1.23.0
 
 require (
-	github.com/klauspost/compress v1.17.9
+	github.com/klauspost/compress v1.18.0
 	github.com/nats-io/nkeys v0.4.9
 	github.com/nats-io/nuid v1.0.1
-	golang.org/x/text v0.21.0
+	golang.org/x/text v0.23.0
 )
 
 require (
