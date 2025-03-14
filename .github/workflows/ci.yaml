@@ -41,7 +41,7 @@ jobs:
 
         strategy:
             matrix:
-              go: [ "1.22", "1.23" ]
+              go: [ "1.23", "1.24" ]
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -61,14 +61,14 @@ jobs:
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
                 go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
-                if [ "${{ matrix.go }}" = "1.23" ]; then
+                if [ "${{ matrix.go }}" = "1.24" ]; then
                   ./scripts/cov.sh CI
                 else
                   go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
                 fi
 
             - name: Coveralls
-              if: matrix.go == '1.23'
+              if: matrix.go == '1.24'
               uses: coverallsapp/github-action@v2
               with:
                file: acc.out
