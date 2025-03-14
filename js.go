@@ -1,4 +1,4 @@
-// Copyright 2020-2024 The NATS Authors
+// Copyright 2020-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -273,6 +273,8 @@ type jsOpts struct {
 	aecb MsgErrHandler
 	// Max async pub ack in flight
 	maxpa int
+	// ackTimeout is the max time to wait for an ack in async publish.
+	ackTimeout time.Duration
 	// the domain that produced the pre
 	domain string
 	// enables protocol tracing
@@ -648,6 +650,7 @@ type pubAckFuture struct {
 	maxRetries int
 	retryWait  time.Duration
 	reply      string
+	timeout    *time.Timer
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
@@ -894,6 +897,10 @@ func (js *js) handleAsyncReply(m *Msg) {
 		}
 	}
 
+	if paf.timeout != nil {
+		paf.timeout.Stop()
+	}
+
 	// Process no responders etc.
 	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
 		if paf.retries < paf.maxRetries {
@@ -975,6 +982,15 @@ func PublishAsyncMaxPending(max int) JSOpt {
 	})
 }
 
+// PublishAsyncTimeout sets the timeout for async message publish.
+// If not provided, timeout is disabled.
+func PublishAsyncTimeout(dur time.Duration) JSOpt {
+	return jsOptFn(func(opts *jsOpts) error {
+		opts.ackTimeout = dur
+		return nil
+	})
+}
+
 // PublishAsync publishes a message to JetStream and returns a PubAckFuture
 func (js *js) PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFuture, error) {
 	return js.PublishMsgAsync(&Msg{Subject: subj, Data: data}, opts...)
@@ -1050,11 +1066,46 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 			case <-js.asyncStall():
 			case <-time.After(stallWait):
 				js.clearPAF(id)
-				return nil, errors.New("nats: stalled with too many outstanding async published messages")
+				return nil, ErrTooManyStalledMsgs
 			}
+		}
+		if js.opts.ackTimeout > 0 {
+			paf.timeout = time.AfterFunc(js.opts.ackTimeout, func() {
+				js.mu.Lock()
+				defer js.mu.Unlock()
+
+				// ack timed out, remove from pending acks
+				delete(js.pafs, id)
+
+				// check on anyone stalled and waiting.
+				if js.stc != nil && len(js.pafs) < js.opts.maxpa {
+					close(js.stc)
+					js.stc = nil
+				}
+
+				// send error to user
+				paf.err = ErrAsyncPublishTimeout
+				if paf.errCh != nil {
+					paf.errCh <- paf.err
+				}
+
+				// call error callback if set
+				if js.opts.aecb != nil {
+					js.opts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
+				}
+
+				// check on anyone one waiting on done status.
+				if js.dch != nil && len(js.pafs) == 0 {
+					close(js.dch)
+					js.dch = nil
+				}
+			})
 		}
 	} else {
 		reply = paf.reply
+		if paf.timeout != nil {
+			paf.timeout.Reset(js.opts.ackTimeout)
+		}
 		id = reply[js.replyPrefixLen:]
 	}
 	hdr, err := m.headerBytes()

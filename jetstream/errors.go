@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -277,6 +277,9 @@ var (
 
 	// ErrJetStreamPublisherClosed is returned for each unfinished ack future when JetStream.Cleanup is called.
 	ErrJetStreamPublisherClosed JetStreamError = &jsError{message: "jetstream context closed"}
+
+	// ErrAsyncPublishTimeout is returned when waiting for ack on async publish
+	ErrAsyncPublishTimeout JetStreamError = &jsError{message: "timeout waiting for ack"}
 
 	// KeyValue Errors
 

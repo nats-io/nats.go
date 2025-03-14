@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2020-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -157,6 +157,13 @@ var (
 	// Deprecated: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
+
+	// ErrAsyncPublishTimeout is returned when waiting for ack on async publish
+	ErrAsyncPublishTimeout JetStreamError = &jsError{message: "timeout waiting for ack"}
+
+	// ErrTooManyStalledMsgs is returned when too many outstanding async
+	// messages are waiting for ack.
+	ErrTooManyStalledMsgs JetStreamError = &jsError{message: "stalled with too many outstanding async published messages"}
 )
 
 // Error code represents JetStream error codes returned by the API

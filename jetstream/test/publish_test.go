@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -702,6 +702,45 @@ func TestPublishMsgAsync(t *testing.T) {
 			},
 		},
 		{
+			name: "publish with ack timeout set",
+			msgs: []publishConfig{
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 1"),
+						Subject: "FOO.1",
+					},
+					expectedAck: jetstream.PubAck{
+						Stream:   "foo",
+						Sequence: 1,
+						Domain:   "",
+					},
+				},
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 2"),
+						Subject: "FOO.1",
+					},
+					expectedAck: jetstream.PubAck{
+						Stream:   "foo",
+						Sequence: 2,
+						Domain:   "",
+					},
+				},
+				{
+					msg: &nats.Msg{
+						Data:    []byte("msg 3"),
+						Subject: "FOO.2",
+					},
+					expectedAck: jetstream.PubAck{
+						Stream:   "foo",
+						Sequence: 3,
+						Domain:   "",
+					},
+				},
+			},
+			timeout: time.Second,
+		},
+		{
 			name: "publish 3 messages with message ID, with duplicate",
 			msgs: []publishConfig{
 				{
@@ -1170,7 +1209,11 @@ func TestPublishMsgAsync(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			js, err := jetstream.New(nc)
+			opts := []jetstream.JetStreamOpt{}
+			if test.timeout != 0 {
+				opts = append(opts, jetstream.WithPublishAsyncTimeout(test.timeout))
+			}
+			js, err := jetstream.New(nc, opts...)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1550,5 +1593,119 @@ func TestPublishAsyncRetryInErrHandler(t *testing.T) {
 
 	if info.State.Msgs != 10 {
 		t.Fatalf("Expected 10 messages in the stream; got: %d", info.State.Msgs)
+	}
+}
+
+func TestPublishAsyncAckTimeout(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	errs := make(chan error, 1)
+	js, err := jetstream.New(nc,
+		jetstream.WithPublishAsyncTimeout(50*time.Millisecond),
+		jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, m *nats.Msg, e error) {
+			errs <- e
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.PublishAsync("FOO.A", []byte("hello"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	select {
+	case <-ack.Ok():
+		t.Fatalf("Expected timeout")
+	case err := <-ack.Err():
+		if !errors.Is(err, jetstream.ErrAsyncPublishTimeout) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrAsyncPublishTimeout, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive ack timeout")
+	}
+
+	// check if error callback is called
+	select {
+	case err := <-errs:
+		if !errors.Is(err, jetstream.ErrAsyncPublishTimeout) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrAsyncPublishTimeout, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive error from error handler")
+	}
+
+	if js.PublishAsyncPending() != 0 {
+		t.Fatalf("Expected no pending messages")
+	}
+
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("Did not receive completion signal")
+	}
+}
+
+func TestPublishAsyncClearStall(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc,
+		jetstream.WithPublishAsyncTimeout(500*time.Millisecond),
+		jetstream.WithPublishAsyncMaxPending(100))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// use stream with no acks to test stalling
+	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for range 100 {
+		_, err := js.PublishAsync("FOO.A", []byte("hello"), jetstream.WithStallWait(1*time.Nanosecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+	// after publishing 100 messages, next one should fail with ErrTooManyStalledMsgs
+	_, err = js.PublishAsync("FOO.A", []byte("hello"), jetstream.WithStallWait(50*time.Millisecond))
+	if !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+		t.Fatalf("Expected error: %v; got: %v", jetstream.ErrTooManyStalledMsgs, err)
+	}
+
+	// after publish timeout all pending messages should be cleared
+	// and we should be able to publish again
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+
+	if _, err = js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if js.PublishAsyncPending() != 1 {
+		t.Fatalf("Expected 1 pending message; got: %d", js.PublishAsyncPending())
 	}
 }

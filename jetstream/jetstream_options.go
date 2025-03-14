@@ -56,6 +56,15 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 	}
 }
 
+// WithPublishAsyncTimeout sets the timeout for async message publish.
+// If not provided, timeout is disabled.
+func WithPublishAsyncTimeout(dur time.Duration) JetStreamOpt {
+	return func(opts *JetStreamOptions) error {
+		opts.publisherOpts.ackTimeout = dur
+		return nil
+	}
+}
+
 // WithPurgeSubject sets a specific subject for which messages on a stream will
 // be purged
 func WithPurgeSubject(subject string) StreamPurgeOpt {
