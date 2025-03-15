@@ -569,7 +569,7 @@ func (s *stream) deleteMsg(ctx context.Context, req *msgDeleteRequest) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf("%w: %s", ErrMsgDeleteUnsuccessful, err)
+		return fmt.Errorf("%w: %s", ErrMsgDeleteUnsuccessful, resp.Error.Error())
 	}
 	return nil
 }
