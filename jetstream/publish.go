@@ -310,6 +310,12 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				js.publisher.Lock()
 				defer js.publisher.Unlock()
 
+				if _, ok := js.publisher.acks[id]; !ok {
+					// paf has already been resolved
+					// while waiting for the lock
+					return
+				}
+
 				// ack timed out, remove from pending acks
 				delete(js.publisher.acks, id)
 

@@ -1074,6 +1074,12 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 				js.mu.Lock()
 				defer js.mu.Unlock()
 
+				if _, ok := js.pafs[id]; !ok {
+					// paf has already been resolved
+					// while waiting for the lock
+					return
+				}
+
 				// ack timed out, remove from pending acks
 				delete(js.pafs, id)
 
