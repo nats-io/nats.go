@@ -1640,3 +1640,54 @@ func TestKeyValueCompression(t *testing.T) {
 		t.Fatalf("Expected stream to be compressed with S2")
 	}
 }
+
+func TestListKeysFromPurgedStream(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Error getting jetstream context: %v", err)
+	}
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "A"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	for i := range 10000 {
+		if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
+			t.Fatalf("Error putting key: %v", err)
+		}
+	}
+
+	// purge the stream after a bit
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		if err := js.PurgeStream("KV_A"); err != nil {
+			t.Logf("Error purging stream: %v", err)
+		}
+	}()
+	keys, err := kv.ListKeys()
+	if err != nil {
+		t.Fatalf("Error listing keys: %v", err)
+	}
+
+	// there should not be a deadlock here
+	for {
+		select {
+		case _, ok := <-keys.Keys():
+			if !ok {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for keys")
+		}
+	}
+}
