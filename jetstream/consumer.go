@@ -376,14 +376,14 @@ func validateConsumerName(dur string) error {
 }
 
 func unpinConsumer(ctx context.Context, js *jetStream, stream, consumer, group string) error {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
 	if err := validateConsumerName(consumer); err != nil {
 		return err
 	}
-	unpinSubject := apiSubj(js.apiPrefix, fmt.Sprintf(apiConsumerUnpinT, stream, consumer))
+	unpinSubject := fmt.Sprintf(apiConsumerUnpinT, stream, consumer)
 
 	var req = consumerUnpinRequest{
 		Group: group,
