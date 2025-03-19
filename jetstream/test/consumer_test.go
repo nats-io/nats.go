@@ -628,6 +628,7 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer msgs.Stop()
 
 		msg, err := msgs.Next()
 		if err != nil {
@@ -649,6 +650,7 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer noMsgs.Stop()
 
 		done := make(chan struct{})
 		errC := make(chan error)
