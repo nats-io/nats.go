@@ -88,7 +88,7 @@ type (
 		name    string
 		info    *ConsumerInfo
 		subs    syncx.Map[string, *pullSubscription]
-		PinId         string
+		PinId   string
 	}
 
 	pullRequest struct {
