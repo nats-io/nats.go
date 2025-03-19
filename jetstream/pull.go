@@ -457,12 +457,16 @@ func (s *pullSubscription) checkPending() {
 			batchSize = min(batchSize, s.consumeOpts.StopAfter-s.delivered-s.pending.msgCount)
 		}
 		if batchSize > 0 {
+			pinID := ""
+			if s.consumer != nil {
+				pinID = s.consumer.PinId
+			}
 			s.fetchNext <- &pullRequest{
 				Expires:   s.consumeOpts.Expires,
 				Batch:     batchSize,
 				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
-				PinId:     s.consumer.PinId,
+				PinId:     pinID,
 				Group:     s.consumeOpts.Group,
 			}
 
