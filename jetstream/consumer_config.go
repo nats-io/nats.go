@@ -78,12 +78,6 @@ type (
 
 		// PriorityPolicy contains the information about the currently defined priority groups
 		PriorityGroups []PriorityGroupState `json:"priority_groups,omitempty"`
-	}
-
-	PriorityGroupState struct {
-		Group          string    `json:"group"`
-		PinnedClientID string    `json:"pinned_client_id,omitempty"`
-		PinnedTS       time.Time `json:"pinned_ts,omitempty"`
 
 		// Paused indicates whether the consumer is paused.
 		Paused bool `json:"paused,omitempty"`
@@ -91,6 +85,12 @@ type (
 		// PauseRemaining contains the amount of time left until the consumer
 		// unpauses. It will only be non-zero if the consumer is currently paused.
 		PauseRemaining time.Duration `json:"pause_remaining,omitempty"`
+	}
+
+	PriorityGroupState struct {
+		Group          string    `json:"group"`
+		PinnedClientID string    `json:"pinned_client_id,omitempty"`
+		PinnedTS       time.Time `json:"pinned_ts,omitempty"`
 	}
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
