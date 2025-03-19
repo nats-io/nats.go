@@ -260,6 +260,7 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
+		defer msgs.Stop()
 
 		msg, err := msgs.Next()
 		if err != nil {
@@ -279,7 +280,7 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-
+		defer noMsgs.Stop()
 		done := make(chan struct{})
 		errC := make(chan error)
 		go func() {
@@ -492,7 +493,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		}
 
-		// Different
+		// Different consumer instance.
 		cdiff, err := js.Consumer(ctx, "foo", "cons")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -515,7 +516,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		count = 0
 
-		// the same again, should be fine
+		// Now lets fetch from the pinned one, which should be fine.
 		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -534,10 +535,12 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", msgs3.Error())
 		}
 
+		fmt.Print("WAIT FOR THE TTL\n")
 		// Wait for the TTL to expire, expect different ID
 		count = 0
 		time.Sleep(10 * time.Second)
 		// The same instance, should work fine.
+
 		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -553,11 +556,30 @@ func TestConsumerPinned(t *testing.T) {
 			msg.Ack()
 			count++
 		}
+		if !errors.Is(msgs4.Error(), jetstream.ErrPinIdMismatch) {
+			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrPinIdMismatch, msgs4.Error())
+		}
+
+		msgs5, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for msg := range msgs5.Messages() {
+			if msg == nil {
+				break
+			}
+			newId := msg.Headers().Get("Nats-Pin-Id")
+			if newId == id {
+				t.Fatalf("Expected new pull to have different ID. old: %s, new: %s", id, newId)
+			}
+			msg.Ack()
+			count++
+		}
+		if msgs5.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs5.Error())
+		}
 		if count != 10 {
 			t.Fatalf("Expected 10 messages, got %d", count)
-		}
-		if msgs4.Error() != nil {
-			t.Fatalf("Unexpected error: %v", msgs4.Error())
 		}
 	})
 
