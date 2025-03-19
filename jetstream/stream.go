@@ -762,5 +762,5 @@ func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]st
 // UnpinConsumer unpins the currently pinned client for a consumer for the given group name.
 // If consumer does not exist, ErrConsumerNotFound is returned.
 func (s *stream) UnpinConsumer(ctx context.Context, consumer string, group string) error {
-	return unpinConsumer(ctx, s.jetStream, s.name, consumer, group)
+	return unpinConsumer(ctx, s.js, s.name, consumer, group)
 }
