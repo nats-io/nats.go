@@ -1131,6 +1131,7 @@ func TestJetStreamSubscribe_SkipConsumerLookup(t *testing.T) {
 }
 
 func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
+	t.Skip("Since v2.10.26 server sends no responders if the consumer is deleted, we need to figure out how else to test missing heartbeats")
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -1239,6 +1240,57 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	}
 }
 
+func TestPullSubscribeConsumerDoesNotExist(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = sub.Fetch(5)
+	if !errors.Is(err, nats.ErrNoResponders) {
+		t.Fatalf("Expected no responders error; got: %v", err)
+	}
+
+	msgs, err := sub.FetchBatch(5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	select {
+	case _, ok := <-msgs.Messages():
+		if ok {
+			t.Fatalf("Expected no messages")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Timeout waiting for messages")
+	}
+
+	if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+		t.Fatalf("Expected no responders error; got: %v", msgs.Error())
+	}
+}
+
 func TestPullSubscribeFetchDrain(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -1298,6 +1350,7 @@ func TestPullSubscribeFetchDrain(t *testing.T) {
 }
 
 func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
+	t.Skip("Since v2.10.26 server sends no responders if the consumer is deleted, we need to figure out how else to test missing heartbeats")
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -9617,8 +9670,8 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	send("bar", "d")
 	send("foo", "e")
 
-	// Without AllowDirect, we should get a timeout (so reduce the timeout for this call)
-	if _, err := js.GetMsg("DGM", 1, nats.DirectGet(), nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
+	// Without AllowDirect, we should get no responders
+	if _, err := js.GetMsg("DGM", 1, nats.DirectGet()); err != nats.ErrNoResponders {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 

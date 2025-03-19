@@ -208,7 +208,8 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 		if errors.Is(err, ErrNoHeartbeat) ||
 			errors.Is(err, errOrderedSequenceMismatch) ||
 			errors.Is(err, ErrConsumerDeleted) ||
-			errors.Is(err, errConnected) {
+			errors.Is(err, errConnected) ||
+			errors.Is(err, nats.ErrNoResponders) {
 			// only reset if serial matches the current consumer serial and there is no reset in progress
 			if serial == c.serial && c.resetInProgress.Load() == 0 {
 				c.resetInProgress.Store(1)

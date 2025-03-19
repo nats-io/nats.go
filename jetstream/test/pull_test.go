@@ -353,7 +353,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 	})
 
-	t.Run("with missing heartbeat", func(t *testing.T) {
+	t.Run("consumer does not exist", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -379,7 +379,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 		publishTestMsgs(t, js)
 		// fetch 5 messages, should return normally
-		msgs, err := c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -395,7 +395,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 
 		// fetch again, should timeout without any error
-		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		msgs, err = c.Fetch(5, jetstream.FetchMaxWait(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -415,7 +415,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
 			t.Fatalf("Error deleting consumer: %s", err)
 		}
-		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err = c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -428,8 +428,8 @@ func TestPullConsumerFetch(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatalf("Expected channel to be closed")
 		}
-		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 		}
 	})
 
@@ -752,7 +752,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		}
 	})
 
-	t.Run("with missing heartbeat", func(t *testing.T) {
+	t.Run("consumer does not exist", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -778,7 +778,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		}
 
 		// fetch again, should timeout without any error
-		msgs, err := c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		msgs, err := c.FetchBytes(5, jetstream.FetchMaxWait(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -794,11 +794,11 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
 		}
 
-		// delete the consumer, at this point server should stop sending heartbeats for pull requests
+		// delete the consumer
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
 			t.Fatalf("Error deleting consumer: %s", err)
 		}
-		msgs, err = c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err = c.FetchBytes(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -811,8 +811,8 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatalf("Expected channel to be closed")
 		}
-		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 		}
 	})
 
@@ -2687,6 +2687,17 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
+		// if the consumer does not exist, server will return ErrNoResponders
+		select {
+		case err := <-errs:
+			if !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for %v", jetstream.ErrNoHeartbeat)
+		}
+
+		// after 2*heartbeat interval, we should get ErrNoHeartbeat
 		select {
 		case err := <-errs:
 			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
