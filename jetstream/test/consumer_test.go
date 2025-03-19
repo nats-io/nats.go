@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -369,12 +370,12 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Expected invalid priority group error")
 		}
 
-		count := 0
+		count := atomic.Uint32{}
 		ip, err := initialyPinned.Consume(func(m jetstream.Msg) {
 			if err := m.Ack(); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			count++
+			count.Add(1)
 			gcount <- struct{}{}
 		}, jetstream.PullThresholdMessages(10), jetstream.PriorityGroup("A"))
 		if err != nil {
@@ -400,7 +401,7 @@ func TestConsumerPinned(t *testing.T) {
 		for {
 			select {
 			case <-gcount:
-				if count == 1000 {
+				if count.Load() == 1000 {
 					break outer
 				}
 			case <-time.After(30 * time.Second):
@@ -408,7 +409,7 @@ func TestConsumerPinned(t *testing.T) {
 			}
 		}
 
-		if count != 1000 {
+		if count.Load() != 1000 {
 			t.Fatalf("Expected 1000 messages for pinned consumer, got %d", count)
 		}
 		if notPinnedC != 0 {
