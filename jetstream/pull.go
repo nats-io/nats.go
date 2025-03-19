@@ -801,7 +801,8 @@ func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch,
 // request. It will not wait for more messages to arrive.
 func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch: batch,
+		Batch:  batch,
+		NoWait: true,
 	}
 
 	return p.fetch(req)
