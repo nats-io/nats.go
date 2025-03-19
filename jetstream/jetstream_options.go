@@ -416,6 +416,15 @@ func WithMsgID(id string) PublishOpt {
 	}
 }
 
+// WithMsgTTL sets per msg TTL.
+// Requires [StreamConfig.AllowMsgTTL] to be enabled.
+func WithMsgTTL(dur time.Duration) PublishOpt {
+	return func(opts *pubOpts) error {
+		opts.ttl = dur
+		return nil
+	}
+}
+
 // WithExpectStream sets the expected stream the message should be published to.
 // If the message is published to a different stream server will reject the
 // message and publish will fail.

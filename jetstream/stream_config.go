@@ -196,6 +196,14 @@ type (
 		// Template identifies the template that manages the Stream.
 		// Deprecated: This feature is no longer supported.
 		Template string `json:"template_owner,omitempty"`
+
+		// AllowMsgTTL allows header initiated per-message TTLs.
+		// This feature requires nats-server v2.11.0 or later.
+		AllowMsgTTL bool `json:"allow_msg_ttl"`
+
+		// Enables and sets a duration for adding server markers for delete, purge and max age limits.
+		// This feature requires nats-server v2.11.0 or later.
+		SubjectDeleteMarkerTTL time.Duration `json:"subject_delete_marker_ttl,omitempty"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream

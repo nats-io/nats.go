@@ -190,6 +190,10 @@ const (
 	// option.
 	ExpectedLastMsgIDHeader = "Nats-Expected-Last-Msg-Id"
 
+	// MsgTTLHeader is used to specify the TTL for a specific message. This will
+	// override the default TTL for the stream.
+	MsgTTLHeader = "Nats-TTL"
+
 	// MsgRollup is used to apply a purge of all prior messages in the stream
 	// ("all") or at the subject ("sub") before this message.
 	MsgRollup = "Nats-Rollup"

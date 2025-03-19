@@ -430,6 +430,102 @@ func TestJetStreamPublish(t *testing.T) {
 	}
 }
 
+func TestPublishWithTTL(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64, AllowMsgTTL: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.Publish("FOO.1", []byte("msg"), nats.MsgTTL(1*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	gotMsg, err := js.GetMsg("foo", ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "1s" {
+		t.Fatalf("Expected message to have TTL header set to 1s; got: %s", ttl)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_, err = js.GetMsg("foo", ack.Sequence)
+	if !errors.Is(err, nats.ErrMsgNotFound) {
+		t.Fatalf("Expected not found error; got: %v", err)
+	}
+}
+
+func TestMsgDeleteMarkerMaxAge(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, AllowMsgTTL: true, SubjectDeleteMarkerTTL: 50 * time.Second, MaxAge: 1 * time.Second})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish("FOO.1", []byte("msg1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	gotMsg, err := js.GetLastMsg("foo", "FOO.1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttlMarker := gotMsg.Header.Get("Nats-Marker-Reason"); ttlMarker != "MaxAge" {
+		t.Fatalf("Expected message to have Marker-Reason header set to MaxAge; got: %s", ttlMarker)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "50s" {
+		t.Fatalf("Expected message to have Nats-TTL header set to 50s; got: %s", ttl)
+	}
+}
+
+func TestPublishAsyncWithTTL(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64, AllowMsgTTL: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	paf, err := js.PublishAsync("FOO.1", []byte("msg"), nats.MsgTTL(1*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var ack *nats.PubAck
+	select {
+	case ack = <-paf.Ok():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive ack")
+	}
+
+	gotMsg, err := js.GetMsg("foo", ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "1s" {
+		t.Fatalf("Expected message to have TTL header set to 1s; got: %s", ttl)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_, err = js.GetMsg("foo", ack.Sequence)
+	if !errors.Is(err, nats.ErrMsgNotFound) {
+		t.Fatalf("Expected not found error; got: %v", err)
+	}
+}
+
 func TestJetStreamSubscribe(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
