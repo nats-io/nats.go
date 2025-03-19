@@ -466,13 +466,14 @@ func (opt pubOptFn) configurePublish(opts *pubOpts) error {
 }
 
 type pubOpts struct {
-	ctx context.Context
-	ttl time.Duration
-	id  string
-	lid string  // Expected last msgId
-	str string  // Expected stream name
-	seq *uint64 // Expected last sequence
-	lss *uint64 // Expected last sequence per subject
+	ctx    context.Context
+	ttl    time.Duration
+	id     string
+	lid    string        // Expected last msgId
+	str    string        // Expected stream name
+	seq    *uint64       // Expected last sequence
+	lss    *uint64       // Expected last sequence per subject
+	msgTTL time.Duration // Message TTL
 
 	// Publish retries for NoResponders err.
 	rwait time.Duration // Retry wait between attempts
@@ -507,6 +508,7 @@ const (
 	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
 	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
 	MsgRollup              = "Nats-Rollup"
+	MsgTTLHdr              = "Nats-TTL"
 )
 
 // Headers for republished messages and direct gets.
@@ -565,6 +567,9 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
+	}
+	if o.msgTTL > 0 {
+		m.Header.Set(MsgTTLHdr, o.msgTTL.String())
 	}
 
 	var resp *Msg
@@ -1024,6 +1029,9 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
 	}
+	if o.msgTTL > 0 {
+		m.Header.Set(MsgTTLHdr, o.msgTTL.String())
+	}
 
 	// Reply
 	paf := o.pafRetry
@@ -1147,6 +1155,15 @@ func StallWait(ttl time.Duration) PubOpt {
 			return errors.New("nats: stall wait should be more than 0")
 		}
 		opts.stallWait = ttl
+		return nil
+	})
+}
+
+// MsgTTL sets per msg TTL.
+// Requires [StreamConfig.AllowMsgTTL] to be enabled.
+func MsgTTL(dur time.Duration) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.msgTTL = dur
 		return nil
 	})
 }
