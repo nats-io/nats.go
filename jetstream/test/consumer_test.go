@@ -172,10 +172,16 @@ func TestConsumerOverflow(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 	}
 
 	// We are below overflow, so we should not get any moessages.
 	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	count := 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
@@ -188,9 +194,15 @@ func TestConsumerOverflow(t *testing.T) {
 	// Add more messages
 	for i := 0; i < 100; i++ {
 		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 	}
 
 	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.WithPriorityGroup("A"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	count = 0
 	for msg := range msgs.Messages() {
 		msg.Ack()
@@ -239,6 +251,9 @@ func TestConsumerPinned(t *testing.T) {
 
 		for i := 0; i < 1000; i++ {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 		}
 
 		msgs, err := c.Messages(jetstream.PriorityGroup("A"))
@@ -326,6 +341,9 @@ func TestConsumerPinned(t *testing.T) {
 
 		for i := 0; i < 1000; i++ {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 		}
 
 		gcount := make(chan struct{}, 100)
@@ -353,19 +371,29 @@ func TestConsumerPinned(t *testing.T) {
 
 		count := 0
 		ip, err := initialyPinned.Consume(func(m jetstream.Msg) {
-			m.Ack()
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			count++
 			gcount <- struct{}{}
 		}, jetstream.PullThresholdMessages(10), jetstream.PriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		defer ip.Stop()
 
 		// Second consume instance that should remain passive.
 		notPinnedC := 0
 		np, err := c.Consume(func(m jetstream.Msg) {
-			m.Ack()
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			notPinnedC++
 			gcount <- struct{}{}
 		}, jetstream.PriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		defer np.Stop()
 
 	outer:
@@ -434,6 +462,9 @@ func TestConsumerPinned(t *testing.T) {
 
 		for i := 0; i < 100; i++ {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 		}
 
 		// Initial fetch.
@@ -463,6 +494,9 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Different
 		cdiff, err := js.Consumer(ctx, "foo", "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -563,6 +597,9 @@ func TestConsumerPinned(t *testing.T) {
 
 		for i := 0; i < 1000; i++ {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 		}
 
 		msgs, err := c.Messages(jetstream.PriorityGroup("A"))
