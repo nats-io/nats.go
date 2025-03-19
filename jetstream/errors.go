@@ -195,7 +195,7 @@ var (
 	// consumer.
 	ErrNoMessages JetStreamError = &jsError{message: "no messages"}
 
-	// ErrPinIdMismatch is returned when Pin ID sent in ther request does not match
+	// ErrPinIdMismatch is returned when Pin ID sent in the request does not match
 	// the currently pinned consumer subscriber ID on the server.
 	ErrPinIdMismatch JetStreamError = &jsError{message: "pin ID mismatch"}
 
