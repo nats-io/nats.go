@@ -402,6 +402,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	// Look for status header
 	val := msg.Header.Get("Status")
 	descr := msg.Header.Get("Description")
+	fmt.Printf("STATUS: %s DESC: %s\n", val, descr)
 	// If not present, then this is considered a user message
 	if val == "" {
 		return true, nil

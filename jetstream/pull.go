@@ -848,7 +848,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				// check of `Status` header.
 				if status := msg.Header.Get("Status"); status != "" {
 					if status == pinIdMismatch {
-						res.err = err
+						p.PinId = ""
+						res.err = ErrPinIdMismatch
 					}
 				}
 				userMsg, err := checkMsg(msg)
