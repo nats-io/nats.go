@@ -9670,7 +9670,7 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	send("bar", "d")
 	send("foo", "e")
 
-	// Without AllowDirect, we should getno responders
+	// Without AllowDirect, we should get no responders
 	if _, err := js.GetMsg("DGM", 1, nats.DirectGet()); err != nats.ErrNoResponders {
 		t.Fatalf("Unexpected error: %v", err)
 	}
