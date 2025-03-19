@@ -352,13 +352,20 @@ func (js *jetStream) newAsyncReply() (string, error) {
 	}
 	var sb strings.Builder
 	sb.WriteString(js.publisher.replyPrefix)
-	rn := js.publisher.rr.Int63()
-	var b [aReplyTokensize]byte
-	for i, l := 0, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
-		l /= base
+	for {
+		rn := js.publisher.rr.Int63()
+		var b [aReplyTokensize]byte
+		for i, l := 0, rn; i < len(b); i++ {
+			b[i] = rdigits[l%base]
+			l /= base
+		}
+		if _, ok := js.publisher.acks[string(b[:])]; ok {
+			continue
+		}
+		sb.Write(b[:])
+		break
 	}
-	sb.Write(b[:])
+
 	js.publisher.Unlock()
 	return sb.String(), nil
 }
