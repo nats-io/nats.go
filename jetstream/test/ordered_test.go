@@ -237,7 +237,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		l.Stop()
 	})
 
-	t.Run("base usage, missing heartbeat", func(t *testing.T) {
+	t.Run("base usage, consumer does not exist", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -261,8 +261,6 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		// we have to delete consumer before trying to consume
-		// in order to get missing heartbeats
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Config.Name); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -276,7 +274,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			wg.Done()
 		}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
 			errs <- err
-		}), jetstream.PullHeartbeat(1*time.Second))
+		}))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -284,8 +282,8 @@ func TestOrderedConsumerConsume(t *testing.T) {
 		publishTestMsgs(t, js)
 		select {
 		case err := <-errs:
-			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
-				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+			if !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("timeout waiting for error")
