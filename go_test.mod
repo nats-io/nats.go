@@ -22,5 +22,3 @@ require (
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 )
-
-replace github.com/nats-io/nats-server/v2 => /Users/tomaszpietrek/coding/nats-server
