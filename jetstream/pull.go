@@ -88,7 +88,7 @@ type (
 		name    string
 		info    *ConsumerInfo
 		subs    syncx.Map[string, *pullSubscription]
-		PinId   string
+		PinID   string
 	}
 
 	pullRequest struct {
@@ -99,7 +99,7 @@ type (
 		Heartbeat     time.Duration `json:"idle_heartbeat,omitempty"`
 		MinPending    int64         `json:"min_pending,omitempty"`
 		MinAckPending int64         `json:"min_ack_pending,omitempty"`
-		PinId         string        `json:"id,omitempty"`
+		PinID         string        `json:"id,omitempty"`
 		Group         string        `json:"group,omitempty"`
 	}
 
@@ -237,7 +237,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		// check of `Status` header.
 		if status := msg.Header.Get("Status"); status != "" {
 			if status == pinIdMismatch {
-				p.PinId = ""
+				p.PinID = ""
 			}
 		}
 		userMsg, msgErr := checkMsg(msg)
@@ -278,7 +278,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		}
 		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
 			// TODO(jrm): do we need a lock here?
-			p.PinId = pinId
+			p.PinID = pinId
 		}
 		handler(p.js.toJSMsg(msg))
 		sub.Lock()
@@ -323,7 +323,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		MinPending:    consumeOpts.MinPending,
 		MinAckPending: consumeOpts.MinAckPending,
 		Group:         consumeOpts.Group,
-		PinId:         p.PinId,
+		PinID:         p.PinID,
 	}, subject); err != nil {
 		sub.errs <- err
 	}
@@ -362,7 +362,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							MinPending:    sub.consumeOpts.MinPending,
 							MinAckPending: sub.consumeOpts.MinAckPending,
 							Group:         sub.consumeOpts.Group,
-							PinId:         p.PinId,
+							PinID:         p.PinID,
 						}
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -389,7 +389,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						MinPending:    sub.consumeOpts.MinPending,
 						MinAckPending: sub.consumeOpts.MinAckPending,
 						Group:         sub.consumeOpts.Group,
-						PinId:         p.PinId,
+						PinID:         p.PinID,
 					}
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -459,14 +459,14 @@ func (s *pullSubscription) checkPending() {
 		if batchSize > 0 {
 			pinID := ""
 			if s.consumer != nil {
-				pinID = s.consumer.PinId
+				pinID = s.consumer.PinID
 			}
 			s.fetchNext <- &pullRequest{
 				Expires:   s.consumeOpts.Expires,
 				Batch:     batchSize,
 				MaxBytes:  maxBytes,
 				Heartbeat: s.consumeOpts.Heartbeat,
-				PinId:     pinID,
+				PinID:     pinID,
 				Group:     s.consumeOpts.Group,
 			}
 
@@ -827,8 +827,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("setting request pin id: %s\n", p.PinId)
-	req.PinId = p.PinId
+	fmt.Printf("setting request pin id: %s\n", p.PinID)
+	req.PinID = p.PinID
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
@@ -849,8 +849,8 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				// check of `Status` header.
 				if status := msg.Header.Get("Status"); status != "" {
 					if status == pinIdMismatch {
-						p.PinId = ""
-						res.err = ErrPinIdMismatch
+						p.PinID = ""
+						res.err = ErrPinIDMismatch
 					}
 				}
 				userMsg, err := checkMsg(msg)
@@ -868,7 +868,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					continue
 				}
 				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-					p.PinId = pinId
+					p.PinID = pinId
 				}
 				res.msgs <- p.js.toJSMsg(msg)
 				meta, err := msg.Metadata()

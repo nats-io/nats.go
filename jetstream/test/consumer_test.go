@@ -410,7 +410,7 @@ func TestConsumerPinned(t *testing.T) {
 		}
 
 		if count.Load() != 1000 {
-			t.Fatalf("Expected 1000 messages for pinned consumer, got %d", count)
+			t.Fatalf("Expected 1000 messages for pinned consumer, got %d", count.Load())
 		}
 		if notPinnedC != 0 {
 			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC)
@@ -556,8 +556,8 @@ func TestConsumerPinned(t *testing.T) {
 			msg.Ack()
 			count++
 		}
-		if !errors.Is(msgs4.Error(), jetstream.ErrPinIdMismatch) {
-			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrPinIdMismatch, msgs4.Error())
+		if !errors.Is(msgs4.Error(), jetstream.ErrPinIDMismatch) {
+			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrPinIDMismatch, msgs4.Error())
 		}
 
 		msgs5, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
@@ -635,11 +635,11 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		firstPinId := msg.Headers().Get("Nats-Pin-Id")
-		if firstPinId == "" {
+		firstPinID := msg.Headers().Get("Nats-Pin-Id")
+		if firstPinID == "" {
 			t.Fatalf("Expected pinned message")
 		}
-		fmt.Printf("got first pin ID messages (ID: %s)\n", firstPinId)
+		fmt.Printf("got first pin ID messages (ID: %s)\n", firstPinID)
 
 		second, err := s.Consumer(ctx, "cons")
 		if err != nil {
@@ -687,10 +687,10 @@ func TestConsumerPinned(t *testing.T) {
 
 		go func() {
 			msg, err := yesMsgs.Next()
-			newPinId := msg.Headers().Get("Nats-Pin-Id")
-			fmt.Printf("got new pin ID message after unpin (ID: %s)\n", newPinId)
-			if newPinId == firstPinId || newPinId == "" {
-				errC <- fmt.Errorf("Expected new pin ID, got %s", newPinId)
+			newPinID := msg.Headers().Get("Nats-Pin-Id")
+			fmt.Printf("got new pin ID message after unpin (ID: %s)\n", newPinID)
+			if newPinID == firstPinID || newPinID == "" {
+				errC <- fmt.Errorf("Expected new pin ID, got %s", newPinID)
 				return
 			}
 			if err != nil {

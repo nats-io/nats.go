@@ -421,7 +421,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	case controlMsg:
 		return false, nil
 	case pinIdMismatch:
-		return false, ErrPinIdMismatch
+		return false, ErrPinIDMismatch
 	case maxBytesExceeded:
 		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
 			return false, ErrMaxBytesExceeded
