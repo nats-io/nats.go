@@ -269,7 +269,6 @@ func TestConsumerPinned(t *testing.T) {
 		if msg.Headers().Get("Nats-Pin-Id") == "" {
 			t.Fatalf("Expected pinned message")
 		}
-		fmt.Println("got first messages")
 
 		second, err := s.Consumer(ctx, "cons")
 		if err != nil {
