@@ -810,6 +810,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				meta, err := msg.Metadata()
 				if err != nil {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
+					res.done = true
+					res.Unlock()
+					return
 				}
 				res.sseq = meta.Sequence.Stream
 				receivedMsgs++
