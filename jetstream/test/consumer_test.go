@@ -204,7 +204,9 @@ func TestConsumerOverflow(t *testing.T) {
 		}
 		count = 0
 		for msg := range msgs.Messages() {
-			msg.Ack()
+			if err := msg.DoubleAck(context.Background()); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			count++
 		}
 		if count != 10 {
@@ -432,6 +434,7 @@ func TestConsumerOverflow(t *testing.T) {
 
 		count := atomic.Uint32{}
 		errs := make(chan error, 10)
+		done := make(chan struct{}, 1)
 		handler := func(it jetstream.MessagesContext) {
 			for {
 				msg, err := it.Next()
@@ -439,14 +442,15 @@ func TestConsumerOverflow(t *testing.T) {
 					if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
 						errs <- err
 					}
-					return
+					break
 				}
 				if err := msg.Ack(); err != nil {
 					errs <- err
-					return
+					break
 				}
 				count.Add(1)
 			}
+			done <- struct{}{}
 		}
 
 		it, err := c.Messages(jetstream.PullPriorityGroup("A"),
@@ -455,7 +459,6 @@ func TestConsumerOverflow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer it.Stop()
 		go handler(it)
 
 		time.Sleep(100 * time.Millisecond)
@@ -480,6 +483,7 @@ func TestConsumerOverflow(t *testing.T) {
 			t.Fatalf("Expected 10 messages, got %d", count.Load())
 		}
 		it.Stop()
+		<-done
 
 		// now test min ack pending
 		count.Store(0)
@@ -490,7 +494,6 @@ func TestConsumerOverflow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer it.Stop()
 		go handler(it)
 
 		time.Sleep(100 * time.Millisecond)
@@ -520,6 +523,8 @@ func TestConsumerOverflow(t *testing.T) {
 		if count.Load() != 99 {
 			t.Fatalf("Expected 5 messages, got %d", count.Load())
 		}
+		it.Stop()
+		<-done
 	})
 }
 
@@ -724,7 +729,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		waitForCounter(t, &count, 1000)
 		if notPinnedC.Load() != 0 {
-			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC)
+			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC.Load())
 		}
 
 		count.Store(0)
@@ -739,7 +744,6 @@ func TestConsumerPinned(t *testing.T) {
 		if notPinnedC.Load() != 0 {
 			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC.Load())
 		}
-		fmt.Println("WAIT FOR THE TTL")
 
 		//wait for pinned ttl to expire and messages to be consumed by the second consumer
 		waitForCounter(t, &notPinnedC, 100)
@@ -791,7 +795,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", time.Second, info.Config.PinnedTTL)
 		}
 
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -865,7 +869,6 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", msgs.Error())
 		}
 
-		fmt.Print("WAIT FOR THE TTL\n")
 		// Wait for the TTL to expire, expect different ID
 		count = 0
 		time.Sleep(1500 * time.Millisecond)
@@ -943,7 +946,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -965,7 +968,6 @@ func TestConsumerPinned(t *testing.T) {
 		if firstPinID == "" {
 			t.Fatalf("Expected pinned message")
 		}
-		fmt.Printf("got first pin ID messages (ID: %s)\n", firstPinID)
 
 		second, err := s.Consumer(ctx, "cons")
 		if err != nil {
@@ -1014,7 +1016,6 @@ func TestConsumerPinned(t *testing.T) {
 		go func() {
 			msg, err := yesMsgs.Next()
 			newPinID := msg.Headers().Get("Nats-Pin-Id")
-			fmt.Printf("got new pin ID message after unpin (ID: %s)\n", newPinID)
 			if newPinID == firstPinID || newPinID == "" {
 				errC <- fmt.Errorf("Expected new pin ID, got %s", newPinID)
 				return
