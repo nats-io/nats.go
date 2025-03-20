@@ -297,6 +297,13 @@ func (t PullThresholdBytes) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// PullMinPending sets the minimum number of messages that should be pending for
+// a consumer with PriorityPolicyOverflow to be considered for delivery.
+// If provided, PullPriorityGroup must be set as well and the consumer has to have
+// PriorityPolicy set to PriorityPolicyOverflow.
+//
+// PullMinPending implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullMinPending int
 
 func (min PullMinPending) configureConsume(opts *consumeOpts) error {
@@ -315,13 +322,20 @@ func (min PullMinPending) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// PullMinAckPending sets the minimum number of pending acks that should be
+// present for a consumer with PriorityPolicyOverflow to be considered for
+// delivery. If provided, PullPriorityGroup must be set as well and the consumer
+// has to have PriorityPolicy set to PriorityPolicyOverflow.
+//
+// PullMinAckPending implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
 type PullMinAckPending int
 
 func (min PullMinAckPending) configureConsume(opts *consumeOpts) error {
 	if min < 1 {
 		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
 	}
-	opts.MinPending = int64(min)
+	opts.MinAckPending = int64(min)
 	return nil
 }
 
@@ -329,19 +343,24 @@ func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
 	if min < 1 {
 		return fmt.Errorf("%w: min pending should be more than 0", ErrInvalidOption)
 	}
-	opts.MinPending = int64(min)
+	opts.MinAckPending = int64(min)
 	return nil
 }
 
-type PriorityGroup string
+// PullPriorityGroup sets the priority group for a consumer.
+// It has to match one of the priority groups set on the consumer.
+//
+// PullPriorityGroup implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
+type PullPriorityGroup string
 
-func (group PriorityGroup) configureConsume(opts *consumeOpts) error {
-	opts.Group = string(group)
+func (g PullPriorityGroup) configureConsume(opts *consumeOpts) error {
+	opts.Group = string(g)
 	return nil
 }
 
-func (group PriorityGroup) configureMessages(opts *consumeOpts) error {
-	opts.Group = string(group)
+func (g PullPriorityGroup) configureMessages(opts *consumeOpts) error {
+	opts.Group = string(g)
 	return nil
 }
 
@@ -416,6 +435,10 @@ func WithMessagesErrOnMissingHeartbeat(hbErr bool) PullMessagesOpt {
 	})
 }
 
+// FetchMinPending sets the minimum number of messages that should be pending for
+// a consumer with PriorityPolicyOverflow to be considered for delivery.
+// If provided, FetchPriorityGroup must be set as well and the consumer has to have
+// PriorityPolicy set to PriorityPolicyOverflow.
 func FetchMinPending(min int64) FetchOpt {
 	return func(req *pullRequest) error {
 		if min < 1 {
@@ -426,6 +449,10 @@ func FetchMinPending(min int64) FetchOpt {
 	}
 }
 
+// FetchMinAckPending sets the minimum number of pending acks that should be
+// present for a consumer with PriorityPolicyOverflow to be considered for
+// delivery. If provided, FetchPriorityGroup must be set as well and the consumer
+// has to have PriorityPolicy set to PriorityPolicyOverflow.
 func FetchMinAckPending(min int64) FetchOpt {
 	return func(req *pullRequest) error {
 		if min < 1 {
@@ -436,7 +463,9 @@ func FetchMinAckPending(min int64) FetchOpt {
 	}
 }
 
-func WithPriorityGroup(group string) FetchOpt {
+// FetchPriorityGroup sets the priority group for a consumer.
+// It has to match one of the priority groups set on the consumer.
+func FetchPriorityGroup(group string) FetchOpt {
 	return func(req *pullRequest) error {
 		req.Group = group
 		return nil
