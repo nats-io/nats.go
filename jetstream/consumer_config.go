@@ -76,7 +76,7 @@ type (
 		// TimeStamp indicates when the info was gathered by the server.
 		TimeStamp time.Time `json:"ts"`
 
-		// PriorityPolicy contains the information about the currently defined priority groups
+		// PriorityGroups contains the information about the currently defined priority groups
 		PriorityGroups []PriorityGroupState `json:"priority_groups,omitempty"`
 
 		// Paused indicates whether the consumer is paused.
@@ -88,9 +88,14 @@ type (
 	}
 
 	PriorityGroupState struct {
-		Group          string    `json:"group"`
-		PinnedClientID string    `json:"pinned_client_id,omitempty"`
-		PinnedTS       time.Time `json:"pinned_ts,omitempty"`
+		// Group this status is for.
+		Group string `json:"group"`
+
+		// PinnedClientID is the generated ID of the pinned client.
+		PinnedClientID string `json:"pinned_client_id,omitempty"`
+
+		// PinnedTS is the timestamp when the client was pinned.
+		PinnedTS time.Time `json:"pinned_ts,omitempty"`
 	}
 
 	// ConsumerConfig is the configuration of a JetStream consumer.
@@ -237,9 +242,17 @@ type (
 		// PauseUntil is for suspending the consumer until the deadline.
 		PauseUntil *time.Time `json:"pause_until,omitempty"`
 
+		// PriorityPolicy represents he priority policy the consumer is set to.
+		// Requires nats-server v2.11.0 or later.
 		PriorityPolicy PriorityPolicy `json:"priority_policy,omitempty"`
-		PinnedTTL      time.Duration  `json:"priority_timeout,omitempty"`
-		PriorityGroups []string       `json:"priority_groups,omitempty"`
+
+		// PinnedTTL represents the time after which the client will be unpinned
+		// if no new pull requests are sent.Used with PriorityPolicyPinned.
+		// Requires nats-server v2.11.0 or later.
+		PinnedTTL time.Duration `json:"priority_timeout,omitempty"`
+
+		// PriorityGroups is a list of priority groups this consumer supports.
+		PriorityGroups []string `json:"priority_groups,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream
@@ -312,12 +325,21 @@ type (
 		Last     *time.Time `json:"last_active,omitempty"`
 	}
 
+	// PriorityPolicy determines the priority policy the consumer is set to.
 	PriorityPolicy int
 )
 
 const (
+	// PriorityPolicyNone is the default priority policy.
 	PriorityPolicyNone PriorityPolicy = iota
+
+	// PriorityPolicyPinned is the priority policy that pins a consumer to a
+	// specific client.
 	PriorityPolicyPinned
+
+	// PriorityPolicyOverflow is the priority policy that allows for
+	// restricting when a consumer will receive messages based on the number of
+	// pending messages or acks.
 	PriorityPolicyOverflow
 )
 

@@ -132,86 +132,395 @@ func TestConsumerInfo(t *testing.T) {
 }
 
 func TestConsumerOverflow(t *testing.T) {
+	t.Run("fetch", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
 
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
 
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:        "cons",
-		AckPolicy:      jetstream.AckExplicitPolicy,
-		Description:    "test consumer",
-		PriorityPolicy: jetstream.PriorityPolicyOverflow,
-		PriorityGroups: []string{"A"},
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			PriorityPolicy: jetstream.PriorityPolicyOverflow,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Check that consumer got proper priority policy and TTL
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyOverflow {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyOverflow, info.Config.PriorityPolicy)
+		}
+
+		for range 100 {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		// We are below overflow, so we should not get any messages.
+		msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(500*time.Millisecond), jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		count := 0
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			count++
+		}
+		if count != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count)
+		}
+
+		// Add more messages
+		for range 100 {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		count = 0
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			count++
+		}
+		if count != 10 {
+			t.Fatalf("Expected 10 messages, got %d", count)
+		}
+
+		// try fetching messages with min ack pending
+		msgs, err = c.Fetch(10, jetstream.FetchMaxWait(500*time.Millisecond), jetstream.FetchMinAckPending(10), jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		count = 0
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			count++
+		}
+		if count != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count)
+		}
+
+		// now fetch some more messages but do not ack them,
+		// we will test min ack pending
+		msgs, err = c.Fetch(10, jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		count = 0
+		for range msgs.Messages() {
+			count++
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
+		}
+		if count != 10 {
+			t.Fatalf("Expected 10 messages, got %d", count)
+		}
+
+		// now fetch messages with min ack pending
+		msgs, err = c.Fetch(10, jetstream.FetchMinAckPending(10), jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		count = 0
+		for msg := range msgs.Messages() {
+			msg.Ack()
+			count++
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
+		}
+		if count != 10 {
+			t.Fatalf("Expected 10 messages, got %d", count)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
-	// Check that consumer got proper priority policy and TTL
-	info := c.CachedInfo()
-	if info.Config.PriorityPolicy != jetstream.PriorityPolicyOverflow {
-		t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyOverflow, info.Config.PriorityPolicy)
-	}
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
 
-	for i := 0; i < 100; i++ {
-		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+		nc, err := nats.Connect(srv.ClientURL())
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-	}
+		defer nc.Close()
 
-	// We are below overflow, so we should not get any moessages.
-	msgs, err := c.Fetch(10, jetstream.FetchMinPending(110), jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	count := 0
-	for msg := range msgs.Messages() {
-		msg.Ack()
-		count++
-	}
-	if count != 0 {
-		t.Fatalf("Expected 0 messages, got %d", count)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	// Add more messages
-	for i := 0; i < 100; i++ {
-		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-	}
 
-	msgs, err = c.Fetch(10, jetstream.FetchMinPending(110), jetstream.WithPriorityGroup("A"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	count = 0
-	for msg := range msgs.Messages() {
-		msg.Ack()
-		count++
-	}
-	if count != 10 {
-		t.Fatalf("Expected 10 messages, got %d", count)
-	}
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			PriorityPolicy: jetstream.PriorityPolicyOverflow,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Check that consumer got proper priority policy and TTL
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyOverflow {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyOverflow, info.Config.PriorityPolicy)
+		}
+
+		for i := range 100 {
+			_, err = js.Publish(ctx, "FOO.bar", []byte(fmt.Sprintf("hello %d", i)))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		count := atomic.Uint32{}
+
+		handler := func(m jetstream.Msg) {
+			if err := m.Ack(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			count.Add(1)
+		}
+		cc, err := c.Consume(handler,
+			jetstream.PullPriorityGroup("A"),
+			jetstream.PullMinPending(110),
+			jetstream.PullMaxMessages(20))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer cc.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		// there are 100 messages on the stream, and min pending is 110
+		// so we should not get any messages
+		if count.Load() != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count.Load())
+		}
+
+		// Add more messages
+		for i := 100; i < 200; i++ {
+			_, err = js.Publish(ctx, "FOO.bar", []byte(fmt.Sprintf("hello %d", i)))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		// now we should get 91 messages, because `Consume` will
+		// keep getting messages until it drops below min pending
+		if count.Load() != 91 {
+			t.Fatalf("Expected 10 messages, got %d", count.Load())
+		}
+		cc.Stop()
+
+		// now test min ack pending
+		count.Store(0)
+
+		// consume with min ack pending
+		cc, err = c.Consume(handler,
+			jetstream.PullPriorityGroup("A"),
+			jetstream.PullMinAckPending(5),
+			jetstream.PullMaxMessages(20))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer cc.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		// no messages should be received, there are no pending acks
+		if count.Load() != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count.Load())
+		}
+		// fetch some messages, do not ack them
+		msgs, err := c.Fetch(10, jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		i := 0
+		for range msgs.Messages() {
+			i++
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
+		}
+		if i != 10 {
+			t.Fatalf("Expected 10 messages, got %d", i)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		// we should process the rest of the stream minus the 10 unacked messages
+		// 200 - 91 - 10 = 99
+		if count.Load() != 99 {
+			t.Fatalf("Expected 5 messages, got %d", count.Load())
+		}
+	})
+
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			PriorityPolicy: jetstream.PriorityPolicyOverflow,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Check that consumer got proper priority policy and TTL
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyOverflow {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyOverflow, info.Config.PriorityPolicy)
+		}
+
+		for i := range 100 {
+			_, err = js.Publish(ctx, "FOO.bar", []byte(fmt.Sprintf("hello %d", i)))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		count := atomic.Uint32{}
+		errs := make(chan error, 10)
+		handler := func(it jetstream.MessagesContext) {
+			for {
+				msg, err := it.Next()
+				if err != nil {
+					if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+						errs <- err
+					}
+					return
+				}
+				if err := msg.Ack(); err != nil {
+					errs <- err
+					return
+				}
+				count.Add(1)
+			}
+		}
+
+		it, err := c.Messages(jetstream.PullPriorityGroup("A"),
+			jetstream.PullMinPending(110),
+			jetstream.PullMaxMessages(20))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer it.Stop()
+		go handler(it)
+
+		time.Sleep(100 * time.Millisecond)
+		// there are 100 messages on the stream, and min pending is 110
+		// so we should not get any messages
+		if count.Load() != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count.Load())
+		}
+
+		// Add more messages
+		for i := 100; i < 200; i++ {
+			_, err = js.Publish(ctx, "FOO.bar", []byte(fmt.Sprintf("hello %d", i)))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		// now we should get 91 messages, because `Consume` will
+		// keep getting messages until it drops below min pending
+		if count.Load() != 91 {
+			t.Fatalf("Expected 10 messages, got %d", count.Load())
+		}
+		it.Stop()
+
+		// now test min ack pending
+		count.Store(0)
+
+		it, err = c.Messages(jetstream.PullPriorityGroup("A"),
+			jetstream.PullMinAckPending(5),
+			jetstream.PullMaxMessages(20))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer it.Stop()
+		go handler(it)
+
+		time.Sleep(100 * time.Millisecond)
+		// no messages should be received, there are no pending acks
+		if count.Load() != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count.Load())
+		}
+		// fetch some messages, do not ack them
+		msgs, err := c.Fetch(10, jetstream.FetchPriorityGroup("A"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		i := 0
+		for range msgs.Messages() {
+			i++
+		}
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
+		}
+		if i != 10 {
+			t.Fatalf("Expected 10 messages, got %d", i)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		// we should process the rest of the stream minus the 10 unacked messages
+		// 200 - 91 - 10 = 99
+		if count.Load() != 99 {
+			t.Fatalf("Expected 5 messages, got %d", count.Load())
+		}
+	})
 }
 
 func TestConsumerPinned(t *testing.T) {
@@ -250,14 +559,14 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 		}
 
-		msgs, err := c.Messages(jetstream.PriorityGroup("A"))
+		msgs, err := c.Messages(jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -276,7 +585,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		noMsgs, err := second.Messages(jetstream.PriorityGroup("A"))
+		noMsgs, err := second.Messages(jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -333,14 +642,14 @@ func TestConsumerPinned(t *testing.T) {
 			AckPolicy:      jetstream.AckExplicitPolicy,
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      50 * time.Second,
+			PinnedTTL:      time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -350,72 +659,93 @@ func TestConsumerPinned(t *testing.T) {
 		gcount := make(chan struct{}, 100)
 
 		// Initially pinned consumer instance
-		initialyPinned, err := s.Consumer(ctx, "cons")
+		initiallyPinned, err := s.Consumer(ctx, "cons")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
 		// test priority group validation
 		// invalid priority group
-		_, err = initialyPinned.Consume(func(m jetstream.Msg) {
-		}, jetstream.PriorityGroup("BAD"))
+		_, err = initiallyPinned.Consume(func(m jetstream.Msg) {
+		}, jetstream.PullPriorityGroup("BAD"))
 		if err == nil || err.Error() != "nats: invalid jetstream option: invalid priority group" {
 			t.Fatalf("Expected invalid priority group error")
 		}
 
 		// no priority group
-		_, err = initialyPinned.Consume(func(m jetstream.Msg) {
+		_, err = initiallyPinned.Consume(func(m jetstream.Msg) {
 		})
 		if err == nil || err.Error() != "nats: invalid jetstream option: priority group is required for priority consumer" {
 			t.Fatalf("Expected invalid priority group error")
 		}
 
 		count := atomic.Uint32{}
-		ip, err := initialyPinned.Consume(func(m jetstream.Msg) {
+		ip, err := initiallyPinned.Consume(func(m jetstream.Msg) {
 			if err := m.Ack(); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			count.Add(1)
 			gcount <- struct{}{}
-		}, jetstream.PullThresholdMessages(10), jetstream.PriorityGroup("A"))
+		}, jetstream.PullThresholdMessages(10), jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer ip.Stop()
 
 		// Second consume instance that should remain passive.
-		notPinnedC := 0
+		notPinnedC := atomic.Uint32{}
 		np, err := c.Consume(func(m jetstream.Msg) {
 			if err := m.Ack(); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			notPinnedC++
+			notPinnedC.Add(1)
 			gcount <- struct{}{}
-		}, jetstream.PriorityGroup("A"))
+		}, jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer np.Stop()
 
-	outer:
-		for {
-			select {
-			case <-gcount:
-				if count.Load() == 1000 {
-					break outer
+		waitForCounter := func(t *testing.T, c *atomic.Uint32, expected int) {
+			t.Helper()
+
+		outer:
+			for {
+				select {
+				case <-gcount:
+					if c.Load() == uint32(expected) {
+						break outer
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatalf("Did not get all messages in time")
 				}
-			case <-time.After(30 * time.Second):
-				t.Fatalf("Did not get all messages in time")
 			}
 		}
 
-		if count.Load() != 1000 {
-			t.Fatalf("Expected 1000 messages for pinned consumer, got %d", count.Load())
-		}
-		if notPinnedC != 0 {
+		waitForCounter(t, &count, 1000)
+		if notPinnedC.Load() != 0 {
 			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC)
 		}
 
+		count.Store(0)
+		ip.Stop()
+		for range 100 {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if notPinnedC.Load() != 0 {
+			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC.Load())
+		}
+		fmt.Println("WAIT FOR THE TTL")
+
+		//wait for pinned ttl to expire and messages to be consumed by the second consumer
+		waitForCounter(t, &notPinnedC, 100)
+		if count.Load() != 0 {
+			t.Fatalf("Expected 0 messages for pinned, got %d", count.Load())
+		}
 	})
 
 	t.Run("fetch", func(t *testing.T) {
@@ -445,7 +775,7 @@ func TestConsumerPinned(t *testing.T) {
 			AckPolicy:      jetstream.AckExplicitPolicy,
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      5 * time.Second,
+			PinnedTTL:      time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
@@ -457,8 +787,8 @@ func TestConsumerPinned(t *testing.T) {
 		if info.Config.PriorityPolicy != jetstream.PriorityPolicyPinned {
 			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPinned, info.Config.PriorityPolicy)
 		}
-		if info.Config.PinnedTTL != 5*time.Second {
-			t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", 2*time.Second, info.Config.PinnedTTL)
+		if info.Config.PinnedTTL != time.Second {
+			t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", time.Second, info.Config.PinnedTTL)
 		}
 
 		for i := 0; i < 100; i++ {
@@ -470,7 +800,7 @@ func TestConsumerPinned(t *testing.T) {
 
 		// Initial fetch.
 		// Should get all messages and get a Pin ID.
-		msgs, err := c.Fetch(10, jetstream.WithPriorityGroup("A"))
+		msgs, err := c.Fetch(10, jetstream.FetchPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -498,30 +828,30 @@ func TestConsumerPinned(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		msgs2, err := cdiff.Fetch(10, jetstream.FetchMaxWait(1*time.Second), jetstream.WithPriorityGroup("A"))
+		msgs, err = cdiff.Fetch(10, jetstream.FetchMaxWait(200*time.Millisecond), jetstream.FetchPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		count = 0
-		for msg := range msgs2.Messages() {
+		for msg := range msgs.Messages() {
 			msg.Ack()
 			count++
 		}
 		if count != 0 {
 			t.Fatalf("Expected 0 messages, got %d", count)
 		}
-		if msgs2.Error() != nil {
-			t.Fatalf("Unexpected error: %v", msgs2.Error())
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
 		}
 
 		count = 0
 
 		// Now lets fetch from the pinned one, which should be fine.
-		msgs3, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
+		msgs, err = c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.FetchPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		for msg := range msgs3.Messages() {
+		for msg := range msgs.Messages() {
 			if pinId := msg.Headers().Get("Nats-Pin-Id"); pinId == "" {
 				t.Fatalf("missing Nats-Pin-Id header")
 			}
@@ -531,40 +861,36 @@ func TestConsumerPinned(t *testing.T) {
 		if count != 10 {
 			t.Fatalf("Expected 10 messages, got %d", count)
 		}
-		if msgs3.Error() != nil {
-			t.Fatalf("Unexpected error: %v", msgs3.Error())
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
 		}
 
 		fmt.Print("WAIT FOR THE TTL\n")
 		// Wait for the TTL to expire, expect different ID
 		count = 0
-		time.Sleep(10 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 		// The same instance, should work fine.
 
-		msgs4, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
+		msgs, err = c.Fetch(10, jetstream.FetchMaxWait(500*time.Millisecond), jetstream.FetchPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		for msg := range msgs4.Messages() {
-			if msg == nil {
-				break
-			}
-			newId := msg.Headers().Get("Nats-Pin-Id")
-			if newId == id {
-				t.Fatalf("Expected new pull to have different ID. old: %s, new: %s", id, newId)
-			}
+		for msg := range msgs.Messages() {
 			msg.Ack()
 			count++
 		}
-		if !errors.Is(msgs4.Error(), jetstream.ErrPinIDMismatch) {
-			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrPinIDMismatch, msgs4.Error())
+		if !errors.Is(msgs.Error(), jetstream.ErrPinIDMismatch) {
+			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrPinIDMismatch, msgs.Error())
+		}
+		if count != 0 {
+			t.Fatalf("Expected 0 messages, got %d", count)
 		}
 
-		msgs5, err := c.Fetch(10, jetstream.FetchMaxWait(3*time.Second), jetstream.WithPriorityGroup("A"))
+		msgs, err = c.Fetch(10, jetstream.FetchMaxWait(500*time.Millisecond), jetstream.FetchPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		for msg := range msgs5.Messages() {
+		for msg := range msgs.Messages() {
 			if msg == nil {
 				break
 			}
@@ -575,8 +901,8 @@ func TestConsumerPinned(t *testing.T) {
 			msg.Ack()
 			count++
 		}
-		if msgs5.Error() != nil {
-			t.Fatalf("Unexpected error: %v", msgs5.Error())
+		if msgs.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs.Error())
 		}
 		if count != 10 {
 			t.Fatalf("Expected 10 messages, got %d", count)
@@ -624,7 +950,7 @@ func TestConsumerPinned(t *testing.T) {
 			}
 		}
 
-		msgs, err := c.Messages(jetstream.PriorityGroup("A"))
+		msgs, err := c.Messages(jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -646,7 +972,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		noMsgs, err := second.Messages(jetstream.PriorityGroup("A"))
+		noMsgs, err := second.Messages(jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -680,7 +1006,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		yesMsgs, err := third.Messages(jetstream.PriorityGroup("A"))
+		yesMsgs, err := third.Messages(jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
