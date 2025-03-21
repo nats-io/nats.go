@@ -246,13 +246,15 @@ type (
 		// Requires nats-server v2.11.0 or later.
 		PriorityPolicy PriorityPolicy `json:"priority_policy,omitempty"`
 
-		// PinnedTTL represents the time after which the client will be unpinned
-		// if no new pull requests are sent.Used with PriorityPolicyPinned.
-		// Requires nats-server v2.11.0 or later.
-		PinnedTTL time.Duration `json:"priority_timeout,omitempty"`
-
 		// PriorityGroups is a list of priority groups this consumer supports.
 		PriorityGroups []string `json:"priority_groups,omitempty"`
+
+		// pinnedTTL represents the time after which the client will be unpinned
+		// if no new pull requests are sent.Used with PriorityPolicyPinned.
+		// Requires nats-server v2.11.0 or later.
+		//
+		// This field will be exported in the future.
+		pinnedTTL time.Duration `json:"priority_timeout,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream
@@ -333,9 +335,10 @@ const (
 	// PriorityPolicyNone is the default priority policy.
 	PriorityPolicyNone PriorityPolicy = iota
 
-	// PriorityPolicyPinned is the priority policy that pins a consumer to a
+	// priorityPolicyPinned is the priority policy that pins a consumer to a
 	// specific client.
-	PriorityPolicyPinned
+	// This is not exported for now, but will be made public in the future.
+	priorityPolicyPinned
 
 	// PriorityPolicyOverflow is the priority policy that allows for
 	// restricting when a consumer will receive messages based on the number of
@@ -348,7 +351,7 @@ func (p *PriorityPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString(""):
 		*p = PriorityPolicyNone
 	case jsonString("pinned_client"):
-		*p = PriorityPolicyPinned
+		*p = priorityPolicyPinned
 	case jsonString("overflow"):
 		*p = PriorityPolicyOverflow
 	default:
@@ -361,7 +364,7 @@ func (p PriorityPolicy) MarshalJSON() ([]byte, error) {
 	switch p {
 	case PriorityPolicyNone:
 		return json.Marshal("")
-	case PriorityPolicyPinned:
+	case priorityPolicyPinned:
 		return json.Marshal("pinned_client")
 	case PriorityPolicyOverflow:
 		return json.Marshal("overflow")
