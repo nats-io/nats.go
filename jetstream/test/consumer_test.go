@@ -1080,7 +1080,7 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		yesMsgs, err := third.Messages(jetstream.PullPriorityGroup("A"))
+		yesMsgs, err := third.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
