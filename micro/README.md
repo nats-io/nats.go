@@ -98,10 +98,10 @@ _ = numbersGroup.AddEndpoint("multiply", micro.HandlerFunc(multiplyHandler))
 ## Customizing queue groups
 
 For each service, group and endpoint the queue group used to gather responses
-can be customized. If not provided a default queue group will be used (`q`).
-Customizing queue groups can be useful to e.g. implement fanout request pattern
-or hedged request pattern (to reduce tail latencies by only waiting for the
-first response for multiple service instances).
+can be customized or disabled. If not provided a default queue group will be
+used (`q`). Customizing queue groups can be useful to e.g. implement fanout
+request pattern or hedged request pattern (to reduce tail latencies by only
+waiting for the first response for multiple service instances).
 
 Let's say we have multiple services listening on the same subject, but with
 different queue groups:
@@ -153,6 +153,27 @@ Queue groups can be overwritten by setting them on groups and endpoints as well:
   // will be registered with queue group 'q3'
   g.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroup("q3"))
 ```
+
+Similarly, queue groups can be disabled on service config, group and endpoint levels. If disabled,
+a standard NATS subscription will be created for the endpoint.
+
+```go
+  // disable queue group for the service
+  srv, _ := micro.AddService(nc, micro.Config{
+    Name:              "EchoService",
+    Version:           "1.0.0",
+    QueueGroupDisabled: true,
+  })
+
+  // create a group with queue group disabled
+  srv.AddGroup("g", micro.WithEndpointQueueGroupDisabled())
+
+  // create an endpoint with queue group disabled
+  srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}), micro.WithEndpointQueueGroupDisabled())
+```
+
+When disabling queue groups, same inheritance rules apply as for customizing
+queue groups. (service config -> group -> endpoint)
 
 ## Discovery and Monitoring
 
