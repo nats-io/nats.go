@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -530,6 +530,7 @@ func TestConsumerOverflow(t *testing.T) {
 }
 
 func TestConsumerPinned(t *testing.T) {
+	t.Skip("enable these tests once we expose pinned consumer API")
 	t.Run("messages", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
@@ -553,11 +554,11 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:        "cons",
-			AckPolicy:      jetstream.AckExplicitPolicy,
-			Description:    "test consumer",
-			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      time.Second,
+			Durable:     "cons",
+			AckPolicy:   jetstream.AckExplicitPolicy,
+			Description: "test consumer",
+			// PriorityPolicy: jetstream.PriorityPolicyPinned,
+			// PinnedTTL:      time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
@@ -715,11 +716,11 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:        "cons",
-			AckPolicy:      jetstream.AckExplicitPolicy,
-			Description:    "test consumer",
-			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      time.Second,
+			Durable:     "cons",
+			AckPolicy:   jetstream.AckExplicitPolicy,
+			Description: "test consumer",
+			// PriorityPolicy: jetstream.PriorityPolicyPinned,
+			// PinnedTTL:      time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
@@ -847,11 +848,11 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:        "cons",
-			AckPolicy:      jetstream.AckExplicitPolicy,
-			Description:    "test consumer",
-			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      time.Second,
+			Durable:     "cons",
+			AckPolicy:   jetstream.AckExplicitPolicy,
+			Description: "test consumer",
+			// PriorityPolicy: jetstream.PriorityPolicyPinned,
+			// PinnedTTL:      time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
@@ -859,13 +860,13 @@ func TestConsumerPinned(t *testing.T) {
 		}
 
 		// Check that consumer got proper priority policy and TTL
-		info := c.CachedInfo()
-		if info.Config.PriorityPolicy != jetstream.PriorityPolicyPinned {
-			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPinned, info.Config.PriorityPolicy)
-		}
-		if info.Config.PinnedTTL != time.Second {
-			t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", time.Second, info.Config.PinnedTTL)
-		}
+		// info := c.CachedInfo()
+		// if info.Config.PriorityPolicy != jetstream.PriorityPolicyPinned {
+		// 	t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPinned, info.Config.PriorityPolicy)
+		// }
+		// if info.Config.PinnedTTL != time.Second {
+		// 	t.Fatalf("Invalid pinned TTL; expected: %v; got: %v", time.Second, info.Config.PinnedTTL)
+		// }
 
 		for range 100 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
@@ -1007,11 +1008,11 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:        "cons",
-			AckPolicy:      jetstream.AckExplicitPolicy,
-			Description:    "test consumer",
-			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      50 * time.Second,
+			Durable:     "cons",
+			AckPolicy:   jetstream.AckExplicitPolicy,
+			Description: "test consumer",
+			// PriorityPolicy: jetstream.PriorityPolicyPinned,
+			// PinnedTTL:      50 * time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
