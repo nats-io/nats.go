@@ -233,13 +233,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		if sub.hbMonitor != nil {
 			sub.hbMonitor.Stop()
 		}
-		// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
-		// check of `Status` header.
-		if status := msg.Header.Get("Status"); status != "" {
-			if status == pinIdMismatch {
-				p.pinID = ""
-			}
-		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
 			if sub.hbMonitor != nil {
@@ -489,6 +482,18 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 
+	if len(p.info.Config.PriorityGroups) != 0 {
+		if consumeOpts.Group == "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
+		}
+
+		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
+		}
+	} else if consumeOpts.Group != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is not supported for this consumer")
+	}
+
 	p.Lock()
 	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
@@ -605,6 +610,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				continue
 			}
+			if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+				// TODO(jrm): do we need a lock here?
+				s.consumer.pinID = pinId
+			}
 			s.decrementPendingMsgs(msg)
 			s.incrementDeliveredMsgs()
 			return s.consumer.js.toJSMsg(msg), nil
@@ -647,6 +656,11 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) && !errors.Is(msgErr, ErrBatchCompleted) {
 		if errors.Is(msgErr, ErrConsumerDeleted) || errors.Is(msgErr, ErrBadRequest) {
 			return msgErr
+		}
+		if errors.Is(msgErr, ErrPinIDMismatch) {
+			s.consumer.pinID = ""
+			s.pending.msgCount = 0
+			s.pending.byteCount = 0
 		}
 		if s.consumeOpts.ErrHandler != nil {
 			s.consumeOpts.ErrHandler(s, msgErr)
@@ -846,19 +860,14 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if hbTimer != nil {
 					hbTimer.Reset(2 * req.Heartbeat)
 				}
-				// Fixme(jrm): clean up - kinda redundant with checkMsg, and double
-				// check of `Status` header.
-				if status := msg.Header.Get("Status"); status != "" {
-					if status == pinIdMismatch {
-						p.pinID = ""
-						res.err = ErrPinIDMismatch
-					}
-				}
 				userMsg, err := checkMsg(msg)
 				if err != nil {
 					errNotTimeoutOrNoMsgs := !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages)
 					if errNotTimeoutOrNoMsgs && !errors.Is(err, ErrMaxBytesExceeded) {
 						res.err = err
+					}
+					if errors.Is(err, ErrPinIDMismatch) {
+						p.pinID = ""
 					}
 					res.done = true
 					res.Unlock()
