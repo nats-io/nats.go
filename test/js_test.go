@@ -11134,3 +11134,21 @@ func TestPullConsumerFetchRace(t *testing.T) {
 		t.Fatalf("Expected done to be closed")
 	}
 }
+
+func TestJetStreamSubscribeConsumerCreateTimeout(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	_, err = js.SubscribeSync("", nats.BindStream("foo"), nats.Context(ctx))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error")
+	}
+}

@@ -1441,6 +1441,9 @@ type jsSub struct {
 	fciseq uint64
 	csfct  *time.Timer
 
+	// context set on js.Subscribe used e.g. to recreate ordered consumer
+	ctx context.Context
+
 	// Cancellation function to cancel context on drain/unsubscribe.
 	cancel func()
 }
@@ -1913,6 +1916,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		psubj:    subj,
 		cancel:   cancel,
 		ackNone:  o.cfg.AckPolicy == AckNonePolicy,
+		ctx:      o.ctx,
 	}
 
 	// Auto acknowledge unless manual ack is set or policy is set to AckNonePolicy
@@ -1944,7 +1948,12 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		} else if consName == "" {
 			consName = getHash(nuid.Next())
 		}
-		info, err := js.upsertConsumer(stream, consName, ccreq.Config)
+		var info *ConsumerInfo
+		if o.ctx != nil {
+			info, err = js.upsertConsumer(stream, consName, ccreq.Config, Context(o.ctx))
+		} else {
+			info, err = js.upsertConsumer(stream, consName, ccreq.Config)
+		}
 		if err != nil {
 			var apiErr *APIError
 			if ok := errors.As(err, &apiErr); !ok {
@@ -2276,7 +2285,13 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		jsi.consumer = ""
 		sub.mu.Unlock()
 		consName := getHash(nuid.Next())
-		cinfo, err := js.upsertConsumer(jsi.stream, consName, cfg)
+		var cinfo *ConsumerInfo
+		var err error
+		if js.opts.ctx != nil {
+			cinfo, err = js.upsertConsumer(jsi.stream, consName, cfg, Context(js.opts.ctx))
+		} else {
+			cinfo, err = js.upsertConsumer(jsi.stream, consName, cfg)
+		}
 		if err != nil {
 			var apiErr *APIError
 			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
