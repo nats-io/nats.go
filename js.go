@@ -3121,6 +3121,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			if err := nc.PublishRequest(nms, rply, req); err != nil {
 				return err
 			}
+			connStatusChanged := nc.StatusChanged()
 			if o.hb > 0 {
 				if hbTimer == nil {
 					hbTimer = time.AfterFunc(2*o.hb, func() {
@@ -3129,6 +3130,15 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 						hbLock.Unlock()
 						cancel()
 					})
+					go func() {
+						select {
+						case <-ctx.Done():
+							return
+						case <-connStatusChanged:
+							cancel()
+							return
+						}
+					}()
 				} else {
 					hbTimer.Reset(2 * o.hb)
 				}
