@@ -270,8 +270,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			return
 		}
 		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-			// TODO(jrm): do we need a lock here?
-			p.pinID = pinId
+			p.setPinID(pinId)
 		}
 		handler(p.js.toJSMsg(msg))
 		sub.Lock()
@@ -316,7 +315,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		MinPending:    consumeOpts.MinPending,
 		MinAckPending: consumeOpts.MinAckPending,
 		Group:         consumeOpts.Group,
-		PinID:         p.pinID,
+		PinID:         p.getPinID(),
 	}, subject); err != nil {
 		sub.errs <- err
 	}
@@ -355,7 +354,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							MinPending:    sub.consumeOpts.MinPending,
 							MinAckPending: sub.consumeOpts.MinAckPending,
 							Group:         sub.consumeOpts.Group,
-							PinID:         p.pinID,
+							PinID:         p.getPinID(),
 						}
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -382,7 +381,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						MinPending:    sub.consumeOpts.MinPending,
 						MinAckPending: sub.consumeOpts.MinAckPending,
 						Group:         sub.consumeOpts.Group,
-						PinID:         p.pinID,
+						PinID:         p.getPinID(),
 					}
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -452,7 +451,7 @@ func (s *pullSubscription) checkPending() {
 		if batchSize > 0 {
 			pinID := ""
 			if s.consumer != nil {
-				pinID = s.consumer.pinID
+				pinID = s.consumer.getPinID()
 			}
 			s.fetchNext <- &pullRequest{
 				Expires:       s.consumeOpts.Expires,
@@ -611,8 +610,7 @@ func (s *pullSubscription) Next() (Msg, error) {
 				continue
 			}
 			if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-				// TODO(jrm): do we need a lock here?
-				s.consumer.pinID = pinId
+				s.consumer.setPinID(pinId)
 			}
 			s.decrementPendingMsgs(msg)
 			s.incrementDeliveredMsgs()
@@ -658,7 +656,7 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 			return msgErr
 		}
 		if errors.Is(msgErr, ErrPinIDMismatch) {
-			s.consumer.pinID = ""
+			s.consumer.setPinID("")
 			s.pending.msgCount = 0
 			s.pending.byteCount = 0
 		}
@@ -843,7 +841,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.PinID = p.pinID
+	req.PinID = p.getPinID()
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
@@ -867,7 +865,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 						res.err = err
 					}
 					if errors.Is(err, ErrPinIDMismatch) {
-						p.pinID = ""
+						p.setPinID("")
 					}
 					res.done = true
 					res.Unlock()
@@ -878,7 +876,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					continue
 				}
 				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-					p.pinID = pinId
+					p.setPinID(pinId)
 				}
 				res.msgs <- p.js.toJSMsg(msg)
 				meta, err := msg.Metadata()
@@ -1114,4 +1112,16 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		return errors.New("the value of Heartbeat must be less than 50%% of expiry")
 	}
 	return nil
+}
+
+func (c *pullConsumer) getPinID() string {
+	c.Lock()
+	defer c.Unlock()
+	return c.pinID
+}
+
+func (c *pullConsumer) setPinID(pinID string) {
+	c.Lock()
+	defer c.Unlock()
+	c.pinID = pinID
 }

@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -572,7 +572,6 @@ func TestConsumerPinned(t *testing.T) {
 		}
 
 		gcount := make(chan struct{}, 1000)
-		errs := make(chan error, 10)
 		count := atomic.Uint32{}
 
 		// Initially pinned consumer instance
@@ -585,17 +584,9 @@ func TestConsumerPinned(t *testing.T) {
 			for {
 				msg, err := it.Next()
 				if err != nil {
-					// FIXME(pp) - investigate why the unpinned consumer does not receive heartbeats
-					if errors.Is(err, jetstream.ErrNoHeartbeat) {
-						continue
-					}
-					if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-						errs <- err
-					}
 					break
 				}
 				if err := msg.Ack(); err != nil {
-					errs <- err
 					break
 				}
 				counter.Add(1)
@@ -617,7 +608,7 @@ func TestConsumerPinned(t *testing.T) {
 		}
 
 		ipDoneCh := make(chan struct{})
-		ip, err := initiallyPinned.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
+		ip, err := initiallyPinned.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullHeartbeat(500*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -630,10 +621,12 @@ func TestConsumerPinned(t *testing.T) {
 		count.Store(1)
 		go handler(ip, &count, ipDoneCh)
 
+		time.Sleep(100 * time.Millisecond)
+
 		// Second consume instance that should remain passive.
 		notPinnedC := atomic.Uint32{}
 		npDoneCh := make(chan struct{})
-		np, err := c.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
+		np, err := c.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullHeartbeat(500*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -719,7 +712,7 @@ func TestConsumerPinned(t *testing.T) {
 			AckPolicy:      jetstream.AckExplicitPolicy,
 			Description:    "test consumer",
 			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      time.Second,
+			PinnedTTL:      1 * time.Second,
 			PriorityGroups: []string{"A"},
 		})
 		if err != nil {
@@ -732,8 +725,6 @@ func TestConsumerPinned(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 		}
-
-		gcount := make(chan struct{}, 100000)
 
 		// Initially pinned consumer instance
 		initiallyPinned, err := s.Consumer(ctx, "cons")
@@ -750,61 +741,55 @@ func TestConsumerPinned(t *testing.T) {
 		}
 
 		// no priority group
-		_, err = initiallyPinned.Consume(func(m jetstream.Msg) {
-		})
+		_, err = initiallyPinned.Consume(func(m jetstream.Msg) {})
 		if err == nil || err.Error() != "nats: invalid jetstream option: priority group is required for priority consumer" {
 			t.Fatalf("Expected invalid priority group error")
 		}
 
-		count := atomic.Uint32{}
+		pinnedCount := atomic.Uint32{}
+		pinnedDone := make(chan struct{})
 		ip, err := initiallyPinned.Consume(func(m jetstream.Msg) {
 			if err := m.Ack(); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			count.Add(1)
-			gcount <- struct{}{}
+			if pinnedCount.Add(1) == 1000 {
+				close(pinnedDone)
+			}
 		}, jetstream.PullThresholdMessages(10), jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer ip.Stop()
 
+		time.Sleep(100 * time.Millisecond)
+
 		// Second consume instance that should remain passive.
-		notPinnedC := atomic.Uint32{}
+		notPinnedCount := atomic.Uint32{}
+		notPinnedDone := make(chan struct{})
 		np, err := c.Consume(func(m jetstream.Msg) {
 			if err := m.Ack(); err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			notPinnedC.Add(1)
-			gcount <- struct{}{}
-		}, jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
+			if notPinnedCount.Add(1) == 100 {
+				close(notPinnedDone)
+			}
+
+		}, jetstream.PullPriorityGroup("A"))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		defer np.Stop()
 
-		waitForCounter := func(t *testing.T, c *atomic.Uint32, expected int) {
-			t.Helper()
-
-		outer:
-			for {
-				select {
-				case <-gcount:
-					if c.Load() == uint32(expected) {
-						break outer
-					}
-				case <-time.After(30 * time.Second):
-					t.Fatalf("Did not get all messages in time")
-				}
-			}
+		select {
+		case <-pinnedDone:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Expected pinned consumer to be done")
+		}
+		if notPinnedCount.Load() != 0 {
+			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedCount.Load())
 		}
 
-		waitForCounter(t, &count, 1000)
-		if notPinnedC.Load() != 0 {
-			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC.Load())
-		}
-
-		count.Store(0)
+		pinnedCount.Store(0)
 		ip.Stop()
 		for range 100 {
 			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
@@ -813,14 +798,18 @@ func TestConsumerPinned(t *testing.T) {
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
-		if notPinnedC.Load() != 0 {
-			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedC.Load())
+		if notPinnedCount.Load() != 0 {
+			t.Fatalf("Expected 0 messages for not pinned, got %d", notPinnedCount.Load())
 		}
 
 		//wait for pinned ttl to expire and messages to be consumed by the second consumer
-		waitForCounter(t, &notPinnedC, 100)
-		if count.Load() != 0 {
-			t.Fatalf("Expected 0 messages for pinned, got %d", count.Load())
+		select {
+		case <-notPinnedDone:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Expected not pinned consumer to be done after pinned ttl expired")
+		}
+		if pinnedCount.Load() != 0 {
+			t.Fatalf("Expected 0 messages for pinned, got %d", pinnedCount.Load())
 		}
 	})
 
@@ -983,136 +972,139 @@ func TestConsumerPinned(t *testing.T) {
 			t.Fatalf("Expected 10 messages, got %d", count)
 		}
 	})
+}
 
-	t.Run("unpin", func(t *testing.T) {
-		srv := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, srv)
+func TestConsumerUnpin(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
 
-		nc, err := nats.Connect(srv.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Durable:        "cons",
-			AckPolicy:      jetstream.AckExplicitPolicy,
-			Description:    "test consumer",
-			PriorityPolicy: jetstream.PriorityPolicyPinned,
-			PinnedTTL:      50 * time.Second,
-			PriorityGroups: []string{"A"},
-		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		for range 1000 {
-			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-		}
-
-		msgs, err := c.Messages(jetstream.PullPriorityGroup("A"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer msgs.Stop()
-
-		msg, err := msgs.Next()
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		firstPinID := msg.Headers().Get("Nats-Pin-Id")
-		if firstPinID == "" {
-			t.Fatalf("Expected pinned message")
-		}
-
-		second, err := s.Consumer(ctx, "cons")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		noMsgs, err := second.Messages(jetstream.PullPriorityGroup("A"))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer noMsgs.Stop()
-
-		done := make(chan struct{})
-		errC := make(chan error)
-		go func() {
-			_, err := noMsgs.Next()
-			if err != nil {
-				errC <- err
-				return
-			}
-			done <- struct{}{}
-		}()
-
-		select {
-		case <-done:
-			t.Fatalf("Expected no message")
-		case <-time.After(2 * time.Second):
-			noMsgs.Stop()
-		}
-		select {
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Expected error")
-		case <-errC:
-		}
-
-		third, err := s.Consumer(ctx, "cons")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		yesMsgs, err := third.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		go func() {
-			msg, err := yesMsgs.Next()
-			newPinID := msg.Headers().Get("Nats-Pin-Id")
-			if newPinID == firstPinID || newPinID == "" {
-				errC <- fmt.Errorf("Expected new pin ID, got %s", newPinID)
-				return
-			}
-			if err != nil {
-				errC <- err
-				return
-			}
-			done <- struct{}{}
-		}()
-
-		err = s.UnpinConsumer(ctx, "cons", "A")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		select {
-		case <-done:
-		case err := <-errC:
-			t.Fatalf("Unexpected error: %v", err)
-		case <-time.After(4 * time.Second):
-			t.Fatalf("Should not time out")
-		}
-		yesMsgs.Stop()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:        "cons",
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		Description:    "test consumer",
+		PriorityPolicy: jetstream.PriorityPolicyPinned,
+		PinnedTTL:      50 * time.Second,
+		PriorityGroups: []string{"A"},
 	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for range 1000 {
+		_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	msgs, err := c.Messages(jetstream.PullPriorityGroup("A"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer msgs.Stop()
+
+	msg, err := msgs.Next()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	firstPinID := msg.Headers().Get("Nats-Pin-Id")
+	if firstPinID == "" {
+		t.Fatalf("Expected pinned message")
+	}
+
+	second, err := s.Consumer(ctx, "cons")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	noMsgs, err := second.Messages(jetstream.PullPriorityGroup("A"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer noMsgs.Stop()
+
+	done := make(chan struct{})
+	errC := make(chan error)
+	go func() {
+		_, err := noMsgs.Next()
+		if err != nil {
+			errC <- err
+			return
+		}
+		done <- struct{}{}
+	}()
+
+	select {
+	case <-done:
+		t.Fatalf("Expected no message")
+	case <-time.After(500 * time.Millisecond):
+		noMsgs.Stop()
+	}
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Expected error")
+	case err := <-errC:
+		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrMsgIteratorClosed, err)
+		}
+	}
+
+	third, err := s.Consumer(ctx, "cons")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	yesMsgs, err := third.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullExpiry(time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer yesMsgs.Stop()
+
+	go func() {
+		msg, err := yesMsgs.Next()
+		newPinID := msg.Headers().Get("Nats-Pin-Id")
+		if newPinID == firstPinID || newPinID == "" {
+			errC <- fmt.Errorf("Expected new pin ID, got %s", newPinID)
+			return
+		}
+		if err != nil {
+			errC <- err
+			return
+		}
+		done <- struct{}{}
+	}()
+
+	err = s.UnpinConsumer(ctx, "cons", "A")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case err := <-errC:
+		t.Fatalf("Unexpected error: %v", err)
+	case <-time.After(4 * time.Second):
+		t.Fatalf("Should not time out")
+	}
 }
 
 func TestConsumerCachedInfo(t *testing.T) {
