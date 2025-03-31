@@ -164,6 +164,10 @@ var (
 	// ErrTooManyStalledMsgs is returned when too many outstanding async
 	// messages are waiting for ack.
 	ErrTooManyStalledMsgs JetStreamError = &jsError{message: "stalled with too many outstanding async published messages"}
+
+	// ErrFetchDisconnected is returned when the connection to the server is lost
+	// while waiting for messages to be delivered on PullSubscribe.
+	ErrFetchDisconnected = &jsError{message: "disconnected during fetch"}
 )
 
 // Error code represents JetStream error codes returned by the API
