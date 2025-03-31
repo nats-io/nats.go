@@ -1691,3 +1691,38 @@ func TestListKeysFromPurgedStream(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyValueWatcherStopTimer(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("Error getting jetstream context: %v", err)
+	}
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+	for i := range 1000 {
+		if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
+			t.Fatalf("Error putting key: %v", err)
+		}
+	}
+
+	w, err := kv.WatchAll()
+	if err != nil {
+		t.Fatalf("Error creating watcher: %v", err)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("Error stopping watcher: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+}
