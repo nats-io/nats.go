@@ -1377,6 +1377,8 @@ func (kv *kvs) PurgeDeletes(ctx context.Context, opts ...KVPurgeOpt) error {
 			deleteMarkers = append(deleteMarkers, entry)
 		}
 	}
+	// Stop watcher here so as we purge we do not have the system continually updating numPending.
+	watcher.Stop()
 
 	var b strings.Builder
 	// Do actual purges here.

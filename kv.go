@@ -826,6 +826,8 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 			deleteMarkers = append(deleteMarkers, entry)
 		}
 	}
+	// Stop watcher here so as we purge we do not have the system continually updating numPending.
+	watcher.Stop()
 
 	var (
 		pr StreamPurgeRequest
