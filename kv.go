@@ -1109,6 +1109,11 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	}
 	// Set us up to close when the waitForMessages func returns.
 	sub.pDone = func(_ string) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.initDoneTimer != nil {
+			w.initDoneTimer.Stop()
+		}
 		close(w.updates)
 	}
 
