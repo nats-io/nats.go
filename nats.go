@@ -4600,6 +4600,8 @@ func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus {
 		statuses = []SubStatus{SubscriptionActive, SubscriptionDraining, SubscriptionClosed, SubscriptionSlowConsumer}
 	}
 	ch := make(chan SubStatus, 10)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, status := range statuses {
 		s.registerStatusChangeListener(status, ch)
 		// initial status
@@ -4613,9 +4615,8 @@ func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus {
 // registerStatusChangeListener registers a channel waiting for a specific status change event.
 // Status change events are non-blocking - if no receiver is waiting for the status change,
 // it will not be sent on the channel. Closed channels are ignored.
+// Lock should be held entering.
 func (s *Subscription) registerStatusChangeListener(status SubStatus, ch chan SubStatus) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.statListeners == nil {
 		s.statListeners = make(map[chan SubStatus][]SubStatus)
 	}
@@ -5893,6 +5894,8 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
 	}
 	ch := make(chan Status, 10)
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
 	for _, s := range statuses {
 		nc.registerStatusChangeListener(s, ch)
 	}
@@ -5902,9 +5905,8 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 // registerStatusChangeListener registers a channel waiting for a specific status change event.
 // Status change events are non-blocking - if no receiver is waiting for the status change,
 // it will not be sent on the channel. Closed channels are ignored.
+// The lock should be held entering.
 func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
 	if nc.statListeners == nil {
 		nc.statListeners = make(map[Status][]chan Status)
 	}
