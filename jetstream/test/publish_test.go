@@ -774,41 +774,6 @@ func TestPublish(t *testing.T) {
 	}
 }
 
-func TestPublishTimeout(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	js, err := jetstream.New(nc, jetstream.WithDefaultTimeout(200*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	// create stream with no ack to force timeout
-	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{
-		Name:     "foo",
-		Subjects: []string{"FOO.*"},
-		NoAck:    true,
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	now := time.Now()
-	_, err = js.Publish(context.Background(), "FOO.1", []byte("msg"))
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Expected deadline exceeded error; got: %v", err)
-	}
-	since := time.Since(now)
-	if since < 200*time.Millisecond || since > 500*time.Millisecond {
-		t.Fatalf("Expected timeout to be around 200ms; got: %v", since)
-	}
-}
-
 func TestPublishMsgAsync(t *testing.T) {
 	type publishConfig struct {
 		msg              *nats.Msg

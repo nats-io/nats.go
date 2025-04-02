@@ -65,19 +65,6 @@ func WithPublishAsyncTimeout(dur time.Duration) JetStreamOpt {
 	}
 }
 
-// WithDefaultTimeout sets the default timeout for JetStream API requests.
-// It is used when context used for the request does not have a deadline set.
-// If not provided, a default of 5 seconds will be used.
-func WithDefaultTimeout(timeout time.Duration) JetStreamOpt {
-	return func(opts *JetStreamOptions) error {
-		if timeout <= 0 {
-			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
-		}
-		opts.DefaultTimeout = timeout
-		return nil
-	}
-}
-
 // WithPurgeSubject sets a specific subject for which messages on a stream will
 // be purged
 func WithPurgeSubject(subject string) StreamPurgeOpt {
