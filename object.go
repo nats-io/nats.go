@@ -1043,7 +1043,6 @@ func (obs *obs) Seal() error {
 type objWatcher struct {
 	updates chan *ObjectInfo
 	sub     *Subscription
-	mu      sync.Mutex
 }
 
 // Updates returns the interior channel.
@@ -1086,9 +1085,6 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 		if err != nil {
 			return
 		}
-
-		w.mu.Lock()
-		defer w.mu.Unlock()
 
 		if !o.ignoreDeletes || !info.Deleted {
 			info.ModTime = meta.Timestamp
@@ -1133,8 +1129,6 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 	}
 	// Set us up to close when the waitForMessages func returns.
 	sub.pDone = func(_ string) {
-		w.mu.Lock()
-		defer w.mu.Unlock()
 		close(w.updates)
 	}
 	w.sub = sub
