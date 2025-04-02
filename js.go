@@ -3073,6 +3073,11 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		}
 	}
 	var hbTimer *time.Timer
+	defer func() {
+		if hbTimer != nil {
+			hbTimer.Stop()
+		}
+	}()
 	var hbErr error
 	sub.mu.Lock()
 	subClosed := sub.closed || sub.draining
@@ -3081,6 +3086,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		err = errors.Join(ErrBadSubscription, ErrSubscriptionClosed)
 	}
 	hbLock := sync.Mutex{}
+	var disconnected atomic.Bool
 	if err == nil && len(msgs) < batch && !subClosed {
 		// For batch real size of 1, it does not make sense to set no_wait in
 		// the request.
@@ -3135,7 +3141,17 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			}
 			return nil
 		}
-
+		connStatusChanged := nc.StatusChanged()
+		go func() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-connStatusChanged:
+				disconnected.Store(true)
+				cancel()
+				return
+			}
+		}()
 		err = sendReq()
 		for err == nil && len(msgs) < batch {
 			// Ask for next message and wait if there are no messages
@@ -3162,9 +3178,6 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 				}
 			}
 		}
-		if hbTimer != nil {
-			hbTimer.Stop()
-		}
 	}
 	// If there is at least a message added to msgs, then need to return OK and no error
 	if err != nil && len(msgs) == 0 {
@@ -3172,6 +3185,9 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		defer hbLock.Unlock()
 		if hbErr != nil {
 			return nil, hbErr
+		}
+		if disconnected.Load() {
+			return nil, ErrFetchDisconnected
 		}
 		return nil, o.checkCtxErr(err)
 	}
@@ -3383,6 +3399,18 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	}
 	expires := ttl - expiresDiff
 
+	connStatusChanged := nc.StatusChanged()
+	var disconnected atomic.Bool
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-connStatusChanged:
+			disconnected.Store(true)
+			cancel()
+			return
+		}
+	}()
 	requestBatch := batch - len(result.msgs)
 	req := nextRequest{
 		Expires:   expires,
@@ -3407,6 +3435,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 		return result, nil
 	}
 	var hbTimer *time.Timer
+	defer func() {
+		if hbTimer != nil {
+			hbTimer.Stop()
+		}
+	}()
 	var hbErr error
 	if o.hb > 0 {
 		hbTimer = time.AfterFunc(2*o.hb, func() {
@@ -3453,6 +3486,8 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			result.Lock()
 			if hbErr != nil {
 				result.err = hbErr
+			} else if disconnected.Load() {
+				result.err = ErrFetchDisconnected
 			} else {
 				result.err = o.checkCtxErr(err)
 			}

@@ -11152,3 +11152,65 @@ func TestJetStreamSubscribeConsumerCreateTimeout(t *testing.T) {
 		t.Fatalf("Expected error")
 	}
 }
+
+func TestJetStreamPullSubscribeFetchErrOnReconnect(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := js.PullSubscribe("FOO.123", "bar")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	errs := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		errs <- nc.ForceReconnect()
+	}()
+	_, err = sub.Fetch(1, nats.MaxWait(time.Second))
+	if !errors.Is(err, nats.ErrFetchDisconnected) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrFetchDisconnected, err)
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("Error on reconnect: %v", err)
+	}
+}
+
+func TestJetStreamPullSubscribeFetchBatchErrOnReconnect(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := js.PullSubscribe("FOO.123", "bar")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	errs := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		errs <- nc.ForceReconnect()
+	}()
+	msgs, err := sub.FetchBatch(1, nats.MaxWait(time.Second), nats.PullHeartbeat(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for range msgs.Messages() {
+		t.Fatalf("Expected no messages, got one")
+	}
+	if !errors.Is(msgs.Error(), nats.ErrFetchDisconnected) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrFetchDisconnected, msgs.Error())
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("Error on reconnect: %v", err)
+	}
+}
