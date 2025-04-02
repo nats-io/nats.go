@@ -1018,6 +1018,55 @@ func TestForceReconnectDisallowReconnect(t *testing.T) {
 
 }
 
+func TestForceReconnectSubsequentCalls(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.ReconnectWait(10*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	defer close(statusCh)
+	newStatus := make(chan nats.Status, 10)
+	// non-blocking channel, so we need to be constantly listening
+	go func() {
+		for {
+			s, ok := <-statusCh
+			if !ok {
+				return
+			}
+			newStatus <- s
+		}
+	}()
+
+	for range 10 {
+		err = nc.ForceReconnect()
+		if err != nil {
+			t.Fatalf("Unexpected error on reconnect: %v", err)
+		}
+	}
+
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+
+	// check that we did not try to reconnect again
+	select {
+	case <-newStatus:
+		t.Fatal("Should not have received a new status")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// now force a reconnect again
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("Unexpected error on reconnect: %v", err)
+	}
+	WaitOnChannel(t, newStatus, nats.RECONNECTING)
+	WaitOnChannel(t, newStatus, nats.CONNECTED)
+}
+
 func TestAuthExpiredForceReconnect(t *testing.T) {
 	ts := runTrustServer()
 	defer ts.Shutdown()

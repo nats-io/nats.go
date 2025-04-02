@@ -2224,6 +2224,7 @@ func (nc *Conn) ForceReconnect() error {
 		// even if we're in the middle of a backoff
 		if nc.rqch != nil {
 			close(nc.rqch)
+			nc.rqch = nil
 		}
 		return nil
 	}
