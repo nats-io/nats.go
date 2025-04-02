@@ -263,7 +263,7 @@ type (
 
 		// InactiveThreshold is a duration which instructs the server to clean
 		// up the consumer if it has been inactive for the specified duration.
-		// Defaults to 5s.
+		// Defaults to 5m.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 
 		// HeadersOnly indicates whether only headers of messages should be sent
