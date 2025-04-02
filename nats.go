@@ -2844,6 +2844,16 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	var rt *time.Timer
 	// Channel used to kick routine out of sleep when conn is closed.
 	rqch := nc.rqch
+
+	// if rqch is nil, we need to set it up to signal
+	// the reconnect loop to reconnect immediately
+	// this means that `ForceReconnect` was called
+	// before entering doReconnect
+	if rqch == nil {
+		rqch = make(chan struct{})
+		close(rqch)
+	}
+
 	// Counter that is increased when the whole list of servers has been tried.
 	var wlf int
 
