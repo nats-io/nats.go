@@ -614,6 +614,37 @@ func TestKeyValueWatch(t *testing.T) {
 		expectOk(t, kv.Delete(ctx, "age"))
 		expectDelete("age", 6)
 	})
+
+	t.Run("stop watcher should not block", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll(ctx)
+		expectOk(t, err)
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectInitDone()
+
+		err = watcher.Stop()
+		expectOk(t, err)
+
+		select {
+		case _, ok := <-watcher.Updates():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(100 * time.Millisecond):
+			break
+		}
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {

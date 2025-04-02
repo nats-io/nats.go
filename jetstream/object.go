@@ -1245,6 +1245,7 @@ func (obs *obs) Seal(ctx context.Context) error {
 type objWatcher struct {
 	updates chan *ObjectInfo
 	sub     *nats.Subscription
+	mu      sync.Mutex
 }
 
 // Updates returns the interior channel.
@@ -1288,6 +1289,9 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 			return
 		}
 
+		w.mu.Lock()
+		defer w.mu.Unlock()
+
 		if !o.ignoreDeletes || !info.Deleted {
 			info.ModTime = meta.Timestamp
 			w.updates <- &info
@@ -1330,6 +1334,11 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 	if err != nil {
 		return nil, err
 	}
+	sub.SetClosedHandler(func(_ string) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		close(w.updates)
+	})
 	w.sub = sub
 	return w, nil
 }

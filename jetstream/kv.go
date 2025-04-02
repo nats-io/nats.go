@@ -1190,6 +1190,8 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 		return nil, err
 	}
 	sub.SetClosedHandler(func(_ string) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
 		close(w.updates)
 	})
 	// If there were no pending messages at the time of the creation
