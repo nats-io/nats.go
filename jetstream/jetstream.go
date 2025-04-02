@@ -304,6 +304,11 @@ type (
 		// Domain is the domain name token used when sending JetStream requests.
 		Domain string
 
+		// DefaultTimeout is the default timeout used for JetStream API requests.
+		// This applies when the context passed to JetStream methods does not have
+		// a deadline set.
+		DefaultTimeout time.Duration
+
 		publisherOpts asyncPublisherOpts
 
 		// this is the actual prefix used in the API requests
@@ -407,6 +412,7 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -451,7 +457,8 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
-		APIPrefix: apiPrefix,
+		APIPrefix:      apiPrefix,
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -488,7 +495,8 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
-		Domain: domain,
+		Domain:         domain,
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -1089,7 +1097,7 @@ func (js *jetStream) wrapContextWithoutDeadline(ctx context.Context) (context.Co
 	if _, ok := ctx.Deadline(); ok {
 		return ctx, nil
 	}
-	return context.WithTimeout(ctx, defaultAPITimeout)
+	return context.WithTimeout(ctx, js.opts.DefaultTimeout)
 }
 
 // CleanupPublisher will cleanup the publishing side of JetStreamContext.
