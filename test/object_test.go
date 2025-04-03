@@ -625,6 +625,35 @@ func TestObjectWatch(t *testing.T) {
 		expectOk(t, err)
 		expectUpdate("C")
 	})
+
+	t.Run("stop watcher should not block", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "WATCH-TEST"})
+		expectOk(t, err)
+
+		watcher, err := obs.Watch()
+		expectOk(t, err)
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectInitDone()
+
+		err = watcher.Stop()
+		expectOk(t, err)
+
+		select {
+		case _, ok := <-watcher.Updates():
+			if ok {
+				t.Fatal("Expected channel to be closed")
+			}
+		case <-time.After(100 * time.Millisecond):
+			return
+		}
+	})
 }
 
 func TestObjectLinks(t *testing.T) {

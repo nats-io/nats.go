@@ -1330,6 +1330,9 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 	if err != nil {
 		return nil, err
 	}
+	sub.SetClosedHandler(func(_ string) {
+		close(w.updates)
+	})
 	w.sub = sub
 	return w, nil
 }

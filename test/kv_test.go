@@ -454,6 +454,35 @@ func TestKeyValueWatch(t *testing.T) {
 		expectOk(t, kv.Delete("age"))
 		expectDelete("age", 6)
 	})
+
+	t.Run("stop watcher should not block", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll()
+		expectOk(t, err)
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectInitDone()
+
+		err = watcher.Stop()
+		expectOk(t, err)
+
+		select {
+		case _, ok := <-watcher.Updates():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("Stop watcher did not return")
+		}
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
