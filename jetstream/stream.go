@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -114,6 +114,10 @@ type (
 		// ConsumerNames returns a ConsumerNameLister enabling iterating over a
 		// channel of consumer names.
 		ConsumerNames(context.Context) ConsumerNameLister
+
+		// UnpinConsumer unpins the currently pinned client for a consumer for the given group name.
+		// If consumer does not exist, ErrConsumerNotFound is returned.
+		UnpinConsumer(ctx context.Context, consumer string, group string) error
 	}
 
 	RawStreamMsg struct {
@@ -257,6 +261,10 @@ type (
 		apiResponse
 		apiPaged
 		Consumers []string `json:"consumers"`
+	}
+
+	consumerUnpinRequest struct {
+		Group string `json:"group"`
 	}
 )
 
@@ -749,4 +757,10 @@ func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]st
 	s.pageInfo = &resp.apiPaged
 	s.offset += len(resp.Consumers)
 	return resp.Consumers, nil
+}
+
+// UnpinConsumer unpins the currently pinned client for a consumer for the given group name.
+// If consumer does not exist, ErrConsumerNotFound is returned.
+func (s *stream) UnpinConsumer(ctx context.Context, consumer string, group string) error {
+	return unpinConsumer(ctx, s.js, s.name, consumer, group)
 }

@@ -388,6 +388,11 @@ func TestConsumer(t *testing.T) {
 			durable:   "dur.123",
 			withError: jetstream.ErrInvalidConsumerName,
 		},
+		{
+			name:      "empty consumer name",
+			durable:   "",
+			withError: jetstream.ErrInvalidConsumerName,
+		},
 	}
 
 	srv := RunBasicJetStreamServer()

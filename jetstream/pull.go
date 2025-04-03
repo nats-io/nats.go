@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,14 +88,19 @@ type (
 		name    string
 		info    *ConsumerInfo
 		subs    syncx.Map[string, *pullSubscription]
+		pinID   string
 	}
 
 	pullRequest struct {
-		Expires   time.Duration `json:"expires,omitempty"`
-		Batch     int           `json:"batch,omitempty"`
-		MaxBytes  int           `json:"max_bytes,omitempty"`
-		NoWait    bool          `json:"no_wait,omitempty"`
-		Heartbeat time.Duration `json:"idle_heartbeat,omitempty"`
+		Expires       time.Duration `json:"expires,omitempty"`
+		Batch         int           `json:"batch,omitempty"`
+		MaxBytes      int           `json:"max_bytes,omitempty"`
+		NoWait        bool          `json:"no_wait,omitempty"`
+		Heartbeat     time.Duration `json:"idle_heartbeat,omitempty"`
+		MinPending    int64         `json:"min_pending,omitempty"`
+		MinAckPending int64         `json:"min_ack_pending,omitempty"`
+		PinID         string        `json:"id,omitempty"`
+		Group         string        `json:"group,omitempty"`
 	}
 
 	consumeOpts struct {
@@ -102,6 +108,9 @@ type (
 		MaxMessages             int
 		MaxBytes                int
 		LimitSize               bool
+		MinPending              int64
+		MinAckPending           int64
+		Group                   string
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandlerFunc
 		ReportMissingHeartbeats bool
@@ -187,6 +196,19 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
+
+	if len(p.info.Config.PriorityGroups) != 0 {
+		if consumeOpts.Group == "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
+		}
+
+		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
+		}
+	} else if consumeOpts.Group != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is not supported for this consumer")
+	}
+
 	p.Lock()
 
 	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
@@ -247,6 +269,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
+		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+			p.setPinID(pinId)
+		}
 		handler(p.js.toJSMsg(msg))
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
@@ -283,10 +308,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 	}
 	if err := sub.pull(&pullRequest{
-		Expires:   consumeOpts.Expires,
-		Batch:     batchSize,
-		MaxBytes:  consumeOpts.MaxBytes,
-		Heartbeat: consumeOpts.Heartbeat,
+		Expires:       consumeOpts.Expires,
+		Batch:         batchSize,
+		MaxBytes:      consumeOpts.MaxBytes,
+		Heartbeat:     consumeOpts.Heartbeat,
+		MinPending:    consumeOpts.MinPending,
+		MinAckPending: consumeOpts.MinAckPending,
+		Group:         consumeOpts.Group,
+		PinID:         p.getPinID(),
 	}, subject); err != nil {
 		sub.errs <- err
 	}
@@ -318,10 +347,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						}
 
 						sub.fetchNext <- &pullRequest{
-							Expires:   sub.consumeOpts.Expires,
-							Batch:     sub.consumeOpts.MaxMessages,
-							MaxBytes:  sub.consumeOpts.MaxBytes,
-							Heartbeat: sub.consumeOpts.Heartbeat,
+							Expires:       sub.consumeOpts.Expires,
+							Batch:         sub.consumeOpts.MaxMessages,
+							MaxBytes:      sub.consumeOpts.MaxBytes,
+							Heartbeat:     sub.consumeOpts.Heartbeat,
+							MinPending:    sub.consumeOpts.MinPending,
+							MinAckPending: sub.consumeOpts.MinAckPending,
+							Group:         sub.consumeOpts.Group,
+							PinID:         p.getPinID(),
 						}
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -341,10 +374,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 					}
 					sub.fetchNext <- &pullRequest{
-						Expires:   sub.consumeOpts.Expires,
-						Batch:     batchSize,
-						MaxBytes:  sub.consumeOpts.MaxBytes,
-						Heartbeat: sub.consumeOpts.Heartbeat,
+						Expires:       sub.consumeOpts.Expires,
+						Batch:         batchSize,
+						MaxBytes:      sub.consumeOpts.MaxBytes,
+						Heartbeat:     sub.consumeOpts.Heartbeat,
+						MinPending:    sub.consumeOpts.MinPending,
+						MinAckPending: sub.consumeOpts.MinAckPending,
+						Group:         sub.consumeOpts.Group,
+						PinID:         p.getPinID(),
 					}
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
@@ -412,11 +449,19 @@ func (s *pullSubscription) checkPending() {
 			batchSize = min(batchSize, s.consumeOpts.StopAfter-s.delivered-s.pending.msgCount)
 		}
 		if batchSize > 0 {
+			pinID := ""
+			if s.consumer != nil {
+				pinID = s.consumer.getPinID()
+			}
 			s.fetchNext <- &pullRequest{
-				Expires:   s.consumeOpts.Expires,
-				Batch:     batchSize,
-				MaxBytes:  maxBytes,
-				Heartbeat: s.consumeOpts.Heartbeat,
+				Expires:       s.consumeOpts.Expires,
+				Batch:         batchSize,
+				MaxBytes:      maxBytes,
+				Heartbeat:     s.consumeOpts.Heartbeat,
+				PinID:         pinID,
+				Group:         s.consumeOpts.Group,
+				MinPending:    s.consumeOpts.MinPending,
+				MinAckPending: s.consumeOpts.MinAckPending,
 			}
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
@@ -434,6 +479,18 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	consumeOpts, err := parseMessagesOpts(false, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
+	}
+
+	if len(p.info.Config.PriorityGroups) != 0 {
+		if consumeOpts.Group == "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
+		}
+
+		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
+		}
+	} else if consumeOpts.Group != "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is not supported for this consumer")
 	}
 
 	p.Lock()
@@ -552,6 +609,9 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				continue
 			}
+			if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+				s.consumer.setPinID(pinId)
+			}
 			s.decrementPendingMsgs(msg)
 			s.incrementDeliveredMsgs()
 			return s.consumer.js.toJSMsg(msg), nil
@@ -594,6 +654,11 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 	if !errors.Is(msgErr, nats.ErrTimeout) && !errors.Is(msgErr, ErrMaxBytesExceeded) && !errors.Is(msgErr, ErrBatchCompleted) {
 		if errors.Is(msgErr, ErrConsumerDeleted) || errors.Is(msgErr, ErrBadRequest) {
 			return msgErr
+		}
+		if errors.Is(msgErr, ErrPinIDMismatch) {
+			s.consumer.setPinID("")
+			s.pending.msgCount = 0
+			s.pending.byteCount = 0
 		}
 		if s.consumeOpts.ErrHandler != nil {
 			s.consumeOpts.ErrHandler(s, msgErr)
@@ -776,6 +841,7 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.PinID = p.getPinID()
 	if err := sub.pull(req, subject); err != nil {
 		return nil, err
 	}
@@ -798,6 +864,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					if errNotTimeoutOrNoMsgs && !errors.Is(err, ErrMaxBytesExceeded) {
 						res.err = err
 					}
+					if errors.Is(err, ErrPinIDMismatch) {
+						p.setPinID("")
+					}
 					res.done = true
 					res.Unlock()
 					return
@@ -805,6 +874,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if !userMsg {
 					res.Unlock()
 					continue
+				}
+				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
+					p.setPinID(pinId)
 				}
 				res.msgs <- p.js.toJSMsg(msg)
 				meta, err := msg.Metadata()
@@ -946,8 +1018,8 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	if err != nil {
 		return err
 	}
-
 	reply := s.subscription.Subject
+
 	if err := s.consumer.js.conn.PublishRequest(subject, reply, reqJSON); err != nil {
 		return err
 	}
@@ -1040,4 +1112,16 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		return errors.New("the value of Heartbeat must be less than 50%% of expiry")
 	}
 	return nil
+}
+
+func (c *pullConsumer) getPinID() string {
+	c.Lock()
+	defer c.Unlock()
+	return c.pinID
+}
+
+func (c *pullConsumer) setPinID(pinID string) {
+	c.Lock()
+	defer c.Unlock()
+	c.pinID = pinID
 }

@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -147,6 +147,7 @@ const (
 	reqTimeout       = "408"
 	maxBytesExceeded = "409"
 	noResponders     = "503"
+	pinIdMismatch    = "423"
 )
 
 // Headers used when publishing messages.
@@ -418,6 +419,8 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		return false, nats.ErrTimeout
 	case controlMsg:
 		return false, nil
+	case pinIdMismatch:
+		return false, ErrPinIDMismatch
 	case maxBytesExceeded:
 		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
 			return false, ErrMaxBytesExceeded
