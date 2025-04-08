@@ -19,9 +19,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 type (
@@ -528,12 +525,11 @@ const (
 )
 
 func (st StorageType) String() string {
-	caser := cases.Title(language.AmericanEnglish)
 	switch st {
 	case MemoryStorage:
-		return caser.String(memoryStorageString)
+		return "Memory"
 	case FileStorage:
-		return caser.String(fileStorageString)
+		return "File"
 	default:
 		return "Unknown Storage Type"
 	}
