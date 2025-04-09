@@ -488,7 +488,7 @@ const (
 )
 
 func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +511,7 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 }
 
 func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +533,7 @@ func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 }
 
 func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +550,7 @@ func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectSt
 	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
 }
 
-func (js *jetStream) prepareObjectStoreConfig(ctx context.Context, cfg ObjectStoreConfig) (StreamConfig, error) {
+func (js *jetStream) prepareObjectStoreConfig(cfg ObjectStoreConfig) (StreamConfig, error) {
 	if !validBucketRe.MatchString(cfg.Bucket) {
 		return StreamConfig{}, ErrInvalidStoreName
 	}
@@ -824,6 +824,7 @@ func (info *ObjectInfo) isLink() bool {
 
 // Get will pull the object from the underlying stream.
 func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (ObjectResult, error) {
+	ctx, cancel := obs.js.wrapContextWithoutDeadline(ctx)
 	var o getObjectOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -933,10 +934,15 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		nats.Context(ctx),
 		nats.BindStream(streamName),
 	}
-	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
+	sub, err := obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
 	if err != nil {
 		return nil, err
 	}
+	sub.SetClosedHandler(func(subject string) {
+		if cancel != nil {
+			cancel()
+		}
+	})
 
 	return result, nil
 }
