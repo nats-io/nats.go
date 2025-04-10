@@ -4,8 +4,10 @@ on:
   push:
     paths:
       - 'go.mod'
+      - 'dependencies.tpl'
     branches:
       - main
+      - add-license-exception
 
 jobs:
   license-check:
