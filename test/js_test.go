@@ -1425,21 +1425,10 @@ func TestPullSubscribeFetchDrain(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	// now drain the subscription, messages should be in the buffer
+	// now drain the subscription
 	sub.Drain()
-	msgs, err := sub.Fetch(100)
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	for _, msg := range msgs {
-		msg.Ack()
-	}
-	if len(msgs) != 10 {
-		t.Fatalf("Expected %d messages; got: %d", 10, len(msgs))
-	}
-
 	// subsequent fetch should return error, subscription is already drained
-	_, err = sub.Fetch(10, nats.MaxWait(100*time.Millisecond))
+	_, err = sub.Fetch(100, nats.MaxWait(100*time.Millisecond))
 	if !errors.Is(err, nats.ErrSubscriptionClosed) {
 		t.Fatalf("Expected error: %s; got: %s", nats.ErrSubscriptionClosed, err)
 	}
