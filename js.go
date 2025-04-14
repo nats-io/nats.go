@@ -3053,23 +3053,19 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		msgs = make([]*Msg, 0, batch)
 		msg  *Msg
 	)
-	for pmc && len(msgs) < batch {
+	// Clear all messages from prior fetch, since we're reusing the same message channel.
+	// If we reuse the 'cached' message during the next fetch call, we could get duplicated messages
+	// if the next fetch contains a redelivery for the same 'cached' messages.
+	for pmc {
 		// Check next msg with booleans that say that this is an internal call
 		// for a pull subscribe (so don't reject it) and don't wait if there
 		// are no messages.
-		msg, err = sub.nextMsgWithContext(ctx, true, false)
+		_, err = sub.nextMsgWithContext(ctx, true, false)
 		if err != nil {
 			if errors.Is(err, errNoMessages) {
 				err = nil
 			}
 			break
-		}
-		// Check msg but just to determine if this is a user message
-		// or status message, however, we don't care about values of status
-		// messages at this point in the Fetch() call, so checkMsg can't
-		// return an error.
-		if usrMsg, _ := checkMsg(msg, false, false); usrMsg {
-			msgs = append(msgs, msg)
 		}
 	}
 	var hbTimer *time.Timer
