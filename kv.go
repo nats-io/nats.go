@@ -834,6 +834,10 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 		b  strings.Builder
 	)
 	// Do actual purges here.
+	purgeOpts := []JSOpt{}
+	if o.ctx != nil {
+		purgeOpts = append(purgeOpts, Context(o.ctx))
+	}
 	for _, entry := range deleteMarkers {
 		b.WriteString(kv.pre)
 		b.WriteString(entry.Key())
@@ -842,7 +846,7 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 		if olderThan > 0 && entry.Created().After(limit) {
 			pr.Keep = 1
 		}
-		if err := kv.js.purgeStream(kv.stream, &pr); err != nil {
+		if err := kv.js.purgeStream(kv.stream, &pr, purgeOpts...); err != nil {
 			return err
 		}
 		b.Reset()
