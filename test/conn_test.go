@@ -3059,6 +3059,64 @@ func TestConnStatusChangedEvents(t *testing.T) {
 	})
 }
 
+func TestRemoveStatusListener(t *testing.T) {
+	t.Run("with channel not closed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+		statusCh := nc.StatusChanged()
+		done := make(chan struct{})
+		go func() {
+			_, ok := <-statusCh
+			if !ok {
+				done <- struct{}{}
+				return
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
+
+		nc.RemoveStatusListener(statusCh)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("Expected to receive done signal")
+		}
+	})
+	t.Run("with channel closed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+		statusCh := nc.StatusChanged()
+		done := make(chan struct{})
+		go func() {
+			_, ok := <-statusCh
+			if !ok {
+				done <- struct{}{}
+				return
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
+
+		close(statusCh)
+		nc.RemoveStatusListener(statusCh)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("Expected to receive done signal")
+		}
+	})
+}
+
 func TestTLSHandshakeFirst(t *testing.T) {
 	s, opts := RunServerWithConfig("./configs/tls.conf")
 	defer s.Shutdown()
