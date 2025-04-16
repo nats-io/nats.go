@@ -3145,12 +3145,11 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		go func() {
 			select {
 			case <-ctx.Done():
-				return
 			case <-connStatusChanged:
 				disconnected.Store(true)
 				cancel()
-				return
 			}
+			nc.RemoveStatusListener(connStatusChanged)
 		}()
 		err = sendReq()
 		for err == nil && len(msgs) < batch {
@@ -3404,12 +3403,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	go func() {
 		select {
 		case <-ctx.Done():
-			return
 		case <-connStatusChanged:
 			disconnected.Store(true)
 			cancel()
-			return
 		}
+		nc.RemoveStatusListener(connStatusChanged)
 	}()
 	requestBatch := batch - len(result.msgs)
 	req := nextRequest{

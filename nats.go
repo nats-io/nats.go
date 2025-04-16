@@ -572,7 +572,7 @@ type Conn struct {
 	pongs         []chan struct{}
 	scratch       [scratchSize]byte
 	status        Status
-	statListeners map[Status][]chan Status
+	statListeners map[Status]map[chan Status]struct{}
 	initc         bool // true if the connection is performing the initial connect
 	err           error
 	ps            *parseState
@@ -5913,18 +5913,39 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	return ch
 }
 
+// RemoveStatusListener removes a status change listener.
+// If the channel is not closed, it will be closed.
+// Listeners will be removed automatically on status change
+// as well, but this is a way to remove them manually.
+func (nc *Conn) RemoveStatusListener(ch chan (Status)) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+
+	for _, listeners := range nc.statListeners {
+		for l := range listeners {
+			delete(listeners, l)
+		}
+	}
+}
+
 // registerStatusChangeListener registers a channel waiting for a specific status change event.
 // Status change events are non-blocking - if no receiver is waiting for the status change,
 // it will not be sent on the channel. Closed channels are ignored.
 // The lock should be held entering.
 func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 	if nc.statListeners == nil {
-		nc.statListeners = make(map[Status][]chan Status)
+		nc.statListeners = make(map[Status]map[chan Status]struct{})
 	}
 	if _, ok := nc.statListeners[status]; !ok {
-		nc.statListeners[status] = make([]chan Status, 0)
+		nc.statListeners[status] = make(map[chan Status]struct{})
 	}
-	nc.statListeners[status] = append(nc.statListeners[status], ch)
+	nc.statListeners[status][ch] = struct{}{}
 }
 
 // sendStatusEvent sends connection status event to all channels.
@@ -5932,20 +5953,18 @@ func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 // will not block. Lock should be held entering.
 func (nc *Conn) sendStatusEvent(s Status) {
 Loop:
-	for i := 0; i < len(nc.statListeners[s]); i++ {
+	for ch := range nc.statListeners[s] {
 		// make sure channel is not closed
 		select {
-		case <-nc.statListeners[s][i]:
+		case <-ch:
 			// if chan is closed, remove it
-			nc.statListeners[s][i] = nc.statListeners[s][len(nc.statListeners[s])-1]
-			nc.statListeners[s] = nc.statListeners[s][:len(nc.statListeners[s])-1]
-			i--
+			delete(nc.statListeners[s], ch)
 			continue Loop
 		default:
 		}
 		// only send event if someone's listening
 		select {
-		case nc.statListeners[s][i] <- s:
+		case ch <- s:
 		default:
 		}
 	}
