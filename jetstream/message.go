@@ -211,7 +211,7 @@ const (
 	SequenceHeader = "Nats-Sequence"
 
 	// TimeStampHeader contains the original timestamp of the message.
-	TimeStampHeaer = "Nats-Time-Stamp"
+	TimeStampHeader = "Nats-Time-Stamp"
 
 	// SubjectHeader contains the original subject the message was published to.
 	SubjectHeader = "Nats-Subject"

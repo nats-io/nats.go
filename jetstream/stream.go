@@ -561,7 +561,7 @@ func convertDirectGetMsgResponseToMsg(r *nats.Msg) (*RawStreamMsg, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats: invalid sequence header '%s': %v", seqStr, err)
 	}
-	timeStr := r.Header.Get(TimeStampHeaer)
+	timeStr := r.Header.Get(TimeStampHeader)
 	if timeStr == "" {
 		return nil, errors.New("nats: missing timestamp header")
 	}
