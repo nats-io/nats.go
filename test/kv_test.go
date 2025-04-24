@@ -1390,7 +1390,7 @@ func TestKeyValueNonDirectGet(t *testing.T) {
 		t.Fatalf("Error on get: v=%+v err=%v", v, err)
 	}
 	if v, err := kvi.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
-		t.Fatalf("Error on get revisiong: v=%+v err=%v", v, err)
+		t.Fatalf("Error on get revision: v=%+v err=%v", v, err)
 	}
 	if v, err := kvi.GetRevision("key1", 2); err == nil {
 		t.Fatalf("Expected error, got %+v", v)

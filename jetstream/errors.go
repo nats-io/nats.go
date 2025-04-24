@@ -330,6 +330,22 @@ var (
 	// ErrNoKeysFound is returned when no keys are found.
 	ErrNoKeysFound JetStreamError = &jsError{message: "no keys found"}
 
+	// ErrInvalidLimitMarkerTTL is returned when an invalid value for
+	// LimitMarkerTTL is set when creating Key Value bucket.
+	ErrInvalidLimitMarkerTTL JetStreamError = &jsError{message: "limit marker TTL must be at least 1 second"}
+
+	// ErrTTLOnDeleteNotSupported is returned when attempting to set a TTL
+	// on a delete operation.
+	ErrTTLOnDeleteNotSupported JetStreamError = &jsError{message: "TTL is not supported on delete"}
+
+	// ErrLimitMarkerTTLNotSupported is returned when the connected jetstream API
+	// does not support setting the LimitMarkerTTL.
+	ErrLimitMarkerTTLNotSupported JetStreamError = &jsError{message: "limit marker TTLs not supported by server"}
+
+	// ErrLimitMarkersNotEnabled is returned when attempting to set a ttl on a
+	// create or purge operation without enabling LimitMarkers on a bucket.
+	ErrLimitMarkersNotEnabled JetStreamError = &jsError{message: "limit markers need to be enabled to use this feature"}
+
 	// ErrObjectConfigRequired is returned when attempting to create an object
 	// without a config.
 	ErrObjectConfigRequired JetStreamError = &jsError{message: "object-store config required"}

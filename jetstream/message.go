@@ -198,6 +198,9 @@ const (
 	// MsgRollup is used to apply a purge of all prior messages in the stream
 	// ("all") or at the subject ("sub") before this message.
 	MsgRollup = "Nats-Rollup"
+
+	// MarkerReasonHeader is used to specify a reason for message deletion.
+	MarkerReasonHeader = "Nats-Marker-Reason"
 )
 
 // Headers for republished messages and direct gets. Those headers are set by
