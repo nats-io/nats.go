@@ -146,8 +146,8 @@ func main() {
 	fmt.Printf("Rafts: %d\n", len(keys))
 	fmt.Println()
 
-	fields := []any{"RAFT", "NODE", "COMMITTED", "APPLIED", "TERM", "PTERM", "PINDEX", "MESSAGES", "BYTES", "FIRST", "LAST", "STATUS", "TIME", "IPQ", "PEERS"}
-	fmt.Printf("%-15s %-25s %-15s %-15s %-8s %-8s %-15s %-15s %-15s %-15s %-15s  %-15s   %-30s %-25s %-10s\n", fields...)
+	fields := []any{"RAFT", "NODE", "COMMITTED", "APPLIED", "TERM", "PTERM", "PINDEX", "MESSAGES", "BYTES", "FIRST", "LAST", "STATUS", "FIRST_TIME", "LAST_TIME", "IPQ", "PEERS"}
+	fmt.Printf("%-15s %-25s %-15s %-15s %-8s %-8s %-15s %-15s %-15s %-15s %-15s  %-15s   %-30s %-30s %-25s %-10s\n", fields...)
 
 	var prev string
 	for i, k := range keys {
@@ -211,14 +211,21 @@ func main() {
 		sf = append(sf, raft.WAL.Bytes)
 
 		if raft.WAL.Msgs == 0 || raft.WAL.Bytes == 0 {
-			status = "EMPTY"
+			status = fmt.Sprintf("%s:EMPTY", status)
 		}
 
 		sf = append(sf, raft.WAL.FirstSeq)
 		sf = append(sf, raft.WAL.LastSeq)
-		firstTime := raft.WAL.FirstTime.Truncate(time.Second).UTC()
+
+		if raft.WALError != nil {
+			status = fmt.Sprintf("%s:%s", status, raft.WALError)
+		}
 		sf = append(sf, status)
+
+		firstTime := raft.WAL.FirstTime.Truncate(time.Second).UTC()
+		lastTime := raft.WAL.LastTime.Truncate(time.Second).UTC()
 		sf = append(sf, firstTime)
+		sf = append(sf, lastTime)
 
 		// Counters
 		sf = append(sf, fmt.Sprintf("(p:%d, e:%d, r:%d, a:%d)",
@@ -244,7 +251,7 @@ func main() {
 			fmt.Println(line)
 		}
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-15v %-25v %-15v %-15v %-8v %-8v %-15v %-15v %-15v %-15v %-15d | %-15s | %-10s | %-20v | %-30v\n", sf...)
+		fmt.Printf("%-15v %-25v %-15v %-15v %-8v %-8v %-15v %-15v %-15v %-15v %-15d | %-15s | %-15s | %-10s | %-20v | %-30v\n", sf...)
 		prev = raftGroup
 	}
 }
