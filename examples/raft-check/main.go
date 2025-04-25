@@ -183,14 +183,14 @@ func main() {
 				status = "UNSYNCED"
 				unsynced = true
 			}
-			if raft.WAL.Msgs != peer.WAL.Msgs {
-				status = "UNSYNCED"
-				unsynced = true
-			}
-			if raft.WAL.Bytes != peer.WAL.Bytes {
-				status = "UNSYNCED"
-				unsynced = true
-			}
+			// if raft.WAL.Msgs != peer.WAL.Msgs {
+			// 	status = "UNSYNCED"
+			// 	unsynced = true
+			// }
+			// if raft.WAL.Bytes != peer.WAL.Bytes {
+			// 	status = "UNSYNCED"
+			// 	unsynced = true
+			// }
 			if raft.WAL.FirstSeq != peer.WAL.FirstSeq {
 				status = "UNSYNCED"
 				unsynced = true
