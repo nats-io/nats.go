@@ -64,7 +64,7 @@ func TestKeyValueBasics(t *testing.T) {
 	err = kv.Delete(ctx, "name")
 	expectOk(t, err)
 	_, err = kv.Get(ctx, "name")
-	expectErr(t, err, jetstream.ErrKeyNotFound)
+	expectErr(t, err, jetstream.ErrKeyDeleted)
 	r, err = kv.Create(ctx, "name", []byte("derek"))
 	expectOk(t, err)
 	if r != 3 {
@@ -809,7 +809,7 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 	expectOk(t, err)
 	// Check marker
 	e, err := kv.Get(ctx, "name")
-	expectErr(t, err, jetstream.ErrKeyNotFound)
+	expectErr(t, err, jetstream.ErrKeyDeleted)
 	if e != nil {
 		t.Fatalf("Expected a nil entry but got %v", e)
 	}
@@ -1324,7 +1324,7 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 	}
 
 	// Check key gone from kv1
-	if e, err := kv1.Get(ctx, "map"); err != jetstream.ErrKeyNotFound || e != nil {
+	if e, err := kv1.Get(ctx, "map"); !errors.Is(err, jetstream.ErrKeyDeleted) {
 		t.Fatalf("Expected key not found, got err=%v e=%+v", err, e)
 	}
 }
@@ -1447,7 +1447,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 			if err == nil {
 				return errors.New("Expected key to be gone")
 			}
-			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+			if !errors.Is(err, jetstream.ErrKeyDeleted) {
 				return err
 			}
 			return nil
