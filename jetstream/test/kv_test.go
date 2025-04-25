@@ -810,8 +810,8 @@ func TestKeyValueDeleteVsPurge(t *testing.T) {
 	// Check marker
 	e, err := kv.Get(ctx, "name")
 	expectErr(t, err, jetstream.ErrKeyDeleted)
-	if e != nil {
-		t.Fatalf("Expected a nil entry but got %v", e)
+	if e == nil {
+		t.Fatalf("Expected an entry but got nil")
 	}
 	entries, err = kv.History(ctx, "name")
 	expectOk(t, err)
