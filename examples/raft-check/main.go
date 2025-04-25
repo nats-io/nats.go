@@ -191,10 +191,10 @@ func main() {
 			// 	status = "UNSYNCED"
 			// 	unsynced = true
 			// }
-			if raft.WAL.FirstSeq != peer.WAL.FirstSeq {
-				status = "UNSYNCED"
-				unsynced = true
-			}
+			// if raft.WAL.FirstSeq != peer.WAL.FirstSeq {
+			// 	status = "UNSYNCED"
+			// 	unsynced = true
+			// }
 			if raft.WAL.LastSeq != peer.WAL.LastSeq {
 				status = "UNSYNCED"
 				unsynced = true
