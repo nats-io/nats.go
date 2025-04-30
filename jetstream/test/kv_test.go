@@ -2031,35 +2031,4 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 			t.Fatalf("Expected key %q, got %q", "age", entry.Key())
 		}
 	})
-
-	t.Run("invalid options", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
-
-		nc, js := jsClient(t, s)
-		defer nc.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		_, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", LimitMarkerTTL: 100 * time.Millisecond})
-		expectErr(t, err, jetstream.ErrInvalidLimitMarkerTTL)
-
-		// now create a kv without LimitMarkerTTL
-		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS"})
-		expectOk(t, err)
-
-		_, err = kv.Create(ctx, "age", []byte("22"), jetstream.KeyTTL(time.Second))
-		expectErr(t, err, jetstream.ErrLimitMarkersNotEnabled)
-
-		err = kv.Purge(ctx, "age", jetstream.PurgeTTL(time.Second))
-		expectErr(t, err, jetstream.ErrLimitMarkersNotEnabled)
-
-		// update kv to enable LimitMarkerTTL
-		kv, err = js.UpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", LimitMarkerTTL: time.Second})
-		expectOk(t, err)
-
-		// create a value with a TTL
-		_, err = kv.Create(ctx, "age", []byte("22"), jetstream.KeyTTL(time.Second))
-		expectOk(t, err)
-	})
 }

@@ -422,8 +422,6 @@ type kvs struct {
 	useJSPfx bool
 	// To know if we can use the stream direct get API
 	useDirect bool
-	// To know whether KV uses limit markers and per msg ttl
-	useLimitMarkers bool
 }
 
 // KeyValueOp represents the type of KV operation (Put, Delete, Purge). It is a
@@ -636,9 +634,6 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 	var allowMsgTTL bool
 	var subjectDeleteMarkerTTL time.Duration
 	if cfg.LimitMarkerTTL != 0 {
-		if cfg.LimitMarkerTTL < time.Second {
-			return StreamConfig{}, ErrInvalidLimitMarkerTTL
-		}
 		info, err := js.AccountInfo(ctx)
 		if err != nil {
 			return StreamConfig{}, err
@@ -1016,9 +1011,6 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte, opts ...KVC
 		}
 	}
 
-	if o.ttl > 0 && !kv.useLimitMarkers {
-		return 0, ErrLimitMarkersNotEnabled
-	}
 	v, err := kv.updateRevision(ctx, key, value, 0, o.ttl)
 	if err == nil {
 		return v, nil
@@ -1107,9 +1099,6 @@ func (kv *kvs) Delete(ctx context.Context, key string, opts ...KVDeleteOpt) erro
 	}
 	pubOpts := make([]PublishOpt, 0)
 	if o.ttl > 0 && o.purge {
-		if !kv.useLimitMarkers {
-			return ErrLimitMarkersNotEnabled
-		}
 		pubOpts = append(pubOpts, WithMsgTTL(o.ttl))
 	} else if o.ttl > 0 {
 		return ErrTTLOnDeleteNotSupported
@@ -1513,9 +1502,8 @@ func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) 
 		pushJS:     pushJS,
 		stream:     stream,
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
-		useJSPfx:        js.opts.apiPrefix != DefaultAPIPrefix,
-		useDirect:       info.Config.AllowDirect,
-		useLimitMarkers: info.Config.AllowMsgTTL,
+		useJSPfx:  js.opts.apiPrefix != DefaultAPIPrefix,
+		useDirect: info.Config.AllowDirect,
 	}
 
 	// If we are mirroring, we will have mirror direct on, so just use the mirror name
