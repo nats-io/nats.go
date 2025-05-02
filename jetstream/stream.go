@@ -374,7 +374,7 @@ func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {
 }
 
 func (s *stream) PushConsumer(ctx context.Context, name string) (PushConsumer, error) {
-	return getPushConsumer(ctx, s.jetStream, s.name, name)
+	return getPushConsumer(ctx, s.js, s.name, name)
 }
 
 // DeleteConsumer removes a consumer with given name from a stream.

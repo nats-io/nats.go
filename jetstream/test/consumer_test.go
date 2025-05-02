@@ -73,21 +73,21 @@ func TestConsumerInfo(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-		if info.Stream != "foo" {
-			t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
-		}
-		if info.Config.Description != "test consumer" {
-			t.Fatalf("Invalid consumer description; expected: 'test consumer'; got: %s", info.Config.Description)
-		}
-		if info.Config.PauseUntil != nil {
-			t.Fatalf("Consumer should not be paused")
-		}
-		if info.Paused != false {
-			t.Fatalf("Consumer should not be paused")
-		}
-		if info.PauseRemaining != 0 {
-			t.Fatalf("Consumer should not be paused")
-		}
+			if info.Stream != "foo" {
+				t.Fatalf("Invalid stream name; expected: 'foo'; got: %s", info.Stream)
+			}
+			if info.Config.Description != "test consumer" {
+				t.Fatalf("Invalid consumer description; expected: 'test consumer'; got: %s", info.Config.Description)
+			}
+			if info.Config.PauseUntil != nil {
+				t.Fatalf("Consumer should not be paused")
+			}
+			if info.Paused != false {
+				t.Fatalf("Consumer should not be paused")
+			}
+			if info.PauseRemaining != 0 {
+				t.Fatalf("Consumer should not be paused")
+			}
 
 			// update consumer and see if info is updated
 

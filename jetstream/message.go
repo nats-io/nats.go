@@ -141,7 +141,7 @@ type (
 )
 
 const (
-    statusControlMsg    = "100"
+	statusControlMsg    = "100"
 	statusBadRequest    = "400"
 	statusNoMsgs        = "404"
 	statusTimeout       = "408"
