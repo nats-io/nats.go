@@ -147,6 +147,21 @@ type (
 		CachedInfo() *ConsumerInfo
 	}
 
+	PushConsumer interface {
+		// Consume will continuously receive messages and handle them
+		// with the provided callback function. Consume can be configured using
+		// PushConsumeOpt options:
+		//
+		// - Error handling and monitoring can be configured using ConsumeErrHandler.
+		Consume(handler MessageHandler, opts ...PushConsumeOpt) (ConsumeContext, error)
+
+		// Info fetches current ConsumerInfo from the server.
+		Info(context.Context) (*ConsumerInfo, error)
+
+		// CachedInfo returns ConsumerInfo currently cached on this consumer.
+		CachedInfo() *ConsumerInfo
+	}
+
 	createConsumerRequest struct {
 		Stream string          `json:"stream_name"`
 		Config *ConsumerConfig `json:"config"`
@@ -187,7 +202,74 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 	return p.info
 }
 
-func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
+// Info fetches current ConsumerInfo from the server.
+func (p *pushConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
+	ctx, cancel := p.js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	infoSubject := fmt.Sprintf(apiConsumerInfoT, p.stream, p.name)
+	var resp consumerInfoResponse
+
+	if _, err := p.js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		if resp.Error.ErrorCode == JSErrCodeConsumerNotFound {
+			return nil, ErrConsumerNotFound
+		}
+		return nil, resp.Error
+	}
+	if resp.Error == nil && resp.ConsumerInfo == nil {
+		return nil, ErrConsumerNotFound
+	}
+
+	p.info = resp.ConsumerInfo
+	return resp.ConsumerInfo, nil
+}
+
+// CachedInfo returns ConsumerInfo currently cached on this consumer.
+// This method does not perform any network requests. The cached
+// ConsumerInfo is updated on every call to Info and Update.
+func (p *pushConsumer) CachedInfo() *ConsumerInfo {
+	return p.info
+}
+
+func upsertPullConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
+	resp, err := upsertConsumer(ctx, js, stream, cfg, action)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pullConsumer{
+		js:      js,
+		stream:  stream,
+		name:    resp.Name,
+		durable: cfg.Durable != "",
+		info:    resp.ConsumerInfo,
+		subs:    syncx.Map[string, *pullSubscription]{},
+	}, nil
+}
+
+func upsertPushConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (PushConsumer, error) {
+	if cfg.DeliverSubject == "" {
+		return nil, ErrNotPushConsumer
+	}
+
+	resp, err := upsertConsumer(ctx, js, stream, cfg, action)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pushConsumer{
+		js:     js,
+		stream: stream,
+		name:   resp.Name,
+		info:   resp.ConsumerInfo,
+	}, nil
+}
+
+func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (*consumerInfoResponse, error) {
 	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -240,14 +322,7 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		return nil, ErrConsumerMultipleFilterSubjectsNotSupported
 	}
 
-	return &pullConsumer{
-		js:      js,
-		stream:  stream,
-		name:    resp.Name,
-		durable: cfg.Durable != "",
-		info:    resp.ConsumerInfo,
-		subs:    syncx.Map[string, *pullSubscription]{},
-	}, nil
+	return &resp, nil
 }
 
 const (
@@ -268,6 +343,48 @@ func generateConsName() string {
 }
 
 func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consumer, error) {
+	info, err := fetchConsumerInfo(ctx, js, stream, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Config.DeliverSubject != "" {
+		return nil, ErrNotPullConsumer
+	}
+
+	cons := &pullConsumer{
+		js:      js,
+		stream:  stream,
+		name:    name,
+		durable: info.Config.Durable != "",
+		info:    info,
+		subs:    syncx.Map[string, *pullSubscription]{},
+	}
+
+	return cons, nil
+}
+
+func getPushConsumer(ctx context.Context, js *jetStream, stream, name string) (PushConsumer, error) {
+	info, err := fetchConsumerInfo(ctx, js, stream, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Config.DeliverSubject == "" {
+		return nil, ErrNotPushConsumer
+	}
+
+	cons := &pushConsumer{
+		js:     js,
+		stream: stream,
+		name:   name,
+		info:   info,
+	}
+
+	return cons, nil
+}
+
+func fetchConsumerInfo(ctx context.Context, js *jetStream, stream, name string) (*ConsumerInfo, error) {
 	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -292,16 +409,7 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 		return nil, ErrConsumerNotFound
 	}
 
-	cons := &pullConsumer{
-		js:      js,
-		stream:  stream,
-		name:    name,
-		durable: resp.Config.Durable != "",
-		info:    resp.ConsumerInfo,
-		subs:    syncx.Map[string, *pullSubscription]{},
-	}
-
-	return cons, nil
+	return resp.ConsumerInfo, nil
 }
 
 func deleteConsumer(ctx context.Context, js *jetStream, stream, consumer string) error {

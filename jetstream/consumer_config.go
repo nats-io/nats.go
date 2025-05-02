@@ -98,7 +98,8 @@ type (
 		PinnedTS time.Time `json:"pinned_ts,omitempty"`
 	}
 
-	// ConsumerConfig is the configuration of a JetStream consumer.
+	// ConsumerConfig represents the configuration of a JetStream consumer,
+	// encompassing both push and pull consumer settings
 	ConsumerConfig struct {
 		// Name is an optional name for the consumer. If not set, one is
 		// generated automatically.
@@ -253,6 +254,26 @@ type (
 
 		// PriorityGroups is a list of priority groups this consumer supports.
 		PriorityGroups []string `json:"priority_groups,omitempty"`
+
+		// Fields specific for push consumers:
+
+		// DeliverSubject is the subject to deliver messages to for push consumers
+		DeliverSubject string `json:"deliver_subject,omitempty"`
+
+		// DeliverGroup is the group name for push consumers
+		DeliverGroup string `json:"deliver_group,omitempty"`
+
+		// FlowControl is a flag to enable flow control for the consumer.
+		// When set, server will regularly send an empty message with Status
+		// header 100 and a reply subject, consumers must reply to these
+		// messages to control the rate of message delivery
+		FlowControl bool `json:"flow_control,omitempty"`
+
+		// IdleHeartbeat enables push consumer idle heartbeat messages.
+		// If the Consumer is idle for more than the set value, an empty message
+		// with Status header 100 will be sent indicating the consumer is still
+		// alive.
+		IdleHeartbeat time.Duration `json:"idle_heartbeat,omitempty"`
 	}
 
 	// OrderedConsumerConfig is the configuration of an ordered JetStream
