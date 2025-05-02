@@ -261,11 +261,17 @@ type (
 
 	// APIStats reports on API calls to JetStream for this account.
 	APIStats struct {
+		// Level is the API level for this account.
+		Level int `json:"level"`
+
 		// Total is the total number of API calls.
 		Total uint64 `json:"total"`
 
 		// Errors is the total number of API errors.
 		Errors uint64 `json:"errors"`
+
+		// Inflight is the number of API calls currently in flight.
+		Inflight uint64 `json:"inflight,omitempty"`
 	}
 
 	// AccountLimits includes the JetStream limits of the current account.

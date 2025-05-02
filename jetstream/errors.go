@@ -330,6 +330,14 @@ var (
 	// ErrNoKeysFound is returned when no keys are found.
 	ErrNoKeysFound JetStreamError = &jsError{message: "no keys found"}
 
+	// ErrTTLOnDeleteNotSupported is returned when attempting to set a TTL
+	// on a delete operation.
+	ErrTTLOnDeleteNotSupported JetStreamError = &jsError{message: "TTL is not supported on delete"}
+
+	// ErrLimitMarkerTTLNotSupported is returned when the connected jetstream API
+	// does not support setting the LimitMarkerTTL.
+	ErrLimitMarkerTTLNotSupported JetStreamError = &jsError{message: "limit marker TTLs not supported by server"}
+
 	// ErrObjectConfigRequired is returned when attempting to create an object
 	// without a config.
 	ErrObjectConfigRequired JetStreamError = &jsError{message: "object-store config required"}

@@ -101,3 +101,31 @@ func LastRevision(revision uint64) KVDeleteOpt {
 		return nil
 	})
 }
+
+// PurgeTTL sets the TTL for the purge operation.
+// After the TTL expires, the delete markers will be removed.
+// This requires LimitMarkerTTL to be enabled on the bucket.
+// Note that this is not the same as the TTL for the key itself, which is set
+// using the KeyTTL option when creating the key.
+func PurgeTTL(ttl time.Duration) KVDeleteOpt {
+	return deleteOptFn(func(opts *deleteOpts) error {
+		opts.ttl = ttl
+		return nil
+	})
+}
+
+type createOptFn func(opts *createOpts) error
+
+func (opt createOptFn) configureCreate(opts *createOpts) error {
+	return opt(opts)
+}
+
+// KeyTTL sets the TTL for the key. This is the time after which the key will be
+// automatically deleted. The TTL is set when the key is created and can not be
+// changed later. This requires LimitMarkerTTL to be enabled on the bucket.
+func KeyTTL(ttl time.Duration) KVCreateOpt {
+	return createOptFn(func(opts *createOpts) error {
+		opts.ttl = ttl
+		return nil
+	})
+}
