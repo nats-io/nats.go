@@ -204,14 +204,14 @@ func (p *pullConsumer) CachedInfo() *ConsumerInfo {
 
 // Info fetches current ConsumerInfo from the server.
 func (p *pushConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
-	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
+	ctx, cancel := p.js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
-	infoSubject := apiSubj(p.jetStream.apiPrefix, fmt.Sprintf(apiConsumerInfoT, p.stream, p.name))
+	infoSubject := fmt.Sprintf(apiConsumerInfoT, p.stream, p.name)
 	var resp consumerInfoResponse
 
-	if _, err := p.jetStream.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+	if _, err := p.js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {
@@ -242,12 +242,12 @@ func upsertPullConsumer(ctx context.Context, js *jetStream, stream string, cfg C
 	}
 
 	return &pullConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      resp.Name,
-		durable:   cfg.Durable != "",
-		info:      resp.ConsumerInfo,
-		subs:      syncx.Map[string, *pullSubscription]{},
+		js:      js,
+		stream:  stream,
+		name:    resp.Name,
+		durable: cfg.Durable != "",
+		info:    resp.ConsumerInfo,
+		subs:    syncx.Map[string, *pullSubscription]{},
 	}, nil
 }
 
@@ -262,15 +262,15 @@ func upsertPushConsumer(ctx context.Context, js *jetStream, stream string, cfg C
 	}
 
 	return &pushConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      resp.Name,
-		info:      resp.ConsumerInfo,
+		js:     js,
+		stream: stream,
+		name:   resp.Name,
+		info:   resp.ConsumerInfo,
 	}, nil
 }
 
 func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (*consumerInfoResponse, error) {
-	ctx, cancel := wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}
@@ -353,12 +353,12 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 	}
 
 	cons := &pullConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      name,
-		durable:   info.Config.Durable != "",
-		info:      info,
-		subs:      syncx.Map[string, *pullSubscription]{},
+		js:      js,
+		stream:  stream,
+		name:    name,
+		durable: info.Config.Durable != "",
+		info:    info,
+		subs:    syncx.Map[string, *pullSubscription]{},
 	}
 
 	return cons, nil
@@ -375,17 +375,17 @@ func getPushConsumer(ctx context.Context, js *jetStream, stream, name string) (P
 	}
 
 	cons := &pushConsumer{
-		jetStream: js,
-		stream:    stream,
-		name:      name,
-		info:      info,
+		js:     js,
+		stream: stream,
+		name:   name,
+		info:   info,
 	}
 
 	return cons, nil
 }
 
 func fetchConsumerInfo(ctx context.Context, js *jetStream, stream, name string) (*ConsumerInfo, error) {
-	ctx, cancel := ctx, cancel := js.wrapContextWithoutDeadline(ctx)
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
 	}

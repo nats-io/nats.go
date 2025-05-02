@@ -206,14 +206,13 @@ type (
 		// If consumer does not exist, ErrConsumerNotFound is returned.
 		DeleteConsumer(ctx context.Context, stream string, consumer string) error
 
-		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
 		// PauseConsumer pauses a consumer until the given time.
 		PauseConsumer(ctx context.Context, stream string, consumer string, pauseUntil time.Time) (*ConsumerPauseResponse, error)
 
 		// ResumeConsumer resumes a paused consumer.
 		ResumeConsumer(ctx context.Context, stream string, consumer string) (*ConsumerPauseResponse, error)
 
-		// CreateOrUpdateConsumer creates a push consumer on a given stream with
+		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to consume messages.
 		CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)

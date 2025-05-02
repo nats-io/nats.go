@@ -14,11 +14,11 @@ import (
 type (
 	pushConsumer struct {
 		sync.Mutex
-		jetStream *jetStream
-		stream    string
-		name      string
-		info      *ConsumerInfo
-		started   atomic.Bool
+		js      *jetStream
+		stream  string
+		name    string
+		info    *ConsumerInfo
+		started atomic.Bool
 	}
 
 	pushSubscription struct {
@@ -72,7 +72,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 		errs:              make(chan error, 1),
 		done:              make(chan struct{}, 1),
 		consumeOpts:       consumeOpts,
-		connStatusChanged: p.jetStream.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
+		connStatusChanged: p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
 		idleHeartbeat:     p.info.Config.IdleHeartbeat,
 	}
 
@@ -88,7 +88,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 		}()
 		status, descr := msg.Header.Get("Status"), msg.Header.Get("Description")
 		if status == "" {
-			jsMsg := p.jetStream.toJSMsg(msg)
+			jsMsg := p.js.toJSMsg(msg)
 			handler(jsMsg)
 			return
 		}
@@ -105,7 +105,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 	}
 
 	var err error
-	sub.subscription, err = p.jetStream.conn.Subscribe(p.info.Config.DeliverSubject, internalHandler)
+	sub.subscription, err = p.js.conn.Subscribe(p.info.Config.DeliverSubject, internalHandler)
 	if err != nil {
 		return nil, err
 	}
