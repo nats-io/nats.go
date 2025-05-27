@@ -553,6 +553,39 @@ func TestConnectedAddr(t *testing.T) {
 	}
 }
 
+func TestLocalAddr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	var nc *nats.Conn
+	if addr := nc.LocalAddr(); addr != "" {
+		t.Fatalf("Expected empty result for nil connection, got %q", addr)
+	}
+	nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	addr := nc.LocalAddr()
+	if addr == "" {
+		t.Fatalf("Expected non-empty local address")
+	}
+	// Verify it's a valid address format
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("Expected valid host:port format, got %q: %v", addr, err)
+	}
+	if host == "" {
+		t.Fatalf("Expected non-empty host in address %q", addr)
+	}
+	if port == "" {
+		t.Fatalf("Expected non-empty port in address %q", addr)
+	}
+	nc.Close()
+	if addr := nc.LocalAddr(); addr != "" {
+		t.Fatalf("Expected empty result for closed connection, got %q", addr)
+	}
+}
+
 func TestSubscribeSyncRace(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
