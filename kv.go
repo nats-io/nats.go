@@ -1051,7 +1051,10 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 				w.initPending = delta
 			}
 			if w.received > w.initPending || delta == 0 {
-				w.initDoneTimer.Stop()
+				// Avoid possible race setting up timer.
+				if w.initDoneTimer != nil {
+					w.initDoneTimer.Stop()
+				}
 				w.initDone = true
 				w.updates <- nil
 			} else if w.initDoneTimer != nil {
