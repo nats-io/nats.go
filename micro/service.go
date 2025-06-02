@@ -692,7 +692,10 @@ func (s *service) Stop() error {
 	if s.stopped {
 		return nil
 	}
-	for _, e := range s.endpoints {
+	// make a copy of s.endpoints to range over in order to stop
+	// since *Endpoint.stop manipulates s.endpoints!
+	endpointsToStop := append(make([]*Endpoint, 0, len(s.endpoints)), s.endpoints...)
+	for _, e := range endpointsToStop {
 		if err := e.stop(); err != nil {
 			fmt.Println("Error stopping endpoint: ", err)
 			return err
