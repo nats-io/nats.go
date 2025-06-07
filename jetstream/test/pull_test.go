@@ -3143,6 +3143,37 @@ func TestPullConsumerConsume(t *testing.T) {
 		wg.Wait()
 		cc.Stop()
 	})
+
+	t.Run("invalid heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// default expiry is 30s, so max heartbeat should be 15s
+		_, err = c.Consume(func(_ jetstream.Msg) {
+		}, jetstream.PullHeartbeat(20*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+	})
 }
 
 func TestPullConsumerConsume_WithCluster(t *testing.T) {

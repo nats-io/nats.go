@@ -1151,7 +1151,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 		for i := 0; i < len(testMsgs); i++ {
 			msg, err := it.Next()
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Unexpected error fetching next message: %s", err)
 			}
 			time.Sleep(50 * time.Millisecond)
 			msg.Ack()

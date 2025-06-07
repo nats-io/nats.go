@@ -112,7 +112,7 @@ type (
 		MinAckPending           int64
 		Group                   string
 		Heartbeat               time.Duration
-		ErrHandler              ConsumeErrHandlerFunc
+		ErrHandler              ConsumeErrHandler
 		ReportMissingHeartbeats bool
 		ThresholdMessages       int
 		ThresholdBytes          int
@@ -687,15 +687,15 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) error {
 }
 
 func (hb *hbMonitor) Stop() {
-	hb.Mutex.Lock()
+	hb.Lock()
 	hb.timer.Stop()
-	hb.Mutex.Unlock()
+	hb.Unlock()
 }
 
 func (hb *hbMonitor) Reset(dur time.Duration) {
-	hb.Mutex.Lock()
+	hb.Lock()
 	hb.timer.Reset(dur)
-	hb.Mutex.Unlock()
+	hb.Unlock()
 }
 
 // Stop unsubscribes from the stream and cancels subscription. Calling
@@ -1109,7 +1109,7 @@ func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
 		}
 	}
 	if consumeOpts.Heartbeat > consumeOpts.Expires/2 {
-		return errors.New("the value of Heartbeat must be less than 50%% of expiry")
+		return fmt.Errorf("%w: the value of Heartbeat must be less than 50%% of expiry", ErrInvalidOption)
 	}
 	return nil
 }
