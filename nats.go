@@ -5689,6 +5689,9 @@ func (nc *Conn) drainConnection() {
 //
 // See note in Subscription.Drain for JetStream subscriptions.
 func (nc *Conn) Drain() error {
+	if nc == nil {
+		return ErrInvalidConnection
+	}
 	nc.mu.Lock()
 	if nc.isClosed() {
 		nc.mu.Unlock()
