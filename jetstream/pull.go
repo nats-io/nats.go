@@ -292,6 +292,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			p.subs.Delete(sid)
 			sub.draining.CompareAndSwap(1, 0)
 			sub.Lock()
+			// If connection is closed, send error to error handler
+			if p.js.conn.IsClosed() && sub.consumeOpts.ErrHandler != nil {
+				sub.consumeOpts.ErrHandler(sub, ErrConnectionClosed)
+			}
 			if sub.closedCh != nil {
 				close(sub.closedCh)
 				sub.closedCh = nil
@@ -569,6 +573,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 	drainMode := s.draining.Load() == 1
 	closed := s.closed.Load() == 1
 	if closed && !drainMode {
+		// Check if iterator was closed due to connection closure
+		if s.consumer.js.conn.IsClosed() {
+			return nil, fmt.Errorf("%w: %w", ErrMsgIteratorClosed, ErrConnectionClosed)
+		}
 		return nil, ErrMsgIteratorClosed
 	}
 	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
@@ -592,6 +600,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
 				s.consumer.subs.Delete(s.id)
 				s.draining.CompareAndSwap(1, 0)
+				// Check if iterator was closed due to connection closure
+				if s.consumer.js.conn.IsClosed() {
+					return nil, fmt.Errorf("%w: %w", ErrMsgIteratorClosed, ErrConnectionClosed)
+				}
 				return nil, ErrMsgIteratorClosed
 			}
 			if hbMonitor != nil {

@@ -42,4 +42,7 @@ _testmain.go
 .idea
 
 # VS Code
-.vscode 
+.vscode
+
+# Claude Code instructions
+CLAUDE.md

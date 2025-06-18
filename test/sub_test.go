@@ -1771,6 +1771,72 @@ func TestMaxSubscriptionsExceeded(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+func TestClosedHandlerOnConnectionClose(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	closedHandlerCalled := make(chan struct{}, 1)
+
+	t.Run("subscribe", func(t *testing.T) {
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		sub, err := nc.Subscribe("test.subject", func(m *nats.Msg) {})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		sub.SetClosedHandler(func(subject string) {
+			closedHandlerCalled <- struct{}{}
+		})
+
+		nc.Close()
+
+		WaitOnChannel(t, closedHandlerCalled, struct{}{})
+	})
+
+	t.Run("chan subscribe", func(t *testing.T) {
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msgCh := make(chan *nats.Msg, 64)
+		sub, err := nc.ChanSubscribe("test.subject", msgCh)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		sub.SetClosedHandler(func(subject string) {
+			closedHandlerCalled <- struct{}{}
+		})
+
+		nc.Close()
+
+		WaitOnChannel(t, closedHandlerCalled, struct{}{})
+	})
+
+	t.Run("sync subscribe", func(t *testing.T) {
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		sub, err := nc.SubscribeSync("test.subject")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		sub.SetClosedHandler(func(subject string) {
+			closedHandlerCalled <- struct{}{}
+		})
+
+		nc.Close()
+
+		WaitOnChannel(t, closedHandlerCalled, struct{}{})
+	})
+}
+
+
 func TestSubscribeSyncPermissionError(t *testing.T) {
 	conf := createConfFile(t, []byte(`
 	listen: 127.0.0.1:-1
