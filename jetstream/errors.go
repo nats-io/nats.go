@@ -259,9 +259,13 @@ var (
 	// closed iterator.
 	ErrMsgIteratorClosed JetStreamError = &jsError{message: "messages iterator closed"}
 
-	// ErrConnectionClosed is returned when JetStream operations fail due to 
+	// ErrConnectionClosed is returned when JetStream operations fail due to
 	// underlying connection being closed.
 	ErrConnectionClosed JetStreamError = &jsError{message: "connection closed"}
+
+	// ErrServerShutdown is returned when pull request fails due to server
+	// shutdown.
+	ErrServerShutdown JetStreamError = &jsError{message: "server shutdown"}
 
 	// ErrOrderedConsumerReset is returned when resetting ordered consumer fails
 	// due to too many attempts.

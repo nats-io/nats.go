@@ -222,7 +222,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
-	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
+	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING, nats.CLOSED)
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 
@@ -292,10 +292,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			p.subs.Delete(sid)
 			sub.draining.CompareAndSwap(1, 0)
 			sub.Lock()
-			// If connection is closed, send error to error handler
-			if p.js.conn.IsClosed() && sub.consumeOpts.ErrHandler != nil {
-				sub.consumeOpts.ErrHandler(sub, ErrConnectionClosed)
-			}
 			if sub.closedCh != nil {
 				close(sub.closedCh)
 				sub.closedCh = nil
@@ -336,13 +332,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if !ok {
 					continue
 				}
-				if status == nats.RECONNECTING {
+				switch status {
+				case nats.RECONNECTING:
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Stop()
 					}
 					isConnected = false
-				}
-				if status == nats.CONNECTED {
+				case nats.CONNECTED:
 					sub.Lock()
 					if !isConnected {
 						isConnected = true
@@ -366,6 +362,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						sub.resetPendingMsgs()
 					}
 					sub.Unlock()
+
+				case nats.CLOSED:
+					sub.errs <- ErrConnectionClosed
 				}
 			case err := <-sub.errs:
 				sub.Lock()
@@ -393,6 +392,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					sub.resetPendingMsgs()
 				}
 				sub.Unlock()
+				if errors.Is(err, ErrConnectionClosed) {
+					sub.Stop()
+				}
 			case <-sub.done:
 				return
 			}

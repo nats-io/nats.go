@@ -3484,262 +3484,267 @@ func TestPullConsumerNext(t *testing.T) {
 	})
 }
 
-func TestPullConsumerMessagesConnClose(t *testing.T) {
-	// This test checks whether Next() returns an error when the connection is closed
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Create stream
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
-		Name:     "test-stream",
-		Subjects: []string{"test.>"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Create consumer
-	consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Name: "test-consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Get messages context
-	msgs, err := consumer.Messages()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Channel to receive the result from Next() call
-	errC := make(chan error, 1)
-
-	// Call Next() in a goroutine
-	go func() {
-		_, err := msgs.Next()
-		errC <- err
-	}()
-
-	// Give a moment for Next() to start waiting
-	time.Sleep(100 * time.Millisecond)
-
-	// Close the connection directly
-	nc.Close()
-
-	// Wait to see if Next() returns an error without calling Stop()
-	select {
-	case err := <-errC:
-		if err == nil {
-			t.Fatal("Expected Next() to return an error after connection closed")
+func TestPullConsumerConnectionClosed(t *testing.T) {
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-		// Should get ErrMsgIteratorClosed wrapped with ErrConnectionClosed
-		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-			t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-		if !errors.Is(err, jetstream.ErrConnectionClosed) {
-			t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Next() hung indefinitely after connection closed without calling Stop()")
-	}
-}
 
-func TestPullConsumerMessagesMaxReconnectsExceeded(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	nc, err := nats.Connect(srv.ClientURL(),
-		nats.MaxReconnects(3),
-		nats.ReconnectWait(10*time.Millisecond),
-	)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		msgs, err := consumer.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		errC := make(chan error, 1)
 
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
-		Name:     "test-stream",
-		Subjects: []string{"test.>"},
+		go func() {
+			_, err := msgs.Next()
+			errC <- err
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+			}
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Next() hung indefinitely after connection closed")
+		}
 	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
 
-	consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Name: "test-consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	msgs, err := consumer.Messages()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	errC := make(chan error, 1)
-
-	go func() {
-		_, err := msgs.Next()
-		errC <- err
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Shutdown server to trigger reconnection attempts
-	shutdownJSServerAndRemoveStorage(t, srv)
-
-	select {
-	case err := <-errC:
-		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-			t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-		if !errors.Is(err, jetstream.ErrConnectionClosed) {
-			t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Timeout waiting for Next() to return an error after server shutdown")
-	}
-}
 
-func TestPullConsumerConsumeConnClose(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
-	nc, err := nats.Connect(srv.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
-		Name:     "test-stream",
-		Subjects: []string{"test.>"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Name: "test-consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	errC := make(chan error, 1)
-
-	consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
-	}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
-		errC <- err
-	}))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer consumeCtx.Stop()
-
-	time.Sleep(100 * time.Millisecond)
-
-	nc.Close()
-
-	select {
-	case err := <-errC:
-		if !errors.Is(err, jetstream.ErrConnectionClosed) {
-			t.Fatalf("Expected ErrConnectionClosed, got: %v", err)
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	case <-consumeCtx.Closed():
-		// Closed channel was triggered, but check if we also got an error
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			errC <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer consumeCtx.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+
 		select {
 		case err := <-errC:
 			if !errors.Is(err, jetstream.ErrConnectionClosed) {
 				t.Fatalf("Expected ErrConnectionClosed, got: %v", err)
 			}
-		default:
-			t.Fatal("Consume was closed but no error was sent to error handler")
+			select {
+			case <-consumeCtx.Closed():
+			case <-time.After(3 * time.Second):
+				t.Fatal("Received error but Consume context was not closed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after connection closed")
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Consume did not return error after connection closed")
-	}
+	})
 }
 
-func TestPullConsumerConsumeMaxReconnectsExceeded(t *testing.T) {
-	srv := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, srv)
+func TestPullConsumerMaxReconnectsExceeded(t *testing.T) {
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
 
-	nc, err := nats.Connect(srv.ClientURL(),
-		nats.MaxReconnects(3),
-		nats.ReconnectWait(10*time.Millisecond),
-	)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	js, err := jetstream.New(nc)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
-		Name:     "test-stream",
-		Subjects: []string{"test.>"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Name: "test-consumer",
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	errC := make(chan error, 1)
-
-	consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
-	}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
-		errC <- err
-	}))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer consumeCtx.Stop()
-
-	time.Sleep(100 * time.Millisecond)
-
-	shutdownJSServerAndRemoveStorage(t, srv)
-
-	select {
-	case err := <-errC:
-		if err == nil {
-			t.Fatal("Expected Consume to return an error after reconnection attempts exhausted")
+		nc, err := nats.Connect(srv.ClientURL(),
+			nats.MaxReconnects(3),
+			nats.ReconnectWait(100*time.Millisecond),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Consume did not return error after reconnection attempts exhausted")
-	}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := consumer.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		go func() {
+			_, err := msgs.Next()
+			errC <- err
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+		shutdownJSServerAndRemoveStorage(t, srv)
+
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+			}
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("Next() hung after reconnection attempts exhausted")
+		}
+	})
+
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL(),
+			nats.MaxReconnects(3),
+			nats.ReconnectWait(100*time.Millisecond),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			errC <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer consumeCtx.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		shutdownJSServerAndRemoveStorage(t, srv)
+
+		// first, we should receive Server Shutdown error form server
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrServerShutdown) {
+				t.Fatalf("Expected error to contain ErrServerShutdown, got: %v", err)
+			}
+			// consume context should not be closed yet because client tries to reconnect
+			select {
+			case <-consumeCtx.Closed():
+				t.Fatalf("Consume context should not be closed after server shutdown error")
+			case <-time.After(100 * time.Millisecond):
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after server shutdown")
+		}
+
+		// now we should receive connection closed error after all reconnection attempts exhausted
+		// and consume context should be closed
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected ErrConnectionClosed, got: %v", err)
+			}
+			select {
+			case <-consumeCtx.Closed():
+			case <-time.After(3 * time.Second):
+				t.Fatal("Received error but Consume context was not closed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after connection closed")
+		}
+
+	})
 }

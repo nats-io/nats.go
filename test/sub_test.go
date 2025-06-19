@@ -1836,7 +1836,6 @@ func TestClosedHandlerOnConnectionClose(t *testing.T) {
 	})
 }
 
-
 func TestSubscribeSyncPermissionError(t *testing.T) {
 	conf := createConfFile(t, []byte(`
 	listen: 127.0.0.1:-1

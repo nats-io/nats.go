@@ -141,13 +141,13 @@ type (
 )
 
 const (
-	controlMsg       = "100"
-	badRequest       = "400"
-	noMessages       = "404"
-	reqTimeout       = "408"
-	maxBytesExceeded = "409"
-	noResponders     = "503"
-	pinIdMismatch    = "423"
+	controlMsg    = "100"
+	badRequest    = "400"
+	noMessages    = "404"
+	reqTimeout    = "408"
+	conflict      = "409"
+	noResponders  = "503"
+	pinIdMismatch = "423"
 )
 
 // Headers used when publishing messages.
@@ -424,7 +424,7 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		return false, nil
 	case pinIdMismatch:
 		return false, ErrPinIDMismatch
-	case maxBytesExceeded:
+	case conflict:
 		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
 			return false, ErrMaxBytesExceeded
 		}
@@ -436,6 +436,9 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 		}
 		if strings.Contains(strings.ToLower(descr), "leadership change") {
 			return false, ErrConsumerLeadershipChanged
+		}
+		if strings.Contains(strings.ToLower(descr), "server shutdown") {
+			return false, ErrServerShutdown
 		}
 	}
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))
