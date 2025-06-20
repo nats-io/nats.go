@@ -5509,6 +5509,14 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 			close(s.mch)
 		}
 		s.mch = nil
+
+		// Call closed handler for non-AsyncSubscription types (AsyncSubscription handlers
+		// are called by waitForMsgs when it exits)
+		var done func(string)
+		if s.typ != AsyncSubscription && s.pDone != nil {
+			done = s.pDone
+		}
+
 		// Mark as invalid, for signaling to waitForMsgs
 		s.closed = true
 		// Mark connection closed in subscription
@@ -5519,6 +5527,11 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		}
 
 		s.mu.Unlock()
+
+		// Call the closed handler outside the lock to avoid potential deadlocks
+		if done != nil {
+			done(s.Subject)
+		}
 	}
 	nc.subs = nil
 	nc.subsMu.Unlock()

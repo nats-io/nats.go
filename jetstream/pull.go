@@ -222,7 +222,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		fetchNext:   make(chan *pullRequest, 1),
 		consumeOpts: consumeOpts,
 	}
-	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
+	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING, nats.CLOSED)
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(consumeOpts.Heartbeat)
 
@@ -332,13 +332,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if !ok {
 					continue
 				}
-				if status == nats.RECONNECTING {
+				switch status {
+				case nats.RECONNECTING:
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Stop()
 					}
 					isConnected = false
-				}
-				if status == nats.CONNECTED {
+				case nats.CONNECTED:
 					sub.Lock()
 					if !isConnected {
 						isConnected = true
@@ -362,6 +362,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						sub.resetPendingMsgs()
 					}
 					sub.Unlock()
+
+				case nats.CLOSED:
+					sub.errs <- ErrConnectionClosed
 				}
 			case err := <-sub.errs:
 				sub.Lock()
@@ -389,6 +392,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					sub.resetPendingMsgs()
 				}
 				sub.Unlock()
+				if errors.Is(err, ErrConnectionClosed) {
+					sub.Stop()
+				}
 			case <-sub.done:
 				return
 			}
@@ -569,6 +575,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 	drainMode := s.draining.Load() == 1
 	closed := s.closed.Load() == 1
 	if closed && !drainMode {
+		// Check if iterator was closed due to connection closure
+		if s.consumer.js.conn.IsClosed() {
+			return nil, fmt.Errorf("%w: %w", ErrMsgIteratorClosed, ErrConnectionClosed)
+		}
 		return nil, ErrMsgIteratorClosed
 	}
 	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
@@ -592,6 +602,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
 				s.consumer.subs.Delete(s.id)
 				s.draining.CompareAndSwap(1, 0)
+				// Check if iterator was closed due to connection closure
+				if s.consumer.js.conn.IsClosed() {
+					return nil, fmt.Errorf("%w: %w", ErrMsgIteratorClosed, ErrConnectionClosed)
+				}
 				return nil, ErrMsgIteratorClosed
 			}
 			if hbMonitor != nil {
