@@ -2121,3 +2121,57 @@ func TestOrderedConsumerConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestOrderedConsumerCloseConn(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	consumer, err := s.OrderedConsumer(context.Background(), jetstream.OrderedConsumerConfig{})
+	if err != nil {
+		t.Fatalf("Failed to create ordered consumer: %v", err)
+	}
+
+	gotConnClosedErr := make(chan struct{})
+
+	time.AfterFunc(500*time.Millisecond, func() {
+		nc.Close()
+	})
+
+	oc, err := consumer.Consume(func(msg jetstream.Msg) {
+	}, jetstream.ConsumeErrHandler(func(consumeCtx jetstream.ConsumeContext, err error) {
+		if errors.Is(err, jetstream.ErrConnectionClosed) {
+			close(gotConnClosedErr)
+		}
+	}))
+	if err != nil {
+		t.Fatalf("Failed to consume: %v", err)
+	}
+
+	select {
+	case <-gotConnClosedErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for connection closed error")
+	}
+
+	select {
+	case <-oc.Closed():
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Timeout waiting for close")
+	}
+}
