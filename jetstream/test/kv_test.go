@@ -2032,3 +2032,87 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 		}
 	})
 }
+
+func TestKeyValueListKeysDuplicates(t *testing.T) {
+	listKeysF := func(kv jetstream.KeyValue) ([]string, error) {
+		t.Helper()
+		lister, err := kv.ListKeys(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("error listing keys: %v", err)
+		}
+		var keys []string
+		for key := range lister.Keys() {
+			keys = append(keys, key)
+		}
+		return keys, nil
+	}
+
+	keysF := func(kv jetstream.KeyValue) ([]string, error) {
+		t.Helper()
+		return kv.Keys(context.Background())
+	}
+
+	for _, test := range []string{"ListKeys", "Keys"} {
+		t.Run(test, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			ctx := context.Background()
+			kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST_KV", History: 5})
+			if err != nil {
+				t.Fatalf("Error creating KV: %v", err)
+			}
+
+			for i := range 10 {
+				key := fmt.Sprintf("key_%d", i)
+				if _, err := kv.PutString(ctx, key, "initial"); err != nil {
+					t.Fatalf("Error putting key %s: %v", key, err)
+				}
+			}
+
+			done := make(chan bool)
+			go func() {
+				// Continuously update existing keys
+				for {
+					select {
+					case <-done:
+						return
+					default:
+						for i := range 5 {
+							key := fmt.Sprintf("key_%d", i)
+							if _, err := kv.PutString(ctx, key, "updated"); err != nil {
+								t.Logf("Error updating key %s: %v", key, err)
+							}
+						}
+					}
+				}
+			}()
+
+			// List keys multiple times while updates are happening
+			for range 20 {
+				var keys []string
+				if test == "Keys" {
+					keys, err = keysF(kv)
+				} else {
+					keys, err = listKeysF(kv)
+				}
+				if err != nil {
+					t.Fatalf("Error getting keys: %v", err)
+				}
+
+				seen := make(map[string]struct{})
+				for _, key := range keys {
+					if _, exists := seen[key]; exists {
+						t.Fatalf("Duplicate key found: %s", key)
+					}
+					seen[key] = struct{}{}
+				}
+			}
+
+			close(done)
+		})
+	}
+}
