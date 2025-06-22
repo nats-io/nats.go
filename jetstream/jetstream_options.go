@@ -31,7 +31,7 @@ func (fn pullOptFunc) configureMessages(opts *consumeOpts) error {
 // WithClientTrace enables request/response API calls tracing.
 func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 	return func(opts *JetStreamOptions) error {
-		opts.clientTrace = ct
+		opts.ClientTrace = ct
 		return nil
 	}
 }

@@ -188,10 +188,20 @@ func TestJetStreamOptionsReadOnly(t *testing.T) {
 	}
 	defer nc.Close()
 
-	js, err := jetstream.New(nc)
+	// Test with ClientTrace
+	var originalCalled bool
+	clientTrace := &jetstream.ClientTrace{
+		RequestSent: func(subj string, payload []byte) {
+			originalCalled = true
+		},
+	}
+
+	js, err := jetstream.New(nc, jetstream.WithClientTrace(clientTrace))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+
+	// Test that modifying basic options doesn't affect the original
 	opts := js.Options()
 	opts.APIPrefix = "foo"
 	opts.Domain = "bar"
@@ -202,6 +212,32 @@ func TestJetStreamOptionsReadOnly(t *testing.T) {
 	}
 	if opts.Domain != "" {
 		t.Fatalf("Invalid domain; want: %v, got: %v", "", opts.Domain)
+	}
+
+	if opts.ClientTrace == nil {
+		t.Fatal("Expected ClientTrace to be set in Options()")
+	}
+	if opts.ClientTrace == clientTrace {
+		t.Fatal("ClientTrace should be a copy, not the same instance")
+	}
+
+	var modifiedCalled bool
+	opts.ClientTrace.RequestSent = func(subj string, payload []byte) {
+		modifiedCalled = true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "test", Subjects: []string{"test.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !originalCalled {
+		t.Fatal("Original callback should have been called")
+	}
+	if modifiedCalled {
+		t.Fatal("Modified callback should not have been called")
 	}
 }
 
@@ -216,14 +252,15 @@ func TestWithClientTrace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var sent, received string
-	js, err := jetstream.New(nc, jetstream.WithClientTrace(&jetstream.ClientTrace{
+	clientTrace := &jetstream.ClientTrace{
 		RequestSent: func(subj string, _ []byte) {
 			sent = fmt.Sprintf("Request sent: %s", subj)
 		},
 		ResponseReceived: func(subj string, _ []byte, _ nats.Header) {
 			received = fmt.Sprintf("Response received: %s", subj)
 		},
-	}))
+	}
+	js, err := jetstream.New(nc, jetstream.WithClientTrace(clientTrace))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
