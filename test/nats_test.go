@@ -336,6 +336,28 @@ func TestUserJWTAndSeed(t *testing.T) {
 	nc.Close()
 }
 
+func TestUserCredentialBytes(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	// Test with JWT and seed as byte slices
+	jwtBytes := []byte(uJWT)
+	seedBytes := uSeed
+
+	nc, err := nats.Connect(ts.ClientURL(), nats.UserCredentialBytes(jwtBytes, seedBytes))
+	if err != nil {
+		t.Fatalf("Expected to connect with separate JWT and seed bytes, got %v", err)
+	}
+	nc.Close()
+
+	// Test with chained credentials (JWT and seed in same byte slice)
+	nc2, err := nats.Connect(ts.ClientURL(), nats.UserCredentialBytes([]byte(chained)))
+	if err != nil {
+		t.Fatalf("Expected to connect with chained credentials bytes, got %v", err)
+	}
+	nc2.Close()
+}
+
 // If we are using TLS and have multiple servers we try to match the IP
 // from a discovered server with the expected hostname for certs without IP
 // designations. In certain cases where there is a not authorized error and
