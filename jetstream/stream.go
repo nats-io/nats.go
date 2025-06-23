@@ -138,7 +138,7 @@ type (
 	StreamInfoOpt func(*streamInfoRequest) error
 
 	streamInfoRequest struct {
-		apiPaged
+		apiPagedRequest
 		DeletedDetails bool   `json:"deleted_details,omitempty"`
 		SubjectFilter  string `json:"subjects_filter,omitempty"`
 	}
