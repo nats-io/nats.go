@@ -1247,6 +1247,35 @@ func UserCredentials(userOrChainedFile string, seedFiles ...string) Option {
 	return UserJWT(userCB, sigCB)
 }
 
+// UserCredentialBytes is a convenience function that takes the JWT and seed
+// values as byte slices. This allows passing credentials directly from memory
+// or environment variables without needing to write them to disk.
+func UserCredentialBytes(userOrChainedFileBytes []byte, seedFiles ...[]byte) Option {
+	userCB := func() (string, error) {
+		return nkeys.ParseDecoratedJWT(userOrChainedFileBytes)
+	}
+
+	var seedBytes []byte
+	if len(seedFiles) > 0 {
+		seedBytes = seedFiles[0]
+	} else {
+		seedBytes = userOrChainedFileBytes
+	}
+
+	sigCB := func(nonce []byte) ([]byte, error) {
+		kp, err := nkeys.ParseDecoratedNKey(seedBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unable to extract key pair from bytes: %w", err)
+		}
+		defer kp.Wipe()
+
+		sig, _ := kp.Sign(nonce)
+		return sig, nil
+	}
+
+	return UserJWT(userCB, sigCB)
+}
+
 // UserJWTAndSeed is a convenience function that takes the JWT and seed
 // values as strings.
 func UserJWTAndSeed(jwt string, seed string) Option {
