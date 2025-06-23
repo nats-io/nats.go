@@ -315,6 +315,9 @@ type (
 		// a deadline set.
 		DefaultTimeout time.Duration
 
+		// ClientTrace enables request/response API calls tracing.
+		ClientTrace *ClientTrace
+
 		publisherOpts asyncPublisherOpts
 
 		// this is the actual prefix used in the API requests
@@ -322,7 +325,6 @@ type (
 		apiPrefix      string
 		replyPrefix    string
 		replyPrefixLen int
-		clientTrace    *ClientTrace
 	}
 
 	// ClientTrace can be used to trace API interactions for [JetStream].
@@ -528,7 +530,13 @@ func (js *jetStream) Conn() *nats.Conn {
 }
 
 func (js *jetStream) Options() JetStreamOptions {
-	return js.opts
+	opts := js.opts
+	// Return a copy of ClientTrace to prevent modification
+	if opts.ClientTrace != nil {
+		clientTraceCopy := *opts.ClientTrace
+		opts.ClientTrace = &clientTraceCopy
+	}
+	return opts
 }
 
 // CreateStream creates a new stream with given config and returns an

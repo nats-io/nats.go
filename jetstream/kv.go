@@ -834,10 +834,10 @@ func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 	if js.opts.apiPrefix != "" {
 		opts = append(opts, nats.APIPrefix(js.opts.apiPrefix))
 	}
-	if js.opts.clientTrace != nil {
+	if js.opts.ClientTrace != nil {
 		opts = append(opts, nats.ClientTrace{
-			RequestSent:      js.opts.clientTrace.RequestSent,
-			ResponseReceived: js.opts.clientTrace.ResponseReceived,
+			RequestSent:      js.opts.ClientTrace.RequestSent,
+			ResponseReceived: js.opts.ClientTrace.ResponseReceived,
 		})
 	}
 	return js.conn.JetStream(opts...)
