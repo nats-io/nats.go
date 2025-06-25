@@ -123,6 +123,15 @@ func WithGetMsgSubject(subject string) GetMsgOpt {
 	}
 }
 
+// WithMinLastSequence sets the minimum last sequence that the stream on the
+// server that's responding must have.
+func WithMinLastSequence(seq uint64) GetMsgOpt {
+	return func(req *apiMsgGetRequest) error {
+		req.MinLastSeq = seq
+		return nil
+	}
+}
+
 // PullMaxMessages limits the number of messages to be buffered in the client.
 // If not provided, a default of 500 messages will be used.
 // This option is exclusive with PullMaxBytes.

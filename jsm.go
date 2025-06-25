@@ -1199,9 +1199,10 @@ func (js *js) DeleteStream(name string, opts ...JSOpt) error {
 }
 
 type apiMsgGetRequest struct {
-	Seq     uint64 `json:"seq,omitempty"`
-	LastFor string `json:"last_by_subj,omitempty"`
-	NextFor string `json:"next_by_subj,omitempty"`
+	Seq        uint64 `json:"seq,omitempty"`
+	LastFor    string `json:"last_by_subj,omitempty"`
+	NextFor    string `json:"next_by_subj,omitempty"`
+	MinLastSeq uint64 `json:"min_last_seq,omitempty"`
 }
 
 // RawStreamMsg is a raw message stored in JetStream.
@@ -1252,11 +1253,23 @@ func (js *js) getMsg(name string, mreq *apiMsgGetRequest, opts ...JSOpt) (*RawSt
 		return nil, err
 	}
 
+	// If specified, set on the request object.
+	if o.minLastSeq > 0 {
+		mreq.MinLastSeq = o.minLastSeq
+	}
+
 	var apiSubj string
 	if o.directGet && mreq.LastFor != _EMPTY_ {
 		apiSubj = apiDirectMsgGetLastBySubjectT
 		dsSubj := js.apiSubj(fmt.Sprintf(apiSubj, name, mreq.LastFor))
-		r, err := js.apiRequestWithContext(o.ctx, dsSubj, nil)
+		var req []byte
+		if mreq.MinLastSeq > 0 {
+			req, err = json.Marshal(apiMsgGetRequest{MinLastSeq: mreq.MinLastSeq})
+			if err != nil {
+				return nil, err
+			}
+		}
+		r, err := js.apiRequestWithContext(o.ctx, dsSubj, req)
 		if err != nil {
 			return nil, err
 		}
@@ -1330,6 +1343,8 @@ func convertDirectGetMsgResponseToMsg(name string, r *Msg) (*RawStreamMsg, error
 				desc := r.Header.Get(descrHdr)
 				if desc == _EMPTY_ {
 					desc = "unable to get message"
+				} else if desc == "Min Last Sequence" {
+					return nil, ErrMinLastSeq
 				}
 				return nil, fmt.Errorf("nats: %s", desc)
 			}

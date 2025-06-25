@@ -290,6 +290,8 @@ type jsOpts struct {
 	directGet bool
 	// For direct get next message
 	directNextFor string
+	// For direct and msg get requests, denotes the minimum last sequence the stream should have.
+	minLastSeq uint64
 
 	// featureFlags are used to enable/disable specific JetStream features
 	featureFlags featureFlags
@@ -432,6 +434,19 @@ func DirectGetNext(subject string) JSOpt {
 		js.directNextFor = subject
 		return nil
 	})
+}
+
+// MinLastSequence sets the minimum last sequence required for the underlying stream.
+type MinLastSequence uint64
+
+func (seq MinLastSequence) configureJSContext(js *jsOpts) error {
+	js.minLastSeq = uint64(seq)
+	return nil
+}
+
+func (seq MinLastSequence) configureSubscribe(opts *subOpts) error {
+	opts.minLastSeq = uint64(seq)
+	return nil
 }
 
 // StreamListFilter is an option that can be used to configure `StreamsInfo()` and `StreamNames()` requests.
@@ -1357,6 +1372,8 @@ type ConsumerConfig struct {
 	Replicas int `json:"num_replicas"`
 	// Force memory storage.
 	MemoryStorage bool `json:"mem_storage,omitempty"`
+	// Force the consumer to only deliver messages if the stream has at minimum this specified last sequence.
+	MinLastSeq uint64 `json:"min_last_seq,omitempty"`
 
 	// Metadata is additional metadata for the Consumer.
 	// Keys starting with `_nats` are reserved.
@@ -1692,6 +1709,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// If no stream name is specified, the subject cannot be empty.
 	if subj == _EMPTY_ && o.stream == _EMPTY_ {
 		return nil, errors.New("nats: subject required")
+	}
+
+	// Messages will not be delivered until the minimum last sequence is reached.
+	if o.minLastSeq > 0 {
+		cfg.MinLastSeq = o.minLastSeq
 	}
 
 	// Note that these may change based on the consumer info response we may get.
@@ -2474,6 +2496,8 @@ type subOpts struct {
 	// For an ordered consumer.
 	ordered bool
 	ctx     context.Context
+	// For minimum last sequence the stream should have.
+	minLastSeq uint64
 
 	// To disable calling ConsumerInfo
 	skipCInfo bool

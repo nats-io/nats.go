@@ -529,6 +529,68 @@ func TestConsumerOverflow(t *testing.T) {
 	})
 }
 
+func TestConsumerMinLastSequence(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST", Subjects: []string{"foo"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{MinLastSeq: 2})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish(ctx, "foo", nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msgs, err := c.Fetch(2, jetstream.FetchMaxWait(time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	select {
+	case <-msgs.Messages():
+		t.Fatal("Expected timeout")
+	case <-time.After(time.Second):
+		break
+	}
+
+	_, err = js.Publish(ctx, "foo", nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msgs, err = c.Fetch(2, jetstream.FetchMaxWait(time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var count int
+	for range msgs.Messages() {
+		count++
+	}
+	if count != 2 {
+		t.Fatalf("Unexpected number of messages: %d", count)
+	}
+}
+
 func TestConsumerPinned(t *testing.T) {
 	t.Run("messages", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()

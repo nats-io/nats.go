@@ -111,6 +111,12 @@ func TestKeyValueBasics(t *testing.T) {
 	if si == nil {
 		t.Fatalf("StreamInfo not received")
 	}
+
+	// Min last revision.
+	_, err = kv.Get(ctx, "name", jetstream.MinLastRevision(1_000))
+	expectErr(t, err, jetstream.ErrMinLastRevision)
+	_, err = kv.GetRevision(ctx, "name", 1, jetstream.MinLastRevision(1_000))
+	expectErr(t, err, jetstream.ErrMinLastRevision)
 }
 
 func TestCreateKeyValue(t *testing.T) {
@@ -643,6 +649,41 @@ func TestKeyValueWatch(t *testing.T) {
 			}
 		case <-time.After(100 * time.Millisecond):
 			break
+		}
+	})
+	t.Run("watcher with min last sequence", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		_, err = kv.Create(ctx, "name", []byte("value"))
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll(ctx, jetstream.MinLastRevision(2))
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		select {
+		case <-watcher.Updates():
+			t.Fatalf("Expected no updates")
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+
+		_, err = kv.Put(ctx, "name", []byte("value"))
+		expectOk(t, err)
+		select {
+		case <-watcher.Updates():
+			break
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("Expected to receive an update")
 		}
 	})
 }

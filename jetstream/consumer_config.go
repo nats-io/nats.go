@@ -229,6 +229,10 @@ type (
 		// rather than inherit the storage type from the stream.
 		MemoryStorage bool `json:"mem_storage,omitempty"`
 
+		// MinLastSeq forces the consumer to only deliver messages if the stream
+		// has at minimum this specified last sequence.
+		MinLastSeq uint64 `json:"min_last_seq,omitempty"`
+
 		// FilterSubjects allows filtering messages from a stream by subject.
 		// This field is exclusive with FilterSubject. Requires nats-server
 		// v2.10.0 or later.

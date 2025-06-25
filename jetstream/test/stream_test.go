@@ -905,6 +905,26 @@ func TestGetMsg(t *testing.T) {
 				}
 			}
 		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false, min last sequence"), func(t *testing.T) {
+			test.opts = append(test.opts, jetstream.WithMinLastSequence(1_000))
+			_, err := s1.GetMsg(ctx, test.seq, test.opts...)
+			if test.withError != nil && errors.Is(err, test.withError) {
+				return
+			}
+			if !errors.Is(err, jetstream.ErrMinLastSeq) {
+				t.Errorf("Expected min last sequence error, got %v", err)
+			}
+		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: true, min last sequence"), func(t *testing.T) {
+			test.opts = append(test.opts, jetstream.WithMinLastSequence(1_000))
+			_, err := s2.GetMsg(ctx, test.seq, test.opts...)
+			if test.withError != nil && errors.Is(err, test.withError) {
+				return
+			}
+			if !errors.Is(err, jetstream.ErrMinLastSeq) {
+				t.Errorf("Expected min last sequence error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -1027,6 +1047,24 @@ func TestGetLastMsgForSubject(t *testing.T) {
 			}
 			if string(msg.Data) != test.expectedData {
 				t.Fatalf("Invalid message data; want: %s; got: %s", test.expectedData, string(msg.Data))
+			}
+		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: false, min last sequence"), func(t *testing.T) {
+			_, err := s1.GetLastMsgForSubject(ctx, test.subject, jetstream.WithMinLastSequence(1_000))
+			if test.withError != nil && errors.Is(err, test.withError) {
+				return
+			}
+			if !errors.Is(err, jetstream.ErrMinLastSeq) {
+				t.Errorf("Expected min last sequence error, got %v", err)
+			}
+		})
+		t.Run(fmt.Sprintf("%s - %s", test.name, "allow direct: true, min last sequence"), func(t *testing.T) {
+			_, err := s2.GetLastMsgForSubject(ctx, test.subject, jetstream.WithMinLastSequence(1_000))
+			if test.withError != nil && errors.Is(err, test.withError) {
+				return
+			}
+			if !errors.Is(err, jetstream.ErrMinLastSeq) {
+				t.Errorf("Expected min last sequence error, got %v", err)
 			}
 		})
 	}

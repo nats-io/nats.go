@@ -74,6 +74,19 @@ func ResumeFromRevision(revision uint64) WatchOpt {
 	})
 }
 
+// MinLastRevision sets the minimum last revision required for the underlying KV.
+type MinLastRevision uint64
+
+func (revision MinLastRevision) configureGet(opts *getOpts) error {
+	opts.minLastRevision = uint64(revision)
+	return nil
+}
+
+func (revision MinLastRevision) configureWatcher(opts *watchOpts) error {
+	opts.minLastRevision = uint64(revision)
+	return nil
+}
+
 // DeleteMarkersOlderThan indicates that delete or purge markers older than that
 // will be deleted as part of [KeyValue.PurgeDeletes] operation, otherwise, only the data
 // will be removed but markers that are recent will be kept.

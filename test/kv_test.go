@@ -57,6 +57,15 @@ func TestKeyValueBasics(t *testing.T) {
 	if e.Revision() != 1 {
 		t.Fatalf("Expected 1 for the revision, got %d", e.Revision())
 	}
+	// Get with min last revision
+	e, err = kv.Get("name", nats.MinLastRevision(r))
+	expectOk(t, err)
+	if string(e.Value()) != "derek" {
+		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "derek")
+	}
+	if e.Revision() != 1 {
+		t.Fatalf("Expected 1 for the revision, got %d", e.Revision())
+	}
 
 	// Delete
 	err = kv.Delete("name")
@@ -481,6 +490,40 @@ func TestKeyValueWatch(t *testing.T) {
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Fatalf("Stop watcher did not return")
+		}
+	})
+
+	t.Run("watcher with min last sequence", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		_, err = kv.Create("name", []byte("value"))
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll(nats.MinLastRevision(2))
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		select {
+		case <-watcher.Updates():
+			t.Fatalf("Expected no updates")
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+
+		_, err = kv.Put("name", []byte("value"))
+		expectOk(t, err)
+		select {
+		case <-watcher.Updates():
+			break
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("Expected to receive an update")
 		}
 	})
 }
@@ -1389,11 +1432,17 @@ func TestKeyValueNonDirectGet(t *testing.T) {
 	if v, err := kvi.Get("key2"); err != nil || string(v.Value()) != "val2" {
 		t.Fatalf("Error on get: v=%+v err=%v", v, err)
 	}
+	if _, err := kvi.Get("key1", nats.MinLastRevision(1_000)); !errors.Is(err, nats.ErrMinLastRevision) {
+		t.Fatalf("Expected error, got %v", err)
+	}
 	if v, err := kvi.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
 		t.Fatalf("Error on get revision: v=%+v err=%v", v, err)
 	}
 	if v, err := kvi.GetRevision("key1", 2); err == nil {
 		t.Fatalf("Expected error, got %+v", v)
+	}
+	if _, err := kvi.GetRevision("key1", 1, nats.MinLastRevision(1_000)); !errors.Is(err, nats.ErrMinLastRevision) {
+		t.Fatalf("Expected error, got %v", err)
 	}
 }
 

@@ -91,12 +91,12 @@ type (
 	KeyValue interface {
 		// Get returns the latest value for the key. If the key does not exist,
 		// ErrKeyNotFound will be returned.
-		Get(ctx context.Context, key string) (KeyValueEntry, error)
+		Get(ctx context.Context, key string, opts ...KVGetOpt) (KeyValueEntry, error)
 
 		// GetRevision returns a specific revision value for the key. If the key
 		// does not exist or the provided revision does not exists,
 		// ErrKeyNotFound will be returned.
-		GetRevision(ctx context.Context, key string, revision uint64) (KeyValueEntry, error)
+		GetRevision(ctx context.Context, key string, revision uint64, opts ...KVGetOpt) (KeyValueEntry, error)
 
 		// Put will place the new value for the key into the store. If the key
 		// does not exist, it will be created. If the key exists, the value will
@@ -370,6 +370,8 @@ type (
 		metaOnly bool
 		// resumeFromRevision is the revision to resume from.
 		resumeFromRevision uint64
+		// minLastRevision is the minimum last revision of the KV before receiving messages.
+		minLastRevision uint64
 	}
 
 	// KVDeleteOpt is used to configure delete and purge operations.
@@ -386,6 +388,15 @@ type (
 
 		// purge ttl
 		ttl time.Duration
+	}
+
+	// KVGetOpt is used to configure Get.
+	KVGetOpt interface {
+		configureGet(opts *getOpts) error
+	}
+
+	getOpts struct {
+		minLastRevision uint64 // Minimum last revision of the KV
 	}
 
 	// KVCreateOpt is used to configure Create.
@@ -864,9 +875,18 @@ func searchKeyValid(key string) bool {
 	return validSearchKeyRe.MatchString(key)
 }
 
-func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
+func (kv *kvs) get(ctx context.Context, key string, revision uint64, opts ...KVGetOpt) (KeyValueEntry, error) {
 	if !keyValid(key) {
 		return nil, ErrInvalidKey
+	}
+
+	var o getOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureGet(&o); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	var b strings.Builder
@@ -876,10 +896,15 @@ func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEn
 	var m *RawStreamMsg
 	var err error
 
+	var getMsgOpts []GetMsgOpt
+	if o.minLastRevision > 0 {
+		getMsgOpts = append(getMsgOpts, WithMinLastSequence(o.minLastRevision))
+	}
+
 	if revision == kvLatestRevision {
-		m, err = kv.stream.GetLastMsgForSubject(ctx, b.String())
+		m, err = kv.stream.GetLastMsgForSubject(ctx, b.String(), getMsgOpts...)
 	} else {
-		m, err = kv.stream.GetMsg(ctx, revision)
+		m, err = kv.stream.GetMsg(ctx, revision, getMsgOpts...)
 		// If a sequence was provided, just make sure that the retrieved
 		// message subject matches the request.
 		if err == nil && m.Subject != b.String() {
@@ -889,6 +914,9 @@ func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEn
 	if err != nil {
 		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrKeyNotFound
+		}
+		if errors.Is(err, ErrMinLastSeq) {
+			err = ErrMinLastRevision
 		}
 		return nil, err
 	}
@@ -946,8 +974,8 @@ func (e *kve) Delta() uint64         { return e.delta }
 func (e *kve) Operation() KeyValueOp { return e.op }
 
 // Get returns the latest value for the key.
-func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
-	e, err := kv.get(ctx, key, kvLatestRevision)
+func (kv *kvs) Get(ctx context.Context, key string, opts ...KVGetOpt) (KeyValueEntry, error) {
+	e, err := kv.get(ctx, key, kvLatestRevision, opts...)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
@@ -959,8 +987,8 @@ func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
 }
 
 // GetRevision returns a specific revision value for the key.
-func (kv *kvs) GetRevision(ctx context.Context, key string, revision uint64) (KeyValueEntry, error) {
-	e, err := kv.get(ctx, key, revision)
+func (kv *kvs) GetRevision(ctx context.Context, key string, revision uint64, opts ...KVGetOpt) (KeyValueEntry, error) {
+	e, err := kv.get(ctx, key, revision, opts...)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
@@ -1255,6 +1283,9 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 	}
 	if o.resumeFromRevision > 0 {
 		subOpts = append(subOpts, nats.StartSequence(o.resumeFromRevision))
+	}
+	if o.minLastRevision > 0 {
+		subOpts = append(subOpts, nats.MinLastSequence(o.minLastRevision))
 	}
 	subOpts = append(subOpts, nats.Context(ctx))
 	// Create the sub and rest of initialization under the lock.

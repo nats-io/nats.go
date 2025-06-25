@@ -1072,6 +1072,52 @@ func TestJetStreamSubscribe(t *testing.T) {
 	}
 }
 
+func TestJetStreamSubscribeMinLastSequence(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	// Create the stream using our client API.
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish("foo", nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "", nats.MinLastSequence(2))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Drain()
+
+	_, err = sub.Fetch(2, nats.MaxWait(time.Second))
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatalf("Expected timeout: %v", err)
+	}
+
+	_, err = js.Publish("foo", nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msgs, err := sub.Fetch(2, nats.MaxWait(time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("Unexpected number of messages: %d", len(msgs))
+	}
+}
+
 func TestJetStreamSubscribe_SkipConsumerLookup(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -4031,6 +4077,13 @@ func testJetStreamManagement_GetMsg(t *testing.T, srvs ...*jsServer) {
 		}
 		if !reflect.DeepEqual(msg.Header, nats.Header(expectedMap)) {
 			t.Errorf("Expected %v, got: %v", expectedMap, msg.Header)
+		}
+	})
+
+	t.Run("get message with min last seq", func(t *testing.T) {
+		_, err := js.GetMsg("foo", 1, nats.MinLastSequence(1_000))
+		if !errors.Is(err, nats.ErrMinLastSeq) {
+			t.Errorf("Expected min last sequence error, got %v", err)
 		}
 	})
 }
@@ -9960,6 +10013,12 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	}
 	if string(r.Data) != "d" {
 		t.Fatalf("expected data to be 'd', got: %v", string(r.Data))
+	}
+
+	// Test direct get by subject with min last sequence.
+	_, err = js.GetLastMsg("DGM", "bar", nats.DirectGet(), nats.MinLastSequence(1_000))
+	if !errors.Is(err, nats.ErrMinLastSeq) {
+		t.Fatalf("Expected min last sequence error, got %v", err)
 	}
 }
 

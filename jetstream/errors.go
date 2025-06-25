@@ -64,6 +64,7 @@ const (
 	JSErrCodeBadRequest ErrorCode = 10003
 
 	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
+	JSErrCodeStreamMinLastSequence   ErrorCode = 10168
 )
 
 var (
@@ -147,6 +148,9 @@ var (
 
 	// ErrEmptyFilter is returned when a filter in FilterSubjects is empty.
 	ErrEmptyFilter JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerEmptyFilter, Description: "consumer filter in FilterSubjects cannot be empty", Code: 500}}
+
+	// ErrMinLastSeq is returned during a get request and the stream doesn't have the required minimum last sequence.
+	ErrMinLastSeq JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamMinLastSequence, Code: 412}, message: "min last sequence"}
 
 	// Client errors
 
@@ -330,6 +334,9 @@ var (
 	// ErrKeyDeleted is returned when attempting to access a key that was
 	// deleted.
 	ErrKeyDeleted JetStreamError = &jsError{message: "key was deleted"}
+
+	// ErrMinLastRevision is returned during a get request and the KV doesn't have the required minimum last revision.
+	ErrMinLastRevision JetStreamError = &jsError{message: "min last revision"}
 
 	// ErrHistoryToLarge is returned when provided history limit is larger than
 	// 64.

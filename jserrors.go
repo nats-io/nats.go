@@ -75,6 +75,9 @@ var (
 	// ErrEmptyFilter is returned when a filter in FilterSubjects is empty.
 	ErrEmptyFilter JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerEmptyFilter, Description: "consumer filter in FilterSubjects cannot be empty", Code: 500}}
 
+	// ErrMinLastSeq is returned during a get request and the stream doesn't have the required minimum last sequence.
+	ErrMinLastSeq JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMinLastSeq, Description: "min last sequence", Code: 412}}
+
 	// Client errors
 
 	// ErrConsumerNameAlreadyInUse is an error returned when consumer with given name already exists.
@@ -190,6 +193,7 @@ const (
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
 
 	JSErrCodeMessageNotFound ErrorCode = 10037
+	JSErrCodeMinLastSeq      ErrorCode = 10168
 
 	JSErrCodeBadRequest   ErrorCode = 10003
 	JSStreamInvalidConfig ErrorCode = 10052

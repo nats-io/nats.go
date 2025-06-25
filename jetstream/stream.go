@@ -48,8 +48,8 @@ type (
 		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
 
 		// GetLastMsgForSubject retrieves the last raw stream message stored in
-		// JetStream on a given subject subject.
-		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
+		// JetStream on a given subject.
+		GetLastMsgForSubject(ctx context.Context, subject string, opts ...GetMsgOpt) (*RawStreamMsg, error)
 
 		// DeleteMsg deletes a message from a stream.
 		// On the server, the message is marked as erased, but not overwritten.
@@ -195,9 +195,10 @@ type (
 	GetMsgOpt func(*apiMsgGetRequest) error
 
 	apiMsgGetRequest struct {
-		Seq     uint64 `json:"seq,omitempty"`
-		LastFor string `json:"last_by_subj,omitempty"`
-		NextFor string `json:"next_by_subj,omitempty"`
+		Seq        uint64 `json:"seq,omitempty"`
+		LastFor    string `json:"last_by_subj,omitempty"`
+		NextFor    string `json:"next_by_subj,omitempty"`
+		MinLastSeq uint64 `json:"min_last_seq,omitempty"`
 	}
 
 	// apiMsgGetResponse is the response for a Stream get request.
@@ -459,9 +460,15 @@ func (s *stream) GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*Ra
 }
 
 // GetLastMsgForSubject retrieves the last raw stream message stored in
-// JetStream on a given subject subject.
-func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error) {
-	return s.getMsg(ctx, &apiMsgGetRequest{LastFor: subject})
+// JetStream on a given subject.
+func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string, opts ...GetMsgOpt) (*RawStreamMsg, error) {
+	req := &apiMsgGetRequest{LastFor: subject}
+	for _, opt := range opts {
+		if err := opt(req); err != nil {
+			return nil, err
+		}
+	}
+	return s.getMsg(ctx, req)
 }
 
 func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStreamMsg, error) {
@@ -479,7 +486,14 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	if s.info.Config.AllowDirect {
 		if mreq.LastFor != "" {
 			gmSubj = fmt.Sprintf(apiDirectMsgGetLastBySubjectT, s.name, mreq.LastFor)
-			r, err := s.js.apiRequest(ctx, gmSubj, nil)
+			req = nil
+			if mreq.MinLastSeq > 0 {
+				req, err = json.Marshal(apiMsgGetRequest{MinLastSeq: mreq.MinLastSeq})
+				if err != nil {
+					return nil, err
+				}
+			}
+			r, err := s.js.apiRequest(ctx, gmSubj, req)
 			if err != nil {
 				return nil, err
 			}
@@ -503,6 +517,9 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	if resp.Error != nil {
 		if resp.Error.ErrorCode == JSErrCodeMessageNotFound {
 			return nil, ErrMsgNotFound
+		}
+		if resp.Error.ErrorCode == JSErrCodeStreamMinLastSequence {
+			return nil, ErrMinLastSeq
 		}
 		return nil, resp.Error
 	}
@@ -538,6 +555,8 @@ func convertDirectGetMsgResponseToMsg(r *nats.Msg) (*RawStreamMsg, error) {
 				desc := r.Header.Get("Description")
 				if desc == "" {
 					desc = "unable to get message"
+				} else if desc == "Min Last Sequence" {
+					return nil, ErrMinLastSeq
 				}
 				return nil, fmt.Errorf("nats: %s", desc)
 			}

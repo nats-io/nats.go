@@ -44,9 +44,9 @@ type KeyValueManager interface {
 // KeyValue contains methods to operate on a KeyValue store.
 type KeyValue interface {
 	// Get returns the latest value for the key.
-	Get(key string) (entry KeyValueEntry, err error)
+	Get(key string, opts ...GetOpt) (entry KeyValueEntry, err error)
 	// GetRevision returns a specific revision value for the key.
-	GetRevision(key string, revision uint64) (entry KeyValueEntry, err error)
+	GetRevision(key string, revision uint64, opts ...GetOpt) (entry KeyValueEntry, err error)
 	// Put will place the new value for the key into the store.
 	Put(key string, value []byte) (revision uint64, err error)
 	// PutString will place the string for the key into the store.
@@ -123,6 +123,28 @@ type KeyLister interface {
 	Stop() error
 }
 
+type GetOpt interface {
+	configureGet(opts *getOpts) error
+}
+
+type getOpts struct {
+	// Minimum required last revision of the responding server's KV.
+	minLastRevision uint64
+}
+
+// MinLastRevision sets the minimum last revision required for the underlying KV.
+type MinLastRevision uint64
+
+func (revision MinLastRevision) configureGet(opts *getOpts) error {
+	opts.minLastRevision = uint64(revision)
+	return nil
+}
+
+func (revision MinLastRevision) configureWatcher(opts *watchOpts) error {
+	opts.minLastRevision = uint64(revision)
+	return nil
+}
+
 type WatchOpt interface {
 	configureWatcher(opts *watchOpts) error
 }
@@ -143,6 +165,8 @@ type watchOpts struct {
 	updatesOnly bool
 	// retrieve only the meta data of the entry
 	metaOnly bool
+	// Minimum required last revision of the responding server's KV.
+	minLastRevision uint64
 }
 
 type watchOptFn func(opts *watchOpts) error
@@ -331,6 +355,7 @@ var (
 	ErrKeyDeleted             = errors.New("nats: key was deleted")
 	ErrHistoryToLarge         = errors.New("nats: history limited to a max of 64")
 	ErrNoKeysFound            = errors.New("nats: no keys found")
+	ErrMinLastRevision        = errors.New("nats: min last revision")
 )
 
 var (
@@ -574,8 +599,17 @@ func searchKeyValid(key string) bool {
 }
 
 // Get returns the latest value for the key.
-func (kv *kvs) Get(key string) (KeyValueEntry, error) {
-	e, err := kv.get(key, kvLatestRevision)
+func (kv *kvs) Get(key string, opts ...GetOpt) (KeyValueEntry, error) {
+	var o getOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureGet(&o); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	e, err := kv.get(key, kvLatestRevision, o)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
@@ -587,8 +621,17 @@ func (kv *kvs) Get(key string) (KeyValueEntry, error) {
 }
 
 // GetRevision returns a specific revision value for the key.
-func (kv *kvs) GetRevision(key string, revision uint64) (KeyValueEntry, error) {
-	e, err := kv.get(key, revision)
+func (kv *kvs) GetRevision(key string, revision uint64, opts ...GetOpt) (KeyValueEntry, error) {
+	var o getOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureGet(&o); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	e, err := kv.get(key, revision, o)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
 			return nil, ErrKeyNotFound
@@ -599,7 +642,7 @@ func (kv *kvs) GetRevision(key string, revision uint64) (KeyValueEntry, error) {
 	return e, nil
 }
 
-func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
+func (kv *kvs) get(key string, revision uint64, o getOpts) (KeyValueEntry, error) {
 	if !keyValid(key) {
 		return nil, ErrInvalidKey
 	}
@@ -615,6 +658,9 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 	if kv.useDirect {
 		opts = append(opts, DirectGet())
 	}
+	if o.minLastRevision > 0 {
+		opts = append(opts, MinLastSequence(o.minLastRevision))
+	}
 
 	if revision == kvLatestRevision {
 		m, err = kv.js.GetLastMsg(kv.stream, b.String(), opts...)
@@ -629,6 +675,9 @@ func (kv *kvs) get(key string, revision uint64) (KeyValueEntry, error) {
 	if err != nil {
 		if errors.Is(err, ErrMsgNotFound) {
 			err = ErrKeyNotFound
+		}
+		if errors.Is(err, ErrMinLastSeq) {
+			err = ErrMinLastRevision
 		}
 		return nil, err
 	}
@@ -694,7 +743,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 
 	// TODO(dlc) - Since we have tombstones for DEL ops for watchers, this could be from that
 	// so we need to double check.
-	if e, err := kv.get(key, kvLatestRevision); errors.Is(err, ErrKeyDeleted) {
+	if e, err := kv.get(key, kvLatestRevision, getOpts{}); errors.Is(err, ErrKeyDeleted) {
 		return kv.Update(key, value, e.Revision())
 	}
 
@@ -1073,6 +1122,9 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	}
 	if o.metaOnly {
 		subOpts = append(subOpts, HeadersOnly())
+	}
+	if o.minLastRevision > 0 {
+		subOpts = append(subOpts, MinLastSequence(o.minLastRevision))
 	}
 	if o.ctx != nil {
 		subOpts = append(subOpts, Context(o.ctx))
