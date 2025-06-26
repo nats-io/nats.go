@@ -483,6 +483,54 @@ func TestKeyValueWatch(t *testing.T) {
 			t.Fatalf("Stop watcher did not return")
 		}
 	})
+
+	// Test channel-based error API integration with select patterns
+	t.Run("error channel with select", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH_ERROR"})
+		expectOk(t, err)
+
+		// Put some initial keys
+		_, err = kv.Put("test1", []byte("value1"))
+		expectOk(t, err)
+		_, err = kv.Put("test2", []byte("value2"))
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll()
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		updateCount := 0
+		var watchCompleted bool
+
+	Outer:
+		for !watchCompleted {
+			select {
+			case entry := <-watcher.Updates():
+				if entry == nil {
+					break Outer
+				}
+				updateCount++
+
+			case err := <-watcher.Error():
+				if err != nil {
+					t.Fatalf("Unexpected error from watcher error channel: %v", err)
+				}
+
+			case <-time.After(2 * time.Second):
+				t.Fatalf("Timeout waiting for watcher completion")
+			}
+		}
+
+		if updateCount < 2 {
+			t.Fatalf("Expected at least 2 updates, got %d", updateCount)
+		}
+	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
@@ -885,6 +933,56 @@ func TestKeyValueListKeys(t *testing.T) {
 	if _, ok := kmap["age"]; !ok {
 		t.Fatalf("Expected %q to be only key present", "age")
 	}
+
+	// Test channel-based error API patterns
+	t.Run("error channel with select", func(t *testing.T) {
+		keys, err := kv.ListKeys()
+		expectOk(t, err)
+		defer keys.Stop()
+
+		var keyList []string
+		var completed bool
+
+		for !completed {
+			select {
+			case key, ok := <-keys.Keys():
+				if !ok {
+					completed = true
+					break
+				}
+				keyList = append(keyList, key)
+
+			case err := <-keys.Error():
+				if err != nil {
+					t.Fatalf("Unexpected error from error channel: %v", err)
+				}
+			}
+		}
+
+		if len(keyList) != 1 {
+			t.Fatalf("Expected 1 key using select pattern, got %d", len(keyList))
+		}
+	})
+
+	t.Run("error check after completion", func(t *testing.T) {
+		keys, err := kv.ListKeys()
+		expectOk(t, err)
+		defer keys.Stop()
+
+		var keyList []string
+		for key := range keys.Keys() {
+			keyList = append(keyList, key)
+		}
+
+		// Check for errors after completion - should not block and return nil
+		if err := <-keys.Error(); err != nil {
+			t.Fatalf("Unexpected error after completion: %v", err)
+		}
+
+		if len(keyList) != 1 {
+			t.Fatalf("Expected 1 key after completion check, got %d", len(keyList))
+		}
+	})
 }
 
 func TestKeyValueCrossAccounts(t *testing.T) {
