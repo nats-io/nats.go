@@ -988,7 +988,9 @@ func (w *watcher) Stop() error {
 // Error returns a channel that will receive any error that occurs during watching.
 func (w *watcher) Error() <-chan error {
 	if w == nil {
-		return nil
+		closedCh := make(chan error)
+		close(closedCh)
+		return closedCh
 	}
 	return w.errCh
 }
