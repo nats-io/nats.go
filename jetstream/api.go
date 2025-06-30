@@ -127,8 +127,8 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	if len(data) > 0 {
 		req = data[0]
 	}
-	if js.opts.clientTrace != nil {
-		ctrace := js.opts.clientTrace
+	if js.opts.ClientTrace != nil {
+		ctrace := js.opts.ClientTrace
 		if ctrace.RequestSent != nil {
 			ctrace.RequestSent(subj, req)
 		}
@@ -137,8 +137,8 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	if err != nil {
 		return nil, err
 	}
-	if js.opts.clientTrace != nil {
-		ctrace := js.opts.clientTrace
+	if js.opts.ClientTrace != nil {
+		ctrace := js.opts.ClientTrace
 		if ctrace.ResponseReceived != nil {
 			ctrace.ResponseReceived(subj, resp.Data, resp.Header)
 		}
