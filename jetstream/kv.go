@@ -950,7 +950,7 @@ func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
 	e, err := kv.get(ctx, key, kvLatestRevision)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
-			return nil, ErrKeyNotFound
+			return e, ErrKeyDeleted
 		}
 		return nil, err
 	}
@@ -963,7 +963,7 @@ func (kv *kvs) GetRevision(ctx context.Context, key string, revision uint64) (Ke
 	e, err := kv.get(ctx, key, revision)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
-			return nil, ErrKeyNotFound
+			return e, ErrKeyDeleted
 		}
 		return nil, err
 	}
