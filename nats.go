@@ -272,6 +272,48 @@ type InProcessConnProvider interface {
 	InProcessConn() (net.Conn, error)
 }
 
+// ConnTrace can be used to trace connection-level data sent and received.
+// It follows the same pattern as ClientTrace for JetStream API tracing.
+type ConnTrace struct {
+	// DataSent is called when data is sent over the connection.
+	// The data parameter contains the raw bytes sent.
+	DataSent func(data []byte)
+
+	// DataReceived is called when data is received from the connection.
+	// The data parameter contains the raw bytes received.
+	DataReceived func(data []byte)
+}
+
+// tracedConn wraps a net.Conn to enable tracing of data sent and received.
+type tracedConn struct {
+	net.Conn
+	trace *ConnTrace
+}
+
+// Read implements net.Conn.Read and traces data received.
+func (tc *tracedConn) Read(b []byte) (n int, err error) {
+	n, err = tc.Conn.Read(b)
+	if err == nil && tc.trace != nil && tc.trace.DataReceived != nil {
+		// Make a copy of the data to avoid race conditions
+		data := make([]byte, n)
+		copy(data, b[:n])
+		tc.trace.DataReceived(data)
+	}
+	return n, err
+}
+
+// Write implements net.Conn.Write and traces data sent.
+func (tc *tracedConn) Write(b []byte) (n int, err error) {
+	n, err = tc.Conn.Write(b)
+	if err == nil && tc.trace != nil && tc.trace.DataSent != nil {
+		// Make a copy of the data to avoid race conditions
+		data := make([]byte, len(b))
+		copy(data, b)
+		tc.trace.DataSent(data)
+	}
+	return n, err
+}
+
 // Options can be used to create a customized connection.
 type Options struct {
 	// Url represents a single NATS server url to which the client
@@ -519,6 +561,10 @@ type Options struct {
 	// from SubscribeSync if the server returns a permissions error for a subscription.
 	// Defaults to false.
 	PermissionErrOnSubscribe bool
+
+	// ConnTrace enables connection-level tracing of data sent and received.
+	// This allows debugging of the raw NATS protocol messages.
+	ConnTrace *ConnTrace
 }
 
 const (
@@ -884,6 +930,41 @@ func Name(name string) Option {
 	return func(o *Options) error {
 		o.Name = name
 		return nil
+	}
+}
+
+// WithConnTrace is an Option to enable connection-level tracing.
+// It allows tracing of raw data sent and received over the connection.
+func WithConnTrace(trace *ConnTrace) Option {
+	return func(o *Options) error {
+		o.ConnTrace = trace
+		return nil
+	}
+}
+
+// NewStdoutTrace creates a ConnTrace that logs all data to stdout.
+// This is useful for debugging NATS protocol interactions.
+func NewStdoutTrace() *ConnTrace {
+	return &ConnTrace{
+		DataSent: func(data []byte) {
+			fmt.Printf("NATS >>> %s", data)
+		},
+		DataReceived: func(data []byte) {
+			fmt.Printf("NATS <<< %s", data)
+		},
+	}
+}
+
+// NewStderrTrace creates a ConnTrace that logs all data to stderr.
+// This is useful for debugging when stdout is used for application output.
+func NewStderrTrace() *ConnTrace {
+	return &ConnTrace{
+		DataSent: func(data []byte) {
+			fmt.Fprintf(os.Stderr, "NATS >>> %s", data)
+		},
+		DataReceived: func(data []byte) {
+			fmt.Fprintf(os.Stderr, "NATS <<< %s", data)
+		},
 	}
 }
 
@@ -1939,6 +2020,14 @@ func (nc *Conn) newReaderWriter() {
 }
 
 func (nc *Conn) bindToNewConn() {
+	// Wrap the connection with tracing if ConnTrace is enabled
+	if nc.Opts.ConnTrace != nil {
+		nc.conn = &tracedConn{
+			Conn:  nc.conn,
+			trace: nc.Opts.ConnTrace,
+		}
+	}
+	
 	bw := nc.bw
 	bw.w, bw.bufs = nc.newWriter(), nil
 	br := nc.br
