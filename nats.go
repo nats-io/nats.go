@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -272,9 +273,9 @@ type InProcessConnProvider interface {
 	InProcessConn() (net.Conn, error)
 }
 
-// ConnTrace can be used to trace connection-level data sent and received.
+// ProtocolTrace can be used to trace connection-level data sent and received.
 // It follows the same pattern as ClientTrace for JetStream API tracing.
-type ConnTrace struct {
+type ProtocolTrace struct {
 	// DataSent is called when data is sent over the connection.
 	// The data parameter contains the raw bytes sent.
 	DataSent func(data []byte)
@@ -287,7 +288,7 @@ type ConnTrace struct {
 // tracedConn wraps a net.Conn to enable tracing of data sent and received.
 type tracedConn struct {
 	net.Conn
-	trace *ConnTrace
+	trace *ProtocolTrace
 }
 
 // Read implements net.Conn.Read and traces data received.
@@ -562,9 +563,9 @@ type Options struct {
 	// Defaults to false.
 	PermissionErrOnSubscribe bool
 
-	// ConnTrace enables connection-level tracing of data sent and received.
+	// ProtocolTrace enables connection-level tracing of data sent and received.
 	// This allows debugging of the raw NATS protocol messages.
-	ConnTrace *ConnTrace
+	ProtocolTrace *ProtocolTrace
 }
 
 const (
@@ -933,37 +934,26 @@ func Name(name string) Option {
 	}
 }
 
-// WithConnTrace is an Option to enable connection-level tracing.
+// WithProtocolTrace is an Option to enable connection-level tracing.
 // It allows tracing of raw data sent and received over the connection.
-func WithConnTrace(trace *ConnTrace) Option {
+func WithProtocolTrace(trace *ProtocolTrace) Option {
 	return func(o *Options) error {
-		o.ConnTrace = trace
+		o.ProtocolTrace = trace
 		return nil
 	}
 }
 
-// NewStdoutTrace creates a ConnTrace that logs all data to stdout.
+// NewStderrTrace creates a ProtocolTrace that logs all data to stderr.
 // This is useful for debugging NATS protocol interactions.
-func NewStdoutTrace() *ConnTrace {
-	return &ConnTrace{
+// Uses log package to ensure output is not interleaved.
+func NewStderrTrace() *ProtocolTrace {
+	logger := log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	return &ProtocolTrace{
 		DataSent: func(data []byte) {
-			fmt.Printf("NATS >>> %s", data)
+			logger.Printf("NATS CLIENT SEND: %s", data)
 		},
 		DataReceived: func(data []byte) {
-			fmt.Printf("NATS <<< %s", data)
-		},
-	}
-}
-
-// NewStderrTrace creates a ConnTrace that logs all data to stderr.
-// This is useful for debugging when stdout is used for application output.
-func NewStderrTrace() *ConnTrace {
-	return &ConnTrace{
-		DataSent: func(data []byte) {
-			fmt.Fprintf(os.Stderr, "NATS >>> %s", data)
-		},
-		DataReceived: func(data []byte) {
-			fmt.Fprintf(os.Stderr, "NATS <<< %s", data)
+			logger.Printf("NATS CLIENT RECV: %s", data)
 		},
 	}
 }
@@ -2020,14 +2010,14 @@ func (nc *Conn) newReaderWriter() {
 }
 
 func (nc *Conn) bindToNewConn() {
-	// Wrap the connection with tracing if ConnTrace is enabled
-	if nc.Opts.ConnTrace != nil {
+	// Wrap the connection with tracing if ProtocolTrace is enabled
+	if nc.Opts.ProtocolTrace != nil {
 		nc.conn = &tracedConn{
 			Conn:  nc.conn,
-			trace: nc.Opts.ConnTrace,
+			trace: nc.Opts.ProtocolTrace,
 		}
 	}
-	
+
 	bw := nc.bw
 	bw.w, bw.bufs = nc.newWriter(), nil
 	br := nc.br
