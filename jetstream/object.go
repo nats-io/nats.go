@@ -992,7 +992,13 @@ func publishMeta(ctx context.Context, info *ObjectInfo, js *jetStream) error {
 	}
 
 	// Prepare and publish the message.
-	mm := nats.NewMsg(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+	var pubObjMetaPreTmpl strings.Builder
+	if js.opts.apiPrefix != DefaultAPIPrefix {
+		pubObjMetaPreTmpl.WriteString(js.opts.apiPrefix)
+	}
+	pubObjMetaPreTmpl.WriteString(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+
+	mm := nats.NewMsg(pubObjMetaPreTmpl.String())
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
 	if _, err := js.PublishMsg(ctx, mm); err != nil {
