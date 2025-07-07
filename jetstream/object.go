@@ -654,7 +654,7 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, newnuid)
 
 	var pubChunkSubj strings.Builder
-	if obs.js.opts.apiPrefix != "" {
+	if obs.js.opts.apiPrefix != DefaultAPIPrefix {
 		pubChunkSubj.WriteString(obs.js.opts.apiPrefix)
 	}
 	pubChunkSubj.WriteString(fmt.Sprintf(objChunksPreTmpl, obs.name, newnuid))
@@ -761,7 +761,7 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 
 	// Prepare the meta message
 	var pubMetaSubj strings.Builder
-	if obs.js.opts.apiPrefix != "" {
+	if obs.js.opts.apiPrefix != DefaultAPIPrefix {
 		pubMetaSubj.WriteString(obs.js.opts.apiPrefix)
 	}
 	pubMetaSubj.WriteString(fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name)))
