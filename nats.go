@@ -6149,18 +6149,12 @@ func sigHandler(nonce []byte, seedFile string) ([]byte, error) {
 type timeoutWriter struct {
 	timeout time.Duration
 	conn    net.Conn
-	err     error
 }
 
 // Write implements the io.Writer interface.
 func (tw *timeoutWriter) Write(p []byte) (int, error) {
-	if tw.err != nil {
-		return 0, tw.err
-	}
-
-	var n int
 	tw.conn.SetWriteDeadline(time.Now().Add(tw.timeout))
-	n, tw.err = tw.conn.Write(p)
+	n, err := tw.conn.Write(p)
 	tw.conn.SetWriteDeadline(time.Time{})
-	return n, tw.err
+	return n, err
 }
