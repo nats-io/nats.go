@@ -1,8 +1,6 @@
 name: ci
 on: 
   push:
-    branches:
-      - main
   pull_request:
   release:
     types: [published]
