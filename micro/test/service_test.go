@@ -1910,3 +1910,183 @@ func TestDisableQueueGroup(t *testing.T) {
 	wg.Wait()
 
 }
+
+func TestEndpointPendingLimits(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc.Close()
+
+	handler := micro.HandlerFunc(func(req micro.Request) {
+		time.Sleep(10 * time.Millisecond)
+		req.Respond([]byte("OK"))
+	})
+
+	t.Run("with pending limits", func(t *testing.T) {
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "test-service",
+			Version: "1.0.0",
+		})
+		if err != nil {
+			t.Fatalf("Error adding service: %v", err)
+		}
+		defer srv.Stop()
+
+		msgLimit := 10
+		bytesLimit := 1024
+
+		err = srv.AddEndpoint("test", handler,
+			micro.WithEndpointSubject("test.pending"),
+			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+		if err != nil {
+			t.Fatalf("Error adding endpoint: %v", err)
+		}
+
+		// Verify endpoint was created
+		info := srv.Info()
+		if len(info.Endpoints) != 1 {
+			t.Fatalf("Expected 1 endpoint, got %d", len(info.Endpoints))
+		}
+
+		// Send messages and verify they're handled
+		for i := range 5 {
+			resp, err := nc.Request("test.pending", []byte("test"), 100*time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on request %d: %v", i, err)
+			}
+			if string(resp.Data) != "OK" {
+				t.Fatalf("Expected OK response, got %s", string(resp.Data))
+			}
+		}
+	})
+
+	t.Run("with only msg limit", func(t *testing.T) {
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "test-service-msg-only",
+			Version: "1.0.0",
+		})
+		if err != nil {
+			t.Fatalf("Error adding service: %v", err)
+		}
+		defer srv.Stop()
+
+		msgLimit := 50
+		bytesLimit := -1
+
+		err = srv.AddEndpoint("test", handler,
+			micro.WithEndpointSubject("test.msg.only"),
+			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+		if err != nil {
+			t.Fatalf("Error adding endpoint: %v", err)
+		}
+
+		resp, err := nc.Request("test.msg.only", []byte("test"), 100*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Error on request: %v", err)
+		}
+		if string(resp.Data) != "OK" {
+			t.Fatalf("Expected OK response, got %s", string(resp.Data))
+		}
+	})
+
+	t.Run("with only bytes limit", func(t *testing.T) {
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "test-service-bytes-only",
+			Version: "1.0.0",
+		})
+		if err != nil {
+			t.Fatalf("Error adding service: %v", err)
+		}
+		defer srv.Stop()
+
+		msgLimit := -1
+		bytesLimit := 4096
+
+		err = srv.AddEndpoint("test", handler,
+			micro.WithEndpointSubject("test.bytes.only"),
+			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+		if err != nil {
+			t.Fatalf("Error adding endpoint: %v", err)
+		}
+
+		resp, err := nc.Request("test.bytes.only", []byte("test"), 100*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Error on request: %v", err)
+		}
+		if string(resp.Data) != "OK" {
+			t.Fatalf("Expected OK response, got %s", string(resp.Data))
+		}
+	})
+
+	t.Run("invalid limits", func(t *testing.T) {
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "test-service-invalid",
+			Version: "1.0.0",
+		})
+		if err != nil {
+			t.Fatalf("Error adding service: %v", err)
+		}
+		defer srv.Stop()
+
+		err = srv.AddEndpoint("test", handler,
+			micro.WithEndpointPendingLimits(0, 0))
+		if !errors.Is(err, micro.ErrConfigValidation) {
+			t.Fatal("Expected error when both limits are zero")
+		}
+	})
+
+	t.Run("pending limits trigger slow consumer error", func(t *testing.T) {
+		errCh := make(chan error, 1)
+
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "test-service-slow",
+			Version: "1.0.0",
+			ErrorHandler: func(svc micro.Service, natsErr *micro.NATSError) {
+				errCh <- natsErr
+			},
+		})
+		if err != nil {
+			t.Fatalf("Error adding service: %v", err)
+		}
+		defer srv.Stop()
+
+		msgLimit := 2
+		bytesLimit := -1
+
+		slowHandler := micro.HandlerFunc(func(req micro.Request) {
+			time.Sleep(100 * time.Millisecond)
+			req.Respond([]byte("OK"))
+		})
+
+		err = srv.AddEndpoint("slow", slowHandler,
+			micro.WithEndpointSubject("test.slow"),
+			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+		if err != nil {
+			t.Fatalf("Error adding endpoint: %v", err)
+		}
+
+		// Publish 20 requests to force slow consumer
+		for i := range 20 {
+			if err := nc.Publish("test.slow", []byte("test")); err != nil {
+				t.Fatalf("Error publishing message %d: %v", i, err)
+			}
+		}
+
+		if err := nc.Flush(); err != nil {
+			t.Fatalf("Error flushing: %v", err)
+		}
+
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, nats.ErrSlowConsumer) {
+				t.Fatalf("Expected ErrSlowConsumer but got: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Expected ErrSlowConsumer to be triggered within timeout")
+		}
+	})
+}
