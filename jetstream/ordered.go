@@ -80,6 +80,8 @@ var (
 //
 // See [Consumer.Consume] for more details.
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
+	c.Lock()
+	defer c.Unlock()
 	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
 		if err != nil {
@@ -201,10 +203,20 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err error) {
 	return func(cc ConsumeContext, err error) {
 		c.Lock()
-		defer c.Unlock()
+
 		if c.userErrHandler != nil && !errors.Is(err, errOrderedSequenceMismatch) && !errors.Is(err, errConnected) {
 			c.userErrHandler(cc, err)
 		}
+		if errors.Is(err, ErrConnectionClosed) {
+			if c.subscription != nil {
+				c.Unlock()
+				c.subscription.Stop()
+				return
+			}
+			c.Unlock()
+			return
+		}
+
 		if errors.Is(err, ErrNoHeartbeat) ||
 			errors.Is(err, errOrderedSequenceMismatch) ||
 			errors.Is(err, ErrConsumerDeleted) ||
@@ -216,6 +228,7 @@ func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err err
 				c.doReset <- struct{}{}
 			}
 		}
+		c.Unlock()
 	}
 }
 
@@ -359,29 +372,23 @@ func (s *orderedSubscription) Drain() {
 // fully stopped/drained. When the channel is closed, no more messages
 // will be received and processing is complete.
 func (s *orderedSubscription) Closed() <-chan struct{} {
-	s.consumer.Lock()
-	defer s.consumer.Unlock()
 	closedCh := make(chan struct{})
 
 	go func() {
-		for {
-			s.consumer.Lock()
-			if s.consumer.currentSub == nil {
-				return
-			}
+		// First wait for s.done to be closed
+		<-s.done
 
+		// Then ensure underlying consumer is also closed (it may still be draining)
+		s.consumer.Lock()
+		if s.consumer.currentSub != nil {
 			closed := s.consumer.currentSub.Closed()
 			s.consumer.Unlock()
-
-			// wait until the underlying pull consumer is closed
 			<-closed
-			// if the subscription is closed and ordered consumer is closed as well,
-			// send a signal that the Consume() is fully stopped
-			if s.closed.Load() == 1 {
-				close(closedCh)
-				return
-			}
+		} else {
+			s.consumer.Unlock()
 		}
+
+		close(closedCh)
 	}()
 	return closedCh
 }
