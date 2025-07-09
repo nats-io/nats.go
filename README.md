@@ -81,6 +81,27 @@ nc.Drain()
 nc.Close()
 ```
 
+## Connection Tracing
+
+For debugging NATS protocol interactions, you can enable tracing to see all data sent and received:
+
+```go
+// Enable tracing to stderr
+nc, err := nats.Connect(nats.DefaultURL, nats.WithProtocolTrace(nats.NewStderrTrace()))
+
+// Custom tracing with your own handlers
+logger := log.New(os.Stderr, "", 0)
+trace := &nats.ProtocolTrace{
+    DataSent: func(data []byte) {
+        logger.Printf("NATS >>> %s", data)
+    },
+    DataReceived: func(data []byte) {
+        logger.Printf("NATS <<< %s", data)
+    },
+}
+nc, err := nats.Connect(nats.DefaultURL, nats.WithProtocolTrace(trace))
+```
+
 ## JetStream
 [![JetStream API Reference](https://pkg.go.dev/badge/github.com/nats-io/nats.go/jetstream.svg)](https://pkg.go.dev/github.com/nats-io/nats.go/jetstream)
 
