@@ -1032,6 +1032,54 @@ func TestGetMsg(t *testing.T) {
 	}
 }
 
+func TestGetMsgNoHeaders(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	sNonDirect, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "NON_DIRECT", Subjects: []string{"FOO"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sDirect, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "DIRECT", Subjects: []string{"BAR"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for _, s := range []jetstream.Stream{sNonDirect, sDirect} {
+		if _, err := js.PublishMsg(context.Background(), &nats.Msg{
+			Data:    []byte("msg without headers"),
+			Subject: s.CachedInfo().Config.Subjects[0],
+			Header: nats.Header{
+				"X-Nats-Test-Data": {"test_data"},
+				"X-Nats-Key":       {"123"},
+			},
+		}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msg, err := s.GetMsg(context.Background(), 1, jetstream.WithGetMsgNoHeaders())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(msg.Data) != "msg without headers" {
+			t.Fatalf("Invalid message data; want: msg without headers; got: %s", string(msg.Data))
+		}
+		if len(msg.Header) > 0 {
+			t.Fatalf("Expected no headers; got: %v", msg.Header)
+		}
+	}
+}
+
 func TestGetLastMsgForSubject(t *testing.T) {
 	tests := []struct {
 		name         string

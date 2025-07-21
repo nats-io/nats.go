@@ -222,9 +222,10 @@ type (
 	GetMsgOpt func(*apiMsgGetRequest) error
 
 	apiMsgGetRequest struct {
-		Seq     uint64 `json:"seq,omitempty"`
-		LastFor string `json:"last_by_subj,omitempty"`
-		NextFor string `json:"next_by_subj,omitempty"`
+		Seq       uint64 `json:"seq,omitempty"`
+		LastFor   string `json:"last_by_subj,omitempty"`
+		NextFor   string `json:"next_by_subj,omitempty"`
+		NoHeaders bool   `json:"no_hdr,omitempty"`
 	}
 
 	// apiMsgGetResponse is the response for a Stream get request.
