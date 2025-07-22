@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -600,10 +601,18 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
-		for i := range cfg.Sources {
-			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
-				return nil, ErrStreamSubjectTransformNotSupported
-			}
+
+		// the sources list in the response is not ordered
+		cfgNumTransforms := make([]int, len(cfg.Sources))
+		respNumTransforms := make([]int, len(resp.Config.Sources))
+		for i, cfgSource := range cfg.Sources {
+			cfgNumTransforms[i] = len(cfgSource.SubjectTransforms)
+			respNumTransforms[i] = len(resp.Config.Sources[i].SubjectTransforms)
+		}
+		slices.Sort(cfgNumTransforms)
+		slices.Sort(respNumTransforms)
+		if !slices.Equal(cfgNumTransforms, respNumTransforms) {
+			return nil, ErrStreamSubjectTransformNotSupported
 		}
 	}
 
@@ -680,10 +689,18 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
-		for i := range cfg.Sources {
-			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
-				return nil, ErrStreamSubjectTransformNotSupported
-			}
+
+		// the sources list in the response is not ordered
+		cfgNumTransforms := make([]int, len(cfg.Sources))
+		respNumTransforms := make([]int, len(resp.Config.Sources))
+		for i, cfgSource := range cfg.Sources {
+			cfgNumTransforms[i] = len(cfgSource.SubjectTransforms)
+			respNumTransforms[i] = len(resp.Config.Sources[i].SubjectTransforms)
+		}
+		slices.Sort(cfgNumTransforms)
+		slices.Sort(respNumTransforms)
+		if !slices.Equal(cfgNumTransforms, respNumTransforms) {
+			return nil, ErrStreamSubjectTransformNotSupported
 		}
 	}
 
