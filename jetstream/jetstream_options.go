@@ -133,6 +133,15 @@ func WithGetMsgNoHeaders() GetMsgOpt {
 	}
 }
 
+// WithGetLastForSubjectNoHeaders sets whether the message headers should be
+// returned in the response for the last message on a subject.
+func WithGetLastForSubjectNoHeaders() GetLastForSubjectOpt {
+	return func(req *apiMsgGetRequest) error {
+		req.NoHeaders = true
+		return nil
+	}
+}
+
 // PullMaxMessages limits the number of messages to be buffered in the client.
 // If not provided, a default of 500 messages will be used.
 // This option is exclusive with PullMaxBytes.
