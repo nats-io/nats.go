@@ -11214,3 +11214,42 @@ func TestJetStreamPullSubscribeFetchBatchErrOnReconnect(t *testing.T) {
 		t.Fatalf("Error on reconnect: %v", err)
 	}
 }
+
+func TestJetStreamSubscribeShortTimeoutWithContext(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	// create separate JetStream context to create a stream
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// subscribe with MaxWait set to nanosecond
+	// this should fail with context.DeadlineExceeded
+	jsShort, err := nc.JetStream(nats.MaxWait(time.Nanosecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// no context - creating consumer should fail with js.MaxWait set to nanosecond
+	_, err = jsShort.SubscribeSync("FOO.123", nats.BindStream("foo"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error: %v; got: %v", context.DeadlineExceeded, err)
+	}
+
+	// use context.Background() - creating consumer should fail with js.MaxWait set to nanosecond
+	_, err = jsShort.SubscribeSync("FOO.123", nats.BindStream("foo"), nats.Context(context.Background()))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error: %v; got: %v", context.DeadlineExceeded, err)
+	}
+}

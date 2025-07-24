@@ -1778,6 +1778,11 @@ func getJSContextOpts(defs *jsOpts, opts ...JSOpt) (*jsOpts, context.CancelFunc,
 	if o.pre == _EMPTY_ {
 		o.pre = defs.pre
 	}
-
+	if o.ctx != nil {
+		// if context does not have a deadline, use timeout from js context
+		if _, hasDeadline := o.ctx.Deadline(); !hasDeadline {
+			o.ctx, cancel = context.WithTimeout(o.ctx, defs.wait)
+		}
+	}
 	return &o, cancel, nil
 }
