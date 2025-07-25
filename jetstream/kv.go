@@ -1044,7 +1044,11 @@ func (kv *kvs) updateRevision(ctx context.Context, key string, value []byte, rev
 	if kv.useJSPfx {
 		b.WriteString(kv.js.opts.apiPrefix)
 	}
-	b.WriteString(kv.pre)
+	if kv.putPre != "" {
+		b.WriteString(kv.putPre)
+	} else {
+		b.WriteString(kv.pre)
+	}
 	b.WriteString(key)
 
 	m := nats.Msg{Subject: b.String(), Header: nats.Header{}, Data: value}
