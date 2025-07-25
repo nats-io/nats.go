@@ -141,13 +141,21 @@ type (
 )
 
 const (
-	controlMsg    = "100"
-	badRequest    = "400"
-	noMessages    = "404"
-	reqTimeout    = "408"
-	conflict      = "409"
-	noResponders  = "503"
-	pinIdMismatch = "423"
+	statusControlMsg    = "100"
+	statusBadRequest    = "400"
+	statusNoMsgs        = "404"
+	statusTimeout       = "408"
+	statusConflict      = "409"
+	statusNoResponders  = "503"
+	statusPinIdMismatch = "423"
+
+	fcRequestDescr     = "flowcontrol request"
+	idleHeartbeatDescr = "idle heartbeat"
+	consumerDeleted    = "consumer deleted"
+	leadershipChange   = "leadership change"
+	maxBytesExceeded   = "message size exceeds maxbytes"
+	batchCompleted     = "batch completed"
+	serverShutdown     = "server shutdown"
 )
 
 // Headers used when publishing messages.
@@ -411,33 +419,33 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	}
 
 	switch val {
-	case badRequest:
+	case statusBadRequest:
 		return false, ErrBadRequest
-	case noResponders:
+	case statusNoResponders:
 		return false, nats.ErrNoResponders
-	case noMessages:
+	case statusNoMsgs:
 		// 404 indicates that there are no messages.
 		return false, ErrNoMessages
-	case reqTimeout:
+	case statusTimeout:
 		return false, nats.ErrTimeout
-	case controlMsg:
+	case statusControlMsg:
 		return false, nil
-	case pinIdMismatch:
+	case statusPinIdMismatch:
 		return false, ErrPinIDMismatch
-	case conflict:
-		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
+	case statusConflict:
+		if strings.Contains(strings.ToLower(descr), maxBytesExceeded) {
 			return false, ErrMaxBytesExceeded
 		}
-		if strings.Contains(strings.ToLower(descr), "batch completed") {
+		if strings.Contains(strings.ToLower(descr), batchCompleted) {
 			return false, ErrBatchCompleted
 		}
-		if strings.Contains(strings.ToLower(descr), "consumer deleted") {
+		if strings.Contains(strings.ToLower(descr), consumerDeleted) {
 			return false, ErrConsumerDeleted
 		}
-		if strings.Contains(strings.ToLower(descr), "leadership change") {
+		if strings.Contains(strings.ToLower(descr), leadershipChange) {
 			return false, ErrConsumerLeadershipChanged
 		}
-		if strings.Contains(strings.ToLower(descr), "server shutdown") {
+		if strings.Contains(strings.ToLower(descr), serverShutdown) {
 			return false, ErrServerShutdown
 		}
 	}

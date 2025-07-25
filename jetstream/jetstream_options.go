@@ -419,11 +419,16 @@ func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
 // encountered while consuming messages It will be invoked for both terminal
 // (Consumer Deleted, invalid request body) and non-terminal (e.g. missing
 // heartbeats) errors.
-func ConsumeErrHandler(cb ConsumeErrHandlerFunc) PullConsumeOpt {
-	return pullOptFunc(func(cfg *consumeOpts) error {
-		cfg.ErrHandler = cb
-		return nil
-	})
+type ConsumeErrHandler ConsumeErrHandlerFunc
+
+func (c ConsumeErrHandler) configureConsume(opts *consumeOpts) error {
+	opts.ErrHandler = c
+	return nil
+}
+
+func (c ConsumeErrHandler) configurePushConsume(opts *pushConsumeOpts) error {
+	opts.ErrHandler = c
+	return nil
 }
 
 // WithMessagesErrOnMissingHeartbeat sets whether a missing heartbeat error
