@@ -1076,11 +1076,9 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 		// Skip if UpdatesOnly() is set, since there will never be updates initially.
 		if !w.initDone {
 			w.received++
-			// We set this on the first trip through..
-			if w.initPending == 0 {
-				w.initPending = delta
-			}
-			if w.received > w.initPending || delta == 0 {
+			// Use the stable initPending value set at consumer creation.
+			// We're done if we've received all expected messages OR there are no more pending
+			if w.received >= w.initPending || delta == 0 {
 				// Avoid possible race setting up timer.
 				if w.initDoneTimer != nil {
 					w.initDoneTimer.Stop()
@@ -1128,23 +1126,26 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	// of the consumer, send the marker.
 	// Skip if UpdatesOnly() is set, since there will never be updates initially.
 	if !o.updatesOnly {
-		if sub.jsi != nil && sub.jsi.pending == 0 {
-			w.initDone = true
-			w.updates <- nil
-		} else {
-			// Set a timer to send the marker if we do not get any messages.
-			w.initDoneTimer = time.AfterFunc(kv.js.opts.wait, func() {
-				w.mu.Lock()
-				defer w.mu.Unlock()
-				if !w.initDone {
-					w.initDone = true
-					select {
-					case w.errCh <- ErrKeyWatcherTimeout:
-					default:
+		if sub.jsi != nil {
+			if sub.jsi.pending == 0 {
+				w.initDone = true
+				w.updates <- nil
+			} else {
+				w.initPending = sub.jsi.pending
+				// Set a timer to send the marker if we do not get any messages.
+				w.initDoneTimer = time.AfterFunc(kv.js.opts.wait, func() {
+					w.mu.Lock()
+					defer w.mu.Unlock()
+					if !w.initDone {
+						w.initDone = true
+						select {
+						case w.errCh <- ErrKeyWatcherTimeout:
+						default:
+						}
+						w.updates <- nil
 					}
-					w.updates <- nil
-				}
-			})
+				})
+			}
 		}
 	} else {
 		// if UpdatesOnly was used, mark initialization as complete
