@@ -3432,6 +3432,10 @@ func (nc *Conn) processMsg(data []byte) {
 		if sub.mch != nil {
 			select {
 			case sub.mch <- m:
+				// For ChanSubscribe, track delivered count here
+				if sub.typ == ChanSubscription {
+					sub.delivered++
+				}
 			default:
 				goto slowConsumer
 			}
@@ -3489,6 +3493,19 @@ func (nc *Conn) processMsg(data []byte) {
 	// Handle control heartbeat messages.
 	if ctrlMsg && ctrlType == jsCtrlHB && m.Reply == _EMPTY_ {
 		nc.checkForSequenceMismatch(m, sub, jsi)
+	}
+
+	// Check if we need to auto-unsubscribe for chan subscriptions
+	if sub.typ == ChanSubscription && sub.max > 0 && !ctrlMsg {
+		sub.mu.Lock()
+		if sub.delivered >= sub.max {
+			sub.mu.Unlock()
+			nc.mu.Lock()
+			nc.removeSub(sub)
+			nc.mu.Unlock()
+		} else {
+			sub.mu.Unlock()
+		}
 	}
 
 	return
