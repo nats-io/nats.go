@@ -553,6 +553,10 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		return nil, info.Error
 	}
 
+	if info.Error == nil && info.ConsumerInfo == nil {
+		return nil, ErrConsumerCreationResponseEmpty
+	}
+
 	// check whether multiple filter subjects (if used) are reflected in the returned ConsumerInfo
 	if len(cfg.FilterSubjects) != 0 && len(info.Config.FilterSubjects) == 0 {
 		return nil, ErrConsumerMultipleFilterSubjectsNotSupported

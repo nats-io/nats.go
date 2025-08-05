@@ -317,6 +317,10 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		return nil, resp.Error
 	}
 
+	if resp.Error == nil && resp.ConsumerInfo == nil {
+		return nil, ErrConsumerCreationResponseEmpty
+	}
+
 	// check whether multiple filter subjects (if used) are reflected in the returned ConsumerInfo
 	if len(cfg.FilterSubjects) != 0 && len(resp.Config.FilterSubjects) == 0 {
 		return nil, ErrConsumerMultipleFilterSubjectsNotSupported
