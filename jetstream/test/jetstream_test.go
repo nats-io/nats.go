@@ -2278,3 +2278,128 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 	})
 
 }
+
+func TestCreateOrUpdateStreamCrossDomains(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		server_name: HUB
+		listen: 127.0.0.1:-1
+		jetstream: { domain: HUB }
+		leafnodes { listen: 127.0.0.1:7422 }
+	`))
+	defer os.Remove(conf)
+	srv, _ := RunServerWithConfig(conf)
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	lconf := createConfFile(t, []byte(`
+	server_name: LEAF
+	listen: 127.0.0.1:-1
+	 jetstream: { domain: LEAF }
+	 leafnodes {
+		  remotes = [ { url: "leaf://127.0.0.1" } ]
+	 }
+`))
+	defer os.Remove(lconf)
+	ln, _ := RunServerWithConfig(lconf)
+	defer shutdownJSServerAndRemoveStorage(t, ln)
+
+	// Connect to HUB and create source stream
+	ncHub, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Failed to connect to HUB: %v", err)
+	}
+	defer ncHub.Close()
+	jsHub, err := jetstream.New(ncHub)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create stream on HUB domain
+	_, err = jsHub.CreateStream(context.Background(), jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create source stream: %v", err)
+	}
+
+	// Connect to LEAF domain
+	ncLeaf, err := nats.Connect(ln.ClientURL())
+	if err != nil {
+		t.Fatalf("Failed to connect to LEAF: %v", err)
+	}
+	defer ncLeaf.Close()
+	jsLeaf, err := jetstream.New(ncLeaf)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create stream with cross-domain source using CreateOrUpdateStream
+	streamConfig := jetstream.StreamConfig{
+		Name: "SOURCE",
+		Sources: []*jetstream.StreamSource{
+			{
+				Name:   "TEST",
+				Domain: "HUB",
+			},
+		},
+	}
+
+	// First call should create the stream
+	stream, err := jsLeaf.CreateOrUpdateStream(context.Background(), streamConfig)
+	if err != nil {
+		t.Fatalf("Failed to create stream: %v", err)
+	}
+
+	// Verify the stream was created with external configuration
+	info, err := stream.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to get stream info: %v", err)
+	}
+
+	if len(info.Config.Sources) != 1 {
+		t.Fatalf("Expected 1 source, got %d", len(info.Config.Sources))
+	}
+
+	firstSource := info.Config.Sources[0]
+	if firstSource.External == nil {
+		t.Fatal("Expected external configuration to be set after create")
+	}
+	if firstSource.External.APIPrefix == "" {
+		t.Fatal("Expected external APIPrefix to be set after create")
+	}
+	expectedAPIPrefix := firstSource.External.APIPrefix
+
+	// Second call should update the stream
+	// Add a subject to force an actual update
+	streamConfig.Subjects = []string{"bar"}
+	stream2, err := jsLeaf.CreateOrUpdateStream(context.Background(), streamConfig)
+	if err != nil {
+		t.Fatalf("Failed to update stream: %v", err)
+	}
+
+	// Verify the external configuration is preserved during update
+	info2, err := stream2.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to get updated stream info: %v", err)
+	}
+
+	if len(info2.Config.Sources) != 1 {
+		t.Fatalf("Expected 1 source after update, got %d", len(info2.Config.Sources))
+	}
+
+	updatedSource := info2.Config.Sources[0]
+	if updatedSource.External == nil {
+		t.Fatal("External configuration was removed during update - this is the bug!")
+	}
+	if updatedSource.External.APIPrefix != expectedAPIPrefix {
+		t.Fatalf("Expected APIPrefix %q to be preserved, got %q", expectedAPIPrefix, updatedSource.External.APIPrefix)
+	}
+
+	// Verify the subject was actually updated
+	if len(info2.Config.Subjects) != 1 {
+		t.Fatalf("Expected 1 subject after update, got %d", len(info2.Config.Subjects))
+	}
+	if info2.Config.Subjects[0] != "bar" {
+		t.Fatalf("Expected subject to be updated to 'bar', got %q", info2.Config.Subjects[0])
+	}
+}

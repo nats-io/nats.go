@@ -576,27 +576,10 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if cancel != nil {
 		defer cancel()
 	}
-	ncfg := cfg
-	// If we have a mirror and an external domain, convert to ext.APIPrefix.
-	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
-		// Copy so we do not change the caller's version.
-		ncfg.Mirror = ncfg.Mirror.copy()
-		if err := ncfg.Mirror.convertDomain(); err != nil {
-			return nil, err
-		}
-	}
 
-	// Check sources for the same.
-	if len(ncfg.Sources) > 0 {
-		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
-		for i, ss := range ncfg.Sources {
-			if ss.Domain != "" {
-				ncfg.Sources[i] = ss.copy()
-				if err := ncfg.Sources[i].convertDomain(); err != nil {
-					return nil, err
-				}
-			}
-		}
+	ncfg, err := convertStreamConfigDomains(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := json.Marshal(ncfg)
@@ -676,6 +659,36 @@ func (ss *StreamSource) copy() *StreamSource {
 	return &nss
 }
 
+// convertStreamConfigDomains converts domain configurations to external configurations
+// in both mirror and sources of a StreamConfig. It creates a copy of the config to avoid
+// modifying the caller's version.
+func convertStreamConfigDomains(cfg StreamConfig) (StreamConfig, error) {
+	ncfg := cfg
+	// If we have a mirror and an external domain, convert to ext.APIPrefix.
+	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
+		// Copy so we do not change the caller's version.
+		ncfg.Mirror = ncfg.Mirror.copy()
+		if err := ncfg.Mirror.convertDomain(); err != nil {
+			return StreamConfig{}, err
+		}
+	}
+
+	// Check sources for the same.
+	if len(ncfg.Sources) > 0 {
+		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
+		for i, ss := range ncfg.Sources {
+			if ss.Domain != "" {
+				ncfg.Sources[i] = ss.copy()
+				if err := ncfg.Sources[i].convertDomain(); err != nil {
+					return StreamConfig{}, err
+				}
+			}
+		}
+	}
+
+	return ncfg, nil
+}
+
 // UpdateStream updates an existing stream. If stream does not exist,
 // ErrStreamNotFound is returned.
 func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
@@ -687,7 +700,12 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		defer cancel()
 	}
 
-	req, err := json.Marshal(cfg)
+	ncfg, err := convertStreamConfigDomains(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := json.Marshal(ncfg)
 	if err != nil {
 		return nil, err
 	}
