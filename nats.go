@@ -1655,13 +1655,16 @@ func (o Options) Connect() (*Conn, error) {
 	// Create reader/writer
 	nc.newReaderWriter()
 
+	// Spin up the async cb dispatcher before connect so it's ready
+	// to handle callbacks, especially when RetryOnFailedConnect is used
+	// and initial connection fails.
+	go nc.ach.asyncCBDispatcher()
+
 	connectionEstablished, err := nc.connect()
 	if err != nil {
+		nc.ach.close()
 		return nil, err
 	}
-
-	// Spin up the async cb dispatcher on success
-	go nc.ach.asyncCBDispatcher()
 
 	if connectionEstablished && nc.Opts.ConnectedCB != nil {
 		nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
@@ -2549,7 +2552,7 @@ func (nc *Conn) connect() (bool, error) {
 		nc.setup()
 		nc.changeConnStatus(RECONNECTING)
 		nc.bw.switchToPending()
-		go nc.doReconnect(ErrNoServers, false)
+		go nc.doReconnect(err, false)
 		err = nil
 	} else {
 		nc.current = nil
@@ -2872,6 +2875,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 
 	// Clear any errors.
 	nc.err = nil
+
 	// Perform appropriate callback if needed for a disconnect.
 	// DisconnectedErrCB has priority over deprecated DisconnectedCB
 	if !nc.initc {
@@ -2879,6 +2883,12 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 			nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
 		} else if nc.Opts.DisconnectedCB != nil {
 			nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+		}
+	} else if nc.Opts.RetryOnFailedConnect && nc.initc && err != nil {
+		// For initial connection failure with RetryOnFailedConnect,
+		// report the error via ReconnectErrCB if available
+		if nc.Opts.ReconnectErrCB != nil {
+			nc.ach.push(func() { nc.Opts.ReconnectErrCB(nc, err) })
 		}
 	}
 
