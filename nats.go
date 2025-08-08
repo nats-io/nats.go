@@ -146,6 +146,7 @@ var (
 	ErrMaxConnectionsExceeded      = errors.New("nats: server maximum connections exceeded")
 	ErrConnectionNotTLS            = errors.New("nats: connection is not tls")
 	ErrMaxSubscriptionsExceeded    = errors.New("nats: server maximum subscriptions exceeded")
+	ErrWebSocketHeadersAlreadySet  = errors.New("nats: websocket connection headers already set")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -244,6 +245,9 @@ type UserInfoCB func() (string, string)
 // again. Note that this is invoked after the library tried the
 // whole list of URLs and failed to reconnect.
 type ReconnectDelayHandler func(attempts int) time.Duration
+
+// WebSocketHeadersHandler is an optional callback handler for generating token used for WebSocket connections.
+type WebSocketHeadersHandler func() (http.Header, error)
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -519,6 +523,12 @@ type Options struct {
 	// from SubscribeSync if the server returns a permissions error for a subscription.
 	// Defaults to false.
 	PermissionErrOnSubscribe bool
+
+	// WebSocketConnectionHeaders is an optional http request headers to be sent with the WebSocket request.
+	WebSocketConnectionHeaders http.Header
+
+	// WebSocketConnectionHeadersHandler is an optional callback handler for generating token  used for WebSocket connections.
+	WebSocketConnectionHeadersHandler WebSocketHeadersHandler
 }
 
 const (
@@ -1463,6 +1473,26 @@ func TLSHandshakeFirst() Option {
 	return func(o *Options) error {
 		o.TLSHandshakeFirst = true
 		o.Secure = true
+		return nil
+	}
+}
+
+func WebSocketConnectionHeaders(headers http.Header) Option {
+	return func(o *Options) error {
+		if o.WebSocketConnectionHeadersHandler != nil {
+			return ErrWebSocketHeadersAlreadySet
+		}
+		o.WebSocketConnectionHeaders = headers
+		return nil
+	}
+}
+
+func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
+	return func(o *Options) error {
+		if o.WebSocketConnectionHeaders != nil && len(o.WebSocketConnectionHeaders) != 0 {
+			return ErrWebSocketHeadersAlreadySet
+		}
+		o.WebSocketConnectionHeadersHandler = cb
 		return nil
 	}
 }
