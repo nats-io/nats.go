@@ -1,4 +1,4 @@
-// Copyright 2013-2023 The NATS Authors
+// Copyright 2013-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,13 +18,15 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/nats-io/jwt"
+	"github.com/nats-io/jwt/v2"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nkeys"
@@ -1140,4 +1142,363 @@ func TestAuthExpiredForceReconnect(t *testing.T) {
 	}
 	WaitOnChannel(t, newStatus, nats.RECONNECTING)
 	WaitOnChannel(t, newStatus, nats.CONNECTED)
+}
+
+func TestAlwaysReconnectOnMaxConnectionsExceededErr(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+                server_name: "A"
+                listen: 127.0.0.1:-1
+                max_connections: 2
+        `))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	clientOpts := func(name string) ([]nats.Option, chan error, chan struct{}, chan struct{}) {
+		disconnectCh := make(chan error, 10)
+		reconnectCh := make(chan struct{}, 10)
+		closedCh := make(chan struct{}, 10)
+		return []nats.Option{
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(10 * time.Millisecond),
+			nats.Timeout(200 * time.Millisecond),
+			nats.DisconnectErrHandler(func(c *nats.Conn, err error) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Disconnected: %v: %v", name, clientID, err)
+				if err != nil {
+					disconnectCh <- err
+				}
+			}),
+			nats.ReconnectHandler(func(c *nats.Conn) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Reconnected: %v", name, clientID)
+				reconnectCh <- struct{}{}
+			}),
+			nats.ClosedHandler(func(c *nats.Conn) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Closed: %v", name, clientID)
+				closedCh <- struct{}{}
+			}),
+			nats.Name(name),
+		}, disconnectCh, reconnectCh, closedCh
+	}
+
+	opts1, errCh1, reconnectCh1, _ := clientOpts("A")
+	nc1, err := nats.Connect(s.ClientURL(), opts1...)
+	if err != nil {
+		t.Fatalf("Failed to connect first client: %v", err)
+	}
+	defer nc1.Close()
+
+	opts2, errCh2, reconnectCh2, _ := clientOpts("B")
+	nc2, err := nats.Connect(s.ClientURL(), opts2...)
+	if err != nil {
+		t.Fatalf("Failed to connect second client: %v", err)
+	}
+	defer nc2.Close()
+
+	if s.NumClients() != 2 {
+		t.Fatalf("Expected 2 client connections to server. Got %d", s.NumClients())
+	}
+	if err := nc1.Flush(); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if err := nc2.Flush(); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// Reload to reduce number of connections.
+	err = os.WriteFile(conf, []byte(`
+                server_name: "A"
+                listen: 127.0.0.1:-1
+                max_connections: 1
+        `), 0666)
+	if err != nil {
+		t.Fatalf("Failed to update config file: %v", err)
+	}
+	err = s.Reload()
+	if err != nil {
+		t.Fatalf("Unexpected error reloading config: %v", err)
+	}
+
+	select {
+	case err := <-errCh1:
+		if err != nats.ErrMaxConnectionsExceeded {
+			t.Fatalf("Expected ErrMaxConnectionsExceeded, got %v", err)
+		}
+	case err := <-errCh2:
+		if err != nats.ErrMaxConnectionsExceeded {
+			t.Fatalf("Expected ErrMaxConnectionsExceeded, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for disconnect event")
+	}
+	if nc1.IsConnected() && nc2.IsConnected() {
+		t.Fatalf("Expected a client to be disconnected")
+	}
+
+	// Increase number of connections.
+	err = os.WriteFile(conf, []byte(`
+                server_name: "A"
+                listen: 127.0.0.1:-1
+                max_connections: 10
+        `), 0666)
+	if err != nil {
+		t.Fatalf("Failed to update config file: %v", err)
+	}
+	err = s.Reload()
+	if err != nil {
+		t.Fatalf("Unexpected error reloading config: %v", err)
+	}
+
+	// Wait for reconnect.
+	select {
+	case <-reconnectCh1:
+	case <-reconnectCh2:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for reconnect event")
+	}
+	if !(nc1.IsConnected() || nc2.IsConnected()) {
+		t.Fatal("At least one client should have reconnected successfully")
+	}
+	if s.NumClients() < 1 {
+		t.Fatalf("Expected at least 1 client reconnected to server. Got %d", s.NumClients())
+	}
+}
+
+func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+                listen: 127.0.0.1:-1
+                server_name: A
+                accounts: {
+                        ACCT1: {
+                                users: [ {user: "user1", password: "pass1"} ]
+                                limits: {
+                                        max_conn: 1
+                                }
+                        },
+                        ACCT2: {
+                                users: [ {user: "user2", password: "pass2"} ]
+                                limits: {
+                                        max_conn: 2
+                                }
+                        }
+                }
+        `))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	clientOpts := func(name string) ([]nats.Option, chan error, chan struct{}, chan struct{}) {
+		disconnectCh := make(chan error, 10)
+		reconnectCh := make(chan struct{}, 10)
+		closedCh := make(chan struct{}, 10)
+		return []nats.Option{
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(200 * time.Millisecond),
+			nats.Timeout(200 * time.Millisecond),
+			nats.DisconnectErrHandler(func(c *nats.Conn, err error) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Disconnected: %v: %v", name, clientID, err)
+				if err != nil {
+					disconnectCh <- err
+				}
+			}),
+			nats.ReconnectHandler(func(c *nats.Conn) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Reconnected: %v", name, clientID)
+				reconnectCh <- struct{}{}
+			}),
+			nats.ClosedHandler(func(c *nats.Conn) {
+				clientID, _ := c.GetClientID()
+				t.Logf("[%v] Closed: %v", name, clientID)
+				closedCh <- struct{}{}
+			}),
+			nats.Name(name),
+		}, disconnectCh, reconnectCh, closedCh
+	}
+
+	opts1, _, _, _ := clientOpts("ACCT1:C:1")
+	opts1 = append(opts1, nats.UserInfo("user1", "pass1"))
+	nc1, err := nats.Connect(s.ClientURL(), opts1...)
+	if err != nil {
+		t.Fatalf("Failed to connect first client: %v", err)
+	}
+	defer nc1.Close()
+
+	if s.NumClients() != 1 {
+		t.Fatalf("Expected 1 client connection to server. Got %d", s.NumClients())
+	}
+
+	// New connection fails due to limit.
+	opts2, _, _, _ := clientOpts("ACCT1:C:2")
+	opts2 = append(opts2, nats.UserInfo("user1", "pass1"))
+	_, err = nats.Connect(s.ClientURL(), opts2...)
+	if err == nil {
+		t.Fatal("Expected connection to fail due to account max connections limit")
+	}
+	if !strings.Contains(err.Error(), `maximum account active connections exceeded`) {
+		t.Fatalf("Expected second connection to be properly rejected: %v", err)
+	}
+
+	// Update account limits.
+	err = os.WriteFile(conf, []byte(`
+                listen: 127.0.0.1:-1
+                server_name: A
+                accounts: {
+                        ACCT1: {
+                                users: [ {user: "user1", password: "pass1"} ]
+                                limits: {
+                                        max_conn: 10
+                                }
+                        },
+                        ACCT2: {
+                                users: [ {user: "user2", password: "pass2"} ]
+                                limits: {
+                                        max_conn: 2
+                                }
+                        }
+                }
+        `), 0666)
+	if err != nil {
+		t.Fatalf("Failed to update config file: %v", err)
+	}
+
+	err = s.Reload()
+	if err != nil {
+		t.Fatalf("Unexpected error reloading config: %v", err)
+	}
+
+	// Ensure the first connection is fully established before creating the second
+	if err := nc1.Flush(); err != nil {
+		t.Fatalf("Failed to flush first connection: %v", err)
+	}
+
+	opts3, _, _, _ := clientOpts("ACCT1:C:3")
+	opts3 = append(opts3, nats.UserInfo("user1", "pass1"))
+	nc3, err := nats.Connect(s.ClientURL(), opts3...)
+	if err != nil {
+		t.Fatalf("Failed to connect client after limit increase: %v", err)
+	}
+	defer nc3.Close()
+
+	if s.NumClients() != 2 {
+		t.Fatalf("Expected 2 client connections to server. Got %d", s.NumClients())
+	}
+	if err = nc3.Flush(); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Both nc1 and nc3 should be connected at this point.
+	if !(nc1.IsConnected() && nc3.IsConnected()) {
+		t.Errorf("Expected both clients to be connected")
+	}
+
+	// Decrease connections...
+	err = os.WriteFile(conf, []byte(`
+                listen: 127.0.0.1:-1
+                server_name: A
+                accounts: {
+                        ACCT1: {
+                                users: [ {user: "user1", password: "pass1"} ]
+                                limits: {
+                                        max_conn: 1
+                                }
+                        },
+                        ACCT2: {
+                                users: [ {user: "user2", password: "pass2"} ]
+                                limits: {
+                                        max_conn: 2
+                                }
+                        }
+                }
+        `), 0666)
+	if err != nil {
+		t.Fatalf("Failed to update config file: %v", err)
+	}
+	err = s.Reload()
+	if err != nil {
+		t.Fatalf("Unexpected error reloading config: %v", err)
+	}
+
+	_, err = nats.Connect(s.ClientURL(), nats.UserInfo("user1", "pass1"))
+	if err == nil {
+		t.Error("Expected connection to fail due to account max connections limit after reload")
+	}
+	if got := s.NumClients(); got != 1 {
+		t.Errorf("Unexpected number of connections: %v", got)
+	}
+
+	// Now test is reconnecting against JWT based policy changes.
+	// Add a two connections to the other account.
+	opts4, errCh4, reconnectCh4, _ := clientOpts("ACCT2:C:4")
+	opts4 = append(opts4, nats.UserInfo("user2", "pass2"))
+	nc4, err := nats.Connect(s.ClientURL(), opts4...)
+	if err != nil {
+		t.Fatalf("Failed to connect to ACCT2: %v", err)
+	}
+	defer nc4.Close()
+	if !nc4.IsConnected() {
+		t.Fatal("Client connected to ACCT2 should be connected")
+	}
+	opts5, errCh5, reconnectCh5, _ := clientOpts("ACCT2:C:5")
+	opts5 = append(opts5, nats.UserInfo("user2", "pass2"))
+	nc5, err := nats.Connect(s.ClientURL(), opts5...)
+	if err != nil {
+		t.Fatalf("Failed to connect to ACCT2: %v", err)
+	}
+	defer nc5.Close()
+	if !nc5.IsConnected() {
+		t.Fatal("Client connected to ACCT2 should be connected")
+	}
+
+	// Now via JWT update.
+	acc, err := s.LookupAccount("ACCT2")
+	if err != nil {
+		t.Error(err)
+	}
+	accClaims := jwt.NewAccountClaims(acc.Name)
+	accClaims.Limits.Conn = 1
+	s.UpdateAccountClaims(acc, accClaims)
+
+	select {
+	case err := <-errCh4:
+		if err != nats.ErrMaxAccountConnectionsExceeded {
+			t.Fatalf("Expected ErrMaxConnectionsExceeded, got %v", err)
+		}
+	case err := <-errCh5:
+		if err != nats.ErrMaxAccountConnectionsExceeded {
+			t.Fatalf("Expected ErrMaxConnectionsExceeded, got %v", err)
+		}
+		if nc5.IsConnected() {
+			t.Fatalf("Expected client to be disconnected")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for disconnect event")
+	}
+	if !nc4.IsConnected() && !nc5.IsConnected() {
+		t.Fatalf("Expected at least one client to be connected")
+	}
+
+	acc, err = s.LookupAccount("ACCT2")
+	if err != nil {
+		t.Error(err)
+	}
+	accClaims = jwt.NewAccountClaims(acc.Name)
+	accClaims.Limits.Conn = 10
+	s.UpdateAccountClaims(acc, accClaims)
+	select {
+	case <-reconnectCh4:
+	case <-reconnectCh5:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for reconnect event")
+	}
+	if !nc4.IsConnected() || !nc5.IsConnected() {
+		t.Fatal("Expected both clients to be reconnected successfully")
+	}
+	if got := s.NumClients(); got != 3 {
+		t.Errorf("Unexpected number of connections: %v", got)
+	}
 }
