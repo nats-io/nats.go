@@ -191,6 +191,12 @@ const (
 	// [WithExpectLastSequencePerSubject] option.
 	ExpectedLastSubjSeqHeader = "Nats-Expected-Last-Subject-Sequence"
 
+	// ExpectedLastSubjSeqSubjHeader contains the subject for which the
+	// expected last sequence number is set. This is used together with
+	// [ExpectedLastSubjSeqHeader] to apply optimistic concurrency control at
+	// subject level. Server will reject the message if it is not the case.
+	ExpectedLastSubjSeqSubjHeader = "Nats-Expected-Last-Subject-Sequence-Subject"
+
 	// ExpectedLastMsgIDHeader contains the expected last message ID on the
 	// subject and can be used to apply optimistic concurrency control at
 	// stream level. Server will reject the message if it is not the case.
