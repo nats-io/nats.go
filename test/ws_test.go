@@ -620,7 +620,6 @@ func TestWsWithCustomHeaders(t *testing.T) {
 
 	staticHeader := make(http.Header, 0)
 	staticHeader.Set("Authorization", "Bearer Random Token")
-
 	headerProvider := func() (http.Header, error) {
 		return staticHeader, nil
 	}
@@ -660,7 +659,7 @@ func TestWsWithCustomHeaders(t *testing.T) {
 				return
 			}
 			if err != nil && !test.wantErr {
-				t.Fatalf("Error connecting to nats server: %v", err)
+				t.Fatalf("Did not expect error, found error: %v", err)
 			}
 			defer nc.Close()
 			sub, err := nc.SubscribeSync("foo")
