@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
 	"runtime"
 	"strings"
 	"sync"
@@ -610,4 +611,89 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 	}
 
 	tm.Stop()
+}
+
+func TestWsWithCustomHeaders(t *testing.T) {
+	sopts := testWSGetDefaultOptions(t, false)
+	s := RunServerWithOptions(sopts)
+	defer s.Shutdown()
+
+	staticHeader := make(http.Header, 0)
+	staticHeader.Set("Authorization", "Bearer Random Token")
+	headerProvider := func() (http.Header, error) {
+		return staticHeader, nil
+	}
+
+	for _, test := range []struct {
+		name              string
+		connectionOptions []nats.Option
+		wantErr           bool
+	}{
+		{
+			name: "Failure 1: Both headers and handler present",
+			connectionOptions: []nats.Option{
+				nats.WebSocketConnectionHeadersHandler(headerProvider),
+				nats.WebSocketConnectionHeaders(staticHeader),
+			},
+			wantErr: true,
+		},
+		{
+			name: "Success 1: Headers present as static headers",
+			connectionOptions: []nats.Option{
+				nats.WebSocketConnectionHeaders(staticHeader),
+			},
+			wantErr: false,
+		},
+		{
+			name: "Success 2: Header supplied through handler",
+			connectionOptions: []nats.Option{
+				nats.WebSocketConnectionHeadersHandler(headerProvider),
+			},
+			wantErr: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+			nc, err := nats.Connect(url, test.connectionOptions...)
+			if err != nil && test.wantErr {
+				return
+			}
+			if err != nil && !test.wantErr {
+				t.Fatalf("Did not expect error, found error: %v", err)
+			}
+			defer nc.Close()
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+
+			msgs := make([][]byte, 100)
+			for i := 0; i < len(msgs); i++ {
+				msg := make([]byte, 100)
+				for j := 0; j < len(msg); j++ {
+					msg[j] = 'A'
+				}
+				msgs[i] = msg
+			}
+			for i, msg := range msgs {
+				if err := nc.Publish("foo", msg); err != nil {
+					t.Fatalf("Error on publish: %v", err)
+				}
+				// Make sure that compression/masking does not touch user data
+				if !bytes.Equal(msgs[i], msg) {
+					t.Fatalf("User content has been changed: %v, got %v", msgs[i], msg)
+				}
+			}
+
+			for i := 0; i < len(msgs); i++ {
+				msg, err := sub.NextMsg(time.Second)
+				if err != nil {
+					t.Fatalf("Error getting next message (%d): %v", i+1, err)
+				}
+				if !bytes.Equal(msgs[i], msg.Data) {
+					t.Fatalf("Expected message (%d): %v, got %v", i+1, msgs[i], msg)
+				}
+			}
+		})
+	}
 }
