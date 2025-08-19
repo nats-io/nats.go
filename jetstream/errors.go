@@ -54,6 +54,7 @@ const (
 	JSErrCodeConsumerNameExists        ErrorCode = 10013
 	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
 	JSErrCodeConsumerExists            ErrorCode = 10148
+	JSErrCodeMaximumConsumersLimit     ErrorCode = 10026
 	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
 	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
@@ -136,6 +137,10 @@ var (
 	// ErrConsumerCreate is returned when nats-server reports error when
 	// creating consumer (e.g. illegal update).
 	ErrConsumerCreate JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerCreate, Description: "could not create consumer", Code: 500}}
+
+	// ErrMaximumConsumersLimit is returned when user limit of allowed
+	// consumers for stream is reached
+	ErrMaximumConsumersLimit JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMaximumConsumersLimit, Description: "maximum consumers limit reached", Code: 400}}
 
 	// ErrDuplicateFilterSubjects is returned when both FilterSubject and
 	// FilterSubjects are specified when creating consumer.
