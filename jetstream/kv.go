@@ -254,6 +254,8 @@ type (
 
 		// LimitMarkerTTL is how long the bucket keeps markers when keys are
 		// removed by the TTL setting.
+		// It is required for per-key TTL to work and for watcher to notify
+		// about TTL expirations (both per key and per bucket)
 		LimitMarkerTTL time.Duration
 	}
 
