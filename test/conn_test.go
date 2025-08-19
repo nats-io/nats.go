@@ -2920,6 +2920,77 @@ func TestRetryOnFailedConnect(t *testing.T) {
 	}
 }
 
+func TestRetryOnFailedConnectReconnectErrCB(t *testing.T) {
+	errChan := make(chan error, 10)
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(0), // Limited retries for faster test
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectErrHandler(func(_ *nats.Conn, err error) {
+			errChan <- err
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// Verify the first error is the initial connection error
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, nats.ErrNoServers) {
+			t.Fatalf("Expected ErrNoServers for initial connection failure, got: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Should have received initial connection error in ReconnectErrCB")
+	}
+}
+
+func TestRetryOnFailedConnectWithAuthError(t *testing.T) {
+	o := test.DefaultTestOptions
+	o.Username = "user"
+	o.Password = "password"
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	errChan := make(chan error, 10)
+	closedCh := make(chan bool, 1)
+
+	// Try to connect without credentials
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(2),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectErrHandler(func(_ *nats.Conn, err error) {
+			errChan <- err
+		}),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			closedCh <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// Wait for closed due to auth failure
+	select {
+	case <-closedCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Connection should have closed due to auth failure")
+	}
+
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, nats.ErrAuthorization) {
+			t.Fatalf("Expected ErrAuthorization for auth failure, got: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Should have received authorization error in ReconnectErrCB")
+	}
+}
+
 func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	opts := test.DefaultTestOptions
 	opts.Port = 4222
