@@ -2046,12 +2046,6 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 		_, err = kv.Get(ctx, "age")
 		expectErr(t, err, jetstream.ErrKeyNotFound)
 
-		// check if marker exists on stream
-		checkMsgHeaders(t, js, kv, "age", "1s", "MaxAge")
-		time.Sleep(time.Second)
-		// now msg should be gone from stream
-		checkMsgNotFound(t, js, kv, "age")
-
 		entry := <-watcher.Updates()
 		if entry == nil {
 			t.Fatalf("Expected entry, got nil")

@@ -10105,9 +10105,21 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	consInfo, err = sub.ConsumerInfo()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	var infoErr error
+	for range 5 {
+		consInfo, infoErr = sub.ConsumerInfo()
+		if infoErr != nil {
+			if errors.Is(infoErr, nats.ErrConsumerInfoOnOrderedReset) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		infoErr = nil
+		break
+	}
+	if infoErr != nil {
+		t.Fatalf("Unexpected error: %v", infoErr)
 	}
 	if consInfo.Name == consName || len(consInfo.Name) != 8 {
 		t.Fatalf("Unexpected consumer name: %q", consInfo.Name)
