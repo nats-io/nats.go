@@ -314,6 +314,10 @@ func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg Consu
 		if resp.Error.ErrorCode == JSErrCodeStreamNotFound {
 			return nil, ErrStreamNotFound
 		}
+		if resp.Error.ErrorCode == JSErrCodeMaximumConsumersLimit {
+			return nil, ErrMaximumConsumersLimit
+		}
+
 		return nil, resp.Error
 	}
 
