@@ -2175,3 +2175,101 @@ func TestOrderedConsumerCloseConn(t *testing.T) {
 		t.Fatalf("Timeout waiting for close")
 	}
 }
+
+func TestOrderedConsumerCustomPrefix(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"TEST.*"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("custom prefix is used", func(t *testing.T) {
+		customPrefix := "test"
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
+			NamePrefix: customPrefix,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		info := c.CachedInfo()
+		if info == nil {
+			t.Fatal("Expected consumer info, got nil")
+		}
+
+		expectedName := fmt.Sprintf("%s_1", customPrefix)
+		if info.Name != expectedName {
+			t.Errorf("Expected consumer name %q, got %q", expectedName, info.Name)
+		}
+	})
+
+	t.Run("increments sequence on recreation", func(t *testing.T) {
+		customPrefix := "test"
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
+			NamePrefix: customPrefix,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Get initial consumer name
+		info1 := c.CachedInfo()
+		if info1 == nil {
+			t.Fatal("Expected consumer info, got nil")
+		}
+		expectedName1 := fmt.Sprintf("%s_1", customPrefix)
+		if info1.Name != expectedName1 {
+			t.Errorf("Expected initial consumer name %q, got %q", expectedName1, info1.Name)
+		}
+
+		// Delete consumer to force recreation
+		if err := s.DeleteConsumer(ctx, info1.Name); err != nil {
+			t.Fatalf("Failed to delete consumer: %v", err)
+		}
+
+		// Publish message and consume to get the updated consumer name
+		if _, err := js.Publish(ctx, "TEST.B", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+
+		consName := make(chan string, 1)
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			meta, _ := msg.Metadata()
+			// Check if consumer was recreated with incremented sequence
+			if meta.Consumer == fmt.Sprintf("%s_2", customPrefix) {
+				consName <- meta.Consumer
+			}
+		})
+		if err != nil {
+			t.Fatalf("Failed to consume: %v", err)
+		}
+		defer cc.Stop()
+
+		select {
+		case name := <-consName:
+			if name != fmt.Sprintf("%s_2", customPrefix) {
+				t.Errorf("Expected recreated consumer name %q, got %q", fmt.Sprintf("%s_2", customPrefix), name)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timeout waiting for consumer recreation")
+		}
+	})
+}

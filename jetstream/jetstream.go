@@ -864,11 +864,15 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
+	namePrefix := cfg.NamePrefix
+	if namePrefix == "" {
+		namePrefix = nuid.Next()
+	}
 	oc := &orderedConsumer{
 		js:         js,
 		cfg:        &cfg,
 		stream:     stream,
-		namePrefix: nuid.Next(),
+		namePrefix: namePrefix,
 		doReset:    make(chan struct{}, 1),
 	}
 	consCfg := oc.getConsumerConfig()

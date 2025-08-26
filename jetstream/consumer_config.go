@@ -325,6 +325,12 @@ type (
 		// associating metadata on the consumer. This feature requires
 		// nats-server v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
+
+		// NamePrefix is an optional custom prefix for the consumer name.
+		// If provided, ordered consumer names will be generated as:
+		// {NamePrefix}_{sequence_number} (e.g., "custom_1", "custom_2").
+		// If not provided, a unique ID (NUID) will be used as the prefix.
+		NamePrefix string `json:"-"`
 	}
 
 	// DeliverPolicy determines from which point to start delivering messages.
