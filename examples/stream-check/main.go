@@ -46,6 +46,7 @@ func main() {
 		human              bool
 		sortBy             string
 		sortOrder          string
+		backup             bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -61,6 +62,7 @@ func main() {
 	flag.BoolVar(&human, "human", false, "Format bytes in human-readable units (KB, MB, GB)")
 	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects")
 	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
+	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
 	flag.Parse()
 
 	start := time.Now()
@@ -125,6 +127,13 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("Response took %.3fs", time.Since(start).Seconds())
+
+		// Save backup if requested
+		if backup {
+			if err := saveBackup(servers); err != nil {
+				log.Printf("Failed to save backup: %v", err)
+			}
+		}
 
 	}
 
@@ -368,6 +377,27 @@ func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 		}
 		return less
 	})
+}
+
+func saveBackup(servers []JSZResp) error {
+	now := time.Now()
+	filename := fmt.Sprintf("jsz-%04d%02d%02d.json", now.Year(), now.Month(), now.Day())
+	
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create backup file %s: %w", filename, err)
+	}
+	defer file.Close()
+	
+	encoder := json.NewEncoder(file)
+	for _, server := range servers {
+		if err := encoder.Encode(server); err != nil {
+			return fmt.Errorf("failed to encode server data: %w", err)
+		}
+	}
+	
+	log.Printf("Backup saved to %s (%d servers)", filename, len(servers))
+	return nil
 }
 
 const (
