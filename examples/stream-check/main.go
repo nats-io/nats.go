@@ -32,7 +32,7 @@ func main() {
 	var (
 		urls, sname, creds string
 		user, pass         string
-		timeout            int
+		timeout            string
 		unsyncedFilter     bool
 		health             bool
 		expected           int
@@ -45,7 +45,7 @@ func main() {
 	flag.StringVar(&user, "user", "", "User")
 	flag.StringVar(&pass, "pass", "", "Pass")
 	flag.BoolVar(&health, "health", false, "Check health from streams")
-	flag.IntVar(&timeout, "timeout", 30, "Connect timeout in seconds")
+	flag.StringVar(&timeout, "timeout", "30s", "Connect timeout (e.g. 30s, 1m)")
 	flag.IntVar(&readTimeout, "read-timeout", 5, "Read timeout in seconds")
 	flag.IntVar(&expected, "expected", 3, "Expected number of servers")
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
@@ -54,8 +54,13 @@ func main() {
 
 	start := time.Now()
 
+	timeoutDuration, parseErr := time.ParseDuration(timeout)
+	if parseErr != nil {
+		log.Fatalf("Invalid timeout duration: %v", parseErr)
+	}
+
 	opts := []nats.Option{
-		nats.Timeout(time.Duration(timeout) * time.Second),
+		nats.Timeout(timeoutDuration),
 	}
 	if creds != "" {
 		opts = append(opts, nats.UserCredentials(creds))
@@ -96,7 +101,7 @@ func main() {
 
 		start = time.Now()
 		sys = Sys(nc)
-		fetchTimeout := FetchTimeout(time.Duration(timeout) * time.Second)
+		fetchTimeout := FetchTimeout(timeoutDuration)
 		fetchExpected := FetchExpected(expected)
 		fetchReadTimeout := FetchReadTimeout(time.Duration(readTimeout) * time.Second)
 		servers, err = sys.JszPing(JszEventOptions{
