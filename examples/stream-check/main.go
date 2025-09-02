@@ -27,6 +27,11 @@ type streamDetail struct {
 	ServerID     string
 }
 
+type sortableEntry struct {
+	key     string
+	replica *streamDetail
+}
+
 func main() {
 	log.SetFlags(0)
 	var (
@@ -39,6 +44,8 @@ func main() {
 		readTimeout        int
 		stdin              bool
 		human              bool
+		sortBy             string
+		sortOrder          string
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -52,6 +59,8 @@ func main() {
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
 	flag.BoolVar(&stdin, "stdin", false, "Process the contents from STDIN")
 	flag.BoolVar(&human, "human", false, "Format bytes in human-readable units (KB, MB, GB)")
+	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects")
+	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
 	flag.Parse()
 
 	start := time.Now()
@@ -148,13 +157,33 @@ func main() {
 			}
 		}
 	}
-	keys := make([]string, 0)
+
+	// Create sortable entries
+	entries := make([]sortableEntry, 0)
 	for k := range streams {
 		for kk := range streams[k] {
-			keys = append(keys, fmt.Sprintf("%s/%s", k, kk))
+			entries = append(entries, sortableEntry{
+				key:     fmt.Sprintf("%s/%s", k, kk),
+				replica: streams[k][kk],
+			})
 		}
 	}
-	sort.Strings(keys)
+
+	// Sort entries if sort field is specified
+	if sortBy != "" {
+		sortEntries(entries, sortBy, sortOrder)
+	} else {
+		// Default sorting by key (alphabetical)
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].key < entries[j].key
+		})
+	}
+
+	// Extract keys from sorted entries
+	keys := make([]string, len(entries))
+	for i, entry := range entries {
+		keys[i] = entry.key
+	}
 
 	line := strings.Repeat("-", 220)
 	fmt.Printf("Streams: %d\n", len(keys))
@@ -312,6 +341,33 @@ func formatBytes(bytes uint64) string {
 		}
 	}
 	return "" // unreachable
+}
+
+func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
+	isDesc := sortOrder == "desc"
+	
+	sort.Slice(entries, func(i, j int) bool {
+		var less bool
+		
+		switch sortBy {
+		case "bytes":
+			less = entries[i].replica.State.Bytes < entries[j].replica.State.Bytes
+		case "messages":
+			less = entries[i].replica.State.Msgs < entries[j].replica.State.Msgs
+		case "consumers":
+			less = entries[i].replica.State.Consumers < entries[j].replica.State.Consumers
+		case "subjects":
+			less = entries[i].replica.State.NumSubjects < entries[j].replica.State.NumSubjects
+		default:
+			// Default to alphabetical by key
+			less = entries[i].key < entries[j].key
+		}
+		
+		if isDesc {
+			return !less
+		}
+		return less
+	})
 }
 
 const (
