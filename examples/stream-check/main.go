@@ -47,6 +47,7 @@ func main() {
 		sortBy             string
 		sortOrder          string
 		backup             bool
+		compare            string
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -63,7 +64,19 @@ func main() {
 	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects")
 	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
 	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
+	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
 	flag.Parse()
+
+	// Load comparison data if compare flag is provided
+	var compareData map[string]*streamDetail
+	if compare != "" {
+		var err error
+		compareData, err = loadComparisonData(compare)
+		if err != nil {
+			log.Fatalf("Failed to load comparison data: %v", err)
+		}
+		log.Printf("Loaded comparison data from %s", compare)
+	}
 
 	start := time.Now()
 
@@ -130,7 +143,7 @@ func main() {
 
 		// Save backup if requested
 		if backup {
-			if err := saveBackup(servers); err != nil {
+			if err := saveBackup(servers, compare != ""); err != nil {
 				log.Printf("Failed to save backup: %v", err)
 			}
 		}
@@ -285,17 +298,47 @@ func main() {
 
 		s := fmt.Sprintf("%s%s", serverName, suffix)
 		sf = append(sf, s)
-		sf = append(sf, replica.State.Msgs)
-		if human {
-			sf = append(sf, formatBytes(replica.State.Bytes))
+
+		// Add values or deltas based on compare mode
+		if compareData != nil {
+			// Compare mode - show deltas
+			compareKey := fmt.Sprintf("%s|%s/%s", replica.Account, replica.RaftGroup, serverName)
+			if compareReplica, exists := compareData[compareKey]; exists {
+				sf = append(sf, formatDelta(replica.State.Msgs, compareReplica.State.Msgs, false))
+				sf = append(sf, formatDelta(replica.State.Bytes, compareReplica.State.Bytes, human))
+				sf = append(sf, formatDelta(replica.State.NumSubjects, compareReplica.State.NumSubjects, false))
+				sf = append(sf, formatDelta(replica.State.NumDeleted, compareReplica.State.NumDeleted, false))
+				sf = append(sf, formatDelta(replica.State.Consumers, compareReplica.State.Consumers, false))
+				sf = append(sf, formatSequenceDelta(replica.State.FirstSeq, compareReplica.State.FirstSeq))
+				sf = append(sf, formatSequenceDelta(replica.State.LastSeq, compareReplica.State.LastSeq))
+			} else {
+				// New stream - show as all positive deltas
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.Msgs))
+				if human && replica.State.Bytes > 1024 {
+					sf = append(sf, fmt.Sprintf("+%s", formatBytes(replica.State.Bytes)))
+				} else {
+					sf = append(sf, fmt.Sprintf("+%d", replica.State.Bytes))
+				}
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.NumSubjects))
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.NumDeleted))
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.Consumers))
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.FirstSeq))
+				sf = append(sf, fmt.Sprintf("+%d", replica.State.LastSeq))
+			}
 		} else {
-			sf = append(sf, replica.State.Bytes)
+			// Normal mode - show absolute values
+			sf = append(sf, replica.State.Msgs)
+			if human {
+				sf = append(sf, formatBytes(replica.State.Bytes))
+			} else {
+				sf = append(sf, replica.State.Bytes)
+			}
+			sf = append(sf, replica.State.NumSubjects)
+			sf = append(sf, replica.State.NumDeleted)
+			sf = append(sf, replica.State.Consumers)
+			sf = append(sf, replica.State.FirstSeq)
+			sf = append(sf, replica.State.LastSeq)
 		}
-		sf = append(sf, replica.State.NumSubjects)
-		sf = append(sf, replica.State.NumDeleted)
-		sf = append(sf, replica.State.Consumers)
-		sf = append(sf, replica.State.FirstSeq)
-		sf = append(sf, replica.State.LastSeq)
 		sf = append(sf, status)
 		sf = append(sf, replica.Cluster.Leader)
 
@@ -315,7 +358,10 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		if human {
+		if compareData != nil {
+			// Compare mode - all numeric fields are now strings (deltas)
+			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+		} else if human {
 			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
 		} else {
 			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
@@ -379,9 +425,14 @@ func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 	})
 }
 
-func saveBackup(servers []JSZResp) error {
-	now := time.Now()
-	filename := fmt.Sprintf("jsz-%04d%02d%02d.json", now.Year(), now.Month(), now.Day())
+func saveBackup(servers []JSZResp, isCompareMode bool) error {
+	var filename string
+	if isCompareMode {
+		filename = "jsz-latest.json"
+	} else {
+		now := time.Now()
+		filename = fmt.Sprintf("jsz-%04d%02d%02d.json", now.Year(), now.Month(), now.Day())
+	}
 	
 	file, err := os.Create(filename)
 	if err != nil {
@@ -398,6 +449,110 @@ func saveBackup(servers []JSZResp) error {
 	
 	log.Printf("Backup saved to %s (%d servers)", filename, len(servers))
 	return nil
+}
+
+func loadComparisonData(filename string) (map[string]*streamDetail, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open comparison file: %w", err)
+	}
+	defer file.Close()
+
+	compareData := make(map[string]*streamDetail)
+	decoder := json.NewDecoder(file)
+	
+	for {
+		var jszResp JSZResp
+		if err := decoder.Decode(&jszResp); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("failed to decode comparison data: %w", err)
+		}
+
+		server := jszResp.Server
+		jsz := jszResp.JSInfo
+		for _, acc := range jsz.AccountDetails {
+			for _, stream := range acc.Streams {
+				key := fmt.Sprintf("%s|%s/%s", acc.Name, stream.RaftGroup, server.Name)
+				compareData[key] = &streamDetail{
+					ServerID:   server.ID,
+					StreamName: stream.Name,
+					Account:    acc.Name,
+					AccountID:  acc.Id,
+					RaftGroup:  stream.RaftGroup,
+					State:      stream.State,
+					Cluster:    stream.Cluster,
+				}
+			}
+		}
+	}
+
+	return compareData, nil
+}
+
+func formatDelta(current, previous interface{}, human bool) string {
+	var currentVal, previousVal int64
+	
+	switch v := current.(type) {
+	case uint64:
+		currentVal = int64(v)
+	case int:
+		currentVal = int64(v)
+	case int64:
+		currentVal = v
+	}
+	
+	switch v := previous.(type) {
+	case uint64:
+		previousVal = int64(v)
+	case int:
+		previousVal = int64(v)
+	case int64:
+		previousVal = v
+	}
+	
+	if previousVal == 0 && currentVal == 0 {
+		return "0"
+	}
+	
+	delta := currentVal - previousVal
+	if delta == 0 {
+		return "0"
+	}
+	
+	var deltaStr string
+	if delta > 0 {
+		if human && (delta > 1024) {
+			deltaStr = fmt.Sprintf("+%s", formatBytes(uint64(delta)))
+		} else {
+			deltaStr = fmt.Sprintf("+%d", delta)
+		}
+	} else {
+		if human && (-delta > 1024) {
+			deltaStr = fmt.Sprintf("-%s", formatBytes(uint64(-delta)))
+		} else {
+			deltaStr = fmt.Sprintf("%d", delta)
+		}
+	}
+	
+	return deltaStr
+}
+
+func formatSequenceDelta(current, previous uint64) string {
+	if previous == 0 && current == 0 {
+		return "0"
+	}
+	
+	delta := int64(current) - int64(previous)
+	if delta == 0 {
+		return "0"
+	}
+	
+	if delta > 0 {
+		return fmt.Sprintf("+%d", delta)
+	}
+	return fmt.Sprintf("%d", delta)
 }
 
 const (
