@@ -48,6 +48,7 @@ func main() {
 		sortOrder          string
 		backup             bool
 		compare            string
+		skipIdle           bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -65,6 +66,7 @@ func main() {
 	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
 	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
 	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
+	flag.BoolVar(&skipIdle, "skip-idle", false, "Skip streams with no changes when using --compare")
 	flag.Parse()
 
 	// Load comparison data if compare flag is provided
@@ -228,6 +230,16 @@ func main() {
 		key := fmt.Sprintf("%s|%s", accName, streamName)
 		stream := streams[key]
 		replica := stream[serverName]
+		
+		// Skip idle streams if --skip-idle and --compare are both used
+		if skipIdle && compareData != nil {
+			compareKey := fmt.Sprintf("%s|%s/%s", replica.Account, replica.RaftGroup, serverName)
+			if compareReplica, exists := compareData[compareKey]; exists {
+				if isStreamIdle(replica, compareReplica) {
+					continue
+				}
+			}
+		}
 		status := "IN SYNC"
 
 		// Make comparisons against other peers.
@@ -553,6 +565,22 @@ func formatSequenceDelta(current, previous uint64) string {
 		return fmt.Sprintf("+%d", delta)
 	}
 	return fmt.Sprintf("%d", delta)
+}
+
+func isStreamIdle(current, previous *streamDetail) bool {
+	if previous == nil {
+		// New stream - not idle
+		return false
+	}
+	
+	// Check if any of the key metrics changed
+	return current.State.Msgs == previous.State.Msgs &&
+		current.State.Bytes == previous.State.Bytes &&
+		current.State.NumSubjects == previous.State.NumSubjects &&
+		current.State.NumDeleted == previous.State.NumDeleted &&
+		current.State.Consumers == previous.State.Consumers &&
+		current.State.FirstSeq == previous.State.FirstSeq &&
+		current.State.LastSeq == previous.State.LastSeq
 }
 
 const (
