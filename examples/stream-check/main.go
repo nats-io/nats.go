@@ -38,6 +38,7 @@ func main() {
 		expected           int
 		readTimeout        int
 		stdin              bool
+		human              bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -50,6 +51,7 @@ func main() {
 	flag.IntVar(&expected, "expected", 3, "Expected number of servers")
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
 	flag.BoolVar(&stdin, "stdin", false, "Process the contents from STDIN")
+	flag.BoolVar(&human, "human", false, "Format bytes in human-readable units (KB, MB, GB)")
 	flag.Parse()
 
 	start := time.Now()
@@ -246,7 +248,11 @@ func main() {
 		s := fmt.Sprintf("%s%s", serverName, suffix)
 		sf = append(sf, s)
 		sf = append(sf, replica.State.Msgs)
-		sf = append(sf, replica.State.Bytes)
+		if human {
+			sf = append(sf, formatBytes(replica.State.Bytes))
+		} else {
+			sf = append(sf, replica.State.Bytes)
+		}
 		sf = append(sf, replica.State.NumSubjects)
 		sf = append(sf, replica.State.NumDeleted)
 		sf = append(sf, replica.State.Consumers)
@@ -271,11 +277,41 @@ func main() {
 		}
 
 		sf = append(sf, replicasInfo)
-		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+		if human {
+			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+		} else {
+			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+		}
 
 		prev = streamName
 		prevAccount = accName
 	}
+}
+
+func formatBytes(bytes uint64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%dB", bytes)
+	}
+	
+	units := []struct {
+		threshold uint64
+		divisor   uint64
+		suffix    string
+	}{
+		{1024 * 1024 * 1024 * 1024 * 1024 * 1024, 1024 * 1024 * 1024 * 1024 * 1024 * 1024, "EB"},
+		{1024 * 1024 * 1024 * 1024 * 1024, 1024 * 1024 * 1024 * 1024 * 1024, "PB"},
+		{1024 * 1024 * 1024 * 1024, 1024 * 1024 * 1024 * 1024, "TB"},
+		{1024 * 1024 * 1024, 1024 * 1024 * 1024, "GB"},
+		{1024 * 1024, 1024 * 1024, "MB"},
+		{1024, 1024, "KB"},
+	}
+	
+	for _, unit := range units {
+		if bytes >= unit.threshold {
+			return fmt.Sprintf("%.1f%s", float64(bytes)/float64(unit.divisor), unit.suffix)
+		}
+	}
+	return "" // unreachable
 }
 
 const (
