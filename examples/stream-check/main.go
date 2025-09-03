@@ -49,6 +49,7 @@ func main() {
 		backup             bool
 		compare            string
 		skipIdle           bool
+		config             bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -67,6 +68,7 @@ func main() {
 	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
 	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
 	flag.BoolVar(&skipIdle, "skip-idle", false, "Skip streams with no changes when using --compare")
+	flag.BoolVar(&config, "config", false, "Include consumer details and configuration in JSZ request")
 	flag.Parse()
 
 	// Load comparison data if compare flag is provided
@@ -135,6 +137,8 @@ func main() {
 		servers, err = sys.JszPing(JszEventOptions{
 			JszOptions: JszOptions{
 				Streams:    true,
+				Consumer:   config,
+				Config:     config,
 				RaftGroups: true,
 			},
 		}, fetchTimeout, fetchReadTimeout, fetchExpected)
