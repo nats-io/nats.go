@@ -52,6 +52,8 @@ func main() {
 		config             bool
 		asc                bool
 		desc               bool
+		summary            bool
+		file               string
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -73,6 +75,8 @@ func main() {
 	flag.BoolVar(&config, "config", false, "Include consumer details and configuration in JSZ request")
 	flag.BoolVar(&asc, "asc", false, "Sort in ascending order (shorthand for --order asc)")
 	flag.BoolVar(&desc, "desc", false, "Sort in descending order (shorthand for --order desc)")
+	flag.BoolVar(&summary, "summary", false, "Show summary view (omit leader/peers and account ID columns)")
+	flag.StringVar(&file, "f", "", "Read from JSZ JSON file instead of connecting to server")
 	flag.Parse()
 
 	// Handle shorthand sort order flags
@@ -120,9 +124,21 @@ func main() {
 		err     error
 		sys     SysClient
 	)
-	if stdin {
+	if stdin || file != "" {
 		servers = make([]JSZResp, 0)
-		reader := bufio.NewReader(os.Stdin)
+		var reader *bufio.Reader
+		var inputFile *os.File
+
+		if file != "" {
+			inputFile, err = os.Open(file)
+			if err != nil {
+				log.Fatalf("Failed to open file %s: %v", file, err)
+			}
+			defer inputFile.Close()
+			reader = bufio.NewReader(inputFile)
+		} else {
+			reader = bufio.NewReader(os.Stdin)
+		}
 
 		for i := 0; i < expected; i++ {
 			data, err := reader.ReadString('\n')
@@ -232,8 +248,13 @@ func main() {
 	fmt.Printf("Streams: %d\n", len(keys))
 	fmt.Println()
 
-	fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-	fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	if summary {
+		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
+		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	} else {
+		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
+		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+	}
 
 	var prev, prevAccount string
 	for i, k := range keys {
@@ -249,7 +270,7 @@ func main() {
 		key := fmt.Sprintf("%s|%s", accName, streamName)
 		stream := streams[key]
 		replica := stream[serverName]
-		
+
 		// Skip idle streams if --skip-idle and --compare are both used
 		if skipIdle && compareData != nil {
 			compareKey := fmt.Sprintf("%s|%s/%s", replica.Account, replica.RaftGroup, serverName)
@@ -304,7 +325,9 @@ func main() {
 		sf = append(sf, replica.StreamName)
 		sf = append(sf, replica.RaftGroup)
 		sf = append(sf, strings.Replace(replica.Account[:alen], " ", "_", -1))
-		sf = append(sf, replica.AccountID)
+		if !summary {
+			sf = append(sf, replica.AccountID)
+		}
 
 		// Mark it in case it is a leader.
 		var suffix string
@@ -371,7 +394,9 @@ func main() {
 			sf = append(sf, replica.State.LastSeq)
 		}
 		sf = append(sf, status)
-		sf = append(sf, replica.Cluster.Leader)
+		if !summary {
+			sf = append(sf, replica.Cluster.Leader)
+		}
 
 		// Include Healthz if option added.
 		var healthStatus string
@@ -388,14 +413,27 @@ func main() {
 			replicasInfo = fmt.Sprintf("health:%q %s", healthStatus, replicasInfo)
 		}
 
-		sf = append(sf, replicasInfo)
-		if compareData != nil {
-			// Compare mode - all numeric fields are now strings (deltas)
-			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
-		} else if human {
-			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+		if summary {
+			// Summary mode - omit replicasInfo (leader/peers) and adjust format
+			if compareData != nil {
+				// Compare mode - all numeric fields are now strings (deltas)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s %-30s\n", sf...)
+			} else if human {
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d %-30s\n", sf...)
+			} else {
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d %-30s\n", sf...)
+			}
 		} else {
-			fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+			// Full mode - include replicasInfo (leader/peers)
+			sf = append(sf, replicasInfo)
+			if compareData != nil {
+				// Compare mode - all numeric fields are now strings (deltas)
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+			} else if human {
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+			} else {
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+			}
 		}
 
 		prev = streamName
@@ -407,7 +445,7 @@ func formatBytes(bytes uint64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%dB", bytes)
 	}
-	
+
 	units := []struct {
 		threshold uint64
 		divisor   uint64
@@ -420,7 +458,7 @@ func formatBytes(bytes uint64) string {
 		{1024 * 1024, 1024 * 1024, "MB"},
 		{1024, 1024, "KB"},
 	}
-	
+
 	for _, unit := range units {
 		if bytes >= unit.threshold {
 			return fmt.Sprintf("%.1f%s", float64(bytes)/float64(unit.divisor), unit.suffix)
@@ -431,10 +469,10 @@ func formatBytes(bytes uint64) string {
 
 func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 	isDesc := sortOrder == "desc"
-	
+
 	sort.Slice(entries, func(i, j int) bool {
 		var less bool
-		
+
 		switch sortBy {
 		case "bytes":
 			less = entries[i].replica.State.Bytes < entries[j].replica.State.Bytes
@@ -448,7 +486,7 @@ func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 			// Default to alphabetical by key
 			less = entries[i].key < entries[j].key
 		}
-		
+
 		if isDesc {
 			return !less
 		}
@@ -464,20 +502,20 @@ func saveBackup(servers []JSZResp, isCompareMode bool) error {
 		now := time.Now()
 		filename = fmt.Sprintf("jsz-%04d%02d%02d.json", now.Year(), now.Month(), now.Day())
 	}
-	
+
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create backup file %s: %w", filename, err)
 	}
 	defer file.Close()
-	
+
 	encoder := json.NewEncoder(file)
 	for _, server := range servers {
 		if err := encoder.Encode(server); err != nil {
 			return fmt.Errorf("failed to encode server data: %w", err)
 		}
 	}
-	
+
 	log.Printf("Backup saved to %s (%d servers)", filename, len(servers))
 	return nil
 }
@@ -491,7 +529,7 @@ func loadComparisonData(filename string) (map[string]*streamDetail, error) {
 
 	compareData := make(map[string]*streamDetail)
 	decoder := json.NewDecoder(file)
-	
+
 	for {
 		var jszResp JSZResp
 		if err := decoder.Decode(&jszResp); err != nil {
@@ -524,7 +562,7 @@ func loadComparisonData(filename string) (map[string]*streamDetail, error) {
 
 func formatDelta(current, previous interface{}, human bool) string {
 	var currentVal, previousVal int64
-	
+
 	switch v := current.(type) {
 	case uint64:
 		currentVal = int64(v)
@@ -533,7 +571,7 @@ func formatDelta(current, previous interface{}, human bool) string {
 	case int64:
 		currentVal = v
 	}
-	
+
 	switch v := previous.(type) {
 	case uint64:
 		previousVal = int64(v)
@@ -542,16 +580,16 @@ func formatDelta(current, previous interface{}, human bool) string {
 	case int64:
 		previousVal = v
 	}
-	
+
 	if previousVal == 0 && currentVal == 0 {
 		return "0"
 	}
-	
+
 	delta := currentVal - previousVal
 	if delta == 0 {
 		return "0"
 	}
-	
+
 	var deltaStr string
 	if delta > 0 {
 		if human && (delta > 1024) {
@@ -566,7 +604,7 @@ func formatDelta(current, previous interface{}, human bool) string {
 			deltaStr = fmt.Sprintf("%d", delta)
 		}
 	}
-	
+
 	return deltaStr
 }
 
@@ -574,12 +612,12 @@ func formatSequenceDelta(current, previous uint64) string {
 	if previous == 0 && current == 0 {
 		return "0"
 	}
-	
+
 	delta := int64(current) - int64(previous)
 	if delta == 0 {
 		return "0"
 	}
-	
+
 	if delta > 0 {
 		return fmt.Sprintf("+%d", delta)
 	}
@@ -591,7 +629,7 @@ func isStreamIdle(current, previous *streamDetail) bool {
 		// New stream - not idle
 		return false
 	}
-	
+
 	// Check if any of the key metrics changed
 	return current.State.Msgs == previous.State.Msgs &&
 		current.State.Bytes == previous.State.Bytes &&
