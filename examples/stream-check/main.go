@@ -50,6 +50,8 @@ func main() {
 		compare            string
 		skipIdle           bool
 		config             bool
+		asc                bool
+		desc               bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -69,7 +71,20 @@ func main() {
 	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
 	flag.BoolVar(&skipIdle, "skip-idle", false, "Skip streams with no changes when using --compare")
 	flag.BoolVar(&config, "config", false, "Include consumer details and configuration in JSZ request")
+	flag.BoolVar(&asc, "asc", false, "Sort in ascending order (shorthand for --order asc)")
+	flag.BoolVar(&desc, "desc", false, "Sort in descending order (shorthand for --order desc)")
 	flag.Parse()
+
+	// Handle shorthand sort order flags
+	if asc && desc {
+		log.Fatal("Cannot specify both --asc and --desc flags")
+	}
+	if asc {
+		sortOrder = "asc"
+	}
+	if desc {
+		sortOrder = "desc"
+	}
 
 	// Load comparison data if compare flag is provided
 	var compareData map[string]*streamDetail
