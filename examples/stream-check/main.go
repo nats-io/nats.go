@@ -37,6 +37,7 @@ func main() {
 	var (
 		urls, sname, creds string
 		user, pass         string
+		nkey               string
 		timeout            string
 		unsyncedFilter     bool
 		health             bool
@@ -60,6 +61,7 @@ func main() {
 	flag.StringVar(&sname, "stream", "", "Select a single stream")
 	flag.StringVar(&user, "user", "", "User")
 	flag.StringVar(&pass, "pass", "", "Pass")
+	flag.StringVar(&nkey, "nkey", "", "NKey seed file for authentication")
 	flag.BoolVar(&health, "health", false, "Check health from streams")
 	flag.StringVar(&timeout, "timeout", "30s", "Connect timeout (e.g. 30s, 1m)")
 	flag.IntVar(&readTimeout, "read-timeout", 5, "Read timeout in seconds")
@@ -116,6 +118,13 @@ func main() {
 	}
 	if user != "" && pass != "" {
 		opts = append(opts, nats.UserInfo(user, pass))
+	}
+	if nkey != "" {
+		opt, err := nats.NkeyOptionFromSeed(nkey)
+		if err != nil {
+			log.Fatalf("Failed to load NKey: %v", err)
+		}
+		opts = append(opts, opt)
 	}
 
 	var (
