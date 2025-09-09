@@ -43,27 +43,28 @@ type (
 )
 
 const (
+	JSErrCodeBadRequest            ErrorCode = 10003
+	JSErrCodeConsumerCreate        ErrorCode = 10012
+	JSErrCodeConsumerNameExists    ErrorCode = 10013
+	JSErrCodeConsumerNotFound      ErrorCode = 10014
+	JSErrCodeMaximumConsumersLimit ErrorCode = 10026
+
+	JSErrCodeMessageNotFound               ErrorCode = 10037
 	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
-	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
 
-	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
+	JSErrCodeStreamNotFound  ErrorCode = 10059
 
-	JSErrCodeConsumerCreate            ErrorCode = 10012
-	JSErrCodeConsumerNotFound          ErrorCode = 10014
-	JSErrCodeConsumerNameExists        ErrorCode = 10013
-	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
-	JSErrCodeConsumerExists            ErrorCode = 10148
+	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
+	JSErrCodeJetStreamNotEnabled     ErrorCode = 10076
+
+	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
+
 	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
 	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
+	JSErrCodeConsumerExists            ErrorCode = 10148
 	JSErrCodeConsumerDoesNotExist      ErrorCode = 10149
-
-	JSErrCodeMessageNotFound ErrorCode = 10037
-
-	JSErrCodeBadRequest ErrorCode = 10003
-
-	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
 
 var (
@@ -141,6 +142,10 @@ var (
 	// ErrConsumerCreate is returned when nats-server reports error when
 	// creating consumer (e.g. illegal update).
 	ErrConsumerCreate JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerCreate, Description: "could not create consumer", Code: 500}}
+
+	// ErrMaximumConsumersLimit is returned when user limit of allowed
+	// consumers for stream is reached
+	ErrMaximumConsumersLimit JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMaximumConsumersLimit, Description: "maximum consumers limit reached", Code: 400}}
 
 	// ErrDuplicateFilterSubjects is returned when both FilterSubject and
 	// FilterSubjects are specified when creating consumer.
