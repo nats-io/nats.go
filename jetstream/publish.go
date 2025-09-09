@@ -130,6 +130,15 @@ type (
 
 		// Domain is the domain the message was published to.
 		Domain string `json:"domain,omitempty"`
+
+		// The counter's current value for the subject.
+		Value string `json:"val,omitempty"`
+
+		// BatchId is the ID of the batch this message belongs to.
+		BatchId string `json:"batch,omitempty"`
+
+		// BatchSize is the number of messages in the batch so far.
+		BatchSize int `json:"count,omitempty"`
 	}
 )
 
@@ -237,6 +246,45 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		return nil, ErrInvalidJSAck
 	}
 	return ackResp.PubAck, nil
+}
+
+// PublishMsgBatch publishes a batch of messages to a Stream and waits for an ack for the commit.
+func (js *jetStream) PublishMsgBatch(ctx context.Context, messages []*nats.Msg, batchId string) (*PubAck, error) {
+	// Batch publish
+	var pubAck *PubAck
+	var err error
+	msgs := len(messages)
+
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	for i := 0; i < msgs; i++ {
+		messages[i].Header.Del("Nats-Batch-Commit")
+		messages[i].Header.Set("Nats-Batch-Id", batchId)
+		messages[i].Header.Set("Nats-Batch-Sequence", strconv.Itoa(i+1))
+
+		if i == msgs-1 {
+			// Commit the batch on the last message.
+			messages[i].Header.Set("Nats-Batch-Commit", "1")
+			pubAck, err = js.PublishMsg(ctx, messages[i])
+			if err != nil {
+				return nil, fmt.Errorf("committing the batch: %w", err)
+			}
+
+			if pubAck.BatchId != batchId || pubAck.BatchSize != msgs {
+				return nil, fmt.Errorf("batch commit: invalid batch ack: %v", pubAck)
+			}
+
+		} else {
+			err = js.conn.PublishMsg(messages[i])
+			if err != nil {
+				return nil, fmt.Errorf("publishing message in the batch: %w", err)
+			}
+		}
+	}
+	return pubAck, nil
 }
 
 // PublishAsync performs an asynchronous publish to a stream and returns
