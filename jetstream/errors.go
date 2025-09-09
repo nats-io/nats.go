@@ -356,6 +356,10 @@ var (
 	// ErrBatchClosed is returned when attempting to use a batch that has been closed.
 	ErrBatchClosed = &jsError{message: "batch publisher closed"}
 
+	// ErrInvalidBatchAck is returned when JetStream ack from batch publish is
+	// invalid.
+	ErrInvalidBatchAck JetStreamError = &jsError{message: "invalid jetstream batch publish response"}
+
 	// ErrInvalidKey is returned when attempting to create a key with an invalid
 	// name.
 	ErrInvalidKey JetStreamError = &jsError{message: "invalid key"}

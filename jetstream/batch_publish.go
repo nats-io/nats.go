@@ -80,7 +80,7 @@ type (
 	batchPublisher struct {
 		js       *jetStream
 		batchID  string
-		sequence uint32
+		sequence int
 		closed   bool
 		mu       sync.Mutex
 	}
@@ -88,13 +88,13 @@ type (
 	batchAckResponse struct {
 		apiResponse
 		*PubAck
-		BatchID   string `json:"batch_id,omitempty"`
-		BatchSize int    `json:"batch_size,omitempty"`
+		BatchID   string `json:"batch,omitempty"`
+		BatchSize int    `json:"count,omitempty"`
 	}
 )
 
-// NewBatchPublisher creates a new batch publisher for publishing messages in batches.
-func (js *jetStream) NewBatchPublisher() (BatchPublisher, error) {
+// BatchPublisher creates a new batch publisher for publishing messages in batches.
+func (js *jetStream) BatchPublisher() (BatchPublisher, error) {
 	return &batchPublisher{
 		js:      js,
 		batchID: nuid.Next(),
@@ -134,6 +134,10 @@ func (b *batchPublisher) Commit(ctx context.Context, subject string, data []byte
 
 // CommitMsg publishes the final message and commits the batch.
 func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAck, error) {
+	ctx, cancel := b.js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -148,7 +152,7 @@ func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAc
 
 	b.sequence++
 	msg.Header.Set(BatchIDHeader, b.batchID)
-	msg.Header.Set(BatchSeqHeader, strconv.FormatUint(uint64(b.sequence), 10))
+	msg.Header.Set(BatchSeqHeader, strconv.FormatInt(int64(b.sequence), 10))
 	msg.Header.Set(BatchCommitHeader, "1")
 
 	resp, err := b.js.publishWithOptions(ctx, msg, nil)
@@ -163,10 +167,11 @@ func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAc
 		return nil, ErrInvalidJSAck
 	}
 	if batchResp.Error != nil {
-		return nil, fmt.Errorf("nats: %w", batchResp.Error)
+		return nil, batchResp.Error
 	}
-	if batchResp.PubAck == nil || batchResp.PubAck.Stream == "" {
-		return nil, ErrInvalidJSAck
+	if batchResp.PubAck == nil || batchResp.PubAck.Stream == "" ||
+		batchResp.BatchID != b.batchID || batchResp.BatchSize != int(b.sequence) {
+		return nil, ErrInvalidBatchAck
 	}
 
 	// Return BatchAck with server-provided values
@@ -206,4 +211,63 @@ func (b *batchPublisher) IsClosed() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.closed
+}
+
+// PublishMsgBatch publishes a batch of messages to a Stream and waits for an ack for the commit.
+func (js *jetStream) PublishMsgBatch(ctx context.Context, messages []*nats.Msg) (*BatchAck, error) {
+	// Batch publish
+	var batchAck *BatchAck
+	var err error
+	msgs := len(messages)
+
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	batchID := nuid.Next()
+
+	for i := range messages {
+		messages[i].Header.Del(BatchCommitHeader)
+		messages[i].Header.Set(BatchIDHeader, batchID)
+		messages[i].Header.Set(BatchSeqHeader, strconv.Itoa(i+1))
+
+		if i < msgs-1 {
+			err = js.conn.PublishMsg(messages[i])
+			if err != nil {
+				return nil, fmt.Errorf("publishing message in the batch: %w", err)
+			}
+			continue
+		}
+
+		// Commit the batch on the last message.
+		messages[i].Header.Set(BatchCommitHeader, "1")
+		resp, err := js.publishWithOptions(ctx, messages[i], nil)
+		if err != nil {
+			return nil, fmt.Errorf("committing the batch: %w", err)
+		}
+
+		var batchResp batchAckResponse
+		if err := json.Unmarshal(resp.Data, &batchResp); err != nil {
+			return nil, ErrInvalidJSAck
+		}
+		if batchResp.Error != nil {
+			return nil, batchResp.Error
+		}
+		if batchResp.PubAck == nil || batchResp.PubAck.Stream == "" ||
+			batchResp.BatchID != batchID || batchResp.BatchSize != msgs {
+
+			return nil, ErrInvalidBatchAck
+		}
+
+		batchAck = &BatchAck{
+			Stream:    batchResp.PubAck.Stream,
+			Sequence:  batchResp.PubAck.Sequence,
+			Domain:    batchResp.PubAck.Domain,
+			Value:     batchResp.PubAck.Value,
+			BatchID:   batchResp.BatchID,
+			BatchSize: batchResp.BatchSize,
+		}
+
+	}
+	return batchAck, nil
 }

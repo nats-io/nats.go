@@ -123,10 +123,17 @@ type (
 		// be lost.
 		CleanupPublisher()
 
-		// NewBatchPublisher creates a new batch publisher for publishing messages in batches.
+		// PublishMsgBatch publishes a batch of messages to a stream.
+		// All messages in the batch are published with batch headers,
+		// and the batch is committed with the final message which includes
+		// a commit header. Returns a BatchAck containing the acknowledgment
+		// from the server.
+		PublishMsgBatch(ctx context.Context, msgs []*nats.Msg) (*BatchAck, error)
+
+		// BatchPublisher creates a new batch publisher for publishing messages in atomic batches.
 		// Messages are published immediately with batch headers, and the batch is committed
 		// with the final message which includes a commit header.
-		NewBatchPublisher() (BatchPublisher, error)
+		BatchPublisher() (BatchPublisher, error)
 	}
 
 	// StreamManager provides CRUD API for managing streams. It is available as

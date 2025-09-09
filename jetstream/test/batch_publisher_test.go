@@ -47,7 +47,7 @@ func TestBatchPublisher(t *testing.T) {
 		}
 
 		// Create a batch publisher
-		batch, err := js.NewBatchPublisher()
+		batch, err := js.BatchPublisher()
 		if err != nil {
 			t.Fatalf("Unexpected error creating batch publisher: %v", err)
 		}
@@ -130,7 +130,7 @@ func TestBatchPublisher(t *testing.T) {
 
 		// create 50 batches (the default max) and add a message to each
 		for i := 0; i < 50; i++ {
-			batch, err := js.NewBatchPublisher()
+			batch, err := js.BatchPublisher()
 			if err != nil {
 				t.Fatalf("Unexpected error creating batch publisher: %v", err)
 			}
@@ -140,7 +140,7 @@ func TestBatchPublisher(t *testing.T) {
 			}
 		}
 		// Now create one more batch
-		batch, err := js.NewBatchPublisher()
+		batch, err := js.BatchPublisher()
 		if err != nil {
 			t.Fatalf("Unexpected error creating batch publisher: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestBatchPublisher(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error creating stream: %v", err)
 		}
-		batch, err := js.NewBatchPublisher()
+		batch, err := js.BatchPublisher()
 		if err != nil {
 			t.Fatalf("Unexpected error creating batch publisher: %v", err)
 		}
@@ -206,7 +206,7 @@ func TestBatchPublisher(t *testing.T) {
 			t.Fatalf("Unexpected error creating stream: %v", err)
 		}
 
-		batch, err := js.NewBatchPublisher()
+		batch, err := js.BatchPublisher()
 		if err != nil {
 			t.Fatalf("Unexpected error creating batch publisher: %v", err)
 		}
@@ -252,7 +252,7 @@ func TestBatchPublisher(t *testing.T) {
 			t.Fatalf("Unexpected error creating stream: %v", err)
 		}
 
-		batch, err := js.NewBatchPublisher()
+		batch, err := js.BatchPublisher()
 		if err != nil {
 			t.Fatalf("Unexpected error creating batch publisher: %v", err)
 		}
@@ -294,7 +294,7 @@ func TestBatchPublisher_Discard(t *testing.T) {
 		t.Fatalf("Unexpected error creating stream: %v", err)
 	}
 
-	batch, err := js.NewBatchPublisher()
+	batch, err := js.BatchPublisher()
 	if err != nil {
 		t.Fatalf("Unexpected error creating batch publisher: %v", err)
 	}
@@ -346,4 +346,90 @@ func TestBatchPublisher_Discard(t *testing.T) {
 	if info.State.Msgs != 0 {
 		t.Fatalf("Expected 0 messages in the stream, got %d", info.State.Msgs)
 	}
+}
+
+func TestPublishMsgBatch(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create a stream with batch publishing enabled
+		cfg := jetstream.StreamConfig{
+			Name:               "TEST",
+			Subjects:           []string{"test.>"},
+			AllowAtomicPublish: true,
+		}
+		stream, err := js.CreateStream(ctx, cfg)
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		count := 100
+		messages := make([]*nats.Msg, 0, count)
+		for range count {
+			messages = append(messages, &nats.Msg{
+				Subject: "test.subject",
+				Data:    []byte("message"),
+				Header:  nats.Header{},
+			})
+		}
+
+		ack, err := js.PublishMsgBatch(ctx, messages)
+		if err != nil {
+			t.Fatalf("Unexpected error publishing message batch: %v", err)
+		}
+		if ack == nil {
+			t.Fatal("Expected non-nil BatchAck")
+		}
+
+		// verify we have 100 messages in the stream
+		info, err := stream.Info(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error getting stream info: %v", err)
+		}
+		if info.State.Msgs != uint64(count) {
+			t.Fatalf("Expected %d messages in the stream, got %d", count, info.State.Msgs)
+		}
+		if ack.BatchSize != count {
+			t.Fatalf("Expected BatchAck.BatchSize to be %d, got %d", count, ack.BatchSize)
+		}
+	})
+	t.Run("too many messages", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create a stream with batch publishing enabled
+		cfg := jetstream.StreamConfig{
+			Name:               "TEST",
+			Subjects:           []string{"test.>"},
+			AllowAtomicPublish: true,
+		}
+		_, err := js.CreateStream(ctx, cfg)
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+
+		count := 1001
+		messages := make([]*nats.Msg, 0, count)
+		for range count {
+			messages = append(messages, &nats.Msg{
+				Subject: "test.subject",
+				Data:    []byte("message"),
+				Header:  nats.Header{},
+			})
+		}
+
+		_, err = js.PublishMsgBatch(ctx, messages)
+		if !errors.Is(err, jetstream.ErrBatchPublishExceedsLimit) {
+			t.Fatalf("Expected ErrBatchPublishExceedsLimit publishing too many messages, got %v", err)
+		}
+	})
 }

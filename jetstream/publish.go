@@ -247,7 +247,7 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		return nil, ErrInvalidJSAck
 	}
 	if ackResp.Error != nil {
-		return nil, fmt.Errorf("nats: %w", ackResp.Error)
+		return nil, ackResp.Error
 	}
 	if ackResp.PubAck == nil || ackResp.PubAck.Stream == "" {
 		return nil, ErrInvalidJSAck
