@@ -130,6 +130,8 @@ type (
 
 		// Domain is the domain the message was published to.
 		Domain string `json:"domain,omitempty"`
+
+		Value string `json:"val,omitempty"`
 	}
 )
 
