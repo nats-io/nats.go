@@ -150,6 +150,9 @@ var (
 	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
 	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "Leadership Changed"}
 
+	// ErrConsumerInfoOnOrderedReset is returned when attempting to fetch consumer info for an ordered consumer that is currently being recreated.
+	ErrConsumerInfoOnOrderedReset JetStreamError = &jsError{message: "cannot fetch consumer info; ordered consumer is being reset"}
+
 	// ErrNoHeartbeat is returned when no heartbeat is received from server when sending requests with pull consumer.
 	ErrNoHeartbeat JetStreamError = &jsError{message: "no heartbeat received"}
 
