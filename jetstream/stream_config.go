@@ -279,10 +279,25 @@ type (
 		// Name is the name of the cluster.
 		Name string `json:"name,omitempty"`
 
+		// RaftGroup is the name of the Raft group managing the asset (in
+		// clustered environments).
+		RaftGroup string `json:"raft_group,omitempty"`
+
 		// Leader is the server name of the RAFT leader.
 		Leader string `json:"leader,omitempty"`
 
-		// Replicas is the list of members of the RAFT cluster
+		// LeaderSince is the time that it was elected as leader in RFC3339
+		// format, absent when not the leader.
+		LeaderSince *time.Time `json:"leader_since,omitempty"`
+
+		// SystemAcc indicates if the traffic_account is the system account.
+		// When true, replication traffic goes over the system account.
+		SystemAcc bool `json:"system_account,omitempty"`
+
+		// TrafficAcc is the account where the replication traffic goes over.
+		TrafficAcc string `json:"traffic_account,omitempty"`
+
+		// Replicas is the list of members of the RAFT cluster.
 		Replicas []*PeerInfo `json:"replicas,omitempty"`
 	}
 
