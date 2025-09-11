@@ -122,6 +122,11 @@ type (
 		// will be recreated on next publish, but the acks from previous publishes will
 		// be lost.
 		CleanupPublisher()
+
+		// NewBatchPublisher creates a new batch publisher for publishing messages in batches.
+		// Messages are published immediately with batch headers, and the batch is committed
+		// with the final message which includes a commit header.
+		NewBatchPublisher() (BatchPublisher, error)
 	}
 
 	// StreamManager provides CRUD API for managing streams. It is available as

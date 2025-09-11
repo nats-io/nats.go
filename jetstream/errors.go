@@ -65,6 +65,13 @@ const (
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
 	JSErrCodeConsumerExists            ErrorCode = 10148
 	JSErrCodeConsumerDoesNotExist      ErrorCode = 10149
+
+	// Batch publish error codes
+	JSErrCodeBatchPublishNotEnabled        ErrorCode = 10174
+	JSErrCodeBatchPublishMissingSeq        ErrorCode = 10175
+	JSErrCodeBatchPublishIncomplete        ErrorCode = 10176
+	JSErrCodeBatchPublishUnsupportedHeader ErrorCode = 10177
+	JSErrCodeBatchPublishExceedsLimit      ErrorCode = 10199
 )
 
 var (
@@ -328,6 +335,26 @@ var (
 	// ErrInvalidBucketName is returned when attempting to create a bucket with
 	// an invalid name.
 	ErrInvalidBucketName JetStreamError = &jsError{message: "invalid bucket name"}
+
+	// Batch publish errors
+
+	// ErrBatchPublishNotEnabled is returned when batch publish is not enabled on the stream.
+	ErrBatchPublishNotEnabled JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBatchPublishNotEnabled, Description: "batch publish not enabled on stream", Code: 400}}
+
+	// ErrBatchPublishIncomplete is returned when batch publish is incomplete and was abandoned.
+	ErrBatchPublishIncomplete JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBatchPublishIncomplete, Description: "batch publish is incomplete and was abandoned", Code: 400}}
+
+	// ErrBatchPublishMissingSeq is returned when batch publish sequence is missing.
+	ErrBatchPublishMissingSeq JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBatchPublishMissingSeq, Description: "batch publish sequence is missing", Code: 400}}
+
+	// ErrBatchPublishExceedsLimit is returned when batch publish sequence exceeds server limit (default 1000).
+	ErrBatchPublishExceedsLimit JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBatchPublishExceedsLimit, Description: "batch publish sequence exceeds server limit (default 1000)", Code: 400}}
+
+	// ErrBatchPublishUnsupportedHeader is returned when batch publish uses unsupported headers (Nats-Expected-Last-Msg-Id or Nats-Msg-Id).
+	ErrBatchPublishUnsupportedHeader JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeBatchPublishUnsupportedHeader, Description: "batch publish unsupported header used (Nats-Expected-Last-Msg-Id or Nats-Msg-Id)", Code: 400}}
+
+	// ErrBatchClosed is returned when attempting to use a batch that has been closed.
+	ErrBatchClosed = &jsError{message: "batch publisher closed"}
 
 	// ErrInvalidKey is returned when attempting to create a key with an invalid
 	// name.
