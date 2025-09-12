@@ -213,6 +213,15 @@ const (
 	// ("all") or at the subject ("sub") before this message.
 	MsgRollup = "Nats-Rollup"
 
+	// BatchIDHeader contains the batch ID for a message in a batch publish.
+	BatchIDHeader = "Nats-Batch-Id"
+
+	// BatchSeqHeader contains the sequence number of a message within a batch.
+	BatchSeqHeader = "Nats-Batch-Sequence"
+
+	// BatchCommitHeader signals the final message in a batch when set to "1".
+	BatchCommitHeader = "Nats-Batch-Commit"
+
 	// MarkerReasonHeader is used to specify a reason for message deletion.
 	MarkerReasonHeader = "Nats-Marker-Reason"
 )

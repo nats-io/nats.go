@@ -204,6 +204,9 @@ type (
 
 		// AllowMsgCounter enables the feature
 		AllowMsgCounter bool `json:"allow_msg_counter"`
+
+		// AllowAtomicPublish allows atomic batch publishing into the stream.
+		AllowAtomicPublish bool `json:"allow_atomic,omitempty"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream

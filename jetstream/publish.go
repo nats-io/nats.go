@@ -131,6 +131,8 @@ type (
 		// Domain is the domain the message was published to.
 		Domain string `json:"domain,omitempty"`
 
+		// Value is the counter value for the stream.
+		// This is only set when publishing to a stream with [StreamConfig.AllowMsgCounter] enabled.
 		Value string `json:"val,omitempty"`
 	}
 )
@@ -157,10 +159,10 @@ func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts
 	return js.PublishMsg(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
-// PublishMsg performs a synchronous publish to a stream and waits for
-// ack from server. It accepts subject name (which must be bound to a
-// stream) and nats.Message.
-func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
+// publishWithOptions performs a synchronous publish with options processing,
+// retry logic, and error handling. Returns the raw server response for
+// caller-specific parsing.
+func (js *jetStream) publishWithOptions(ctx context.Context, m *nats.Msg, opts []PublishOpt) (*nats.Msg, error) {
 	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -228,12 +230,24 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		}
 	}
 
+	return resp, nil
+}
+
+// PublishMsg performs a synchronous publish to a stream and waits for
+// ack from server. It accepts subject name (which must be bound to a
+// stream) and nats.Message.
+func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
+	resp, err := js.publishWithOptions(ctx, m, opts)
+	if err != nil {
+		return nil, err
+	}
+
 	var ackResp pubAckResponse
 	if err := json.Unmarshal(resp.Data, &ackResp); err != nil {
 		return nil, ErrInvalidJSAck
 	}
 	if ackResp.Error != nil {
-		return nil, fmt.Errorf("nats: %w", ackResp.Error)
+		return nil, ackResp.Error
 	}
 	if ackResp.PubAck == nil || ackResp.PubAck.Stream == "" {
 		return nil, ErrInvalidJSAck
