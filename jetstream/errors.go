@@ -360,6 +360,9 @@ var (
 	// invalid.
 	ErrInvalidBatchAck JetStreamError = &jsError{message: "invalid jetstream batch publish response"}
 
+	// ErrBatchExpectLastSequenceNotFirst is returned when ExpectLastSequence options are used on non-first message in batch.
+	ErrBatchExpectLastSequenceNotFirst = &jsError{message: "ExpectLastSequence options can only be used on first message in batch"}
+
 	// ErrInvalidKey is returned when attempting to create a key with an invalid
 	// name.
 	ErrInvalidKey JetStreamError = &jsError{message: "invalid key"}

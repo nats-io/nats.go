@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
@@ -30,19 +31,19 @@ type (
 	// with the final message which includes a commit header.
 	BatchPublisher interface {
 		// Add publishes a message to the batch with the given subject and data.
-		Add(subject string, data []byte) error
+		Add(subject string, data []byte, opts ...BatchMsgOpt) error
 
 		// AddMsg publishes a message to the batch.
-		AddMsg(msg *nats.Msg) error
+		AddMsg(msg *nats.Msg, opts ...BatchMsgOpt) error
 
 		// Commit publishes the final message with the given subject and data,
 		// and commits the batch. Returns a BatchAck containing the acknowledgment
 		// from the server.
-		Commit(ctx context.Context, subject string, data []byte) (*BatchAck, error)
+		Commit(ctx context.Context, subject string, data []byte, opts ...BatchMsgOpt) (*BatchAck, error)
 
 		// CommitMsg publishes the final message and commits the batch.
 		// Returns a BatchAck containing the acknowledgment from the server.
-		CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAck, error)
+		CommitMsg(ctx context.Context, msg *nats.Msg, opts ...BatchMsgOpt) (*BatchAck, error)
 
 		// Discard cancels the batch without committing.
 		// The server will abandon the batch after a timeout.
@@ -91,6 +92,17 @@ type (
 		BatchID   string `json:"batch,omitempty"`
 		BatchSize int    `json:"count,omitempty"`
 	}
+
+	// BatchMsgOpt is an option for configuring batch message publishing.
+	BatchMsgOpt func(*batchMsgOpts) error
+
+	batchMsgOpts struct {
+		ttl            time.Duration
+		stream         string
+		lastSeq        *uint64
+		lastSubjectSeq *uint64
+		lastSubject    string
+	}
 )
 
 // BatchPublisher creates a new batch publisher for publishing messages in batches.
@@ -102,12 +114,12 @@ func (js *jetStream) BatchPublisher() (BatchPublisher, error) {
 }
 
 // Add publishes a message to the batch with the given subject and data.
-func (b *batchPublisher) Add(subject string, data []byte) error {
-	return b.AddMsg(&nats.Msg{Subject: subject, Data: data})
+func (b *batchPublisher) Add(subject string, data []byte, opts ...BatchMsgOpt) error {
+	return b.AddMsg(&nats.Msg{Subject: subject, Data: data}, opts...)
 }
 
 // AddMsg publishes a message to the batch.
-func (b *batchPublisher) AddMsg(msg *nats.Msg) error {
+func (b *batchPublisher) AddMsg(msg *nats.Msg, opts ...BatchMsgOpt) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -119,21 +131,50 @@ func (b *batchPublisher) AddMsg(msg *nats.Msg) error {
 		msg.Header = nats.Header{}
 	}
 
+	// Process batch message options
+	o := batchMsgOpts{}
+	for _, opt := range opts {
+		if err := opt(&o); err != nil {
+			return err
+		}
+	}
+
+	// Validate ExpectLastSequence options can only be used on first message
+	if b.sequence > 0 && o.lastSeq != nil {
+		return ErrBatchExpectLastSequenceNotFirst
+	}
+
+	if o.ttl > 0 {
+		msg.Header.Set(MsgTTLHeader, o.ttl.String())
+	}
+	if o.stream != "" {
+		msg.Header.Set(ExpectedStreamHeader, o.stream)
+	}
+	if o.lastSubjectSeq != nil {
+		msg.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+	if o.lastSubject != "" {
+		msg.Header.Set(ExpectedLastSubjSeqSubjHeader, o.lastSubject)
+		msg.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+	if o.lastSeq != nil {
+		msg.Header.Set(ExpectedLastSeqHeader, strconv.FormatUint(*o.lastSeq, 10))
+	}
+
 	b.sequence++
 	msg.Header.Set(BatchIDHeader, b.batchID)
 	msg.Header.Set(BatchSeqHeader, strconv.FormatUint(uint64(b.sequence), 10))
 
-	// Publish immediately
 	return b.js.conn.PublishMsg(msg)
 }
 
 // Commit publishes the final message and commits the batch.
-func (b *batchPublisher) Commit(ctx context.Context, subject string, data []byte) (*BatchAck, error) {
-	return b.CommitMsg(ctx, &nats.Msg{Subject: subject, Data: data})
+func (b *batchPublisher) Commit(ctx context.Context, subject string, data []byte, opts ...BatchMsgOpt) (*BatchAck, error) {
+	return b.CommitMsg(ctx, &nats.Msg{Subject: subject, Data: data}, opts...)
 }
 
 // CommitMsg publishes the final message and commits the batch.
-func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAck, error) {
+func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg, opts ...BatchMsgOpt) (*BatchAck, error) {
 	ctx, cancel := b.js.wrapContextWithoutDeadline(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -144,18 +185,47 @@ func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAc
 	if b.closed {
 		return nil, ErrBatchClosed
 	}
+	// Process batch message options and convert to PublishOpt
+	o := batchMsgOpts{}
+	for _, opt := range opts {
+		if err := opt(&o); err != nil {
+			return nil, err
+		}
+	}
 
-	// Check for unsupported headers
+	// Validate ExpectLastSequence options can only be used on first message
+	if b.sequence > 0 && o.lastSeq != nil {
+		return nil, ErrBatchExpectLastSequenceNotFirst
+	}
+
+	// Convert batch options to publish options for commit
+	var pubOpts []PublishOpt
+	if o.ttl > 0 {
+		pubOpts = append(pubOpts, WithMsgTTL(o.ttl))
+	}
+	if o.stream != "" {
+		pubOpts = append(pubOpts, WithExpectStream(o.stream))
+	}
+	if o.lastSeq != nil {
+		pubOpts = append(pubOpts, WithExpectLastSequence(*o.lastSeq))
+	}
+	if o.lastSubject != "" && o.lastSubjectSeq != nil {
+		pubOpts = append(pubOpts, WithExpectLastSequenceForSubject(*o.lastSubjectSeq, o.lastSubject))
+	} else if o.lastSubjectSeq != nil {
+		pubOpts = append(pubOpts, WithExpectLastSequencePerSubject(*o.lastSubjectSeq))
+	}
+
+	b.sequence++
+
 	if msg.Header == nil {
 		msg.Header = nats.Header{}
 	}
 
-	b.sequence++
 	msg.Header.Set(BatchIDHeader, b.batchID)
 	msg.Header.Set(BatchSeqHeader, strconv.FormatInt(int64(b.sequence), 10))
 	msg.Header.Set(BatchCommitHeader, "1")
 
-	resp, err := b.js.publishWithOptions(ctx, msg, nil)
+	resp, err := b.js.publishWithOptions(ctx, msg, pubOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +244,6 @@ func (b *batchPublisher) CommitMsg(ctx context.Context, msg *nats.Msg) (*BatchAc
 		return nil, ErrInvalidBatchAck
 	}
 
-	// Return BatchAck with server-provided values
 	return &BatchAck{
 		Stream:    batchResp.PubAck.Stream,
 		Sequence:  batchResp.PubAck.Sequence,
@@ -215,7 +284,6 @@ func (b *batchPublisher) IsClosed() bool {
 
 // PublishMsgBatch publishes a batch of messages to a Stream and waits for an ack for the commit.
 func (js *jetStream) PublishMsgBatch(ctx context.Context, messages []*nats.Msg) (*BatchAck, error) {
-	// Batch publish
 	var batchAck *BatchAck
 	var err error
 	msgs := len(messages)
