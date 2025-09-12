@@ -6,7 +6,7 @@ require (
 	github.com/golang/protobuf v1.4.2
 	github.com/klauspost/compress v1.18.0
 	github.com/nats-io/jwt/v2 v2.8.0
-	github.com/nats-io/nats-server/v2 v2.12.0-preview.2.0.20250910084245-518408273bfb
+	github.com/nats-io/nats-server/v2 v2.12.0-RC.3
 	github.com/nats-io/nkeys v0.4.11
 	github.com/nats-io/nuid v1.0.1
 	google.golang.org/protobuf v1.23.0
