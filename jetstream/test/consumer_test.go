@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1155,6 +1156,284 @@ func TestConsumerUnpin(t *testing.T) {
 			t.Fatalf("Expected error: %v, got: %v", jetstream.ErrConsumerNotFound, err)
 		}
 	})
+}
+
+func TestConsumerPrioritized(t *testing.T) {
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable:        "cons",
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			Description:    "test consumer",
+			PriorityPolicy: jetstream.PriorityPolicyPrioritized,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Check that consumer got proper priority policy
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyPrioritized {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPrioritized, info.Config.PriorityPolicy)
+		}
+		cons1, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cons2, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := sync.WaitGroup{}
+		wg.Add(100)
+		errs := make(chan error, 100)
+		cc1, err := cons1.Consume(func(m jetstream.Msg) {
+			if err := m.Ack(); err != nil {
+				errs <- fmt.Errorf("Failed to ack message: %v", err)
+			}
+			wg.Done()
+		}, jetstream.PullPriorityGroup("A"), jetstream.PullPrioritized(0), jetstream.PullMaxMessages(10))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer cc1.Stop()
+
+		cc2, err := cons2.Consume(func(m jetstream.Msg) {
+			errs <- fmt.Errorf("Should not receive message")
+			if err := m.Ack(); err != nil {
+				errs <- fmt.Errorf("Failed to ack message: %v", err)
+			}
+			wg.Done()
+		}, jetstream.PullPriorityGroup("A"), jetstream.PullPrioritized(1), jetstream.PullMaxMessages(10))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer cc2.Stop()
+
+		for i := 0; i < 100; i++ {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		wg.Wait()
+		select {
+		case err := <-errs:
+			t.Fatalf("Unexpected error: %v", err)
+		default:
+		}
+	})
+
+	t.Run("fetch", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable:        "cons",
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			Description:    "test consumer",
+			PriorityPolicy: jetstream.PriorityPolicyPrioritized,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Check that consumer got proper priority policy
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyPrioritized {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPrioritized, info.Config.PriorityPolicy)
+		}
+		cons1, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cons2, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// lower priority
+		msgs1, err := cons1.Fetch(100, jetstream.FetchPriorityGroup("A"), jetstream.FetchPrioritized(1), jetstream.FetchMaxWait(time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// higher priority
+		msgs2, err := cons2.Fetch(75, jetstream.FetchPriorityGroup("A"), jetstream.FetchPrioritized(0), jetstream.FetchMaxWait(time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		for i := 0; i < 100; i++ {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		count1 := 0
+		for range msgs1.Messages() {
+			count1++
+		}
+		if msgs1.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs1.Error())
+		}
+		if count1 != 25 {
+			t.Fatalf("Expected 25 messages, got %d", count1)
+		}
+
+		count2 := 0
+		for range msgs2.Messages() {
+			count2++
+		}
+		if msgs2.Error() != nil {
+			t.Fatalf("Unexpected error: %v", msgs2.Error())
+		}
+		if count2 != 75 {
+			t.Fatalf("Expected 75 messages, got %d", count2)
+		}
+	})
+
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable:        "cons",
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			PriorityPolicy: jetstream.PriorityPolicyPrioritized,
+			PriorityGroups: []string{"A"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Check that consumer got proper priority policy
+		info := c.CachedInfo()
+		if info.Config.PriorityPolicy != jetstream.PriorityPolicyPrioritized {
+			t.Fatalf("Invalid priority policy; expected: %v; got: %v", jetstream.PriorityPolicyPrioritized, info.Config.PriorityPolicy)
+		}
+		cons1, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cons2, err := s.Consumer(ctx, "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		wg := sync.WaitGroup{}
+		wg.Add(100)
+		errs := make(chan error, 100)
+		msgs1, err := cons1.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullPrioritized(0), jetstream.PullMaxMessages(10))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs1.Stop()
+		go func() {
+			for {
+				msg, err := msgs1.Next()
+				if err != nil {
+					return
+				}
+				if err := msg.Ack(); err != nil {
+					return
+				}
+				wg.Done()
+			}
+		}()
+
+		msgs2, err := cons2.Messages(jetstream.PullPriorityGroup("A"), jetstream.PullPrioritized(1), jetstream.PullMaxMessages(10))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs2.Stop()
+		go func() {
+			for {
+				msg, err := msgs2.Next()
+				if err != nil {
+					fmt.Println("err", err)
+					return
+				}
+				errs <- fmt.Errorf("Should not receive message")
+				if err := msg.Ack(); err != nil {
+					return
+				}
+				wg.Done()
+			}
+		}()
+		for i := 0; i < 100; i++ {
+			_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		wg.Wait()
+		select {
+		case err := <-errs:
+			t.Fatalf("Unexpected error: %v", err)
+		default:
+		}
+	})
+
 }
 
 func TestConsumerCachedInfo(t *testing.T) {

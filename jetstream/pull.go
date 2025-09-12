@@ -101,6 +101,7 @@ type (
 		MinAckPending int64         `json:"min_ack_pending,omitempty"`
 		PinID         string        `json:"id,omitempty"`
 		Group         string        `json:"group,omitempty"`
+		Priority      uint8         `json:"priority,omitempty"`
 	}
 
 	consumeOpts struct {
@@ -110,6 +111,7 @@ type (
 		LimitSize               bool
 		MinPending              int64
 		MinAckPending           int64
+		Priority                uint8
 		Group                   string
 		Heartbeat               time.Duration
 		ErrHandler              ConsumeErrHandler
@@ -314,6 +316,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		Heartbeat:     consumeOpts.Heartbeat,
 		MinPending:    consumeOpts.MinPending,
 		MinAckPending: consumeOpts.MinAckPending,
+		Priority:      consumeOpts.Priority,
 		Group:         consumeOpts.Group,
 		PinID:         p.getPinID(),
 	}, subject); err != nil {
@@ -353,6 +356,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							Heartbeat:     sub.consumeOpts.Heartbeat,
 							MinPending:    sub.consumeOpts.MinPending,
 							MinAckPending: sub.consumeOpts.MinAckPending,
+							Priority:      sub.consumeOpts.Priority,
 							Group:         sub.consumeOpts.Group,
 							PinID:         p.getPinID(),
 						}
@@ -383,6 +387,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						Heartbeat:     sub.consumeOpts.Heartbeat,
 						MinPending:    sub.consumeOpts.MinPending,
 						MinAckPending: sub.consumeOpts.MinAckPending,
+						Priority:      sub.consumeOpts.Priority,
 						Group:         sub.consumeOpts.Group,
 						PinID:         p.getPinID(),
 					}
@@ -468,6 +473,7 @@ func (s *pullSubscription) checkPending() {
 				Group:         s.consumeOpts.Group,
 				MinPending:    s.consumeOpts.MinPending,
 				MinAckPending: s.consumeOpts.MinAckPending,
+				Priority:      s.consumeOpts.Priority,
 			}
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
