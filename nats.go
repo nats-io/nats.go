@@ -3657,6 +3657,7 @@ func (nc *Conn) flusher() {
 // processPing will send an immediate pong protocol response to the
 // server. The server uses this mechanism to detect dead clients.
 func (nc *Conn) processPing() {
+	fmt.Println(time.Now(), "PING FROM SERVER", nc.pout, len(nc.pongs))
 	nc.sendProto(pongProto)
 }
 
@@ -3666,10 +3667,12 @@ func (nc *Conn) processPong() {
 	var ch chan struct{}
 
 	nc.mu.Lock()
+	fmt.Println(time.Now(), "PONGS: ", len(nc.pongs), nc.pout)
 	if len(nc.pongs) > 0 {
 		ch = nc.pongs[0]
 		nc.pongs = append(nc.pongs[:0], nc.pongs[1:]...)
 	}
+	// pout is reset but pongs still has entries.
 	nc.pout = 0
 	nc.mu.Unlock()
 	if ch != nil {
@@ -5344,6 +5347,7 @@ func (nc *Conn) removeFlushEntry(ch chan struct{}) bool {
 
 // The lock must be held entering this function.
 func (nc *Conn) sendPing(ch chan struct{}) {
+	fmt.Println(time.Now(), "SPING", len(nc.pongs))
 	nc.pongs = append(nc.pongs, ch)
 	nc.bw.appendString(pingProto)
 	// Flush in place.
