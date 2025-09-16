@@ -282,10 +282,22 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	return sub, nil
 }
 
-func (s *orderedSubscription) Next() (Msg, error) {
+func (s *orderedSubscription) Next(opts ...NextOpt) (Msg, error) {
 	for {
-		msg, err := s.consumer.currentSub.Next()
+		msg, err := s.consumer.currentSub.Next(opts...)
 		if err != nil {
+			// Check for validation errors - these should be returned directly
+			if errors.Is(err, ErrInvalidOption) {
+				return nil, err
+			}
+			// Check for timeout errors - these should be returned directly
+			if errors.Is(err, nats.ErrTimeout) {
+				return nil, err
+			}
+			// Check for context cancellation - these should be returned directly
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
 			if errors.Is(err, ErrMsgIteratorClosed) {
 				s.Stop()
 				return nil, err

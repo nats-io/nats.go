@@ -14,6 +14,7 @@
 package jetstream
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -647,4 +648,27 @@ func WithStallWait(ttl time.Duration) PublishOpt {
 		opts.stallWait = ttl
 		return nil
 	}
+}
+
+// nextOptFunc is a helper type for NextOpt implementations
+type nextOptFunc func(*nextOpts)
+
+func (fn nextOptFunc) configureNext(opts *nextOpts) {
+	fn(opts)
+}
+
+// NextTimeout sets a timeout for the Next operation.
+// If the timeout is reached before a message is available, a timeout error is returned.
+func NextTimeout(timeout time.Duration) NextOpt {
+	return nextOptFunc(func(opts *nextOpts) {
+		opts.timeout = timeout
+	})
+}
+
+// NextContext sets a context for the Next operation.
+// The Next operation will be cancelled if the context is cancelled.
+func NextContext(ctx context.Context) NextOpt {
+	return nextOptFunc(func(opts *nextOpts) {
+		opts.ctx = ctx
+	})
 }

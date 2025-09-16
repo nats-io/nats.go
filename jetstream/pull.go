@@ -14,6 +14,7 @@
 package jetstream
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,11 @@ type (
 	MessagesContext interface {
 		// Next retrieves next message on a stream. It will block until the next
 		// message is available. If the context is canceled, Next will return
-		// ErrMsgIteratorClosed error.
-		Next() (Msg, error)
+		// ErrMsgIteratorClosed error. An optional timeout or context can be
+		// provided using NextOpt options. If none are provided, Next will block
+		// indefinitely until a message is available, iterator is closed or a
+		// heartbeat error occurs.
+		Next(opts ...NextOpt) (Msg, error)
 
 		// Stop unsubscribes from the stream and cancels subscription. Calling
 		// Next after calling Stop will return ErrMsgIteratorClosed error.
@@ -166,6 +170,16 @@ type (
 	hbMonitor struct {
 		timer *time.Timer
 		sync.Mutex
+	}
+
+	// NextOpt is an option for configuring the behavior of MessagesContext.Next.
+	NextOpt interface {
+		configureNext(*nextOpts)
+	}
+
+	nextOpts struct {
+		timeout time.Duration
+		ctx     context.Context
 	}
 )
 
@@ -569,7 +583,32 @@ var (
 // Next retrieves next message on a stream. It will block until the next
 // message is available. If the context is canceled, Next will return
 // ErrMsgIteratorClosed error.
-func (s *pullSubscription) Next() (Msg, error) {
+func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
+	// Parse options
+	var nextOpts nextOpts
+	for _, opt := range opts {
+		opt.configureNext(&nextOpts)
+	}
+
+	// Validate options - context and timeout are mutually exclusive
+	if nextOpts.timeout > 0 && nextOpts.ctx != nil {
+		return nil, fmt.Errorf("%w: cannot specify both NextTimeout and NextContext", ErrInvalidOption)
+	}
+
+	// Create timeout channel if needed
+	var timeoutCh <-chan time.Time
+	if nextOpts.timeout > 0 {
+		timer := time.NewTimer(nextOpts.timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
+
+	// Use context if provided
+	var ctxDone <-chan struct{}
+	if nextOpts.ctx != nil {
+		ctxDone = nextOpts.ctx.Done()
+	}
+
 	s.Lock()
 	defer s.Unlock()
 	drainMode := s.draining.Load() == 1
@@ -660,6 +699,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				isConnected = false
 			}
+		case <-timeoutCh:
+			return nil, nats.ErrTimeout
+		case <-ctxDone:
+			return nil, nextOpts.ctx.Err()
 		}
 	}
 }

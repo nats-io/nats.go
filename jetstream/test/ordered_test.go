@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2120,6 +2121,111 @@ func TestOrderedConsumerConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOrderedConsumerMessagesNextWithTimeout(t *testing.T) {
+	t.Run("with timeout option", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx := context.Background()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs.Stop()
+
+		// timeout when no messages are available
+		start := time.Now()
+		_, err = msgs.Next(jetstream.NextTimeout(100 * time.Millisecond))
+		elapsed := time.Since(start)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+		if elapsed < 100*time.Millisecond || elapsed > 200*time.Millisecond {
+			t.Fatalf("Timeout not respected; elapsed: %v", elapsed)
+		}
+
+		// Publish a message and verify it can be fetched
+		if _, err := js.Publish(ctx, "FOO.A", []byte("msg1")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+
+		msg, err := msgs.Next(jetstream.NextTimeout(1 * time.Second))
+		if err != nil {
+			t.Fatalf("Expected to receive message, got error: %v", err)
+		}
+		if string(msg.Data()) != "msg1" {
+			t.Fatalf("Unexpected message data; got: %s", msg.Data())
+		}
+	})
+
+	t.Run("context and timeout provided", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx := context.Background()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs.Stop()
+
+		// ctx and timeout cannot be used together
+		testCtx, testCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer testCancel()
+
+		_, err = msgs.Next(jetstream.NextTimeout(500*time.Millisecond), jetstream.NextContext(testCtx))
+		if err == nil {
+			t.Fatal("Expected error when providing both NextTimeout and NextContext")
+		}
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected ErrInvalidOption, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "cannot specify both NextTimeout and NextContext") {
+			t.Fatalf("Expected specific error message, got: %v", err)
+		}
+	})
 }
 
 func TestOrderedConsumerCloseConn(t *testing.T) {
