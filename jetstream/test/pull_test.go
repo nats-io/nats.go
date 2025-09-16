@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -475,6 +474,82 @@ func TestPullConsumerFetch(t *testing.T) {
 		_, err = c.Fetch(5, jetstream.FetchHeartbeat(-2*time.Second))
 		if !errors.Is(err, jetstream.ErrInvalidOption) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+	})
+
+	t.Run("with context", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// pull request should expire before client timeout
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		result, err := c.Fetch(1, jetstream.FetchContext(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error from Fetch: %v", err)
+		}
+		msg, ok := <-result.Messages()
+		if ok {
+			t.Fatalf("Expected no message, got: %v", msg)
+		}
+		if result.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", result.Error())
+		}
+
+		// Test context cancellation
+		ctx, cancel = context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+		result, err = c.Fetch(1, jetstream.FetchContext(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error from Fetch: %v", err)
+		}
+		msg = <-result.Messages()
+		if msg != nil {
+			t.Fatalf("Expected no message, got: %v", msg)
+		}
+		err = result.Error()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Expected context canceled error, got: %v", err)
+		}
+
+		// Test mutual exclusion with FetchMaxWait
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, err = c.Fetch(1, jetstream.FetchContext(ctx), jetstream.FetchMaxWait(time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected mutual exclusion error, got: %v", err)
+		}
+
+		// Test already expired context
+		expiredCtx, cancel := context.WithTimeout(context.Background(), -time.Second)
+		defer cancel()
+		_, err = c.Fetch(1, jetstream.FetchContext(expiredCtx))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected invalid option error, got: %v", err)
 		}
 	})
 }
@@ -3550,7 +3625,7 @@ func TestPullConsumerMessagesNextWithTimeout(t *testing.T) {
 
 		// no msgs yet, should timeout
 		start := time.Now()
-		_, err = msgs.Next(jetstream.NextTimeout(100 * time.Millisecond))
+		_, err = msgs.Next(jetstream.NextMaxWait(100 * time.Millisecond))
 		elapsed := time.Since(start)
 		if !errors.Is(err, nats.ErrTimeout) {
 			t.Fatalf("Expected timeout error; got: %v", err)
@@ -3564,7 +3639,7 @@ func TestPullConsumerMessagesNextWithTimeout(t *testing.T) {
 			t.Fatalf("Unexpected error during publish: %s", err)
 		}
 
-		msg, err := msgs.Next(jetstream.NextTimeout(1 * time.Second))
+		msg, err := msgs.Next(jetstream.NextMaxWait(1 * time.Second))
 		if err != nil {
 			t.Fatalf("Expected to receive message, got error: %v", err)
 		}
@@ -3671,18 +3746,18 @@ func TestPullConsumerMessagesNextWithTimeout(t *testing.T) {
 		}
 		defer msgs.Stop()
 
-		// Test that providing both NextTimeout and NextContext returns an error
+		// Test that providing both NextMaxWait and NextContext returns an error
 		testCtx, testCancel := context.WithTimeout(context.Background(), time.Second)
 		defer testCancel()
 
-		_, err = msgs.Next(jetstream.NextTimeout(500*time.Millisecond), jetstream.NextContext(testCtx))
+		_, err = msgs.Next(jetstream.NextMaxWait(500*time.Millisecond), jetstream.NextContext(testCtx))
 		if err == nil {
-			t.Fatal("Expected error when providing both NextTimeout and NextContext")
+			t.Fatal("Expected error when providing both NextMaxWait and NextContext")
 		}
 		if !errors.Is(err, jetstream.ErrInvalidOption) {
 			t.Fatalf("Expected ErrInvalidOption, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "cannot specify both NextTimeout and NextContext") {
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
 			t.Fatalf("Expected specific error message, got: %v", err)
 		}
 	})

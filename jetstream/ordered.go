@@ -286,15 +286,14 @@ func (s *orderedSubscription) Next(opts ...NextOpt) (Msg, error) {
 	for {
 		msg, err := s.consumer.currentSub.Next(opts...)
 		if err != nil {
-			// Check for validation errors - these should be returned directly
+			// Check for errors which should be returned directly
+			// without resetting the consumer
 			if errors.Is(err, ErrInvalidOption) {
 				return nil, err
 			}
-			// Check for timeout errors - these should be returned directly
 			if errors.Is(err, nats.ErrTimeout) {
 				return nil, err
 			}
-			// Check for context cancellation - these should be returned directly
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}

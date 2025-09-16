@@ -1836,7 +1836,7 @@ func TestOrderedConsumerInfo(t *testing.T) {
 	}
 }
 
-func TestOrderedConsumerNextTimeout(t *testing.T) {
+func TestOrderedConsumerNextMaxWait(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)
 	nc, err := nats.Connect(srv.ClientURL())
@@ -2157,7 +2157,7 @@ func TestOrderedConsumerMessagesNextWithTimeout(t *testing.T) {
 
 		// timeout when no messages are available
 		start := time.Now()
-		_, err = msgs.Next(jetstream.NextTimeout(100 * time.Millisecond))
+		_, err = msgs.Next(jetstream.NextMaxWait(100 * time.Millisecond))
 		elapsed := time.Since(start)
 		if !errors.Is(err, nats.ErrTimeout) {
 			t.Fatalf("Expected timeout error; got: %v", err)
@@ -2171,7 +2171,7 @@ func TestOrderedConsumerMessagesNextWithTimeout(t *testing.T) {
 			t.Fatalf("Unexpected error during publish: %s", err)
 		}
 
-		msg, err := msgs.Next(jetstream.NextTimeout(1 * time.Second))
+		msg, err := msgs.Next(jetstream.NextMaxWait(1 * time.Second))
 		if err != nil {
 			t.Fatalf("Expected to receive message, got error: %v", err)
 		}
@@ -2215,14 +2215,14 @@ func TestOrderedConsumerMessagesNextWithTimeout(t *testing.T) {
 		testCtx, testCancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer testCancel()
 
-		_, err = msgs.Next(jetstream.NextTimeout(500*time.Millisecond), jetstream.NextContext(testCtx))
+		_, err = msgs.Next(jetstream.NextMaxWait(500*time.Millisecond), jetstream.NextContext(testCtx))
 		if err == nil {
-			t.Fatal("Expected error when providing both NextTimeout and NextContext")
+			t.Fatal("Expected error when providing both NextMaxWait and NextContext")
 		}
 		if !errors.Is(err, jetstream.ErrInvalidOption) {
 			t.Fatalf("Expected ErrInvalidOption, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "cannot specify both NextTimeout and NextContext") {
+		if !strings.Contains(err.Error(), "cannot specify both NextMaxWait and NextContext") {
 			t.Fatalf("Expected specific error message, got: %v", err)
 		}
 	})
