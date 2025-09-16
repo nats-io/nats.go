@@ -1477,6 +1477,11 @@ func TLSHandshakeFirst() Option {
 	}
 }
 
+// WebSocketConnectionHeaders sets a fixed set of HTTP headers that will be
+// sent during the WebSocket connection handshake.
+// This option is mutually exclusive with WebSocketConnectionHeadersHandler;
+// if a headers handler has already been configured, it returns
+// ErrWebSocketHeadersAlreadySet.
 func WebSocketConnectionHeaders(headers http.Header) Option {
 	return func(o *Options) error {
 		if o.WebSocketConnectionHeadersHandler != nil {
@@ -1487,6 +1492,11 @@ func WebSocketConnectionHeaders(headers http.Header) Option {
 	}
 }
 
+// WebSocketConnectionHeadersHandler registers a callback used to supply HTTP
+// headers for the WebSocket connection handshake.
+// This option is mutually exclusive with WebSocketConnectionHeaders; if
+// non-empty static headers have already been configured, it returns
+// ErrWebSocketHeadersAlreadySet.
 func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
 	return func(o *Options) error {
 		if o.WebSocketConnectionHeaders != nil && len(o.WebSocketConnectionHeaders) != 0 {
