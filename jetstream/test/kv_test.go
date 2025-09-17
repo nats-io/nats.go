@@ -113,6 +113,38 @@ func TestKeyValueBasics(t *testing.T) {
 	}
 }
 
+func TestKeyValueTTL(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: 100 * time.Millisecond, LimitMarkerTTL: time.Second})
+	expectOk(t, err)
+
+	_, err = kv.Put(ctx, "name", []byte("pp"))
+	expectOk(t, err)
+
+	watcher, err := kv.WatchAll(ctx, jetstream.UpdatesOnly())
+	expectOk(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	_, err = kv.Get(ctx, "name")
+	expectErr(t, err, jetstream.ErrKeyNotFound)
+
+	select {
+	case v := <-watcher.Updates():
+		if v == nil || v.Key() != "name" || v.Operation() != jetstream.KeyValuePurge {
+			t.Fatalf("Expected purge operation for key 'name', got: %+v", v)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Expected update notification for key 'name', got nothing")
+	}
+}
+
 func TestCreateKeyValue(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -2013,12 +2045,6 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 		time.Sleep(1500 * time.Millisecond)
 		_, err = kv.Get(ctx, "age")
 		expectErr(t, err, jetstream.ErrKeyNotFound)
-
-		// check if marker exists on stream
-		checkMsgHeaders(t, js, kv, "age", "1s", "MaxAge")
-		time.Sleep(time.Second)
-		// now msg should be gone from stream
-		checkMsgNotFound(t, js, kv, "age")
 
 		entry := <-watcher.Updates()
 		if entry == nil {

@@ -43,27 +43,28 @@ type (
 )
 
 const (
+	JSErrCodeBadRequest            ErrorCode = 10003
+	JSErrCodeConsumerCreate        ErrorCode = 10012
+	JSErrCodeConsumerNameExists    ErrorCode = 10013
+	JSErrCodeConsumerNotFound      ErrorCode = 10014
+	JSErrCodeMaximumConsumersLimit ErrorCode = 10026
+
+	JSErrCodeMessageNotFound               ErrorCode = 10037
 	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
-	JSErrCodeJetStreamNotEnabled           ErrorCode = 10076
 
-	JSErrCodeStreamNotFound  ErrorCode = 10059
 	JSErrCodeStreamNameInUse ErrorCode = 10058
+	JSErrCodeStreamNotFound  ErrorCode = 10059
 
-	JSErrCodeConsumerCreate            ErrorCode = 10012
-	JSErrCodeConsumerNotFound          ErrorCode = 10014
-	JSErrCodeConsumerNameExists        ErrorCode = 10013
-	JSErrCodeConsumerAlreadyExists     ErrorCode = 10105
-	JSErrCodeConsumerExists            ErrorCode = 10148
+	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
+	JSErrCodeJetStreamNotEnabled     ErrorCode = 10076
+
+	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
+
 	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136
 	JSErrCodeOverlappingFilterSubjects ErrorCode = 10138
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
+	JSErrCodeConsumerExists            ErrorCode = 10148
 	JSErrCodeConsumerDoesNotExist      ErrorCode = 10149
-
-	JSErrCodeMessageNotFound ErrorCode = 10037
-
-	JSErrCodeBadRequest ErrorCode = 10003
-
-	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 )
 
 var (
@@ -118,6 +119,11 @@ var (
 	// does not exist.
 	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
 
+	// ErrConsumerCreationResponseEmpty is an error returned when the response from the server
+	// when creating a consumer is empty. This means that the state of the consumer is unknown and
+	// the consumer may not have been created successfully.
+	ErrConsumerCreationResponseEmpty JetStreamError = &jsError{message: "consumer creation response is empty"}
+
 	// ErrConsumerExists is returned when attempting to create a consumer with
 	// CreateConsumer but a consumer with given name already exists.
 	ErrConsumerExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerExists, Description: "consumer already exists", Code: 400}}
@@ -136,6 +142,10 @@ var (
 	// ErrConsumerCreate is returned when nats-server reports error when
 	// creating consumer (e.g. illegal update).
 	ErrConsumerCreate JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerCreate, Description: "could not create consumer", Code: 500}}
+
+	// ErrMaximumConsumersLimit is returned when user limit of allowed
+	// consumers for stream is reached
+	ErrMaximumConsumersLimit JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMaximumConsumersLimit, Description: "maximum consumers limit reached", Code: 400}}
 
 	// ErrDuplicateFilterSubjects is returned when both FilterSubject and
 	// FilterSubjects are specified when creating consumer.
