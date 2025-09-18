@@ -14,6 +14,7 @@
 package jetstream
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,11 @@ type (
 	MessagesContext interface {
 		// Next retrieves next message on a stream. It will block until the next
 		// message is available. If the context is canceled, Next will return
-		// ErrMsgIteratorClosed error.
-		Next() (Msg, error)
+		// ErrMsgIteratorClosed error. An optional timeout or context can be
+		// provided using NextOpt options. If none are provided, Next will block
+		// indefinitely until a message is available, iterator is closed or a
+		// heartbeat error occurs.
+		Next(opts ...NextOpt) (Msg, error)
 
 		// Stop unsubscribes from the stream and cancels subscription. Calling
 		// Next after calling Stop will return ErrMsgIteratorClosed error.
@@ -92,15 +96,17 @@ type (
 	}
 
 	pullRequest struct {
-		Expires       time.Duration `json:"expires,omitempty"`
-		Batch         int           `json:"batch,omitempty"`
-		MaxBytes      int           `json:"max_bytes,omitempty"`
-		NoWait        bool          `json:"no_wait,omitempty"`
-		Heartbeat     time.Duration `json:"idle_heartbeat,omitempty"`
-		MinPending    int64         `json:"min_pending,omitempty"`
-		MinAckPending int64         `json:"min_ack_pending,omitempty"`
-		PinID         string        `json:"id,omitempty"`
-		Group         string        `json:"group,omitempty"`
+		Expires       time.Duration   `json:"expires,omitempty"`
+		Batch         int             `json:"batch,omitempty"`
+		MaxBytes      int             `json:"max_bytes,omitempty"`
+		NoWait        bool            `json:"no_wait,omitempty"`
+		Heartbeat     time.Duration   `json:"idle_heartbeat,omitempty"`
+		MinPending    int64           `json:"min_pending,omitempty"`
+		MinAckPending int64           `json:"min_ack_pending,omitempty"`
+		PinID         string          `json:"id,omitempty"`
+		Group         string          `json:"group,omitempty"`
+		ctx           context.Context `json:"-"`
+		maxWaitSet    bool            `json:"-"`
 	}
 
 	consumeOpts struct {
@@ -166,6 +172,16 @@ type (
 	hbMonitor struct {
 		timer *time.Timer
 		sync.Mutex
+	}
+
+	// NextOpt is an option for configuring the behavior of MessagesContext.Next.
+	NextOpt interface {
+		configureNext(*nextOpts)
+	}
+
+	nextOpts struct {
+		timeout time.Duration
+		ctx     context.Context
 	}
 )
 
@@ -569,7 +585,30 @@ var (
 // Next retrieves next message on a stream. It will block until the next
 // message is available. If the context is canceled, Next will return
 // ErrMsgIteratorClosed error.
-func (s *pullSubscription) Next() (Msg, error) {
+func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
+	var nextOpts nextOpts
+	for _, opt := range opts {
+		opt.configureNext(&nextOpts)
+	}
+
+	if nextOpts.timeout > 0 && nextOpts.ctx != nil {
+		return nil, fmt.Errorf("%w: cannot specify both NextMaxWait and NextContext", ErrInvalidOption)
+	}
+
+	// Create timeout channel if needed
+	var timeoutCh <-chan time.Time
+	if nextOpts.timeout > 0 {
+		timer := time.NewTimer(nextOpts.timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
+
+	// Use context if provided
+	var ctxDone <-chan struct{}
+	if nextOpts.ctx != nil {
+		ctxDone = nextOpts.ctx.Done()
+	}
+
 	s.Lock()
 	defer s.Unlock()
 	drainMode := s.draining.Load() == 1
@@ -660,6 +699,10 @@ func (s *pullSubscription) Next() (Msg, error) {
 				}
 				isConnected = false
 			}
+		case <-timeoutCh:
+			return nil, nats.ErrTimeout
+		case <-ctxDone:
+			return nil, nextOpts.ctx.Err()
 		}
 	}
 }
@@ -779,6 +822,11 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 			return nil, err
 		}
 	}
+
+	if req.ctx != nil && req.maxWaitSet {
+		return nil, fmt.Errorf("%w: cannot specify both FetchContext and FetchMaxWait", ErrInvalidOption)
+	}
+
 	// if heartbeat was not explicitly set, set it to 5 seconds for longer pulls
 	// and disable it for shorter pulls
 	if req.Heartbeat == unset {
@@ -808,6 +856,11 @@ func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch,
 			return nil, err
 		}
 	}
+
+	if req.ctx != nil && req.maxWaitSet {
+		return nil, fmt.Errorf("%w: cannot specify both FetchContext and FetchMaxWait", ErrInvalidOption)
+	}
+
 	// if heartbeat was not explicitly set, set it to 5 seconds for longer pulls
 	// and disable it for shorter pulls
 	if req.Heartbeat == unset {
@@ -862,6 +915,13 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 
 	var receivedMsgs, receivedBytes int
 	hbTimer := sub.scheduleHeartbeatCheck(req.Heartbeat)
+
+	// Use context if provided
+	var ctxDone <-chan struct{}
+	if req.ctx != nil {
+		ctxDone = req.ctx.Done()
+	}
+
 	go func(res *fetchResult) {
 		defer sub.subscription.Unsubscribe()
 		defer close(res.msgs)
@@ -919,6 +979,12 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				return
 			case <-time.After(req.Expires + 1*time.Second):
 				res.Lock()
+				res.done = true
+				res.Unlock()
+				return
+			case <-ctxDone:
+				res.Lock()
+				res.err = req.ctx.Err()
 				res.done = true
 				res.Unlock()
 				return
