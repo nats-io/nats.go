@@ -225,10 +225,9 @@ type (
 	GetLastForSubjectOpt func(*apiMsgGetRequest) error
 
 	apiMsgGetRequest struct {
-		Seq       uint64 `json:"seq,omitempty"`
-		LastFor   string `json:"last_by_subj,omitempty"`
-		NextFor   string `json:"next_by_subj,omitempty"`
-		NoHeaders bool   `json:"no_hdr,omitempty"`
+		Seq     uint64 `json:"seq,omitempty"`
+		LastFor string `json:"last_by_subj,omitempty"`
+		NextFor string `json:"next_by_subj,omitempty"`
 	}
 
 	// apiMsgGetResponse is the response for a Stream get request.
@@ -551,14 +550,14 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 			if err != nil {
 				return nil, err
 			}
-			return convertDirectGetMsgResponseToMsg(r.msg, mreq.NoHeaders)
+			return convertDirectGetMsgResponseToMsg(r.msg)
 		}
 		gmSubj = fmt.Sprintf(apiDirectMsgGetT, s.name)
 		r, err := s.js.apiRequest(ctx, gmSubj, req)
 		if err != nil {
 			return nil, err
 		}
-		return convertDirectGetMsgResponseToMsg(r.msg, mreq.NoHeaders)
+		return convertDirectGetMsgResponseToMsg(r.msg)
 	}
 	req, err := json.Marshal(mreq)
 	if err != nil {
@@ -598,7 +597,7 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	}, nil
 }
 
-func convertDirectGetMsgResponseToMsg(r *nats.Msg, noHeaders bool) (*RawStreamMsg, error) {
+func convertDirectGetMsgResponseToMsg(r *nats.Msg) (*RawStreamMsg, error) {
 	// Check for 404/408. We would get a no-payload message and a "Status" header
 	if len(r.Data) == 0 {
 		val := r.Header.Get(statusHdr)
@@ -615,11 +614,7 @@ func convertDirectGetMsgResponseToMsg(r *nats.Msg, noHeaders bool) (*RawStreamMs
 			}
 		}
 	}
-	if noHeaders {
-		return &RawStreamMsg{
-			Data: r.Data,
-		}, nil
-	}
+
 	// Check for headers that give us the required information to
 	// reconstruct the message.
 	if len(r.Header) == 0 {
