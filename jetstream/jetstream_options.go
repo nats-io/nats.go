@@ -367,6 +367,26 @@ func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// PullPrioritized sets the priority used when sending pull requests for consumer with
+// PriorityPolicyPrioritized. Lower values indicate higher priority (0 is the
+// highest priority). Maximum priority value is 9.
+//
+// If provided, PullPriorityGroup must be set as well and the consumer has to
+// have PriorityPolicy set to PriorityPolicyPrioritized.
+//
+// PullPrioritized implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
+type PullPrioritized uint8
+
+func (p PullPrioritized) configureConsume(opts *consumeOpts) error {
+	opts.Priority = uint8(p)
+	return nil
+}
+func (p PullPrioritized) configureMessages(opts *consumeOpts) error {
+	opts.Priority = uint8(p)
+	return nil
+}
+
 // PullPriorityGroup sets the priority group for a consumer.
 // It has to match one of the priority groups set on the consumer.
 //
@@ -484,6 +504,19 @@ func FetchMinAckPending(min int64) FetchOpt {
 			return fmt.Errorf("%w: min ack pending should be more than 0", ErrInvalidOption)
 		}
 		req.MinAckPending = min
+		return nil
+	}
+}
+
+// FetchPrioritized sets the priority used when sending fetch requests for consumer with
+// PriorityPolicyPrioritized. Lower values indicate higher priority (0 is the
+// highest priority). Maximum priority value is 9.
+//
+// If provided, FetchPriorityGroup must be set as well and the consumer has to
+// have PriorityPolicy set to PriorityPolicyPrioritized.
+func FetchPrioritized(priority uint8) FetchOpt {
+	return func(req *pullRequest) error {
+		req.Priority = priority
 		return nil
 	}
 }
