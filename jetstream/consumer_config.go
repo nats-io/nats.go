@@ -368,6 +368,11 @@ const (
 	// restricting when a consumer will receive messages based on the number of
 	// pending messages or acks.
 	PriorityPolicyOverflow
+
+	// PriorityPolicyPrioritized is the priority policy that allows for the
+	// server to deliver messages to clients based on their priority (instead
+	// of round-robin). Requires nats-server v2.12.0 or later.
+	PriorityPolicyPrioritized
 )
 
 func (p *PriorityPolicy) UnmarshalJSON(data []byte) error {
@@ -378,6 +383,8 @@ func (p *PriorityPolicy) UnmarshalJSON(data []byte) error {
 		*p = PriorityPolicyPinned
 	case jsonString("overflow"):
 		*p = PriorityPolicyOverflow
+	case jsonString("prioritized"):
+		*p = PriorityPolicyPrioritized
 	default:
 		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
@@ -392,6 +399,8 @@ func (p PriorityPolicy) MarshalJSON() ([]byte, error) {
 		return json.Marshal("pinned_client")
 	case PriorityPolicyOverflow:
 		return json.Marshal("overflow")
+	case PriorityPolicyPrioritized:
+		return json.Marshal("prioritized")
 	}
 	return nil, fmt.Errorf("nats: unknown priority policy %v", p)
 }
