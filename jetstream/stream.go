@@ -349,11 +349,15 @@ func (s *stream) UpdatePushConsumer(ctx context.Context, cfg ConsumerConfig) (Pu
 // messages from a stream. Ordered consumers are ephemeral in-memory
 // pull consumers and are resilient to deletes and restarts.
 func (s *stream) OrderedConsumer(ctx context.Context, cfg OrderedConsumerConfig) (Consumer, error) {
+	namePrefix := cfg.NamePrefix
+	if namePrefix == "" {
+		namePrefix = nuid.Next()
+	}
 	oc := &orderedConsumer{
 		js:         s.js,
 		cfg:        &cfg,
 		stream:     s.name,
-		namePrefix: nuid.Next(),
+		namePrefix: namePrefix,
 		doReset:    make(chan struct{}, 1),
 	}
 	consCfg := oc.getConsumerConfig()
