@@ -207,6 +207,9 @@ type (
 
 		// AllowAtomicPublish allows atomic batch publishing into the stream.
 		AllowAtomicPublish bool `json:"allow_atomic,omitempty"`
+
+		// AllowMsgSchedules enables the scheduling of messages
+		AllowMsgSchedules bool `json:"allow_msg_schedules,omitempty"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream
