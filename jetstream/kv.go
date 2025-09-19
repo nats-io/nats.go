@@ -256,7 +256,11 @@ type (
 		// removed by the TTL setting.
 		// It is required for per-key TTL to work and for watcher to notify
 		// about TTL expirations (both per key and per bucket)
-		LimitMarkerTTL time.Duration
+		LimitMarkerTTL time.Duration `json:"limit_marker_ttl,omitempty"`
+
+		// Metadata is a set of application-defined key-value pairs that can be
+		// used to store arbitrary metadata about the bucket.
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// KeyLister is used to retrieve a list of key value store keys. It returns
@@ -316,6 +320,9 @@ type (
 		// LimitMarkerTTL is how long the bucket keeps markers when keys are
 		// removed by the TTL setting, 0 meaning markers are not supported.
 		LimitMarkerTTL() time.Duration
+
+		// Metadata returns the metadata associated with the bucket.
+		Metadata() map[string]string
 	}
 
 	// KeyWatcher is what is returned when doing a watch. It can be used to
@@ -667,6 +674,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 		Discard:                DiscardNew,
 		AllowMsgTTL:            allowMsgTTL,
 		SubjectDeleteMarkerTTL: subjectDeleteMarkerTTL,
+		Metadata:               cfg.Metadata,
 	}
 	if cfg.Mirror != nil {
 		// Copy in case we need to make changes so we do not change caller's version.
@@ -811,6 +819,11 @@ func (s *KeyValueBucketStatus) IsCompressed() bool { return s.info.Config.Compre
 // removed by the TTL setting, 0 meaning markers are not supported.
 func (s *KeyValueBucketStatus) LimitMarkerTTL() time.Duration {
 	return s.info.Config.SubjectDeleteMarkerTTL
+}
+
+// Metadata returns the metadata associated with the bucket.
+func (s *KeyValueBucketStatus) Metadata() map[string]string {
+	return s.info.Config.Metadata
 }
 
 type kvLister struct {
