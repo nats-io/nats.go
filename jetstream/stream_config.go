@@ -208,6 +208,9 @@ type (
 		// AllowAtomicPublish allows atomic batch publishing into the stream.
 		AllowAtomicPublish bool `json:"allow_atomic,omitempty"`
 
+		// AllowMsgSchedules enables the scheduling of messages
+		AllowMsgSchedules bool `json:"allow_msg_schedules,omitempty"`
+
 		// PersistMode allows to opt-in to different persistence mode settings.
 		PersistMode PersistModeType `json:"persist_mode,omitempty"`
 	}
