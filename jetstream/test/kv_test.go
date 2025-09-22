@@ -37,7 +37,7 @@ func TestKeyValueBasics(t *testing.T) {
 	defer nc.Close()
 	ctx := context.Background()
 
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour})
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour, Metadata: map[string]string{"foo": "bar"}, LimitMarkerTTL: time.Minute})
 	expectOk(t, err)
 
 	if kv.Bucket() != "TEST" {
@@ -104,6 +104,9 @@ func TestKeyValueBasics(t *testing.T) {
 	}
 	if status.BackingStore() != "JetStream" {
 		t.Fatalf("invalid backing store kind %s", status.BackingStore())
+	}
+	if status.Metadata()["foo"] != "bar" {
+		t.Fatalf("expected metadata foo to be bar got %v", status.Metadata()["foo"])
 	}
 
 	kvs := status.(*jetstream.KeyValueBucketStatus)
