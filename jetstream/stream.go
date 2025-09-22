@@ -49,7 +49,7 @@ type (
 
 		// GetLastMsgForSubject retrieves the last raw stream message stored in
 		// JetStream on a given subject subject.
-		GetLastMsgForSubject(ctx context.Context, subject string, opts ...GetLastForSubjectOpt) (*RawStreamMsg, error)
+		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
 
 		// DeleteMsg deletes a message from a stream.
 		// On the server, the message is marked as erased, but not overwritten.
@@ -220,9 +220,6 @@ type (
 
 	// GetMsgOpt is a function setting options for [Stream.GetMsg]
 	GetMsgOpt func(*apiMsgGetRequest) error
-
-	// GetLastForSubjectOpt is a function setting options for [Stream.GetLastMsgForSubject]
-	GetLastForSubjectOpt func(*apiMsgGetRequest) error
 
 	apiMsgGetRequest struct {
 		Seq     uint64 `json:"seq,omitempty"`
@@ -522,14 +519,8 @@ func (s *stream) GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*Ra
 
 // GetLastMsgForSubject retrieves the last raw stream message stored in
 // JetStream on a given subject subject.
-func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string, opts ...GetLastForSubjectOpt) (*RawStreamMsg, error) {
-	req := &apiMsgGetRequest{LastFor: subject}
-	for _, opt := range opts {
-		if err := opt(req); err != nil {
-			return nil, err
-		}
-	}
-	return s.getMsg(ctx, req)
+func (s *stream) GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error) {
+	return s.getMsg(ctx, &apiMsgGetRequest{LastFor: subject})
 }
 
 func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStreamMsg, error) {
@@ -537,20 +528,18 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	if cancel != nil {
 		defer cancel()
 	}
+	req, err := json.Marshal(mreq)
+	if err != nil {
+		return nil, err
+	}
 
 	var gmSubj string
 
 	// handle direct gets
 	if s.info.Config.AllowDirect {
-		lastFor := mreq.LastFor
-		mreq.LastFor = ""
-		req, err := json.Marshal(mreq)
-		if err != nil {
-			return nil, err
-		}
-		if lastFor != "" {
-			gmSubj = fmt.Sprintf(apiDirectMsgGetLastBySubjectT, s.name, lastFor)
-			r, err := s.js.apiRequest(ctx, gmSubj, req)
+		if mreq.LastFor != "" {
+			gmSubj = fmt.Sprintf(apiDirectMsgGetLastBySubjectT, s.name, mreq.LastFor)
+			r, err := s.js.apiRequest(ctx, gmSubj, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -562,10 +551,6 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 			return nil, err
 		}
 		return convertDirectGetMsgResponseToMsg(r.msg)
-	}
-	req, err := json.Marshal(mreq)
-	if err != nil {
-		return nil, err
 	}
 
 	var resp apiMsgGetResponse
