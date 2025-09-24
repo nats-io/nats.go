@@ -151,7 +151,7 @@ var (
 	ErrMaxAccountConnectionsExceeded = errors.New("nats: maximum account active connections exceeded")
 	ErrConnectionNotTLS              = errors.New("nats: connection is not tls")
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
-	ErrWebSocketHeadersAlreadySet  = errors.New("nats: websocket connection headers already set")
+	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
