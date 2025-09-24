@@ -610,6 +610,9 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 	if compress {
 		req.Header.Add("Sec-WebSocket-Extensions", wsPMCReqHeaderValue)
 	}
+	if err := nc.wsUpdateConnectionHeaders(req); err != nil {
+		return err
+	}
 	if err := req.Write(nc.conn); err != nil {
 		return err
 	}
@@ -726,6 +729,25 @@ func (nc *Conn) wsEnqueueControlMsg(needsLock bool, frameType wsOpCode, payload 
 		wr.ctrlFrames = append(wr.ctrlFrames, payload)
 	}
 	nc.bw.flush()
+}
+
+func (nc *Conn) wsUpdateConnectionHeaders(req *http.Request) error {
+	var headers http.Header
+	var err error
+	if nc.Opts.WebSocketConnectionHeadersHandler != nil {
+		headers, err = nc.Opts.WebSocketConnectionHeadersHandler()
+		if err != nil {
+			return err
+		}
+	} else {
+		headers = nc.Opts.WebSocketConnectionHeaders
+	}
+	for key, values := range headers {
+		for _, val := range values {
+			req.Header.Add(key, val)
+		}
+	}
+	return nil
 }
 
 func wsPMCExtensionSupport(header http.Header) (bool, bool) {
