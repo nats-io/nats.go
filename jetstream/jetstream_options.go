@@ -14,6 +14,7 @@
 package jetstream
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -347,6 +348,26 @@ func (min PullMinAckPending) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// PullPrioritized sets the priority used when sending pull requests for consumer with
+// PriorityPolicyPrioritized. Lower values indicate higher priority (0 is the
+// highest priority). Maximum priority value is 9.
+//
+// If provided, PullPriorityGroup must be set as well and the consumer has to
+// have PriorityPolicy set to PriorityPolicyPrioritized.
+//
+// PullPrioritized implements both PullConsumeOpt and PullMessagesOpt, allowing
+// it to configure Consumer.Consume and Consumer.Messages.
+type PullPrioritized uint8
+
+func (p PullPrioritized) configureConsume(opts *consumeOpts) error {
+	opts.Priority = uint8(p)
+	return nil
+}
+func (p PullPrioritized) configureMessages(opts *consumeOpts) error {
+	opts.Priority = uint8(p)
+	return nil
+}
+
 // PullPriorityGroup sets the priority group for a consumer.
 // It has to match one of the priority groups set on the consumer.
 //
@@ -468,6 +489,19 @@ func FetchMinAckPending(min int64) FetchOpt {
 	}
 }
 
+// FetchPrioritized sets the priority used when sending fetch requests for consumer with
+// PriorityPolicyPrioritized. Lower values indicate higher priority (0 is the
+// highest priority). Maximum priority value is 9.
+//
+// If provided, FetchPriorityGroup must be set as well and the consumer has to
+// have PriorityPolicy set to PriorityPolicyPrioritized.
+func FetchPrioritized(priority uint8) FetchOpt {
+	return func(req *pullRequest) error {
+		req.Priority = priority
+		return nil
+	}
+}
+
 // FetchPriorityGroup sets the priority group for a consumer.
 // It has to match one of the priority groups set on the consumer.
 func FetchPriorityGroup(group string) FetchOpt {
@@ -486,6 +520,7 @@ func FetchMaxWait(timeout time.Duration) FetchOpt {
 			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
 		}
 		req.Expires = timeout
+		req.maxWaitSet = true
 		return nil
 	}
 }
@@ -504,6 +539,31 @@ func FetchHeartbeat(hb time.Duration) FetchOpt {
 			return fmt.Errorf("%w: timeout value must be greater than 0", ErrInvalidOption)
 		}
 		req.Heartbeat = hb
+		return nil
+	}
+}
+
+// FetchContext sets a context for the Fetch operation.
+// The Fetch operation will be canceled if the context is canceled.
+// If the context has a deadline, it will be used to set expiry on pull request.
+func FetchContext(ctx context.Context) FetchOpt {
+	return func(req *pullRequest) error {
+		req.ctx = ctx
+
+		// If context has a deadline, use it to set expiry
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return fmt.Errorf("%w: context deadline already exceeded", ErrInvalidOption)
+			}
+			// Use 90% of remaining time for server (capped at 1s)
+			buffer := time.Duration(float64(remaining) * 0.1)
+			if buffer > time.Second {
+				buffer = time.Second
+			}
+			req.Expires = remaining - buffer
+		}
+
 		return nil
 	}
 }
@@ -647,4 +707,26 @@ func WithStallWait(ttl time.Duration) PublishOpt {
 		opts.stallWait = ttl
 		return nil
 	}
+}
+
+type nextOptFunc func(*nextOpts)
+
+func (fn nextOptFunc) configureNext(opts *nextOpts) {
+	fn(opts)
+}
+
+// NextMaxWait sets a timeout for the Next operation.
+// If the timeout is reached before a message is available, a timeout error is returned.
+func NextMaxWait(timeout time.Duration) NextOpt {
+	return nextOptFunc(func(opts *nextOpts) {
+		opts.timeout = timeout
+	})
+}
+
+// NextContext sets a context for the Next operation.
+// The Next operation will be canceled if the context is canceled.
+func NextContext(ctx context.Context) NextOpt {
+	return nextOptFunc(func(opts *nextOpts) {
+		opts.ctx = ctx
+	})
 }
