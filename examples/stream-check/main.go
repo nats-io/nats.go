@@ -57,6 +57,8 @@ func main() {
 		desc               bool
 		summary            bool
 		file               string
+		olderThan          string
+		newerThan          string
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -81,6 +83,8 @@ func main() {
 	flag.BoolVar(&desc, "desc", false, "Sort in descending order (shorthand for --order desc)")
 	flag.BoolVar(&summary, "summary", false, "Show summary view (omit leader/peers and account ID columns)")
 	flag.StringVar(&file, "f", "", "Read from JSZ JSON file instead of connecting to server")
+	flag.StringVar(&olderThan, "older-than", "", "Filter streams older than duration (e.g. 48h, 7d)")
+	flag.StringVar(&newerThan, "newer-than", "", "Filter streams newer than duration (e.g. 1h, 30m)")
 	flag.Parse()
 
 	// Handle shorthand sort order flags
@@ -110,6 +114,26 @@ func main() {
 	timeoutDuration, parseErr := time.ParseDuration(timeout)
 	if parseErr != nil {
 		log.Fatalf("Invalid timeout duration: %v", parseErr)
+	}
+
+	// Parse older-than duration if provided
+	var olderThanDuration time.Duration
+	if olderThan != "" {
+		var err error
+		olderThanDuration, err = time.ParseDuration(olderThan)
+		if err != nil {
+			log.Fatalf("Invalid older-than duration: %v", err)
+		}
+	}
+
+	// Parse newer-than duration if provided
+	var newerThanDuration time.Duration
+	if newerThan != "" {
+		var err error
+		newerThanDuration, err = time.ParseDuration(newerThan)
+		if err != nil {
+			log.Fatalf("Invalid newer-than duration: %v", err)
+		}
 	}
 
 	opts := []nats.Option{
@@ -283,6 +307,22 @@ func main() {
 		key := fmt.Sprintf("%s|%s", accName, streamName)
 		stream := streams[key]
 		replica := stream[serverName]
+
+		// Filter by older-than if specified
+		if olderThan != "" && replica != nil {
+			cutoffTime := time.Now().Add(-olderThanDuration)
+			if replica.Created.After(cutoffTime) {
+				continue
+			}
+		}
+
+		// Filter by newer-than if specified
+		if newerThan != "" && replica != nil {
+			cutoffTime := time.Now().Add(-newerThanDuration)
+			if replica.Created.Before(cutoffTime) {
+				continue
+			}
+		}
 
 		// Skip idle streams if --skip-idle and --compare are both used
 		if skipIdle && compareData != nil {
