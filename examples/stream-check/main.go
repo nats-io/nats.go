@@ -9,7 +9,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +34,31 @@ type streamDetail struct {
 type sortableEntry struct {
 	key     string
 	replica *streamDetail
+}
+
+// parseDurationWithDays extends time.ParseDuration to support day units (d, day, days)
+func parseDurationWithDays(s string) (time.Duration, error) {
+	// Try standard parsing first
+	if duration, err := time.ParseDuration(s); err == nil {
+		return duration, nil
+	}
+
+	// Handle day units manually
+	// Match patterns like "7d", "2days", "1day"
+	dayPattern := regexp.MustCompile(`^(\d+(?:\.\d+)?)(d|day|days)$`)
+	matches := dayPattern.FindStringSubmatch(s)
+	if matches != nil {
+		value, err := strconv.ParseFloat(matches[1], 64)
+		if err != nil {
+			return 0, err
+		}
+		// Convert to hours (24 hours per day) and then to duration
+		hours := value * 24
+		return time.Duration(hours * float64(time.Hour)), nil
+	}
+
+	// If no day pattern matches, return original parsing error
+	return time.ParseDuration(s)
 }
 
 func main() {
@@ -120,7 +147,7 @@ func main() {
 	var olderThanDuration time.Duration
 	if olderThan != "" {
 		var err error
-		olderThanDuration, err = time.ParseDuration(olderThan)
+		olderThanDuration, err = parseDurationWithDays(olderThan)
 		if err != nil {
 			log.Fatalf("Invalid older-than duration: %v", err)
 		}
@@ -130,7 +157,7 @@ func main() {
 	var newerThanDuration time.Duration
 	if newerThan != "" {
 		var err error
-		newerThanDuration, err = time.ParseDuration(newerThan)
+		newerThanDuration, err = parseDurationWithDays(newerThan)
 		if err != nil {
 			log.Fatalf("Invalid newer-than duration: %v", err)
 		}
