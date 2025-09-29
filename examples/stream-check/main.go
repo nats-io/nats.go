@@ -25,6 +25,8 @@ type streamDetail struct {
 	Cluster      *nats.ClusterInfo
 	HealthStatus string
 	ServerID     string
+	Config       *nats.StreamConfig
+	Created      time.Time
 }
 
 type sortableEntry struct {
@@ -69,7 +71,7 @@ func main() {
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
 	flag.BoolVar(&stdin, "stdin", false, "Process the contents from STDIN")
 	flag.BoolVar(&human, "human", false, "Format bytes in human-readable units (KB, MB, GB)")
-	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects")
+	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects, activity")
 	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
 	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
 	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
@@ -221,6 +223,8 @@ func main() {
 					RaftGroup:  stream.RaftGroup,
 					State:      stream.State,
 					Cluster:    stream.Cluster,
+					Config:     stream.Config,
+					Created:     stream.Created,
 				}
 			}
 		}
@@ -258,8 +262,8 @@ func main() {
 	fmt.Println()
 
 	if summary {
-		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "LAST_ACTIVITY", "LAST_TS", "CREATED", "STATUS"}
+		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s %-30s %-30s %-30s\n", fields...)
 	} else {
 		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
 		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
@@ -401,6 +405,14 @@ func main() {
 			sf = append(sf, replica.State.Consumers)
 			sf = append(sf, replica.State.FirstSeq)
 			sf = append(sf, replica.State.LastSeq)
+			ago := time.Since(replica.State.LastTime)
+			if ago > 30*(24*time.Hour) {
+				status += ", STALE?"
+			}
+			sf = append(sf, ago)
+			sf = append(sf, replica.State.LastTime)
+			created := time.Since(replica.Created)
+			sf = append(sf, created)
 		}
 		sf = append(sf, status)
 		if !summary {
@@ -428,9 +440,9 @@ func main() {
 				// Compare mode - all numeric fields are now strings (deltas)
 				fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s %-30s\n", sf...)
 			} else if human {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d %-30s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d %-30s %-30s %-30s %-30s\n", sf...)
 			} else {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d %-30s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d %-30s %-30s %-30s %-30s\n", sf...)
 			}
 		} else {
 			// Full mode - include replicasInfo (leader/peers)
@@ -491,6 +503,8 @@ func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 			less = entries[i].replica.State.Consumers < entries[j].replica.State.Consumers
 		case "subjects":
 			less = entries[i].replica.State.NumSubjects < entries[j].replica.State.NumSubjects
+		case "activity":
+			less = entries[i].replica.State.LastTime.Before(entries[j].replica.State.LastTime)
 		default:
 			// Default to alphabetical by key
 			less = entries[i].key < entries[j].key
