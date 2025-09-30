@@ -196,14 +196,14 @@ type (
 
 		// AllowMsgTTL allows header initiated per-message TTLs.
 		// This feature requires nats-server v2.11.0 or later.
-		AllowMsgTTL bool `json:"allow_msg_ttl"`
+		AllowMsgTTL bool `json:"allow_msg_ttl,omitempty"`
 
 		// Enables and sets a duration for adding server markers for delete, purge and max age limits.
 		// This feature requires nats-server v2.11.0 or later.
 		SubjectDeleteMarkerTTL time.Duration `json:"subject_delete_marker_ttl,omitempty"`
 
 		// AllowMsgCounter enables the feature
-		AllowMsgCounter bool `json:"allow_msg_counter"`
+		AllowMsgCounter bool `json:"allow_msg_counter,omitempty"`
 
 		// AllowAtomicPublish allows atomic batch publishing into the stream.
 		AllowAtomicPublish bool `json:"allow_atomic,omitempty"`
