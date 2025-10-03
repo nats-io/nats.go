@@ -731,6 +731,19 @@ func TestFlushWithContext(t *testing.T) {
 	if err := nc.FlushWithContext(dctx); err != context.Canceled {
 		t.Fatalf("Expected '%v', got '%v'", context.Canceled, err)
 	}
+
+	t.Run("flush on closed connection", func(t *testing.T) {
+		nc2 := NewDefaultConnection(t)
+		nc2.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		err := nc2.FlushWithContext(ctx)
+		if err != nats.ErrConnectionClosed {
+			t.Fatalf("Expected '%v', got '%v'", nats.ErrConnectionClosed, err)
+		}
+	})
 }
 
 func TestUnsubscribeAndNextMsgWithContext(t *testing.T) {

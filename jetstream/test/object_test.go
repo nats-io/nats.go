@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1296,5 +1297,22 @@ func TestObjectStoreMirror(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Expected to receive an update")
 		}
+	}
+}
+
+func TestObjectStoreDeleteNonExistent(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	err := js.DeleteObjectStore(ctx, "NONEXISTENT")
+	if err == nil {
+		t.Fatal("Expected error when deleting non-existent object store")
+	}
+	if !errors.Is(err, jetstream.ErrBucketNotFound) {
+		t.Fatalf("Expected ErrBucketNotFound, got: %v", err)
 	}
 }
