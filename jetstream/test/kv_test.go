@@ -2228,3 +2228,70 @@ func TestKeyValueWithSources(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyValueGetRevision(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "TEST",
+		History: 5,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value1")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value2")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	entry, err := kv.GetRevision(ctx, "key", 1)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if string(entry.Value()) != "value1" {
+		t.Fatalf("Expected value1, got %s", string(entry.Value()))
+	}
+
+	if entry.Revision() != 1 {
+		t.Fatalf("Expected revision 1, got %d", entry.Revision())
+	}
+}
+
+func TestKeyValueStatusBytes(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket: "TEST",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	status, err := kv.Status(ctx)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if status.Bytes() == 0 {
+		t.Fatal("Expected Bytes() to return non-zero value")
+	}
+}
