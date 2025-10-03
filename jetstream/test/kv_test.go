@@ -2145,3 +2145,86 @@ func TestKeyValueListKeysDuplicates(t *testing.T) {
 		})
 	}
 }
+
+func TestKeyValueWithSources(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv1, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "SOURCE1",
+		History: 5,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	kv2, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "SOURCE2",
+		History: 5,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	kv3, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "SOURCED",
+		History: 5,
+		Sources: []*jetstream.StreamSource{
+			{Name: "SOURCE1"},
+			{Name: "SOURCE2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv1.Put(ctx, "key1", []byte("value1")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv2.Put(ctx, "key2", []byte("value2")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	val, err := kv3.Get(ctx, "key1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if string(val.Value()) != "value1" {
+		t.Fatalf("Expected value1, got %s", string(val.Value()))
+	}
+
+	val, err = kv3.Get(ctx, "key2")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if string(val.Value()) != "value2" {
+		t.Fatalf("Expected value2, got %s", string(val.Value()))
+	}
+
+	stream, err := js.Stream(ctx, "KV_SOURCED")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	info, err := stream.Info(ctx)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(info.Config.Sources) != 2 {
+		t.Fatalf("Expected 2 sources, got %d", len(info.Config.Sources))
+	}
+
+	for _, src := range info.Config.Sources {
+		if len(src.SubjectTransforms) != 1 {
+			t.Fatalf("Expected 1 subject transform, got %d", len(src.SubjectTransforms))
+		}
+	}
+}

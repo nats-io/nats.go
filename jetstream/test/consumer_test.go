@@ -1522,3 +1522,79 @@ func TestConsumerCachedInfo(t *testing.T) {
 	}
 
 }
+
+func TestJetStreamPauseAndResumeConsumer(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx := context.Background()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.CreateConsumer(ctx, "TEST", jetstream.ConsumerConfig{
+		Durable:   "cons",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("pause consumer", func(t *testing.T) {
+		pauseUntil := time.Now().Add(1 * time.Minute)
+		resp, err := js.PauseConsumer(ctx, "TEST", "cons", pauseUntil)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if !resp.Paused {
+			t.Fatal("Consumer should be paused")
+		}
+		if resp.PauseRemaining <= 0 {
+			t.Fatal("PauseRemaining should be greater than 0")
+		}
+	})
+
+	t.Run("resume consumer", func(t *testing.T) {
+		resp, err := js.ResumeConsumer(ctx, "TEST", "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if resp.Paused {
+			t.Fatal("Consumer should not be paused")
+		}
+		if resp.PauseRemaining != 0 {
+			t.Fatal("PauseRemaining should be 0")
+		}
+	})
+
+	t.Run("pause consumer with invalid stream name", func(t *testing.T) {
+		_, err := js.PauseConsumer(ctx, "", "cons", time.Now())
+		if err == nil {
+			t.Fatal("Expected error for empty stream name")
+		}
+	})
+
+	t.Run("resume consumer with invalid stream name", func(t *testing.T) {
+		_, err := js.ResumeConsumer(ctx, "", "cons")
+		if err == nil {
+			t.Fatal("Expected error for empty stream name")
+		}
+	})
+}
