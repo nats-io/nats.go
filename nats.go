@@ -1504,7 +1504,7 @@ func WebSocketConnectionHeaders(headers http.Header) Option {
 // ErrWebSocketHeadersAlreadySet.
 func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
 	return func(o *Options) error {
-		if o.WebSocketConnectionHeaders != nil && len(o.WebSocketConnectionHeaders) != 0 {
+		if len(o.WebSocketConnectionHeaders) != 0 {
 			return ErrWebSocketHeadersAlreadySet
 		}
 		o.WebSocketConnectionHeadersHandler = cb
