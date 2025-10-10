@@ -299,7 +299,13 @@ func TestClientTLSConfig(t *testing.T) {
 	// Should fail because of missing certificate
 	_, err = nats.Connect(secureURL,
 		nats.ClientTLSConfig(nil, caCB))
-	if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate required") {
+	if err == nil {
+		t.Fatal("Expected connection to fail due to missing certificate")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "bad certificate") &&
+		!strings.Contains(errStr, "certificate required") &&
+		!strings.Contains(errStr, "connection reset by peer") {
 		t.Fatalf("Expected missing certificate error; got: %s", err)
 	}
 

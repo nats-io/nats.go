@@ -554,6 +554,70 @@ func TestPullConsumerFetch(t *testing.T) {
 	})
 }
 
+func TestPullConsumerMessagesConcurrentStopAndDrain(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "FOO",
+		Subjects: []string{"FOO.>"},
+	})
+	if err != nil {
+		t.Fatalf("create stream: %v", err)
+	}
+
+	consumer, err := js.CreateOrUpdateConsumer(ctx, "FOO", jetstream.ConsumerConfig{
+		Durable:   "race-consumer",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+
+	messages, err := consumer.Messages()
+	if err != nil {
+		t.Fatalf("messages: %v", err)
+	}
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(2)
+	done.Add(2)
+
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		messages.Stop()
+	}()
+
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		nc.Drain()
+	}()
+
+	ready.Wait()
+	time.Sleep(2 * time.Millisecond)
+	close(start)
+	done.Wait()
+}
+
 func TestPullConsumerFetchRace(t *testing.T) {
 	srv := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, srv)

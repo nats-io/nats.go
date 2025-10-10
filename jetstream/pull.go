@@ -137,6 +137,7 @@ type (
 		consumer          *pullConsumer
 		subscription      *nats.Subscription
 		msgs              chan *nats.Msg
+		msgsClosed        atomic.Uint32
 		errs              chan error
 		pending           pendingMsgs
 		hbMonitor         *hbMonitor
@@ -552,7 +553,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 				// in Next
 				p.subs.Delete(sid)
 			}
-			close(msgs)
+			sub.closeMsgs()
 		}
 	}(sub.id))
 
@@ -1054,6 +1055,12 @@ func (s *pullSubscription) pullMessages(subject string) {
 			s.cleanup()
 			return
 		}
+	}
+}
+
+func (s *pullSubscription) closeMsgs() {
+	if s.msgsClosed.CompareAndSwap(0, 1) {
+		close(s.msgs)
 	}
 }
 
