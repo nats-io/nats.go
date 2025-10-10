@@ -471,6 +471,7 @@ type (
 		r      io.ReadCloser
 		err    error
 		ctx    context.Context
+		cancel context.CancelFunc
 		digest hash.Hash
 	}
 )
@@ -867,7 +868,7 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
 	}
 
-	result := &objResult{info: info, ctx: ctx}
+	result := &objResult{info: info, ctx: ctx, cancel: cancel}
 	if info.Size == 0 {
 		return result, nil
 	}
@@ -934,15 +935,10 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		nats.Context(ctx),
 		nats.BindStream(streamName),
 	}
-	sub, err := obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
+	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
 	if err != nil {
 		return nil, err
 	}
-	sub.SetClosedHandler(func(subject string) {
-		if cancel != nil {
-			cancel()
-		}
-	})
 
 	return result, nil
 }
@@ -1500,6 +1496,9 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 func (o *objResult) Close() error {
 	o.Lock()
 	defer o.Unlock()
+	if o.cancel != nil {
+		o.cancel()
+	}
 	if o.r == nil {
 		return nil
 	}

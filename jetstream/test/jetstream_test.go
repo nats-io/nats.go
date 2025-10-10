@@ -2478,3 +2478,24 @@ func TestPromoteMirrorToStream(t *testing.T) {
 		t.Fatalf("Expected subject to be 'bar', got %q", info.Config.Subjects[0])
 	}
 }
+
+func TestJetStreamConn(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	conn := js.Conn()
+	if conn != nc {
+		t.Fatal("Expected Conn() to return the same connection")
+	}
+}
