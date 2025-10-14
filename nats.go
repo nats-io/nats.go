@@ -1711,8 +1711,10 @@ func (o Options) Connect() (*Conn, error) {
 		return nil, err
 	}
 
-	if connectionEstablished && nc.Opts.ConnectedCB != nil {
-		nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
+	if connectionEstablished {
+		if connectedCB := nc.Opts.ConnectedCB; connectedCB != nil {
+			nc.ach.push(func() { connectedCB(nc) })
+		}
 	}
 
 	return nc, nil
@@ -2787,8 +2789,10 @@ func (nc *Conn) sendConnect() error {
 	// Construct the CONNECT protocol string
 	cProto, err := nc.connectProto()
 	if err != nil {
-		if !nc.initc && nc.Opts.AsyncErrorCB != nil {
-			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+		if !nc.initc {
+			if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+				nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
+			}
 		}
 		return err
 	}
@@ -2804,8 +2808,10 @@ func (nc *Conn) sendConnect() error {
 	// reading byte-by-byte here is ok.
 	proto, err := nc.readProto()
 	if err != nil {
-		if !nc.initc && nc.Opts.AsyncErrorCB != nil {
-			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+		if !nc.initc {
+			if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+				nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
+			}
 		}
 		return err
 	}
@@ -2815,8 +2821,10 @@ func (nc *Conn) sendConnect() error {
 		// Read the rest now...
 		proto, err = nc.readProto()
 		if err != nil {
-			if !nc.initc && nc.Opts.AsyncErrorCB != nil {
-				nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+			if !nc.initc {
+				if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+					nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
+				}
 			}
 			return err
 		}
@@ -2924,10 +2932,10 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	// Perform appropriate callback if needed for a disconnect.
 	// DisconnectedErrCB has priority over deprecated DisconnectedCB
 	if !nc.initc {
-		if nc.Opts.DisconnectedErrCB != nil {
-			nc.ach.push(func() { nc.Opts.DisconnectedErrCB(nc, err) })
-		} else if nc.Opts.DisconnectedCB != nil {
-			nc.ach.push(func() { nc.Opts.DisconnectedCB(nc) })
+		if disconnectedErrCB := nc.Opts.DisconnectedErrCB; disconnectedErrCB != nil {
+			nc.ach.push(func() { disconnectedErrCB(nc, err) })
+		} else if disconnectedCB := nc.Opts.DisconnectedCB; disconnectedCB != nil {
+			nc.ach.push(func() { disconnectedCB(nc) })
 		}
 	} else if nc.Opts.RetryOnFailedConnect && nc.initc && err != nil {
 		// For initial connection failure with RetryOnFailedConnect,
@@ -3036,8 +3044,8 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 		// Continue to hold the lock
 		if err != nil {
 			// Perform appropriate callback for a failed connection attempt.
-			if nc.Opts.ReconnectErrCB != nil {
-				nc.ach.push(func() { nc.Opts.ReconnectErrCB(nc, err) })
+			if reconnectErrCB := nc.Opts.ReconnectErrCB; reconnectErrCB != nil {
+				nc.ach.push(func() { reconnectErrCB(nc, err) })
 			}
 			nc.err = nil
 			continue
@@ -3087,10 +3095,10 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 		// Queue up the correct callback. If we are in initial connect state
 		// (using retry on failed connect), we will call the ConnectedCB,
 		// otherwise the ReconnectedCB.
-		if nc.Opts.ReconnectedCB != nil && !nc.initc {
-			nc.ach.push(func() { nc.Opts.ReconnectedCB(nc) })
-		} else if nc.Opts.ConnectedCB != nil && nc.initc {
-			nc.ach.push(func() { nc.Opts.ConnectedCB(nc) })
+		if reconnectedCB := nc.Opts.ReconnectedCB; reconnectedCB != nil && !nc.initc {
+			nc.ach.push(func() { reconnectedCB(nc) })
+		} else if connectedCB := nc.Opts.ConnectedCB; connectedCB != nil && nc.initc {
+			nc.ach.push(func() { connectedCB(nc) })
 		}
 
 		// If we are here with a retry on failed connect, indicate that the
@@ -3404,8 +3412,8 @@ func (nc *Conn) processMsg(data []byte) {
 			// We will pass the message through but send async error.
 			nc.mu.Lock()
 			nc.err = ErrBadHeaderMsg
-			if nc.Opts.AsyncErrorCB != nil {
-				nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, sub, ErrBadHeaderMsg) })
+			if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+				nc.ach.push(func() { asyncErrorCB(nc, sub, ErrBadHeaderMsg) })
 			}
 			nc.mu.Unlock()
 		}
@@ -3582,8 +3590,8 @@ slowConsumer:
 		// is already experiencing client-side slow consumer situation.
 		nc.mu.Lock()
 		nc.err = ErrSlowConsumer
-		if nc.Opts.AsyncErrorCB != nil {
-			nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, sub, ErrSlowConsumer) })
+		if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+			nc.ach.push(func() { asyncErrorCB(nc, sub, ErrSlowConsumer) })
 		}
 		nc.mu.Unlock()
 	} else {
@@ -3626,8 +3634,8 @@ func (nc *Conn) processTransientError(err error) {
 			}
 		}
 	}
-	if nc.Opts.AsyncErrorCB != nil {
-		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+	if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+		nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
 	}
 	nc.mu.Unlock()
 }
@@ -3639,8 +3647,10 @@ func (nc *Conn) processTransientError(err error) {
 // Connection lock is held on entry
 func (nc *Conn) processAuthError(err error) bool {
 	nc.err = err
-	if !nc.initc && nc.Opts.AsyncErrorCB != nil {
-		nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+	if !nc.initc {
+		if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+			nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
+		}
 	}
 	// We should give up if we tried twice on this server and got the
 	// same error. This behavior can be modified using IgnoreAuthErrorAbort.
@@ -3685,8 +3695,8 @@ func (nc *Conn) flusher() {
 				if nc.err == nil {
 					nc.err = err
 				}
-				if nc.Opts.AsyncErrorCB != nil {
-					nc.ach.push(func() { nc.Opts.AsyncErrorCB(nc, nil, err) })
+				if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+					nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
 				}
 			}
 		}
@@ -3800,12 +3810,16 @@ func (nc *Conn) processInfo(info string) error {
 		if !nc.Opts.NoRandomize {
 			nc.shufflePool(1)
 		}
-		if !nc.initc && nc.Opts.DiscoveredServersCB != nil {
-			nc.ach.push(func() { nc.Opts.DiscoveredServersCB(nc) })
+		if !nc.initc {
+			if discoveredServersCB := nc.Opts.DiscoveredServersCB; discoveredServersCB != nil {
+				nc.ach.push(func() { discoveredServersCB(nc) })
+			}
 		}
 	}
-	if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
-		nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
+	if !nc.initc && ncInfo.LameDuckMode {
+		if lameDuckModeHandler := nc.Opts.LameDuckModeHandler; lameDuckModeHandler != nil {
+			nc.ach.push(func() { lameDuckModeHandler(nc) })
+		}
 	}
 	return nil
 }
@@ -5647,8 +5661,8 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 				nc.ach.push(func() { disconnectedCB(nc) })
 			}
 		}
-		if nc.Opts.ClosedCB != nil {
-			nc.ach.push(func() { nc.Opts.ClosedCB(nc) })
+		if closedCB := nc.Opts.ClosedCB; closedCB != nil {
+			nc.ach.push(func() { closedCB(nc) })
 		}
 	}
 	// If this is terminal, then we have to notify the asyncCB handler that
