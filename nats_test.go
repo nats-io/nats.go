@@ -308,8 +308,8 @@ func TestSimplifiedURLs(t *testing.T) {
 			}
 			// Check server pool directly
 			for i, u := range nc.srvPool {
-				if u.url.String() != test.expected[i] {
-					t.Fatalf("Expected url %q, got %q", test.expected[i], u.url.String())
+				if u.URL.String() != test.expected[i] {
+					t.Fatalf("Expected url %q, got %q", test.expected[i], u.URL.String())
 				}
 			}
 		})
@@ -326,7 +326,7 @@ func TestServersRandomize(t *testing.T) {
 	// Build []string from srvPool
 	clientServers := []string{}
 	for _, s := range nc.srvPool {
-		clientServers = append(clientServers, s.url.String())
+		clientServers = append(clientServers, s.URL.String())
 	}
 	// In theory this could happen..
 	if reflect.DeepEqual(testServers, clientServers) {
@@ -344,7 +344,7 @@ func TestServersRandomize(t *testing.T) {
 	// Build []string from srvPool
 	clientServers = []string{}
 	for _, s := range nc.srvPool {
-		clientServers = append(clientServers, s.url.String())
+		clientServers = append(clientServers, s.URL.String())
 	}
 	if !reflect.DeepEqual(testServers, clientServers) {
 		t.Fatalf("ServerPool list should not be randomized\n")
@@ -364,7 +364,7 @@ func TestServersRandomize(t *testing.T) {
 	// Build []string from srvPool
 	clientServers = []string{}
 	for _, s := range nc.srvPool {
-		clientServers = append(clientServers, s.url.String())
+		clientServers = append(clientServers, s.URL.String())
 	}
 	// In theory this could happen..
 	if reflect.DeepEqual(testServers, clientServers) {
@@ -384,7 +384,7 @@ func TestSelectNextServer(t *testing.T) {
 		t.Fatalf("Problem setting up Server Pool: %v\n", err)
 	}
 	if nc.current != nc.srvPool[0] {
-		t.Fatalf("Wrong default selection: %v\n", nc.current.url)
+		t.Fatalf("Wrong default selection: %v\n", nc.current.URL)
 	}
 
 	sel, err := nc.selectNextServer()
@@ -395,18 +395,18 @@ func TestSelectNextServer(t *testing.T) {
 	if len(nc.srvPool) != len(testServers) {
 		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers))
 	}
-	if nc.current.url.String() != testServers[1] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.url, testServers[1])
+	if nc.current.URL.String() != testServers[1] {
+		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.URL, testServers[1])
 	}
-	if nc.srvPool[len(nc.srvPool)-1].url.String() != testServers[0] {
+	if nc.srvPool[len(nc.srvPool)-1].URL.String() != testServers[0] {
 		t.Fatalf("Did not push old to last position\n")
 	}
 	if sel != nc.srvPool[0] {
-		t.Fatalf("Did not return correct server: %v vs %v\n", sel.url, nc.srvPool[0].url)
+		t.Fatalf("Did not return correct server: %v vs %v\n", sel.URL, nc.srvPool[0].URL)
 	}
 
 	// Test that we do not keep servers where we have tried to reconnect past our limit.
-	nc.srvPool[0].reconnects = int(opts.MaxReconnect)
+	nc.srvPool[0].Reconnects = int(opts.MaxReconnect)
 	if _, err := nc.selectNextServer(); err != nil {
 		t.Fatalf("Got an err: %v\n", err)
 	}
@@ -414,10 +414,10 @@ func TestSelectNextServer(t *testing.T) {
 	if len(nc.srvPool) != len(testServers)-1 {
 		t.Fatalf("List is incorrect size: %d vs %d\n", len(nc.srvPool), len(testServers)-1)
 	}
-	if nc.current.url.String() != testServers[2] {
-		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.url, testServers[2])
+	if nc.current.URL.String() != testServers[2] {
+		t.Fatalf("Selection incorrect: %v vs %v\n", nc.current.URL, testServers[2])
 	}
-	if nc.srvPool[len(nc.srvPool)-1].url.String() == testServers[1] {
+	if nc.srvPool[len(nc.srvPool)-1].URL.String() == testServers[1] {
 		t.Fatalf("Did not throw away the last server correctly\n")
 	}
 }
@@ -1113,13 +1113,13 @@ func TestAsyncINFO(t *testing.T) {
 	// Capture the pool sequence after randomization
 	urlsAfterPoolSetup := make([]string, 0, len(c.srvPool))
 	for _, srv := range c.srvPool {
-		urlsAfterPoolSetup = append(urlsAfterPoolSetup, srv.url.Host)
+		urlsAfterPoolSetup = append(urlsAfterPoolSetup, srv.URL.Host)
 	}
 	checkNewURLsAddedRandomly := func() {
 		t.Helper()
 		var ok bool
 		for i := 0; i < len(urlsAfterPoolSetup); i++ {
-			if c.srvPool[i].url.Host != urlsAfterPoolSetup[i] {
+			if c.srvPool[i].URL.Host != urlsAfterPoolSetup[i] {
 				ok = true
 				break
 			}
@@ -1139,7 +1139,7 @@ func TestAsyncINFO(t *testing.T) {
 	}
 	checkNewURLsAddedRandomly()
 	// Check that we have not moved the first URL
-	if u := c.srvPool[0].url.Host; u != urlsAfterPoolSetup[0] {
+	if u := c.srvPool[0].URL.Host; u != urlsAfterPoolSetup[0] {
 		t.Fatalf("Expected first URL to be %q, got %q", urlsAfterPoolSetup[0], u)
 	}
 }
