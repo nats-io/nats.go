@@ -268,7 +268,7 @@ type WebSocketHeadersHandler func() (http.Header, error)
 // MaxReconnect limits are enforced automatically: servers exceeding the configured
 // MaxReconnect attempts are removed from the pool before the handler is called.
 // To disable this limit, set MaxReconnect to a negative value.
-type ReconnectToServerHandler func([]Server) (url.URL, bool)
+type ReconnectToServerHandler func([]Server, ServerInfo) (*url.URL, bool)
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -612,7 +612,7 @@ type Conn struct {
 	bw            *natsWriter
 	br            *natsReader
 	fch           chan struct{}
-	info          serverInfo
+	info          ServerInfo
 	ssid          int64
 	subsMu        sync.RWMutex
 	subs          map[int64]*Subscription
@@ -854,7 +854,7 @@ type Server struct {
 }
 
 // The INFO block received from the server.
-type serverInfo struct {
+type ServerInfo struct {
 	ID           string   `json:"server_id"`
 	Name         string   `json:"server_name"`
 	Proto        int      `json:"proto"`
@@ -3049,9 +3049,10 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	}
 
 	for i := 0; len(nc.srvPool) > 0; {
+		var err error
 		var cur *Server
-		var shouldSleep bool
-		var selectedSrv url.URL
+		var doSleep bool
+		var selectedSrv *url.URL
 
 		if nc.Opts.ReconnectToServerCB != nil {
 			// Enforce MaxReconnect limits before calling the callback
@@ -3081,19 +3082,20 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 				}
 			}
 
-			selectedSrv, shouldSleep = nc.Opts.ReconnectToServerCB(srvVals)
+			selectedSrv, doSleep = nc.Opts.ReconnectToServerCB(srvVals, nc.info)
 			idx := slices.IndexFunc(nc.srvPool, func(srv *Server) bool {
 				return srv != nil && srv.URL.String() == selectedSrv.String()
 			})
 			if idx == -1 {
 				// Server not in pool, add it dynamically
-				newSrv := &Server{URL: &selectedSrv}
+				newSrv := &Server{URL: selectedSrv}
 				nc.srvPool = append(nc.srvPool, newSrv)
 				nc.urls[selectedSrv.Host] = struct{}{}
 				cur = newSrv
 			} else {
 				cur = nc.srvPool[idx]
 			}
+			nc.current = cur
 		}
 
 		if cur == nil {
@@ -3103,10 +3105,9 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 				break
 			}
 			// Use default sleep behavior when callback not used or fallback occurred
-			shouldSleep = i+1 >= len(nc.srvPool)
+			doSleep = i+1 >= len(nc.srvPool) && !forceReconnect
 		}
 
-		doSleep := shouldSleep && !forceReconnect
 		forceReconnect = false
 		nc.mu.Unlock()
 
@@ -3859,7 +3860,7 @@ func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
 		return nil
 	}
-	var ncInfo serverInfo
+	var ncInfo ServerInfo
 	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
 		return err
 	}
