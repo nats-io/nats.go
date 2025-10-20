@@ -1001,7 +1001,7 @@ func TestAsyncINFO(t *testing.T) {
 	c.setupServerPool()
 
 	// Partials requiring argBuf
-	expectedServer := serverInfo{
+	expectedServer := ServerInfo{
 		ID:           "test",
 		Host:         "localhost",
 		Port:         4222,
