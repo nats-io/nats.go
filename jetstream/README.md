@@ -568,7 +568,6 @@ iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1
   request. If the value is set too low, the consumer will stall and not be able
   to consume messages.
 - `PullExpiry(time.Duration)` - timeout on a single pull request to the server
-type PullThresholdMessages int
 - `PullThresholdMessages(int)` - amount of messages which triggers refilling the
   buffer
 - `PullThresholdBytes(int)` - amount of bytes which triggers refilling the
