@@ -3560,7 +3560,7 @@ func (js *js) apiRequestWithContext(ctx context.Context, subj string, data []byt
 	}
 	if js.opts.shouldTrace {
 		ctrace := js.opts.ctrace
-		if ctrace.RequestSent != nil {
+		if ctrace.ResponseReceived != nil {
 			ctrace.ResponseReceived(subj, resp.Data, resp.Header)
 		}
 	}
