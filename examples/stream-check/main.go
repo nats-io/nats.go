@@ -86,6 +86,8 @@ func main() {
 		file               string
 		olderThan          string
 		newerThan          string
+		tolerance          int
+		lastSeqOnly        bool
 	)
 	flag.StringVar(&urls, "s", nats.DefaultURL, "The NATS server URLs (separated by comma)")
 	flag.StringVar(&creds, "creds", "", "The NATS credentials")
@@ -100,7 +102,7 @@ func main() {
 	flag.BoolVar(&unsyncedFilter, "unsynced", false, "Filter by streams that are out of sync")
 	flag.BoolVar(&stdin, "stdin", false, "Process the contents from STDIN")
 	flag.BoolVar(&human, "human", false, "Format bytes in human-readable units (KB, MB, GB)")
-	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects, activity")
+	flag.StringVar(&sortBy, "sort", "", "Sort by field: bytes, messages, consumers, subjects, activity, density, deleteratio")
 	flag.StringVar(&sortOrder, "order", "desc", "Sort order: asc or desc (default: desc)")
 	flag.BoolVar(&backup, "backup", false, "Save JSZ responses to jsz-YYYYMMDD.json file")
 	flag.StringVar(&compare, "compare", "", "Compare against previous backup file (shows deltas)")
@@ -112,6 +114,8 @@ func main() {
 	flag.StringVar(&file, "f", "", "Read from JSZ JSON file instead of connecting to server")
 	flag.StringVar(&olderThan, "older-than", "", "Filter streams older than duration (e.g. 48h, 7d)")
 	flag.StringVar(&newerThan, "newer-than", "", "Filter streams newer than duration (e.g. 1h, 30m)")
+	flag.IntVar(&tolerance, "tolerance", 0, "Tolerance for sequence drift in LastSeq comparison (default: 0 - exact match)")
+	flag.BoolVar(&lastSeqOnly, "lastseq-only", false, "Only check LastSeq drift, ignore other sync checks (messages, bytes, firstseq)")
 	flag.Parse()
 
 	// Handle shorthand sort order flags
@@ -313,11 +317,11 @@ func main() {
 	fmt.Println()
 
 	if summary {
-		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "LAST_ACTIVITY", "LAST_TS", "CREATED", "STATUS"}
-		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s %-30s %-30s %-30s\n", fields...)
+		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "DENSITY", "DELETE_RATIO", "LAST_ACTIVITY", "LAST_TS", "CREATED", "STATUS"}
+		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", fields...)
 	} else {
-		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "STATUS"}
-		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-30s\n", fields...)
+		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "DENSITY", "DELETE_RATIO", "STATUS"}
+		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s\n", fields...)
 	}
 
 	var prev, prevAccount string
@@ -364,23 +368,32 @@ func main() {
 
 		// Make comparisons against other peers.
 		for _, peer := range stream {
-			if peer.State.Msgs != replica.State.Msgs && peer.State.Bytes != replica.State.Bytes {
+			if !lastSeqOnly {
+				if peer.State.Msgs != replica.State.Msgs && peer.State.Bytes != replica.State.Bytes {
+					status = "UNSYNCED"
+					unsynced = true
+				}
+				if peer.State.FirstSeq != replica.State.FirstSeq {
+					status = "UNSYNCED"
+					unsynced = true
+				}
+			}
+			// Check LastSeq with tolerance
+			lastSeqDiff := int64(peer.State.LastSeq) - int64(replica.State.LastSeq)
+			if lastSeqDiff < 0 {
+				lastSeqDiff = -lastSeqDiff
+			}
+			if lastSeqDiff > int64(tolerance) {
 				status = "UNSYNCED"
 				unsynced = true
 			}
-			if peer.State.FirstSeq != replica.State.FirstSeq {
-				status = "UNSYNCED"
-				unsynced = true
-			}
-			if peer.State.LastSeq != replica.State.LastSeq {
-				status = "UNSYNCED"
-				unsynced = true
-			}
-			// Cannot trust results unless coming from the stream leader.
-			// Need Stream INFO and collect multiple responses instead.
-			if peer.Cluster.Leader != replica.Cluster.Leader {
-				status = "MULTILEADER"
-				unsynced = true
+			if !lastSeqOnly {
+				// Cannot trust results unless coming from the stream leader.
+				// Need Stream INFO and collect multiple responses instead.
+				if peer.Cluster.Leader != replica.Cluster.Leader {
+					status = "MULTILEADER"
+					unsynced = true
+				}
 			}
 		}
 		if unsyncedFilter && !unsynced {
@@ -445,6 +458,36 @@ func main() {
 				sf = append(sf, formatDelta(replica.State.Consumers, compareReplica.State.Consumers, false))
 				sf = append(sf, formatSequenceDelta(replica.State.FirstSeq, compareReplica.State.FirstSeq))
 				sf = append(sf, formatSequenceDelta(replica.State.LastSeq, compareReplica.State.LastSeq))
+				// Calculate density delta
+				currentSeqRange := replica.State.LastSeq - replica.State.FirstSeq + 1
+				prevSeqRange := compareReplica.State.LastSeq - compareReplica.State.FirstSeq + 1
+				var currentDensity, prevDensity float64
+				if currentSeqRange > 0 {
+					currentDensity = float64(replica.State.Msgs) / float64(currentSeqRange)
+				}
+				if prevSeqRange > 0 {
+					prevDensity = float64(compareReplica.State.Msgs) / float64(prevSeqRange)
+				}
+				densityDelta := currentDensity - prevDensity
+				if densityDelta >= 0 {
+					sf = append(sf, fmt.Sprintf("+%.3f", densityDelta))
+				} else {
+					sf = append(sf, fmt.Sprintf("%.3f", densityDelta))
+				}
+				// Calculate delete ratio delta
+				var currentDeleteRatio, prevDeleteRatio float64
+				if replica.State.Msgs > 0 {
+					currentDeleteRatio = float64(replica.State.NumDeleted) / float64(replica.State.Msgs)
+				}
+				if compareReplica.State.Msgs > 0 {
+					prevDeleteRatio = float64(compareReplica.State.NumDeleted) / float64(compareReplica.State.Msgs)
+				}
+				deleteRatioDelta := currentDeleteRatio - prevDeleteRatio
+				if deleteRatioDelta >= 0 {
+					sf = append(sf, fmt.Sprintf("+%.3f", deleteRatioDelta))
+				} else {
+					sf = append(sf, fmt.Sprintf("%.3f", deleteRatioDelta))
+				}
 			} else {
 				// New stream - show as all positive deltas
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.Msgs))
@@ -458,6 +501,21 @@ func main() {
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.Consumers))
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.FirstSeq))
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.LastSeq))
+				// Calculate density
+				sequenceRange := replica.State.LastSeq - replica.State.FirstSeq + 1
+				if sequenceRange > 0 {
+					streamDensity := float64(replica.State.Msgs) / float64(sequenceRange)
+					sf = append(sf, fmt.Sprintf("%.3f", streamDensity))
+				} else {
+					sf = append(sf, "0.000")
+				}
+				// Calculate delete ratio
+				if replica.State.Msgs > 0 {
+					deleteRatio := float64(replica.State.NumDeleted) / float64(replica.State.Msgs)
+					sf = append(sf, fmt.Sprintf("+%.3f", deleteRatio))
+				} else {
+					sf = append(sf, "+0.000")
+				}
 			}
 		} else {
 			// Normal mode - show absolute values
@@ -472,6 +530,21 @@ func main() {
 			sf = append(sf, replica.State.Consumers)
 			sf = append(sf, replica.State.FirstSeq)
 			sf = append(sf, replica.State.LastSeq)
+			// Calculate density
+			sequenceRange := replica.State.LastSeq - replica.State.FirstSeq + 1
+			if sequenceRange > 0 {
+				streamDensity := float64(replica.State.Msgs) / float64(sequenceRange)
+				sf = append(sf, fmt.Sprintf("%.3f", streamDensity))
+			} else {
+				sf = append(sf, "0.000")
+			}
+			// Calculate delete ratio
+			if replica.State.Msgs > 0 {
+				deleteRatio := float64(replica.State.NumDeleted) / float64(replica.State.Msgs)
+				sf = append(sf, fmt.Sprintf("%.3f", deleteRatio))
+			} else {
+				sf = append(sf, "0.000")
+			}
 			ago := time.Since(replica.State.LastTime)
 			if ago > 30*(24*time.Hour) {
 				status += ", STALE?"
@@ -505,22 +578,22 @@ func main() {
 			// Summary mode - omit replicasInfo (leader/peers) and adjust format
 			if compareData != nil {
 				// Compare mode - all numeric fields are now strings (deltas)
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s %-30s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
 			} else if human {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d %-30s %-30s %-30s %-30s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
 			} else {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d %-30s %-30s %-30s %-30s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
 			}
 		} else {
 			// Full mode - include replicasInfo (leader/peers)
 			sf = append(sf, replicasInfo)
 			if compareData != nil {
 				// Compare mode - all numeric fields are now strings (deltas)
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
 			} else if human {
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
 			} else {
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-15d %-15d| %-10s | leader: %s | peers: %s\n", sf...)
+				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
 			}
 		}
 
@@ -572,6 +645,28 @@ func sortEntries(entries []sortableEntry, sortBy, sortOrder string) {
 			less = entries[i].replica.State.NumSubjects < entries[j].replica.State.NumSubjects
 		case "activity":
 			less = entries[i].replica.State.LastTime.Before(entries[j].replica.State.LastTime)
+		case "density":
+			// Calculate density for both entries
+			iSeqRange := entries[i].replica.State.LastSeq - entries[i].replica.State.FirstSeq + 1
+			jSeqRange := entries[j].replica.State.LastSeq - entries[j].replica.State.FirstSeq + 1
+			var iDensity, jDensity float64
+			if iSeqRange > 0 {
+				iDensity = float64(entries[i].replica.State.Msgs) / float64(iSeqRange)
+			}
+			if jSeqRange > 0 {
+				jDensity = float64(entries[j].replica.State.Msgs) / float64(jSeqRange)
+			}
+			less = iDensity < jDensity
+		case "deleteratio":
+			// Calculate delete ratio for both entries
+			var iDeleteRatio, jDeleteRatio float64
+			if entries[i].replica.State.Msgs > 0 {
+				iDeleteRatio = float64(entries[i].replica.State.NumDeleted) / float64(entries[i].replica.State.Msgs)
+			}
+			if entries[j].replica.State.Msgs > 0 {
+				jDeleteRatio = float64(entries[j].replica.State.NumDeleted) / float64(entries[j].replica.State.Msgs)
+			}
+			less = iDeleteRatio < jDeleteRatio
 		default:
 			// Default to alphabetical by key
 			less = entries[i].key < entries[j].key
