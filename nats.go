@@ -1967,8 +1967,10 @@ func hostIsIP(u *url.URL) bool {
 	return net.ParseIP(u.Hostname()) != nil
 }
 
-// addURLToPool adds an entry to the server pool
-func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
+// parseServerURL parses a server URL string into a Server struct.
+// It handles scheme defaults and port defaults. Does not validate websocket consistency.
+// Returns the parsed Server and whether it's a websocket URL.
+func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server, error) {
 	if !strings.Contains(sURL, "://") {
 		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
@@ -1979,7 +1981,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	for i := 0; i < 2; i++ {
 		u, err = url.Parse(sURL)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if u.Port() != "" {
 			break
@@ -1999,16 +2001,6 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 		}
 	}
 
-	isWS := isWebsocketScheme(u)
-	// We don't support mix and match of websocket and non websocket URLs.
-	// If this is the first URL, then we accept and switch the global state
-	// to websocket. After that, we will know how to reject mixed URLs.
-	if len(nc.srvPool) == 0 {
-		nc.ws = isWS
-	} else if isWS && !nc.ws || !isWS && nc.ws {
-		return errors.New("mixing of websocket and non websocket URLs is not allowed")
-	}
-
 	var tlsName string
 	if implicit {
 		curl := nc.current.URL
@@ -2026,8 +2018,28 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	}
 
 	s := &Server{URL: u, isImplicit: implicit, tlsName: tlsName}
+	return s, nil
+}
+
+// addURLToPool adds an entry to the server pool
+func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
+	s, err := nc.parseServerURL(sURL, implicit, saveTLSName)
+	if err != nil {
+		return err
+	}
+
+	// We don't support mix and match of websocket and non websocket URLs.
+	// If this is the first URL, then we accept and switch the global state
+	// to websocket. After that, we will know how to reject mixed URLs.
+	isWS := isWebsocketScheme(s.URL)
+	if len(nc.srvPool) == 0 {
+		nc.ws = isWS
+	} else if isWS != nc.ws {
+		return errors.New("mixing of websocket and non websocket URLs is not allowed")
+	}
+
 	nc.srvPool = append(nc.srvPool, s)
-	nc.urls[u.Host] = struct{}{}
+	nc.urls[s.URL.Host] = struct{}{}
 	return nil
 }
 
@@ -6170,6 +6182,80 @@ func (nc *Conn) Barrier(f func()) error {
 	}
 	nc.subsMu.Unlock()
 	nc.mu.Unlock()
+	return nil
+}
+
+func (nc *Conn) ServerPool() []Server {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	servers := make([]Server, len(nc.srvPool))
+	for i, srv := range nc.srvPool {
+		if srv != nil {
+			// Return a copy to avoid exposing internal state
+			s := *srv
+			servers[i] = s
+		}
+	}
+	return servers
+}
+
+func (nc *Conn) SetServerPool(servers []string) error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+
+	// Parse and validate all URLs first (without modifying state)
+	newPool := make([]*Server, 0, len(servers))
+	newURLs := make(map[string]struct{})
+	var firstWS *bool
+
+	for _, addr := range servers {
+		s, err := nc.parseServerURL(addr, false, false)
+		if err != nil {
+			return err
+		}
+		isWS := isWebsocketScheme(s.URL)
+
+		// Check websocket consistency
+		if firstWS == nil {
+			firstWS = &isWS
+		} else if isWS != *firstWS {
+			return errors.New("mixing of websocket and non websocket URLs is not allowed")
+		}
+
+		newPool = append(newPool, s)
+		newURLs[s.URL.Host] = struct{}{}
+	}
+
+	// All validated - atomically replace
+	nc.srvPool = newPool
+	nc.urls = newURLs
+	if firstWS != nil {
+		nc.ws = *firstWS
+	}
+
+	// Update nc.current to point to the corresponding server in the new pool
+	// This is important because currentServer() uses pointer equality
+	if nc.current != nil {
+		currentURL := nc.current.URL.String()
+		found := false
+		for _, s := range newPool {
+			if s.URL.String() == currentURL {
+				// Update nc.current to point to the server instance in the new pool
+				nc.current = s
+				found = true
+				break
+			}
+		}
+		if !found && len(newPool) > 0 {
+			// Current server not in new pool - point to first server in new pool
+			// This ensures selectNextServer() can find it and properly rotate
+			nc.current = newPool[0]
+		}
+	}
+
 	return nil
 }
 
