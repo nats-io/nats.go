@@ -105,7 +105,11 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 	}
 
 	var err error
-	sub.subscription, err = p.js.conn.Subscribe(p.info.Config.DeliverSubject, internalHandler)
+	if p.info.Config.DeliverGroup != "" {
+		sub.subscription, err = p.js.conn.QueueSubscribe(p.info.Config.DeliverSubject, p.info.Config.DeliverGroup, internalHandler)
+	} else {
+		sub.subscription, err = p.js.conn.Subscribe(p.info.Config.DeliverSubject, internalHandler)
+	}
 	if err != nil {
 		return nil, err
 	}

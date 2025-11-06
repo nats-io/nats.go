@@ -505,3 +505,78 @@ func TestPushConsumerConsume(t *testing.T) {
 		cc.Drain()
 	})
 }
+
+func TestPushConsumerConsume_WithQueue(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	c1, err := s.CreatePushConsumer(ctx, jetstream.ConsumerConfig{
+		DeliverSubject: nats.NewInbox(),
+		DeliverGroup:   "workers",
+		AckPolicy:      jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	c2, err := s.PushConsumer(ctx, c1.CachedInfo().Name)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msgs := make([]jetstream.Msg, 0)
+	lock := sync.Mutex{}
+	wg := &sync.WaitGroup{}
+	l1, err := c1.Consume(func(msg jetstream.Msg) {
+		msg.Ack()
+		lock.Lock()
+		msgs = append(msgs, msg)
+		lock.Unlock()
+		wg.Done()
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer l1.Stop()
+	l2, err := c2.Consume(func(msg jetstream.Msg) {
+		msg.Ack()
+		lock.Lock()
+		msgs = append(msgs, msg)
+		lock.Unlock()
+		wg.Done()
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer l2.Stop()
+
+	testSubject := "FOO.123"
+	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
+	wg.Add(len(testMsgs))
+	for _, msg := range testMsgs {
+		if _, err := js.Publish(context.Background(), testSubject, []byte(msg)); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+	}
+
+	wg.Wait()
+	if len(msgs) != len(testMsgs) {
+		t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+	}
+}
