@@ -246,6 +246,11 @@ type (
 		Mirror *StreamSource `json:"mirror,omitempty"`
 
 		// Sources defines the configuration for sources of a KeyValue store.
+		// If no subject transforms are defined, it is assumed that a source is
+		// also a KV store and subject transforms will be set to correctly map
+		// keys from the source KV to the current one. If subject transforms are
+		// defined, they will be used as is. This allows using non-kv streams as
+		// sources.
 		Sources []*StreamSource `json:"sources,omitempty"`
 
 		// Compression sets the underlying stream compression.
@@ -471,7 +476,6 @@ const (
 	kvSubjectsTmpl          = "$KV.%s.>"
 	kvSubjectsPreTmpl       = "$KV.%s."
 	kvSubjectsPreDomainTmpl = "%s.$KV.%s."
-	kvNoPending             = "0"
 )
 
 const (
@@ -685,8 +689,14 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 		scfg.Mirror = m
 		scfg.MirrorDirect = true
 	} else if len(cfg.Sources) > 0 {
-		// For now we do not allow direct subjects for sources. If that is desired a user could use stream API directly.
 		for _, ss := range cfg.Sources {
+			// if subject transforms are already set, then use as is.
+			// this allows for full control of the source, e.g. using non-KV streams.
+			// Note that in this case, the Name is not modified and full stream name must be provided.
+			if len(ss.SubjectTransforms) > 0 {
+				scfg.Sources = append(scfg.Sources, ss)
+				continue
+			}
 			var sourceBucketName string
 			if strings.HasPrefix(ss.Name, kvBucketNamePre) {
 				sourceBucketName = ss.Name[len(kvBucketNamePre):]
