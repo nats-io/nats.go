@@ -1009,6 +1009,175 @@ func TestObjectList(t *testing.T) {
 	})
 }
 
+func TestObjectCrossAccounts(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+		listen: 127.0.0.1:-1
+		jetstream: enabled
+		accounts: {
+			A: {
+				users: [{ user: a, password: a }]
+				jetstream: enabled
+				exports: [
+					{ service: '$JS.API.INFO' }
+					{ service: '$JS.API.STREAM.>' }
+					{ service: '$JS.API.CONSUMER.>' }
+					{ service: '$JS.API.DIRECT.>' }
+					{ service: '$O.>' }
+					{ stream: 'accI.>' }
+				]
+			},
+			I: {
+				users: [{ user: i, password: i }]
+				imports: [
+					{ service: { account: 'A', subject: '$JS.API.INFO'}, to: 'fromA.API.INFO' } 
+					{ service: { account: 'A', subject: '$JS.API.STREAM.>'}, to: 'fromA.API.STREAM.>' }
+					{ service: { account: 'A', subject: '$JS.API.CONSUMER.>'}, to: 'fromA.API.CONSUMER.>' }
+					{ service: { account: 'A', subject: '$JS.API.DIRECT.>'}, to: 'fromA.API.DIRECT.>' }
+					{ service: { account: 'A', subject: '$O.>'}, to: 'fromA.API.$O.>' }
+					{ stream: { subject: 'accI.>', account: 'A' }}
+				]
+			}
+		}
+	}`))
+
+	defer os.Remove(conf)
+	s, _ := RunServerWithConfig(conf)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	nc1, err := nats.Connect(s.ClientURL(), nats.UserInfo("a", "a"))
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc1.Close()
+
+	js1, err := jetstream.New(nc1)
+	if err != nil {
+		t.Fatalf("Error creating JetStream client: %v", err)
+	}
+
+	obj1, err := js1.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "Map"})
+	if err != nil {
+		t.Fatalf("Error creating object store: %v", err)
+	}
+
+	_, err = obj1.Status(ctx)
+	expectOk(t, err)
+
+	w1, err := obj1.Watch(ctx)
+	if err != nil {
+		t.Fatalf("Error creating watcher: %v", err)
+	}
+	defer w1.Stop()
+
+	nc2, err := nats.Connect(s.ClientURL(), nats.UserInfo("i", "i"), nats.CustomInboxPrefix("accI"))
+	if err != nil {
+		t.Fatalf("Error connecting to server: %v", err)
+	}
+	defer nc2.Close()
+
+	js2, err := jetstream.NewWithAPIPrefix(nc2, "fromA.API")
+	if err != nil {
+		t.Fatalf("Error creating JetStream client: %v", err)
+	}
+
+	obj2, err := js2.ObjectStore(ctx, "Map")
+	if err != nil {
+		t.Fatalf("Error getting object store: %v", err)
+	}
+
+	w2, err := obj2.Watch(ctx)
+	if err != nil {
+		t.Fatalf("Error creating watcher: %v", err)
+	}
+	defer w2.Stop()
+
+	put2 := func(name, value string) {
+		_, err = obj2.PutString(ctx, name, value)
+		expectOk(t, err)
+	}
+
+	// Do a Put from obj2
+	put2("A", "AAA")
+
+	// GetInfo from obj1
+	result, err := obj1.GetInfo(ctx, "A")
+	expectOk(t, err)
+	if result.Name != "A" || result.Size != 3 {
+		t.Fatalf("Expected object A with size 3, got: %+v", result)
+	}
+
+	// Get from obj1
+	err = obj1.GetFile(ctx, "A", "tmpA.txt")
+	expectOk(t, err)
+
+	// Read the file to verify content
+	tmpResult, err := os.ReadFile("tmpA.txt")
+	expectOk(t, err)
+	if string(tmpResult) != "AAA" {
+		t.Fatalf("Expected content 'AAA', got: %s", tmpResult)
+	}
+	defer os.Remove("tmpA.txt")
+
+	// GetInfo from obj2
+	result, err = obj2.GetInfo(ctx, "A")
+	expectOk(t, err)
+	if result.Name != "A" || result.Size != 3 {
+		t.Fatalf("Expected object B with size 3, got: %+v", result)
+	}
+
+	// Get from obj2
+	err = obj2.GetFile(ctx, "A", "tmpA2.txt")
+	expectOk(t, err)
+
+	// Read the file to verify content
+	tmpResult, err = os.ReadFile("tmpA2.txt")
+	expectOk(t, err)
+	if string(tmpResult) != "AAA" {
+		t.Fatalf("Expected content 'AAA', got: %s", tmpResult)
+	}
+	defer os.Remove("tmpA2.txt")
+
+	// Delete from obj2
+	err = obj2.Delete(ctx, "A")
+	expectOk(t, err)
+
+	put := func(name, value string) {
+		_, err = obj1.PutString(ctx, name, value)
+		expectOk(t, err)
+	}
+
+	// Do a Put from obj1
+	put("B", "BBB")
+
+	// Get from obj1
+	result, err = obj1.GetInfo(ctx, "B")
+	expectOk(t, err)
+	if result.Name != "B" || result.Size != 3 {
+		t.Fatalf("Expected object B with size 3, got: %+v", result)
+	}
+
+	// Get from obj2
+	result, err = obj2.GetInfo(ctx, "B")
+	expectOk(t, err)
+	if result.Name != "B" || result.Size != 3 {
+		t.Fatalf("Expected object B with size 3, got: %+v", result)
+	}
+
+	// Delete from obj2
+	err = obj2.Delete(ctx, "B")
+	expectOk(t, err)
+	// Verify deletion in obj1
+	_, err = obj1.GetInfo(ctx, "B")
+	expectErr(t, err, jetstream.ErrObjectNotFound)
+	// Verify deletion in obj2
+	_, err = obj2.GetInfo(ctx, "B")
+	expectErr(t, err, jetstream.ErrObjectNotFound)
+
+}
+
 func TestObjectMaxBytes(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
