@@ -279,7 +279,7 @@ func main() {
 					State:      stream.State,
 					Cluster:    stream.Cluster,
 					Config:     stream.Config,
-					Created:     stream.Created,
+					Created:    stream.Created,
 				}
 			}
 		}
@@ -312,16 +312,16 @@ func main() {
 		keys[i] = entry.key
 	}
 
-	line := strings.Repeat("-", 220)
+	line := strings.Repeat("-", 240)
 	fmt.Printf("Streams: %d\n", len(keys))
 	fmt.Println()
 
 	if summary {
 		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "DENSITY", "DELETE_RATIO", "LAST_ACTIVITY", "LAST_TS", "CREATED", "STATUS"}
-		fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", fields...)
+		fmt.Printf("%-60s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", fields...)
 	} else {
 		fields := []any{"STREAM REPLICA", "RAFT", "ACCOUNT", "ACC_ID", "NODE", "MESSAGES", "BYTES", "SUBJECTS", "DELETED", "CONSUMERS", "SEQUENCES", "DENSITY", "DELETE_RATIO", "STATUS"}
-		fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s\n", fields...)
+		fmt.Printf("%-60s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s\n", fields...)
 	}
 
 	var prev, prevAccount string
@@ -456,8 +456,9 @@ func main() {
 				sf = append(sf, formatDelta(replica.State.NumSubjects, compareReplica.State.NumSubjects, false))
 				sf = append(sf, formatDelta(replica.State.NumDeleted, compareReplica.State.NumDeleted, false))
 				sf = append(sf, formatDelta(replica.State.Consumers, compareReplica.State.Consumers, false))
-				sf = append(sf, formatSequenceDelta(replica.State.FirstSeq, compareReplica.State.FirstSeq))
-				sf = append(sf, formatSequenceDelta(replica.State.LastSeq, compareReplica.State.LastSeq))
+				sf = append(sf, fmt.Sprintf("%s/%s",
+					formatSequenceDelta(replica.State.FirstSeq, compareReplica.State.FirstSeq),
+					formatSequenceDelta(replica.State.LastSeq, compareReplica.State.LastSeq)))
 				// Calculate density delta
 				currentSeqRange := replica.State.LastSeq - replica.State.FirstSeq + 1
 				prevSeqRange := compareReplica.State.LastSeq - compareReplica.State.FirstSeq + 1
@@ -499,8 +500,7 @@ func main() {
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.NumSubjects))
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.NumDeleted))
 				sf = append(sf, fmt.Sprintf("+%d", replica.State.Consumers))
-				sf = append(sf, fmt.Sprintf("+%d", replica.State.FirstSeq))
-				sf = append(sf, fmt.Sprintf("+%d", replica.State.LastSeq))
+				sf = append(sf, fmt.Sprintf("+%d/+%d", replica.State.FirstSeq, replica.State.LastSeq))
 				// Calculate density
 				sequenceRange := replica.State.LastSeq - replica.State.FirstSeq + 1
 				if sequenceRange > 0 {
@@ -528,8 +528,7 @@ func main() {
 			sf = append(sf, replica.State.NumSubjects)
 			sf = append(sf, replica.State.NumDeleted)
 			sf = append(sf, replica.State.Consumers)
-			sf = append(sf, replica.State.FirstSeq)
-			sf = append(sf, replica.State.LastSeq)
+			sf = append(sf, fmt.Sprintf("%d/%d", replica.State.FirstSeq, replica.State.LastSeq))
 			// Calculate density
 			sequenceRange := replica.State.LastSeq - replica.State.FirstSeq + 1
 			if sequenceRange > 0 {
@@ -578,22 +577,23 @@ func main() {
 			// Summary mode - omit replicasInfo (leader/peers) and adjust format
 			if compareData != nil {
 				// Compare mode - all numeric fields are now strings (deltas)
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
+				fmt.Printf("%-60s %-15s %-10s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s\n", sf...)
 			} else if human {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
+				fmt.Printf("%-60s %-15s %-10s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s %-30v %-30v %-30v %-30s\n", sf...)
 			} else {
-				fmt.Printf("%-40s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s %-30s %-30s %-30s %-30s\n", sf...)
+				fmt.Printf("%-60s %-15s %-10s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s %-30v %-30v %-30v %-30s\n", sf...)
 			}
 		} else {
 			// Full mode - include replicasInfo (leader/peers)
-			sf = append(sf, replicasInfo)
 			if compareData != nil {
-				// Compare mode - all numeric fields are now strings (deltas)
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+				// Compare mode - all numeric fields are now strings (deltas) - no LastActivity/LastTime/Created
+				fmt.Printf("%-60s %-15s %-10s %-56s %-25s %-15s %-15s %-15s %-15s %-15s %-30s %-15s %-15s %-30s %-30s| peers: %s\n", append(sf, replicasInfo)...)
 			} else if human {
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+				// Normal mode - includes LastActivity/LastTime/Created
+				fmt.Printf("%-60s %-15s %-10s %-56s %-25s %-15d %-15s %-15d %-15d %-15d %-30s %-15s %-15s %-30v %-30v %-30v %-30s %-30s| peers: %s\n", append(sf, replicasInfo)...)
 			} else {
-				fmt.Printf("%-40s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s| %-10s | leader: %s | peers: %s\n", sf...)
+				// Normal mode - includes LastActivity/LastTime/Created
+				fmt.Printf("%-60s %-15s %-10s %-56s %-25s %-15d %-15d %-15d %-15d %-15d %-30s %-15s %-15s %-30v %-30v %-30v %-30s %-30s| peers: %s\n", append(sf, replicasInfo)...)
 			}
 		}
 
@@ -1104,6 +1104,7 @@ type (
 		Config             *nats.StreamConfig       `json:"config,omitempty"`
 		State              nats.StreamState         `json:"state,omitempty"`
 		Consumer           []*nats.ConsumerInfo     `json:"consumer_detail,omitempty"`
+		DirectConsumer     []*nats.ConsumerInfo     `json:"direct_consumer_detail,omitempty"`
 		Mirror             *nats.StreamSourceInfo   `json:"mirror,omitempty"`
 		Sources            []*nats.StreamSourceInfo `json:"sources,omitempty"`
 		RaftGroup          string                   `json:"stream_raft_group,omitempty"`
@@ -1121,15 +1122,16 @@ type (
 	}
 
 	JszOptions struct {
-		Account    string `json:"account,omitempty"`
-		Accounts   bool   `json:"accounts,omitempty"`
-		Streams    bool   `json:"streams,omitempty"`
-		Consumer   bool   `json:"consumer,omitempty"`
-		Config     bool   `json:"config,omitempty"`
-		LeaderOnly bool   `json:"leader_only,omitempty"`
-		Offset     int    `json:"offset,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		RaftGroups bool   `json:"raft,omitempty"`
+		Account        string `json:"account,omitempty"`
+		Accounts       bool   `json:"accounts,omitempty"`
+		Streams        bool   `json:"streams,omitempty"`
+		Consumer       bool   `json:"consumer,omitempty"`
+		DirectConsumer bool   `json:"direct_consumer,omitempty"`
+		Config         bool   `json:"config,omitempty"`
+		LeaderOnly     bool   `json:"leader_only,omitempty"`
+		Offset         int    `json:"offset,omitempty"`
+		Limit          int    `json:"limit,omitempty"`
+		RaftGroups     bool   `json:"raft,omitempty"`
 	}
 )
 

@@ -124,9 +124,10 @@ func main() {
 		fetchReadTimeout := FetchReadTimeout(time.Duration(readTimeout) * time.Second)
 		servers, err = sys.JszPing(JszEventOptions{
 			JszOptions: JszOptions{
-				Streams:    true,
-				Consumer:   true,
-				RaftGroups: true,
+				Streams:        true,
+				Consumer:       true,
+				RaftGroups:     true,
+				DirectConsumer: true,
 			},
 		}, fetchTimeout, fetchReadTimeout, fetchExpected)
 		if err != nil {
@@ -163,6 +164,9 @@ func main() {
 					Cluster:    stream.Cluster,
 				}
 
+				if stream.DirectConsumer != nil {
+					stream.Consumer = append(stream.Consumer, stream.DirectConsumer...)
+				}
 				for _, consumer := range stream.Consumer {
 					var raftGroup string
 					for _, cr := range stream.ConsumerRaftGroups {
@@ -170,6 +174,11 @@ func main() {
 							raftGroup = cr.RaftGroup
 							break
 						}
+					}
+					
+					// For DirectConsumers, use a special identifier if no RaftGroup
+					if raftGroup == "" {
+						raftGroup = fmt.Sprintf("DIRECT-%s", consumer.Name)
 					}
 
 					var ok bool
@@ -179,7 +188,6 @@ func main() {
 						m = make(map[string]*ConsumerDetail)
 						consumers[key] = m
 					}
-
 					m[server.Name] = &ConsumerDetail{
 						ServerID:     server.ID,
 						StreamName:   consumer.Stream,
@@ -227,14 +235,16 @@ func main() {
 		av := strings.Split(k, "|")
 		accName := av[0]
 		v := strings.Split(av[1], "/")
-		consumerName, serverName := v[0], v[1]
+		raftGroup, serverName := v[0], v[1]
+		
+		// Get the consumer details using the correct key format
+		consumerKey := fmt.Sprintf("%s|%s", accName, raftGroup)
+		consumer := consumers[consumerKey]
+		replica := consumer[serverName]
+		consumerName := replica.ConsumerName
 		if cname != "" && consumerName != cname {
 			continue
 		}
-
-		key := fmt.Sprintf("%s|%s", accName, consumerName)
-		consumer := consumers[key]
-		replica := consumer[serverName]
 		var status string
 		statuses := make(map[string]bool)
 
@@ -290,7 +300,7 @@ func main() {
 			status = "IN SYNC"
 		}
 
-		if serverName == replica.Cluster.Leader && replica.Cluster.Leader == replica.StreamCluster.Leader {
+		if replica.Cluster != nil && serverName == replica.Cluster.Leader && replica.Cluster.Leader == replica.StreamCluster.Leader {
 			status += " / INTERSECT"
 		}
 
@@ -345,9 +355,11 @@ func main() {
 		))
 
 		var replicasInfo string
-		for _, r := range replica.Cluster.Replicas {
-			info := fmt.Sprintf("%s(current=%-5v,offline=%v)", r.Name, r.Current, r.Offline)
-			replicasInfo = fmt.Sprintf("%-40s %s", info, replicasInfo)
+		if replica.Cluster != nil {
+			for _, r := range replica.Cluster.Replicas {
+				info := fmt.Sprintf("%s(current=%-5v,offline=%v)", r.Name, r.Current, r.Offline)
+				replicasInfo = fmt.Sprintf("%-40s %s", info, replicasInfo)
+			}
 		}
 		// replicasInfo = fmt.Sprintf("leader: %q", replica.Cluster.Leader)
 
@@ -367,7 +379,11 @@ func main() {
 			replicasInfo = fmt.Sprintf("%s health:%q", replicasInfo, healthStatus)
 		}
 		sf = append(sf, status)
-		sf = append(sf, replica.Cluster.Leader)
+		if replica.Cluster != nil {
+			sf = append(sf, replica.Cluster.Leader)
+		} else {
+			sf = append(sf, "")
+		}
 		sf = append(sf, replica.StreamCluster.Leader)
 		sf = append(sf, replicasInfo)
 		fmt.Printf("%-10s %-15s %-15s %-15s %-35s %-15s | %-40s | %-20s | %-20s | %-25s | leader: %s | stream: %s | peers: %s \n", sf...)
@@ -656,6 +672,7 @@ type (
 		Config             *nats.StreamConfig       `json:"config,omitempty"`
 		State              nats.StreamState         `json:"state,omitempty"`
 		Consumer           []*nats.ConsumerInfo     `json:"consumer_detail,omitempty"`
+		DirectConsumer     []*nats.ConsumerInfo     `json:"direct_consumer_detail,omitempty"`
 		Mirror             *nats.StreamSourceInfo   `json:"mirror,omitempty"`
 		Sources            []*nats.StreamSourceInfo `json:"sources,omitempty"`
 		RaftGroup          string                   `json:"stream_raft_group,omitempty"`
@@ -673,15 +690,16 @@ type (
 	}
 
 	JszOptions struct {
-		Account    string `json:"account,omitempty"`
-		Accounts   bool   `json:"accounts,omitempty"`
-		Streams    bool   `json:"streams,omitempty"`
-		Consumer   bool   `json:"consumer,omitempty"`
-		Config     bool   `json:"config,omitempty"`
-		LeaderOnly bool   `json:"leader_only,omitempty"`
-		Offset     int    `json:"offset,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		RaftGroups bool   `json:"raft,omitempty"`
+		Account        string `json:"account,omitempty"`
+		Accounts       bool   `json:"accounts,omitempty"`
+		Streams        bool   `json:"streams,omitempty"`
+		Consumer       bool   `json:"consumer,omitempty"`
+		DirectConsumer bool   `json:"direct_consumer,omitempty"`
+		Config         bool   `json:"config,omitempty"`
+		LeaderOnly     bool   `json:"leader_only,omitempty"`
+		Offset         int    `json:"offset,omitempty"`
+		Limit          int    `json:"limit,omitempty"`
+		RaftGroups     bool   `json:"raft,omitempty"`
 	}
 )
 
