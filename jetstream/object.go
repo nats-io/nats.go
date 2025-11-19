@@ -314,6 +314,9 @@ type (
 
 	// ObjectStoreStatus is run-time status about a bucket.
 	ObjectStoreStatus interface {
+		// StreamName returns the name of object store stream
+		StreamName() string
+
 		// Bucket returns the name of the object store.
 		Bucket() string
 
@@ -1384,6 +1387,9 @@ type ObjectBucketStatus struct {
 	nfo    *StreamInfo
 	bucket string
 }
+
+// StreamName is the name of the bucket stream
+func (s *ObjectBucketStatus) StreamName() string { return s.StreamInfo().Config.Name }
 
 // Bucket is the name of the bucket
 func (s *ObjectBucketStatus) Bucket() string { return s.bucket }
