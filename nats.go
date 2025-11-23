@@ -4079,7 +4079,7 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 	if nc == nil {
 		return ErrInvalidConnection
 	}
-	if subj == "" {
+	if badSubject(subj) {
 		return ErrBadSubject
 	}
 	nc.mu.Lock()

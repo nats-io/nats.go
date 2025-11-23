@@ -653,6 +653,15 @@ func TestBadSubjectsAndQueueNames(t *testing.T) {
 		}
 	}
 
+	// Also test that bad subjects are rejected in Publish
+	// This prevents protocol violations
+	badPubs := []string{"foo bar", "foo..bar", ".foo", "bar.baz.", "baz\t.foo", "test\nfoo", "test\rfoo", ""}
+	for _, subj := range badPubs {
+		if err := nc.Publish(subj, []byte("test")); err != nats.ErrBadSubject {
+			t.Fatalf("Expected an error of ErrBadSubject for publish to %q, got %v", subj, err)
+		}
+	}
+
 	badQueues := []string{"foo group", "group\t1", "g1\r\n2"}
 	for _, q := range badQueues {
 		if _, err := nc.QueueSubscribeSync("foo", q); err != nats.ErrBadQueueName {
