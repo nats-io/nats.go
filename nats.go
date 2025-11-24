@@ -4072,6 +4072,20 @@ func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
 // Used for handrolled Itoa
 const digits = "0123456789"
 
+// validateSubject checks if the subject contains characters that break the NATS protocol.
+func validateSubject(subj string) error {
+	if subj == "" {
+		return ErrBadSubject
+	}
+	for i := range len(subj) {
+		c := subj[i]
+		if c <= ' ' && (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+			return ErrBadSubject
+		}
+	}
+	return nil
+}
+
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queuing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
@@ -4079,8 +4093,8 @@ func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
 	if nc == nil {
 		return ErrInvalidConnection
 	}
-	if subj == "" {
-		return ErrBadSubject
+	if err := validateSubject(subj); err != nil {
+		return err
 	}
 	nc.mu.Lock()
 
