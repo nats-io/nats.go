@@ -16,6 +16,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -900,11 +901,23 @@ func TestBadSubject(t *testing.T) {
 	nc := NewDefaultConnection(t)
 	defer nc.Close()
 
+	// empty subject
 	err := nc.Publish("", []byte("Hello World"))
-	if err == nil {
-		t.Fatalf("Expected an error on bad subject to publish")
+	if !errors.Is(err, nats.ErrBadSubject) {
+		t.Fatalf("Expected a ErrBadSubject error: Got %v\n", err)
 	}
-	if err != nats.ErrBadSubject {
+
+	// invalid subject
+	err = nc.Publish("foo bar", []byte("Hello World"))
+	if !errors.Is(err, nats.ErrBadSubject) {
+		t.Fatalf("Expected a ErrBadSubject error: Got %v\n", err)
+	}
+
+	// invalid reply subject
+	msg := &nats.Msg{Subject: "foo", Reply: "bar baz", Data: []byte("Hello World")}
+	err = nc.PublishMsg(msg)
+
+	if !errors.Is(err, nats.ErrBadSubject) {
 		t.Fatalf("Expected a ErrBadSubject error: Got %v\n", err)
 	}
 }

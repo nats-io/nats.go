@@ -3916,7 +3916,7 @@ func (nc *Conn) kickFlusher() {
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
 func (nc *Conn) Publish(subj string, data []byte) error {
-	return nc.publish(subj, _EMPTY_, nil, data)
+	return nc.publish(subj, _EMPTY_, false, nil, data)
 }
 
 // Header represents the optional Header for a NATS message,
@@ -4059,14 +4059,15 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 	if err != nil {
 		return err
 	}
-	return nc.publish(m.Subject, m.Reply, hdr, m.Data)
+	validateReply := m.Reply != _EMPTY_
+	return nc.publish(m.Subject, m.Reply, validateReply, hdr, m.Data)
 }
 
 // PublishRequest will perform a Publish() expecting a response on the
 // reply subject. Use Request() for automatically waiting for a response
 // inline.
 func (nc *Conn) PublishRequest(subj, reply string, data []byte) error {
-	return nc.publish(subj, reply, nil, data)
+	return nc.publish(subj, reply, true, nil, data)
 }
 
 // Used for handrolled Itoa
@@ -4109,12 +4110,17 @@ func validateSubject(subj string) error {
 // publish is the internal function to publish messages to a nats-server.
 // Sends a protocol data message by queuing into the bufio writer
 // and kicking the flush go routine. These writes should be protected.
-func (nc *Conn) publish(subj, reply string, hdr, data []byte) error {
+func (nc *Conn) publish(subj, reply string, validateReply bool, hdr, data []byte) error {
 	if nc == nil {
 		return ErrInvalidConnection
 	}
 	if err := validateSubject(subj); err != nil {
 		return err
+	}
+	if validateReply {
+		if err := validateSubject(reply); err != nil {
+			return ErrBadSubject
+		}
 	}
 	nc.mu.Lock()
 
@@ -4279,7 +4285,7 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 	}
 	nc.mu.Unlock()
 
-	if err := nc.publish(subj, respInbox, hdr, data); err != nil {
+	if err := nc.publish(subj, respInbox, false, hdr, data); err != nil {
 		return nil, token, err
 	}
 
@@ -4375,7 +4381,7 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 	s.AutoUnsubscribe(1)
 	defer s.Unsubscribe()
 
-	err = nc.publish(subj, inbox, hdr, data)
+	err = nc.publish(subj, inbox, false, hdr, data)
 	if err != nil {
 		return nil, err
 	}
