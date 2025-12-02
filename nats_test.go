@@ -1852,3 +1852,42 @@ func TestTimeoutWriterRecovery(t *testing.T) {
 		t.Fatalf("Expected data %q, got %q", expectedData, mc.data)
 	}
 }
+
+func TestValidateSubject(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject string
+		wantErr bool
+	}{
+		{"valid short", "foo", false},
+		{"valid with dots", "foo.bar.baz", false},
+		{"valid long", "metrics.production.server01.cpu.usage.percent", false},
+		{"empty string", "", true},
+		{"contains space", "foo bar", true},
+		{"contains tab", "foo\tbar", true},
+		{"contains CR", "foo\rbar", true},
+		{"contains LF", "foo\nbar", true},
+		{"space at start", " foo", true},
+		{"space at end", "foo ", true},
+		{"tab at start", "\tfoo", true},
+		{"newline at end", "foo\n", true},
+		{"valid with wildcards", "foo.*.bar.>", false},
+		{"valid with hyphen", "foo-bar-baz", false},
+		{"valid with underscore", "foo_bar_baz", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSubject(tt.subject)
+			if tt.wantErr {
+				if !errors.Is(err, ErrBadSubject) {
+					t.Errorf("validateSubject(%q) error = %v, want ErrBadSubject", tt.subject, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("validateSubject(%q) unexpected error: %v", tt.subject, err)
+			}
+		})
+	}
+}
