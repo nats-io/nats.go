@@ -23,7 +23,7 @@ import "github.com/nats-io/nats.go/micro"
 
 The core of the `micro` package is the Service. A Service aggregates endpoints
 for handling application logic. Services are named and versioned. You create a
-Service using the `micro.NewService()` function, passing in the NATS connection
+Service using the `micro.AddService()` function, passing in the NATS connection
 and Service configuration.
 
 ```go
