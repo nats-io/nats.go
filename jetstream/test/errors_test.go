@@ -136,6 +136,26 @@ func TestJetStreamErrors(t *testing.T) {
 		if aerr.Error() != expectedMessage {
 			t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
 		}
+
+		// matching to ErrorCode via errors.Is(...)
+		if ok := errors.Is(err, jetstream.JSErrCodeJetStreamNotEnabledForAccount); !ok {
+			t.Fatal("Expected err to match JSErrCodeJetStreamNotEnabledForAccount")
+		}
+
+		// non-matching to ErrorCode via errors.Is(...)
+		if ok := errors.Is(err, jetstream.JSErrCodeStreamNotFound); ok {
+			t.Fatal("Expected err to not match JSErrCodeStreamNotFound")
+		}
+
+		// matching to ErrorCode via errors.As(...)
+		var codeErr jetstream.ErrorCode
+		ok = errors.As(err, &codeErr)
+		if !ok {
+			t.Fatal("Expected to match to ErrorCode")
+		}
+		if codeErr != jetstream.JSErrCodeJetStreamNotEnabledForAccount {
+			t.Fatalf("Expected: %v, got: %v", jetstream.JSErrCodeJetStreamNotEnabledForAccount, codeErr)
+		}
 	})
 
 	t.Run("test non-api error", func(t *testing.T) {
@@ -207,5 +227,4 @@ func TestJetStreamErrors(t *testing.T) {
 			t.Fatal("Expected ErrStreamNameRequired not to map to APIError")
 		}
 	})
-
 }
