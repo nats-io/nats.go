@@ -8,23 +8,22 @@ import (
 )
 
 func main() {
-	// Connect to NATS
-	nc, err := nats.Connect("localhost:4222")
+	// Connect to NATS demo server
+	nc, err := nats.Connect("demo.nats.io")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	log.Println("Connected to NATS")
-
-	// NATS-DOC-START
 	// Subscribe to 'hello'
-	nc.Subscribe("hello", func(msg *nats.Msg) {
+	_, err = nc.Subscribe("hello", func(msg *nats.Msg) {
 		log.Printf("Received: %s", string(msg.Data))
 	})
-	// NATS-DOC-END
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	log.Println("Waiting for messages...")
+	log.Println("Listening for messages on 'hello'...")
 
 	// Keep the connection alive
 	runtime.Goexit()

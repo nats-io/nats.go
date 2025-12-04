@@ -7,23 +7,18 @@ import (
 )
 
 func main() {
-	// Connect to NATS
-	nc, err := nats.Connect("localhost:4222")
+	// Connect to NATS demo server
+	nc, err := nats.Connect("demo.nats.io")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer nc.Close()
 
-	log.Println("Connected to NATS")
+	// Publish a message
+	err = nc.Publish("hello", []byte("Hello NATS!"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// NATS-DOC-START
-	// Publish messages
-	nc.Publish("hello", []byte("Hello NATS!"))
-	nc.Publish("hello", []byte("Welcome to messaging"))
-	// NATS-DOC-END
-
-	log.Println("Messages published")
-
-	// Flush to ensure messages are sent
-	nc.Flush()
+	log.Println("Message published to hello")
 }
