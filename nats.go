@@ -534,6 +534,11 @@ type Options struct {
 
 	// WebSocketConnectionHeadersHandler is an optional callback handler for generating token  used for WebSocket connections.
 	WebSocketConnectionHeadersHandler WebSocketHeadersHandler
+
+	// SkipSubjectValidation will disable publish subject validation.
+	// NOTE: This is not recommended in general, as the performance gain is minimal
+	// and may lead to breaking protocol.
+	SkipSubjectValidation bool
 }
 
 const (
@@ -1508,6 +1513,20 @@ func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
 			return ErrWebSocketHeadersAlreadySet
 		}
 		o.WebSocketConnectionHeadersHandler = cb
+		return nil
+	}
+}
+
+// SkipSubjectValidation is an Option to skip subject validation when
+// publishing messages.
+// By default, subject validation is performed to ensure that subjects
+// are valid according to NATS subject syntax (no spaces newlines and tabs).
+// NOTE: It is not recommended to use this option as the performance gain
+// is minimal and disabling subject validation can lead breaking protocol
+// rules.
+func SkipSubjectValidation() Option {
+	return func(o *Options) error {
+		o.SkipSubjectValidation = true
 		return nil
 	}
 }
@@ -4114,13 +4133,17 @@ func (nc *Conn) publish(subj, reply string, validateReply bool, hdr, data []byte
 	if nc == nil {
 		return ErrInvalidConnection
 	}
-	if err := validateSubject(subj); err != nil {
-		return err
-	}
-	if validateReply {
-		if err := validateSubject(reply); err != nil {
-			return ErrBadSubject
+	if !nc.Opts.SkipSubjectValidation {
+		if err := validateSubject(subj); err != nil {
+			return err
 		}
+		if validateReply {
+			if err := validateSubject(reply); err != nil {
+				return ErrBadSubject
+			}
+		}
+	} else if subj == _EMPTY_ {
+		return ErrBadSubject
 	}
 	nc.mu.Lock()
 
