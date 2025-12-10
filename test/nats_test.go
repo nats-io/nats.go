@@ -1194,3 +1194,20 @@ func TestInProcessConn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSkipSubjectValidation(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	// Try to publish to a bad subject.
+	badSubj := "foo bar"
+	if err := nc.Publish(badSubj, []byte("hello")); err != nil {
+		t.Fatalf("Expected to publish to bad subject %q, got error: %v", badSubj, err)
+	}
+}
