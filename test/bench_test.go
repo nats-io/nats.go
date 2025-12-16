@@ -172,3 +172,86 @@ func BenchmarkOldRequest(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkPublishValidation(b *testing.B) {
+	msgPayload := []byte("test")
+	shortSubject := "foo.bar"                                      // 7 chars
+	longSubject := "metrics.production.server01.cpu.usage.percent" // 45 chars
+
+	b.Run("skip validation, short subject", func(b *testing.B) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
+		if err != nil {
+			b.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		b.ResetTimer()
+		for b.Loop() {
+			if err := nc.Publish(shortSubject, msgPayload); err != nil {
+				b.Fatalf("Error publishing message: %v", err)
+			}
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
+	b.Run("skip validation, long subject", func(b *testing.B) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
+		if err != nil {
+			b.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		b.ResetTimer()
+		for b.Loop() {
+			if err := nc.Publish(longSubject, msgPayload); err != nil {
+				b.Fatalf("Error publishing message: %v", err)
+			}
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
+	b.Run("with validation, short subject", func(b *testing.B) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			b.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		b.ResetTimer()
+		for b.Loop() {
+			if err := nc.Publish(shortSubject, msgPayload); err != nil {
+				b.Fatalf("Error publishing message: %v", err)
+			}
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
+	b.Run("with validation, long subject", func(b *testing.B) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			b.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		b.ResetTimer()
+		for b.Loop() {
+			if err := nc.Publish(longSubject, msgPayload); err != nil {
+				b.Fatalf("Error publishing message: %v", err)
+			}
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
+}
