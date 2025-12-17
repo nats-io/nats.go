@@ -23,7 +23,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 go get github.com/nats-io/nats.go@latest
 
 # To get a specific version:
-go get github.com/nats-io/nats.go@v1.47.0
+go get github.com/nats-io/nats.go@v1.48.0
 
 # Note that the latest major version for NATS Server is v2:
 go get github.com/nats-io/nats-server/v2@latest
