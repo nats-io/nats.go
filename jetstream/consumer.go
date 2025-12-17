@@ -67,6 +67,11 @@ type (
 		// without additional checks. After the channel is closed,
 		// MessageBatch.Error() should be checked to see if there was an error
 		// during message delivery (e.g. missing heartbeat).
+		//
+		// NOTE: Fetch has worse performance when used to continuously retrieve
+		// messages in comparison to Messages or Consume methods, as it does not
+		// perform any optimizations (e.g. overlapping pull requests) and new
+		// subscription is created for each execution.
 		Fetch(batch int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchBytes is used to retrieve up to a provided bytes from the
@@ -88,6 +93,11 @@ type (
 		// without additional checks. After the channel is closed,
 		// MessageBatch.Error() should be checked to see if there was an error
 		// during message delivery (e.g. missing heartbeat).
+		//
+		// NOTE: FetchBytes has worse performance when used to continuously
+		// retrieve messages in comparison to Messages or Consume methods, as it
+		// does not perform any optimizations (e.g. overlapping pull requests)
+		// and new subscription is created for each execution.
 		FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchNoWait is used to retrieve up to a provided number of messages
@@ -102,6 +112,11 @@ type (
 		// without additional checks. After the channel is closed,
 		// MessageBatch.Error() should be checked to see if there was an error
 		// during message delivery (e.g. missing heartbeat).
+		//
+		// NOTE: FetchNoWait has worse performance when used to continuously
+		// retrieve messages in comparison to Messages or Consume methods, as it
+		// does not perform any optimizations (e.g. overlapping pull requests)
+		// and new subscription is created for each execution.
 		FetchNoWait(batch int) (MessageBatch, error)
 
 		// Consume will continuously receive messages and handle them
