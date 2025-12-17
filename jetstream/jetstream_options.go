@@ -40,7 +40,7 @@ func WithClientTrace(ct *ClientTrace) JetStreamOpt {
 // WithPublishAsyncErrHandler sets error handler for async message publish.
 func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 	return func(opts *JetStreamOptions) error {
-		opts.publisherOpts.aecb = cb
+		opts.PublisherOpts.aecb = cb
 		return nil
 	}
 }
@@ -52,7 +52,7 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 		if max < 1 {
 			return fmt.Errorf("%w: max ack pending should be >= 1", ErrInvalidOption)
 		}
-		opts.publisherOpts.maxpa = max
+		opts.PublisherOpts.MaxAckPending = max
 		return nil
 	}
 }
@@ -61,7 +61,7 @@ func WithPublishAsyncMaxPending(max int) JetStreamOpt {
 // If not provided, timeout is disabled.
 func WithPublishAsyncTimeout(dur time.Duration) JetStreamOpt {
 	return func(opts *JetStreamOptions) error {
-		opts.publisherOpts.ackTimeout = dur
+		opts.PublisherOpts.AckTimeout = dur
 		return nil
 	}
 }

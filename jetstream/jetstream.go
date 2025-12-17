@@ -344,7 +344,7 @@ type (
 		// ClientTrace enables request/response API calls tracing.
 		ClientTrace *ClientTrace
 
-		publisherOpts asyncPublisherOpts
+		PublisherOpts AsyncPublisherOpts
 
 		// this is the actual prefix used in the API requests
 		// it is either APIPrefix or a domain specific prefix
@@ -443,8 +443,8 @@ var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := JetStreamOptions{
 		apiPrefix: DefaultAPIPrefix,
-		publisherOpts: asyncPublisherOpts{
-			maxpa: defaultAsyncPubAckInflight,
+		PublisherOpts: AsyncPublisherOpts{
+			MaxAckPending: defaultAsyncPubAckInflight,
 		},
 		DefaultTimeout: defaultAPITimeout,
 	}
@@ -457,7 +457,7 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 	js := &jetStream{
 		conn:      nc,
 		opts:      jsOpts,
-		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
+		publisher: &jetStreamClient{AsyncPublisherOpts: jsOpts.PublisherOpts},
 	}
 
 	return js, nil
@@ -488,8 +488,8 @@ func setReplyPrefix(nc *nats.Conn, jsOpts *JetStreamOptions) {
 //     that can be inflight at one time.
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := JetStreamOptions{
-		publisherOpts: asyncPublisherOpts{
-			maxpa: defaultAsyncPubAckInflight,
+		PublisherOpts: AsyncPublisherOpts{
+			MaxAckPending: defaultAsyncPubAckInflight,
 		},
 		APIPrefix:      apiPrefix,
 		DefaultTimeout: defaultAPITimeout,
@@ -511,7 +511,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 	js := &jetStream{
 		conn:      nc,
 		opts:      jsOpts,
-		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
+		publisher: &jetStreamClient{AsyncPublisherOpts: jsOpts.PublisherOpts},
 	}
 	return js, nil
 }
@@ -526,8 +526,8 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 //     that can be inflight at one time.
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
 	jsOpts := JetStreamOptions{
-		publisherOpts: asyncPublisherOpts{
-			maxpa: defaultAsyncPubAckInflight,
+		PublisherOpts: AsyncPublisherOpts{
+			MaxAckPending: defaultAsyncPubAckInflight,
 		},
 		Domain:         domain,
 		DefaultTimeout: defaultAPITimeout,
@@ -545,7 +545,7 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 	js := &jetStream{
 		conn:      nc,
 		opts:      jsOpts,
-		publisher: &jetStreamClient{asyncPublisherOpts: jsOpts.publisherOpts},
+		publisher: &jetStreamClient{AsyncPublisherOpts: jsOpts.PublisherOpts},
 	}
 	return js, nil
 }

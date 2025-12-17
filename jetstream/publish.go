@@ -30,13 +30,13 @@ import (
 )
 
 type (
-	asyncPublisherOpts struct {
+	AsyncPublisherOpts struct {
 		// For async publish error handling.
 		aecb MsgErrHandler
 		// Max async pub ack in flight
-		maxpa int
-		// ackTimeout is the max time to wait for an ack.
-		ackTimeout time.Duration
+		MaxAckPending int
+		// AckTimeout is the max time to wait for an ack.
+		AckTimeout time.Duration
 	}
 
 	// PublishOpt are the options that can be passed to Publish methods.
@@ -91,7 +91,7 @@ type (
 
 	jetStreamClient struct {
 		asyncPublishContext
-		asyncPublisherOpts
+		AsyncPublisherOpts
 	}
 
 	// MsgErrHandler is used to process asynchronous errors from JetStream
@@ -323,8 +323,8 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				return nil, ErrTooManyStalledMsgs
 			}
 		}
-		if js.publisher.ackTimeout > 0 {
-			paf.timeout = time.AfterFunc(js.publisher.ackTimeout, func() {
+		if js.publisher.AckTimeout > 0 {
+			paf.timeout = time.AfterFunc(js.publisher.AckTimeout, func() {
 				js.publisher.Lock()
 				defer js.publisher.Unlock()
 
@@ -338,7 +338,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				delete(js.publisher.acks, id)
 
 				// check on anyone stalled and waiting.
-				if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
+				if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.MaxAckPending {
 					close(js.publisher.stallCh)
 					js.publisher.stallCh = nil
 				}
@@ -350,8 +350,8 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				}
 
 				// call error callback if set
-				if js.publisher.asyncPublisherOpts.aecb != nil {
-					js.publisher.asyncPublisherOpts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
+				if js.publisher.AsyncPublisherOpts.aecb != nil {
+					js.publisher.AsyncPublisherOpts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
 				}
 
 				// check on anyone one waiting on done status.
@@ -365,7 +365,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		// when retrying, get the ID from existing reply subject
 		reply = paf.reply
 		if paf.timeout != nil {
-			paf.timeout.Reset(js.publisher.ackTimeout)
+			paf.timeout.Reset(js.publisher.AckTimeout)
 		}
 		id = reply[js.opts.replyPrefixLen:]
 	}
@@ -449,7 +449,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 
 	closeStc := func() {
 		// Check on anyone stalled and waiting.
-		if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
+		if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.MaxAckPending {
 			close(js.publisher.stallCh)
 			js.publisher.stallCh = nil
 		}
@@ -477,7 +477,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		if paf.errCh != nil {
 			paf.errCh <- paf.err
 		}
-		cb := js.publisher.asyncPublisherOpts.aecb
+		cb := js.publisher.AsyncPublisherOpts.aecb
 		js.publisher.Unlock()
 		if cb != nil {
 			cb(js, paf.msg, err)
@@ -555,7 +555,7 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			return
 		}
 		js.publisher.Lock()
-		errCb := js.publisher.asyncPublisherOpts.aecb
+		errCb := js.publisher.AsyncPublisherOpts.aecb
 		for id, paf := range js.publisher.acks {
 			paf.err = nats.ErrDisconnected
 			if paf.errCh != nil {
@@ -582,7 +582,7 @@ func (js *jetStream) registerPAF(id string, paf *pubAckFuture) (int, int) {
 	}
 	js.publisher.acks[id] = paf
 	np := len(js.publisher.acks)
-	maxpa := js.publisher.asyncPublisherOpts.maxpa
+	maxpa := js.publisher.AsyncPublisherOpts.MaxAckPending
 	js.publisher.Unlock()
 	return np, maxpa
 }
