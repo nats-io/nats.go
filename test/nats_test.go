@@ -661,6 +661,27 @@ func TestBadSubjectsAndQueueNames(t *testing.T) {
 	}
 }
 
+func TestTypeSubscription(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	// Make sure that ConsumerInfo() returns invalid subscription type error
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+
+	if _, err := sub.ConsumerInfo(); err != nats.ErrTypeSubscription {
+		t.Fatalf("Expected an error about invalid subscription type, got %v", err)
+	}
+}
+
 func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
