@@ -654,6 +654,12 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 	// These will be used in more than one place
 	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, newnuid)
 
+	var pubChunkSubj strings.Builder
+	if obs.js.opts.apiPrefix != DefaultAPIPrefix {
+		pubChunkSubj.WriteString(obs.js.opts.apiPrefix)
+	}
+	pubChunkSubj.WriteString(fmt.Sprintf(objChunksPreTmpl, obs.name, newnuid))
+
 	// Grab existing meta info (einfo). Ok to be found or not found, any other error is a problem
 	// Chunks on the old nuid can be cleaned up at the end
 	einfo, err := obs.GetInfo(ctx, meta.Name, GetObjectInfoShowDeleted()) // GetInfo will encode the name
@@ -692,7 +698,7 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 		_ = obs.stream.Purge(ctx, WithPurgeSubject(chunkSubj))
 	}
 
-	m, h := nats.NewMsg(chunkSubj), sha256.New()
+	m, h := nats.NewMsg(pubChunkSubj.String()), sha256.New()
 	chunk, sent, total := make([]byte, meta.Opts.ChunkSize), 0, uint64(0)
 
 	// set up the info object. The chunk upload sets the size and digest
@@ -755,8 +761,14 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 	}
 
 	// Prepare the meta message
-	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
-	mm := nats.NewMsg(metaSubj)
+	var pubMetaSubj strings.Builder
+	if obs.js.opts.apiPrefix != DefaultAPIPrefix {
+		pubMetaSubj.WriteString(obs.js.opts.apiPrefix)
+	}
+	pubMetaSubj.WriteString(fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name)))
+
+	//metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
+	mm := nats.NewMsg(pubMetaSubj.String())
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data, err = json.Marshal(info)
 	if err != nil {
@@ -976,7 +988,13 @@ func publishMeta(ctx context.Context, info *ObjectInfo, js *jetStream) error {
 	}
 
 	// Prepare and publish the message.
-	mm := nats.NewMsg(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+	var pubObjMetaPreTmpl strings.Builder
+	if js.opts.apiPrefix != DefaultAPIPrefix {
+		pubObjMetaPreTmpl.WriteString(js.opts.apiPrefix)
+	}
+	pubObjMetaPreTmpl.WriteString(fmt.Sprintf(objMetaPreTmpl, info.Bucket, encodeName(info.ObjectMeta.Name)))
+
+	mm := nats.NewMsg(pubObjMetaPreTmpl.String())
 	mm.Header.Set(MsgRollup, MsgRollupSubject)
 	mm.Data = data
 	if _, err := js.PublishMsg(ctx, mm); err != nil {
