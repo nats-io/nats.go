@@ -353,7 +353,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 	})
 
-	t.Run("with missing heartbeat", func(t *testing.T) {
+	t.Run("consumer does not exist", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -379,7 +379,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 		publishTestMsgs(t, js)
 		// fetch 5 messages, should return normally
-		msgs, err := c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err := c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -395,7 +395,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 
 		// fetch again, should timeout without any error
-		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		msgs, err = c.Fetch(5, jetstream.FetchMaxWait(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -415,7 +415,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
 			t.Fatalf("Error deleting consumer: %s", err)
 		}
-		msgs, err = c.Fetch(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err = c.Fetch(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -428,8 +428,8 @@ func TestPullConsumerFetch(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatalf("Expected channel to be closed")
 		}
-		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 		}
 	})
 
@@ -476,6 +476,146 @@ func TestPullConsumerFetch(t *testing.T) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 		}
 	})
+
+	t.Run("with context", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// pull request should expire before client timeout
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		result, err := c.Fetch(1, jetstream.FetchContext(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error from Fetch: %v", err)
+		}
+		msg, ok := <-result.Messages()
+		if ok {
+			t.Fatalf("Expected no message, got: %v", msg)
+		}
+		if result.Error() != nil {
+			t.Fatalf("Unexpected error during fetch: %v", result.Error())
+		}
+
+		// Test context cancellation
+		ctx, cancel = context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+		result, err = c.Fetch(1, jetstream.FetchContext(ctx))
+		if err != nil {
+			t.Fatalf("Unexpected error from Fetch: %v", err)
+		}
+		msg = <-result.Messages()
+		if msg != nil {
+			t.Fatalf("Expected no message, got: %v", msg)
+		}
+		err = result.Error()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Expected context canceled error, got: %v", err)
+		}
+
+		// Test mutual exclusion with FetchMaxWait
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, err = c.Fetch(1, jetstream.FetchContext(ctx), jetstream.FetchMaxWait(time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected mutual exclusion error, got: %v", err)
+		}
+
+		// Test already expired context
+		expiredCtx, cancel := context.WithTimeout(context.Background(), -time.Second)
+		defer cancel()
+		_, err = c.Fetch(1, jetstream.FetchContext(expiredCtx))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected invalid option error, got: %v", err)
+		}
+	})
+}
+
+func TestPullConsumerMessagesConcurrentStopAndDrain(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "FOO",
+		Subjects: []string{"FOO.>"},
+	})
+	if err != nil {
+		t.Fatalf("create stream: %v", err)
+	}
+
+	consumer, err := js.CreateOrUpdateConsumer(ctx, "FOO", jetstream.ConsumerConfig{
+		Durable:   "race-consumer",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+
+	messages, err := consumer.Messages()
+	if err != nil {
+		t.Fatalf("messages: %v", err)
+	}
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(2)
+	done.Add(2)
+
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		messages.Stop()
+	}()
+
+	go func() {
+		defer done.Done()
+		ready.Done()
+		<-start
+		nc.Drain()
+	}()
+
+	ready.Wait()
+	time.Sleep(2 * time.Millisecond)
+	close(start)
+	done.Wait()
 }
 
 func TestPullConsumerFetchRace(t *testing.T) {
@@ -752,7 +892,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		}
 	})
 
-	t.Run("with missing heartbeat", func(t *testing.T) {
+	t.Run("consumer does not exist", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
 		nc, err := nats.Connect(srv.ClientURL())
@@ -778,7 +918,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		}
 
 		// fetch again, should timeout without any error
-		msgs, err := c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond), jetstream.FetchMaxWait(200*time.Millisecond))
+		msgs, err := c.FetchBytes(5, jetstream.FetchMaxWait(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -794,11 +934,11 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
 		}
 
-		// delete the consumer, at this point server should stop sending heartbeats for pull requests
+		// delete the consumer
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
 			t.Fatalf("Error deleting consumer: %s", err)
 		}
-		msgs, err = c.FetchBytes(5, jetstream.FetchHeartbeat(50*time.Millisecond))
+		msgs, err = c.FetchBytes(5)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -811,8 +951,8 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Fatalf("Expected channel to be closed")
 		}
-		if !errors.Is(msgs.Error(), jetstream.ErrNoHeartbeat) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+		if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
 		}
 	})
 
@@ -2687,6 +2827,17 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 		defer l.Stop()
 
+		// if the consumer does not exist, server will return ErrNoResponders
+		select {
+		case err := <-errs:
+			if !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Timeout waiting for %v", jetstream.ErrNoHeartbeat)
+		}
+
+		// after 2*heartbeat interval, we should get ErrNoHeartbeat
 		select {
 		case err := <-errs:
 			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
@@ -3132,6 +3283,37 @@ func TestPullConsumerConsume(t *testing.T) {
 		wg.Wait()
 		cc.Stop()
 	})
+
+	t.Run("invalid heartbeat", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// default expiry is 30s, so max heartbeat should be 15s
+		_, err = c.Consume(func(_ jetstream.Msg) {
+		}, jetstream.PullHeartbeat(20*time.Second))
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+		}
+	})
 }
 
 func TestPullConsumerConsume_WithCluster(t *testing.T) {
@@ -3470,5 +3652,442 @@ func TestPullConsumerNext(t *testing.T) {
 		if _, err := c.Next(jetstream.FetchMaxWait(50 * time.Millisecond)); !errors.Is(err, nats.ErrTimeout) {
 			t.Fatalf("Expected timeout; got: %s", err)
 		}
+	})
+}
+
+func TestPullConsumerMessagesNextWithTimeout(t *testing.T) {
+	t.Run("with timeout option", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs.Stop()
+
+		// no msgs yet, should timeout
+		start := time.Now()
+		_, err = msgs.Next(jetstream.NextMaxWait(100 * time.Millisecond))
+		elapsed := time.Since(start)
+		if !errors.Is(err, nats.ErrTimeout) {
+			t.Fatalf("Expected timeout error; got: %v", err)
+		}
+		if elapsed < 100*time.Millisecond || elapsed > 200*time.Millisecond {
+			t.Fatalf("Timeout not respected; elapsed: %v", elapsed)
+		}
+
+		// Publish a message and verify it can be fetched
+		if _, err := js.Publish(ctx, "FOO.A", []byte("msg1")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+
+		msg, err := msgs.Next(jetstream.NextMaxWait(1 * time.Second))
+		if err != nil {
+			t.Fatalf("Expected to receive message, got error: %v", err)
+		}
+		if string(msg.Data()) != "msg1" {
+			t.Fatalf("Unexpected message data; got: %s", msg.Data())
+		}
+	})
+
+	t.Run("with context option", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs.Stop()
+
+		// context timeout
+		ctx1, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel2()
+
+		start := time.Now()
+		_, err = msgs.Next(jetstream.NextContext(ctx1))
+		elapsed := time.Since(start)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Expected context deadline exceeded error; got: %v", err)
+		}
+		if elapsed < 100*time.Millisecond || elapsed > 200*time.Millisecond {
+			t.Fatalf("Context timeout not respected; elapsed: %v", elapsed)
+		}
+
+		// cancel context before calling Next
+		ctx2, cancel3 := context.WithCancel(context.Background())
+		cancel3()
+		_, err = msgs.Next(jetstream.NextContext(ctx2))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Expected context canceled error; got: %v", err)
+		}
+
+		// Publish a message and verify it can be fetched
+		if _, err := js.Publish(context.Background(), "FOO.A", []byte("msg1")); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+
+		ctx3, cancel4 := context.WithTimeout(context.Background(), time.Second)
+		defer cancel4()
+		msg, err := msgs.Next(jetstream.NextContext(ctx3))
+		if err != nil {
+			t.Fatalf("Expected to receive message, got error: %v", err)
+		}
+		if string(msg.Data()) != "msg1" {
+			t.Fatalf("Unexpected message data; got: %s", msg.Data())
+		}
+	})
+
+	t.Run("context and timeout provided", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer msgs.Stop()
+
+		// Test that providing both NextMaxWait and NextContext returns an error
+		testCtx, testCancel := context.WithTimeout(context.Background(), time.Second)
+		defer testCancel()
+
+		_, err = msgs.Next(jetstream.NextMaxWait(500*time.Millisecond), jetstream.NextContext(testCtx))
+		if err == nil {
+			t.Fatal("Expected error when providing both NextMaxWait and NextContext")
+		}
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected ErrInvalidOption, got: %v", err)
+		}
+		if !errors.Is(err, jetstream.ErrInvalidOption) {
+			t.Fatalf("Expected specific error message, got: %v", err)
+		}
+	})
+}
+
+func TestPullConsumerConnectionClosed(t *testing.T) {
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := consumer.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		go func() {
+			_, err := msgs.Next()
+			errC <- err
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+			}
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Next() hung indefinitely after connection closed")
+		}
+	})
+
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			errC <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer consumeCtx.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected ErrConnectionClosed, got: %v", err)
+			}
+			select {
+			case <-consumeCtx.Closed():
+			case <-time.After(3 * time.Second):
+				t.Fatal("Received error but Consume context was not closed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after connection closed")
+		}
+	})
+}
+
+func TestPullConsumerMaxReconnectsExceeded(t *testing.T) {
+	t.Run("messages", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL(),
+			nats.MaxReconnects(3),
+			nats.ReconnectWait(100*time.Millisecond),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgs, err := consumer.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		go func() {
+			_, err := msgs.Next()
+			errC <- err
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+		shutdownJSServerAndRemoveStorage(t, srv)
+
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				t.Fatalf("Expected error to contain ErrMsgIteratorClosed, got: %v", err)
+			}
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected error to contain ErrConnectionClosed, got: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("Next() hung after reconnection attempts exhausted")
+		}
+	})
+
+	t.Run("consume", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL(),
+			nats.MaxReconnects(3),
+			nats.ReconnectWait(100*time.Millisecond),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "test-stream",
+			Subjects: []string{"test.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		consumer, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+			Name: "test-consumer",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errC := make(chan error, 1)
+
+		consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			errC <- err
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer consumeCtx.Stop()
+
+		time.Sleep(100 * time.Millisecond)
+		shutdownJSServerAndRemoveStorage(t, srv)
+
+		// first, we should receive Server Shutdown error form server
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrServerShutdown) {
+				t.Fatalf("Expected error to contain ErrServerShutdown, got: %v", err)
+			}
+			// consume context should not be closed yet because client tries to reconnect
+			select {
+			case <-consumeCtx.Closed():
+				t.Fatalf("Consume context should not be closed after server shutdown error")
+			case <-time.After(100 * time.Millisecond):
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after server shutdown")
+		}
+
+		// now we should receive connection closed error after all reconnection attempts exhausted
+		// and consume context should be closed
+		select {
+		case err := <-errC:
+			if !errors.Is(err, jetstream.ErrConnectionClosed) {
+				t.Fatalf("Expected ErrConnectionClosed, got: %v", err)
+			}
+			select {
+			case <-consumeCtx.Closed():
+			case <-time.After(3 * time.Second):
+				t.Fatal("Received error but Consume context was not closed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Consume did not return error after connection closed")
+		}
+
 	})
 }

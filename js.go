@@ -1,4 +1,4 @@
-// Copyright 2020-2024 The NATS Authors
+// Copyright 2020-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -273,6 +273,8 @@ type jsOpts struct {
 	aecb MsgErrHandler
 	// Max async pub ack in flight
 	maxpa int
+	// ackTimeout is the max time to wait for an ack in async publish.
+	ackTimeout time.Duration
 	// the domain that produced the pre
 	domain string
 	// enables protocol tracing
@@ -346,7 +348,7 @@ type featureFlags struct {
 }
 
 // UseLegacyDurableConsumers makes JetStream use the legacy (pre nats-server v2.9.0) subjects for consumer creation.
-// If this option is used when creating JetStremContext, $JS.API.CONSUMER.DURABLE.CREATE.<stream>.<consumer> will be used
+// If this option is used when creating JetStreamContext, $JS.API.CONSUMER.DURABLE.CREATE.<stream>.<consumer> will be used
 // to create a consumer with Durable provided, rather than $JS.API.CONSUMER.CREATE.<stream>.<consumer>.
 func UseLegacyDurableConsumers() JSOpt {
 	return jsOptFn(func(opts *jsOpts) error {
@@ -466,13 +468,14 @@ func (opt pubOptFn) configurePublish(opts *pubOpts) error {
 }
 
 type pubOpts struct {
-	ctx context.Context
-	ttl time.Duration
-	id  string
-	lid string  // Expected last msgId
-	str string  // Expected stream name
-	seq *uint64 // Expected last sequence
-	lss *uint64 // Expected last sequence per subject
+	ctx    context.Context
+	ttl    time.Duration
+	id     string
+	lid    string        // Expected last msgId
+	str    string        // Expected stream name
+	seq    *uint64       // Expected last sequence
+	lss    *uint64       // Expected last sequence per subject
+	msgTTL time.Duration // Message TTL
 
 	// Publish retries for NoResponders err.
 	rwait time.Duration // Retry wait between attempts
@@ -507,6 +510,7 @@ const (
 	ExpectedLastSubjSeqHdr = "Nats-Expected-Last-Subject-Sequence"
 	ExpectedLastMsgIdHdr   = "Nats-Expected-Last-Msg-Id"
 	MsgRollup              = "Nats-Rollup"
+	MsgTTLHdr              = "Nats-TTL"
 )
 
 // Headers for republished messages and direct gets.
@@ -565,6 +569,9 @@ func (js *js) PublishMsg(m *Msg, opts ...PubOpt) (*PubAck, error) {
 	}
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
+	}
+	if o.msgTTL > 0 {
+		m.Header.Set(MsgTTLHdr, o.msgTTL.String())
 	}
 
 	var resp *Msg
@@ -648,6 +655,7 @@ type pubAckFuture struct {
 	maxRetries int
 	retryWait  time.Duration
 	reply      string
+	timeout    *time.Timer
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
@@ -712,13 +720,19 @@ func (js *js) newAsyncReply() string {
 	}
 	var sb strings.Builder
 	sb.WriteString(js.rpre)
-	rn := js.rr.Int63()
-	var b [aReplyTokensize]byte
-	for i, l := 0, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
-		l /= base
+	for {
+		rn := js.rr.Int63()
+		var b [aReplyTokensize]byte
+		for i, l := 0, rn; i < len(b); i++ {
+			b[i] = rdigits[l%base]
+			l /= base
+		}
+		if _, ok := js.pafs[string(b[:])]; ok {
+			continue
+		}
+		sb.Write(b[:])
+		break
 	}
-	sb.Write(b[:])
 	js.mu.Unlock()
 	return sb.String()
 }
@@ -894,6 +908,10 @@ func (js *js) handleAsyncReply(m *Msg) {
 		}
 	}
 
+	if paf.timeout != nil {
+		paf.timeout.Stop()
+	}
+
 	// Process no responders etc.
 	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
 		if paf.retries < paf.maxRetries {
@@ -975,6 +993,15 @@ func PublishAsyncMaxPending(max int) JSOpt {
 	})
 }
 
+// PublishAsyncTimeout sets the timeout for async message publish.
+// If not provided, timeout is disabled.
+func PublishAsyncTimeout(dur time.Duration) JSOpt {
+	return jsOptFn(func(opts *jsOpts) error {
+		opts.ackTimeout = dur
+		return nil
+	})
+}
+
 // PublishAsync publishes a message to JetStream and returns a PubAckFuture
 func (js *js) PublishAsync(subj string, data []byte, opts ...PubOpt) (PubAckFuture, error) {
 	return js.PublishMsgAsync(&Msg{Subject: subj, Data: data}, opts...)
@@ -1024,6 +1051,9 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 	if o.lss != nil {
 		m.Header.Set(ExpectedLastSubjSeqHdr, strconv.FormatUint(*o.lss, 10))
 	}
+	if o.msgTTL > 0 {
+		m.Header.Set(MsgTTLHdr, o.msgTTL.String())
+	}
 
 	// Reply
 	paf := o.pafRetry
@@ -1050,18 +1080,59 @@ func (js *js) PublishMsgAsync(m *Msg, opts ...PubOpt) (PubAckFuture, error) {
 			case <-js.asyncStall():
 			case <-time.After(stallWait):
 				js.clearPAF(id)
-				return nil, errors.New("nats: stalled with too many outstanding async published messages")
+				return nil, ErrTooManyStalledMsgs
 			}
+		}
+		if js.opts.ackTimeout > 0 {
+			paf.timeout = time.AfterFunc(js.opts.ackTimeout, func() {
+				js.mu.Lock()
+				defer js.mu.Unlock()
+
+				if _, ok := js.pafs[id]; !ok {
+					// paf has already been resolved
+					// while waiting for the lock
+					return
+				}
+
+				// ack timed out, remove from pending acks
+				delete(js.pafs, id)
+
+				// check on anyone stalled and waiting.
+				if js.stc != nil && len(js.pafs) < js.opts.maxpa {
+					close(js.stc)
+					js.stc = nil
+				}
+
+				// send error to user
+				paf.err = ErrAsyncPublishTimeout
+				if paf.errCh != nil {
+					paf.errCh <- paf.err
+				}
+
+				// call error callback if set
+				if js.opts.aecb != nil {
+					js.opts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
+				}
+
+				// check on anyone one waiting on done status.
+				if js.dch != nil && len(js.pafs) == 0 {
+					close(js.dch)
+					js.dch = nil
+				}
+			})
 		}
 	} else {
 		reply = paf.reply
+		if paf.timeout != nil {
+			paf.timeout.Reset(js.opts.ackTimeout)
+		}
 		id = reply[js.replyPrefixLen:]
 	}
 	hdr, err := m.headerBytes()
 	if err != nil {
 		return nil, err
 	}
-	if err := js.nc.publish(m.Subject, reply, hdr, m.Data); err != nil {
+	if err := js.nc.publish(m.Subject, reply, false, hdr, m.Data); err != nil {
 		js.clearPAF(id)
 		return nil, err
 	}
@@ -1147,6 +1218,15 @@ func StallWait(ttl time.Duration) PubOpt {
 			return errors.New("nats: stall wait should be more than 0")
 		}
 		opts.stallWait = ttl
+		return nil
+	})
+}
+
+// MsgTTL sets per msg TTL.
+// Requires [StreamConfig.AllowMsgTTL] to be enabled.
+func MsgTTL(dur time.Duration) PubOpt {
+	return pubOptFn(func(opts *pubOpts) error {
+		opts.msgTTL = dur
 		return nil
 	})
 }
@@ -1360,6 +1440,9 @@ type jsSub struct {
 	fcd    uint64
 	fciseq uint64
 	csfct  *time.Timer
+
+	// context set on js.Subscribe used e.g. to recreate ordered consumer
+	ctx context.Context
 
 	// Cancellation function to cancel context on drain/unsubscribe.
 	cancel func()
@@ -1833,6 +1916,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		psubj:    subj,
 		cancel:   cancel,
 		ackNone:  o.cfg.AckPolicy == AckNonePolicy,
+		ctx:      o.ctx,
 	}
 
 	// Auto acknowledge unless manual ack is set or policy is set to AckNonePolicy
@@ -1864,7 +1948,12 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		} else if consName == "" {
 			consName = getHash(nuid.Next())
 		}
-		info, err := js.upsertConsumer(stream, consName, ccreq.Config)
+		var info *ConsumerInfo
+		if o.ctx != nil {
+			info, err = js.upsertConsumer(stream, consName, ccreq.Config, Context(o.ctx))
+		} else {
+			info, err = js.upsertConsumer(stream, consName, ccreq.Config)
+		}
 		if err != nil {
 			var apiErr *APIError
 			if ok := errors.As(err, &apiErr); !ok {
@@ -2196,7 +2285,13 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		jsi.consumer = ""
 		sub.mu.Unlock()
 		consName := getHash(nuid.Next())
-		cinfo, err := js.upsertConsumer(jsi.stream, consName, cfg)
+		var cinfo *ConsumerInfo
+		var err error
+		if js.opts.ctx != nil {
+			cinfo, err = js.upsertConsumer(jsi.stream, consName, cfg, Context(js.opts.ctx))
+		} else {
+			cinfo, err = js.upsertConsumer(jsi.stream, consName, cfg)
+		}
 		if err != nil {
 			var apiErr *APIError
 			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
@@ -2740,8 +2835,15 @@ func ConsumerFilterSubjects(subjects ...string) SubOpt {
 func (sub *Subscription) ConsumerInfo() (*ConsumerInfo, error) {
 	sub.mu.Lock()
 	// TODO(dlc) - Better way to mark especially if we attach.
-	if sub.jsi == nil || sub.jsi.consumer == _EMPTY_ {
+	if sub.jsi == nil {
 		sub.mu.Unlock()
+		return nil, ErrTypeSubscription
+	} else if sub.jsi.consumer == _EMPTY_ {
+		ordered := sub.jsi.ordered
+		sub.mu.Unlock()
+		if ordered {
+			return nil, ErrConsumerInfoOnOrderedReset
+		}
 		return nil, ErrTypeSubscription
 	}
 
@@ -2978,6 +3080,11 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		}
 	}
 	var hbTimer *time.Timer
+	defer func() {
+		if hbTimer != nil {
+			hbTimer.Stop()
+		}
+	}()
 	var hbErr error
 	sub.mu.Lock()
 	subClosed := sub.closed || sub.draining
@@ -2986,6 +3093,7 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		err = errors.Join(ErrBadSubscription, ErrSubscriptionClosed)
 	}
 	hbLock := sync.Mutex{}
+	var disconnected atomic.Bool
 	if err == nil && len(msgs) < batch && !subClosed {
 		// For batch real size of 1, it does not make sense to set no_wait in
 		// the request.
@@ -3040,7 +3148,16 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 			}
 			return nil
 		}
-
+		connStatusChanged := nc.StatusChanged()
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-connStatusChanged:
+				disconnected.Store(true)
+				cancel()
+			}
+			nc.RemoveStatusListener(connStatusChanged)
+		}()
 		err = sendReq()
 		for err == nil && len(msgs) < batch {
 			// Ask for next message and wait if there are no messages
@@ -3067,9 +3184,6 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 				}
 			}
 		}
-		if hbTimer != nil {
-			hbTimer.Stop()
-		}
 	}
 	// If there is at least a message added to msgs, then need to return OK and no error
 	if err != nil && len(msgs) == 0 {
@@ -3077,6 +3191,9 @@ func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 		defer hbLock.Unlock()
 		if hbErr != nil {
 			return nil, hbErr
+		}
+		if disconnected.Load() {
+			return nil, ErrFetchDisconnected
 		}
 		return nil, o.checkCtxErr(err)
 	}
@@ -3288,6 +3405,17 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 	}
 	expires := ttl - expiresDiff
 
+	connStatusChanged := nc.StatusChanged()
+	var disconnected atomic.Bool
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-connStatusChanged:
+			disconnected.Store(true)
+			cancel()
+		}
+		nc.RemoveStatusListener(connStatusChanged)
+	}()
 	requestBatch := batch - len(result.msgs)
 	req := nextRequest{
 		Expires:   expires,
@@ -3312,6 +3440,11 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 		return result, nil
 	}
 	var hbTimer *time.Timer
+	defer func() {
+		if hbTimer != nil {
+			hbTimer.Stop()
+		}
+	}()
 	var hbErr error
 	if o.hb > 0 {
 		hbTimer = time.AfterFunc(2*o.hb, func() {
@@ -3358,6 +3491,8 @@ func (sub *Subscription) FetchBatch(batch int, opts ...PullOpt) (MessageBatch, e
 			result.Lock()
 			if hbErr != nil {
 				result.err = hbErr
+			} else if disconnected.Load() {
+				result.err = ErrFetchDisconnected
 			} else {
 				result.err = o.checkCtxErr(err)
 			}
@@ -3428,7 +3563,7 @@ func (js *js) apiRequestWithContext(ctx context.Context, subj string, data []byt
 	}
 	if js.opts.shouldTrace {
 		ctrace := js.opts.ctrace
-		if ctrace.RequestSent != nil {
+		if ctrace.ResponseReceived != nil {
 			ctrace.ResponseReceived(subj, resp.Data, resp.Header)
 		}
 	}

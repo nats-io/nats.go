@@ -37,7 +37,7 @@ func TestKeyValueBasics(t *testing.T) {
 	defer nc.Close()
 	ctx := context.Background()
 
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour})
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour, Metadata: map[string]string{"foo": "bar"}, LimitMarkerTTL: time.Minute})
 	expectOk(t, err)
 
 	if kv.Bucket() != "TEST" {
@@ -50,6 +50,11 @@ func TestKeyValueBasics(t *testing.T) {
 	if r != 1 {
 		t.Fatalf("Expected 1 for the revision, got %d", r)
 	}
+
+	// put, invalid key
+	_, err = kv.Put(ctx, ".invalid", []byte("value"))
+	expectErr(t, err, jetstream.ErrInvalidKey)
+
 	// Simple Get
 	e, err := kv.Get(ctx, "name")
 	expectOk(t, err)
@@ -59,6 +64,10 @@ func TestKeyValueBasics(t *testing.T) {
 	if e.Revision() != 1 {
 		t.Fatalf("Expected 1 for the revision, got %d", e.Revision())
 	}
+
+	// get, invalid key
+	_, err = kv.Get(ctx, ".invalid")
+	expectErr(t, err, jetstream.ErrInvalidKey)
 
 	// Delete
 	err = kv.Delete(ctx, "name")
@@ -74,6 +83,10 @@ func TestKeyValueBasics(t *testing.T) {
 	expectErr(t, err)
 	err = kv.Delete(ctx, "name", jetstream.LastRevision(3))
 	expectOk(t, err)
+
+	// delete, invalid key
+	err = kv.Delete(ctx, ".invalid")
+	expectErr(t, err, jetstream.ErrInvalidKey)
 
 	// Conditional Updates.
 	r, err = kv.Update(ctx, "name", []byte("rip"), 4)
@@ -105,11 +118,46 @@ func TestKeyValueBasics(t *testing.T) {
 	if status.BackingStore() != "JetStream" {
 		t.Fatalf("invalid backing store kind %s", status.BackingStore())
 	}
+	if status.Metadata()["foo"] != "bar" {
+		t.Fatalf("expected metadata foo to be bar got %v", status.Metadata()["foo"])
+	}
 
 	kvs := status.(*jetstream.KeyValueBucketStatus)
 	si := kvs.StreamInfo()
 	if si == nil {
 		t.Fatalf("StreamInfo not received")
+	}
+}
+
+func TestKeyValueTTL(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST", History: 5, TTL: 100 * time.Millisecond, LimitMarkerTTL: time.Second})
+	expectOk(t, err)
+
+	_, err = kv.Put(ctx, "name", []byte("pp"))
+	expectOk(t, err)
+
+	watcher, err := kv.WatchAll(ctx, jetstream.UpdatesOnly())
+	expectOk(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	_, err = kv.Get(ctx, "name")
+	expectErr(t, err, jetstream.ErrKeyNotFound)
+
+	select {
+	case v := <-watcher.Updates():
+		if v == nil || v.Key() != "name" || v.Operation() != jetstream.KeyValuePurge {
+			t.Fatalf("Expected purge operation for key 'name', got: %+v", v)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Expected update notification for key 'name', got nothing")
 	}
 }
 
@@ -134,6 +182,10 @@ func TestCreateKeyValue(t *testing.T) {
 
 	// assert that we're backwards compatible
 	expectErr(t, err, jetstream.ErrStreamNameAlreadyInUse)
+
+	// invalid configs
+	_, err = js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "NEW", History: 200})
+	expectErr(t, err, jetstream.ErrHistoryTooLarge)
 }
 
 func TestUpdateKeyValue(t *testing.T) {
@@ -613,6 +665,37 @@ func TestKeyValueWatch(t *testing.T) {
 		expectUpdate("age", "33", 5)
 		expectOk(t, kv.Delete(ctx, "age"))
 		expectDelete("age", 6)
+	})
+
+	t.Run("stop watcher should not block", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll(ctx)
+		expectOk(t, err)
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectInitDone()
+
+		err = watcher.Stop()
+		expectOk(t, err)
+
+		select {
+		case _, ok := <-watcher.Updates():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(100 * time.Millisecond):
+			break
+		}
 	})
 }
 
@@ -1869,5 +1952,455 @@ func TestKeyValueCreateRepairOldKV(t *testing.T) {
 	})
 	if !errors.Is(err, jetstream.ErrBucketExists) {
 		t.Fatalf("Expected error to be ErrBucketExists, got: %v", err)
+	}
+}
+
+func TestKeyValueLimitMarkerTTL(t *testing.T) {
+	checkMsgHeaders := func(t *testing.T, js jetstream.JetStream, kv jetstream.KeyValue, key, expectedTTL, expectedReason string) {
+		t.Helper()
+		ctx := context.Background()
+		stream, err := js.Stream(ctx, "KV_KVS")
+		expectOk(t, err)
+		msg, err := stream.GetLastMsgForSubject(ctx, "$KV.KVS."+key)
+		expectOk(t, err)
+		marker := msg.Header.Get(jetstream.MarkerReasonHeader)
+		if marker != expectedReason {
+			t.Fatalf("Expected marker to be MaxAge, got %q", marker)
+		}
+		ttl := msg.Header.Get(jetstream.MsgTTLHeader)
+		if ttl != expectedTTL {
+			t.Fatalf("Expected TTL to be 1s, got %q", ttl)
+		}
+	}
+
+	checkMsgNotFound := func(t *testing.T, js jetstream.JetStream, kv jetstream.KeyValue, key string) {
+		t.Helper()
+		ctx := context.Background()
+		stream, err := js.Stream(ctx, "KV_KVS")
+		expectOk(t, err)
+		msg, err := stream.GetLastMsgForSubject(ctx, "$KV.KVS."+key)
+		if err == nil {
+			t.Fatalf("Expected error getting message, got %v", msg)
+		}
+		if !errors.Is(err, jetstream.ErrMsgNotFound) {
+			t.Fatalf("Expected error to be ErrMsgNotFound, got: %v", err)
+		}
+	}
+
+	t.Run("create with TTL", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", LimitMarkerTTL: time.Second})
+		expectOk(t, err)
+
+		// Put in a few names and ages.
+		_, err = kv.Create(ctx, "age", []byte("22"), jetstream.KeyTTL(time.Second))
+		expectOk(t, err)
+
+		// create watcher to wait for deletion
+		watcher, err := kv.WatchAll(ctx, jetstream.UpdatesOnly())
+		expectOk(t, err)
+
+		_, err = kv.Get(ctx, "age")
+		expectOk(t, err)
+		time.Sleep(1500 * time.Millisecond)
+
+		_, err = kv.Get(ctx, "age")
+		expectErr(t, err, jetstream.ErrKeyNotFound)
+		// check if marker exists on stream
+		checkMsgHeaders(t, js, kv, "age", "1s", "MaxAge")
+
+		time.Sleep(time.Second)
+		_, err = kv.Get(ctx, "age")
+		expectErr(t, err, jetstream.ErrKeyNotFound)
+		// now msg should be gone from stream
+		checkMsgNotFound(t, js, kv, "age")
+
+		entry := <-watcher.Updates()
+		if entry == nil {
+			t.Fatalf("Expected entry, got nil")
+		}
+		if entry.Operation() != jetstream.KeyValuePurge {
+			t.Fatalf("Expected purge operation, got %v", entry.Operation())
+		}
+		if entry.Key() != "age" {
+			t.Fatalf("Expected key %q, got %q", "age", entry.Key())
+		}
+	})
+
+	t.Run("purge with TTL", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "KVS", LimitMarkerTTL: time.Second})
+		expectOk(t, err)
+
+		// Put in a few names and ages.
+		_, err = kv.Create(ctx, "age", []byte("22"))
+		expectOk(t, err)
+
+		watcher, err := kv.WatchAll(ctx, jetstream.UpdatesOnly())
+		expectOk(t, err)
+
+		err = kv.Purge(ctx, "age", jetstream.PurgeTTL(time.Second))
+		expectOk(t, err)
+
+		_, err = kv.Get(ctx, "age")
+		expectErr(t, err, jetstream.ErrKeyNotFound)
+		// check if msg with ttl exists on stream
+		checkMsgHeaders(t, js, kv, "age", "1s", "")
+		expectErr(t, err, jetstream.ErrKeyNotFound)
+
+		time.Sleep(1500 * time.Millisecond)
+		_, err = kv.Get(ctx, "age")
+		expectErr(t, err, jetstream.ErrKeyNotFound)
+
+		entry := <-watcher.Updates()
+		if entry == nil {
+			t.Fatalf("Expected entry, got nil")
+		}
+		if entry.Operation() != jetstream.KeyValuePurge {
+			t.Fatalf("Expected purge operation, got %v", entry.Operation())
+		}
+		if entry.Key() != "age" {
+			t.Fatalf("Expected key %q, got %q", "age", entry.Key())
+		}
+	})
+}
+
+func TestKeyValueListKeysDuplicates(t *testing.T) {
+	listKeysF := func(kv jetstream.KeyValue) ([]string, error) {
+		t.Helper()
+		lister, err := kv.ListKeys(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("error listing keys: %v", err)
+		}
+		var keys []string
+		for key := range lister.Keys() {
+			keys = append(keys, key)
+		}
+		return keys, nil
+	}
+
+	keysF := func(kv jetstream.KeyValue) ([]string, error) {
+		t.Helper()
+		return kv.Keys(context.Background())
+	}
+
+	for _, test := range []string{"ListKeys", "Keys"} {
+		t.Run(test, func(t *testing.T) {
+			s := RunBasicJetStreamServer()
+			defer shutdownJSServerAndRemoveStorage(t, s)
+
+			nc, js := jsClient(t, s)
+			defer nc.Close()
+
+			ctx := context.Background()
+			kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST_KV", History: 5})
+			if err != nil {
+				t.Fatalf("Error creating KV: %v", err)
+			}
+
+			for i := range 10 {
+				key := fmt.Sprintf("key_%d", i)
+				if _, err := kv.PutString(ctx, key, "initial"); err != nil {
+					t.Fatalf("Error putting key %s: %v", key, err)
+				}
+			}
+
+			done := make(chan bool)
+			go func() {
+				// Continuously update existing keys
+				for {
+					select {
+					case <-done:
+						return
+					default:
+						for i := range 5 {
+							key := fmt.Sprintf("key_%d", i)
+							if _, err := kv.PutString(ctx, key, "updated"); err != nil {
+								if errors.Is(err, nats.ErrConnectionClosed) {
+									return
+								}
+								t.Logf("Error updating key %s: %v", key, err)
+							}
+						}
+					}
+				}
+			}()
+
+			// List keys multiple times while updates are happening
+			for range 20 {
+				var keys []string
+				if test == "Keys" {
+					keys, err = keysF(kv)
+				} else {
+					keys, err = listKeysF(kv)
+				}
+				if err != nil {
+					t.Fatalf("Error getting keys: %v", err)
+				}
+
+				seen := make(map[string]struct{})
+				for _, key := range keys {
+					if _, exists := seen[key]; exists {
+						t.Fatalf("Duplicate key found: %s", key)
+					}
+					seen[key] = struct{}{}
+				}
+			}
+
+			close(done)
+		})
+	}
+}
+
+func TestKeyValueWithSources(t *testing.T) {
+	t.Run("kv -> kv", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx := context.Background()
+
+		kv1, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket:  "SOURCE1",
+			History: 5,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		kv2, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket:  "SOURCE2",
+			History: 5,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		kv3, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket:  "SOURCED",
+			History: 5,
+			Sources: []*jetstream.StreamSource{
+				{Name: "SOURCE1"},
+				// for the second one, pass the prefix, should still work
+				{Name: "KV_SOURCE2"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := kv1.Put(ctx, "key1", []byte("value1")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := kv2.Put(ctx, "key2", []byte("value2")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+
+		val, err := kv3.Get(ctx, "key1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(val.Value()) != "value1" {
+			t.Fatalf("Expected value1, got %s", string(val.Value()))
+		}
+
+		val, err = kv3.Get(ctx, "key2")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(val.Value()) != "value2" {
+			t.Fatalf("Expected value2, got %s", string(val.Value()))
+		}
+
+		stream, err := js.Stream(ctx, "KV_SOURCED")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		info, err := stream.Info(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if len(info.Config.Sources) != 2 {
+			t.Fatalf("Expected 2 sources, got %d", len(info.Config.Sources))
+		}
+
+		for _, src := range info.Config.Sources {
+			if len(src.SubjectTransforms) != 1 {
+				t.Fatalf("Expected 1 subject transform, got %d", len(src.SubjectTransforms))
+			}
+		}
+	})
+	t.Run("streams -> kv", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx := context.Background()
+
+		_, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "SOURCE1",
+			Subjects: []string{"S1.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "SOURCE2",
+			Subjects: []string{"S2.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+			Bucket:  "SOURCED",
+			History: 5,
+			Sources: []*jetstream.StreamSource{
+				{
+					Name: "SOURCE1",
+					SubjectTransforms: []jetstream.SubjectTransformConfig{
+						{
+							Source:      "S1.>",
+							Destination: "$KV.SOURCED.>",
+						},
+					},
+				},
+				{
+					Name: "SOURCE2",
+					SubjectTransforms: []jetstream.SubjectTransformConfig{
+						{
+							Source:      "S2.>",
+							Destination: "$KV.SOURCED.>",
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.Publish(ctx, "S1.key1", []byte("value1")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.Publish(ctx, "S2.key2", []byte("value2")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+
+		val, err := kv.Get(ctx, "key1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(val.Value()) != "value1" {
+			t.Fatalf("Expected value1, got %s", string(val.Value()))
+		}
+
+		val, err = kv.Get(ctx, "key2")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if string(val.Value()) != "value2" {
+			t.Fatalf("Expected value2, got %s", string(val.Value()))
+		}
+	})
+}
+
+func TestKeyValueGetRevision(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "TEST",
+		History: 5,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value1")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value2")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	entry, err := kv.GetRevision(ctx, "key", 1)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if string(entry.Value()) != "value1" {
+		t.Fatalf("Expected value1, got %s", string(entry.Value()))
+	}
+
+	if entry.Revision() != 1 {
+		t.Fatalf("Expected revision 1, got %d", entry.Revision())
+	}
+
+	if err := kv.Delete(ctx, "key"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = kv.GetRevision(ctx, "key", 3)
+	if !errors.Is(err, jetstream.ErrKeyNotFound) {
+		t.Fatalf("Expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+func TestKeyValueStatusBytes(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket: "TEST",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if _, err := kv.Put(ctx, "key", []byte("value")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	status, err := kv.Status(ctx)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if status.Bytes() == 0 {
+		t.Fatal("Expected Bytes() to return non-zero value")
 	}
 }

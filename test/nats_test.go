@@ -336,6 +336,28 @@ func TestUserJWTAndSeed(t *testing.T) {
 	nc.Close()
 }
 
+func TestUserCredentialBytes(t *testing.T) {
+	ts := runTrustServer()
+	defer ts.Shutdown()
+
+	// Test with JWT and seed as byte slices
+	jwtBytes := []byte(uJWT)
+	seedBytes := uSeed
+
+	nc, err := nats.Connect(ts.ClientURL(), nats.UserCredentialBytes(jwtBytes, seedBytes))
+	if err != nil {
+		t.Fatalf("Expected to connect with separate JWT and seed bytes, got %v", err)
+	}
+	nc.Close()
+
+	// Test with chained credentials (JWT and seed in same byte slice)
+	nc2, err := nats.Connect(ts.ClientURL(), nats.UserCredentialBytes([]byte(chained)))
+	if err != nil {
+		t.Fatalf("Expected to connect with chained credentials bytes, got %v", err)
+	}
+	nc2.Close()
+}
+
 // If we are using TLS and have multiple servers we try to match the IP
 // from a discovered server with the expected hostname for certs without IP
 // designations. In certain cases where there is a not authorized error and
@@ -553,6 +575,39 @@ func TestConnectedAddr(t *testing.T) {
 	}
 }
 
+func TestLocalAddr(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	var nc *nats.Conn
+	if addr := nc.LocalAddr(); addr != "" {
+		t.Fatalf("Expected empty result for nil connection, got %q", addr)
+	}
+	nc, err := nats.Connect(fmt.Sprintf("localhost:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	addr := nc.LocalAddr()
+	if addr == "" {
+		t.Fatalf("Expected non-empty local address")
+	}
+	// Verify it's a valid address format
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("Expected valid host:port format, got %q: %v", addr, err)
+	}
+	if host == "" {
+		t.Fatalf("Expected non-empty host in address %q", addr)
+	}
+	if port == "" {
+		t.Fatalf("Expected non-empty port in address %q", addr)
+	}
+	nc.Close()
+	if addr := nc.LocalAddr(); addr != "" {
+		t.Fatalf("Expected empty result for closed connection, got %q", addr)
+	}
+}
+
 func TestSubscribeSyncRace(t *testing.T) {
 	s := RunServerOnPort(TEST_PORT)
 	defer s.Shutdown()
@@ -603,6 +658,27 @@ func TestBadSubjectsAndQueueNames(t *testing.T) {
 		if _, err := nc.QueueSubscribeSync("foo", q); err != nats.ErrBadQueueName {
 			t.Fatalf("Expected an error of ErrBadQueueName for %q, got %v", q, err)
 		}
+	}
+}
+
+func TestTypeSubscription(t *testing.T) {
+	s := RunServerOnPort(TEST_PORT)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(fmt.Sprintf("127.0.0.1:%d", TEST_PORT))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	// Make sure that ConsumerInfo() returns invalid subscription type error
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+
+	if _, err := sub.ConsumerInfo(); err != nats.ErrTypeSubscription {
+		t.Fatalf("Expected an error about invalid subscription type, got %v", err)
 	}
 }
 
@@ -1137,5 +1213,22 @@ func TestInProcessConn(t *testing.T) {
 	// The server should respond to a request.
 	if _, err := nc.RTT(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSkipSubjectValidation(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	// Try to publish to a bad subject.
+	badSubj := "foo bar"
+	if err := nc.Publish(badSubj, []byte("hello")); err != nil {
+		t.Fatalf("Expected to publish to bad subject %q, got error: %v", badSubj, err)
 	}
 }

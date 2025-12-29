@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -141,12 +141,21 @@ type (
 )
 
 const (
-	controlMsg       = "100"
-	badRequest       = "400"
-	noMessages       = "404"
-	reqTimeout       = "408"
-	maxBytesExceeded = "409"
-	noResponders     = "503"
+	statusControlMsg    = "100"
+	statusBadRequest    = "400"
+	statusNoMsgs        = "404"
+	statusTimeout       = "408"
+	statusConflict      = "409"
+	statusNoResponders  = "503"
+	statusPinIdMismatch = "423"
+
+	fcRequestDescr     = "flowcontrol request"
+	idleHeartbeatDescr = "idle heartbeat"
+	consumerDeleted    = "consumer deleted"
+	leadershipChange   = "leadership change"
+	maxBytesExceeded   = "message size exceeds maxbytes"
+	batchCompleted     = "batch completed"
+	serverShutdown     = "server shutdown"
 )
 
 // Headers used when publishing messages.
@@ -182,6 +191,12 @@ const (
 	// [WithExpectLastSequencePerSubject] option.
 	ExpectedLastSubjSeqHeader = "Nats-Expected-Last-Subject-Sequence"
 
+	// ExpectedLastSubjSeqSubjHeader contains the subject for which the
+	// expected last sequence number is set. This is used together with
+	// [ExpectedLastSubjSeqHeader] to apply optimistic concurrency control at
+	// subject level. Server will reject the message if it is not the case.
+	ExpectedLastSubjSeqSubjHeader = "Nats-Expected-Last-Subject-Sequence-Subject"
+
 	// ExpectedLastMsgIDHeader contains the expected last message ID on the
 	// subject and can be used to apply optimistic concurrency control at
 	// stream level. Server will reject the message if it is not the case.
@@ -190,9 +205,16 @@ const (
 	// option.
 	ExpectedLastMsgIDHeader = "Nats-Expected-Last-Msg-Id"
 
+	// MsgTTLHeader is used to specify the TTL for a specific message. This will
+	// override the default TTL for the stream.
+	MsgTTLHeader = "Nats-TTL"
+
 	// MsgRollup is used to apply a purge of all prior messages in the stream
 	// ("all") or at the subject ("sub") before this message.
 	MsgRollup = "Nats-Rollup"
+
+	// MarkerReasonHeader is used to specify a reason for message deletion.
+	MarkerReasonHeader = "Nats-Marker-Reason"
 )
 
 // Headers for republished messages and direct gets. Those headers are set by
@@ -403,29 +425,34 @@ func checkMsg(msg *nats.Msg) (bool, error) {
 	}
 
 	switch val {
-	case badRequest:
+	case statusBadRequest:
 		return false, ErrBadRequest
-	case noResponders:
+	case statusNoResponders:
 		return false, nats.ErrNoResponders
-	case noMessages:
+	case statusNoMsgs:
 		// 404 indicates that there are no messages.
 		return false, ErrNoMessages
-	case reqTimeout:
+	case statusTimeout:
 		return false, nats.ErrTimeout
-	case controlMsg:
+	case statusControlMsg:
 		return false, nil
-	case maxBytesExceeded:
-		if strings.Contains(strings.ToLower(descr), "message size exceeds maxbytes") {
+	case statusPinIdMismatch:
+		return false, ErrPinIDMismatch
+	case statusConflict:
+		if strings.Contains(strings.ToLower(descr), maxBytesExceeded) {
 			return false, ErrMaxBytesExceeded
 		}
-		if strings.Contains(strings.ToLower(descr), "batch completed") {
+		if strings.Contains(strings.ToLower(descr), batchCompleted) {
 			return false, ErrBatchCompleted
 		}
-		if strings.Contains(strings.ToLower(descr), "consumer deleted") {
+		if strings.Contains(strings.ToLower(descr), consumerDeleted) {
 			return false, ErrConsumerDeleted
 		}
-		if strings.Contains(strings.ToLower(descr), "leadership change") {
+		if strings.Contains(strings.ToLower(descr), leadershipChange) {
 			return false, ErrConsumerLeadershipChanged
+		}
+		if strings.Contains(strings.ToLower(descr), serverShutdown) {
+			return false, ErrServerShutdown
 		}
 	}
 	return false, fmt.Errorf("nats: %s", msg.Header.Get("Description"))

@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -35,6 +35,8 @@ type (
 		aecb MsgErrHandler
 		// Max async pub ack in flight
 		maxpa int
+		// ackTimeout is the max time to wait for an ack.
+		ackTimeout time.Duration
 	}
 
 	// PublishOpt are the options that can be passed to Publish methods.
@@ -42,10 +44,12 @@ type (
 
 	pubOpts struct {
 		id             string
-		lastMsgID      string  // Expected last msgId
-		stream         string  // Expected stream name
-		lastSeq        *uint64 // Expected last sequence
-		lastSubjectSeq *uint64 // Expected last sequence per subject
+		lastMsgID      string        // Expected last msgId
+		stream         string        // Expected stream name
+		lastSeq        *uint64       // Expected last sequence
+		lastSubjectSeq *uint64       // Expected last sequence for subject
+		lastSubject    string        // Expected subject for last sequence
+		ttl            time.Duration // Message TTL
 
 		// Publish retries for NoResponders err.
 		retryWait     time.Duration // Retry wait between attempts
@@ -82,6 +86,7 @@ type (
 		errCh      chan error
 		doneCh     chan *PubAck
 		reply      string
+		timeout    *time.Timer
 	}
 
 	jetStreamClient struct {
@@ -125,6 +130,8 @@ type (
 
 		// Domain is the domain the message was published to.
 		Domain string `json:"domain,omitempty"`
+
+		Value string `json:"val,omitempty"`
 	}
 )
 
@@ -190,6 +197,13 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	}
 	if o.lastSubjectSeq != nil {
 		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+	if o.lastSubject != "" {
+		m.Header.Set(ExpectedLastSubjSeqSubjHeader, o.lastSubject)
+		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+	if o.ttl > 0 {
+		m.Header.Set(MsgTTLHeader, o.ttl.String())
 	}
 
 	var resp *nats.Msg
@@ -274,6 +288,13 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 	if o.lastSubjectSeq != nil {
 		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
 	}
+	if o.lastSubject != "" {
+		m.Header.Set(ExpectedLastSubjSeqSubjHeader, o.lastSubject)
+		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
+	}
+	if o.ttl > 0 {
+		m.Header.Set(MsgTTLHeader, o.ttl.String())
+	}
 
 	paf := o.pafRetry
 	if paf == nil && m.Reply != "" {
@@ -302,9 +323,50 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				return nil, ErrTooManyStalledMsgs
 			}
 		}
+		if js.publisher.ackTimeout > 0 {
+			paf.timeout = time.AfterFunc(js.publisher.ackTimeout, func() {
+				js.publisher.Lock()
+				defer js.publisher.Unlock()
+
+				if _, ok := js.publisher.acks[id]; !ok {
+					// paf has already been resolved
+					// while waiting for the lock
+					return
+				}
+
+				// ack timed out, remove from pending acks
+				delete(js.publisher.acks, id)
+
+				// check on anyone stalled and waiting.
+				if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
+					close(js.publisher.stallCh)
+					js.publisher.stallCh = nil
+				}
+
+				// send error to user
+				paf.err = ErrAsyncPublishTimeout
+				if paf.errCh != nil {
+					paf.errCh <- paf.err
+				}
+
+				// call error callback if set
+				if js.publisher.asyncPublisherOpts.aecb != nil {
+					js.publisher.asyncPublisherOpts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
+				}
+
+				// check on anyone one waiting on done status.
+				if js.publisher.doneCh != nil && len(js.publisher.acks) == 0 {
+					close(js.publisher.doneCh)
+					js.publisher.doneCh = nil
+				}
+			})
+		}
 	} else {
 		// when retrying, get the ID from existing reply subject
 		reply = paf.reply
+		if paf.timeout != nil {
+			paf.timeout.Reset(js.publisher.ackTimeout)
+		}
 		id = reply[js.opts.replyPrefixLen:]
 	}
 
@@ -352,13 +414,20 @@ func (js *jetStream) newAsyncReply() (string, error) {
 	}
 	var sb strings.Builder
 	sb.WriteString(js.publisher.replyPrefix)
-	rn := js.publisher.rr.Int63()
-	var b [aReplyTokensize]byte
-	for i, l := 0, rn; i < len(b); i++ {
-		b[i] = rdigits[l%base]
-		l /= base
+	for {
+		rn := js.publisher.rr.Int63()
+		var b [aReplyTokensize]byte
+		for i, l := 0, rn; i < len(b); i++ {
+			b[i] = rdigits[l%base]
+			l /= base
+		}
+		if _, ok := js.publisher.acks[string(b[:])]; ok {
+			continue
+		}
+		sb.Write(b[:])
+		break
 	}
-	sb.Write(b[:])
+
 	js.publisher.Unlock()
 	return sb.String(), nil
 }
@@ -415,8 +484,12 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		}
 	}
 
+	if paf.timeout != nil {
+		paf.timeout.Stop()
+	}
+
 	// Process no responders etc.
-	if len(m.Data) == 0 && m.Header.Get(statusHdr) == noResponders {
+	if len(m.Data) == 0 && m.Header.Get(statusHdr) == statusNoResponders {
 		if paf.retries < paf.maxRetries {
 			paf.retries++
 			time.AfterFunc(paf.retryWait, func() {

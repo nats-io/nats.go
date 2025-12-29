@@ -494,3 +494,23 @@ func TestDrainConnDuringReconnect(t *testing.T) {
 		t.Fatalf("Timeout waiting for closed state for connection")
 	}
 }
+
+func TestDrainClosedHandlerRace(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.ClosedHandler(func(_ *nats.Conn) {}))
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	if err := nc.Drain(); err != nil {
+		t.Fatalf("Unexpected error on drain: %v", err)
+	}
+	go func() {
+		nc.SetClosedHandler(nil)
+	}()
+	time.Sleep(500 * time.Millisecond)
+}

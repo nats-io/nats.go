@@ -14,6 +14,7 @@
 package nats
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -606,5 +607,125 @@ func TestWSProxyPath(t *testing.T) {
 				t.Fatal("Proxy was not reached")
 			}
 		})
+	}
+}
+
+// --- helpers ---
+
+func startHeaderCatcher(t *testing.T) (addr string, got chan []string, closer func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	got = make(chan []string, 1)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			// surface nothing; test will timeout
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		var lines []string
+		for {
+			s, err := r.ReadString('\n')
+			if err != nil {
+				break
+			}
+			s = strings.TrimRight(s, "\r\n")
+			if s == "" { // end of HTTP headers
+				break
+			}
+			lines = append(lines, s)
+		}
+		got <- lines
+	}()
+
+	return ln.Addr().String(), got, func() { _ = ln.Close() }
+}
+
+func hasHeaderValue(headers []string, name, want string) bool {
+	prefix := strings.ToLower(name) + ":"
+	for _, h := range headers {
+		if !strings.HasPrefix(strings.ToLower(h), prefix) {
+			continue
+		}
+		val := strings.TrimSpace(strings.SplitN(h, ":", 2)[1])
+		for _, part := range strings.Split(val, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestWSHeaders_StaticAppliedOnHandshake(t *testing.T) {
+	addr, got, closeLn := startHeaderCatcher(t)
+	defer closeLn()
+
+	static := make(http.Header)
+	static.Set("Authorization", "Bearer Random Token")
+	static.Add("X-Multi", "v1")
+	static.Add("X-Multi", "v2")
+
+	// Intentionally connect to our fake server; it won't complete the upgrade.
+	opts := GetDefaultOptions()
+	opts.WebSocketConnectionHeaders = static
+	opts.Url = "ws://" + addr
+	_, err := opts.Connect()
+	if err == nil {
+		t.Fatalf("expected connect to fail because server does not reply")
+	}
+
+	var headers []string
+	select {
+	case headers = <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not capture headers in time")
+	}
+
+	if !hasHeaderValue(headers, "Authorization", "Bearer Random Token") {
+		t.Fatalf("Authorization header missing: %v", headers)
+	}
+	if !hasHeaderValue(headers, "X-Multi", "v1") || !hasHeaderValue(headers, "X-Multi", "v2") {
+		t.Fatalf("X-Multi headers missing/combined incorrectly: %v", headers)
+	}
+}
+
+func TestWSHeaders_HandlerAppliedOnHandshake(t *testing.T) {
+	addr, got, closeLn := startHeaderCatcher(t)
+	defer closeLn()
+
+	provider := func() (http.Header, error) {
+		h := make(http.Header)
+		h.Set("Authorization", "Bearer FromHandler")
+		h.Add("X-Multi", "h1")
+		h.Add("X-Multi", "h2")
+		return h, nil
+	}
+
+	opts := GetDefaultOptions()
+	opts.WebSocketConnectionHeadersHandler = provider
+	opts.Url = "ws://" + addr
+	_, err := opts.Connect()
+	if err == nil {
+		t.Fatalf("expected connect to fail because server does not reply")
+	}
+
+	var headers []string
+	select {
+	case headers = <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not capture headers in time")
+	}
+
+	if !hasHeaderValue(headers, "Authorization", "Bearer FromHandler") {
+		t.Fatalf("Authorization header missing: %v", headers)
+	}
+	if !hasHeaderValue(headers, "X-Multi", "h1") || !hasHeaderValue(headers, "X-Multi", "h2") {
+		t.Fatalf("X-Multi headers missing/combined incorrectly: %v", headers)
 	}
 }

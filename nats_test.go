@@ -237,11 +237,11 @@ func TestSimplifiedURLs(t *testing.T) {
 				"host4:1234",
 				"host5:",
 				"host6",
-				"nats://[1:2:3:4]:1234",
-				"nats://[5:6:7:8]:",
-				"nats://[9:10:11:12]",
-				"[13:14:15:16]:",
-				"[17:18:19:20]:1234",
+				"nats://[::1:2:3:4]:1234",
+				"nats://[::5:6:7:8]:",
+				"nats://[::9:10:11:12]",
+				"[::13:14:15:16]:",
+				"[::17:18:19:20]:1234",
 			},
 			[]string{
 				"nats://host1:1234/",
@@ -251,11 +251,11 @@ func TestSimplifiedURLs(t *testing.T) {
 				"nats://host4:1234",
 				"nats://host5:4222",
 				"nats://host6:4222",
-				"nats://[1:2:3:4]:1234",
-				"nats://[5:6:7:8]:4222",
-				"nats://[9:10:11:12]:4222",
-				"nats://[13:14:15:16]:4222",
-				"nats://[17:18:19:20]:1234",
+				"nats://[::1:2:3:4]:1234",
+				"nats://[::5:6:7:8]:4222",
+				"nats://[::9:10:11:12]:4222",
+				"nats://[::13:14:15:16]:4222",
+				"nats://[::17:18:19:20]:1234",
 			},
 		},
 		{
@@ -264,17 +264,17 @@ func TestSimplifiedURLs(t *testing.T) {
 				"ws://host1:1234",
 				"ws://host2:",
 				"ws://host3",
-				"ws://[1:2:3:4]:1234",
-				"ws://[5:6:7:8]:",
-				"ws://[9:10:11:12]",
+				"ws://[::1:2:3:4]:1234",
+				"ws://[::5:6:7:8]:",
+				"ws://[::9:10:11:12]",
 			},
 			[]string{
 				"ws://host1:1234",
 				"ws://host2:80",
 				"ws://host3:80",
-				"ws://[1:2:3:4]:1234",
-				"ws://[5:6:7:8]:80",
-				"ws://[9:10:11:12]:80",
+				"ws://[::1:2:3:4]:1234",
+				"ws://[::5:6:7:8]:80",
+				"ws://[::9:10:11:12]:80",
 			},
 		},
 		{
@@ -283,17 +283,17 @@ func TestSimplifiedURLs(t *testing.T) {
 				"wss://host1:1234",
 				"wss://host2:",
 				"wss://host3",
-				"wss://[1:2:3:4]:1234",
-				"wss://[5:6:7:8]:",
-				"wss://[9:10:11:12]",
+				"wss://[::1:2:3:4]:1234",
+				"wss://[::5:6:7:8]:",
+				"wss://[::9:10:11:12]",
 			},
 			[]string{
 				"wss://host1:1234",
 				"wss://host2:443",
 				"wss://host3:443",
-				"wss://[1:2:3:4]:1234",
-				"wss://[5:6:7:8]:443",
-				"wss://[9:10:11:12]:443",
+				"wss://[::1:2:3:4]:1234",
+				"wss://[::5:6:7:8]:443",
+				"wss://[::9:10:11:12]:443",
 			},
 		},
 	} {
@@ -1776,6 +1776,117 @@ func BenchmarkHeaderDecode(b *testing.B) {
 				if _, err := DecodeHeadersMsg(hdr); err != nil {
 					b.Fatalf("Unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// mockConn simulates a network connection that can fail and recover
+// after a number of attempts.
+type mockConn struct {
+	failures          int
+	temporaryFailures int
+	data              []byte
+}
+
+func (mc *mockConn) Write(p []byte) (int, error) {
+	if mc.failures < mc.temporaryFailures {
+		mc.failures++
+		return 0, &net.OpError{Op: "write", Net: "tcp", Err: errors.New("i/o timeout")}
+	}
+	mc.data = append(mc.data, p...)
+	return len(p), nil
+}
+
+func (mc *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+func (mc *mockConn) Read(b []byte) (int, error)         { return 0, nil }
+func (mc *mockConn) Close() error                       { return nil }
+func (mc *mockConn) LocalAddr() net.Addr                { return nil }
+func (mc *mockConn) RemoteAddr() net.Addr               { return nil }
+func (mc *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (mc *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+
+func TestTimeoutWriterRecovery(t *testing.T) {
+	mc := &mockConn{temporaryFailures: 2}
+	tw := &timeoutWriter{
+		timeout: time.Second,
+		conn:    mc,
+	}
+	n, err := tw.Write([]byte("foo"))
+	if err == nil {
+		t.Fatal("Unexpected success")
+	}
+	if n != 0 {
+		t.Fatalf("Expected 0 bytes, got %d", n)
+	}
+	n, err = tw.Write([]byte("bar"))
+	if err == nil {
+		t.Fatal("Unexpected success")
+	}
+	if n != 0 {
+		t.Fatalf("Expected 0 bytes, got: %d", n)
+	}
+
+	// Should succeed since it was a temporary error.
+	testData := []byte("quux")
+	n, err = tw.Write(testData)
+	if err != nil {
+		t.Fatalf("Expected success, got: %v", err)
+	}
+	if n != len(testData) {
+		t.Fatalf("Expected %d, got: %d", len(testData), n)
+	}
+	if !bytes.Equal(mc.data, testData) {
+		t.Fatalf("Expected %q, got: %q", testData, mc.data)
+	}
+	testData2 := []byte("quuz")
+	n, err = tw.Write(testData2)
+	if err != nil {
+		t.Fatalf("Expected success, got: %v", err)
+	}
+	if n != len(testData2) {
+		t.Fatalf("Expected %d bytes written, got %d", len(testData2), n)
+	}
+	expectedData := append(testData, testData2...)
+	if !bytes.Equal(mc.data, expectedData) {
+		t.Fatalf("Expected data %q, got %q", expectedData, mc.data)
+	}
+}
+
+func TestValidateSubject(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject string
+		wantErr bool
+	}{
+		{"valid short", "foo", false},
+		{"valid with dots", "foo.bar.baz", false},
+		{"valid long", "metrics.production.server01.cpu.usage.percent", false},
+		{"empty string", "", true},
+		{"contains space", "foo bar", true},
+		{"contains tab", "foo\tbar", true},
+		{"contains CR", "foo\rbar", true},
+		{"contains LF", "foo\nbar", true},
+		{"space at start", " foo", true},
+		{"space at end", "foo ", true},
+		{"tab at start", "\tfoo", true},
+		{"newline at end", "foo\n", true},
+		{"valid with wildcards", "foo.*.bar.>", false},
+		{"valid with hyphen", "foo-bar-baz", false},
+		{"valid with underscore", "foo_bar_baz", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSubject(tt.subject)
+			if tt.wantErr {
+				if !errors.Is(err, ErrBadSubject) {
+					t.Errorf("validateSubject(%q) error = %v, want ErrBadSubject", tt.subject, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("validateSubject(%q) unexpected error: %v", tt.subject, err)
 			}
 		})
 	}

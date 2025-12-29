@@ -299,7 +299,13 @@ func TestClientTLSConfig(t *testing.T) {
 	// Should fail because of missing certificate
 	_, err = nats.Connect(secureURL,
 		nats.ClientTLSConfig(nil, caCB))
-	if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate required") {
+	if err == nil {
+		t.Fatal("Expected connection to fail due to missing certificate")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "bad certificate") &&
+		!strings.Contains(errStr, "certificate required") &&
+		!strings.Contains(errStr, "connection reset by peer") {
 		t.Fatalf("Expected missing certificate error; got: %s", err)
 	}
 
@@ -969,7 +975,6 @@ func TestCallbacksOrder(t *testing.T) {
 		nats.ReconnectWait(50*time.Millisecond),
 		nats.ReconnectJitter(0, 0),
 		nats.DontRandomize())
-
 	if err != nil {
 		t.Fatalf("Unable to connect: %v\n", err)
 	}
@@ -1093,6 +1098,35 @@ func TestCallbacksOrder(t *testing.T) {
 	t.Fatalf("The async callback dispatcher(s) should have stopped")
 }
 
+func TestReconnectErrHandler(t *testing.T) {
+	handler := func(ch chan bool) func(*nats.Conn, error) {
+		return func(*nats.Conn, error) {
+			ch <- true
+		}
+	}
+	t.Run("with RetryOnFailedConnect, MaxReconnects(-1), no connection", func(t *testing.T) {
+		opts := test.DefaultTestOptions
+		// Server should not be reachable to test this one
+		opts.Port = 4223
+		s := RunServerWithOptions(&opts)
+		defer s.Shutdown()
+
+		reconnectErr := make(chan bool)
+
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.ReconnectErrHandler(handler(reconnectErr)),
+			nats.RetryOnFailedConnect(true),
+			nats.MaxReconnects(-1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		if err = Wait(reconnectErr); err != nil {
+			t.Fatal("Timeout waiting for reconnect error handler")
+		}
+	})
+}
+
 func TestConnectHandler(t *testing.T) {
 	handler := func(ch chan bool) func(*nats.Conn) {
 		return func(*nats.Conn) {
@@ -1110,7 +1144,6 @@ func TestConnectHandler(t *testing.T) {
 			nats.ConnectHandler(handler(connected)),
 			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true))
-
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1130,7 +1163,6 @@ func TestConnectHandler(t *testing.T) {
 			nats.ConnectHandler(handler(connected)),
 			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true))
-
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1151,7 +1183,6 @@ func TestConnectHandler(t *testing.T) {
 		nc, err := nats.Connect(nats.DefaultURL,
 			nats.ConnectHandler(handler(connected)),
 			nats.ReconnectHandler(handler(reconnected)))
-
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1189,7 +1220,6 @@ func TestConnectHandler(t *testing.T) {
 			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true),
 			nats.ReconnectWait(100*time.Millisecond))
-
 		if err != nil {
 			t.Fatalf("Expected error on connect, got nil")
 		}
@@ -1221,7 +1251,6 @@ func TestConnectHandler(t *testing.T) {
 			nats.ReconnectHandler(handler(reconnected)),
 			nats.RetryOnFailedConnect(true),
 			nats.ReconnectWait(100*time.Millisecond))
-
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -2221,7 +2250,6 @@ func TestBarrier(t *testing.T) {
 		// invocation of this callback, but the Barrier should still be
 		// invoked.
 		nc.Barrier(func() { ch <- true })
-
 	})
 	if err != nil {
 		t.Fatalf("Error on subscribe: %v", err)
@@ -2898,6 +2926,77 @@ func TestRetryOnFailedConnect(t *testing.T) {
 	}
 }
 
+func TestRetryOnFailedConnectReconnectErrCB(t *testing.T) {
+	errChan := make(chan error, 10)
+
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(0), // Limited retries for faster test
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectErrHandler(func(_ *nats.Conn, err error) {
+			errChan <- err
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// Verify the first error is the initial connection error
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, nats.ErrNoServers) {
+			t.Fatalf("Expected ErrNoServers for initial connection failure, got: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Should have received initial connection error in ReconnectErrCB")
+	}
+}
+
+func TestRetryOnFailedConnectWithAuthError(t *testing.T) {
+	o := test.DefaultTestOptions
+	o.Username = "user"
+	o.Password = "password"
+	s := RunServerWithOptions(&o)
+	defer s.Shutdown()
+
+	errChan := make(chan error, 10)
+	closedCh := make(chan bool, 1)
+
+	// Try to connect without credentials
+	nc, err := nats.Connect(nats.DefaultURL,
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(2),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectErrHandler(func(_ *nats.Conn, err error) {
+			errChan <- err
+		}),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			closedCh <- true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// Wait for closed due to auth failure
+	select {
+	case <-closedCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Connection should have closed due to auth failure")
+	}
+
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, nats.ErrAuthorization) {
+			t.Fatalf("Expected ErrAuthorization for auth failure, got: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Should have received authorization error in ReconnectErrCB")
+	}
+}
+
 func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	opts := test.DefaultTestOptions
 	opts.Port = 4222
@@ -3034,6 +3133,64 @@ func TestConnStatusChangedEvents(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
+	})
+}
+
+func TestRemoveStatusListener(t *testing.T) {
+	t.Run("with channel not closed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+		statusCh := nc.StatusChanged()
+		done := make(chan struct{})
+		go func() {
+			_, ok := <-statusCh
+			if !ok {
+				done <- struct{}{}
+				return
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
+
+		nc.RemoveStatusListener(statusCh)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("Expected to receive done signal")
+		}
+	})
+	t.Run("with channel closed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+		statusCh := nc.StatusChanged()
+		done := make(chan struct{})
+		go func() {
+			_, ok := <-statusCh
+			if !ok {
+				done <- struct{}{}
+				return
+			}
+		}()
+		time.Sleep(50 * time.Millisecond)
+
+		close(statusCh)
+		nc.RemoveStatusListener(statusCh)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("Expected to receive done signal")
+		}
 	})
 }
 

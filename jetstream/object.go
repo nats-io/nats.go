@@ -475,6 +475,7 @@ type (
 		r      io.ReadCloser
 		err    error
 		ctx    context.Context
+		cancel context.CancelFunc
 		digest hash.Hash
 	}
 )
@@ -492,7 +493,7 @@ const (
 )
 
 func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +516,7 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 }
 
 func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +538,7 @@ func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 }
 
 func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
-	scfg, err := js.prepareObjectStoreConfig(ctx, cfg)
+	scfg, err := js.prepareObjectStoreConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +555,7 @@ func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectSt
 	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
 }
 
-func (js *jetStream) prepareObjectStoreConfig(ctx context.Context, cfg ObjectStoreConfig) (StreamConfig, error) {
+func (js *jetStream) prepareObjectStoreConfig(cfg ObjectStoreConfig) (StreamConfig, error) {
 	if !validBucketRe.MatchString(cfg.Bucket) {
 		return StreamConfig{}, ErrInvalidStoreName
 	}
@@ -843,6 +844,7 @@ func (info *ObjectInfo) isLink() bool {
 
 // Get will pull the object from the underlying stream.
 func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (ObjectResult, error) {
+	ctx, cancel := obs.js.wrapContextWithoutDeadline(ctx)
 	var o getObjectOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -885,7 +887,7 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
 	}
 
-	result := &objResult{info: info, ctx: ctx}
+	result := &objResult{info: info, ctx: ctx, cancel: cancel}
 	if info.Size == 0 {
 		return result, nil
 	}
@@ -1355,6 +1357,9 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 	if err != nil {
 		return nil, err
 	}
+	sub.SetClosedHandler(func(_ string) {
+		close(w.updates)
+	})
 	w.sub = sub
 	return w, nil
 }
@@ -1516,6 +1521,9 @@ func (o *objResult) Read(p []byte) (n int, err error) {
 func (o *objResult) Close() error {
 	o.Lock()
 	defer o.Unlock()
+	if o.cancel != nil {
+		o.cancel()
+	}
 	if o.r == nil {
 		return nil
 	}

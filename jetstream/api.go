@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -63,6 +63,9 @@ const (
 	// apiConsumerDeleteT is used to delete consumers.
 	apiConsumerDeleteT = "CONSUMER.DELETE.%s.%s"
 
+	// apiConsumerPauseT is used to pause a consumer.
+	apiConsumerPauseT = "CONSUMER.PAUSE.%s.%s"
+
 	// apiConsumerListT is used to return all detailed consumer information
 	apiConsumerListT = "CONSUMER.LIST.%s"
 
@@ -101,6 +104,9 @@ const (
 
 	// apiMsgDeleteT is the endpoint to remove a message.
 	apiMsgDeleteT = "STREAM.MSG.DELETE.%s"
+
+	// apiConsumerUnpinT is the endpoint to unpin a consumer.
+	apiConsumerUnpinT = "CONSUMER.UNPIN.%s.%s"
 )
 
 func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp any, data ...[]byte) (*jetStreamMsg, error) {
@@ -121,8 +127,8 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	if len(data) > 0 {
 		req = data[0]
 	}
-	if js.opts.clientTrace != nil {
-		ctrace := js.opts.clientTrace
+	if js.opts.ClientTrace != nil {
+		ctrace := js.opts.ClientTrace
 		if ctrace.RequestSent != nil {
 			ctrace.RequestSent(subj, req)
 		}
@@ -131,8 +137,8 @@ func (js *jetStream) apiRequest(ctx context.Context, subj string, data ...[]byte
 	if err != nil {
 		return nil, err
 	}
-	if js.opts.clientTrace != nil {
-		ctrace := js.opts.clientTrace
+	if js.opts.ClientTrace != nil {
+		ctrace := js.opts.ClientTrace
 		if ctrace.ResponseReceived != nil {
 			ctrace.ResponseReceived(subj, resp.Data, resp.Header)
 		}

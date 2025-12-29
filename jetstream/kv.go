@@ -119,7 +119,7 @@ type (
 		//
 		// A key has to consist of alphanumeric characters, dashes, underscores,
 		// equal signs, and dots.
-		Create(ctx context.Context, key string, value []byte) (uint64, error)
+		Create(ctx context.Context, key string, value []byte, opts ...KVCreateOpt) (uint64, error)
 
 		// Update will update the value if the latest revision matches.
 		// If the provided revision is not the latest, Update will return an error.
@@ -246,11 +246,26 @@ type (
 		Mirror *StreamSource `json:"mirror,omitempty"`
 
 		// Sources defines the configuration for sources of a KeyValue store.
+		// If no subject transforms are defined, it is assumed that a source is
+		// also a KV store and subject transforms will be set to correctly map
+		// keys from the source KV to the current one. If subject transforms are
+		// defined, they will be used as is. This allows using non-kv streams as
+		// sources.
 		Sources []*StreamSource `json:"sources,omitempty"`
 
 		// Compression sets the underlying stream compression.
 		// NOTE: Compression is supported for nats-server 2.10.0+
 		Compression bool `json:"compression,omitempty"`
+
+		// LimitMarkerTTL is how long the bucket keeps markers when keys are
+		// removed by the TTL setting.
+		// It is required for per-key TTL to work and for watcher to notify
+		// about TTL expirations (both per key and per bucket)
+		LimitMarkerTTL time.Duration `json:"limit_marker_ttl,omitempty"`
+
+		// Metadata is a set of application-defined key-value pairs that can be
+		// used to store arbitrary metadata about the bucket.
+		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
 	// KeyLister is used to retrieve a list of key value store keys. It returns
@@ -306,6 +321,13 @@ type (
 
 		// IsCompressed indicates if the data is compressed on disk.
 		IsCompressed() bool
+
+		// LimitMarkerTTL is how long the bucket keeps markers when keys are
+		// removed by the TTL setting, 0 meaning markers are not supported.
+		LimitMarkerTTL() time.Duration
+
+		// Metadata returns the metadata associated with the bucket.
+		Metadata() map[string]string
 	}
 
 	// KeyWatcher is what is returned when doing a watch. It can be used to
@@ -375,6 +397,18 @@ type (
 
 		// Delete only if the latest revision matches.
 		revision uint64
+
+		// purge ttl
+		ttl time.Duration
+	}
+
+	// KVCreateOpt is used to configure Create.
+	KVCreateOpt interface {
+		configureCreate(opts *createOpts) error
+	}
+
+	createOpts struct {
+		ttl time.Duration // TTL for the key
 	}
 
 	// KVPurgeOpt is used to configure PurgeDeletes.
@@ -442,7 +476,6 @@ const (
 	kvSubjectsTmpl          = "$KV.%s.>"
 	kvSubjectsPreTmpl       = "$KV.%s."
 	kvSubjectsPreDomainTmpl = "%s.$KV.%s."
-	kvNoPending             = "0"
 )
 
 const (
@@ -611,25 +644,41 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 	if cfg.Compression {
 		compression = S2Compression
 	}
+	var allowMsgTTL bool
+	var subjectDeleteMarkerTTL time.Duration
+	if cfg.LimitMarkerTTL != 0 {
+		info, err := js.AccountInfo(ctx)
+		if err != nil {
+			return StreamConfig{}, err
+		}
+		if info.API.Level < 1 {
+			return StreamConfig{}, ErrLimitMarkerTTLNotSupported
+		}
+		allowMsgTTL = true
+		subjectDeleteMarkerTTL = cfg.LimitMarkerTTL
+	}
 	scfg := StreamConfig{
-		Name:              fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
-		Description:       cfg.Description,
-		MaxMsgsPerSubject: history,
-		MaxBytes:          maxBytes,
-		MaxAge:            cfg.TTL,
-		MaxMsgSize:        maxMsgSize,
-		Storage:           cfg.Storage,
-		Replicas:          replicas,
-		Placement:         cfg.Placement,
-		AllowRollup:       true,
-		DenyDelete:        true,
-		Duplicates:        duplicateWindow,
-		MaxMsgs:           -1,
-		MaxConsumers:      -1,
-		AllowDirect:       true,
-		RePublish:         cfg.RePublish,
-		Compression:       compression,
-		Discard:           DiscardNew,
+		Name:                   fmt.Sprintf(kvBucketNameTmpl, cfg.Bucket),
+		Description:            cfg.Description,
+		MaxMsgsPerSubject:      history,
+		MaxBytes:               maxBytes,
+		MaxAge:                 cfg.TTL,
+		MaxMsgSize:             maxMsgSize,
+		Storage:                cfg.Storage,
+		Replicas:               replicas,
+		Placement:              cfg.Placement,
+		AllowRollup:            true,
+		DenyDelete:             true,
+		Duplicates:             duplicateWindow,
+		MaxMsgs:                -1,
+		MaxConsumers:           -1,
+		AllowDirect:            true,
+		RePublish:              cfg.RePublish,
+		Compression:            compression,
+		Discard:                DiscardNew,
+		AllowMsgTTL:            allowMsgTTL,
+		SubjectDeleteMarkerTTL: subjectDeleteMarkerTTL,
+		Metadata:               cfg.Metadata,
 	}
 	if cfg.Mirror != nil {
 		// Copy in case we need to make changes so we do not change caller's version.
@@ -640,8 +689,14 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 		scfg.Mirror = m
 		scfg.MirrorDirect = true
 	} else if len(cfg.Sources) > 0 {
-		// For now we do not allow direct subjects for sources. If that is desired a user could use stream API directly.
 		for _, ss := range cfg.Sources {
+			// if subject transforms are already set, then use as is.
+			// this allows for full control of the source, e.g. using non-KV streams.
+			// Note that in this case, the Name is not modified and full stream name must be provided.
+			if len(ss.SubjectTransforms) > 0 {
+				scfg.Sources = append(scfg.Sources, ss)
+				continue
+			}
 			var sourceBucketName string
 			if strings.HasPrefix(ss.Name, kvBucketNamePre) {
 				sourceBucketName = ss.Name[len(kvBucketNamePre):]
@@ -730,7 +785,7 @@ func (js *jetStream) KeyValueStores(ctx context.Context) KeyValueLister {
 				if !strings.HasPrefix(info.Config.Name, kvBucketNamePre) {
 					continue
 				}
-				res.kvs <- &KeyValueBucketStatus{nfo: info, bucket: strings.TrimPrefix(info.Config.Name, kvBucketNamePre)}
+				res.kvs <- &KeyValueBucketStatus{info: info, bucket: strings.TrimPrefix(info.Config.Name, kvBucketNamePre)}
 			}
 			if errors.Is(err, ErrEndOfData) {
 				return
@@ -742,7 +797,7 @@ func (js *jetStream) KeyValueStores(ctx context.Context) KeyValueLister {
 
 // KeyValueBucketStatus represents status of a Bucket, implements KeyValueStatus
 type KeyValueBucketStatus struct {
-	nfo    *StreamInfo
+	info   *StreamInfo
 	bucket string
 }
 
@@ -750,25 +805,36 @@ type KeyValueBucketStatus struct {
 func (s *KeyValueBucketStatus) Bucket() string { return s.bucket }
 
 // Values is how many messages are in the bucket, including historical values
-func (s *KeyValueBucketStatus) Values() uint64 { return s.nfo.State.Msgs }
+func (s *KeyValueBucketStatus) Values() uint64 { return s.info.State.Msgs }
 
 // History returns the configured history kept per key
-func (s *KeyValueBucketStatus) History() int64 { return s.nfo.Config.MaxMsgsPerSubject }
+func (s *KeyValueBucketStatus) History() int64 { return s.info.Config.MaxMsgsPerSubject }
 
 // TTL is how long the bucket keeps values for
-func (s *KeyValueBucketStatus) TTL() time.Duration { return s.nfo.Config.MaxAge }
+func (s *KeyValueBucketStatus) TTL() time.Duration { return s.info.Config.MaxAge }
 
 // BackingStore indicates what technology is used for storage of the bucket
 func (s *KeyValueBucketStatus) BackingStore() string { return "JetStream" }
 
 // StreamInfo is the stream info retrieved to create the status
-func (s *KeyValueBucketStatus) StreamInfo() *StreamInfo { return s.nfo }
+func (s *KeyValueBucketStatus) StreamInfo() *StreamInfo { return s.info }
 
 // Bytes is the size of the stream
-func (s *KeyValueBucketStatus) Bytes() uint64 { return s.nfo.State.Bytes }
+func (s *KeyValueBucketStatus) Bytes() uint64 { return s.info.State.Bytes }
 
 // IsCompressed indicates if the data is compressed on disk
-func (s *KeyValueBucketStatus) IsCompressed() bool { return s.nfo.Config.Compression != NoCompression }
+func (s *KeyValueBucketStatus) IsCompressed() bool { return s.info.Config.Compression != NoCompression }
+
+// LimitMarkerTTL is how long the bucket keeps markers when keys are
+// removed by the TTL setting, 0 meaning markers are not supported.
+func (s *KeyValueBucketStatus) LimitMarkerTTL() time.Duration {
+	return s.info.Config.SubjectDeleteMarkerTTL
+}
+
+// Metadata returns the metadata associated with the bucket.
+func (s *KeyValueBucketStatus) Metadata() map[string]string {
+	return s.info.Config.Metadata
+}
 
 type kvLister struct {
 	kvs     chan KeyValueStatus
@@ -793,10 +859,10 @@ func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
 	if js.opts.apiPrefix != "" {
 		opts = append(opts, nats.APIPrefix(js.opts.apiPrefix))
 	}
-	if js.opts.clientTrace != nil {
+	if js.opts.ClientTrace != nil {
 		opts = append(opts, nats.ClientTrace{
-			RequestSent:      js.opts.clientTrace.RequestSent,
-			ResponseReceived: js.opts.clientTrace.ResponseReceived,
+			RequestSent:      js.opts.ClientTrace.RequestSent,
+			ResponseReceived: js.opts.ClientTrace.ResponseReceived,
 		})
 	}
 	return js.conn.JetStream(opts...)
@@ -862,12 +928,22 @@ func (kv *kvs) get(ctx context.Context, key string, revision uint64) (KeyValueEn
 
 	// Double check here that this is not a DEL Operation marker.
 	if len(m.Header) > 0 {
-		switch m.Header.Get(kvop) {
-		case kvdel:
-			entry.op = KeyValueDelete
-			return entry, ErrKeyDeleted
-		case kvpurge:
-			entry.op = KeyValuePurge
+		if m.Header.Get(kvop) != "" {
+			switch m.Header.Get(kvop) {
+			case kvdel:
+				entry.op = KeyValueDelete
+			case kvpurge:
+				entry.op = KeyValuePurge
+			}
+		} else if m.Header.Get(MarkerReasonHeader) != "" {
+			switch m.Header.Get(MarkerReasonHeader) {
+			case "MaxAge", "Purge":
+				entry.op = KeyValuePurge
+			case "Remove":
+				entry.op = KeyValueDelete
+			}
+		}
+		if entry.op != KeyValuePut {
 			return entry, ErrKeyDeleted
 		}
 	}
@@ -949,15 +1025,24 @@ func (kv *kvs) PutString(ctx context.Context, key string, value string) (uint64,
 	return kv.Put(ctx, key, []byte(value))
 }
 
-// Create will add the key/value pair iff it does not exist.
-func (kv *kvs) Create(ctx context.Context, key string, value []byte) (revision uint64, err error) {
-	v, err := kv.Update(ctx, key, value, 0)
+// Create will add the key/value pair if it does not exist.
+func (kv *kvs) Create(ctx context.Context, key string, value []byte, opts ...KVCreateOpt) (revision uint64, err error) {
+	var o createOpts
+	for _, opt := range opts {
+		if opt != nil {
+			if err := opt.configureCreate(&o); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	v, err := kv.updateRevision(ctx, key, value, 0, o.ttl)
 	if err == nil {
 		return v, nil
 	}
 
 	if e, err := kv.get(ctx, key, kvLatestRevision); errors.Is(err, ErrKeyDeleted) {
-		return kv.Update(ctx, key, value, e.Revision())
+		return kv.updateRevision(ctx, key, value, e.Revision(), o.ttl)
 	}
 
 	// Check if the expected last subject sequence is not zero which implies
@@ -972,6 +1057,10 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte) (revision u
 
 // Update will update the value if the latest revision matches.
 func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error) {
+	return kv.updateRevision(ctx, key, value, revision, 0)
+}
+
+func (kv *kvs) updateRevision(ctx context.Context, key string, value []byte, revision uint64, ttl time.Duration) (uint64, error) {
 	if !keyValid(key) {
 		return 0, ErrInvalidKey
 	}
@@ -980,13 +1069,22 @@ func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision ui
 	if kv.useJSPfx {
 		b.WriteString(kv.js.opts.apiPrefix)
 	}
-	b.WriteString(kv.pre)
+	if kv.putPre != "" {
+		b.WriteString(kv.putPre)
+	} else {
+		b.WriteString(kv.pre)
+	}
 	b.WriteString(key)
 
 	m := nats.Msg{Subject: b.String(), Header: nats.Header{}, Data: value}
-	m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(revision, 10))
+	opts := []PublishOpt{
+		WithExpectLastSequencePerSubject(revision),
+	}
+	if ttl > 0 {
+		opts = append(opts, WithMsgTTL(ttl))
+	}
 
-	pa, err := kv.js.PublishMsg(ctx, &m)
+	pa, err := kv.js.PublishMsg(ctx, &m, opts...)
 	if err != nil {
 		return 0, err
 	}
@@ -1028,12 +1126,18 @@ func (kv *kvs) Delete(ctx context.Context, key string, opts ...KVDeleteOpt) erro
 	} else {
 		m.Header.Set(kvop, kvdel)
 	}
+	pubOpts := make([]PublishOpt, 0)
+	if o.ttl > 0 && o.purge {
+		pubOpts = append(pubOpts, WithMsgTTL(o.ttl))
+	} else if o.ttl > 0 {
+		return ErrTTLOnDeleteNotSupported
+	}
 
 	if o.revision != 0 {
 		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(o.revision, 10))
 	}
 
-	_, err := kv.js.PublishMsg(ctx, m)
+	_, err := kv.js.PublishMsg(ctx, m, pubOpts...)
 	return err
 }
 
@@ -1122,11 +1226,20 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 
 		var op KeyValueOp
 		if len(m.Header) > 0 {
-			switch m.Header.Get(kvop) {
-			case kvdel:
-				op = KeyValueDelete
-			case kvpurge:
-				op = KeyValuePurge
+			if m.Header.Get(kvop) != "" {
+				switch m.Header.Get(kvop) {
+				case kvdel:
+					op = KeyValueDelete
+				case kvpurge:
+					op = KeyValuePurge
+				}
+			} else if m.Header.Get(MarkerReasonHeader) != "" {
+				switch m.Header.Get(MarkerReasonHeader) {
+				case "MaxAge", "Purge":
+					op = KeyValuePurge
+				case "Remove":
+					op = KeyValueDelete
+				}
 			}
 		}
 		delta := parser.ParseNum(tokens[parser.AckNumPendingTokenPos])
@@ -1147,11 +1260,9 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 		// Check if done and initial values.
 		if !w.initDone {
 			w.received++
-			// We set this on the first trip through..
-			if w.initPending == 0 {
-				w.initPending = delta
-			}
-			if w.received > w.initPending || delta == 0 {
+			// Use the stable initPending value set at consumer creation.
+			// We're done if we've received all expected messages OR there are no more pending.
+			if w.received >= w.initPending || delta == 0 {
 				w.initDone = true
 				w.updates <- nil
 			}
@@ -1190,6 +1301,8 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 		return nil, err
 	}
 	sub.SetClosedHandler(func(_ string) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
 		close(w.updates)
 	})
 	// If there were no pending messages at the time of the creation
@@ -1197,9 +1310,13 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 	// Skip if UpdatesOnly() is set, since there will never be updates initially.
 	if !o.updatesOnly {
 		initialPending, err := sub.InitialConsumerPending()
-		if err == nil && initialPending == 0 {
-			w.initDone = true
-			w.updates <- nil
+		if err == nil {
+			if initialPending == 0 {
+				w.initDone = true
+				w.updates <- nil
+			} else {
+				w.initPending = initialPending
+			}
 		}
 	} else {
 		// if UpdatesOnly was used, mark initialization as complete
@@ -1377,6 +1494,8 @@ func (kv *kvs) PurgeDeletes(ctx context.Context, opts ...KVPurgeOpt) error {
 			deleteMarkers = append(deleteMarkers, entry)
 		}
 	}
+	// Stop watcher here so as we purge we do not have the system continually updating numPending.
+	watcher.Stop()
 
 	var b strings.Builder
 	// Do actual purges here.
@@ -1402,7 +1521,7 @@ func (kv *kvs) Status(ctx context.Context) (KeyValueStatus, error) {
 		return nil, err
 	}
 
-	return &KeyValueBucketStatus{nfo: nfo, bucket: kv.name}, nil
+	return &KeyValueBucketStatus{info: nfo, bucket: kv.name}, nil
 }
 
 func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) *kvs {

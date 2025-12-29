@@ -115,12 +115,22 @@ type KeyWatcher interface {
 	Updates() <-chan KeyValueEntry
 	// Stop will stop this watcher.
 	Stop() error
+	// Error returns a channel that will receive any error that occurs during
+	// watching. In particular, this will receive an error if the watcher times
+	// out while expecting more initial keys. The channel is closed when the
+	// watch operation completes or when Stop() is called.
+	Error() <-chan error
 }
 
 // KeyLister is used to retrieve a list of key value store keys
 type KeyLister interface {
 	Keys() <-chan string
 	Stop() error
+	// Error returns a channel that will receive any error that occurs during
+	// key listing. In particular, this will receive an error if the underlying
+	// watcher times out while expecting more keys. The channel is closed when
+	// the listing operation completes or when Stop() is called.
+	Error() <-chan error
 }
 
 type WatchOpt interface {
@@ -331,6 +341,7 @@ var (
 	ErrKeyDeleted             = errors.New("nats: key was deleted")
 	ErrHistoryToLarge         = errors.New("nats: history limited to a max of 64")
 	ErrNoKeysFound            = errors.New("nats: no keys found")
+	ErrKeyWatcherTimeout      = errors.New("nats: key watcher timed out waiting for initial keys")
 )
 
 var (
@@ -343,7 +354,6 @@ const (
 	kvSubjectsTmpl          = "$KV.%s.>"
 	kvSubjectsPreTmpl       = "$KV.%s."
 	kvSubjectsPreDomainTmpl = "%s.$KV.%s."
-	kvNoPending             = "0"
 )
 
 // Regex for valid keys and buckets.
@@ -826,12 +836,18 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 			deleteMarkers = append(deleteMarkers, entry)
 		}
 	}
+	// Stop watcher here so as we purge we do not have the system continually updating numPending.
+	watcher.Stop()
 
 	var (
 		pr StreamPurgeRequest
 		b  strings.Builder
 	)
 	// Do actual purges here.
+	purgeOpts := []JSOpt{}
+	if o.ctx != nil {
+		purgeOpts = append(purgeOpts, Context(o.ctx))
+	}
 	for _, entry := range deleteMarkers {
 		b.WriteString(kv.pre)
 		b.WriteString(entry.Key())
@@ -840,7 +856,7 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 		if olderThan > 0 && entry.Created().After(limit) {
 			pr.Keep = 1
 		}
-		if err := kv.js.purgeStream(kv.stream, &pr); err != nil {
+		if err := kv.js.purgeStream(kv.stream, &pr, purgeOpts...); err != nil {
 			return err
 		}
 		b.Reset()
@@ -905,6 +921,10 @@ func (kl *keyLister) Stop() error {
 	return kl.watcher.Stop()
 }
 
+func (kl *keyLister) Error() <-chan error {
+	return kl.watcher.Error()
+}
+
 // History will return all values for the key.
 func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 	opts = append(opts, IncludeHistory())
@@ -929,13 +949,15 @@ func (kv *kvs) History(key string, opts ...WatchOpt) ([]KeyValueEntry, error) {
 
 // Implementation for Watch
 type watcher struct {
-	mu          sync.Mutex
-	updates     chan KeyValueEntry
-	sub         *Subscription
-	initDone    bool
-	initPending uint64
-	received    uint64
-	ctx         context.Context
+	mu            sync.Mutex
+	updates       chan KeyValueEntry
+	sub           *Subscription
+	initDone      bool
+	initPending   uint64
+	received      uint64
+	ctx           context.Context
+	initDoneTimer *time.Timer
+	errCh         chan error
 }
 
 // Context returns the context for the watcher if set.
@@ -960,6 +982,16 @@ func (w *watcher) Stop() error {
 		return nil
 	}
 	return w.sub.Unsubscribe()
+}
+
+// Error returns a channel that will receive any error that occurs during watching.
+func (w *watcher) Error() <-chan error {
+	if w == nil {
+		closedCh := make(chan error)
+		close(closedCh)
+		return closedCh
+	}
+	return w.errCh
 }
 
 // WatchAll watches all keys.
@@ -999,7 +1031,11 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	}
 
 	// We will block below on placing items on the chan. That is by design.
-	w := &watcher{updates: make(chan KeyValueEntry, 256), ctx: o.ctx}
+	w := &watcher{
+		updates: make(chan KeyValueEntry, 256),
+		ctx:     o.ctx,
+		errCh:   make(chan error, 1),
+	}
 
 	update := func(m *Msg) {
 		tokens, err := parser.GetMetadataFields(m.Reply)
@@ -1039,13 +1075,17 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 		// Skip if UpdatesOnly() is set, since there will never be updates initially.
 		if !w.initDone {
 			w.received++
-			// We set this on the first trip through..
-			if w.initPending == 0 {
-				w.initPending = delta
-			}
-			if w.received > w.initPending || delta == 0 {
+			// Use the stable initPending value set at consumer creation.
+			// We're done if we've received all expected messages OR there are no more pending
+			if w.received >= w.initPending || delta == 0 {
+				// Avoid possible race setting up timer.
+				if w.initDoneTimer != nil {
+					w.initDoneTimer.Stop()
+				}
 				w.initDone = true
 				w.updates <- nil
+			} else if w.initDoneTimer != nil {
+				w.initDoneTimer.Reset(kv.js.opts.wait)
 			}
 		}
 	}
@@ -1085,9 +1125,26 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	// of the consumer, send the marker.
 	// Skip if UpdatesOnly() is set, since there will never be updates initially.
 	if !o.updatesOnly {
-		if sub.jsi != nil && sub.jsi.pending == 0 {
-			w.initDone = true
-			w.updates <- nil
+		if sub.jsi != nil {
+			if sub.jsi.pending == 0 {
+				w.initDone = true
+				w.updates <- nil
+			} else {
+				w.initPending = sub.jsi.pending
+				// Set a timer to send the marker if we do not get any messages.
+				w.initDoneTimer = time.AfterFunc(kv.js.opts.wait, func() {
+					w.mu.Lock()
+					defer w.mu.Unlock()
+					if !w.initDone {
+						w.initDone = true
+						select {
+						case w.errCh <- ErrKeyWatcherTimeout:
+						default:
+						}
+						w.updates <- nil
+					}
+				})
+			}
 		}
 	} else {
 		// if UpdatesOnly was used, mark initialization as complete
@@ -1095,8 +1152,15 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 	}
 	// Set us up to close when the waitForMessages func returns.
 	sub.pDone = func(_ string) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.initDoneTimer != nil {
+			w.initDoneTimer.Stop()
+		}
 		close(w.updates)
+		close(w.errCh)
 	}
+
 	sub.mu.Unlock()
 
 	w.sub = sub

@@ -430,6 +430,102 @@ func TestJetStreamPublish(t *testing.T) {
 	}
 }
 
+func TestPublishWithTTL(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64, AllowMsgTTL: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.Publish("FOO.1", []byte("msg"), nats.MsgTTL(1*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	gotMsg, err := js.GetMsg("foo", ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "1s" {
+		t.Fatalf("Expected message to have TTL header set to 1s; got: %s", ttl)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_, err = js.GetMsg("foo", ack.Sequence)
+	if !errors.Is(err, nats.ErrMsgNotFound) {
+		t.Fatalf("Expected not found error; got: %v", err)
+	}
+}
+
+func TestMsgDeleteMarkerMaxAge(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, AllowMsgTTL: true, SubjectDeleteMarkerTTL: 50 * time.Second, MaxAge: 1 * time.Second})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish("FOO.1", []byte("msg1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	gotMsg, err := js.GetLastMsg("foo", "FOO.1")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttlMarker := gotMsg.Header.Get("Nats-Marker-Reason"); ttlMarker != "MaxAge" {
+		t.Fatalf("Expected message to have Marker-Reason header set to MaxAge; got: %s", ttlMarker)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "50s" {
+		t.Fatalf("Expected message to have Nats-TTL header set to 50s; got: %s", ttl)
+	}
+}
+
+func TestPublishAsyncWithTTL(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 64, AllowMsgTTL: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	paf, err := js.PublishAsync("FOO.1", []byte("msg"), nats.MsgTTL(1*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var ack *nats.PubAck
+	select {
+	case ack = <-paf.Ok():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive ack")
+	}
+
+	gotMsg, err := js.GetMsg("foo", ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if ttl := gotMsg.Header.Get("Nats-TTL"); ttl != "1s" {
+		t.Fatalf("Expected message to have TTL header set to 1s; got: %s", ttl)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_, err = js.GetMsg("foo", ack.Sequence)
+	if !errors.Is(err, nats.ErrMsgNotFound) {
+		t.Fatalf("Expected not found error; got: %v", err)
+	}
+}
+
 func TestJetStreamSubscribe(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -1131,6 +1227,7 @@ func TestJetStreamSubscribe_SkipConsumerLookup(t *testing.T) {
 }
 
 func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
+	t.Skip("Since v2.10.26 server sends no responders if the consumer is deleted, we need to figure out how else to test missing heartbeats")
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -1239,6 +1336,57 @@ func TestPullSubscribeFetchWithHeartbeat(t *testing.T) {
 	}
 }
 
+func TestPullSubscribeConsumerDoesNotExist(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub, err := js.PullSubscribe("foo", "")
+	if err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+	defer sub.Unsubscribe()
+
+	info, err := sub.ConsumerInfo()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := js.DeleteConsumer("TEST", info.Name); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = sub.Fetch(5)
+	if !errors.Is(err, nats.ErrNoResponders) {
+		t.Fatalf("Expected no responders error; got: %v", err)
+	}
+
+	msgs, err := sub.FetchBatch(5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	select {
+	case _, ok := <-msgs.Messages():
+		if ok {
+			t.Fatalf("Expected no messages")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Timeout waiting for messages")
+	}
+
+	if !errors.Is(msgs.Error(), nats.ErrNoResponders) {
+		t.Fatalf("Expected no responders error; got: %v", msgs.Error())
+	}
+}
+
 func TestPullSubscribeFetchDrain(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -1298,6 +1446,7 @@ func TestPullSubscribeFetchDrain(t *testing.T) {
 }
 
 func TestPullSubscribeFetchBatchWithHeartbeat(t *testing.T) {
+	t.Skip("Since v2.10.26 server sends no responders if the consumer is deleted, we need to figure out how else to test missing heartbeats")
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
 
@@ -8088,6 +8237,120 @@ func TestPublishAsyncResetPendingOnReconnect(t *testing.T) {
 	}
 }
 
+func TestPublishAsyncAckTimeout(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	errs := make(chan error, 1)
+	js, err := nc.JetStream(
+		nats.PublishAsyncTimeout(50*time.Millisecond),
+		nats.PublishAsyncErrHandler(func(js nats.JetStream, m *nats.Msg, e error) {
+			errs <- e
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	_, err = js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.PublishAsync("FOO.A", []byte("hello"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	select {
+	case <-ack.Ok():
+		t.Fatalf("Expected timeout")
+	case err := <-ack.Err():
+		if !errors.Is(err, nats.ErrAsyncPublishTimeout) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrAsyncPublishTimeout, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive ack timeout")
+	}
+
+	// check if error callback is called
+	select {
+	case err := <-errs:
+		if !errors.Is(err, nats.ErrAsyncPublishTimeout) {
+			t.Fatalf("Expected error: %v; got: %v", nats.ErrAsyncPublishTimeout, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Did not receive error from error handler")
+	}
+
+	if js.PublishAsyncPending() != 0 {
+		t.Fatalf("Expected no pending messages")
+	}
+
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("Did not receive completion signal")
+	}
+}
+
+func TestPublishAsyncClearStall(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	js, err := nc.JetStream(
+		nats.PublishAsyncTimeout(500*time.Millisecond),
+		nats.PublishAsyncMaxPending(100))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	// use stream with no acks to test stalling
+	_, err = js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for range 100 {
+		_, err := js.PublishAsync("FOO.A", []byte("hello"), nats.StallWait(1*time.Nanosecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+	// after publishing 100 messages, next one should fail with ErrTooManyStalledMsgs
+	_, err = js.PublishAsync("FOO.A", []byte("hello"), nats.StallWait(50*time.Millisecond))
+	if !errors.Is(err, nats.ErrTooManyStalledMsgs) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrTooManyStalledMsgs, err)
+	}
+
+	// after publish timeout all pending messages should be cleared
+	// and we should be able to publish again
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Did not receive completion signal")
+	}
+
+	if _, err = js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if js.PublishAsyncPending() != 1 {
+		t.Fatalf("Expected 1 pending message; got: %d", js.PublishAsyncPending())
+	}
+}
+
 func TestPublishAsyncRetryInErrHandler(t *testing.T) {
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
@@ -9617,8 +9880,8 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 	send("bar", "d")
 	send("foo", "e")
 
-	// Without AllowDirect, we should get a timeout (so reduce the timeout for this call)
-	if _, err := js.GetMsg("DGM", 1, nats.DirectGet(), nats.MaxWait(200*time.Millisecond)); err != context.DeadlineExceeded {
+	// Without AllowDirect, we should get no responders
+	if _, err := js.GetMsg("DGM", 1, nats.DirectGet()); err != nats.ErrNoResponders {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
@@ -9842,9 +10105,21 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	consInfo, err = sub.ConsumerInfo()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	var infoErr error
+	for range 5 {
+		consInfo, infoErr = sub.ConsumerInfo()
+		if infoErr != nil {
+			if errors.Is(infoErr, nats.ErrConsumerInfoOnOrderedReset) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		infoErr = nil
+		break
+	}
+	if infoErr != nil {
+		t.Fatalf("Unexpected error: %v", infoErr)
 	}
 	if consInfo.Name == consName || len(consInfo.Name) != 8 {
 		t.Fatalf("Unexpected consumer name: %q", consInfo.Name)
@@ -10869,5 +11144,124 @@ func TestPullConsumerFetchRace(t *testing.T) {
 		t.Fatalf("Error deleting consumer: %s", ert)
 	case <-time.After(1 * time.Second):
 		t.Fatalf("Expected done to be closed")
+	}
+}
+
+func TestJetStreamSubscribeConsumerCreateTimeout(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	_, err = js.SubscribeSync("", nats.BindStream("foo"), nats.Context(ctx))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error")
+	}
+}
+
+func TestJetStreamPullSubscribeFetchErrOnReconnect(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := js.PullSubscribe("FOO.123", "bar")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	errs := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		errs <- nc.ForceReconnect()
+	}()
+	_, err = sub.Fetch(1, nats.MaxWait(time.Second))
+	if !errors.Is(err, nats.ErrFetchDisconnected) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrFetchDisconnected, err)
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("Error on reconnect: %v", err)
+	}
+}
+
+func TestJetStreamPullSubscribeFetchBatchErrOnReconnect(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, js := jsClient(t, srv)
+	defer nc.Close()
+	_, err := js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	sub, err := js.PullSubscribe("FOO.123", "bar")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer sub.Unsubscribe()
+	errs := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		errs <- nc.ForceReconnect()
+	}()
+	msgs, err := sub.FetchBatch(1, nats.MaxWait(time.Second), nats.PullHeartbeat(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	for range msgs.Messages() {
+		t.Fatalf("Expected no messages, got one")
+	}
+	if !errors.Is(msgs.Error(), nats.ErrFetchDisconnected) {
+		t.Fatalf("Expected error: %v; got: %v", nats.ErrFetchDisconnected, msgs.Error())
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("Error on reconnect: %v", err)
+	}
+}
+
+func TestJetStreamSubscribeShortTimeoutWithContext(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+	// create separate JetStream context to create a stream
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.AddStream(&nats.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// subscribe with MaxWait set to nanosecond
+	// this should fail with context.DeadlineExceeded
+	jsShort, err := nc.JetStream(nats.MaxWait(time.Nanosecond))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// no context - creating consumer should fail with js.MaxWait set to nanosecond
+	_, err = jsShort.SubscribeSync("FOO.123", nats.BindStream("foo"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error: %v; got: %v", context.DeadlineExceeded, err)
+	}
+
+	// use context.Background() - creating consumer should fail with js.MaxWait set to nanosecond
+	_, err = jsShort.SubscribeSync("FOO.123", nats.BindStream("foo"), nats.Context(context.Background()))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Expected error: %v; got: %v", context.DeadlineExceeded, err)
 	}
 }

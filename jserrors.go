@@ -1,4 +1,4 @@
-// Copyright 2020-2023 The NATS Authors
+// Copyright 2020-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -59,6 +59,11 @@ var (
 
 	// ErrConsumerNotFound is an error returned when consumer with given name does not exist.
 	ErrConsumerNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerNotFound, Description: "consumer not found", Code: 404}}
+
+	// ErrConsumerCreationResponseEmpty is an error returned when the response from the server
+	// when creating a consumer is empty. This means that the state of the consumer is unknown and
+	// the consumer may not have been created successfully.
+	ErrConsumerCreationResponseEmpty JetStreamError = &jsError{message: "consumer creation response is empty"}
 
 	// ErrMsgNotFound is returned when message with provided sequence number does npt exist.
 	ErrMsgNotFound JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMessageNotFound, Description: "message not found", Code: 404}}
@@ -145,6 +150,9 @@ var (
 	// ErrConsumerLeadershipChanged is returned when pending requests are no longer valid after leadership has changed
 	ErrConsumerLeadershipChanged JetStreamError = &jsError{message: "Leadership Changed"}
 
+	// ErrConsumerInfoOnOrderedReset is returned when attempting to fetch consumer info for an ordered consumer that is currently being recreated.
+	ErrConsumerInfoOnOrderedReset JetStreamError = &jsError{message: "cannot fetch consumer info; ordered consumer is being reset"}
+
 	// ErrNoHeartbeat is returned when no heartbeat is received from server when sending requests with pull consumer.
 	ErrNoHeartbeat JetStreamError = &jsError{message: "no heartbeat received"}
 
@@ -157,6 +165,17 @@ var (
 	// Deprecated: ErrInvalidDurableName is no longer returned and will be removed in future releases.
 	// Use ErrInvalidConsumerName instead.
 	ErrInvalidDurableName = errors.New("nats: invalid durable name")
+
+	// ErrAsyncPublishTimeout is returned when waiting for ack on async publish
+	ErrAsyncPublishTimeout JetStreamError = &jsError{message: "timeout waiting for ack"}
+
+	// ErrTooManyStalledMsgs is returned when too many outstanding async
+	// messages are waiting for ack.
+	ErrTooManyStalledMsgs JetStreamError = &jsError{message: "stalled with too many outstanding async published messages"}
+
+	// ErrFetchDisconnected is returned when the connection to the server is lost
+	// while waiting for messages to be delivered on PullSubscribe.
+	ErrFetchDisconnected = &jsError{message: "disconnected during fetch"}
 )
 
 // Error code represents JetStream error codes returned by the API

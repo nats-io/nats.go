@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -695,6 +696,36 @@ func TestObjectWatch(t *testing.T) {
 		expectOk(t, err)
 		expectUpdate("C")
 	})
+
+	t.Run("stop watcher should close the channel", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+		ctx := context.Background()
+
+		obs, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "WATCH-TEST"})
+		expectOk(t, err)
+
+		watcher, err := obs.Watch(ctx)
+		expectOk(t, err)
+
+		expectInitDone := expectInitDoneF(t, watcher)
+		expectInitDone()
+
+		err = watcher.Stop()
+		expectOk(t, err)
+
+		select {
+		case _, ok := <-watcher.Updates():
+			if ok {
+				t.Fatalf("Expected channel to be closed")
+			}
+		case <-time.After(100 * time.Millisecond):
+			return
+		}
+	})
 }
 
 func TestObjectLinks(t *testing.T) {
@@ -1364,4 +1395,21 @@ func TestObjectStoreCrossDomains(t *testing.T) {
 	// Delete an object cross-domain (LEAF -> HUB)
 	err = lhos.Delete(ctx, "hub_file")
 	expectOk(t, err)
+}
+
+func TestObjectStoreDeleteNonExistent(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	err := js.DeleteObjectStore(ctx, "NONEXISTENT")
+	if err == nil {
+		t.Fatal("Expected error when deleting non-existent object store")
+	}
+	if !errors.Is(err, jetstream.ErrBucketNotFound) {
+		t.Fatalf("Expected ErrBucketNotFound, got: %v", err)
+	}
 }

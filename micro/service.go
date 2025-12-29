@@ -73,10 +73,14 @@ type (
 		subject    string
 		metadata   map[string]string
 		queueGroup string
+		qgDisabled bool
+		msgLimit   int
+		bytesLimit int
 	}
 
 	groupOpts struct {
 		queueGroup string
+		qgDisabled bool
 	}
 
 	// ErrHandler is a function used to configure a custom error handler for a service,
@@ -152,9 +156,10 @@ type (
 	}
 
 	group struct {
-		service    *service
-		prefix     string
-		queueGroup string
+		service            *service
+		prefix             string
+		queueGroup         string
+		queueGroupDisabled bool
 	}
 
 	// Verb represents a name of the monitoring service.
@@ -182,6 +187,9 @@ type (
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
 
+		// QueueGroupDisabled disables the queue group for the service.
+		QueueGroupDisabled bool `json:"queue_group_disabled"`
+
 		// StatsHandler is a user-defined custom function.
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
@@ -205,6 +213,9 @@ type (
 
 		// QueueGroup can be used to override the default queue group name.
 		QueueGroup string `json:"queue_group"`
+
+		// QueueGroupDisabled disables the queue group for the endpoint.
+		QueueGroupDisabled bool `json:"queue_group_disabled"`
 	}
 
 	// NATSError represents an error returned by a NATS Subscription.
@@ -213,6 +224,7 @@ type (
 	NATSError struct {
 		Subject     string
 		Description string
+		err         error
 	}
 
 	// service represents a configured NATS service.
@@ -364,7 +376,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			response, _ := json.Marshal(valuef())
 			if err := req.Respond(response); err != nil {
 				if err := req.Error("500", fmt.Sprintf("Error handling %s request: %s", verb, err), nil); err != nil && config.ErrorHandler != nil {
-					svc.asyncDispatcher.push(func() { config.ErrorHandler(svc, &NATSError{req.Subject(), err.Error()}) })
+					svc.asyncDispatcher.push(func() {
+						config.ErrorHandler(svc, &NATSError{Subject: req.Subject(), Description: err.Error(), err: err})
+					})
 				}
 			}
 		}
@@ -397,11 +411,11 @@ func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt)
 	if options.subject != "" {
 		subject = options.subject
 	}
-	queueGroup := queueGroupName(options.queueGroup, s.Config.QueueGroup)
-	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, s.Config.QueueGroup, options.qgDisabled, s.Config.QueueGroupDisabled)
+	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup, noQueue, options.msgLimit, options.bytesLimit)
 }
 
-func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string) error {
+func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string, noQueue bool, msgLimit, bytesLimit int) error {
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("%w: invalid endpoint name", ErrConfigValidation)
 	}
@@ -414,24 +428,49 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	endpoint := &Endpoint{
 		service: s,
 		EndpointConfig: EndpointConfig{
-			Subject:    subject,
-			Handler:    handler,
-			Metadata:   metadata,
-			QueueGroup: queueGroup,
+			Subject:            subject,
+			Handler:            handler,
+			Metadata:           metadata,
+			QueueGroup:         queueGroup,
+			QueueGroupDisabled: noQueue,
 		},
 		Name: name,
 	}
 
-	sub, err := s.nc.QueueSubscribe(
-		subject,
-		queueGroup,
-		func(m *nats.Msg) {
-			s.reqHandler(endpoint, &request{msg: m})
-		},
-	)
+	var sub *nats.Subscription
+	var err error
+	var options = endpointOpts{
+		msgLimit:   msgLimit,
+		bytesLimit: bytesLimit,
+	}
+
+	if !noQueue {
+		sub, err = s.nc.QueueSubscribe(
+			subject,
+			queueGroup,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	} else {
+		sub, err = s.nc.Subscribe(
+			subject,
+			func(m *nats.Msg) {
+				s.reqHandler(endpoint, &request{msg: m})
+			},
+		)
+	}
 	if err != nil {
 		return err
 	}
+
+	// Apply pending limits if configured
+	if options.msgLimit != 0 || options.bytesLimit != 0 {
+		if err := sub.SetPendingLimits(options.msgLimit, options.bytesLimit); err != nil {
+			return err
+		}
+	}
+
 	s.m.Lock()
 	endpoint.subscription = sub
 	s.endpoints = append(s.endpoints, endpoint)
@@ -449,11 +488,12 @@ func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	queueGroup := queueGroupName(o.queueGroup, s.Config.QueueGroup)
+	queueGroup, noQueue := resolveQueueGroup(o.queueGroup, s.Config.QueueGroup, o.qgDisabled, s.Config.QueueGroupDisabled)
 	return &group{
-		service:    s,
-		prefix:     name,
-		queueGroup: queueGroup,
+		service:            s,
+		prefix:             name,
+		queueGroup:         queueGroup,
+		queueGroupDisabled: noQueue,
 	}
 }
 
@@ -526,6 +566,7 @@ func (s *service) wrapConnectionEventCallbacks() {
 				s.Config.ErrorHandler(s, &NATSError{
 					Subject:     sub.Subject,
 					Description: err.Error(),
+					err:         err,
 				})
 			}
 			s.m.Lock()
@@ -553,6 +594,7 @@ func (s *service) wrapConnectionEventCallbacks() {
 				s.Config.ErrorHandler(s, &NATSError{
 					Subject:     sub.Subject,
 					Description: err.Error(),
+					err:         err,
 				})
 			}
 			s.m.Lock()
@@ -669,9 +711,11 @@ func (s *service) Stop() error {
 	if s.stopped {
 		return nil
 	}
-	for _, e := range s.endpoints {
+	// make a copy of s.endpoints to range over in order to stop
+	// since *Endpoint.stop manipulates s.endpoints!
+	endpointsToStop := append(make([]*Endpoint, 0, len(s.endpoints)), s.endpoints...)
+	for _, e := range endpointsToStop {
 		if err := e.stop(); err != nil {
-			fmt.Println("Error stopping endpoint: ", err)
 			return err
 		}
 	}
@@ -782,6 +826,22 @@ func (e *NATSError) Error() string {
 	return fmt.Sprintf("%q: %s", e.Subject, e.Description)
 }
 
+// Unwrap returns the underlying error if any.
+func (e *NATSError) Unwrap() error {
+	return e.err
+}
+
+// Is reports whether the target error is equal to this error.
+func (e *NATSError) Is(target error) bool {
+	if e == nil {
+		return false
+	}
+	if t, ok := target.(*NATSError); ok {
+		return e.Subject == t.Subject && e.Description == t.Description
+	}
+	return e.err != nil && errors.Is(e.err, target)
+}
+
 func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) error {
 	var options endpointOpts
 	for _, opt := range opts {
@@ -797,21 +857,25 @@ func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) e
 	if g.prefix == "" {
 		endpointSubject = subject
 	}
-	queueGroup := queueGroupName(options.queueGroup, g.queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, g.queueGroup, options.qgDisabled, g.queueGroupDisabled)
 
-	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup)
+	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup, noQueue, options.msgLimit, options.bytesLimit)
 }
 
-func queueGroupName(customQG, parentQG string) string {
-	queueGroup := customQG
-	if queueGroup == "" {
-		if parentQG != "" {
-			queueGroup = parentQG
-		} else {
-			queueGroup = DefaultQueueGroup
-		}
+func resolveQueueGroup(customQG, parentQG string, disabled, parentDisabled bool) (string, bool) {
+	if disabled {
+		return "", true
 	}
-	return queueGroup
+	if customQG != "" {
+		return customQG, false
+	}
+	if parentDisabled {
+		return "", true
+	}
+	if parentQG != "" {
+		return parentQG, false
+	}
+	return DefaultQueueGroup, false
 }
 
 func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
@@ -819,7 +883,7 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	for _, opt := range opts {
 		opt(&o)
 	}
-	queueGroup := queueGroupName(o.queueGroup, g.queueGroup)
+	queueGroup, noQueue := resolveQueueGroup(o.queueGroup, g.queueGroup, o.qgDisabled, g.queueGroupDisabled)
 
 	parts := make([]string, 0, 2)
 	if g.prefix != "" {
@@ -831,9 +895,10 @@ func (g *group) AddGroup(name string, opts ...GroupOpt) Group {
 	prefix := strings.Join(parts, ".")
 
 	return &group{
-		service:    g.service,
-		prefix:     prefix,
-		queueGroup: queueGroup,
+		service:            g.service,
+		prefix:             prefix,
+		queueGroup:         queueGroup,
+		queueGroupDisabled: noQueue,
 	}
 }
 
@@ -907,8 +972,36 @@ func WithEndpointQueueGroup(queueGroup string) EndpointOpt {
 	}
 }
 
+func WithEndpointQueueGroupDisabled() EndpointOpt {
+	return func(e *endpointOpts) error {
+		e.qgDisabled = true
+		return nil
+	}
+}
+
+// WithEndpointPendingLimits sets the pending limits for the endpoint's
+// subscription. These limits how many messages and/or bytes can be buffered in
+// memory before the subscription is terminated with nats.ErrSlowConsumer.
+// Either limit can be set to -1 to indicate no limit.
+func WithEndpointPendingLimits(msgLimit, bytesLimit int) EndpointOpt {
+	return func(e *endpointOpts) error {
+		if msgLimit == 0 && bytesLimit == 0 {
+			return fmt.Errorf("%w: at least one pending limit must be non-zero", ErrConfigValidation)
+		}
+		e.msgLimit = msgLimit
+		e.bytesLimit = bytesLimit
+		return nil
+	}
+}
+
 func WithGroupQueueGroup(queueGroup string) GroupOpt {
 	return func(g *groupOpts) {
 		g.queueGroup = queueGroup
+	}
+}
+
+func WithGroupQueueGroupDisabled() GroupOpt {
+	return func(g *groupOpts) {
+		g.qgDisabled = true
 	}
 }

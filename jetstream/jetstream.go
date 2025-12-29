@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -204,6 +205,37 @@ type (
 		// DeleteConsumer removes a consumer with given name from a stream.
 		// If consumer does not exist, ErrConsumerNotFound is returned.
 		DeleteConsumer(ctx context.Context, stream string, consumer string) error
+
+		// PauseConsumer pauses a consumer until the given time.
+		PauseConsumer(ctx context.Context, stream string, consumer string, pauseUntil time.Time) (*ConsumerPauseResponse, error)
+
+		// ResumeConsumer resumes a paused consumer.
+		ResumeConsumer(ctx context.Context, stream string, consumer string) (*ConsumerPauseResponse, error)
+
+		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
+		// given config. If consumer already exists, it will be updated (if
+		// possible). Consumer interface is returned, allowing to consume messages.
+		CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
+
+		// CreatePushConsumer creates a push consumer on a given stream with given
+		// config. If consumer already exists and the provided configuration
+		// differs from its configuration, ErrConsumerExists is returned. If the
+		// provided configuration is the same as the existing consumer, the
+		// existing consumer is returned. Consumer interface is returned,
+		// allowing to consume messages.
+		CreatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
+
+		// UpdatePushConsumer updates an existing push consumer. If consumer does not
+		// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+		// returned, allowing to consume messages.
+		UpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
+
+		// PushConsumer returns an interface to an existing push consumer, allowing processing
+		// of messages. If consumer does not exist, ErrConsumerNotFound is
+		// returned.
+		//
+		// It returns ErrNotPushConsumer if the consumer is not a push consumer (deliver subject is not set).
+		PushConsumer(ctx context.Context, stream string, consumer string) (PushConsumer, error)
 	}
 
 	// StreamListOpt is a functional option for [StreamManager.ListStreams] and
@@ -255,11 +287,17 @@ type (
 
 	// APIStats reports on API calls to JetStream for this account.
 	APIStats struct {
+		// Level is the API level for this account.
+		Level int `json:"level"`
+
 		// Total is the total number of API calls.
 		Total uint64 `json:"total"`
 
 		// Errors is the total number of API errors.
 		Errors uint64 `json:"errors"`
+
+		// Inflight is the number of API calls currently in flight.
+		Inflight uint64 `json:"inflight,omitempty"`
 	}
 
 	// AccountLimits includes the JetStream limits of the current account.
@@ -298,6 +336,14 @@ type (
 		// Domain is the domain name token used when sending JetStream requests.
 		Domain string
 
+		// DefaultTimeout is the default timeout used for JetStream API requests.
+		// This applies when the context passed to JetStream methods does not have
+		// a deadline set.
+		DefaultTimeout time.Duration
+
+		// ClientTrace enables request/response API calls tracing.
+		ClientTrace *ClientTrace
+
 		publisherOpts asyncPublisherOpts
 
 		// this is the actual prefix used in the API requests
@@ -305,7 +351,6 @@ type (
 		apiPrefix      string
 		replyPrefix    string
 		replyPrefixLen int
-		clientTrace    *ClientTrace
 	}
 
 	// ClientTrace can be used to trace API interactions for [JetStream].
@@ -401,6 +446,7 @@ func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -445,7 +491,8 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
-		APIPrefix: apiPrefix,
+		APIPrefix:      apiPrefix,
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -482,7 +529,8 @@ func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStrea
 		publisherOpts: asyncPublisherOpts{
 			maxpa: defaultAsyncPubAckInflight,
 		},
-		Domain: domain,
+		Domain:         domain,
+		DefaultTimeout: defaultAPITimeout,
 	}
 	setReplyPrefix(nc, &jsOpts)
 	for _, opt := range opts {
@@ -508,7 +556,13 @@ func (js *jetStream) Conn() *nats.Conn {
 }
 
 func (js *jetStream) Options() JetStreamOptions {
-	return js.opts
+	opts := js.opts
+	// Return a copy of ClientTrace to prevent modification
+	if opts.ClientTrace != nil {
+		clientTraceCopy := *opts.ClientTrace
+		opts.ClientTrace = &clientTraceCopy
+	}
+	return opts
 }
 
 // CreateStream creates a new stream with given config and returns an
@@ -522,27 +576,10 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 	if cancel != nil {
 		defer cancel()
 	}
-	ncfg := cfg
-	// If we have a mirror and an external domain, convert to ext.APIPrefix.
-	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
-		// Copy so we do not change the caller's version.
-		ncfg.Mirror = ncfg.Mirror.copy()
-		if err := ncfg.Mirror.convertDomain(); err != nil {
-			return nil, err
-		}
-	}
 
-	// Check sources for the same.
-	if len(ncfg.Sources) > 0 {
-		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
-		for i, ss := range ncfg.Sources {
-			if ss.Domain != "" {
-				ncfg.Sources[i] = ss.copy()
-				if err := ncfg.Sources[i].convertDomain(); err != nil {
-					return nil, err
-				}
-			}
-		}
+	ncfg, err := convertStreamConfigDomains(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := json.Marshal(ncfg)
@@ -572,10 +609,18 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
-		for i := range cfg.Sources {
-			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
-				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
-			}
+
+		// the sources list in the response is not ordered
+		cfgNumTransforms := make([]int, len(cfg.Sources))
+		respNumTransforms := make([]int, len(resp.Config.Sources))
+		for i, cfgSource := range cfg.Sources {
+			cfgNumTransforms[i] = len(cfgSource.SubjectTransforms)
+			respNumTransforms[i] = len(resp.Config.Sources[i].SubjectTransforms)
+		}
+		slices.Sort(cfgNumTransforms)
+		slices.Sort(respNumTransforms)
+		if !slices.Equal(cfgNumTransforms, respNumTransforms) {
+			return nil, ErrStreamSubjectTransformNotSupported
 		}
 	}
 
@@ -614,6 +659,36 @@ func (ss *StreamSource) copy() *StreamSource {
 	return &nss
 }
 
+// convertStreamConfigDomains converts domain configurations to external configurations
+// in both mirror and sources of a StreamConfig. It creates a copy of the config to avoid
+// modifying the caller's version.
+func convertStreamConfigDomains(cfg StreamConfig) (StreamConfig, error) {
+	ncfg := cfg
+	// If we have a mirror and an external domain, convert to ext.APIPrefix.
+	if ncfg.Mirror != nil && ncfg.Mirror.Domain != "" {
+		// Copy so we do not change the caller's version.
+		ncfg.Mirror = ncfg.Mirror.copy()
+		if err := ncfg.Mirror.convertDomain(); err != nil {
+			return StreamConfig{}, err
+		}
+	}
+
+	// Check sources for the same.
+	if len(ncfg.Sources) > 0 {
+		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
+		for i, ss := range ncfg.Sources {
+			if ss.Domain != "" {
+				ncfg.Sources[i] = ss.copy()
+				if err := ncfg.Sources[i].convertDomain(); err != nil {
+					return StreamConfig{}, err
+				}
+			}
+		}
+	}
+
+	return ncfg, nil
+}
+
 // UpdateStream updates an existing stream. If stream does not exist,
 // ErrStreamNotFound is returned.
 func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
@@ -625,7 +700,12 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		defer cancel()
 	}
 
-	req, err := json.Marshal(cfg)
+	ncfg, err := convertStreamConfigDomains(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := json.Marshal(ncfg)
 	if err != nil {
 		return nil, err
 	}
@@ -652,10 +732,18 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		if len(cfg.Sources) != len(resp.Config.Sources) {
 			return nil, ErrStreamSourceNotSupported
 		}
-		for i := range cfg.Sources {
-			if len(cfg.Sources[i].SubjectTransforms) != 0 && len(resp.Sources[i].SubjectTransforms) == 0 {
-				return nil, ErrStreamSourceMultipleFilterSubjectsNotSupported
-			}
+
+		// the sources list in the response is not ordered
+		cfgNumTransforms := make([]int, len(cfg.Sources))
+		respNumTransforms := make([]int, len(resp.Config.Sources))
+		for i, cfgSource := range cfg.Sources {
+			cfgNumTransforms[i] = len(cfgSource.SubjectTransforms)
+			respNumTransforms[i] = len(resp.Config.Sources[i].SubjectTransforms)
+		}
+		slices.Sort(cfgNumTransforms)
+		slices.Sort(respNumTransforms)
+		if !slices.Equal(cfgNumTransforms, respNumTransforms) {
+			return nil, ErrStreamSubjectTransformNotSupported
 		}
 	}
 
@@ -742,7 +830,7 @@ func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, 
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreateOrUpdate)
+	return upsertPullConsumer(ctx, js, stream, cfg, consumerActionCreateOrUpdate)
 }
 
 // CreateConsumer creates a consumer on a given stream with given
@@ -755,7 +843,7 @@ func (js *jetStream) CreateConsumer(ctx context.Context, stream string, cfg Cons
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, consumerActionCreate)
+	return upsertPullConsumer(ctx, js, stream, cfg, consumerActionCreate)
 }
 
 // UpdateConsumer updates an existing consumer. If consumer does not
@@ -765,7 +853,7 @@ func (js *jetStream) UpdateConsumer(ctx context.Context, stream string, cfg Cons
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
-	return upsertConsumer(ctx, js, stream, cfg, consumerActionUpdate)
+	return upsertPullConsumer(ctx, js, stream, cfg, consumerActionUpdate)
 }
 
 // OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
@@ -776,11 +864,15 @@ func (js *jetStream) OrderedConsumer(ctx context.Context, stream string, cfg Ord
 	if err := validateStreamName(stream); err != nil {
 		return nil, err
 	}
+	namePrefix := cfg.NamePrefix
+	if namePrefix == "" {
+		namePrefix = nuid.Next()
+	}
 	oc := &orderedConsumer{
 		js:         js,
 		cfg:        &cfg,
 		stream:     stream,
-		namePrefix: nuid.Next(),
+		namePrefix: namePrefix,
 		doReset:    make(chan struct{}, 1),
 	}
 	consCfg := oc.getConsumerConfig()
@@ -810,6 +902,63 @@ func (js *jetStream) DeleteConsumer(ctx context.Context, stream string, name str
 		return err
 	}
 	return deleteConsumer(ctx, js, stream, name)
+}
+
+// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
+// given config. If consumer already exists, it will be updated (if
+// possible). Consumer interface is returned, allowing to consume messages.
+func (js *jetStream) CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return upsertPushConsumer(ctx, js, stream, cfg, consumerActionCreateOrUpdate)
+}
+
+// CreatePushConsumer creates a push consumer on a given stream with given
+// config. If consumer already exists and the provided configuration
+// differs from its configuration, ErrConsumerExists is returned. If the
+// provided configuration is the same as the existing consumer, the
+// existing consumer is returned. Consumer interface is returned,
+// allowing to consume messages.
+func (js *jetStream) CreatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return upsertPushConsumer(ctx, js, stream, cfg, consumerActionCreate)
+}
+
+// UpdatePushConsumer updates an existing push consumer. If consumer does not
+// exist, ErrConsumerDoesNotExist is returned. Consumer interface is
+// returned, allowing to consume messages.
+func (js *jetStream) UpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return upsertPushConsumer(ctx, js, stream, cfg, consumerActionUpdate)
+}
+
+// PushConsumer returns an interface to an existing consumer, allowing processing
+// of messages. If consumer does not exist, ErrConsumerNotFound is
+// returned.
+func (js *jetStream) PushConsumer(ctx context.Context, stream string, name string) (PushConsumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return getPushConsumer(ctx, js, stream, name)
+}
+
+func (js *jetStream) PauseConsumer(ctx context.Context, stream string, consumer string, pauseUntil time.Time) (*ConsumerPauseResponse, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return pauseConsumer(ctx, js, stream, consumer, &pauseUntil)
+}
+
+func (js *jetStream) ResumeConsumer(ctx context.Context, stream string, consumer string) (*ConsumerPauseResponse, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return resumeConsumer(ctx, js, stream, consumer)
 }
 
 func validateStreamName(stream string) error {
@@ -1069,7 +1218,7 @@ func (js *jetStream) wrapContextWithoutDeadline(ctx context.Context) (context.Co
 	if _, ok := ctx.Deadline(); ok {
 		return ctx, nil
 	}
-	return context.WithTimeout(ctx, defaultAPITimeout)
+	return context.WithTimeout(ctx, js.opts.DefaultTimeout)
 }
 
 // CleanupPublisher will cleanup the publishing side of JetStreamContext.

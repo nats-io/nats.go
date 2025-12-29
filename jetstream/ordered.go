@@ -39,7 +39,7 @@ type (
 		consumerType      consumerType
 		doReset           chan struct{}
 		resetInProgress   atomic.Uint32
-		userErrHandler    ConsumeErrHandlerFunc
+		userErrHandler    ConsumeErrHandler
 		stopAfter         int
 		stopAfterMsgsLeft chan int
 		withStopAfter     bool
@@ -80,6 +80,8 @@ var (
 //
 // See [Consumer.Consume] for more details.
 func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error) {
+	c.Lock()
+	defer c.Unlock()
 	if (c.consumerType == consumerTypeNotSet || c.consumerType == consumerTypeConsume) && c.currentConsumer == nil {
 		err := c.reset()
 		if err != nil {
@@ -201,20 +203,32 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 func (c *orderedConsumer) errHandler(serial int) func(cc ConsumeContext, err error) {
 	return func(cc ConsumeContext, err error) {
 		c.Lock()
-		defer c.Unlock()
+
 		if c.userErrHandler != nil && !errors.Is(err, errOrderedSequenceMismatch) && !errors.Is(err, errConnected) {
 			c.userErrHandler(cc, err)
 		}
+		if errors.Is(err, ErrConnectionClosed) {
+			if c.subscription != nil {
+				c.Unlock()
+				c.subscription.Stop()
+				return
+			}
+			c.Unlock()
+			return
+		}
+
 		if errors.Is(err, ErrNoHeartbeat) ||
 			errors.Is(err, errOrderedSequenceMismatch) ||
 			errors.Is(err, ErrConsumerDeleted) ||
-			errors.Is(err, errConnected) {
+			errors.Is(err, errConnected) ||
+			errors.Is(err, nats.ErrNoResponders) {
 			// only reset if serial matches the current consumer serial and there is no reset in progress
 			if serial == c.serial && c.resetInProgress.Load() == 0 {
 				c.resetInProgress.Store(1)
 				c.doReset <- struct{}{}
 			}
 		}
+		c.Unlock()
 	}
 }
 
@@ -268,10 +282,21 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	return sub, nil
 }
 
-func (s *orderedSubscription) Next() (Msg, error) {
+func (s *orderedSubscription) Next(opts ...NextOpt) (Msg, error) {
 	for {
-		msg, err := s.consumer.currentSub.Next()
+		msg, err := s.consumer.currentSub.Next(opts...)
 		if err != nil {
+			// Check for errors which should be returned directly
+			// without resetting the consumer
+			if errors.Is(err, ErrInvalidOption) {
+				return nil, err
+			}
+			if errors.Is(err, nats.ErrTimeout) {
+				return nil, err
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
 			if errors.Is(err, ErrMsgIteratorClosed) {
 				s.Stop()
 				return nil, err
@@ -358,29 +383,23 @@ func (s *orderedSubscription) Drain() {
 // fully stopped/drained. When the channel is closed, no more messages
 // will be received and processing is complete.
 func (s *orderedSubscription) Closed() <-chan struct{} {
-	s.consumer.Lock()
-	defer s.consumer.Unlock()
 	closedCh := make(chan struct{})
 
 	go func() {
-		for {
-			s.consumer.Lock()
-			if s.consumer.currentSub == nil {
-				return
-			}
+		// First wait for s.done to be closed
+		<-s.done
 
+		// Then ensure underlying consumer is also closed (it may still be draining)
+		s.consumer.Lock()
+		if s.consumer.currentSub != nil {
 			closed := s.consumer.currentSub.Closed()
 			s.consumer.Unlock()
-
-			// wait until the underlying pull consumer is closed
 			<-closed
-			// if the subscription is closed and ordered consumer is closed as well,
-			// send a signal that the Consume() is fully stopped
-			if s.closed.Load() == 1 {
-				close(closedCh)
-				return
-			}
+		} else {
+			s.consumer.Unlock()
 		}
+
+		close(closedCh)
 	}()
 	return closedCh
 }
