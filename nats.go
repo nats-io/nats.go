@@ -6133,8 +6133,8 @@ func (nc *Conn) RemoveStatusListener(ch chan (Status)) {
 	}
 
 	for _, listeners := range nc.statListeners {
-		for l := range listeners {
-			delete(listeners, l)
+		for range listeners {
+			delete(listeners, ch)
 		}
 	}
 }

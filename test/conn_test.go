@@ -3192,6 +3192,45 @@ func TestRemoveStatusListener(t *testing.T) {
 			t.Fatal("Expected to receive done signal")
 		}
 	})
+	t.Run("does not remove other listeners", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		defer nc.Close()
+
+		// Create two status listeners for the same status
+		statusCh1 := nc.StatusChanged(nats.CLOSED)
+		statusCh2 := nc.StatusChanged(nats.CLOSED)
+
+		// Remove only the first listener
+		nc.RemoveStatusListener(statusCh1)
+
+		// Verify first channel is closed
+		select {
+		case _, ok := <-statusCh1:
+			if ok {
+				t.Fatal("Expected channel 1 to be closed")
+			}
+		default:
+			t.Fatal("Expected channel 1 to be closed")
+		}
+
+		// Trigger CLOSED status
+		nc.Close()
+
+		// Second listener should still receive the event
+		select {
+		case status := <-statusCh2:
+			if status != nats.CLOSED {
+				t.Fatalf("Expected CLOSED status, got %v", status)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Expected second listener to receive CLOSED status")
+		}
+	})
 }
 
 func TestTLSHandshakeFirst(t *testing.T) {
