@@ -1502,3 +1502,289 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 		t.Errorf("Unexpected number of connections: %v", got)
 	}
 }
+
+func TestReconnectToServerCallback(t *testing.T) {
+	t.Run("select custom server", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+		defer srv2.Shutdown()
+
+		url1 := srv1.ClientURL()
+		url2 := srv2.ClientURL()
+
+		var callbackCalled atomic.Int32
+		reconnectCh := make(chan bool, 1)
+
+		nc, err := nats.Connect(
+			url1+","+url2,
+			nats.ReconnectWait(100*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.DontRandomize(),
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
+				callbackCalled.Add(1)
+				for _, srv := range servers {
+					if srv.URL.String() == url2 {
+						return srv.URL, false
+					}
+				}
+				return servers[0].URL, false
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				select {
+				case reconnectCh <- true:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.ConnectedUrl() != url1 {
+			t.Fatalf("Expected initial connection to %s, got %s", url1, nc.ConnectedUrl())
+		}
+
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatalf("Failed to force reconnect: %v", err)
+		}
+
+		select {
+		case <-reconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+
+		if callbackCalled.Load() == 0 {
+			t.Fatal("Callback was not invoked")
+		}
+
+		if nc.ConnectedUrl() != url2 {
+			t.Fatalf("Expected connection to %s after callback selection, got %s", url2, nc.ConnectedUrl())
+		}
+	})
+
+	t.Run("wait before reconnect", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+		defer srv2.Shutdown()
+
+		url1 := srv1.ClientURL()
+		url2 := srv2.ClientURL()
+
+		reconnectCh := make(chan bool, 1)
+
+		nc, err := nats.Connect(
+			url1+","+url2,
+			nats.ReconnectWait(500*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.DontRandomize(),
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
+				for _, srv := range servers {
+					if srv.URL.String() == url2 {
+						return srv.URL, true
+					}
+				}
+				return servers[0].URL, true
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				select {
+				case reconnectCh <- true:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.ConnectedUrl() != url1 {
+			t.Fatalf("Expected initial connection to %s, got %s", url1, nc.ConnectedUrl())
+		}
+		now := time.Now()
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatalf("Failed to force reconnect: %v", err)
+		}
+
+		select {
+		case <-reconnectCh:
+			if time.Since(now) < 500*time.Millisecond {
+				t.Fatal("Reconnect occurred too quickly, expected wait time, got:", time.Since(now))
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+	})
+
+	t.Run("dynamic server addition", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+
+		url1 := srv1.ClientURL()
+
+		newSrv := RunServerOnPort(-1)
+		defer newSrv.Shutdown()
+		newURL := newSrv.ClientURL()
+
+		reconnectCh := make(chan bool, 1)
+
+		nc, err := nats.Connect(
+			url1,
+			nats.ReconnectWait(50*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
+				targetURL, _ := url.Parse(newURL)
+				return targetURL, false
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				reconnectCh <- true
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		srv1.Shutdown()
+
+		select {
+		case <-reconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+
+		if nc.ConnectedUrl() != newURL {
+			t.Fatalf("Expected connection to %s, got %s", newURL, nc.ConnectedUrl())
+		}
+	})
+}
+
+func TestSetServerPool(t *testing.T) {
+	t.Run("reconnect to server from new pool", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+		defer srv2.Shutdown()
+
+		url1 := srv1.ClientURL()
+		url2 := srv2.ClientURL()
+
+		reconnectCh := make(chan bool, 1)
+		disconnectCh := make(chan bool, 1)
+
+		nc, err := nats.Connect(
+			url1,
+			nats.ReconnectWait(50*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) {
+				select {
+				case disconnectCh <- true:
+				default:
+				}
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				select {
+				case reconnectCh <- true:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		if nc.ConnectedUrl() != url1 {
+			t.Fatalf("Expected initial connection to %s, got %s", url1, nc.ConnectedUrl())
+		}
+
+		srv3 := RunServerOnPort(-1)
+		defer srv3.Shutdown()
+		url3 := srv3.ClientURL()
+
+		if err := nc.SetServerPool([]string{url2, url3}); err != nil {
+			t.Fatalf("Failed to set server pool: %v", err)
+		}
+
+		srv1.Shutdown()
+
+		select {
+		case <-disconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for disconnect")
+		}
+
+		select {
+		case <-reconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+
+		connectedURL := nc.ConnectedUrl()
+		if connectedURL != url2 && connectedURL != url3 {
+			t.Fatalf("Expected connection to %s or %s, got %s", url2, url3, connectedURL)
+		}
+	})
+
+	t.Run("atomic operation - partial failure doesn't modify pool", func(t *testing.T) {
+		srv := RunServerOnPort(-1)
+		defer srv.Shutdown()
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		originalPool := nc.ServerPool()
+		if len(originalPool) != 1 {
+			t.Fatalf("Expected 1 server in original pool, got %d", len(originalPool))
+		}
+
+		err = nc.SetServerPool([]string{
+			"nats://localhost:4222",
+			"invalid://bad url with spaces",
+			"nats://localhost:4223",
+		})
+		if err == nil {
+			t.Fatal("Expected error from invalid URL, got nil")
+		}
+
+		currentPool := nc.ServerPool()
+		if len(currentPool) != len(originalPool) {
+			t.Fatalf("Pool was modified on error: expected %d servers, got %d", len(originalPool), len(currentPool))
+		}
+		if currentPool[0].URL.String() != originalPool[0].URL.String() {
+			t.Fatalf("Pool was modified on error: expected %s, got %s", originalPool[0].URL.String(), currentPool[0].URL.String())
+		}
+	})
+
+	t.Run("atomic operation - websocket mixing doesn't modify pool", func(t *testing.T) {
+		srv := RunServerOnPort(-1)
+		defer srv.Shutdown()
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		originalPool := nc.ServerPool()
+
+		err = nc.SetServerPool([]string{
+			"nats://localhost:4222",
+			"ws://localhost:8080",
+		})
+		if err == nil {
+			t.Fatal("Expected error from mixing websocket and non-websocket URLs")
+		}
+
+		currentPool := nc.ServerPool()
+		if len(currentPool) != len(originalPool) {
+			t.Fatalf("Pool was modified on error: expected %d servers, got %d", len(originalPool), len(currentPool))
+		}
+	})
+}
