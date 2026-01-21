@@ -1264,7 +1264,7 @@ func (js *jetStream) cleanupReplySub() {
 		js.publisher.replySub = nil
 	}
 	if js.publisher.connStatusCh != nil {
-		close(js.publisher.connStatusCh)
+		js.conn.RemoveStatusListener(js.publisher.connStatusCh)
 		js.publisher.connStatusCh = nil
 	}
 	js.publisher.Unlock()
