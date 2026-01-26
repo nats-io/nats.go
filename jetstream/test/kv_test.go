@@ -263,7 +263,7 @@ func TestKeyValueHistory(t *testing.T) {
 		age, err := strconv.Atoi(string(v.Value()))
 		expectOk(t, err)
 		if age != i+62 {
-			t.Fatalf("Expected data value of %d, got %d", i+22, age)
+			t.Fatalf("Expected data value of %d, got %d", i+62, age)
 		}
 	}
 }
