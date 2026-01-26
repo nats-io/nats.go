@@ -363,7 +363,7 @@ func TestConsumerOverflow(t *testing.T) {
 		// now we should get 91 messages, because `Consume` will
 		// keep getting messages until it drops below min pending
 		if count.Load() != 91 {
-			t.Fatalf("Expected 10 messages, got %d", count.Load())
+			t.Fatalf("Expected 91 messages, got %d", count.Load())
 		}
 		cc.Stop()
 
@@ -405,7 +405,7 @@ func TestConsumerOverflow(t *testing.T) {
 		// we should process the rest of the stream minus the 10 unacked messages
 		// 200 - 91 - 10 = 99
 		if count.Load() != 99 {
-			t.Fatalf("Expected 5 messages, got %d", count.Load())
+			t.Fatalf("Expected 99 messages, got %d", count.Load())
 		}
 	})
 
@@ -501,7 +501,7 @@ func TestConsumerOverflow(t *testing.T) {
 		// now we should get 91 messages, because `Consume` will
 		// keep getting messages until it drops below min pending
 		if count.Load() != 91 {
-			t.Fatalf("Expected 10 messages, got %d", count.Load())
+			t.Fatalf("Expected 91 messages, got %d", count.Load())
 		}
 		it.Stop()
 		<-done
@@ -542,7 +542,7 @@ func TestConsumerOverflow(t *testing.T) {
 		// we should process the rest of the stream minus the 10 unacked messages
 		// 200 - 91 - 10 = 99
 		if count.Load() != 99 {
-			t.Fatalf("Expected 5 messages, got %d", count.Load())
+			t.Fatalf("Expected 99 messages, got %d", count.Load())
 		}
 		it.Stop()
 		<-done
