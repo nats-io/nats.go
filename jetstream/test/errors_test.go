@@ -163,7 +163,7 @@ func TestJetStreamErrors(t *testing.T) {
 
 		// check directly to var (backwards compatible)
 		if err != jetstream.ErrStreamNameRequired {
-			t.Fatalf("Expected: %v; got: %v", jetstream.ErrInvalidStreamName, err)
+			t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
 		}
 
 		// matching via errors.Is
