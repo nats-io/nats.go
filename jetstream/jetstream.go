@@ -95,8 +95,8 @@ type (
 		// be bound to a stream) and nats.Message.
 		//
 		// PublishMsgAsync does not guarantee that the message has been
-		// sent to the server and thus messages can be stored in the stream
 		// received by the server. It only guarantees that the message has been
+		// sent to the server and thus messages can be stored in the stream
 		// out of order in case of retries.
 		PublishMsgAsync(msg *nats.Msg, opts ...PublishOpt) (PubAckFuture, error)
 
