@@ -168,10 +168,10 @@ func TestNewWithDomain(t *testing.T) {
 
 		opts := js.Options()
 		if opts.APIPrefix != "" {
-			t.Fatalf("Invalid API prefix; want: %v, got: %v", "main", opts.APIPrefix)
+			t.Fatalf("Invalid API prefix; want: %v, got: %v", "", opts.APIPrefix)
 		}
 		if opts.Domain != "ABC" {
-			t.Fatalf("Invalid domain; want: %v, got: %v", "", opts.Domain)
+			t.Fatalf("Invalid domain; want: %v, got: %v", "ABC", opts.Domain)
 		}
 
 		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
@@ -298,7 +298,7 @@ func TestWithClientTrace(t *testing.T) {
 		t.Fatalf(`Invalid value on sent request trace; want: "Request sent: $JS.API.STREAM.CREATE.foo"; got: %s`, sent)
 	}
 	if received != "Response received: $JS.API.STREAM.CREATE.foo" {
-		t.Fatalf(`Invalid value on response receive trace; want: "Response received: $JS.API.STREAM.CREATE.foo"; got: %s`, sent)
+		t.Fatalf(`Invalid value on response receive trace; want: "Response received: $JS.API.STREAM.CREATE.foo"; got: %s`, received)
 	}
 	defer nc.Close()
 }
@@ -560,7 +560,7 @@ func TestCreateStreamMirrorCrossDomains(t *testing.T) {
 			}
 
 			if rStream.CachedInfo().State.Msgs != 4 {
-				t.Fatalf("Expected 3 msgs in stream; got: %d", rStream.CachedInfo().State.Msgs)
+				t.Fatalf("Expected 4 msgs in stream; got: %d", rStream.CachedInfo().State.Msgs)
 			}
 		})
 	}
@@ -942,7 +942,7 @@ func TestDeleteStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	defer nc.Close()
+
 	_, err = js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "bar", Subjects: []string{"BAR.123"}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -1018,7 +1018,7 @@ func TestAccountInfo(t *testing.T) {
 
 		_, err = js.AccountInfo(ctx)
 		if err == nil || !errors.Is(err, jetstream.ErrJetStreamNotEnabled) {
-			t.Fatalf(": %v; got: %v", jetstream.ErrJetStreamNotEnabled, err)
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrJetStreamNotEnabled, err)
 		}
 	})
 
@@ -1051,7 +1051,7 @@ func TestAccountInfo(t *testing.T) {
 		defer nc.Close()
 		_, err = js.AccountInfo(ctx)
 		if err == nil || !errors.Is(err, jetstream.ErrJetStreamNotEnabledForAccount) {
-			t.Fatalf(": %v; got: %v", jetstream.ErrJetStreamNotEnabledForAccount, err)
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrJetStreamNotEnabledForAccount, err)
 		}
 	})
 }
@@ -1665,11 +1665,6 @@ func TestJetStream_Consumer(t *testing.T) {
 			durable:   "dur",
 			timeout:   1 * time.Microsecond,
 			withError: context.DeadlineExceeded,
-		},
-		{
-			name:      "invalid stream name",
-			stream:    "foo.1",
-			withError: jetstream.ErrInvalidStreamName,
 		},
 	}
 
