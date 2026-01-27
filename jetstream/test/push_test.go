@@ -234,7 +234,7 @@ func TestPushConsumerConsume(t *testing.T) {
 		defer cc.Stop()
 		wg.Wait()
 		if len(msgs) != 2*len(testMsgs) {
-			t.Fatalf("Unexpected received message count; want %d; got %d", len(testMsgs), len(msgs))
+			t.Fatalf("Unexpected received message count; want %d; got %d", 2*len(testMsgs), len(msgs))
 		}
 
 	})
