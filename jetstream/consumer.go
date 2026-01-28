@@ -497,13 +497,13 @@ func resumeConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 }
 
 func validateConsumerName(name string) error {
-    if name == "" {
-        return fmt.Errorf("%w: name is required", ErrInvalidConsumerName)
-    }
-    if strings.ContainsAny(name, ">*. /\\") {
-        return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, name)
-    }
-    return nil
+	if name == "" {
+		return fmt.Errorf("%w: name is required", ErrInvalidConsumerName)
+	}
+	if strings.ContainsAny(name, ">*. /\\") {
+		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, name)
+	}
+	return nil
 }
 
 func unpinConsumer(ctx context.Context, js *jetStream, stream, consumer, group string) error {
