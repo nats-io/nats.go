@@ -222,7 +222,7 @@ type (
 		// messages to be delivered.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 
-		// Replicas is the number of replicas for the consumer's state. By 
+		// Replicas is the number of replicas for the consumer's state. By
 		// default, consumers inherit the number of replicas from the stream.
 		Replicas int `json:"num_replicas"`
 
@@ -302,7 +302,7 @@ type (
 
 		// ReplayPolicy defines the rate at which messages are sent to the
 		// consumer. If ReplayOriginalPolicy is set, messages are sent in the
-		// same intervals in which they were stored on the stream. This can be 
+		// same intervals in which they were stored on the stream. This can be
 		// used e.g. to simulate production traffic in development environments.
 		// If ReplayInstantPolicy is set, messages are sent as fast as possible.
 		// Defaults to ReplayInstantPolicy.
