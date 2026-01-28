@@ -216,14 +216,14 @@ type (
 		// settings from stream's ConsumerLimits. If neither are set, server
 		// default is 5 seconds.
 		//
-		// A consumer is considered inactive there are not pull requests
-		// received by the server (for pull consumers), or no interest detected
-		// on deliver subject (for push consumers), not if there are no
+		// A consumer is considered inactive if no pull requests are received by
+		// the server (for pull consumers), or no interest is detected on the
+		// deliver subject (for push consumers), not if there are no
 		// messages to be delivered.
 		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
 
-		// Replicas the number of replicas for the consumer's state. By default,
-		// consumers inherit the number of replicas from the stream.
+		// Replicas is the number of replicas for the consumer's state. By 
+		// default, consumers inherit the number of replicas from the stream.
 		Replicas int `json:"num_replicas"`
 
 		// MemoryStorage is a flag to force the consumer to use memory storage
@@ -243,19 +243,19 @@ type (
 		// PauseUntil is for suspending the consumer until the deadline.
 		PauseUntil *time.Time `json:"pause_until,omitempty"`
 
-		// PriorityPolicy represents he priority policy the consumer is set to.
+		// PriorityPolicy represents the priority policy the consumer is set to.
 		// Requires nats-server v2.11.0 or later.
 		PriorityPolicy PriorityPolicy `json:"priority_policy,omitempty"`
 
 		// PinnedTTL represents the time after which the client will be unpinned
-		// if no new pull requests are sent.Used with PriorityPolicyPinned.
+		// if no new pull requests are sent. Used with PriorityPolicyPinned.
 		// Requires nats-server v2.11.0 or later.
 		PinnedTTL time.Duration `json:"priority_timeout,omitempty"`
 
 		// PriorityGroups is a list of priority groups this consumer supports.
 		PriorityGroups []string `json:"priority_groups,omitempty"`
 
-		// Fields specific for push consumers:
+		// Fields specific to push consumers:
 
 		// DeliverSubject is the subject to deliver messages to for push consumers
 		DeliverSubject string `json:"deliver_subject,omitempty"`
@@ -264,9 +264,9 @@ type (
 		DeliverGroup string `json:"deliver_group,omitempty"`
 
 		// FlowControl is a flag to enable flow control for the consumer.
-		// When set, server will regularly send an empty message with Status
-		// header 100 and a reply subject, consumers must reply to these
-		// messages to control the rate of message delivery
+		// When set, the server will regularly send an empty message with status
+		// header 100 and a reply subject. Consumers must reply to these
+		// messages to control the rate of message delivery.
 		FlowControl bool `json:"flow_control,omitempty"`
 
 		// IdleHeartbeat enables push consumer idle heartbeat messages.
@@ -302,9 +302,9 @@ type (
 
 		// ReplayPolicy defines the rate at which messages are sent to the
 		// consumer. If ReplayOriginalPolicy is set, messages are sent in the
-		// same intervals in which they were stored on stream. This can be used
-		// e.g. to simulate production traffic in development environments. If
-		// ReplayInstantPolicy is set, messages are sent as fast as possible.
+		// same intervals in which they were stored on the stream. This can be 
+		// used e.g. to simulate production traffic in development environments.
+		// If ReplayInstantPolicy is set, messages are sent as fast as possible.
 		// Defaults to ReplayInstantPolicy.
 		ReplayPolicy ReplayPolicy `json:"replay_policy"`
 
@@ -317,12 +317,12 @@ type (
 		// (and no payload). Defaults to false.
 		HeadersOnly bool `json:"headers_only,omitempty"`
 
-		// Maximum number of attempts for the consumer to be recreated in a
-		// single recreation cycle. Defaults to unlimited.
+		// MaxResetAttempts is the maximum number of attempts to recreate the
+		// consumer in a single recovery cycle. Defaults to unlimited.
 		MaxResetAttempts int
 
 		// Metadata is a set of application-defined key-value pairs for
-		// associating metadata on the consumer. This feature requires
+		// associating metadata with the consumer. This feature requires
 		// nats-server v2.10.0 or later.
 		Metadata map[string]string `json:"metadata,omitempty"`
 
@@ -386,7 +386,7 @@ func (p *PriorityPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("prioritized"):
 		*p = PriorityPolicyPrioritized
 	default:
-		return fmt.Errorf("nats: can not unmarshal %q", data)
+		return fmt.Errorf("nats: cannot unmarshal %q", data)
 	}
 	return nil
 }
@@ -446,7 +446,7 @@ func (p *DeliverPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("last_per_subject"):
 		*p = DeliverLastPerSubjectPolicy
 	default:
-		return fmt.Errorf("nats: can not unmarshal %q", data)
+		return fmt.Errorf("nats: cannot unmarshal %q", data)
 	}
 
 	return nil
@@ -509,7 +509,7 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("explicit"):
 		*p = AckExplicitPolicy
 	default:
-		return fmt.Errorf("nats: can not unmarshal %q", data)
+		return fmt.Errorf("nats: cannot unmarshal %q", data)
 	}
 	return nil
 }
@@ -554,7 +554,7 @@ func (p *ReplayPolicy) UnmarshalJSON(data []byte) error {
 	case jsonString("original"):
 		*p = ReplayOriginalPolicy
 	default:
-		return fmt.Errorf("nats: can not unmarshal %q", data)
+		return fmt.Errorf("nats: cannot unmarshal %q", data)
 	}
 	return nil
 }
