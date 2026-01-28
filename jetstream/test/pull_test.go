@@ -282,7 +282,7 @@ func TestPullConsumerFetch(t *testing.T) {
 		}
 
 		if msgsNum != len(testMsgs) {
-			t.Fatalf("Expected 5 messages, got: %d", msgsNum)
+			t.Fatalf("Expected %d messages, got: %d", len(testMsgs), msgsNum)
 		}
 	})
 
@@ -388,7 +388,7 @@ func TestPullConsumerFetch(t *testing.T) {
 			i++
 		}
 		if i != len(testMsgs) {
-			t.Fatalf("Expected 5 messages; got: %d", i)
+			t.Fatalf("Expected %d messages; got: %d", len(testMsgs), i)
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
@@ -679,7 +679,7 @@ func TestPullConsumerFetchRace(t *testing.T) {
 		i++
 	}
 	if i != 3 {
-		t.Fatalf("Invalid number of messages received; want: %d; got: %d", 5, i)
+		t.Fatalf("Invalid number of messages received; want: %d; got: %d", 3, i)
 	}
 	select {
 	case err := <-errCh:
@@ -796,7 +796,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			i++
 		}
 		if i != 4 {
-			t.Fatalf("Expected 5 messages; got: %d", i)
+			t.Fatalf("Expected 4 messages; got: %d", i)
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
@@ -840,7 +840,7 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			i++
 		}
 		if i != 0 {
-			t.Fatalf("Expected 5 messages; got: %d", i)
+			t.Fatalf("Expected 0 messages; got: %d", i)
 		}
 		if msgs.Error() != nil {
 			t.Fatalf("Unexpected error during fetch: %v", msgs.Error())
