@@ -1024,7 +1024,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrMsgIteratorClosed, err)
 		}
 		if len(msgs) != 150 {
-			t.Fatalf("Unexpected received message count; want %d; got %d", 50, len(msgs))
+			t.Fatalf("Unexpected received message count; want %d; got %d", 150, len(msgs))
 		}
 		ci, err := c.Info(ctx)
 		if err != nil {
