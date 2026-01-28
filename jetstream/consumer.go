@@ -44,13 +44,13 @@ type (
 	//   deletes and restarts. They provide limited configuration options
 	//   using [OrderedConsumerConfig].
 	//
-	// Consumer provides method for optimized continuous consumption of messages
+	// Consumer provides methods for optimized continuous consumption of messages
 	// using Consume and Messages methods, as well as simple one-off messages
 	// retrieval using Fetch and Next methods.
 	Consumer interface {
 		// Fetch is used to retrieve up to a provided number of messages from a
 		// stream. This method will send a single request and deliver either all
-		// requested messages unless time out is met earlier. Fetch timeout
+		// requested messages unless the timeout is met earlier. Fetch timeout
 		// defaults to 30 seconds and can be configured using FetchMaxWait
 		// option.
 		//
@@ -74,9 +74,9 @@ type (
 		// subscription is created for each execution.
 		Fetch(batch int, opts ...FetchOpt) (MessageBatch, error)
 
-		// FetchBytes is used to retrieve up to a provided bytes from the
-		// stream. This method will send a single request and deliver the
-		// provided number of bytes unless time out is met earlier. FetchBytes
+		// FetchBytes is used to retrieve up to a provided number of bytes from
+		// the stream. This method will send a single request and deliver the
+		// provided number of bytes unless the timeout is met earlier. FetchBytes
 		// timeout defaults to 30 seconds and can be configured using
 		// FetchMaxWait option.
 		//
@@ -84,7 +84,7 @@ type (
 		// 10 seconds. For shorter requests, the idle heartbeat is disabled.
 		// This can be configured using FetchHeartbeat option. If a client does
 		// not receive a heartbeat message from a stream for more than 2 times
-		// the idle heartbeat setting, Fetch will return ErrNoHeartbeat.
+		// the idle heartbeat setting, FetchBytes will return [ErrNoHeartbeat].
 		//
 		// FetchBytes is non-blocking and returns MessageBatch, exposing a channel
 		// for delivered messages.
@@ -127,7 +127,7 @@ type (
 		//   option, which provides information about errors encountered during
 		//   consumption (both transient and terminal)
 		// - Consume can be configured to stop after a certain number of
-		//   messages is received using StopAfter option.
+		//   messages have been received using StopAfter option.
 		// - Consume can be optimized for throughput or memory usage using
 		//   PullExpiry, PullMaxMessages, PullMaxBytes and PullHeartbeat options.
 		//   Unless there is a specific use case, these options should not be used.
@@ -136,8 +136,8 @@ type (
 		// the consumer.
 		Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error)
 
-		// Messages returns MessagesContext, allowing continuously iterating
-		// over messages on a stream. Messages can be configured using
+		// Messages returns MessagesContext, allowing continuous iteration
+		// over messages in a stream. Messages can be configured using
 		// PullMessagesOpt options:
 		//
 		// - Messages can be optimized for throughput or memory usage using
@@ -149,8 +149,8 @@ type (
 		Messages(opts ...PullMessagesOpt) (MessagesContext, error)
 
 		// Next is used to retrieve the next message from the consumer. This
-		// method will block until the message is retrieved or timeout is
-		// reached.
+		// method will block until the message is retrieved or the timeout
+		// is reached.
 		Next(opts ...FetchOpt) (Msg, error)
 
 		// Info fetches current ConsumerInfo from the server.
@@ -496,12 +496,12 @@ func resumeConsumer(ctx context.Context, js *jetStream, stream, consumer string)
 	return pauseConsumer(ctx, js, stream, consumer, nil)
 }
 
-func validateConsumerName(dur string) error {
-	if dur == "" {
-		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, "name is required")
+func validateConsumerName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%w: name is required", ErrInvalidConsumerName)
 	}
-	if strings.ContainsAny(dur, ">*. /\\") {
-		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, dur)
+	if strings.ContainsAny(name, ">*. /\\") {
+		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, name)
 	}
 	return nil
 }
