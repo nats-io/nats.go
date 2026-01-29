@@ -167,7 +167,7 @@ var (
 	// already created in the server.
 	ErrConsumerMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "multiple consumer filter subjects not supported by nats-server"}
 
-	// ErrConsumerNameAlreadyInUse is an error returned when attempting to create 
+	// ErrConsumerNameAlreadyInUse is an error returned when attempting to create
 	// a consumer with a name that is already in use.
 	ErrConsumerNameAlreadyInUse JetStreamError = &jsError{message: "consumer name already in use"}
 
