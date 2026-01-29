@@ -151,7 +151,7 @@ var (
 	// FilterSubjects are specified when creating consumer.
 	ErrDuplicateFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeDuplicateFilterSubjects, Description: "consumer cannot have both FilterSubject and FilterSubjects specified", Code: 500}}
 
-	// ErrDuplicateFilterSubjects is returned when filter subjects overlap when
+	// ErrOverlappingFilterSubjects is returned when filter subjects overlap when
 	// creating consumer.
 	ErrOverlappingFilterSubjects JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeOverlappingFilterSubjects, Description: "consumer subject filters cannot overlap", Code: 500}}
 
@@ -167,8 +167,8 @@ var (
 	// already created in the server.
 	ErrConsumerMultipleFilterSubjectsNotSupported JetStreamError = &jsError{message: "multiple consumer filter subjects not supported by nats-server"}
 
-	// ErrConsumerNotFound is an error returned when consumer with given name
-	// does not exist.
+	// ErrConsumerNameAlreadyInUse is an error returned when attempting to create 
+	// a consumer with a name that is already in use.
 	ErrConsumerNameAlreadyInUse JetStreamError = &jsError{message: "consumer name already in use"}
 
 	// ErrNotPullConsumer is returned when attempting to fetch or create pull
@@ -289,8 +289,8 @@ var (
 	// shutdown.
 	ErrServerShutdown JetStreamError = &jsError{message: "server shutdown"}
 
-	// ErrOrderedConsumerReset is returned when resetting ordered consumer fails
-	// due to too many attempts.
+	// ErrOrderedConsumerReset indicates that the ordered consumer was
+	// automatically reset and recreated to preserve message ordering.
 	ErrOrderedConsumerReset JetStreamError = &jsError{message: "recreating ordered consumer"}
 
 	// ErrOrderConsumerUsedAsFetch is returned when ordered consumer was already
@@ -353,7 +353,7 @@ var (
 	// deleted.
 	ErrKeyDeleted JetStreamError = &jsError{message: "key was deleted"}
 
-	// ErrHistoryToLarge is returned when provided history limit is larger than
+	// ErrHistoryTooLarge is returned when provided history limit is larger than
 	// 64.
 	ErrHistoryTooLarge JetStreamError = &jsError{message: "history limited to a max of 64"}
 
