@@ -34,9 +34,9 @@ type (
 	//
 	// - Publishing messages to a stream using [Publisher].
 	// - Managing streams using [StreamManager].
-	// - Managing consumers using [StreamConsumerManager]. Those are the same
-	//   methods as on [Stream], but are available as a shortcut to a consumer
-	//   bypassing stream lookup.
+	// - Managing consumers using [StreamConsumerManager]. These are the same
+	//   methods available on [Stream], but exposed here as a shortcut that bypasses
+	//   stream lookup.
 	// - Managing KeyValue stores using [KeyValueManager].
 	// - Managing Object Stores using [ObjectStoreManager].
 	//
@@ -110,7 +110,7 @@ type (
 		// server.
 		PublishAsyncComplete() <-chan struct{}
 
-		// CleanupPublisher will cleanup the publishing side of JetStreamContext.
+		// CleanupPublisher will clean up the publishing side of JetStreamContext.
 		//
 		// This will unsubscribe from the internal reply subject if needed.
 		// All pending async publishes will fail with ErrJetStreamContextClosed.
@@ -129,7 +129,7 @@ type (
 	// CreateOrUpdateStream and Stream methods return a [Stream] interface, allowing
 	// to operate on a stream.
 	StreamManager interface {
-		// CreateStream creates a new stream with given config and returns an
+		// CreateStream creates a new stream with the given config and returns an
 		// interface to operate on it. If stream with given name already exists
 		// and its configuration differs from the provided one,
 		// ErrStreamNameAlreadyInUse is returned.
@@ -139,7 +139,7 @@ type (
 		// ErrStreamNotFound is returned.
 		UpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
-		// CreateOrUpdateStream creates a stream with given config. If stream
+		// CreateOrUpdateStream creates a stream with the given config. If stream
 		// already exists, it will be updated (if possible).
 		CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error)
 
@@ -147,7 +147,7 @@ type (
 		// If stream does not exist, ErrStreamNotFound is returned.
 		Stream(ctx context.Context, stream string) (Stream, error)
 
-		// StreamNameBySubject returns a stream name stream listening on given
+		// StreamNameBySubject returns the name of the stream that listens on the given
 		// subject. If no stream is bound to given subject, ErrStreamNotFound
 		// is returned.
 		StreamNameBySubject(ctx context.Context, subject string) (string, error)
@@ -156,11 +156,11 @@ type (
 		// exist, ErrStreamNotFound is returned.
 		DeleteStream(ctx context.Context, stream string) error
 
-		// ListStreams returns StreamInfoLister, enabling iterating over a
+		// ListStreams returns StreamInfoLister, enabling iteration over a
 		// channel of stream infos.
 		ListStreams(context.Context, ...StreamListOpt) StreamInfoLister
 
-		// StreamNames returns a  StreamNameLister, enabling iterating over a
+		// StreamNames returns a StreamNameLister, enabling iteration over a
 		// channel of stream names.
 		StreamNames(context.Context, ...StreamListOpt) StreamNameLister
 	}
@@ -169,11 +169,11 @@ type (
 	// available as a part of [JetStream] interface. This is an alternative to
 	// [Stream] interface, allowing to bypass stream lookup. CreateConsumer,
 	// UpdateConsumer, CreateOrUpdateConsumer and Consumer methods return a
-	// [Consumer] interface, allowing to operate on a consumer (e.g. consume
+	// [Consumer] interface, allowing operation on a consumer (e.g. consume
 	// messages).
 	StreamConsumerManager interface {
 		// CreateOrUpdateConsumer creates a consumer on a given stream with
-		// given config. If consumer already exists, it will be updated (if
+		// the given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to operate on a
 		// consumer (e.g. fetch messages).
 		CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
@@ -191,10 +191,11 @@ type (
 		// returned, allowing to operate on a consumer (e.g. fetch messages).
 		UpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error)
 
-		// OrderedConsumer returns an OrderedConsumer instance. OrderedConsumer
-		// are managed by the library and provide a simple way to consume
-		// messages from a stream. Ordered consumers are ephemeral in-memory
-		// pull consumers and are resilient to deletes and restarts.
+		// OrderedConsumer returns a client-managed ordered consumer for the given stream.
+		// Ordered consumers use ephemeral pull consumers and automatically reset
+		// themselves when ordering is lost. The client tracks state in memory and
+		// recreates the underlying consumer as needed, making them resilient to deletes
+		// and restarts while ensuring message order is preserved.
 		OrderedConsumer(ctx context.Context, stream string, cfg OrderedConsumerConfig) (Consumer, error)
 
 		// Consumer returns an interface to an existing consumer, allowing processing
@@ -213,7 +214,7 @@ type (
 		ResumeConsumer(ctx context.Context, stream string, consumer string) (*ConsumerPauseResponse, error)
 
 		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
-		// given config. If consumer already exists, it will be updated (if
+		// the given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to consume messages.
 		CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error)
 
@@ -234,7 +235,7 @@ type (
 		// of messages. If consumer does not exist, ErrConsumerNotFound is
 		// returned.
 		//
-		// It returns ErrNotPushConsumer if the consumer is not a push consumer (deliver subject is not set).
+		// It returns ErrNotPushConsumer if the consumer is not a push consumer (delivery subject is not set).
 		PushConsumer(ctx context.Context, stream string, consumer string) (PushConsumer, error)
 	}
 
@@ -565,7 +566,7 @@ func (js *jetStream) Options() JetStreamOptions {
 	return opts
 }
 
-// CreateStream creates a new stream with given config and returns an
+// CreateStream creates a new stream with the given config and returns an
 // interface to operate on it. If stream with given name already exists,
 // ErrStreamNameAlreadyInUse is returned.
 func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
@@ -673,7 +674,7 @@ func convertStreamConfigDomains(cfg StreamConfig) (StreamConfig, error) {
 		}
 	}
 
-	// Check sources for the same.
+	// Check sources for the same conversion.
 	if len(ncfg.Sources) > 0 {
 		ncfg.Sources = append([]*StreamSource(nil), ncfg.Sources...)
 		for i, ss := range ncfg.Sources {
@@ -754,7 +755,7 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 	}, nil
 }
 
-// CreateOrUpdateStream creates a stream with given config. If stream
+// CreateOrUpdateStream creates a stream with the given config. If stream
 // already exists, it will be updated (if possible).
 func (js *jetStream) CreateOrUpdateStream(ctx context.Context, cfg StreamConfig) (Stream, error) {
 	s, err := js.UpdateStream(ctx, cfg)
@@ -823,7 +824,7 @@ func (js *jetStream) DeleteStream(ctx context.Context, name string) error {
 }
 
 // CreateOrUpdateConsumer creates a consumer on a given stream with
-// given config. If consumer already exists, it will be updated (if
+// the given config. If consumer already exists, it will be updated (if
 // possible). Consumer interface is returned, allowing to operate on a
 // consumer (e.g. fetch messages).
 func (js *jetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (Consumer, error) {
@@ -905,7 +906,7 @@ func (js *jetStream) DeleteConsumer(ctx context.Context, stream string, name str
 }
 
 // CreateOrUpdatePushConsumer creates a push consumer on a given stream with
-// given config. If consumer already exists, it will be updated (if
+// the given config. If consumer already exists, it will be updated (if
 // possible). Consumer interface is returned, allowing to consume messages.
 func (js *jetStream) CreateOrUpdatePushConsumer(ctx context.Context, stream string, cfg ConsumerConfig) (PushConsumer, error) {
 	if err := validateStreamName(stream); err != nil {
@@ -1014,7 +1015,7 @@ func (js *jetStream) AccountInfo(ctx context.Context) (*AccountInfo, error) {
 	return &resp.AccountInfo, nil
 }
 
-// ListStreams returns StreamInfoLister, enabling iterating over a
+// ListStreams returns StreamInfoLister, enabling iteration over a
 // channel of stream infos.
 func (js *jetStream) ListStreams(ctx context.Context, opts ...StreamListOpt) StreamInfoLister {
 	l := &streamLister{
@@ -1068,7 +1069,7 @@ func (s *streamLister) Err() error {
 	return s.err
 }
 
-// StreamNames returns a  StreamNameLister, enabling iterating over a
+// StreamNames returns a StreamNameLister, enabling iteration over a
 // channel of stream names.
 func (js *jetStream) StreamNames(ctx context.Context, opts ...StreamListOpt) StreamNameLister {
 	l := &streamLister{
@@ -1112,7 +1113,7 @@ func (js *jetStream) StreamNames(ctx context.Context, opts ...StreamListOpt) Str
 	return l
 }
 
-// StreamNameBySubject returns a stream name stream listening on given
+// StreamNameBySubject returns the name of the stream bound to the given
 // subject. If no stream is bound to given subject, ErrStreamNotFound
 // is returned.
 func (js *jetStream) StreamNameBySubject(ctx context.Context, subject string) (string, error) {
