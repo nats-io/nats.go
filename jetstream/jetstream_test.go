@@ -268,7 +268,7 @@ func TestRetryWithBackoff(t *testing.T) {
 			case <-time.After(test.timeout):
 				t.Fatalf("Timeout after %v", test.timeout)
 			}
-			
+
 			if count != test.expectedAttemptsCount-1 {
 				t.Fatalf("Invalid count; got: %d, want: %d", count, test.expectedAttemptsCount-1)
 			}
