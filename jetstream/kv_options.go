@@ -29,7 +29,7 @@ func (opt watchOptFn) configureWatcher(opts *watchOpts) error {
 func IncludeHistory() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		if opts.updatesOnly {
-			return fmt.Errorf("%w: include history can not be used with updates only", ErrInvalidOption)
+			return fmt.Errorf("%w: include history cannot be used with updates only", ErrInvalidOption)
 		}
 		opts.includeHistory = true
 		return nil
@@ -41,14 +41,14 @@ func IncludeHistory() WatchOpt {
 func UpdatesOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		if opts.includeHistory {
-			return fmt.Errorf("%w: updates only can not be used with include history", ErrInvalidOption)
+			return fmt.Errorf("%w: updates only cannot be used with include history", ErrInvalidOption)
 		}
 		opts.updatesOnly = true
 		return nil
 	})
 }
 
-// IgnoreDeletes will have the key watcher not pass any deleted keys.
+// IgnoreDeletes will prevent the key watcher from passing any deleted keys.
 func IgnoreDeletes() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
 		opts.ignoreDeletes = true
@@ -56,7 +56,7 @@ func IgnoreDeletes() WatchOpt {
 	})
 }
 
-// MetaOnly instructs the key watcher to retrieve only the entry meta data, not
+// MetaOnly instructs the key watcher to retrieve only the entry metadata, not
 // the entry value.
 func MetaOnly() WatchOpt {
 	return watchOptFn(func(opts *watchOpts) error {
@@ -121,7 +121,7 @@ func (opt createOptFn) configureCreate(opts *createOpts) error {
 }
 
 // KeyTTL sets the TTL for the key. This is the time after which the key will be
-// automatically deleted. The TTL is set when the key is created and can not be
+// automatically deleted. The TTL is set when the key is created and cannot be
 // changed later. This requires LimitMarkerTTL to be enabled on the bucket.
 func KeyTTL(ttl time.Duration) KVCreateOpt {
 	return createOptFn(func(opts *createOpts) error {
