@@ -180,7 +180,7 @@ const (
 	// level. Server will reject the message if it is not the case.
 	//
 	// This can be set when publishing messages using [WithExpectLastSequence]
-	// option. option.
+	// option.
 	ExpectedLastSeqHeader = "Nats-Expected-Last-Sequence"
 
 	// ExpectedLastSubjSeqHeader contains the expected last sequence number on
@@ -228,7 +228,7 @@ const (
 	SequenceHeader = "Nats-Sequence"
 
 	// TimeStampHeader contains the original timestamp of the message.
-	TimeStampHeaer = "Nats-Time-Stamp"
+	TimeStampHeader = "Nats-Time-Stamp"
 
 	// SubjectHeader contains the original subject the message was published to.
 	SubjectHeader = "Nats-Subject"
@@ -291,7 +291,7 @@ func (m *jetStreamMsg) Headers() nats.Header {
 	return m.msg.Header
 }
 
-// Subject returns a subject on which a message is published.
+// Subject returns a subject on which a message was published/received.
 func (m *jetStreamMsg) Subject() string {
 	return m.msg.Subject
 }
@@ -408,9 +408,9 @@ func (m *jetStreamMsg) checkReply() error {
 	return nil
 }
 
-// Returns if the given message is a user message or not, and if
-// checkSts() is true, returns appropriate error based on the
-// content of the status (404, etc..)
+// checkMsg returns whether the given message is a user message or a control message.
+// If the status header is present, it returns an appropriate error based
+// on the status code (404, etc.)
 func checkMsg(msg *nats.Msg) (bool, error) {
 	// If payload or no header, consider this a user message
 	if len(msg.Data) > 0 || len(msg.Header) == 0 {
