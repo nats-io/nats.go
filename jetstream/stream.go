@@ -48,7 +48,7 @@ type (
 		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
 
 		// GetLastMsgForSubject retrieves the last raw stream message stored in
-		// JetStream on a given subject subject.
+		// JetStream on a given subject.
 		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
 
 		// DeleteMsg deletes a message from a stream.
@@ -622,7 +622,7 @@ func convertDirectGetMsgResponseToMsg(r *nats.Msg) (*RawStreamMsg, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats: invalid sequence header '%s': %v", seqStr, err)
 	}
-	timeStr := r.Header.Get(TimeStampHeaer)
+	timeStr := r.Header.Get(TimeStampHeader)
 	if timeStr == "" {
 		return nil, errors.New("nats: missing timestamp header")
 	}
