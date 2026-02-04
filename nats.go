@@ -470,7 +470,7 @@ type Options struct {
 	// Token sets the token to be used when connecting to a server.
 	Token string
 
-	// TokenHandler designates the function used to generate the token 
+	// TokenHandler designates the function used to generate the token
 	// used when connecting to a server.
 	TokenHandler AuthTokenHandler
 
