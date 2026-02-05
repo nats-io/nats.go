@@ -242,7 +242,7 @@ type SignatureHandler func([]byte) ([]byte, error)
 // AuthTokenHandler is used to generate a new token.
 type AuthTokenHandler func() string
 
-// UserInfoCB is used to pass the username and password when establishing connection.
+// UserInfoCB is used to pass the username and password when establishing a connection.
 type UserInfoCB func() (string, string)
 
 // ReconnectDelayHandler is used to get from the user the desired
@@ -350,7 +350,7 @@ type Options struct {
 	// Defaults to 60.
 	MaxReconnect int
 
-	// ReconnectWait sets the time to backoff after attempting a reconnect
+	// ReconnectWait sets the time to back off after attempting a reconnect
 	// to a server that we were already connected to previously.
 	// Defaults to 2s.
 	ReconnectWait time.Duration
@@ -377,7 +377,7 @@ type Options struct {
 	// Defaults to 2s.
 	Timeout time.Duration
 
-	// DrainTimeout sets the timeout for a Drain Operation to complete.
+	// DrainTimeout sets the timeout for a drain operation to complete.
 	// Defaults to 30s.
 	DrainTimeout time.Duration
 
@@ -431,7 +431,7 @@ type Options struct {
 	AsyncErrorCB ErrHandler
 
 	// ReconnectErrCB sets the callback that is invoked whenever a
-	// reconnect attempt failed
+	// reconnect attempt fails.
 	ReconnectErrCB ConnErrHandler
 
 	// ReconnectBufSize is the size of the backing bufio during reconnect.
@@ -440,9 +440,9 @@ type Options struct {
 	ReconnectBufSize int
 
 	// SubChanLen is the size of the buffered channel used between the socket
-	// Go routine and the message delivery for SyncSubscriptions.
+	// goroutine and the message delivery for SyncSubscriptions.
 	// NOTE: This does not affect AsyncSubscriptions which are
-	// dictated by PendingLimits()
+	// dictated by PendingLimits().
 	// Defaults to 65536.
 	SubChanLen int
 
@@ -470,7 +470,8 @@ type Options struct {
 	// Token sets the token to be used when connecting to a server.
 	Token string
 
-	// TokenHandler designates the function used to generate the token to be used when connecting to a server.
+	// TokenHandler designates the function used to generate the token
+	// used when connecting to a server.
 	TokenHandler AuthTokenHandler
 
 	// Dialer allows a custom net.Dialer when forming connections.
@@ -532,7 +533,7 @@ type Options struct {
 	// WebSocketConnectionHeaders is an optional http request headers to be sent with the WebSocket request.
 	WebSocketConnectionHeaders http.Header
 
-	// WebSocketConnectionHeadersHandler is an optional callback handler for generating token  used for WebSocket connections.
+	// WebSocketConnectionHeadersHandler is an optional callback handler for generating token used for WebSocket connections.
 	WebSocketConnectionHeadersHandler WebSocketHeadersHandler
 
 	// SkipSubjectValidation will disable publish subject validation.
@@ -907,7 +908,7 @@ func Name(name string) Option {
 	}
 }
 
-// InProcessServer is an Option that will try to establish a direction to a NATS server
+// InProcessServer is an Option that will try to establish a connection to a NATS server
 // running within the process instead of dialing via TCP.
 func InProcessServer(server InProcessConnProvider) Option {
 	return func(o *Options) error {
@@ -1522,7 +1523,7 @@ func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
 // By default, subject validation is performed to ensure that subjects
 // are valid according to NATS subject syntax (no spaces newlines and tabs).
 // NOTE: It is not recommended to use this option as the performance gain
-// is minimal and disabling subject validation can lead breaking protocol
+// is minimal and disabling subject validation can lead to breaking protocol
 // rules.
 func SkipSubjectValidation() Option {
 	return func(o *Options) error {
@@ -4765,7 +4766,7 @@ func (s *Subscription) IsValid() bool {
 //
 // For a JetStream subscription, if the library has created the JetStream
 // consumer, the library will send a DeleteConsumer request to the server
-// when the Drain operation completes. If a failure occurs when deleting
+// when the drain operation completes. If a failure occurs when deleting
 // the JetStream consumer, an error will be reported to the asynchronous
 // error callback.
 // If you do not wish the JetStream consumer to be automatically deleted,
