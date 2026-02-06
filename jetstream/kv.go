@@ -328,6 +328,9 @@ type (
 
 		// Metadata returns the metadata associated with the bucket.
 		Metadata() map[string]string
+
+		// Config returns the configuration for the bucket.
+		Config() KeyValueConfig
 	}
 
 	// KeyWatcher is what is returned when doing a watch. It can be used to
@@ -829,6 +832,27 @@ func (s *KeyValueBucketStatus) IsCompressed() bool { return s.info.Config.Compre
 // removed by the TTL setting, 0 meaning markers are not supported.
 func (s *KeyValueBucketStatus) LimitMarkerTTL() time.Duration {
 	return s.info.Config.SubjectDeleteMarkerTTL
+}
+
+// Config returns the configuration for the bucket.
+func (s *KeyValueBucketStatus) Config() KeyValueConfig {
+	return KeyValueConfig{
+		Bucket:         s.bucket,
+		Description:    s.info.Config.Description,
+		MaxValueSize:   s.info.Config.MaxMsgSize,
+		History:        uint8(s.info.Config.MaxMsgsPerSubject),
+		TTL:            s.info.Config.MaxAge,
+		MaxBytes:       s.info.Config.MaxBytes,
+		Storage:        s.info.Config.Storage,
+		Replicas:       s.info.Config.Replicas,
+		Placement:      s.info.Config.Placement,
+		RePublish:      s.info.Config.RePublish,
+		Mirror:         s.info.Config.Mirror,
+		Sources:        s.info.Config.Sources,
+		Compression:    s.info.Config.Compression != NoCompression,
+		Metadata:       s.info.Config.Metadata,
+		LimitMarkerTTL: s.info.Config.SubjectDeleteMarkerTTL,
+	}
 }
 
 // Metadata returns the metadata associated with the bucket.
