@@ -178,7 +178,7 @@ type (
 		// the key value store in a streaming fashion (on a channel).
 		ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error)
 
-		// ListKeysFiltered ListKeysWithFilters returns a KeyLister for filtered keys in the bucket.
+		// ListKeysFiltered returns a KeyLister for filtered keys in the bucket.
 		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
@@ -241,7 +241,7 @@ type (
 		// subject after it's stored.
 		RePublish *RePublish `json:"republish,omitempty"`
 
-		// Mirror defines the consiguration for mirroring another KeyValue
+		// Mirror defines the configuration for mirroring another KeyValue
 		// store.
 		Mirror *StreamSource `json:"mirror,omitempty"`
 
@@ -1180,6 +1180,8 @@ func (w *watcher) Stop() error {
 	return w.sub.Unsubscribe()
 }
 
+// WatchFiltered will watch for any updates to keys that match the provided
+// key filters. It can be configured with the same options as Watch.
 func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOpt) (KeyWatcher, error) {
 	for _, key := range keys {
 		if !searchKeyValid(key) {
@@ -1364,7 +1366,7 @@ type keyLister struct {
 	keys    chan string
 }
 
-// Keys will return all keys.
+// ListKeys will return all keys.
 func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error) {
 	opts = append(opts, IgnoreDeletes(), MetaOnly())
 	watcher, err := kv.WatchAll(ctx, opts...)
@@ -1391,7 +1393,7 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 	return kl, nil
 }
 
-// ListKeysWithFilters returns a channel of keys matching the provided filters using WatchFiltered.
+// ListKeysFiltered returns a KeyLister for filtered keys in the bucket.
 func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error) {
 	watcher, err := kv.WatchFiltered(ctx, filters, IgnoreDeletes(), MetaOnly())
 	if err != nil {
