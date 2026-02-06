@@ -1316,3 +1316,61 @@ func TestObjectStoreDeleteNonExistent(t *testing.T) {
 		t.Fatalf("Expected ErrBucketNotFound, got: %v", err)
 	}
 }
+
+func TestObjectPutPermissionViolation(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+			listen: 127.0.0.1:-1
+			jetstream: {max_mem_store: 64GB, max_file_store: 10TB}
+			no_auth_user: guest
+			accounts: {
+				JS: {
+					jetstream: enabled
+					users: [ {user: guest, password: "", permissions: {
+						publish: { deny: "$O.>" }
+					}}]
+				}
+			}
+		`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc, jetstream.WithDefaultTimeout(200*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obs, err := js.CreateObjectStore(context.Background(), jetstream.ObjectStoreConfig{Bucket: "TEST"})
+	expectOk(t, err)
+
+	// default timeout from js
+	start := time.Now()
+	_, err = obs.PutBytes(context.Background(), "test-object", []byte("test data"))
+
+	if !errors.Is(err, jetstream.ErrAsyncPublishTimeout) {
+		t.Fatal("Expected timeout waiting for publish ack")
+	}
+	if elapsed := time.Since(start); elapsed < 200*time.Millisecond {
+		t.Fatalf("Expected at least 200ms timeout, got: %v", elapsed)
+	}
+
+	// context timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start = time.Now()
+	_, err = obs.PutBytes(ctx, "test-object", []byte("test data"))
+	if !errors.Is(err, nats.ErrTimeout) {
+		t.Fatal("Expected timeout waiting for publish ack")
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > 200*time.Millisecond {
+		t.Fatalf("Expected at least 100ms timeout, got: %v", elapsed)
+	}
+}
