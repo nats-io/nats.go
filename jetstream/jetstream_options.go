@@ -250,7 +250,7 @@ type PullMaxBytes int
 
 func (max PullMaxBytes) configureConsume(opts *consumeOpts) error {
 	if max <= 0 {
-		return fmt.Errorf("%w: max bytes must be greater then 0", ErrInvalidOption)
+		return fmt.Errorf("%w: max bytes must be greater than 0", ErrInvalidOption)
 	}
 	opts.MaxBytes = int(max)
 	return nil
@@ -258,7 +258,7 @@ func (max PullMaxBytes) configureConsume(opts *consumeOpts) error {
 
 func (max PullMaxBytes) configureMessages(opts *consumeOpts) error {
 	if max <= 0 {
-		return fmt.Errorf("%w: max bytes must be greater then 0", ErrInvalidOption)
+		return fmt.Errorf("%w: max bytes must be greater than 0", ErrInvalidOption)
 	}
 	opts.MaxBytes = int(max)
 	return nil
