@@ -227,8 +227,8 @@ const (
 	// SequenceHeader contains the original sequence number of the message.
 	SequenceHeader = "Nats-Sequence"
 
-	// TimeStampHeader contains the original timestamp of the message.
-	TimeStampHeader = "Nats-Time-Stamp"
+	// TimeStampHeaer contains the original timestamp of the message.
+	TimeStampHeaer = "Nats-Time-Stamp"
 
 	// SubjectHeader contains the original subject the message was published to.
 	SubjectHeader = "Nats-Subject"
