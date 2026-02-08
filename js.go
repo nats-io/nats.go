@@ -296,8 +296,7 @@ type jsOpts struct {
 }
 
 const (
-	defaultRequestWait  = 5 * time.Second
-	defaultAccountCheck = 20 * time.Second
+	defaultRequestWait = 5 * time.Second
 )
 
 // JetStream returns a JetStreamContext for messaging and stream management.
