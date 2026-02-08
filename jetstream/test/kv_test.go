@@ -1460,7 +1460,7 @@ func TestListKeyValueStores(t *testing.T) {
 			if len(names) != test.bucketsNum {
 				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
 			}
-			infos := make([]nats.KeyValueStatus, 0)
+			infos := make([]jetstream.KeyValueStatus, 0)
 			kvInfos := js.KeyValueStores(ctx)
 			for info := range kvInfos.Status() {
 				infos = append(infos, info)
@@ -2402,5 +2402,69 @@ func TestKeyValueStatusBytes(t *testing.T) {
 
 	if status.Bytes() == 0 {
 		t.Fatal("Expected Bytes() to return non-zero value")
+	}
+}
+
+func TestKeyValueConfig(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+	ctx := context.Background()
+
+	originalCfg := jetstream.KeyValueConfig{
+		Bucket:       "CONFIG_TEST",
+		Description:  "test bucket for config retrieval",
+		MaxValueSize: 1024,
+		History:      10,
+		TTL:          2 * time.Hour,
+		MaxBytes:     1024 * 1024,
+		Storage:      jetstream.FileStorage,
+		Replicas:     1,
+		Metadata:     map[string]string{"key": "value"},
+	}
+
+	kv, err := js.CreateKeyValue(ctx, originalCfg)
+	if err != nil {
+		t.Fatalf("Error creating KV: %v", err)
+	}
+
+	status, err := kv.Status(ctx)
+	if err != nil {
+		t.Fatalf("Error getting status: %v", err)
+	}
+
+	retrievedCfg := status.Config()
+
+	if retrievedCfg.Bucket != originalCfg.Bucket {
+		t.Errorf("Expected bucket %q, got %q", originalCfg.Bucket, retrievedCfg.Bucket)
+	}
+	if retrievedCfg.Description != originalCfg.Description {
+		t.Errorf("Expected description %q, got %q", originalCfg.Description, retrievedCfg.Description)
+	}
+	if retrievedCfg.MaxValueSize != originalCfg.MaxValueSize {
+		t.Errorf("Expected MaxValueSize %d, got %d", originalCfg.MaxValueSize, retrievedCfg.MaxValueSize)
+	}
+	if retrievedCfg.History != originalCfg.History {
+		t.Errorf("Expected history %d, got %d", originalCfg.History, retrievedCfg.History)
+	}
+	if retrievedCfg.TTL != originalCfg.TTL {
+		t.Errorf("Expected TTL %v, got %v", originalCfg.TTL, retrievedCfg.TTL)
+	}
+	if retrievedCfg.MaxBytes != originalCfg.MaxBytes {
+		t.Errorf("Expected MaxBytes %d, got %d", originalCfg.MaxBytes, retrievedCfg.MaxBytes)
+	}
+	if retrievedCfg.Storage != originalCfg.Storage {
+		t.Errorf("Expected storage %v, got %v", originalCfg.Storage, retrievedCfg.Storage)
+	}
+	if retrievedCfg.Replicas != originalCfg.Replicas {
+		t.Errorf("Expected replicas %d, got %d", originalCfg.Replicas, retrievedCfg.Replicas)
+	}
+	if retrievedCfg.LimitMarkerTTL != originalCfg.LimitMarkerTTL {
+		t.Errorf("Expected LimitMarkerTTL %v, got %v", originalCfg.LimitMarkerTTL, retrievedCfg.LimitMarkerTTL)
+	}
+	if retrievedCfg.Metadata["key"] != originalCfg.Metadata["key"] {
+		t.Errorf("Expected Metadata[key] %q, got %q", originalCfg.Metadata["key"], retrievedCfg.Metadata["key"])
 	}
 }
