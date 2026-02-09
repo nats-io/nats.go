@@ -22,7 +22,7 @@ jobs:
             - name: Install deps
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go get -t ./...
+                go get -t work
                 go install honnef.co/go/tools/cmd/staticcheck@latest
                 go install github.com/client9/misspell/cmd/misspell@latest
                 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
@@ -30,18 +30,9 @@ jobs:
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                MODULE_DIRS=(
-                  "."
-                  "test"
-                  "jetstream/test"
-                  "micro/test"
-                )
-                for modDir in "${MODULE_DIRS[@]}"; do
-                  $(exit $(cd "$modDir" && go fmt ./... | wc -l))
-                done
-                $(exit $(go fmt ./... | wc -l))
-                go vet ./... ./test/... ./jetstream/test/... ./micro/test/...
-                staticcheck ./... ./test/... ./jetstream/test/... ./micro/test/...
+                $(exit $(go fmt work | wc -l))
+                go vet work
+                staticcheck work
                 find . -type f -name "*.go" | xargs misspell -error -locale US
                 golangci-lint run --timeout 5m0s ./jetstream/... ./jetstream/test/...
 
@@ -73,6 +64,7 @@ jobs:
                 if [ "${{ matrix.go }}" = "1.25" ]; then
                   ./scripts/cov.sh CI
                 else
+                  # TODO: switch to `go test work` once CI moves to >=v1.25
                   go test -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
                   go test -race -v -p=1 ./test/... --failfast -vet=off
                   go test -race -v -p=1 ./jetstream/test/... --failfast -vet=off
