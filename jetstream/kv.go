@@ -430,6 +430,7 @@ type kvs struct {
 	pushJS     nats.JetStreamContext
 	js         *jetStream
 	stream     Stream
+	keyToTTL   map[string]time.Duration
 	// If true, it means that APIPrefix/Domain was set in the context
 	// and we need to add something to some of our high level protocols
 	// (such as Put, etc..)
@@ -1035,7 +1036,7 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte, opts ...KVC
 			}
 		}
 	}
-
+	kv.keyToTTL[key] = o.ttl
 	v, err := kv.updateRevision(ctx, key, value, 0, o.ttl)
 	if err == nil {
 		return v, nil
@@ -1057,7 +1058,11 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte, opts ...KVC
 
 // Update will update the value if the latest revision matches.
 func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error) {
-	return kv.updateRevision(ctx, key, value, revision, 0)
+	ttl, ok := kv.keyToTTL[key]
+	if !ok {
+		ttl = 0
+	}
+	return kv.updateRevision(ctx, key, value, revision, ttl)
 }
 
 func (kv *kvs) updateRevision(ctx context.Context, key string, value []byte, revision uint64, ttl time.Duration) (uint64, error) {
@@ -1536,6 +1541,7 @@ func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) 
 		js:         js,
 		pushJS:     pushJS,
 		stream:     stream,
+		keyToTTL:   make(map[string]time.Duration),
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
 		useJSPfx:  js.opts.apiPrefix != DefaultAPIPrefix,
 		useDirect: info.Config.AllowDirect,
