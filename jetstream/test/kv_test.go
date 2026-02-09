@@ -2009,6 +2009,10 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 
 		_, err = kv.Get(ctx, "age")
 		expectOk(t, err)
+
+		_, err = kv.Update(ctx, "age", []byte("27"), 1)
+		expectOk(t, err)
+
 		time.Sleep(1500 * time.Millisecond)
 
 		_, err = kv.Get(ctx, "age")
@@ -2023,6 +2027,14 @@ func TestKeyValueLimitMarkerTTL(t *testing.T) {
 		checkMsgNotFound(t, js, kv, "age")
 
 		entry := <-watcher.Updates()
+		if entry == nil {
+			t.Fatalf("Expected entry, got nil")
+		}
+		if entry.Operation() != jetstream.KeyValuePut {
+			t.Fatalf("Expected put operation, got %v", entry.Operation())
+		}
+
+		entry = <-watcher.Updates()
 		if entry == nil {
 			t.Fatalf("Expected entry, got nil")
 		}
