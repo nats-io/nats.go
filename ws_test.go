@@ -555,9 +555,9 @@ func TestWSTlsNoConfig(t *testing.T) {
 	}
 	nc.mu.Lock()
 	for _, srv := range nc.srvPool {
-		if srv.url.Scheme != wsSchemeTLS {
+		if srv.URL.Scheme != wsSchemeTLS {
 			nc.mu.Unlock()
-			t.Fatalf("Expected scheme to be %q, got url: %s", wsSchemeTLS, srv.url)
+			t.Fatalf("Expected scheme to be %q, got url: %s", wsSchemeTLS, srv.URL)
 		}
 	}
 	nc.mu.Unlock()
