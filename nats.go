@@ -540,6 +540,10 @@ type Options struct {
 	// NOTE: This is not recommended in general, as the performance gain is minimal
 	// and may lead to breaking protocol.
 	SkipSubjectValidation bool
+
+	// IgnoreDiscoveredServers will disable adding advertised server URLs
+	// from INFO messages to the server pool.
+	IgnoreDiscoveredServers bool
 }
 
 const (
@@ -1528,6 +1532,15 @@ func WebSocketConnectionHeadersHandler(cb WebSocketHeadersHandler) Option {
 func SkipSubjectValidation() Option {
 	return func(o *Options) error {
 		o.SkipSubjectValidation = true
+		return nil
+	}
+}
+
+// IgnoreDiscoveredServers is an Option to disable adding advertised
+// server URLs from INFO messages to the server pool.
+func IgnoreDiscoveredServers() Option {
+	return func(o *Options) error {
+		o.IgnoreDiscoveredServers = true
 		return nil
 	}
 }
@@ -3770,7 +3783,7 @@ func (nc *Conn) processInfo(info string) error {
 	// if advertise is disabled on that server, or servers that
 	// did not include themselves in the async INFO protocol.
 	// If empty, do not remove the implicit servers from the pool.
-	if len(nc.info.ConnectURLs) == 0 {
+	if len(nc.info.ConnectURLs) == 0 || nc.Opts.IgnoreDiscoveredServers {
 		if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
 			nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
 		}

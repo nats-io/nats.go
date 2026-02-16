@@ -896,3 +896,82 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 
 	nc.Close()
 }
+
+func TestIgnoreDiscoveredServers(t *testing.T) {
+	s1Opts := test.DefaultTestOptions
+	s1Opts.Port = 4222
+	s1Opts.Cluster.Host = "127.0.0.1"
+	s1Opts.Cluster.Port = 6222
+	s1Opts.Routes = server.RoutesFromStr("nats://127.0.0.1:6223")
+	s1 := test.RunServer(&s1Opts)
+	defer s1.Shutdown()
+
+	s2Opts := test.DefaultTestOptions
+	s2Opts.Port = 4223
+	s2Opts.Cluster.Host = "127.0.0.1"
+	s2Opts.Cluster.Port = 6223
+	s2Opts.Routes = server.RoutesFromStr("nats://127.0.0.1:6222")
+
+	checkPoolSize := func(nc *nats.Conn, expected int) {
+		t.Helper()
+		timeout := time.Now().Add(5 * time.Second)
+		for time.Now().Before(timeout) {
+			if len(nc.Servers()) == expected {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("Expected %d server(s), got %d: %v", expected, len(nc.Servers()), nc.Servers())
+	}
+
+	waitForCluster := func() {
+		t.Helper()
+		timeout := time.Now().Add(5 * time.Second)
+		for time.Now().Before(timeout) {
+			if s1.NumRoutes() > 0 {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatal("Cluster did not form")
+	}
+
+	t.Run("add new servers to pool", func(t *testing.T) {
+		nc, err := nats.Connect(s1.ClientURL())
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		s2 := test.RunServer(&s2Opts)
+		defer s2.Shutdown()
+
+		checkPoolSize(nc, 2)
+		if len(nc.DiscoveredServers()) != 1 {
+			t.Fatalf("Expected 1 discovered server, got %v", nc.DiscoveredServers())
+		}
+	})
+
+	t.Run("ignore new servers", func(t *testing.T) {
+		nc, err := nats.Connect(s1.ClientURL(),
+			nats.IgnoreDiscoveredServers(),
+		)
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+		s2 := test.RunServer(&s2Opts)
+		defer s2.Shutdown()
+
+		waitForCluster()
+		nc.Flush()
+
+		if len(nc.Servers()) != 1 {
+			t.Fatalf("Expected 1 server, got %d: %v", len(nc.Servers()), nc.Servers())
+		}
+		if len(nc.DiscoveredServers()) != 0 {
+			t.Fatalf("Expected no discovered servers, got %v", nc.DiscoveredServers())
+		}
+	})
+
+}
