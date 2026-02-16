@@ -1195,6 +1195,30 @@ func TestConnServers(t *testing.T) {
 	validateURLs(c.Servers(), "nats://localhost:4333", "nats://localhost:4444")
 }
 
+func TestIgnoreDiscoveredServers(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.IgnoreDiscoveredServers = true
+	c := &Conn{Opts: opts}
+	c.ps = &parseState{}
+	c.setupServerPool()
+
+	if len(c.Servers()) != 1 {
+		t.Fatalf("Expected 1 server, got %d", len(c.Servers()))
+	}
+
+	err := c.parse([]byte("INFO {\"connect_urls\":[\"localhost:5222\", \"localhost:6222\"]}\r\n"))
+	if err != nil {
+		t.Fatalf("Unexpected: %d : %v\n", c.ps.state, err)
+	}
+
+	if len(c.Servers()) != 1 {
+		t.Fatalf("Expected 1 server, got %d: %v", len(c.Servers()), c.Servers())
+	}
+	if len(c.DiscoveredServers()) != 0 {
+		t.Fatalf("Expected no discovered servers, got %v", c.DiscoveredServers())
+	}
+}
+
 func TestNoEchoOldServer(t *testing.T) {
 	opts := GetDefaultOptions()
 	opts.Url = DefaultURL
