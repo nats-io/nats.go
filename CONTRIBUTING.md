@@ -66,15 +66,6 @@ send your question to the [NATS Google Group](https://groups.google.com/forum/#!
 
 ## Testing
 
-You should use `go_test.mod` to manage your testing dependencies. Please use the following command to update your
-dependencies and avoid changing the main `go.mod` in a PR:
-
-```shell
-go mod tidy -modfile=go_test.mod
-```
-
-To the tests you can pass `-modfile=go_test.mod` flag to `go test` or instead you can also set `GOFLAGS="-modfile=go_test.mod"` as an environment variable:
-
-```shell
-go test ./... -modfile=go_test.mod
-```
+All tests utilizing `nats-server` should be placed in the appropriate package's
+`test` directory. This is to ensure that the test dependencies are isolated from
+the main package dependencies as each test package is its own module.
