@@ -3981,6 +3981,15 @@ func (h Header) Get(key string) string {
 	return _EMPTY_
 }
 
+// Keys returns a slice containing all the keys present in the Header.
+func (h Header) Keys() []string {
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Values returns all values associated with the given key.
 // It is case-sensitive.
 func (h Header) Values(key string) []string {
