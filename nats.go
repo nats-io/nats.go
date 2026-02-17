@@ -152,6 +152,7 @@ var (
 	ErrConnectionNotTLS              = errors.New("nats: connection is not tls")
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
 	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
+	ErrServerNotInPool               = errors.New("nats: selected server is not in the pool")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -256,19 +257,22 @@ type WebSocketHeadersHandler func() (http.Header, error)
 
 // ReconnectToServerHandler is used to determine the server to reconnect to during
 // the reconnection process. The handler receives a snapshot of available servers
-// in the pool. It should return the URL of the server to connect to and a boolean
-// indicating whether to apply the reconnect delay before attempting the connection.
+// in the pool and should return a pointer to one of the servers from the provided
+// slice and a delay before attempting the connection.
 //
 // Return values:
-//   - url.URL: The server URL to connect to. Can be from the provided servers slice
-//     or a new server URL. New servers will be automatically added to the pool.
-//   - bool: If true, apply reconnect delay (ReconnectWait + jitter or CustomReconnectDelayCB)
-//     before attempting connection. If false, attempt connection immediately.
+//   - *Server: The server to connect to. Must be a pointer to an element from the
+//     provided servers slice. If the returned server is not in the pool, the library
+//     will fire ReconnectErrCB with ErrServerNotInPool and fall back to default
+//     server selection.
+//   - time.Duration: The delay before attempting the connection. If zero, the
+//     connection attempt is made immediately. If non-zero, the library sleeps
+//     for exactly that duration before attempting.
 //
 // MaxReconnect limits are enforced automatically: servers exceeding the configured
 // MaxReconnect attempts are removed from the pool before the handler is called.
 // To disable this limit, set MaxReconnect to a negative value.
-type ReconnectToServerHandler func([]Server, ServerInfo) (*url.URL, bool)
+type ReconnectToServerHandler func([]Server, ServerInfo) (*Server, time.Duration)
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -843,7 +847,7 @@ type Statistics struct {
 	Reconnects uint64
 }
 
-// Tracks individual backend servers.
+// Server represents a server in the pool of servers that the client can connect to.
 type Server struct {
 	URL        *url.URL
 	Reconnects int
@@ -853,7 +857,7 @@ type Server struct {
 	tlsName    string
 }
 
-// The INFO block received from the server.
+// ServerInfo represents the information about the server that is sent in the INFO protocol message.
 type ServerInfo struct {
 	ID           string   `json:"server_id"`
 	Name         string   `json:"server_name"`
@@ -1117,8 +1121,8 @@ func CustomReconnectDelay(cb ReconnectDelayHandler) Option {
 
 // ReconnectToServer is an Option to set a custom server selection callback
 // for reconnection attempts. The callback receives a snapshot of available
-// servers and must return the URL to connect to and whether to apply the
-// reconnect delay before attempting the connection.
+// servers and must return a server from the pool to connect to and a delay
+// duration before attempting the connection.
 //
 // See ReconnectToServerHandler for detailed documentation and usage examples.
 func ReconnectToServer(cb ReconnectToServerHandler) Option {
@@ -3063,8 +3067,8 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	for i := 0; len(nc.srvPool) > 0; {
 		var err error
 		var cur *Server
-		var doSleep bool
-		var selectedSrv *url.URL
+		var callbackDelay time.Duration
+		var useCallbackDelay bool
 
 		if nc.Opts.ReconnectToServerCB != nil {
 			// Enforce MaxReconnect limits before calling the callback
@@ -3094,36 +3098,55 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 				}
 			}
 
-			selectedSrv, doSleep = nc.Opts.ReconnectToServerCB(srvVals, nc.info)
-			idx := slices.IndexFunc(nc.srvPool, func(srv *Server) bool {
-				return srv != nil && srv.URL.String() == selectedSrv.String()
-			})
-			if idx == -1 {
-				// Server not in pool, add it dynamically
-				newSrv := &Server{URL: selectedSrv}
-				nc.srvPool = append(nc.srvPool, newSrv)
-				nc.urls[selectedSrv.Host] = struct{}{}
-				cur = newSrv
-			} else {
-				cur = nc.srvPool[idx]
+			var selectedSrv *Server
+			selectedSrv, callbackDelay = nc.Opts.ReconnectToServerCB(srvVals, nc.info)
+			if selectedSrv != nil {
+				idx := slices.IndexFunc(nc.srvPool, func(srv *Server) bool {
+					return srv != nil && srv.URL.String() == selectedSrv.URL.String()
+				})
+				if idx != -1 {
+					cur = nc.srvPool[idx]
+					nc.current = cur
+					useCallbackDelay = true
+				} else if reconnectErrCB := nc.Opts.ReconnectErrCB; reconnectErrCB != nil {
+					nc.ach.push(func() { reconnectErrCB(nc, ErrServerNotInPool) })
+				}
 			}
-			nc.current = cur
 		}
 
+		var doSleep bool
 		if cur == nil {
 			cur, err = nc.selectNextServer()
 			if err != nil {
 				nc.err = err
 				break
 			}
-			// Use default sleep behavior when callback not used or fallback occurred
 			doSleep = i+1 >= len(nc.srvPool) && !forceReconnect
 		}
 
 		forceReconnect = false
 		nc.mu.Unlock()
 
-		if !doSleep {
+		if useCallbackDelay {
+			if callbackDelay > 0 {
+				i = 0
+				if rt == nil {
+					rt = time.NewTimer(callbackDelay)
+				} else {
+					rt.Reset(callbackDelay)
+				}
+				select {
+				case <-rqch:
+					rt.Stop()
+					nc.mu.Lock()
+					nc.rqch = make(chan struct{})
+					nc.mu.Unlock()
+				case <-rt.C:
+				}
+			} else {
+				runtime.Gosched()
+			}
+		} else if !doSleep {
 			i++
 			// Release the lock to give a chance to a concurrent nc.Close() to break the loop.
 			runtime.Gosched()
@@ -6185,6 +6208,7 @@ func (nc *Conn) Barrier(f func()) error {
 	return nil
 }
 
+// ServerPool returns a copy of the current server pool for the connection.
 func (nc *Conn) ServerPool() []Server {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -6199,6 +6223,22 @@ func (nc *Conn) ServerPool() []Server {
 	return servers
 }
 
+// SetServerPool allows updating the server pool for the connection. This
+// replaces the existing pool with the provided list of server URLs. If the
+// current server is not in the new pool, the client will switch to a server in
+// the new pool on the next reconnect attempt. This function is thread-safe and
+// can be called while the connection is active. It will return an error if the
+// connection is closed or if any of the provided URLs are invalid.
+//
+// This function does not trigger an immediate reconnect. The new server
+// pool will be used on the next reconnect attempt.
+// If you want to trigger an immediate reconnect to apply the new server pool,
+// you can call [Conn.ForceReconnect] after this function.
+//
+// Unless [IgnoreDiscoveredServers] is used true, the client will continue to
+// discover and add new servers to the pool as it receives INFO messages from
+// the server. If you want to prevent this behavior and only use the servers
+// provided in SetServerPool, use [IgnoreDiscoveredServers].
 func (nc *Conn) SetServerPool(servers []string) error {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()

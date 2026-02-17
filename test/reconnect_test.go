@@ -1521,14 +1521,14 @@ func TestReconnectToServerCallback(t *testing.T) {
 			nats.ReconnectWait(100*time.Millisecond),
 			nats.MaxReconnects(10),
 			nats.DontRandomize(),
-			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*nats.Server, time.Duration) {
 				callbackCalled.Add(1)
-				for _, srv := range servers {
-					if srv.URL.String() == url2 {
-						return srv.URL, false
+				for i := range servers {
+					if servers[i].URL.String() == url2 {
+						return &servers[i], 0
 					}
 				}
-				return servers[0].URL, false
+				return &servers[0], 0
 			}),
 			nats.ReconnectHandler(func(_ *nats.Conn) {
 				select {
@@ -1546,22 +1546,25 @@ func TestReconnectToServerCallback(t *testing.T) {
 			t.Fatalf("Expected initial connection to %s, got %s", url1, nc.ConnectedUrl())
 		}
 
-		if err := nc.ForceReconnect(); err != nil {
-			t.Fatalf("Failed to force reconnect: %v", err)
-		}
+		// try reconnecting a few times, we should end up on url2 each time
+		for i := range 5 {
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Failed to force reconnect: %v", err)
+			}
 
-		select {
-		case <-reconnectCh:
-		case <-time.After(2 * time.Second):
-			t.Fatal("Timed out waiting for reconnect")
-		}
+			select {
+			case <-reconnectCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Timed out waiting for reconnect")
+			}
 
-		if callbackCalled.Load() == 0 {
-			t.Fatal("Callback was not invoked")
-		}
+			if callbackCalled.Load() != int32(i+1) {
+				t.Fatal("Expected ReconnectToServer callback to be called on each reconnect")
+			}
 
-		if nc.ConnectedUrl() != url2 {
-			t.Fatalf("Expected connection to %s after callback selection, got %s", url2, nc.ConnectedUrl())
+			if nc.ConnectedUrl() != url2 {
+				t.Fatalf("Expected connection to %s after callback selection, got %s", url2, nc.ConnectedUrl())
+			}
 		}
 	})
 
@@ -1578,16 +1581,16 @@ func TestReconnectToServerCallback(t *testing.T) {
 
 		nc, err := nats.Connect(
 			url1+","+url2,
-			nats.ReconnectWait(500*time.Millisecond),
+			nats.ReconnectWait(2*time.Second),
 			nats.MaxReconnects(10),
 			nats.DontRandomize(),
-			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
-				for _, srv := range servers {
-					if srv.URL.String() == url2 {
-						return srv.URL, true
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*nats.Server, time.Duration) {
+				for i := range servers {
+					if servers[i].URL.String() == url2 {
+						return &servers[i], 500 * time.Millisecond
 					}
 				}
-				return servers[0].URL, true
+				return &servers[0], 500 * time.Millisecond
 			}),
 			nats.ReconnectHandler(func(_ *nats.Conn) {
 				select {
@@ -1611,36 +1614,46 @@ func TestReconnectToServerCallback(t *testing.T) {
 
 		select {
 		case <-reconnectCh:
-			if time.Since(now) < 500*time.Millisecond {
-				t.Fatal("Reconnect occurred too quickly, expected wait time, got:", time.Since(now))
+			elapsed := time.Since(now)
+			if elapsed < 500*time.Millisecond {
+				t.Fatalf("Reconnect occurred too quickly, expected ~500ms, got %v", elapsed)
 			}
-		case <-time.After(2 * time.Second):
+			if elapsed > 1500*time.Millisecond {
+				t.Fatalf("Reconnect took too long (used ReconnectWait instead of callback delay?), got %v", elapsed)
+			}
+		case <-time.After(5 * time.Second):
 			t.Fatal("Timed out waiting for reconnect")
 		}
 	})
 
-	t.Run("dynamic server addition", func(t *testing.T) {
+	t.Run("server not in pool fires error callback", func(t *testing.T) {
 		srv1 := RunServerOnPort(-1)
 		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+		defer srv2.Shutdown()
 
 		url1 := srv1.ClientURL()
-
-		newSrv := RunServerOnPort(-1)
-		defer newSrv.Shutdown()
-		newURL := newSrv.ClientURL()
+		url2 := srv2.ClientURL()
 
 		reconnectCh := make(chan bool, 1)
+		var reconnectErr atomic.Value
 
 		nc, err := nats.Connect(
-			url1,
+			url1+","+url2,
 			nats.ReconnectWait(50*time.Millisecond),
 			nats.MaxReconnects(10),
-			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*url.URL, bool) {
-				targetURL, _ := url.Parse(newURL)
-				return targetURL, false
+			nats.DontRandomize(),
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*nats.Server, time.Duration) {
+				return &nats.Server{URL: &url.URL{Scheme: "nats", Host: "127.0.0.1:9999"}}, 0
+			}),
+			nats.ReconnectErrHandler(func(_ *nats.Conn, err error) {
+				reconnectErr.Store(err)
 			}),
 			nats.ReconnectHandler(func(_ *nats.Conn) {
-				reconnectCh <- true
+				select {
+				case reconnectCh <- true:
+				default:
+				}
 			}),
 		)
 		if err != nil {
@@ -1656,8 +1669,58 @@ func TestReconnectToServerCallback(t *testing.T) {
 			t.Fatal("Timed out waiting for reconnect")
 		}
 
-		if nc.ConnectedUrl() != newURL {
-			t.Fatalf("Expected connection to %s, got %s", newURL, nc.ConnectedUrl())
+		if nc.ConnectedUrl() != url2 {
+			t.Fatalf("Expected connection to %s via default fallback, got %s", url2, nc.ConnectedUrl())
+		}
+
+		if storedErr, ok := reconnectErr.Load().(error); !ok {
+			t.Fatalf("Expected an error in ReconnectErrHandler, got %v", storedErr)
+		} else if !errors.Is(storedErr, nats.ErrServerNotInPool) {
+			t.Fatalf("Expected ErrServerNotInPool, got %v", storedErr)
+		}
+	})
+
+	t.Run("nil server falls back to default selection", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+		defer srv2.Shutdown()
+
+		url1 := srv1.ClientURL()
+		url2 := srv2.ClientURL()
+
+		reconnectCh := make(chan bool, 1)
+
+		nc, err := nats.Connect(
+			url1+","+url2,
+			nats.ReconnectWait(50*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.DontRandomize(),
+			nats.ReconnectToServer(func(servers []nats.Server, info nats.ServerInfo) (*nats.Server, time.Duration) {
+				return nil, 0
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				select {
+				case reconnectCh <- true:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		srv1.Shutdown()
+
+		select {
+		case <-reconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+
+		if nc.ConnectedUrl() != url2 {
+			t.Fatalf("Expected connection to %s via default fallback, got %s", url2, nc.ConnectedUrl())
 		}
 	})
 }
