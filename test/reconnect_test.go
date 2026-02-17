@@ -1825,7 +1825,7 @@ func TestSetServerPool(t *testing.T) {
 		}
 	})
 
-	t.Run("atomic operation - websocket mixing doesn't modify pool", func(t *testing.T) {
+	t.Run("websocket URLs rejected for non-websocket connection", func(t *testing.T) {
 		srv := RunServerOnPort(-1)
 		defer srv.Shutdown()
 
@@ -1837,17 +1837,106 @@ func TestSetServerPool(t *testing.T) {
 
 		originalPool := nc.ServerPool()
 
-		err = nc.SetServerPool([]string{
-			"nats://localhost:4222",
-			"ws://localhost:8080",
-		})
-		if err == nil {
-			t.Fatal("Expected error from mixing websocket and non-websocket URLs")
+		err = nc.SetServerPool([]string{"ws://localhost:8080"})
+		if !errors.Is(err, nats.ErrMixingWebsocketSchemes) {
+			t.Fatal("Expected error from websocket URL on non-websocket connection")
 		}
 
 		currentPool := nc.ServerPool()
 		if len(currentPool) != len(originalPool) {
 			t.Fatalf("Pool was modified on error: expected %d servers, got %d", len(originalPool), len(currentPool))
+		}
+	})
+
+	t.Run("preserves reconnect count for existing servers", func(t *testing.T) {
+		srv1 := RunServerOnPort(-1)
+		defer srv1.Shutdown()
+		srv2 := RunServerOnPort(-1)
+
+		url1 := srv1.ClientURL()
+		url2 := srv2.ClientURL()
+
+		reconnectCh := make(chan struct{}, 1)
+
+		nc, err := nats.Connect(
+			url1+","+url2,
+			nats.ReconnectWait(50*time.Millisecond),
+			nats.MaxReconnects(10),
+			nats.DontRandomize(),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				reconnectCh <- struct{}{}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		// Shut down srv2 so it fails when attempted during reconnect.
+		// Then ForceReconnect: client tries url2 (fails, Reconnects++),
+		// then url1 (succeeds, Reconnects=0). So url2 has non-zero count.
+		srv2.Shutdown()
+
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatalf("Failed to force reconnect: %v", err)
+		}
+
+		select {
+		case <-reconnectCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for reconnect")
+		}
+
+		pool := nc.ServerPool()
+		var srv2Reconnects int
+		for _, s := range pool {
+			if s.URL.String() == url2 {
+				srv2Reconnects = s.Reconnects
+				break
+			}
+		}
+		if srv2Reconnects != 1 {
+			t.Fatal("Expected one reconnect for srv2")
+		}
+
+		srv3 := RunServerOnPort(-1)
+		defer srv3.Shutdown()
+		url3 := srv3.ClientURL()
+
+		if err := nc.SetServerPool([]string{url1, url2, url3}); err != nil {
+			t.Fatalf("Failed to set server pool: %v", err)
+		}
+
+		pool = nc.ServerPool()
+		for _, s := range pool {
+			if s.URL.String() == url2 {
+				if s.Reconnects != srv2Reconnects {
+					t.Fatalf("Expected reconnect count %d to be preserved, got %d", srv2Reconnects, s.Reconnects)
+				}
+				return
+			}
+		}
+		t.Fatal("srv2 not found in pool after SetServerPool")
+	})
+
+	t.Run("server pool returns deep copy", func(t *testing.T) {
+		srv := RunServerOnPort(-1)
+		defer srv.Shutdown()
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer nc.Close()
+
+		pool := nc.ServerPool()
+		originalURL := pool[0].URL.String()
+
+		pool[0].URL.Host = "modified:9999"
+
+		pool2 := nc.ServerPool()
+		if pool2[0].URL.String() != originalURL {
+			t.Fatalf("Internal pool was modified: expected %s, got %s", originalURL, pool2[0].URL.String())
 		}
 	})
 }

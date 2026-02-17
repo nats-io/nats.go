@@ -153,6 +153,7 @@ var (
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
 	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
 	ErrServerNotInPool               = errors.New("nats: selected server is not in the pool")
+	ErrMixingWebsocketSchemes        = errors.New("nats: mixing of websocket and non websocket URLs is not allowed")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -855,6 +856,15 @@ type Server struct {
 	lastErr    error
 	isImplicit bool
 	tlsName    string
+}
+
+func (s Server) clone() Server {
+	c := s
+	if s.URL != nil {
+		u := *s.URL
+		c.URL = &u
+	}
+	return c
 }
 
 // ServerInfo represents the information about the server that is sent in the INFO protocol message.
@@ -2039,7 +2049,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	if len(nc.srvPool) == 0 {
 		nc.ws = isWS
 	} else if isWS != nc.ws {
-		return errors.New("mixing of websocket and non websocket URLs is not allowed")
+		return ErrMixingWebsocketSchemes
 	}
 
 	nc.srvPool = append(nc.srvPool, s)
@@ -3094,7 +3104,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 			srvVals := make([]Server, len(nc.srvPool))
 			for idx, srv := range nc.srvPool {
 				if srv != nil {
-					srvVals[idx] = *srv
+					srvVals[idx] = srv.clone()
 				}
 			}
 
@@ -6216,8 +6226,7 @@ func (nc *Conn) ServerPool() []Server {
 	for i, srv := range nc.srvPool {
 		if srv != nil {
 			// Return a copy to avoid exposing internal state
-			s := *srv
-			servers[i] = s
+			servers[i] = srv.clone()
 		}
 	}
 	return servers
@@ -6249,32 +6258,33 @@ func (nc *Conn) SetServerPool(servers []string) error {
 	// Parse and validate all URLs first (without modifying state)
 	newPool := make([]*Server, 0, len(servers))
 	newURLs := make(map[string]struct{})
-	var firstWS *bool
 
 	for _, addr := range servers {
 		s, err := nc.parseServerURL(addr, false, false)
 		if err != nil {
 			return err
 		}
-		isWS := isWebsocketScheme(s.URL)
-
-		// Check websocket consistency
-		if firstWS == nil {
-			firstWS = &isWS
-		} else if isWS != *firstWS {
-			return errors.New("mixing of websocket and non websocket URLs is not allowed")
+		if isWebsocketScheme(s.URL) != nc.ws {
+			return ErrMixingWebsocketSchemes
 		}
 
 		newPool = append(newPool, s)
 		newURLs[s.URL.Host] = struct{}{}
 	}
 
-	// All validated - atomically replace
+	// Preserve state from existing pool entries
+	for _, newSrv := range newPool {
+		if idx := slices.IndexFunc(nc.srvPool, func(oldSrv *Server) bool {
+			return oldSrv != nil && oldSrv.URL.String() == newSrv.URL.String()
+		}); idx != -1 {
+			newSrv.Reconnects = nc.srvPool[idx].Reconnects
+			newSrv.didConnect = nc.srvPool[idx].didConnect
+			newSrv.lastErr = nc.srvPool[idx].lastErr
+		}
+	}
+
 	nc.srvPool = newPool
 	nc.urls = newURLs
-	if firstWS != nil {
-		nc.ws = *firstWS
-	}
 
 	// Update nc.current to point to the corresponding server in the new pool
 	// This is important because currentServer() uses pointer equality
