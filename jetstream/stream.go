@@ -48,7 +48,7 @@ type (
 		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
 
 		// GetLastMsgForSubject retrieves the last raw stream message stored in
-		// JetStream on a given subject subject.
+		// JetStream on a given subject.
 		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
 
 		// DeleteMsg deletes a message from a stream.
