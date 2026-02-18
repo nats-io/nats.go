@@ -121,7 +121,7 @@ func main() {
         messageCounter++
     }
 
-    fmt.Printf("received %d messages\n", messageCounter)
+    fmt.Printf("Received %d messages\n", messageCounter)
 
     if msgs.Error() != nil {
         fmt.Println("Error during Fetch(): ", msgs.Error())
@@ -224,7 +224,7 @@ _ = s.Purge(ctx, jetstream.WithPurgeSequence(100))
 _ = s.Purge(ctx, jetstream.WithPurgeKeep(10))
 ```
 
-- Get and messages from stream
+- Get and delete messages from a stream
 
 ```go
 // get message from stream with sequence number == 100
@@ -240,7 +240,7 @@ _ = s.DeleteMsg(ctx, 100)
 - Get information about a stream
 
 ```go
-// Fetches latest stream info from server
+// Fetches the latest stream info from server
 info, _ := s.Info(ctx)
 fmt.Println(info.Config.Name)
 
@@ -310,7 +310,7 @@ cons2 := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
 // or an illegal property is to be updated (e.g. AckPolicy)
 updated, _ := js.UpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
-    Description: "updated consumer"
+    Description: "updated consumer",
 })
 
 // get consumer handle
@@ -336,7 +336,7 @@ cons, _ := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
 })
 
 // get consumer handle
-cons, _ = stream.Consumer(ctx, "ORDERS", "foo")
+cons, _ = stream.Consumer(ctx, "foo")
 
 // delete a consumer
 stream.DeleteConsumer(ctx, "foo")
@@ -395,20 +395,19 @@ js, _ := jetstream.New(nc)
 // create a consumer (this is an idempotent operation)
 cons, _ := js.OrderedConsumer(ctx, "ORDERS", jetstream.OrderedConsumerConfig{
     // Filter results from "ORDERS" stream by specific subject
-    FilterSubjects: []{"ORDERS.A"},
+    FilterSubjects: []string{"ORDERS.A"},
 })
 ```
 
 ### Receiving messages from pull consumers
 
-The `Consumer` interface covers allows fetching messages on demand, with
-pre-defined batch size on bytes limit, or continuous push-like receiving of
+The `Consumer` interface allows fetching messages on demand, with a
+pre-defined batch size or byte limit, or continuous push-like receiving of
 messages.
 
 #### __Single fetch__
 
-This pattern pattern allows fetching a defined number of messages in a single
-RPC.
+This pattern allows fetching a defined number of messages in a single RPC.
 
 - Using `Fetch` or `FetchBytes`, consumer will return up to the provided number
 of messages/bytes. By default, `Fetch()` will wait 30 seconds before timing out
@@ -481,10 +480,10 @@ single messages on demand.
 Subject filtering is achieved by configuring a consumer with a `FilterSubject`
 value.
 
-##### Using `Consume()` receive messages in a callback
+##### Using `Consume()` to receive messages in a callback
 
 ```go
-cons, _ := js.CreateOrUpdateConsumer("ORDERS", jetstream.ConsumerConfig{
+cons, _ := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     AckPolicy: jetstream.AckExplicitPolicy,
     // receive messages from ORDERS.A subject only
     FilterSubject: "ORDERS.A"
@@ -498,7 +497,7 @@ consContext, _ := c.Consume(func(msg jetstream.Msg) {
 defer consContext.Stop()
 ```
 
-Similarly to `Messages()`, `Consume()` can be supplied with options to modify
+Similar to `Messages()`, `Consume()` can be supplied with options to modify
 the behavior of a single pull request:
 
 - `PullMaxMessages(int)` - up to provided number of messages will be buffered
@@ -511,7 +510,6 @@ the behavior of a single pull request:
   request. If the value is set too low, the consumer will stall and not be able
   to consume messages.
 - `PullExpiry(time.Duration)` - timeout on a single pull request to the server
-type PullThresholdMessages int
 - `PullThresholdMessages(int)` - amount of messages which triggers refilling the
   buffer
 - `PullThresholdBytes(int)` - amount of bytes which triggers refilling the
@@ -521,10 +519,10 @@ request. An error will be triggered if at least 2 heartbeats are missed
 - `ConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a
   custom error handler on `Consume()`, allowing e.g. tracking missing
   heartbeats.
-- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages will
-  be buffered and a single fetch size will be limited to the provided value.
+- `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
+  will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,
-  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that he byte
+  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that the byte
   limit should never be set to a value lower than the maximum message size that
   can be expected from the server. If the byte limit is lower than the maximum
   message size, the consumer will stall and not be able to consume messages.
@@ -575,10 +573,10 @@ iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
-- `PullMaxMessagesWithBytesLimit` - up to the provided number of messages will
-  be buffered and a single fetch size will be limited to the provided value.
+- `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
+  will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,
-  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that he byte
+  `PullMaxMessages` or `PullMaxBytes` should be used instead. Note that the byte
   limit should never be set to a value lower than the maximum message size that
   can be expected from the server. If the byte limit is lower than the maximum
   message size, the consumer will stall and not be able to consume messages.
@@ -622,7 +620,7 @@ can be set to prevent the consumer from receiving more messages than it can
 handle.
 
 ```go
-cons, _ := js.CreateOrUpdatePushConsumer("ORDERS", jetstream.ConsumerConfig{
+cons, _ := js.CreateOrUpdatePushConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
     DeliverSubject: nats.NewInbox()
     AckPolicy: jetstream.AckExplicitPolicy,
     // receive messages from ORDERS.A subject only
@@ -671,7 +669,7 @@ setting various headers. Additionally, for `PublishMsg()` headers can be set
 directly on `nats.Msg`.
 
 ```go
-// All 3 implementations are work identically 
+// All 3 implementations work identically 
 ack, err := js.PublishMsg(ctx, &nats.Msg{
     Data:    []byte("hello"),
     Subject: "ORDERS.new",
@@ -972,14 +970,14 @@ js.DeleteObjectStore(ctx, "configs")
 
 Object Stores support Watchers, which can be used to watch for changes on
 objects in a given bucket. Watcher will receive a notification on a channel when
-a change occurs. By default, watcher will return latest information for all
+a change occurs. By default, watcher will return the latest information for all
 objects in a bucket. After sending all initial values, watcher will send nil on
 the channel to signal that all initial values have been sent and it will start
 sending updates when changes occur.
 
 >__NOTE:__ Watchers do not retrieve values for objects, only metadata (containing
 >information such as object name, bucket name, object size etc.). If object data
->is required, `Get` method should be used.
+>is required, the `Get` method should be used.
 
 Watcher supports several configuration options:
 
