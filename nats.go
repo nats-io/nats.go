@@ -152,6 +152,8 @@ var (
 	ErrConnectionNotTLS              = errors.New("nats: connection is not tls")
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
 	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
+	ErrServerNotInPool               = errors.New("nats: selected server is not in the pool")
+	ErrMixingWebsocketSchemes        = errors.New("nats: mixing of websocket and non websocket URLs is not allowed")
 )
 
 // GetDefaultOptions returns default configuration options for the client.
@@ -253,6 +255,25 @@ type ReconnectDelayHandler func(attempts int) time.Duration
 
 // WebSocketHeadersHandler is an optional callback handler for generating token used for WebSocket connections.
 type WebSocketHeadersHandler func() (http.Header, error)
+
+// ReconnectToServerHandler is used to determine the server to reconnect to during
+// the reconnection process. The handler receives a snapshot of available servers
+// in the pool and should return a pointer to one of the servers from the provided
+// slice and a delay before attempting the connection.
+//
+// Return values:
+//   - *Server: The server to connect to. Must be a pointer to an element from the
+//     provided servers slice. If the returned server is not in the pool, the library
+//     will fire ReconnectErrCB with ErrServerNotInPool and fall back to default
+//     server selection.
+//   - time.Duration: The delay before attempting the connection. If zero, the
+//     connection attempt is made immediately. If non-zero, the library sleeps
+//     for exactly that duration before attempting.
+//
+// MaxReconnect limits are enforced automatically: servers exceeding the configured
+// MaxReconnect attempts are removed from the pool before the handler is called.
+// To disable this limit, set MaxReconnect to a negative value.
+type ReconnectToServerHandler func([]Server, ServerInfo) (*Server, time.Duration)
 
 // asyncCB is used to preserve order for async callbacks.
 type asyncCB struct {
@@ -434,6 +455,13 @@ type Options struct {
 	// reconnect attempt fails.
 	ReconnectErrCB ConnErrHandler
 
+	// ReconnectToServerCB is called before reconnection attempt.
+	// It is used to determine the server to reconnect to out of
+	// the list of available servers.
+	// If a reconnect attempt is not successful, this callback will
+	// be called again before the next attempt.
+	ReconnectToServerCB ReconnectToServerHandler
+
 	// ReconnectBufSize is the size of the backing bufio during reconnect.
 	// Once this has been exhausted publish operations will return an error.
 	// Defaults to 8388608 bytes (8MB).
@@ -582,14 +610,14 @@ type Conn struct {
 	// Modifying the configuration of a running Conn is a race.
 	Opts          Options
 	wg            sync.WaitGroup
-	srvPool       []*srv
-	current       *srv
+	srvPool       []*Server
+	current       *Server
 	urls          map[string]struct{} // Keep track of all known URLs (used by processInfo)
 	conn          net.Conn
 	bw            *natsWriter
 	br            *natsReader
 	fch           chan struct{}
-	info          serverInfo
+	info          ServerInfo
 	ssid          int64
 	subsMu        sync.RWMutex
 	subs          map[int64]*Subscription
@@ -820,18 +848,27 @@ type Statistics struct {
 	Reconnects uint64
 }
 
-// Tracks individual backend servers.
-type srv struct {
-	url        *url.URL
+// Server represents a server in the pool of servers that the client can connect to.
+type Server struct {
+	URL        *url.URL
+	Reconnects int
 	didConnect bool
-	reconnects int
 	lastErr    error
 	isImplicit bool
 	tlsName    string
 }
 
-// The INFO block received from the server.
-type serverInfo struct {
+func (s Server) clone() Server {
+	c := s
+	if s.URL != nil {
+		u := *s.URL
+		c.URL = &u
+	}
+	return c
+}
+
+// ServerInfo represents the information about the server that is sent in the INFO protocol message.
+type ServerInfo struct {
 	ID           string   `json:"server_id"`
 	Name         string   `json:"server_name"`
 	Proto        int      `json:"proto"`
@@ -1088,6 +1125,19 @@ func ReconnectJitter(jitter, jitterForTLS time.Duration) Option {
 func CustomReconnectDelay(cb ReconnectDelayHandler) Option {
 	return func(o *Options) error {
 		o.CustomReconnectDelayCB = cb
+		return nil
+	}
+}
+
+// ReconnectToServer is an Option to set a custom server selection callback
+// for reconnection attempts. The callback receives a snapshot of available
+// servers and must return a server from the pool to connect to and a delay
+// duration before attempting the connection.
+//
+// See ReconnectToServerHandler for detailed documentation and usage examples.
+func ReconnectToServer(cb ReconnectToServerHandler) Option {
+	return func(o *Options) error {
+		o.ReconnectToServerCB = cb
 		return nil
 	}
 }
@@ -1804,7 +1854,7 @@ const (
 )
 
 // Return the currently selected server
-func (nc *Conn) currentServer() (int, *srv) {
+func (nc *Conn) currentServer() (int, *Server) {
 	for i, s := range nc.srvPool {
 		if s == nil {
 			continue
@@ -1818,7 +1868,7 @@ func (nc *Conn) currentServer() (int, *srv) {
 
 // Pop the current server and put onto the end of the list. Select head of list as long
 // as number of reconnect attempts under MaxReconnect.
-func (nc *Conn) selectNextServer() (*srv, error) {
+func (nc *Conn) selectNextServer() (*Server, error) {
 	i, s := nc.currentServer()
 	if i < 0 {
 		return nil, ErrNoServers
@@ -1827,7 +1877,7 @@ func (nc *Conn) selectNextServer() (*srv, error) {
 	num := len(sp)
 	copy(sp[i:num-1], sp[i+1:num])
 	maxReconnect := nc.Opts.MaxReconnect
-	if maxReconnect < 0 || s.reconnects < maxReconnect {
+	if maxReconnect < 0 || s.Reconnects < maxReconnect {
 		nc.srvPool[num-1] = s
 	} else {
 		nc.srvPool = sp[0 : num-1]
@@ -1863,7 +1913,7 @@ const tlsScheme = "tls"
 // Server Options. We will randomize the server pool unless
 // the NoRandomize flag is set.
 func (nc *Conn) setupServerPool() error {
-	nc.srvPool = make([]*srv, 0, srvPoolSize)
+	nc.srvPool = make([]*Server, 0, srvPoolSize)
 	nc.urls = make(map[string]struct{}, srvPoolSize)
 
 	// Create srv objects from each url string in nc.Opts.Servers
@@ -1900,7 +1950,7 @@ func (nc *Conn) setupServerPool() error {
 
 	// Check for Scheme hint to move to TLS mode.
 	for _, srv := range nc.srvPool {
-		if srv.url.Scheme == tlsScheme || srv.url.Scheme == wsSchemeTLS {
+		if srv.URL.Scheme == tlsScheme || srv.URL.Scheme == wsSchemeTLS {
 			// FIXME(dlc), this is for all in the pool, should be case by case.
 			nc.Opts.Secure = true
 			if nc.Opts.TLSConfig == nil {
@@ -1931,8 +1981,10 @@ func hostIsIP(u *url.URL) bool {
 	return net.ParseIP(u.Hostname()) != nil
 }
 
-// addURLToPool adds an entry to the server pool
-func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
+// parseServerURL parses a server URL string into a Server struct.
+// It handles scheme defaults and port defaults. Does not validate websocket consistency.
+// Returns the parsed Server and whether it's a websocket URL.
+func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server, error) {
 	if !strings.Contains(sURL, "://") {
 		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
@@ -1943,7 +1995,7 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 	for i := 0; i < 2; i++ {
 		u, err = url.Parse(sURL)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if u.Port() != "" {
 			break
@@ -1963,19 +2015,9 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 		}
 	}
 
-	isWS := isWebsocketScheme(u)
-	// We don't support mix and match of websocket and non websocket URLs.
-	// If this is the first URL, then we accept and switch the global state
-	// to websocket. After that, we will know how to reject mixed URLs.
-	if len(nc.srvPool) == 0 {
-		nc.ws = isWS
-	} else if isWS && !nc.ws || !isWS && nc.ws {
-		return errors.New("mixing of websocket and non websocket URLs is not allowed")
-	}
-
 	var tlsName string
 	if implicit {
-		curl := nc.current.url
+		curl := nc.current.URL
 		// Check to see if we do not have a url.User but current connected
 		// url does. If so copy over.
 		if u.User == nil && curl.User != nil {
@@ -1989,9 +2031,29 @@ func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
 		}
 	}
 
-	s := &srv{url: u, isImplicit: implicit, tlsName: tlsName}
+	s := &Server{URL: u, isImplicit: implicit, tlsName: tlsName}
+	return s, nil
+}
+
+// addURLToPool adds an entry to the server pool
+func (nc *Conn) addURLToPool(sURL string, implicit, saveTLSName bool) error {
+	s, err := nc.parseServerURL(sURL, implicit, saveTLSName)
+	if err != nil {
+		return err
+	}
+
+	// We don't support mix and match of websocket and non websocket URLs.
+	// If this is the first URL, then we accept and switch the global state
+	// to websocket. After that, we will know how to reject mixed URLs.
+	isWS := isWebsocketScheme(s.URL)
+	if len(nc.srvPool) == 0 {
+		nc.ws = isWS
+	} else if isWS != nc.ws {
+		return ErrMixingWebsocketSchemes
+	}
+
 	nc.srvPool = append(nc.srvPool, s)
-	nc.urls[u.Host] = struct{}{}
+	nc.urls[s.URL.Host] = struct{}{}
 	return nil
 }
 
@@ -2187,7 +2249,7 @@ func (nc *Conn) createConn() (err error) {
 
 	// We will auto-expand host names if they resolve to multiple IPs
 	hosts := []string{}
-	u := nc.current.url
+	u := nc.current.URL
 
 	if !nc.Opts.SkipHostLookup && net.ParseIP(u.Hostname()) == nil {
 		addrs, _ := net.LookupHost(u.Hostname())
@@ -2273,7 +2335,7 @@ func (nc *Conn) makeTLSConn() error {
 		if nc.current.tlsName != _EMPTY_ {
 			tlsCopy.ServerName = nc.current.tlsName
 		} else {
-			h, _, _ := net.SplitHostPort(nc.current.url.Host)
+			h, _, _ := net.SplitHostPort(nc.current.URL.Host)
 			tlsCopy.ServerName = h
 		}
 	}
@@ -2371,7 +2433,7 @@ func (nc *Conn) ConnectedUrl() string {
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.current.url.String()
+	return nc.current.URL.String()
 }
 
 // ConnectedUrlRedacted reports the connected server's URL with passwords redacted
@@ -2386,7 +2448,7 @@ func (nc *Conn) ConnectedUrlRedacted() string {
 	if nc.status != CONNECTED {
 		return _EMPTY_
 	}
-	return nc.current.url.Redacted()
+	return nc.current.URL.Redacted()
 }
 
 // ConnectedAddr returns the connected server's IP
@@ -2601,7 +2663,7 @@ func (nc *Conn) connect() (bool, error) {
 
 			if err == nil {
 				nc.current.didConnect = true
-				nc.current.reconnects = 0
+				nc.current.Reconnects = 0
 				nc.current.lastErr = nil
 				break
 			} else {
@@ -2718,7 +2780,7 @@ func (nc *Conn) sendProto(proto string) {
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
 	var nkey, sig, user, pass, token, ujwt string
-	u := nc.current.url.User
+	u := nc.current.URL.User
 	if u != nil {
 		// if no password, assume username is authToken
 		if _, ok := u.Password(); !ok {
@@ -3013,17 +3075,88 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 	}
 
 	for i := 0; len(nc.srvPool) > 0; {
-		cur, err := nc.selectNextServer()
-		if err != nil {
-			nc.err = err
-			break
+		var err error
+		var cur *Server
+		var callbackDelay time.Duration
+		var useCallbackDelay bool
+
+		if nc.Opts.ReconnectToServerCB != nil {
+			// Enforce MaxReconnect limits before calling the callback
+			maxReconnect := nc.Opts.MaxReconnect
+			if maxReconnect >= 0 {
+				// Remove servers that have exceeded MaxReconnect attempts
+				filtered := make([]*Server, 0, len(nc.srvPool))
+				for _, srv := range nc.srvPool {
+					if srv != nil && srv.Reconnects < maxReconnect {
+						filtered = append(filtered, srv)
+					}
+				}
+				nc.srvPool = filtered
+			}
+
+			// Check if we still have servers after filtering
+			if len(nc.srvPool) == 0 {
+				nc.err = ErrNoServers
+				break
+			}
+
+			// Copy server values to avoid caller modifying internal state
+			srvVals := make([]Server, len(nc.srvPool))
+			for idx, srv := range nc.srvPool {
+				if srv != nil {
+					srvVals[idx] = srv.clone()
+				}
+			}
+
+			var selectedSrv *Server
+			selectedSrv, callbackDelay = nc.Opts.ReconnectToServerCB(srvVals, nc.info)
+			if selectedSrv != nil {
+				idx := slices.IndexFunc(nc.srvPool, func(srv *Server) bool {
+					return srv != nil && srv.URL.String() == selectedSrv.URL.String()
+				})
+				if idx != -1 {
+					cur = nc.srvPool[idx]
+					nc.current = cur
+					useCallbackDelay = true
+				} else if reconnectErrCB := nc.Opts.ReconnectErrCB; reconnectErrCB != nil {
+					nc.ach.push(func() { reconnectErrCB(nc, ErrServerNotInPool) })
+				}
+			}
 		}
 
-		doSleep := i+1 >= len(nc.srvPool) && !forceReconnect
+		var doSleep bool
+		if cur == nil {
+			cur, err = nc.selectNextServer()
+			if err != nil {
+				nc.err = err
+				break
+			}
+			doSleep = i+1 >= len(nc.srvPool) && !forceReconnect
+		}
+
 		forceReconnect = false
 		nc.mu.Unlock()
 
-		if !doSleep {
+		if useCallbackDelay {
+			if callbackDelay > 0 {
+				i = 0
+				if rt == nil {
+					rt = time.NewTimer(callbackDelay)
+				} else {
+					rt.Reset(callbackDelay)
+				}
+				select {
+				case <-rqch:
+					rt.Stop()
+					nc.mu.Lock()
+					nc.rqch = make(chan struct{})
+					nc.mu.Unlock()
+				case <-rt.C:
+				}
+			} else {
+				runtime.Gosched()
+			}
+		} else if !doSleep {
 			i++
 			// Release the lock to give a chance to a concurrent nc.Close() to break the loop.
 			runtime.Gosched()
@@ -3069,7 +3202,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 		}
 
 		// Mark that we tried a reconnect
-		cur.reconnects++
+		cur.Reconnects++
 
 		// Try to create a new connection
 		err = nc.createConn()
@@ -3104,7 +3237,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 
 		// Clear out server stats for the server we connected to..
 		cur.didConnect = true
-		cur.reconnects = 0
+		cur.Reconnects = 0
 
 		// Send existing subscription state
 		nc.resendSubscriptions()
@@ -3772,7 +3905,7 @@ func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
 		return nil
 	}
-	var ncInfo serverInfo
+	var ncInfo ServerInfo
 	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
 		return err
 	}
@@ -3806,7 +3939,7 @@ func (nc *Conn) processInfo(info string) error {
 	sp := nc.srvPool
 	for i := 0; i < len(sp); i++ {
 		srv := sp[i]
-		curl := srv.url.Host
+		curl := srv.URL.Host
 		// Check if this URL is in the INFO protocol
 		_, inInfo := tmp[curl]
 		// Remove from the temp map so that at the end we are left with only
@@ -3814,7 +3947,7 @@ func (nc *Conn) processInfo(info string) error {
 		delete(tmp, curl)
 		// Keep servers that were set through Options, but also the one that
 		// we are currently connected to (even if it is a discovered server).
-		if !srv.isImplicit || srv.url == nc.current.url {
+		if !srv.isImplicit || srv.URL == nc.current.URL {
 			continue
 		}
 		if !inInfo {
@@ -3826,7 +3959,7 @@ func (nc *Conn) processInfo(info string) error {
 		}
 	}
 	// Figure out if we should save off the current non-IP hostname if we encounter a bare IP.
-	saveTLS := nc.current != nil && !hostIsIP(nc.current.url)
+	saveTLS := nc.current != nil && !hostIsIP(nc.current.URL)
 
 	// If there are any left in the tmp map, these are new (or restarted) servers
 	// and need to be added to the pool.
@@ -5929,7 +6062,7 @@ func (nc *Conn) getServers(implicitOnly bool) []string {
 		if implicitOnly && !nc.srvPool[i].isImplicit {
 			continue
 		}
-		url := nc.srvPool[i].url
+		url := nc.srvPool[i].URL
 		servers = append(servers, fmt.Sprintf("%s://%s", url.Scheme, url.Host))
 	}
 	return servers
@@ -6082,6 +6215,103 @@ func (nc *Conn) Barrier(f func()) error {
 	}
 	nc.subsMu.Unlock()
 	nc.mu.Unlock()
+	return nil
+}
+
+// ServerPool returns a copy of the current server pool for the connection.
+//
+// This function should not be called from within connection callbacks to avoid
+// potential deadlocks.
+func (nc *Conn) ServerPool() []Server {
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+	servers := make([]Server, len(nc.srvPool))
+	for i, srv := range nc.srvPool {
+		if srv != nil {
+			// Return a copy to avoid exposing internal state
+			servers[i] = srv.clone()
+		}
+	}
+	return servers
+}
+
+// SetServerPool allows updating the server pool for the connection. This
+// replaces the existing pool with the provided list of server URLs. If the
+// current server is not in the new pool, the client will switch to a server in
+// the new pool on the next reconnect attempt. This function is thread-safe and
+// can be called while the connection is active. It will return an error if the
+// connection is closed or if any of the provided URLs are invalid.
+//
+// This function does not trigger an immediate reconnect. The new server
+// pool will be used on the next reconnect attempt.
+// If you want to trigger an immediate reconnect to apply the new server pool,
+// you can call [Conn.ForceReconnect] after this function.
+//
+// Unless [IgnoreDiscoveredServers] is used true, the client will continue to
+// discover and add new servers to the pool as it receives INFO messages from
+// the server. If you want to prevent this behavior and only use the servers
+// provided in SetServerPool, use [IgnoreDiscoveredServers].
+//
+// This function should not be called from within connection callbacks to avoid
+// potential deadlocks.
+func (nc *Conn) SetServerPool(servers []string) error {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	if nc.isClosed() {
+		return ErrConnectionClosed
+	}
+
+	// Parse and validate all URLs first (without modifying state)
+	newPool := make([]*Server, 0, len(servers))
+	newURLs := make(map[string]struct{})
+
+	for _, addr := range servers {
+		s, err := nc.parseServerURL(addr, false, false)
+		if err != nil {
+			return err
+		}
+		if isWebsocketScheme(s.URL) != nc.ws {
+			return ErrMixingWebsocketSchemes
+		}
+
+		newPool = append(newPool, s)
+		newURLs[s.URL.Host] = struct{}{}
+	}
+
+	// Preserve state from existing pool entries
+	for _, newSrv := range newPool {
+		if idx := slices.IndexFunc(nc.srvPool, func(oldSrv *Server) bool {
+			return oldSrv != nil && oldSrv.URL.String() == newSrv.URL.String()
+		}); idx != -1 {
+			newSrv.Reconnects = nc.srvPool[idx].Reconnects
+			newSrv.didConnect = nc.srvPool[idx].didConnect
+			newSrv.lastErr = nc.srvPool[idx].lastErr
+		}
+	}
+
+	nc.srvPool = newPool
+	nc.urls = newURLs
+
+	// Update nc.current to point to the corresponding server in the new pool
+	// This is important because currentServer() uses pointer equality
+	if nc.current != nil {
+		currentURL := nc.current.URL.String()
+		found := false
+		for _, s := range newPool {
+			if s.URL.String() == currentURL {
+				// Update nc.current to point to the server instance in the new pool
+				nc.current = s
+				found = true
+				break
+			}
+		}
+		if !found && len(newPool) > 0 {
+			// Current server not in new pool - point to first server in new pool
+			// This ensures selectNextServer() can find it and properly rotate
+			nc.current = newPool[0]
+		}
+	}
+
 	return nil
 }
 
