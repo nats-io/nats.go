@@ -6219,6 +6219,9 @@ func (nc *Conn) Barrier(f func()) error {
 }
 
 // ServerPool returns a copy of the current server pool for the connection.
+//
+// This function should not be called from within connection callbacks to avoid
+// potential deadlocks.
 func (nc *Conn) ServerPool() []Server {
 	nc.mu.RLock()
 	defer nc.mu.RUnlock()
@@ -6248,6 +6251,9 @@ func (nc *Conn) ServerPool() []Server {
 // discover and add new servers to the pool as it receives INFO messages from
 // the server. If you want to prevent this behavior and only use the servers
 // provided in SetServerPool, use [IgnoreDiscoveredServers].
+//
+// This function should not be called from within connection callbacks to avoid
+// potential deadlocks.
 func (nc *Conn) SetServerPool(servers []string) error {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
