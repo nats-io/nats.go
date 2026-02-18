@@ -105,6 +105,9 @@ type KeyValueStatus interface {
 
 	// IsCompressed indicates if the data is compressed on disk
 	IsCompressed() bool
+
+	// Config returns the original configuration used to create the bucket
+	Config() KeyValueConfig
 }
 
 // KeyWatcher is what is returned when doing a watch.
@@ -1207,6 +1210,24 @@ func (s *KeyValueBucketStatus) Bytes() uint64 { return s.nfo.State.Bytes }
 
 // IsCompressed indicates if the data is compressed on disk
 func (s *KeyValueBucketStatus) IsCompressed() bool { return s.nfo.Config.Compression != NoCompression }
+
+func (s *KeyValueBucketStatus) Config() KeyValueConfig {
+	return KeyValueConfig{
+		Bucket:       s.bucket,
+		Description:  s.nfo.Config.Description,
+		MaxValueSize: s.nfo.Config.MaxMsgSize,
+		History:      uint8(s.nfo.Config.MaxMsgsPerSubject),
+		TTL:          s.nfo.Config.MaxAge,
+		MaxBytes:     s.nfo.Config.MaxBytes,
+		Storage:      s.nfo.Config.Storage,
+		Replicas:     s.nfo.Config.Replicas,
+		Placement:    s.nfo.Config.Placement,
+		RePublish:    s.nfo.Config.RePublish,
+		Mirror:       s.nfo.Config.Mirror,
+		Sources:      s.nfo.Config.Sources,
+		Compression:  s.nfo.Config.Compression != NoCompression,
+	}
+}
 
 // Status retrieves the status and configuration of a bucket
 func (kv *kvs) Status() (KeyValueStatus, error) {
