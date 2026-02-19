@@ -146,8 +146,8 @@ The new API provides three creation methods:
 **Additional notes on consumer behavior:**
 
 - The default ack policy changed between the APIs. In the legacy API,
- `AddConsumer()` defaulted to `AckNone`. In the new API, the default is
- `AckExplicit`.
+  `AddConsumer()` defaulted to `AckNone`. In the new API, the default is
+  `AckExplicit`.
 
 - In the legacy API, `sub.Unsubscribe()` on an implicitly created
   consumer would automatically delete that consumer on the server. The new API
@@ -253,10 +253,9 @@ With the exception of PullSubscribe, all legacy subscription flavors utilized pu
 
 The legacy `js.Subscribe()` created a push consumer behind the scenes (unless
 explicitly specified otherwise via `nats.Bind()` or `nats.Durable()`) and
-delivered messages either via a callback. In the new
-API, the recommended replacement is a **pull consumer** with `Consume()` or
-`Messages()`. These provide the same continuous delivery with better flow
-control.
+delivered messages either via a callback. In the new API, the recommended
+replacement is a **pull consumer** with `Consume()` or `Messages()`. These
+provide the same continuous delivery with better flow control.
 
 #### Legacy: callback subscription
 
@@ -373,6 +372,11 @@ cc, _ := cons.Consume(handler)
 defer cc.Stop()
 ```
 
+> **Note:** Push consumers with `DeliverGroup` cannot be flow controlled. If you
+> experience slow consumer issues, consider using pull-based consumers instead —
+> multiple instances on the same durable consumer achieve the same work
+> distribution without the slow consumer risk.
+
 #### Legacy: channel subscription
 
 ```go
@@ -431,6 +435,9 @@ if msgs.Error() != nil {
 > **Warning:** `Fetch()`, `FetchNoWait()`, and `FetchBytes()` are one-off,
 > single pull requests. They do not perform pre-buffering optimizations. For
 > continuous message processing, always prefer `Consume()` or `Messages()`.
+> When using `FetchBytes()`, the requested byte size must stay under the
+> client's max pending bytes limit (64MB by default), otherwise it will trigger
+> slow consumer errors on the underlying subscription.
 
 ### Ordered Consumers
 
@@ -621,14 +628,14 @@ message fields are accessed via methods instead of struct fields.
 
 | Legacy                  | New                          |
 |-------------------------|------------------------------|
-| `msg.Ack()`             | `msg.Ack()`                  |
+| `msg.Ack()`             | Unchanged                    |
 | `msg.AckSync()`         | `msg.DoubleAck(ctx)`         |
-| `msg.Nak()`             | `msg.Nak()`                  |
-| `msg.NakWithDelay(dur)` | `msg.NakWithDelay(dur)`      |
-| `msg.InProgress()`      | `msg.InProgress()`           |
-| `msg.Term()`            | `msg.Term()`                 |
+| `msg.Nak()`             | Unchanged                    |
+| `msg.NakWithDelay(dur)` | Unchanged                    |
+| `msg.InProgress()`      | Unchanged                    |
+| `msg.Term()`            | Unchanged                    |
 | N/A                     | `msg.TermWithReason(reason)` |
-| `msg.Metadata()`        | `msg.Metadata()`             |
+| `msg.Metadata()`        | Unchanged                    |
 
 ### Accessing Message Data
 
