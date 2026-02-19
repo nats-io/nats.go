@@ -225,6 +225,51 @@ func TestWSParseControlFrames(t *testing.T) {
 	}
 }
 
+func TestWSDataBeforeCloseFrame(t *testing.T) {
+	mr := &fakeReader{ch: make(chan []byte, 1)}
+	defer mr.close()
+	r := wsNewReader(mr)
+
+	p := make([]byte, 100)
+
+	// Simulate what happens when a NATS server sends an -ERR message
+	// followed by a WebSocket close frame in the same TCP read.
+	// This is the case described in https://github.com/nats-io/nats.go/issues/2024:
+	// the server sends "-ERR 'Authorization Violation'\r\n" as a text frame,
+	// immediately followed by a WebSocket close frame. The data frame must
+	// be returned to the caller before the close frame's io.EOF.
+	errMsg := []byte("-ERR 'Authorization Violation'\r\n")
+
+	// Binary frame (final=true) with the error message.
+	mr.buf.Write([]byte{byte(wsBinaryMessage) | wsFinalBit, byte(len(errMsg))})
+	mr.buf.Write(errMsg)
+	// Close frame with status 1000 and body "Authentication Failure".
+	closeBody := "Authentication Failure"
+	closePayloadLen := 2 + len(closeBody) // 2 bytes for status + body
+	mr.buf.Write([]byte{byte(wsCloseMessage) | wsFinalBit, byte(closePayloadLen)})
+	// Status code 1000 (normal closure) in network byte order.
+	mr.buf.Write([]byte{0x03, 0xE8})
+	mr.buf.WriteString(closeBody)
+
+	// First Read should return the -ERR data, not an error.
+	n, err := r.Read(p)
+	if err != nil {
+		t.Fatalf("Expected data to be returned before close, got error: %v", err)
+	}
+	if !bytes.Equal(p[:n], errMsg) {
+		t.Fatalf("Expected %q, got %q", errMsg, p[:n])
+	}
+
+	// Second Read should now return the deferred io.EOF from the close frame.
+	n, err = r.Read(p)
+	if err != io.EOF {
+		t.Fatalf("Expected io.EOF, got n=%v err=%v", n, err)
+	}
+	if n != 0 {
+		t.Fatalf("Expected 0 bytes on close, got %v", n)
+	}
+}
+
 func TestWSParseInvalidFrames(t *testing.T) {
 
 	newReader := func() (*fakeReader, *websocketReader) {
