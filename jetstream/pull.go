@@ -341,6 +341,11 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	sub.Unlock()
 
 	go func() {
+		defer func() {
+			nc := sub.consumer.js.conn
+			nc.RemoveStatusListener(sub.connStatusChanged)
+		}()
+
 		isConnected := true
 		for {
 			if sub.closed.Load() == 1 {
