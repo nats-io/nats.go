@@ -15,6 +15,7 @@ package jetstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -470,6 +471,20 @@ func (op KeyValueOp) String() string {
 		return "KeyValuePurgeOp"
 	default:
 		return "Unknown Operation"
+	}
+}
+
+// MarshalJSON implements [json.Marshaler].
+func (op KeyValueOp) MarshalJSON() ([]byte, error) {
+	switch op {
+	case KeyValuePut:
+		return []byte("PUT"), nil
+	case KeyValueDelete:
+		return []byte(kvdel), nil
+	case KeyValuePurge:
+		return []byte(kvpurge), nil
+	default:
+		return []byte("Unknown Operation"), nil
 	}
 }
 
@@ -986,13 +1001,38 @@ type kve struct {
 	op       KeyValueOp
 }
 
-func (e *kve) Bucket() string        { return e.bucket }
-func (e *kve) Key() string           { return e.key }
-func (e *kve) Value() []byte         { return e.value }
-func (e *kve) Revision() uint64      { return e.revision }
-func (e *kve) Created() time.Time    { return e.created }
-func (e *kve) Delta() uint64         { return e.delta }
-func (e *kve) Operation() KeyValueOp { return e.op }
+func (e *kve) Bucket() string               { return e.bucket }
+func (e *kve) Key() string                  { return e.key }
+func (e *kve) Value() []byte                { return e.value }
+func (e *kve) Revision() uint64             { return e.revision }
+func (e *kve) Created() time.Time           { return e.created }
+func (e *kve) Delta() uint64                { return e.delta }
+func (e *kve) Operation() KeyValueOp        { return e.op }
+func (e *kve) MarshalJSON() ([]byte, error) { return json.Marshal(ToKeyValueEntryInfo(e)) }
+
+// KeyValueEntryInfo is the JSON representation of a KeyValueEntry.
+type KeyValueEntryInfo struct {
+	Bucket   string     `json:"bucket"`
+	Key      string     `json:"key"`
+	Value    []byte     `json:"value,omitzero"`
+	Revision uint64     `json:"revision"`
+	Delta    uint64     `json:"delta"`
+	Created  time.Time  `json:"created"`
+	Op       KeyValueOp `json:"op"`
+}
+
+// ToKeyValueEntryInfo produces a [KeyValueEntryInfo] from a [KeyValueEntry].
+func ToKeyValueEntryInfo(e KeyValueEntry) *KeyValueEntryInfo {
+	return &KeyValueEntryInfo{
+		Bucket:   e.Bucket(),
+		Key:      e.Key(),
+		Value:    e.Value(),
+		Revision: e.Revision(),
+		Delta:    e.Delta(),
+		Created:  e.Created(),
+		Op:       e.Operation(),
+	}
+}
 
 // Get returns the latest value for the key.
 func (kv *kvs) Get(ctx context.Context, key string) (KeyValueEntry, error) {
