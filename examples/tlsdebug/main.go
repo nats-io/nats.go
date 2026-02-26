@@ -53,6 +53,7 @@ func main() {
 	var tlsClientCert = flag.String("tlscert", "", "TLS client certificate file")
 	var tlsClientKey = flag.String("tlskey", "", "TLS client private key file")
 	var tlsCACert = flag.String("tlscacert", "", "CA certificate to verify peer against")
+	var tlsCA = flag.String("tlsca", "", "CA certificate to verify peer against (alias for -tlscacert)")
 	var tlsFirst = flag.Bool("tlsfirst", false, "Perform TLS handshake before receiving INFO protocol")
 	var timeout = flag.Duration("timeout", 5*time.Second, "Connection timeout")
 	var showHelp = flag.Bool("h", false, "Show help message")
@@ -63,6 +64,11 @@ func main() {
 
 	if *showHelp {
 		showUsageAndExit(0)
+	}
+
+	// Allow -tlsca as alias for -tlscacert.
+	if *tlsCACert == "" && *tlsCA != "" {
+		*tlsCACert = *tlsCA
 	}
 
 	// Connect Options.
