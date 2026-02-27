@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -3339,5 +3340,228 @@ func TestTLSHandshakeFirst(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Server did not exit")
+	}
+}
+
+func TestTLSHandshakeFirstEOFAfterHandshake(t *testing.T) {
+	// Simulate a proxy (like nginx) that completes the TLS handshake
+	// but then closes the connection because the client certificate
+	// is not trusted. The client should get a descriptive error
+	// instead of a bare EOF.
+
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+	}
+	tlsConf, err := server.GenTLSConfig(tc)
+	if err != nil {
+		t.Fatalf("Can't build TLSConfig: %v", err)
+	}
+	tlsConf.ServerName = "localhost"
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen: %v", err)
+	}
+	defer l.Close()
+
+	addr := l.Addr().(*net.TCPAddr)
+
+	// Mock server: complete TLS handshake then immediately close,
+	// simulating nginx rejecting an untrusted client cert.
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		tlsConn := tls.Server(conn, tlsConf)
+		tlsConn.Handshake()
+		// Close without sending INFO — this is what nginx does
+		// when it rejects the client certificate.
+		tlsConn.Close()
+	}()
+
+	_, err = nats.Connect(
+		fmt.Sprintf("tls://localhost:%d", addr.Port),
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.TLSHandshakeFirst(),
+	)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	// Should contain descriptive TLS context, not bare EOF.
+	if !strings.Contains(err.Error(), "TLS handshake") {
+		t.Fatalf("Expected error about TLS handshake, got: %v", err)
+	}
+	// Should still wrap io.EOF for backwards compatibility.
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Expected error to wrap io.EOF, got: %v", err)
+	}
+}
+
+func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
+	// Test that when the NATS server itself does mTLS verification
+	// and rejects the client cert, the error is a clear TLS alert
+	// (not a wrapped EOF).
+
+	sopts := test.DefaultTestOptions
+	sopts.Port = -1
+
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+		CaFile:   "./configs/certs/ca.pem",
+		Verify:   true,
+	}
+	var err error
+	sopts.TLSConfig, err = server.GenTLSConfig(tc)
+	if err != nil {
+		t.Fatalf("Can't build TLSConfig: %v", err)
+	}
+	sopts.TLSTimeout = 2.0
+	sopts.TLSHandshakeFirst = true
+
+	s := RunServerWithOptions(&sopts)
+	defer s.Shutdown()
+
+	// Connect with a client cert signed by a different CA.
+	_, err = nats.Connect(
+		fmt.Sprintf("tls://127.0.0.1:%d", sopts.Port),
+		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.ClientCert("./configs/certs/client-cert-invalid.pem", "./configs/certs/client-key-invalid.pem"),
+		nats.TLSHandshakeFirst(),
+	)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	// NATS server sends a proper TLS alert, so we should NOT get EOF.
+	if errors.Is(err, io.EOF) {
+		t.Fatalf("Expected TLS alert error, not EOF: %v", err)
+	}
+	// Should contain a TLS-related error message.
+	errStr := err.Error()
+	if !strings.Contains(errStr, "tls:") && !strings.Contains(errStr, "certificate") {
+		t.Fatalf("Expected TLS certificate error, got: %v", err)
+	}
+}
+
+func TestTLSEOFAfterHandshakeNonTLSFirst(t *testing.T) {
+	// When the server requires TLS (but not handshake-first), completes
+	// the TLS handshake via the INFO-driven upgrade, then immediately
+	// closes, the error should also be wrapped.
+
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+	}
+	tlsConf, err := server.GenTLSConfig(tc)
+	if err != nil {
+		t.Fatalf("Can't build TLSConfig: %v", err)
+	}
+	tlsConf.ServerName = "localhost"
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen: %v", err)
+	}
+	defer l.Close()
+
+	addr := l.Addr().(*net.TCPAddr)
+
+	// Mock server: send INFO requiring TLS, do TLS upgrade, then close.
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Send INFO with tls_required before TLS handshake.
+		info := fmt.Sprintf("INFO {\"server_id\":\"test\",\"host\":\"localhost\",\"port\":%d,\"tls_required\":true,\"tls_available\":true,\"max_payload\":1048576}\r\n", addr.Port)
+		conn.Write([]byte(info))
+
+		// Upgrade to TLS.
+		tlsConn := tls.Server(conn, tlsConf)
+		if err := tlsConn.Handshake(); err != nil {
+			return
+		}
+		// Wait a bit so the client starts writing CONNECT+PING,
+		// then close — this makes "broken pipe" more likely.
+		time.Sleep(50 * time.Millisecond)
+		tlsConn.Close()
+	}()
+
+	_, err = nats.Connect(
+		fmt.Sprintf("nats://localhost:%d", addr.Port),
+		nats.RootCAs("./configs/certs/ca.pem"),
+	)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	// Should contain descriptive TLS context. Depending on timing,
+	// the underlying error may be EOF (read) or broken pipe (write).
+	if !strings.Contains(err.Error(), "TLS handshake") {
+		t.Fatalf("Expected error about TLS handshake, got: %v", err)
+	}
+}
+
+func TestTLSEOFAfterHandshakeBrokenPipe(t *testing.T) {
+	// Simulate a scenario where the server does a hard close (TCP RST)
+	// after TLS handshake, which can cause "broken pipe" or
+	// "connection reset by peer" on the client side.
+
+	tc := &server.TLSConfigOpts{
+		CertFile: "./configs/certs/server.pem",
+		KeyFile:  "./configs/certs/key.pem",
+	}
+	tlsConf, err := server.GenTLSConfig(tc)
+	if err != nil {
+		t.Fatalf("Can't build TLSConfig: %v", err)
+	}
+	tlsConf.ServerName = "localhost"
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen: %v", err)
+	}
+	defer l.Close()
+
+	addr := l.Addr().(*net.TCPAddr)
+
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+
+		// Send INFO with tls_required.
+		info := fmt.Sprintf("INFO {\"server_id\":\"test\",\"host\":\"localhost\",\"port\":%d,\"tls_required\":true,\"tls_available\":true,\"max_payload\":1048576}\r\n", addr.Port)
+		conn.Write([]byte(info))
+
+		// Upgrade to TLS.
+		tlsConn := tls.Server(conn, tlsConf)
+		if err := tlsConn.Handshake(); err != nil {
+			conn.Close()
+			return
+		}
+
+		// Force a TCP RST by setting linger to 0 then closing.
+		// This causes "connection reset by peer" on the client
+		// instead of a graceful EOF.
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetLinger(0)
+		}
+		conn.Close()
+	}()
+
+	_, err = nats.Connect(
+		fmt.Sprintf("nats://localhost:%d", addr.Port),
+		nats.RootCAs("./configs/certs/ca.pem"),
+	)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "TLS handshake") {
+		t.Fatalf("Expected error about TLS handshake, got: %v", err)
 	}
 }
