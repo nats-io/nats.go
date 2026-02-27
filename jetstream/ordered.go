@@ -371,10 +371,10 @@ func (s *orderedSubscription) Drain() {
 	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
+	s.consumer.Lock()
+	defer s.consumer.Unlock()
 	if s.consumer.currentSub != nil {
-		s.consumer.currentConsumer.Lock()
 		s.consumer.currentSub.Drain()
-		s.consumer.currentConsumer.Unlock()
 	}
 	close(s.done)
 }
