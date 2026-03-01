@@ -1082,6 +1082,9 @@ func (s *pullSubscription) cleanup() {
 	// is already holding the lock and waiting.
 	// The fields that are read (subscription, hbMonitor)
 	// are read only (Only written on creation of pullSubscription).
+	nc := s.consumer.js.conn
+	nc.RemoveStatusListener(s.connStatusChanged)
+
 	if s.subscription == nil || !s.subscription.IsValid() {
 		return
 	}
