@@ -1085,6 +1085,10 @@ func (s *pullSubscription) cleanup() {
 	if s.subscription == nil || !s.subscription.IsValid() {
 		return
 	}
+	if s.consumer != nil {
+		nc := s.consumer.js.conn
+		nc.RemoveStatusListener(s.connStatusChanged)
+	}
 	if s.hbMonitor != nil {
 		s.hbMonitor.Stop()
 	}
