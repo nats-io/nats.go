@@ -2183,23 +2183,26 @@ func TestKeyValueWithSources(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		time.Sleep(200 * time.Millisecond)
-
-		val, err := kv3.Get(ctx, "key1")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if string(val.Value()) != "value1" {
-			t.Fatalf("Expected value1, got %s", string(val.Value()))
-		}
-
-		val, err = kv3.Get(ctx, "key2")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if string(val.Value()) != "value2" {
-			t.Fatalf("Expected value2, got %s", string(val.Value()))
-		}
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			val, err := kv3.Get(ctx, "key1")
+			if err != nil {
+				return err
+			}
+			if string(val.Value()) != "value1" {
+				return fmt.Errorf("expected value1, got %s", string(val.Value()))
+			}
+			return nil
+		})
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			val, err := kv3.Get(ctx, "key2")
+			if err != nil {
+				return err
+			}
+			if string(val.Value()) != "value2" {
+				return fmt.Errorf("expected value2, got %s", string(val.Value()))
+			}
+			return nil
+		})
 
 		stream, err := js.Stream(ctx, "KV_SOURCED")
 		if err != nil {
@@ -2280,23 +2283,26 @@ func TestKeyValueWithSources(t *testing.T) {
 		if _, err := js.Publish(ctx, "S2.key2", []byte("value2")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		time.Sleep(200 * time.Millisecond)
-
-		val, err := kv.Get(ctx, "key1")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if string(val.Value()) != "value1" {
-			t.Fatalf("Expected value1, got %s", string(val.Value()))
-		}
-
-		val, err = kv.Get(ctx, "key2")
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		if string(val.Value()) != "value2" {
-			t.Fatalf("Expected value2, got %s", string(val.Value()))
-		}
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			val, err := kv.Get(ctx, "key1")
+			if err != nil {
+				return err
+			}
+			if string(val.Value()) != "value1" {
+				return fmt.Errorf("expected value1, got %s", string(val.Value()))
+			}
+			return nil
+		})
+		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+			val, err := kv.Get(ctx, "key2")
+			if err != nil {
+				return err
+			}
+			if string(val.Value()) != "value2" {
+				return fmt.Errorf("expected value2, got %s", string(val.Value()))
+			}
+			return nil
+		})
 	})
 }
 
