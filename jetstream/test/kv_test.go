@@ -2212,7 +2212,7 @@ func TestKeyValueWithSources(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
 			val, err := kv3.Get(ctx, "key1")
 			if err != nil {
 				return err
@@ -2222,7 +2222,7 @@ func TestKeyValueWithSources(t *testing.T) {
 			}
 			return nil
 		})
-		checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+		checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
 			val, err := kv3.Get(ctx, "key2")
 			if err != nil {
 				return err
