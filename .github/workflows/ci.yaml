@@ -22,7 +22,7 @@ jobs:
             - name: Install deps
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go get -t ./...
+                go get -t work
                 go install honnef.co/go/tools/cmd/staticcheck@latest
                 go install github.com/client9/misspell/cmd/misspell@latest
                 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
@@ -30,11 +30,11 @@ jobs:
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                $(exit $(go fmt -modfile=go_test.mod  ./... | wc -l))
-                go vet -modfile=go_test.mod ./... 
-                GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
+                $(exit $(go fmt work | wc -l))
+                go vet work
+                staticcheck work
                 find . -type f -name "*.go" | xargs misspell -error -locale US
-                golangci-lint run --timeout 5m0s ./jetstream/...
+                golangci-lint run --timeout 5m0s ./jetstream/... ./jetstream/test/...
 
     test:
         runs-on: ubuntu-latest-8-cores
@@ -60,11 +60,15 @@ jobs:
             - name: Test and coverage
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
+                go test -v -run=TestNoRace -p=1 ./test/... --failfast -vet=off
                 if [ "${{ matrix.go }}" = "1.25" ]; then
                   ./scripts/cov.sh CI
                 else
-                  go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
+                  # TODO: switch to `go test work` once CI moves to >=v1.25
+                  go test -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
+                  go test -race -v -p=1 ./test/... --failfast -vet=off
+                  go test -race -v -p=1 ./jetstream/test/... --failfast -vet=off
+                  go test -race -v -p=1 ./micro/test/... --failfast -vet=off
                 fi
 
             - name: Coveralls
