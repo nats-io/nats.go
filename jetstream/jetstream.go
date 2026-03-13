@@ -966,7 +966,7 @@ func validateStreamName(stream string) error {
 	if stream == "" {
 		return ErrStreamNameRequired
 	}
-	if strings.ContainsAny(stream, ">*. /\\") {
+	if strings.ContainsAny(stream, ">*. /\\\t\r\n") {
 		return fmt.Errorf("%w: '%s'", ErrInvalidStreamName, stream)
 	}
 	return nil
