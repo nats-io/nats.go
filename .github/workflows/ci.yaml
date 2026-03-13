@@ -41,7 +41,10 @@ jobs:
 
         strategy:
             matrix:
-              go: [ "1.24", "1.25" ]
+              go: [ "1.25", "1.26" ]
+              include:
+                - go: "1.26"
+                  coverage: true
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -61,14 +64,14 @@ jobs:
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
                 go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
-                if [ "${{ matrix.go }}" = "1.25" ]; then
+                if [ "${{ matrix.coverage }}" = "true" ]; then
                   ./scripts/cov.sh CI
                 else
                   go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
                 fi
 
             - name: Coveralls
-              if: matrix.go == '1.25'
+              if: matrix.coverage
               uses: coverallsapp/github-action@v2
               with:
                file: acc.out
