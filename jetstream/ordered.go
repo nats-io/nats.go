@@ -493,11 +493,18 @@ func (c *orderedConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBat
 // reset the consumer for each subsequent Fetch call.
 // Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
+	c.Lock()
 	if c.consumerType == consumerTypeConsume {
+		c.Unlock()
 		return nil, ErrOrderConsumerUsedAsConsume
 	}
-	if c.runningFetch != nil && !c.runningFetch.done {
-		return nil, ErrOrderedConsumerConcurrentRequests
+	if c.runningFetch != nil {
+		if !c.runningFetch.closed() {
+			return nil, ErrOrderedConsumerConcurrentRequests
+		}
+		if c.runningFetch.sseq != 0 {
+			c.cursor.streamSeq = c.runningFetch.sseq
+		}
 	}
 	c.consumerType = consumerTypeFetch
 	sub := orderedSubscription{
@@ -505,11 +512,17 @@ func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 		done:     make(chan struct{}),
 	}
 	c.subscription = &sub
+	c.Unlock()
 	err := c.reset()
 	if err != nil {
 		return nil, err
 	}
-	return c.currentConsumer.FetchNoWait(batch)
+	msgs, err := c.currentConsumer.FetchNoWait(batch)
+	if err != nil {
+		return nil, err
+	}
+	c.runningFetch = msgs.(*fetchResult)
+	return msgs, nil
 }
 
 // Next is used to retrieve the next message from the stream. This
