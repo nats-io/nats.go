@@ -117,6 +117,76 @@ func TestValidateSubject(t *testing.T) {
 	}
 }
 
+func TestValidateStreamName(t *testing.T) {
+	tests := []struct {
+		name      string
+		withError bool
+	}{
+		{"test", false},
+		{"test-stream_1", false},
+		{"", true},
+		{"stream.name", true},
+		{"stream name", true},
+		{"stream>", true},
+		{"stream*", true},
+		{"stream/name", true},
+		{"stream\\name", true},
+		{"stream\tname", true},
+		{"stream\rname", true},
+		{"stream\nname", true},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("name=%q,err=%t", test.name, test.withError), func(t *testing.T) {
+			err := validateStreamName(test.name)
+			if test.withError {
+				if err == nil {
+					t.Fatal("Expected error; got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateConsumerName(t *testing.T) {
+	tests := []struct {
+		name      string
+		withError bool
+	}{
+		{"test", false},
+		{"test-consumer_1", false},
+		{"", true},
+		{"consumer.name", true},
+		{"consumer name", true},
+		{"consumer>", true},
+		{"consumer*", true},
+		{"consumer/name", true},
+		{"consumer\\name", true},
+		{"consumer\tname", true},
+		{"consumer\rname", true},
+		{"consumer\nname", true},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("name=%q,err=%t", test.name, test.withError), func(t *testing.T) {
+			err := validateConsumerName(test.name)
+			if test.withError {
+				if err == nil {
+					t.Fatal("Expected error; got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestRetryWithBackoff(t *testing.T) {
 	tests := []struct {
 		name                  string

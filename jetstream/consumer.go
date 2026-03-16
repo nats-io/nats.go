@@ -500,8 +500,8 @@ func validateConsumerName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidConsumerName)
 	}
-	if strings.ContainsAny(name, ">*. /\\") {
-		return fmt.Errorf("%w: '%s'", ErrInvalidConsumerName, name)
+	if strings.ContainsAny(name, ">*. /\\\t\r\n") {
+		return fmt.Errorf("%w: %q", ErrInvalidConsumerName, name)
 	}
 	return nil
 }
