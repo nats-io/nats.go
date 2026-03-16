@@ -771,13 +771,7 @@ func (s *pullSubscription) Stop() {
 		return
 	}
 	close(s.done)
-	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
-			close(s.consumeOpts.stopAfterMsgsLeft)
-		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
-		}
-	}
+	s.signalStopAfter()
 }
 
 // Drain unsubscribes from the stream and cancels subscription. All
@@ -790,11 +784,18 @@ func (s *pullSubscription) Drain() {
 	}
 	s.draining.Store(1)
 	close(s.done)
+	s.signalStopAfter()
+}
+
+func (s *pullSubscription) signalStopAfter() {
 	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
+		s.Lock()
+		delivered := s.delivered
+		s.Unlock()
+		if delivered >= s.consumeOpts.StopAfter {
 			close(s.consumeOpts.stopAfterMsgsLeft)
 		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
+			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - delivered
 		}
 	}
 }
