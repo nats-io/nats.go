@@ -316,6 +316,22 @@ type (
 		// MaxConsumers is the maximum number of consumers allowed for this
 		// account.
 		MaxConsumers int `json:"max_consumers"`
+
+		// MaxAckPending is the maximum number of outstanding ACKs any consumer
+		// may configure.
+		MaxAckPending int `json:"max_ack_pending"`
+
+		// MemoryMaxStreamBytes is is the maximum size any single memory based
+		// stream may be.
+		MemoryMaxStreamBytes int64 `json:"memory_max_stream_bytes"`
+
+		// StoreMaxStreamBytes is the maximum size any single storage based
+		// stream may be.
+		StoreMaxStreamBytes int64 `json:"storage_max_stream_bytes"`
+
+		// MaxBytesRequired indicates if max bytes is required to be set for
+		// streams in this account.
+		MaxBytesRequired bool `json:"max_bytes_required"`
 	}
 
 	jetStream struct {
