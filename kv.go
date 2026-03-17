@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,10 +69,13 @@ type KeyValue interface {
 	// WatchFiltered will watch for any updates to keys that match the keys
 	// argument. It can be configured with the same options as Watch.
 	WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error)
-	// Keys will return all keys.
-	// Deprecated: Use ListKeys instead to avoid memory issues.
+	// Keys will return all keys, filtering out any duplicates.
+	// For large datasets, this can be memory-heavy as all keys are loaded
+	// into memory. Use ListKeys for a streaming alternative.
 	Keys(opts ...WatchOpt) ([]string, error)
 	// ListKeys will return all keys in a channel.
+	// Note: On buckets with a large number of keys and frequent writes,
+	// duplicate keys may be reported during listing.
 	ListKeys(opts ...WatchOpt) (KeyLister, error)
 	// History will return all historical values for the key.
 	History(key string, opts ...WatchOpt) ([]KeyValueEntry, error)
@@ -867,7 +871,7 @@ func (kv *kvs) PurgeDeletes(opts ...PurgeOpt) error {
 	return nil
 }
 
-// Keys() will return all keys.
+// Keys will return all keys, filtering out any duplicates.
 func (kv *kvs) Keys(opts ...WatchOpt) ([]string, error) {
 	opts = append(opts, IgnoreDeletes(), MetaOnly())
 	watcher, err := kv.WatchAll(opts...)
@@ -886,7 +890,8 @@ func (kv *kvs) Keys(opts ...WatchOpt) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, ErrNoKeysFound
 	}
-	return keys, nil
+	slices.Sort(keys)
+	return slices.Compact(keys), nil
 }
 
 type keyLister struct {
@@ -895,6 +900,8 @@ type keyLister struct {
 }
 
 // ListKeys will return all keys.
+// Note: On buckets with a large number of keys and frequent writes,
+// duplicate keys may be reported during listing.
 func (kv *kvs) ListKeys(opts ...WatchOpt) (KeyLister, error) {
 	opts = append(opts, IgnoreDeletes(), MetaOnly())
 	watcher, err := kv.WatchAll(opts...)

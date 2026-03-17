@@ -1854,85 +1854,56 @@ func TestKeyValueWatcherStopTimer(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-func TestKeyValueListKeysDuplicates(t *testing.T) {
-	listKeysF := func(kv nats.KeyValue) ([]string, error) {
-		t.Helper()
-		lister, err := kv.ListKeys()
+func TestKeyValueKeysDeduplicate(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST_KV", History: 5})
+	if err != nil {
+		t.Fatalf("Error creating KV: %v", err)
+	}
+
+	for i := range 10 {
+		key := fmt.Sprintf("key_%d", i)
+		if _, err := kv.PutString(key, "initial"); err != nil {
+			t.Fatalf("Error putting key %s: %v", key, err)
+		}
+	}
+
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				for i := range 5 {
+					key := fmt.Sprintf("key_%d", i)
+					kv.PutString(key, "updated")
+				}
+			}
+		}
+	}()
+
+	for range 20 {
+		keys, err := kv.Keys()
 		if err != nil {
-			return nil, fmt.Errorf("error listing keys: %v", err)
+			t.Fatalf("Error getting keys: %v", err)
 		}
-		var keys []string
-		for key := range lister.Keys() {
-			keys = append(keys, key)
+
+		seen := make(map[string]struct{})
+		for _, key := range keys {
+			if _, exists := seen[key]; exists {
+				t.Fatalf("Duplicate key found: %s", key)
+			}
+			seen[key] = struct{}{}
 		}
-		return keys, nil
 	}
 
-	keysF := func(kv nats.KeyValue) ([]string, error) {
-		t.Helper()
-		return kv.Keys()
-	}
-
-	for _, test := range []string{"ListKeys", "Keys"} {
-		t.Run(test, func(t *testing.T) {
-			s := RunBasicJetStreamServer()
-			defer shutdownJSServerAndRemoveStorage(t, s)
-
-			nc, js := jsClient(t, s)
-			defer nc.Close()
-
-			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST_KV", History: 5})
-			if err != nil {
-				t.Fatalf("Error creating KV: %v", err)
-			}
-
-			for i := range 10 {
-				key := fmt.Sprintf("key_%d", i)
-				if _, err := kv.PutString(key, "initial"); err != nil {
-					t.Fatalf("Error putting key %s: %v", key, err)
-				}
-			}
-
-			done := make(chan bool)
-			go func() {
-				// Continuously update existing keys
-				for {
-					select {
-					case <-done:
-						return
-					default:
-						for i := range 5 {
-							key := fmt.Sprintf("key_%d", i)
-							kv.PutString(key, "updated")
-						}
-					}
-				}
-			}()
-
-			// List keys multiple times while updates are happening
-			for range 20 {
-				var keys []string
-				if test == "Keys" {
-					keys, err = keysF(kv)
-				} else {
-					keys, err = listKeysF(kv)
-				}
-				if err != nil {
-					t.Fatalf("Error getting keys: %v", err)
-				}
-
-				seen := make(map[string]struct{})
-				for _, key := range keys {
-					if _, exists := seen[key]; exists {
-						t.Fatalf("Duplicate key found: %s", key)
-					}
-					seen[key] = struct{}{}
-				}
-			}
-
-			close(done)
-		})
-	}
+	close(done)
 }
 
 func TestKeyValueConfig(t *testing.T) {

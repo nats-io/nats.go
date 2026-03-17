@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,15 +171,20 @@ type (
 		// argument. It can be configured with the same options as Watch.
 		WatchFiltered(ctx context.Context, keys []string, opts ...WatchOpt) (KeyWatcher, error)
 
-		// Keys will return all keys.
-		// Deprecated: Use ListKeys instead to avoid memory issues.
+		// Keys will return all keys, filtering out any duplicates.
+		// For large datasets, this can be memory-heavy as all keys are loaded
+		// into memory. Use ListKeys for a streaming alternative.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
 		// the key value store in a streaming fashion (on a channel).
+		// Note: On buckets with a large number of keys and frequent writes,
+		// duplicate keys may be reported during listing.
 		ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error)
 
 		// ListKeysFiltered returns a KeyLister for filtered keys in the bucket.
+		// Note: On buckets with a large number of keys and frequent writes,
+		// duplicate keys may be reported during listing.
 		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
@@ -1363,7 +1369,7 @@ func (kv *kvs) WatchAll(ctx context.Context, opts ...WatchOpt) (KeyWatcher, erro
 	return kv.Watch(ctx, AllKeys, opts...)
 }
 
-// Keys will return all keys.
+// Keys will return all keys, filtering out any duplicates.
 func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 	opts = append(opts, IgnoreDeletes(), MetaOnly())
 	watcher, err := kv.WatchAll(ctx, opts...)
@@ -1382,7 +1388,8 @@ func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, ErrNoKeysFound
 	}
-	return keys, nil
+	slices.Sort(keys)
+	return slices.Compact(keys), nil
 }
 
 type keyLister struct {
@@ -1391,6 +1398,8 @@ type keyLister struct {
 }
 
 // ListKeys will return all keys.
+// Note: On buckets with a large number of keys and frequent writes,
+// duplicate keys may be reported during listing.
 func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error) {
 	opts = append(opts, IgnoreDeletes(), MetaOnly())
 	watcher, err := kv.WatchAll(ctx, opts...)
@@ -1418,6 +1427,8 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 }
 
 // ListKeysFiltered returns a KeyLister for filtered keys in the bucket.
+// Note: On buckets with a large number of keys and frequent writes,
+// duplicate keys may be reported during listing.
 func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error) {
 	watcher, err := kv.WatchFiltered(ctx, filters, IgnoreDeletes(), MetaOnly())
 	if err != nil {
