@@ -1427,9 +1427,12 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 	if err == nil {
 		t.Error("Expected connection to fail due to account max connections limit after reload")
 	}
-	if got := s.NumClients(); got != 1 {
-		t.Errorf("Unexpected number of connections: %v", got)
-	}
+	checkFor(t, 2*time.Second, 50*time.Millisecond, func() error {
+		if got := s.NumClients(); got != 1 {
+			return fmt.Errorf("unexpected number of connections: %v", got)
+		}
+		return nil
+	})
 
 	// Now test is reconnecting against JWT based policy changes.
 	// Add a two connections to the other account.
