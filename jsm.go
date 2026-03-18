@@ -367,8 +367,10 @@ type Tier struct {
 
 // APIStats reports on API calls to JetStream for this account.
 type APIStats struct {
-	Total  uint64 `json:"total"`
-	Errors uint64 `json:"errors"`
+	Level    int    `json:"level"`
+	Total    uint64 `json:"total"`
+	Errors   uint64 `json:"errors"`
+	Inflight uint64 `json:"inflight,omitempty"`
 }
 
 // AccountLimits includes the JetStream limits of the current account.
