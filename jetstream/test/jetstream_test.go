@@ -1000,6 +1000,42 @@ func TestAccountInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("account limits fields", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		info, err := js.AccountInfo(ctx)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		expectedLimits := jetstream.AccountLimits{
+			MaxMemory:            -1,
+			MaxStore:             -1,
+			MaxStreams:           -1,
+			MaxConsumers:         -1,
+			MaxAckPending:        -1,
+			MemoryMaxStreamBytes: -1,
+			StoreMaxStreamBytes:  -1,
+			MaxBytesRequired:     false,
+		}
+		if info.Limits != expectedLimits {
+			t.Fatalf("Expected limits %+v, got: %+v", expectedLimits, info.Limits)
+		}
+	})
+
 	t.Run("jetstream not enabled on server", func(t *testing.T) {
 		srv := RunDefaultServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
