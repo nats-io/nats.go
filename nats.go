@@ -1,4 +1,4 @@
-// Copyright 2012-2024 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -38,6 +38,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nkeys"
@@ -150,6 +151,7 @@ var (
 	ErrMaxConnectionsExceeded        = errors.New("nats: server maximum connections exceeded")
 	ErrMaxAccountConnectionsExceeded = errors.New("nats: maximum account active connections exceeded")
 	ErrConnectionNotTLS              = errors.New("nats: connection is not tls")
+	ErrTLS                           = errors.New("nats: tls error")
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
 	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
 	ErrServerNotInPool               = errors.New("nats: selected server is not in the pool")
@@ -2342,7 +2344,7 @@ func (nc *Conn) makeTLSConn() error {
 	nc.conn = tls.Client(nc.conn, tlsCopy)
 	conn := nc.conn.(*tls.Conn)
 	if err := conn.Handshake(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrTLS, err)
 	}
 	nc.bindToNewConn()
 	return nil
@@ -2585,6 +2587,31 @@ func (nc *Conn) setup() {
 	copy(pub, _HPUB_P_)
 }
 
+// tlsHandshakeEOF wraps an error with context when it occurs right after
+// a completed TLS handshake, which typically indicates the remote side
+// rejected the client certificate (e.g. an mTLS proxy like nginx).
+// Depending on timing, the error may be io.EOF (read from closed conn)
+// or a "broken pipe"/"connection reset" (write to closed conn).
+func (nc *Conn) tlsHandshakeEOF(err error) error {
+	tlsConn, ok := nc.conn.(*tls.Conn)
+	if !ok || !tlsConn.ConnectionState().HandshakeComplete {
+		return err
+	}
+	if errors.Is(err, io.EOF) || isConnClosedError(err) {
+		return fmt.Errorf("%w: connection closed by remote after TLS handshake: %w", ErrTLS, err)
+	}
+	return err
+}
+
+// isConnClosedError reports whether the error indicates the remote
+// side closed the connection (broken pipe or connection reset).
+// NOTE: On Windows, connection resets use WSAECONNRESET which may not
+// match syscall.ECONNRESET. In that case, the error will not be
+// detected here but will still be returned unwrapped by the caller.
+func isConnClosedError(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
+}
+
 // Process a connected connection and initialize properly.
 func (nc *Conn) processConnectInit() error {
 	// Set our deadline for the whole connect process
@@ -2605,14 +2632,14 @@ func (nc *Conn) processConnectInit() error {
 	// Process the INFO protocol received from the server
 	err := nc.processExpectedInfo()
 	if err != nil {
-		return err
+		return nc.tlsHandshakeEOF(err)
 	}
 
 	// Send the CONNECT protocol along with the initial PING protocol.
 	// Wait for the PONG response (or any error that we get from the server).
 	err = nc.sendConnect()
 	if err != nil {
-		return err
+		return nc.tlsHandshakeEOF(err)
 	}
 
 	// Reset the number of PING sent out
