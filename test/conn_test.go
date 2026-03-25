@@ -3389,9 +3389,9 @@ func TestTLSHandshakeFirstEOFAfterHandshake(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-	// Should contain descriptive TLS context, not bare EOF.
-	if !strings.Contains(err.Error(), "TLS handshake") {
-		t.Fatalf("Expected error about TLS handshake, got: %v", err)
+	// Should be detectable as a TLS error.
+	if !errors.Is(err, nats.ErrTLS) {
+		t.Fatalf("Expected error to wrap nats.ErrTLS, got: %v", err)
 	}
 	// Should still wrap io.EOF for backwards compatibility.
 	if !errors.Is(err, io.EOF) {
@@ -3440,7 +3440,7 @@ func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
 	}
 	// Should contain a TLS-related error message.
 	errStr := err.Error()
-	if !strings.Contains(errStr, "tls:") && !strings.Contains(errStr, "certificate") {
+	if !strings.Contains(errStr, "tls:") {
 		t.Fatalf("Expected TLS certificate error, got: %v", err)
 	}
 }
@@ -3498,10 +3498,8 @@ func TestTLSEOFAfterHandshakeNonTLSFirst(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-	// Should contain descriptive TLS context. Depending on timing,
-	// the underlying error may be EOF (read) or broken pipe (write).
-	if !strings.Contains(err.Error(), "TLS handshake") {
-		t.Fatalf("Expected error about TLS handshake, got: %v", err)
+	if !errors.Is(err, nats.ErrTLS) {
+		t.Fatalf("Expected error to wrap nats.ErrTLS, got: %v", err)
 	}
 }
 
@@ -3561,7 +3559,7 @@ func TestTLSEOFAfterHandshakeBrokenPipe(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "TLS handshake") {
-		t.Fatalf("Expected error about TLS handshake, got: %v", err)
+	if !errors.Is(err, nats.ErrTLS) {
+		t.Fatalf("Expected error to wrap nats.ErrTLS, got: %v", err)
 	}
 }

@@ -151,6 +151,7 @@ var (
 	ErrMaxConnectionsExceeded        = errors.New("nats: server maximum connections exceeded")
 	ErrMaxAccountConnectionsExceeded = errors.New("nats: maximum account active connections exceeded")
 	ErrConnectionNotTLS              = errors.New("nats: connection is not tls")
+	ErrTLS                           = errors.New("nats: tls error")
 	ErrMaxSubscriptionsExceeded      = errors.New("nats: server maximum subscriptions exceeded")
 	ErrWebSocketHeadersAlreadySet    = errors.New("nats: websocket connection headers already set")
 	ErrServerNotInPool               = errors.New("nats: selected server is not in the pool")
@@ -2343,7 +2344,7 @@ func (nc *Conn) makeTLSConn() error {
 	nc.conn = tls.Client(nc.conn, tlsCopy)
 	conn := nc.conn.(*tls.Conn)
 	if err := conn.Handshake(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrTLS, err)
 	}
 	nc.bindToNewConn()
 	return nil
@@ -2597,13 +2598,16 @@ func (nc *Conn) tlsHandshakeEOF(err error) error {
 		return err
 	}
 	if errors.Is(err, io.EOF) || isConnClosedError(err) {
-		return fmt.Errorf("nats: connection closed by remote after TLS handshake: %w", err)
+		return fmt.Errorf("%w: connection closed by remote after TLS handshake: %w", ErrTLS, err)
 	}
 	return err
 }
 
 // isConnClosedError reports whether the error indicates the remote
 // side closed the connection (broken pipe or connection reset).
+// NOTE: On Windows, connection resets use WSAECONNRESET which may not
+// match syscall.ECONNRESET. In that case, the error will not be
+// detected here but will still be returned unwrapped by the caller.
 func isConnClosedError(err error) bool {
 	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
