@@ -116,22 +116,28 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	c.subscription = sub
 	internalHandler := func(serial int) func(msg Msg) {
 		return func(msg Msg) {
+			c.Lock()
 			// handler is a noop if message was delivered for a consumer with different serial
 			if serial != c.serial {
+				c.Unlock()
 				return
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
-				c.errHandler(serial)(c.currentSub, err)
+				currentSub := c.currentSub
+				c.Unlock()
+				c.errHandler(serial)(currentSub, err)
 				return
 			}
 			dseq := meta.Sequence.Consumer
 			if dseq != c.cursor.deliverSeq+1 {
+				c.Unlock()
 				c.errHandler(serial)(sub, errOrderedSequenceMismatch)
 				return
 			}
 			c.cursor.deliverSeq = dseq
 			c.cursor.streamSeq = meta.Sequence.Stream
+			c.Unlock()
 			handler(msg)
 		}
 	}
