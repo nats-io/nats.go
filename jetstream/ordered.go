@@ -124,10 +124,9 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 			}
 			meta, err := msg.Metadata()
 			if err != nil {
+				currentSub := c.currentSub
 				c.Unlock()
-			currentSub := c.currentSub
-			c.Unlock()
-			c.errHandler(serial)(currentSub, err)
+				c.errHandler(serial)(currentSub, err)
 				return
 			}
 			dseq := meta.Sequence.Consumer
