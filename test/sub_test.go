@@ -1736,6 +1736,42 @@ func TestSubscriptionEvents(t *testing.T) {
 		WaitOnChannel(t, status, nats.SubscriptionSlowConsumer)
 	})
 
+	t.Run("return closed channel if subscription is closed", func(t *testing.T) {
+		s := RunDefaultServer()
+		defer s.Shutdown()
+
+		nc := NewDefaultConnection(t)
+		defer nc.Close()
+
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+		nc.SetErrorHandler(func(c *nats.Conn, s *nats.Subscription, e error) {})
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		// Unsubscribe first to set status to SubscriptionClosed.
+		if err = sub.Unsubscribe(); err != nil {
+			t.Fatalf("Error unsubscribing: %v", err)
+		}
+		// Ensure StatusChanged channel is closed after receiving current status.
+		statusCh := sub.StatusChanged()
+		select {
+		case status := <-statusCh:
+			if status != nats.SubscriptionClosed {
+				t.Fatalf("Current subscription status is not closed")
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatalf("StatusChanged() channel does not receive current status")
+		}
+		select {
+		case _, ok := <-statusCh:
+			if ok {
+				t.Fatalf("StatusChanged() channel is not closed")
+			}
+		default:
+			t.Fatalf("StatusChanged() channel exists and is blocking")
+		}
+	})
+
 	t.Run("do not block channel if it's not read", func(t *testing.T) {
 		s := RunDefaultServer()
 		defer s.Shutdown()

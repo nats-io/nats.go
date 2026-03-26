@@ -4982,6 +4982,12 @@ func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus {
 	ch := make(chan SubStatus, 10)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		if s.status == SubscriptionClosed {
+			close(ch)
+		}
+	}()
+
 	for _, status := range statuses {
 		s.registerStatusChangeListener(status, ch)
 		// initial status
