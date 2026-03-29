@@ -9854,7 +9854,7 @@ func TestJetStreamRePublish(t *testing.T) {
 }
 
 func TestJetStreamDirectGetMsg(t *testing.T) {
-	// Using standlone server here, we are testing the client side API, not
+	// Using standalone server here, we are testing the client side API, not
 	// the server feature, which has tests checking it works in cluster mode.
 	s := RunBasicJetStreamServer()
 	defer shutdownJSServerAndRemoveStorage(t, s)
