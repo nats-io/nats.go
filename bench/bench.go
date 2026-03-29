@@ -338,20 +338,6 @@ func HumanBytes(bytes float64, si bool) string {
 	return fmt.Sprintf("%.2f %s", bytes/math.Pow(float64(base), float64(exp)), units)
 }
 
-func min(x, y int64) int64 {
-	if x < y {
-		return x
-	}
-	return y
-}
-
-func max(x, y int64) int64 {
-	if x > y {
-		return x
-	}
-	return y
-}
-
 // MsgsPerClient divides the number of messages by the number of clients and tries to distribute them as evenly as possible
 func MsgsPerClient(numMsgs, numClients int) []int {
 	var counts []int

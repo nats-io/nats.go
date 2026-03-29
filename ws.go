@@ -114,10 +114,7 @@ func (d *wsDecompressor) Read(dst []byte) (int, error) {
 	copied := 0
 	rem := len(dst)
 	for buf := d.bufs[0]; buf != nil && rem > 0; {
-		n := len(buf[d.off:])
-		if n > rem {
-			n = rem
-		}
+		n := min(len(buf[d.off:]), rem)
 		copy(dst[copied:], buf[d.off:d.off+n])
 		copied += n
 		rem -= n
