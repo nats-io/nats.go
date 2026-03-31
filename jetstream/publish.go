@@ -50,6 +50,11 @@ type (
 		lastSubjectSeq *uint64       // Expected last sequence for subject
 		lastSubject    string        // Expected subject for last sequence
 		ttl            time.Duration // Message TTL
+		schedule       string        // Schedule expression
+		scheduleTarget string        // Target subject for scheduled messages
+		scheduleSource string        // Source subject for sampling
+		scheduleTTL    string        // TTL for generated messages
+		scheduleTZ     string        // Time zone for cron schedules
 
 		// Publish retries for NoResponders err.
 		retryWait     time.Duration // Retry wait between attempts
@@ -205,6 +210,21 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	if o.ttl > 0 {
 		m.Header.Set(MsgTTLHeader, o.ttl.String())
 	}
+	if o.schedule != "" {
+		m.Header.Set(ScheduleHeader, o.schedule)
+	}
+	if o.scheduleTarget != "" {
+		m.Header.Set(ScheduleTargetHeader, o.scheduleTarget)
+	}
+	if o.scheduleSource != "" {
+		m.Header.Set(ScheduleSourceHeader, o.scheduleSource)
+	}
+	if o.scheduleTTL != "" {
+		m.Header.Set(ScheduleTTLHeader, o.scheduleTTL)
+	}
+	if o.scheduleTZ != "" {
+		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
+	}
 
 	var resp *nats.Msg
 	var err error
@@ -294,6 +314,21 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 	}
 	if o.ttl > 0 {
 		m.Header.Set(MsgTTLHeader, o.ttl.String())
+	}
+	if o.schedule != "" {
+		m.Header.Set(ScheduleHeader, o.schedule)
+	}
+	if o.scheduleTarget != "" {
+		m.Header.Set(ScheduleTargetHeader, o.scheduleTarget)
+	}
+	if o.scheduleSource != "" {
+		m.Header.Set(ScheduleSourceHeader, o.scheduleSource)
+	}
+	if o.scheduleTTL != "" {
+		m.Header.Set(ScheduleTTLHeader, o.scheduleTTL)
+	}
+	if o.scheduleTZ != "" {
+		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
 	}
 
 	paf := o.pafRetry
