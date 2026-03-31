@@ -378,7 +378,7 @@ func TestWSParseInvalidFrames(t *testing.T) {
 	// 64-bit frame length exceeding MaxPayload-derived limit
 	mr, r = newReader()
 	r.nc = &Conn{}
-	r.nc.info.MaxPayload = 1024 * 1024 // 1MB -> max frame = 8MB
+	r.nc.info.MaxPayload = 1024 * 1024                     // 1MB -> max frame = 8MB
 	mr.buf.Write([]byte{130, 127, 0, 0, 0, 0, 1, 0, 0, 0}) // 16MB
 	n, err = r.Read(p)
 	if n != 0 || err == nil || !strings.Contains(err.Error(), "too large") {

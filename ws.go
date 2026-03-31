@@ -193,11 +193,8 @@ func wsNewReader(r io.Reader) *websocketReader {
 func (r *websocketReader) maxFrameSize() uint64 {
 	if r.nc != nil {
 		mp := r.nc.info.MaxPayload
-		if mp > 0 {
-			limit := uint64(mp) * wsMaxMsgPayloadMultiple
-			if limit < wsMaxMsgPayloadLimit {
-				return limit
-			}
+		if mp > 0 && uint64(mp) <= wsMaxMsgPayloadLimit/wsMaxMsgPayloadMultiple {
+			return uint64(mp) * wsMaxMsgPayloadMultiple
 		}
 	}
 	return wsMaxMsgPayloadLimit
