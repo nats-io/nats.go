@@ -719,11 +719,10 @@ const (
 )
 
 // WithScheduleAt schedules a message for one-time delivery at a specific time.
-// The time is truncated to whole seconds and converted to UTC.
 // Requires [StreamConfig.AllowMsgSchedules] to be enabled.
 func WithScheduleAt(t time.Time) PublishOpt {
 	return func(opts *pubOpts) error {
-		opts.schedule = "@at " + t.UTC().Truncate(time.Second).Format(time.RFC3339)
+		opts.schedule = "@at " + t.UTC().Format(time.RFC3339)
 		return nil
 	}
 }
