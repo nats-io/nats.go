@@ -183,6 +183,22 @@ var (
 	// subject is invalid.
 	ErrScheduleSourceInvalid JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeScheduleSourceInvalid, Description: "message schedules source is invalid", Code: 400}}
 
+	// ErrScheduleTTLInvalid is returned when the schedule TTL value
+	// is not a valid duration or "never".
+	ErrScheduleTTLInvalid JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeScheduleTTLInvalid, Description: "message schedules invalid per-message TTL", Code: 400}}
+
+	// ErrScheduleRollupInvalid is returned when a scheduled message
+	// has an invalid rollup configuration.
+	ErrScheduleRollupInvalid JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeScheduleRollupInvalid, Description: "message schedules invalid rollup", Code: 400}}
+
+	// ErrMirrorWithMsgSchedules is returned when attempting to enable
+	// message scheduling on a mirror stream.
+	ErrMirrorWithMsgSchedules JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeMirrorWithMsgSchedules, Description: "stream mirrors can not also schedule messages", Code: 400}}
+
+	// ErrSourceWithMsgSchedules is returned when attempting to enable
+	// message scheduling on a stream with sources.
+	ErrSourceWithMsgSchedules JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeSourceWithMsgSchedules, Description: "stream source can not also schedule messages", Code: 400}}
+
 	// Client errors
 
 	// ErrConsumerMultipleFilterSubjectsNotSupported is returned when the
