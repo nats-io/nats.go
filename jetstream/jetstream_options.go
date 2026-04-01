@@ -733,7 +733,6 @@ func WithScheduleAt(t time.Time) PublishOpt {
 // Requires [StreamConfig.AllowMsgSchedules] to be enabled.
 func WithScheduleEvery(d time.Duration) PublishOpt {
 	return func(opts *pubOpts) error {
-		d = d.Truncate(time.Second)
 		if d < time.Second {
 			return fmt.Errorf("%w: schedule interval must be at least 1s", ErrInvalidOption)
 		}

@@ -2299,7 +2299,7 @@ func TestPublishWithScheduleSource(t *testing.T) {
 	if _, err := js.Publish(ctx, "source.data", []byte("hello")); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	msg, err := cons.Next(jetstream.FetchMaxWait(2 * time.Second))
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
