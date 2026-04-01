@@ -85,7 +85,7 @@ func TestObjectBasics(t *testing.T) {
 		t.Fatalf("size is 0")
 	}
 	if status.Storage() != nats.FileStorage {
-		t.Fatalf("stauts reports %d storage", status.Storage())
+		t.Fatalf("status reports %d storage", status.Storage())
 	}
 	if status.Description() != "testing" {
 		t.Fatalf("invalid description: '%s'", status.Description())

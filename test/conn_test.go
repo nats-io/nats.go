@@ -1600,7 +1600,7 @@ func TestErrStaleConnection(t *testing.T) {
 		t.Fatal("Failed to get DisconnectedErrCB")
 	}
 
-	// Then reconneted..
+	// Then reconnected..
 	if err := Wait(rch); err != nil {
 		t.Fatal("Failed to get ReconnectedCB")
 	}
