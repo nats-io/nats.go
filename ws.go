@@ -55,6 +55,12 @@ const (
 	wsMaxControlPayloadSize = 125
 	wsCloseSatusSize        = 2
 
+	// wsMaxMsgPayloadMultiple is the multiplier applied to MaxPayload to
+	// determine the maximum WebSocket frame size.
+	wsMaxMsgPayloadMultiple = 8
+	// wsMaxMsgPayloadLimit is the absolute cap on WebSocket frame size (64MB).
+	wsMaxMsgPayloadLimit = 64 * 1024 * 1024
+
 	// From https://tools.ietf.org/html/rfc6455#section-11.7
 	wsCloseStatusNormalClosure      = 1000
 	wsCloseStatusNoStatusReceived   = 1005
@@ -182,6 +188,18 @@ func wsNewReader(r io.Reader) *websocketReader {
 	return &websocketReader{r: r, ff: true}
 }
 
+// maxFrameSize returns the maximum allowed WebSocket frame size based on the
+// negotiated MaxPayload. This mirrors the server-side wsMaxMessageSize logic.
+func (r *websocketReader) maxFrameSize() uint64 {
+	if r.nc != nil {
+		mp := r.nc.info.MaxPayload
+		if mp > 0 && uint64(mp) <= wsMaxMsgPayloadLimit/wsMaxMsgPayloadMultiple {
+			return uint64(mp) * wsMaxMsgPayloadMultiple
+		}
+	}
+	return wsMaxMsgPayloadLimit
+}
+
 // From now on, reads will be from the readLoop and we will need to
 // acquire the connection lock should we have to send/write a control
 // message from handleControlFrame.
@@ -288,7 +306,14 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			rem = int(binary.BigEndian.Uint64(tmpBuf))
+			rem64 := binary.BigEndian.Uint64(tmpBuf)
+			if rem64&(1<<63) != 0 {
+				return 0, errors.New("invalid websocket frame: MSB set in 64-bit payload length")
+			}
+			if rem64 > r.maxFrameSize() {
+				return 0, fmt.Errorf("websocket frame too large: %d", rem64)
+			}
+			rem = int(rem64)
 		}
 
 		// Handle control messages in place...
