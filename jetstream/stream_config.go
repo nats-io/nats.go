@@ -213,6 +213,10 @@ type (
 
 		// PersistMode allows to opt-in to different persistence mode settings.
 		PersistMode PersistModeType `json:"persist_mode,omitempty"`
+
+		// AllowBatchPublish allows fast batch publishing into the stream.
+		// This feature requires nats-server v2.14.0 or later.
+		AllowBatchPublish bool `json:"allow_batched,omitempty"`
 	}
 
 	// StreamSourceInfo shows information about an upstream stream
