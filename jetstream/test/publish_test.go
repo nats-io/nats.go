@@ -2079,7 +2079,7 @@ func TestPublishWithScheduleAt(t *testing.T) {
 	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
-	}
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
 	if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "@at "+schedTime.Format(time.RFC3339) {
 		t.Fatalf("Expected schedule header %q; got: %q", "@at "+schedTime.Format(time.RFC3339), got)
 	}
