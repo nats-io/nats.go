@@ -2106,10 +2106,6 @@ func TestReconnectOnFlusherError(t *testing.T) {
 			opts := []nats.Option{
 				nats.SetCustomDialer(&lowWriteBufferDialer{}),
 				nats.FlusherTimeout(15 * time.Millisecond),
-				// Prevent ping-based dead connection detection from
-				// racing with the flusher-triggered reconnect.
-				nats.PingInterval(30 * time.Second),
-				nats.ReconnectWait(50 * time.Millisecond),
 				nats.MaxReconnects(10),
 				nats.DontRandomize(),
 				nats.ReconnectHandler(func(_ *nats.Conn) {
@@ -2148,6 +2144,11 @@ func TestReconnectOnFlusherError(t *testing.T) {
 				defer close(pubDone)
 				tick := time.NewTicker(50 * time.Millisecond)
 				defer tick.Stop()
+				// We want to have a payload size that is big enough so that after
+				// few publish, the socket buffer will be full and produce the timeout.
+				// Since we try to produce the error in the flusher and not the publish
+				// call itself, use a size that is a bit less than the internal
+				// buffer used by the library.
 				payload := make([]byte, 32*1024-200)
 				for {
 					select {

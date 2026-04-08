@@ -2453,8 +2453,10 @@ func (nc *Conn) ForceReconnect() error {
 	// Stop ping timer if set.
 	nc.stopPingTimer()
 
-	// Go ahead and make sure we have flushed the outbound
+	// flush any pending data and switch to pending mode to buffer new outgoing
+	// data until we reconnect and can flush it.
 	nc.bw.flush()
+	nc.bw.switchToPending()
 	nc.conn.Close()
 
 	nc.changeConnStatus(RECONNECTING)
@@ -3933,13 +3935,9 @@ func (nc *Conn) flusher() {
 					nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
 				}
 				if nc.Opts.ReconnectOnFlusherError {
-					// A flusher write error leaves the TCP stream in an
-					// indeterminate state. Funnel through processOpErr —
-					// the same path the read loop uses on a read error —
-					// with forceReconnect=true so the first reconnect
-					// attempt bypasses ReconnectWait. processOpErr
-					// re-acquires nc.mu itself, so release first.
 					nc.mu.Unlock()
+					// If the option is set, trigger immediate reconnect on
+					// flusher error.
 					nc.processOpErr(err, true)
 					return
 				}
