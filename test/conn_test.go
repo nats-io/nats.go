@@ -1931,7 +1931,7 @@ func TestCustomFlusherTimeout(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for {
@@ -1949,50 +1949,7 @@ func TestCustomFlusherTimeout(t *testing.T) {
 	}()
 	defer nc1.Close()
 
-	l, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal("Could not listen on an ephemeral port")
-	}
-	tl := l.(*net.TCPListener)
-	defer tl.Close()
-
-	addr := tl.Addr().(*net.TCPAddr)
-
-	fsDoneCh := make(chan struct{}, 1)
-	fsErrCh := make(chan error, 1)
-	go func() {
-		defer wg.Done()
-
-		serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":%d}\r\n"
-		conn, err := l.Accept()
-		if err != nil {
-			fsErrCh <- err
-			return
-		}
-		defer conn.Close()
-		// Make it small on purpose
-		if err := conn.(*net.TCPConn).SetReadBuffer(1024); err != nil {
-			fsErrCh <- err
-			return
-		}
-
-		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port, 1024*1024)
-		conn.Write([]byte(info))
-
-		// Read connect and ping commands sent from the client
-		line := make([]byte, 100)
-		_, err = conn.Read(line)
-		if err != nil {
-			fsErrCh <- fmt.Errorf("Expected CONNECT and PING from client, got: %v", err)
-			return
-		}
-		conn.Write([]byte("PONG\r\n"))
-
-		// Don't consume anything at this point and wait to be notified
-		// that we are done.
-		<-fsDoneCh
-		fsErrCh <- nil
-	}()
+	addr := startStalledMockServer(t)
 
 	nc2, err := nats.Connect(
 		// URL to fake server
@@ -2046,16 +2003,11 @@ forLoop:
 		}
 	}
 
-	// Notify fake server that it can stop
-	close(fsDoneCh)
-
-	// Wait for go routines to end
+	// Close nc2 to fire its ClosedHandler, which signals the publisher
+	// goroutine (via doneCh) to exit. The fake server is torn down by
+	// the t.Cleanup registered in startStalledFakeServer.
+	nc2.Close()
 	wg.Wait()
-
-	// Make sure there were no error in the fake server
-	if err := <-fsErrCh; err != nil {
-		t.Fatalf("Fake server reported: %v", err)
-	}
 
 	// One of those two are guaranteed to be set.
 	err = nc2Err
@@ -2079,6 +2031,164 @@ forLoop:
 	case e := <-errCh:
 		t.Fatal(e)
 	default:
+	}
+}
+
+// startStalledMockServer starts a fake NATS server on an ephemeral port
+// that completes the INFO/CONNECT/PING handshake and then stops reading
+// from the socket, so client writes eventually stall.
+func startStalledMockServer(t *testing.T) *net.TCPAddr {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen on an ephemeral port: %v", err)
+	}
+	addr := l.Addr().(*net.TCPAddr)
+
+	done := make(chan struct{})
+	exited := make(chan struct{})
+
+	go func() {
+		defer close(exited)
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if err := conn.(*net.TCPConn).SetReadBuffer(1024); err != nil {
+			t.Errorf("Expected SetReadBuffer to succeed, got: %v", err)
+			return
+		}
+		info := fmt.Sprintf(
+			"INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":%d}\r\n",
+			addr.IP, addr.Port, 1024*1024,
+		)
+		conn.Write([]byte(info))
+		line := make([]byte, 100)
+		if _, err := conn.Read(line); err != nil {
+			t.Errorf("Expected CONNECT+PING, got: %v", err)
+			return
+		}
+		conn.Write([]byte("PONG\r\n"))
+		<-done
+	}()
+
+	t.Cleanup(func() {
+		close(done)
+		l.Close()
+		<-exited
+	})
+	return addr
+}
+
+func TestReconnectOnFlusherError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.SkipNow()
+	}
+
+	for _, tc := range []struct {
+		name          string
+		withOption    bool
+		wantReconnect bool
+	}{
+		{"enabled", true, true},
+		{"disabled", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := RunDefaultServer()
+			defer s.Shutdown()
+
+			fakeAddr := startStalledMockServer(t)
+
+			reconnectedCh := make(chan struct{}, 1)
+			asyncErrCh := make(chan error, 1)
+
+			opts := []nats.Option{
+				nats.SetCustomDialer(&lowWriteBufferDialer{}),
+				nats.FlusherTimeout(15 * time.Millisecond),
+				// Prevent ping-based dead connection detection from
+				// racing with the flusher-triggered reconnect.
+				nats.PingInterval(30 * time.Second),
+				nats.ReconnectWait(50 * time.Millisecond),
+				nats.MaxReconnects(10),
+				nats.DontRandomize(),
+				nats.ReconnectHandler(func(_ *nats.Conn) {
+					select {
+					case reconnectedCh <- struct{}{}:
+					default:
+					}
+				}),
+				nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+					select {
+					case asyncErrCh <- err:
+					default:
+					}
+				}),
+			}
+			if tc.withOption {
+				opts = append(opts, nats.ReconnectOnFlusherError())
+			}
+
+			nc, err := nats.Connect(
+				fmt.Sprintf("nats://127.0.0.1:%d,%s", fakeAddr.Port, nats.DefaultURL),
+				opts...,
+			)
+			if err != nil {
+				t.Fatalf("Connect: %v", err)
+			}
+			defer nc.Close()
+
+			if url := nc.ConnectedUrl(); url != fmt.Sprintf("nats://127.0.0.1:%d", fakeAddr.Port) {
+				t.Fatalf("Expected initial connection to fake server, got %q", url)
+			}
+
+			stopPub := make(chan struct{})
+			pubDone := make(chan struct{})
+			go func() {
+				defer close(pubDone)
+				tick := time.NewTicker(50 * time.Millisecond)
+				defer tick.Stop()
+				payload := make([]byte, 32*1024-200)
+				for {
+					select {
+					case <-stopPub:
+						return
+					case <-tick.C:
+						nc.Publish("hello", payload)
+					}
+				}
+			}()
+			defer func() {
+				close(stopPub)
+				<-pubDone
+			}()
+
+			// Confirm the flusher actually observes a write error.
+			// Without this, the negative case could pass for the wrong
+			// reason (nothing ever went wrong).
+			select {
+			case <-asyncErrCh:
+			case <-time.After(3 * time.Second):
+				t.Fatal("flusher did not report an async write error within 3s")
+			}
+
+			if tc.wantReconnect {
+				select {
+				case <-reconnectedCh:
+				case <-time.After(5 * time.Second):
+					t.Fatal("expected reconnect after flusher error")
+				}
+				if url := nc.ConnectedUrl(); url != s.ClientURL() {
+					t.Fatalf("expected to be reconnected to real server %q, got %q", s.ClientURL(), url)
+				}
+			} else {
+				select {
+				case <-reconnectedCh:
+					t.Fatal("unexpected reconnect when ReconnectOnFlusherError is disabled")
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
+		})
 	}
 }
 
