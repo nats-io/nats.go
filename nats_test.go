@@ -1933,6 +1933,7 @@ func TestWriteBufferSize(t *testing.T) {
 
 func TestWriteBufferSizeDefault(t *testing.T) {
 	opts := GetDefaultOptions()
+	opts.WriteBufferSize = DefaultWriteBufSize
 	opts.Servers = []string{"nats://127.0.0.1:4222"}
 	nc := &Conn{Opts: opts}
 	nc.newReaderWriter()

@@ -1763,6 +1763,10 @@ func (o Options) Connect() (*Conn, error) {
 	if nc.Opts.ReconnectBufSize == 0 {
 		nc.Opts.ReconnectBufSize = DefaultReconnectBufSize
 	}
+	// Default WriteBufferSize
+	if nc.Opts.WriteBufferSize <= 0 {
+		nc.Opts.WriteBufferSize = DefaultWriteBufSize
+	}
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
@@ -2097,16 +2101,12 @@ func (nc *Conn) shufflePool(offset int) {
 }
 
 func (nc *Conn) newReaderWriter() {
-	writeBufSize := nc.Opts.WriteBufferSize
-	if writeBufSize <= 0 {
-		writeBufSize = DefaultWriteBufSize
-	}
 	nc.br = &natsReader{
 		buf: make([]byte, defaultBufSize),
 		off: -1,
 	}
 	nc.bw = &natsWriter{
-		limit:  writeBufSize,
+		limit:  nc.Opts.WriteBufferSize,
 		plimit: nc.Opts.ReconnectBufSize,
 	}
 }
