@@ -3936,9 +3936,9 @@ func (nc *Conn) flusher() {
 				}
 				if nc.Opts.ReconnectOnFlusherError {
 					nc.mu.Unlock()
-					// If the option is set, trigger immediate reconnect on
-					// flusher error.
-					nc.processOpErr(err, true)
+					if shouldClose := nc.processOpErr(err, true); shouldClose {
+						nc.close(CLOSED, true, nil)
+					}
 					return
 				}
 			}

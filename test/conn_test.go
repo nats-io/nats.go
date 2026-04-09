@@ -2089,10 +2089,13 @@ func TestReconnectOnFlusherError(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		withOption    bool
+		noReconnect   bool
 		wantReconnect bool
+		wantClosed    bool
 	}{
-		{"enabled", true, true},
-		{"disabled", false, false},
+		{"enabled", true, false, true, false},
+		{"disabled", false, false, false, false},
+		{"no_reconnect", true, true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := RunDefaultServer()
@@ -2101,6 +2104,7 @@ func TestReconnectOnFlusherError(t *testing.T) {
 			fakeAddr := startStalledMockServer(t)
 
 			reconnectedCh := make(chan struct{}, 1)
+			closedCh := make(chan struct{}, 1)
 			asyncErrCh := make(chan error, 1)
 
 			opts := []nats.Option{
@@ -2114,6 +2118,12 @@ func TestReconnectOnFlusherError(t *testing.T) {
 					default:
 					}
 				}),
+				nats.ClosedHandler(func(_ *nats.Conn) {
+					select {
+					case closedCh <- struct{}{}:
+					default:
+					}
+				}),
 				nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
 					select {
 					case asyncErrCh <- err:
@@ -2123,6 +2133,9 @@ func TestReconnectOnFlusherError(t *testing.T) {
 			}
 			if tc.withOption {
 				opts = append(opts, nats.ReconnectOnFlusherError())
+			}
+			if tc.noReconnect {
+				opts = append(opts, nats.NoReconnect())
 			}
 
 			nc, err := nats.Connect(
@@ -2144,11 +2157,8 @@ func TestReconnectOnFlusherError(t *testing.T) {
 				defer close(pubDone)
 				tick := time.NewTicker(50 * time.Millisecond)
 				defer tick.Stop()
-				// We want to have a payload size that is big enough so that after
-				// few publish, the socket buffer will be full and produce the timeout.
-				// Since we try to produce the error in the flusher and not the publish
-				// call itself, use a size that is a bit less than the internal
-				// buffer used by the library.
+				// Slightly under the library's internal buffer size so the
+				// flusher goroutine (not the Publish call) triggers the write.
 				payload := make([]byte, 32*1024-200)
 				for {
 					select {
@@ -2165,8 +2175,6 @@ func TestReconnectOnFlusherError(t *testing.T) {
 			}()
 
 			// Confirm the flusher actually observes a write error.
-			// Without this, the negative case could pass for the wrong
-			// reason (nothing ever went wrong).
 			select {
 			case <-asyncErrCh:
 			case <-time.After(3 * time.Second):
@@ -2181,6 +2189,11 @@ func TestReconnectOnFlusherError(t *testing.T) {
 				}
 				if url := nc.ConnectedUrl(); url != s.ClientURL() {
 					t.Fatalf("expected to be reconnected to real server %q, got %q", s.ClientURL(), url)
+				}
+			} else if tc.wantClosed {
+				WaitOnChannel(t, closedCh, struct{}{})
+				if !nc.IsClosed() {
+					t.Fatalf("expected IsClosed() to be true, got status %v", nc.Status())
 				}
 			} else {
 				select {
