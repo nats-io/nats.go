@@ -61,6 +61,7 @@ const (
 	DefaultMaxPingOut         = 2
 	DefaultMaxChanLen         = 64 * 1024       // 64k
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
+	DefaultWriteBufSize       = defaultBufSize
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
 	DefaultFlusherTimeout     = time.Minute
@@ -574,6 +575,14 @@ type Options struct {
 	// IgnoreDiscoveredServers will disable adding advertised server URLs
 	// from INFO messages to the server pool.
 	IgnoreDiscoveredServers bool
+
+	// WriteBufferSize is an advanced option that sets the flush threshold
+	// of the write buffer used to batch outgoing data before writing to
+	// the underlying connection. In most cases, the default value should
+	// not be changed. A smaller buffer reduces the amount of data that
+	// can be lost on blocked writes but may significantly reduce throughput.
+	// Defaults to 32768 bytes (32KB).
+	WriteBufferSize int
 }
 
 const (
@@ -1168,6 +1177,19 @@ func MaxPingsOutstanding(max int) Option {
 func ReconnectBufSize(size int) Option {
 	return func(o *Options) error {
 		o.ReconnectBufSize = size
+		return nil
+	}
+}
+
+// WriteBufferSize is an advanced option that sets the flush threshold
+// of the write buffer used to batch outgoing data before writing to
+// the underlying connection. In most cases, the default value should
+// not be changed. A smaller buffer reduces the amount of data that
+// can be lost on blocked writes but may significantly reduce throughput.
+// Defaults to 32768 bytes (32KB).
+func WriteBufferSize(size int) Option {
+	return func(o *Options) error {
+		o.WriteBufferSize = size
 		return nil
 	}
 }
@@ -2075,12 +2097,16 @@ func (nc *Conn) shufflePool(offset int) {
 }
 
 func (nc *Conn) newReaderWriter() {
+	writeBufSize := nc.Opts.WriteBufferSize
+	if writeBufSize <= 0 {
+		writeBufSize = DefaultWriteBufSize
+	}
 	nc.br = &natsReader{
 		buf: make([]byte, defaultBufSize),
 		off: -1,
 	}
 	nc.bw = &natsWriter{
-		limit:  defaultBufSize,
+		limit:  writeBufSize,
 		plimit: nc.Opts.ReconnectBufSize,
 	}
 }

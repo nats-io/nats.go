@@ -3563,3 +3563,29 @@ func TestTLSEOFAfterHandshakeBrokenPipe(t *testing.T) {
 		t.Fatalf("Expected error to wrap nats.ErrTLS, got: %v", err)
 	}
 }
+
+func TestWriteBufferSizeOption(t *testing.T) {
+	s := RunDefaultServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.WriteBufferSize(64*1024))
+	if err != nil {
+		t.Fatalf("Expected to connect, got: %v", err)
+	}
+	defer nc.Close()
+
+	if nc.Opts.WriteBufferSize != 64*1024 {
+		t.Fatalf("Expected WriteBufferSize 64KB, got %d", nc.Opts.WriteBufferSize)
+	}
+
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatalf("Error subscribing: %v", err)
+	}
+	if err := nc.Publish("foo", []byte("hello")); err != nil {
+		t.Fatalf("Error publishing: %v", err)
+	}
+	if _, err := sub.NextMsg(2 * time.Second); err != nil {
+		t.Fatalf("Error receiving message: %v", err)
+	}
+}
