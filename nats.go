@@ -2187,12 +2187,20 @@ func (w *natsWriter) appendBufs(bufs ...[]byte) error {
 }
 
 func (w *natsWriter) writeDirect(strs ...string) error {
-	for _, str := range strs {
-		if _, err := w.w.Write([]byte(str)); err != nil {
-			return err
-		}
+	switch len(strs) {
+	case 0:
+		return nil
+	case 1:
+		_, err := w.w.Write([]byte(strs[0]))
+		return err
 	}
-	return nil
+
+	var buf bytes.Buffer
+	for _, str := range strs {
+		buf.WriteString(str)
+	}
+	_, err := w.w.Write(buf.Bytes())
+	return err
 }
 
 func (w *natsWriter) flush() error {
@@ -2284,7 +2292,23 @@ build_string:
 		s += string(r.buf[r.off:r.n])
 		r.off = -1
 	}
-	if _, err := r.Read(); err != nil {
+	if buf, err := r.Read(); err != nil {
+		if len(buf) == 0 {
+			return s, err
+		}
+		r.off = 0
+		i := bytes.IndexByte(r.buf[r.off:r.n], delim)
+		if i >= 0 {
+			end := r.off + i + 1
+			s += string(r.buf[r.off:end])
+			r.off = end
+			if r.off >= r.n {
+				r.off = -1
+			}
+			return s, nil
+		}
+		s += string(r.buf[r.off:r.n])
+		r.off = -1
 		return s, err
 	}
 	r.off = 0
