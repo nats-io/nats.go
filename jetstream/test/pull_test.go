@@ -3946,6 +3946,144 @@ func TestPullConsumerConnectionClosed(t *testing.T) {
 	})
 }
 
+func TestConsumeErrHandlerNoDeadlock(t *testing.T) {
+	t.Run("error handler from background goroutine", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx := context.Background()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "TEST",
+			Subjects: []string{"FOO.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			AckPolicy: jetstream.AckExplicitPolicy,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errHandlerDone := make(chan struct{}, 1)
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			msg.Ack()
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			// Closed() acquires the lock
+			cc.Closed()
+			select {
+			case errHandlerDone <- struct{}{}:
+			default:
+			}
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Closing the connection sends ErrConnectionClosed through
+		// sub.errs
+		nc.Close()
+
+		select {
+		case <-errHandlerDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Deadlock: ErrHandler did not complete")
+		}
+
+		done := make(chan struct{})
+		go func() {
+			l.Stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Deadlock: Stop() blocked")
+		}
+	})
+
+	t.Run("error handler from status message", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx := context.Background()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     "TEST",
+			Subjects: []string{"FOO.>"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			AckPolicy: jetstream.AckExplicitPolicy,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errHandlerDone := make(chan struct{}, 1)
+		l, err := c.Consume(func(msg jetstream.Msg) {
+			msg.Ack()
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			cc.Closed()
+			select {
+			case errHandlerDone <- struct{}{}:
+			default:
+			}
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Deleting the consumer triggers a 409 status message
+		// processed by handleStatusMsg resulting in the ConsumeErrHandler being called
+		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+			t.Fatalf("Error deleting consumer: %s", err)
+		}
+
+		select {
+		case <-errHandlerDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Deadlock: ErrHandler did not complete")
+		}
+
+		done := make(chan struct{})
+		go func() {
+			l.Stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Deadlock: Stop() blocked")
+		}
+	})
+}
+
 func TestPullConsumerMaxReconnectsExceeded(t *testing.T) {
 	t.Run("messages", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
