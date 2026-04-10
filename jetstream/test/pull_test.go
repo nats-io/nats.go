@@ -3983,10 +3983,7 @@ func TestConsumeErrHandlerNoDeadlock(t *testing.T) {
 		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
 			// Closed() acquires the lock
 			cc.Closed()
-			select {
-			case errHandlerDone <- struct{}{}:
-			default:
-			}
+			errHandlerDone <- struct{}{}
 		}))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -4045,22 +4042,35 @@ func TestConsumeErrHandlerNoDeadlock(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
+		// Publish a message and wait for it to be consumed, ensuring
+		if _, err := js.Publish(ctx, "FOO.test", []byte("msg")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		msgReceived := make(chan struct{}, 1)
 		errHandlerDone := make(chan struct{}, 1)
 		l, err := c.Consume(func(msg jetstream.Msg) {
 			msg.Ack()
-		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
-			cc.Closed()
 			select {
-			case errHandlerDone <- struct{}{}:
+			case msgReceived <- struct{}{}:
 			default:
 			}
+		}, jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+			cc.Closed()
+			errHandlerDone <- struct{}{}
 		}))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
+		select {
+		case <-msgReceived:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timed out waiting for message")
+		}
+
 		// Deleting the consumer triggers a 409 status message
-		// processed by handleStatusMsg resulting in the ConsumeErrHandler being called
+		// processed by handleStatusMsg in the internalHandler path.
 		if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
 			t.Fatalf("Error deleting consumer: %s", err)
 		}
