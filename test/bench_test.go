@@ -14,6 +14,7 @@
 package test
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -254,4 +255,42 @@ func BenchmarkPublishValidation(b *testing.B) {
 		nc.Flush()
 		b.StopTimer()
 	})
+}
+
+func BenchmarkPublishWithWriteBufferSize(b *testing.B) {
+	payloads := []struct {
+		name string
+		size int
+	}{
+		{"16B", 16},
+		{"128B", 128},
+		{"512B", 512},
+	}
+	bufSizes := []int{512, 4096, 8192, 16384, 32768, 65536, 131072}
+
+	for _, p := range payloads {
+		msg := make([]byte, p.size)
+		for i := range msg {
+			msg[i] = byte(i)
+		}
+		for _, sz := range bufSizes {
+			b.Run(fmt.Sprintf("payload_%s/buf_%d", p.name, sz), func(b *testing.B) {
+				s := RunDefaultServer()
+				defer s.Shutdown()
+				nc, err := nats.Connect(s.ClientURL(), nats.WriteBufferSize(sz))
+				if err != nil {
+					b.Fatalf("Failed to connect: %v", err)
+				}
+				defer nc.Close()
+				b.ResetTimer()
+				for range b.N {
+					if err := nc.Publish("foo", msg); err != nil {
+						b.Fatalf("Error publishing: %v", err)
+					}
+				}
+				b.StopTimer()
+				nc.Flush()
+			})
+		}
+	}
 }

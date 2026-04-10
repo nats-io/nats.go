@@ -61,6 +61,7 @@ const (
 	DefaultMaxPingOut         = 2
 	DefaultMaxChanLen         = 64 * 1024       // 64k
 	DefaultReconnectBufSize   = 8 * 1024 * 1024 // 8MB
+	DefaultWriteBufSize       = defaultBufSize
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
 	DefaultFlusherTimeout     = time.Minute
@@ -574,6 +575,14 @@ type Options struct {
 	// IgnoreDiscoveredServers will disable adding advertised server URLs
 	// from INFO messages to the server pool.
 	IgnoreDiscoveredServers bool
+
+	// WriteBufferSize is an advanced option that sets the flush threshold
+	// of the write buffer used to batch outgoing data before writing to
+	// the underlying connection. In most cases, the default value should
+	// not be changed. A smaller buffer reduces the amount of data that
+	// can be lost on blocked writes but may significantly reduce throughput.
+	// Defaults to 32768 bytes (32KB).
+	WriteBufferSize int
 }
 
 const (
@@ -1172,6 +1181,19 @@ func ReconnectBufSize(size int) Option {
 	}
 }
 
+// WriteBufferSize is an advanced option that sets the flush threshold
+// of the write buffer used to batch outgoing data before writing to
+// the underlying connection. In most cases, the default value should
+// not be changed. A smaller buffer reduces the amount of data that
+// can be lost on blocked writes but may significantly reduce throughput.
+// Defaults to 32768 bytes (32KB).
+func WriteBufferSize(size int) Option {
+	return func(o *Options) error {
+		o.WriteBufferSize = size
+		return nil
+	}
+}
+
 // Timeout is an Option to set the timeout for Dial on a connection.
 // Defaults to 2s.
 func Timeout(t time.Duration) Option {
@@ -1741,6 +1763,10 @@ func (o Options) Connect() (*Conn, error) {
 	if nc.Opts.ReconnectBufSize == 0 {
 		nc.Opts.ReconnectBufSize = DefaultReconnectBufSize
 	}
+	// Default WriteBufferSize
+	if nc.Opts.WriteBufferSize <= 0 {
+		nc.Opts.WriteBufferSize = DefaultWriteBufSize
+	}
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
@@ -2080,7 +2106,7 @@ func (nc *Conn) newReaderWriter() {
 		off: -1,
 	}
 	nc.bw = &natsWriter{
-		limit:  defaultBufSize,
+		limit:  nc.Opts.WriteBufferSize,
 		plimit: nc.Opts.ReconnectBufSize,
 	}
 }

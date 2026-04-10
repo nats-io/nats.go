@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -1913,5 +1913,32 @@ func TestValidateSubject(t *testing.T) {
 				t.Errorf("validateSubject(%q) unexpected error: %v", tt.subject, err)
 			}
 		})
+	}
+}
+
+func TestWriteBufferSize(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.WriteBufferSize = 64 * 1024
+	opts.Servers = []string{"nats://127.0.0.1:4222"}
+	nc := &Conn{Opts: opts}
+	nc.newReaderWriter()
+
+	if nc.bw.limit != 64*1024 {
+		t.Fatalf("Expected write buffer limit of %d, got %d", 64*1024, nc.bw.limit)
+	}
+	if len(nc.br.buf) != defaultBufSize {
+		t.Fatalf("Expected read buffer size of %d, got %d", defaultBufSize, len(nc.br.buf))
+	}
+}
+
+func TestWriteBufferSizeDefault(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.WriteBufferSize = DefaultWriteBufSize
+	opts.Servers = []string{"nats://127.0.0.1:4222"}
+	nc := &Conn{Opts: opts}
+	nc.newReaderWriter()
+
+	if nc.bw.limit != defaultBufSize {
+		t.Fatalf("Expected default write buffer limit of %d, got %d", defaultBufSize, nc.bw.limit)
 	}
 }
