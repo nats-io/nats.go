@@ -258,14 +258,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
-		defer func() {
-			sub.Lock()
-			sub.checkPending()
-			if sub.hbMonitor != nil {
-				sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
-			}
-			sub.Unlock()
-		}()
 		if !userMsg {
 			// heartbeat message
 			if msgErr == nil {
@@ -274,6 +266,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 			sub.Lock()
 			err := sub.handleStatusMsg(msg, msgErr)
+			if err == nil {
+				sub.checkPending()
+				if sub.hbMonitor != nil {
+					sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+				}
+			}
 			sub.Unlock()
 
 			if err != nil {
@@ -294,6 +292,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		sub.Lock()
 		sub.decrementPendingMsgs(msg)
 		sub.incrementDeliveredMsgs()
+		sub.checkPending()
+		if sub.hbMonitor != nil {
+			sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
+		}
 		sub.Unlock()
 
 		if sub.consumeOpts.StopAfter > 0 && sub.consumeOpts.StopAfter == sub.delivered {
