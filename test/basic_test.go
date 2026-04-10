@@ -147,6 +147,13 @@ func TestConnectedServer(t *testing.T) {
 	if cname == "" {
 		t.Fatalf("Expected a connected server cluster name, got %s", cname)
 	}
+	jsEnabled, _ := nc.ConnectedServerJetStream()
+	if jsEnabled {
+		t.Fatalf("Expected JetStream to be disabled")
+	}
+	if nc.IsSystemAccount() {
+		t.Fatalf("Expected non-system account")
+	}
 
 	nc.Close()
 	u = nc.ConnectedUrl()
@@ -164,6 +171,32 @@ func TestConnectedServer(t *testing.T) {
 	cname = nc.ConnectedClusterName()
 	if cname != "" {
 		t.Fatalf("Expected a nil connect server cluster, got %s", cname)
+	}
+	jsEnabled, _ = nc.ConnectedServerJetStream()
+	if jsEnabled {
+		t.Fatalf("Expected JetStream to be disabled after close")
+	}
+	if nc.IsSystemAccount() {
+		t.Fatalf("Expected non-system account after close")
+	}
+}
+
+func TestConnectedServerJetStream(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	jsEnabled, jsApiLevel := nc.ConnectedServerJetStream()
+	if !jsEnabled {
+		t.Fatalf("Expected JetStream to be enabled")
+	}
+	if jsApiLevel == 0 {
+		t.Fatalf("Expected non-zero JetStream API level")
 	}
 }
 

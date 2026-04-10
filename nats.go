@@ -908,23 +908,26 @@ func (s Server) clone() Server {
 
 // ServerInfo represents the information about the server that is sent in the INFO protocol message.
 type ServerInfo struct {
-	ID           string   `json:"server_id"`
-	Name         string   `json:"server_name"`
-	Proto        int      `json:"proto"`
-	Version      string   `json:"version"`
-	Host         string   `json:"host"`
-	Port         int      `json:"port"`
-	Headers      bool     `json:"headers"`
-	AuthRequired bool     `json:"auth_required,omitempty"`
-	TLSRequired  bool     `json:"tls_required,omitempty"`
-	TLSAvailable bool     `json:"tls_available,omitempty"`
-	MaxPayload   int64    `json:"max_payload"`
-	CID          uint64   `json:"client_id,omitempty"`
-	ClientIP     string   `json:"client_ip,omitempty"`
-	Nonce        string   `json:"nonce,omitempty"`
-	Cluster      string   `json:"cluster,omitempty"`
-	ConnectURLs  []string `json:"connect_urls,omitempty"`
-	LameDuckMode bool     `json:"ldm,omitempty"`
+	ID              string   `json:"server_id"`
+	Name            string   `json:"server_name"`
+	Proto           int      `json:"proto"`
+	Version         string   `json:"version"`
+	Host            string   `json:"host"`
+	Port            int      `json:"port"`
+	Headers         bool     `json:"headers"`
+	AuthRequired    bool     `json:"auth_required,omitempty"`
+	TLSRequired     bool     `json:"tls_required,omitempty"`
+	TLSAvailable    bool     `json:"tls_available,omitempty"`
+	MaxPayload      int64    `json:"max_payload"`
+	CID             uint64   `json:"client_id,omitempty"`
+	ClientIP        string   `json:"client_ip,omitempty"`
+	Nonce           string   `json:"nonce,omitempty"`
+	Cluster         string   `json:"cluster,omitempty"`
+	ConnectURLs     []string `json:"connect_urls,omitempty"`
+	LameDuckMode    bool     `json:"ldm,omitempty"`
+	JetStream       bool     `json:"jetstream,omitempty"`
+	IsSystemAccount bool     `json:"acc_is_sys,omitempty"`
+	JSApiLevel      int      `json:"api_lvl,omitempty"`
 }
 
 const (
@@ -2639,6 +2642,38 @@ func (nc *Conn) ConnectedClusterName() string {
 		return _EMPTY_
 	}
 	return nc.info.Cluster
+}
+
+// ConnectedServerJetStream reports whether the connected server has
+// JetStream enabled and, if so, its API level.
+func (nc *Conn) ConnectedServerJetStream() (bool, int) {
+	if nc == nil {
+		return false, 0
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return false, 0
+	}
+	return nc.info.JetStream, nc.info.JSApiLevel
+}
+
+// IsSystemAccount reports whether the connected client's account
+// is the system account.
+func (nc *Conn) IsSystemAccount() bool {
+	if nc == nil {
+		return false
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return false
+	}
+	return nc.info.IsSystemAccount
 }
 
 // Low level setup for structs, etc
