@@ -908,26 +908,31 @@ func (s Server) clone() Server {
 
 // ServerInfo represents the information about the server that is sent in the INFO protocol message.
 type ServerInfo struct {
-	ID              string   `json:"server_id"`
-	Name            string   `json:"server_name"`
-	Proto           int      `json:"proto"`
-	Version         string   `json:"version"`
-	Host            string   `json:"host"`
-	Port            int      `json:"port"`
-	Headers         bool     `json:"headers"`
-	AuthRequired    bool     `json:"auth_required,omitempty"`
-	TLSRequired     bool     `json:"tls_required,omitempty"`
-	TLSAvailable    bool     `json:"tls_available,omitempty"`
-	MaxPayload      int64    `json:"max_payload"`
-	CID             uint64   `json:"client_id,omitempty"`
-	ClientIP        string   `json:"client_ip,omitempty"`
-	Nonce           string   `json:"nonce,omitempty"`
-	Cluster         string   `json:"cluster,omitempty"`
-	ConnectURLs     []string `json:"connect_urls,omitempty"`
-	LameDuckMode    bool     `json:"ldm,omitempty"`
-	JetStream       bool     `json:"jetstream,omitempty"`
-	IsSystemAccount bool     `json:"acc_is_sys,omitempty"`
-	JSApiLevel      int      `json:"api_lvl,omitempty"`
+	ID           string   `json:"server_id"`
+	Name         string   `json:"server_name"`
+	Proto        int      `json:"proto"`
+	Version      string   `json:"version"`
+	Host         string   `json:"host"`
+	Port         int      `json:"port"`
+	Headers      bool     `json:"headers"`
+	AuthRequired bool     `json:"auth_required,omitempty"`
+	TLSRequired  bool     `json:"tls_required,omitempty"`
+	TLSAvailable bool     `json:"tls_available,omitempty"`
+	MaxPayload   int64    `json:"max_payload"`
+	CID          uint64   `json:"client_id,omitempty"`
+	ClientIP     string   `json:"client_ip,omitempty"`
+	Nonce        string   `json:"nonce,omitempty"`
+	Cluster      string   `json:"cluster,omitempty"`
+	ConnectURLs  []string `json:"connect_urls,omitempty"`
+	LameDuckMode bool     `json:"ldm,omitempty"`
+	// JetStream indicates whether the server has JetStream enabled.
+	JetStream bool `json:"jetstream,omitempty"`
+	// IsSystemAccount indicates whether the connected client's account
+	// is the system account.
+	IsSystemAccount bool `json:"acc_is_sys,omitempty"`
+	// JSApiLevel is the JetStream API level advertised by the server.
+	// Requires nats-server v2.12.0 or later; older servers will report 0.
+	JSApiLevel int `json:"api_lvl,omitempty"`
 }
 
 const (
@@ -2645,7 +2650,9 @@ func (nc *Conn) ConnectedClusterName() string {
 }
 
 // ConnectedServerJetStream reports whether the connected server has
-// JetStream enabled and, if so, its API level.
+// JetStream enabled and, if so, its API level. The API level is
+// advertised by nats-server v2.12.0 or later; older servers will
+// report 0 even when JetStream is enabled.
 func (nc *Conn) ConnectedServerJetStream() (bool, int) {
 	if nc == nil {
 		return false, 0
