@@ -194,13 +194,6 @@ const (
 	unset                    = -1
 )
 
-func min(x, y int) int {
-	if x < y {
-		return x
-	}
-	return y
-}
-
 // Consume can be used to continuously receive messages and handle them
 // with the provided callback function. Consume cannot be used concurrently
 // when using ordered consumer.
