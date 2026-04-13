@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -147,6 +148,13 @@ func TestConnectedServer(t *testing.T) {
 	if cname == "" {
 		t.Fatalf("Expected a connected server cluster name, got %s", cname)
 	}
+	jsEnabled, _ := nc.ConnectedServerJetStream()
+	if jsEnabled {
+		t.Fatalf("Expected JetStream to be disabled")
+	}
+	if nc.IsSystemAccount() {
+		t.Fatalf("Expected non-system account")
+	}
 
 	nc.Close()
 	u = nc.ConnectedUrl()
@@ -164,6 +172,75 @@ func TestConnectedServer(t *testing.T) {
 	cname = nc.ConnectedClusterName()
 	if cname != "" {
 		t.Fatalf("Expected a nil connect server cluster, got %s", cname)
+	}
+	jsEnabled, _ = nc.ConnectedServerJetStream()
+	if jsEnabled {
+		t.Fatalf("Expected JetStream to be disabled after close")
+	}
+	if nc.IsSystemAccount() {
+		t.Fatalf("Expected non-system account after close")
+	}
+}
+
+func TestConnectedServerJetStream(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	jsEnabled, jsApiLevel := nc.ConnectedServerJetStream()
+	if !jsEnabled {
+		t.Fatalf("Expected JetStream to be enabled")
+	}
+	if jsApiLevel == 0 {
+		t.Fatalf("Expected non-zero JetStream API level")
+	}
+}
+
+func TestIsSystemAccount(t *testing.T) {
+	conf := createConfFile(t, []byte(`
+	listen: 127.0.0.1:-1
+	accounts: {
+		SYS: {
+			users: [ {user: "sys", password: "pass"} ]
+		}
+		APP: {
+			users: [ {user: "app", password: "pass"} ]
+		}
+	}
+	system_account: SYS
+	`))
+	defer os.Remove(conf)
+
+	s, _ := RunServerWithConfig(conf)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("sys", "pass"))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc.Close()
+
+	// IsSystemAccount is sent by the server in an async INFO after connect.
+	checkFor(t, time.Second, 15*time.Millisecond, func() error {
+		if !nc.IsSystemAccount() {
+			return fmt.Errorf("expected system account")
+		}
+		return nil
+	})
+
+	nc2, err := nats.Connect(s.ClientURL(), nats.UserInfo("app", "pass"))
+	if err != nil {
+		t.Fatalf("Error connecting: %v", err)
+	}
+	defer nc2.Close()
+
+	if nc2.IsSystemAccount() {
+		t.Fatalf("Expected non-system account")
 	}
 }
 

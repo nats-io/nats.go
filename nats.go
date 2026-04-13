@@ -925,6 +925,14 @@ type ServerInfo struct {
 	Cluster      string   `json:"cluster,omitempty"`
 	ConnectURLs  []string `json:"connect_urls,omitempty"`
 	LameDuckMode bool     `json:"ldm,omitempty"`
+	// JetStream indicates whether the server has JetStream enabled.
+	JetStream bool `json:"jetstream,omitempty"`
+	// IsSystemAccount indicates whether the connected client's account
+	// is the system account.
+	IsSystemAccount bool `json:"acc_is_sys,omitempty"`
+	// JSApiLevel is the JetStream API level advertised by the server.
+	// Requires nats-server v2.12.0 or later; older servers will report 0.
+	JSApiLevel int `json:"api_lvl,omitempty"`
 }
 
 const (
@@ -2639,6 +2647,40 @@ func (nc *Conn) ConnectedClusterName() string {
 		return _EMPTY_
 	}
 	return nc.info.Cluster
+}
+
+// ConnectedServerJetStream reports whether the connected server has
+// JetStream enabled and, if so, its API level. The API level is
+// advertised by nats-server v2.12.0 or later; older servers will
+// report 0 even when JetStream is enabled.
+func (nc *Conn) ConnectedServerJetStream() (bool, int) {
+	if nc == nil {
+		return false, 0
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return false, 0
+	}
+	return nc.info.JetStream, nc.info.JSApiLevel
+}
+
+// IsSystemAccount reports whether the connected client's account
+// is the system account.
+func (nc *Conn) IsSystemAccount() bool {
+	if nc == nil {
+		return false
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return false
+	}
+	return nc.info.IsSystemAccount
 }
 
 // Low level setup for structs, etc
