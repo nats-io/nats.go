@@ -6486,6 +6486,9 @@ func setupJSClusterWithSize(t *testing.T, clusterName string, size int) []*jsSer
 	}
 	waitForJSReady(t, nc)
 	nc.Close()
+	if size > 1 {
+		waitForJSClusterReady(t, nodes, size)
+	}
 
 	return nodes
 }
@@ -6573,6 +6576,20 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 		return
 	}
 	t.Fatalf("Timeout waiting for JS to be ready: %v", err)
+}
+
+func waitForJSClusterReady(t *testing.T, nodes []*jsServer, size int) {
+	t.Helper()
+	timeout := time.Now().Add(10 * time.Second)
+	for time.Now().Before(timeout) {
+		for _, n := range nodes {
+			if n.JetStreamIsLeader() && len(n.JetStreamClusterPeers()) == size {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Timeout waiting for JS cluster of size %d to be ready", size)
 }
 
 func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
