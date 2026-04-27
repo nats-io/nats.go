@@ -65,6 +65,199 @@ const (
 	JSErrCodeConsumerEmptyFilter       ErrorCode = 10139
 	JSErrCodeConsumerExists            ErrorCode = 10148
 	JSErrCodeConsumerDoesNotExist      ErrorCode = 10149
+
+	JSErrCodeAccountResourcesExceeded                   ErrorCode = 10002
+	JSErrCodeAtomicPublishContainsDuplicateMessage      ErrorCode = 10201
+	JSErrCodeAtomicPublishDisabled                      ErrorCode = 10174
+	JSErrCodeAtomicPublishIncompleteBatch               ErrorCode = 10176
+	JSErrCodeAtomicPublishInvalidBatchCommit            ErrorCode = 10200
+	JSErrCodeAtomicPublishInvalidBatchID                ErrorCode = 10179
+	JSErrCodeAtomicPublishMissingSeq                    ErrorCode = 10175
+	JSErrCodeAtomicPublishTooLargeBatch                 ErrorCode = 10199
+	JSErrCodeAtomicPublishUnsupportedHeaderBatch        ErrorCode = 10177
+	JSErrCodeClusterIncomplete                          ErrorCode = 10004
+	JSErrCodeClusterNoPeers                             ErrorCode = 10005
+	JSErrCodeClusterNotActive                           ErrorCode = 10006
+	JSErrCodeClusterNotAssigned                         ErrorCode = 10007
+	JSErrCodeClusterNotAvail                            ErrorCode = 10008
+	JSErrCodeClusterNotLeader                           ErrorCode = 10009
+	JSErrCodeClusterPeerNotMember                       ErrorCode = 10040
+	JSErrCodeClusterRequired                            ErrorCode = 10010
+	JSErrCodeClusterServerMemberChangeInflight          ErrorCode = 10202
+	JSErrCodeClusterServerNotMember                     ErrorCode = 10044
+	JSErrCodeClusterTags                                ErrorCode = 10011
+	JSErrCodeClusterUnSupportFeature                    ErrorCode = 10036
+	JSErrCodeConsumerAckPolicyInvalid                   ErrorCode = 10181
+	JSErrCodeConsumerAckWaitNegative                    ErrorCode = 10183
+	JSErrCodeConsumerBackOffNegative                    ErrorCode = 10184
+	JSErrCodeConsumerBadDurableName                     ErrorCode = 10103
+	JSErrCodeConsumerConfigRequired                     ErrorCode = 10078
+	JSErrCodeConsumerCreateDurableAndNameMismatch       ErrorCode = 10132
+	JSErrCodeConsumerCreateFilterSubjectMismatch        ErrorCode = 10131
+	JSErrCodeConsumerDeliverCycle                       ErrorCode = 10081
+	JSErrCodeConsumerDeliverToWildcards                 ErrorCode = 10079
+	JSErrCodeConsumerDescriptionTooLong                 ErrorCode = 10107
+	JSErrCodeConsumerDirectRequiresEphemeral            ErrorCode = 10091
+	JSErrCodeConsumerDirectRequiresPush                 ErrorCode = 10090
+	JSErrCodeConsumerDuplicateFilterSubjects            ErrorCode = 10136
+	JSErrCodeConsumerDurableNameNotInSubject            ErrorCode = 10016
+	JSErrCodeConsumerDurableNameNotMatchSubject         ErrorCode = 10017
+	JSErrCodeConsumerDurableNameNotSet                  ErrorCode = 10018
+	JSErrCodeConsumerEmptyGroupName                     ErrorCode = 10161
+	JSErrCodeConsumerEphemeralWithDurableInSubject      ErrorCode = 10019
+	JSErrCodeConsumerEphemeralWithDurableName           ErrorCode = 10020
+	JSErrCodeConsumerExistingActive                     ErrorCode = 10105
+	JSErrCodeConsumerFCRequiresPush                     ErrorCode = 10089
+	JSErrCodeConsumerFilterNotSubset                    ErrorCode = 10093
+	JSErrCodeConsumerHBRequiresPush                     ErrorCode = 10088
+	JSErrCodeConsumerInactiveThresholdExcess            ErrorCode = 10153
+	JSErrCodeConsumerInvalidDeliverSubject              ErrorCode = 10112
+	JSErrCodeConsumerInvalidGroupName                   ErrorCode = 10162
+	JSErrCodeConsumerInvalidPolicy                      ErrorCode = 10094
+	JSErrCodeConsumerInvalidPriorityGroup               ErrorCode = 10160
+	JSErrCodeConsumerInvalidSampling                    ErrorCode = 10095
+	JSErrCodeConsumerMaxDeliverBackoff                  ErrorCode = 10116
+	JSErrCodeConsumerMaxPendingAckExcess                ErrorCode = 10121
+	JSErrCodeConsumerMaxPendingAckPolicyRequired        ErrorCode = 10082
+	JSErrCodeConsumerMaxRequestBatchExceeded            ErrorCode = 10125
+	JSErrCodeConsumerMaxRequestBatchNegative            ErrorCode = 10114
+	JSErrCodeConsumerMaxRequestExpiresTooSmall          ErrorCode = 10115
+	JSErrCodeConsumerMaxWaitingNegative                 ErrorCode = 10087
+	JSErrCodeConsumerMetadataLength                     ErrorCode = 10135
+	JSErrCodeConsumerMultipleFiltersNotAllowed          ErrorCode = 10137
+	JSErrCodeConsumerNameContainsPathSeparators         ErrorCode = 10127
+	JSErrCodeConsumerNameExist                          ErrorCode = 10013
+	JSErrCodeConsumerNameTooLong                        ErrorCode = 10102
+	JSErrCodeConsumerOffline                            ErrorCode = 10119
+	JSErrCodeConsumerOfflineReason                      ErrorCode = 10195
+	JSErrCodeConsumerOnMapped                           ErrorCode = 10092
+	JSErrCodeConsumerOverlappingSubjectFilters          ErrorCode = 10138
+	JSErrCodeConsumerPinnedTTLWithoutPriorityPolicyNone ErrorCode = 10197
+	JSErrCodeConsumerPriorityGroupWithPolicyNone        ErrorCode = 10196
+	JSErrCodeConsumerPriorityPolicyWithoutGroup         ErrorCode = 10159
+	JSErrCodeConsumerPullNotDurable                     ErrorCode = 10085
+	JSErrCodeConsumerPullRequiresAck                    ErrorCode = 10084
+	JSErrCodeConsumerPullWithRateLimit                  ErrorCode = 10086
+	JSErrCodeConsumerPushMaxWaiting                     ErrorCode = 10080
+	JSErrCodeConsumerPushWithPriorityGroup              ErrorCode = 10178
+	JSErrCodeConsumerReplacementWithDifferentName       ErrorCode = 10106
+	JSErrCodeConsumerReplayPolicyInvalid                ErrorCode = 10182
+	JSErrCodeConsumerReplicasExceedsStream              ErrorCode = 10126
+	JSErrCodeConsumerReplicasShouldMatchStream          ErrorCode = 10134
+	JSErrCodeConsumerSmallHeartbeat                     ErrorCode = 10083
+	JSErrCodeConsumerStoreFailed                        ErrorCode = 10104
+	JSErrCodeConsumerWQConsumerNotDeliverAll            ErrorCode = 10101
+	JSErrCodeConsumerWQConsumerNotUnique                ErrorCode = 10100
+	JSErrCodeConsumerWQMultipleUnfiltered               ErrorCode = 10099
+	JSErrCodeConsumerWQRequiresExplicitAck              ErrorCode = 10098
+	JSErrCodeConsumerWithFlowControlNeedsHeartbeats     ErrorCode = 10108
+	JSErrCodeInsufficientResources                      ErrorCode = 10023
+	JSErrCodeInvalidJSON                                ErrorCode = 10025
+	JSErrCodeMaximumStreamsLimit                        ErrorCode = 10027
+	JSErrCodeMemoryResourcesExceeded                    ErrorCode = 10028
+	JSErrCodeMessageCounterBroken                       ErrorCode = 10172
+	JSErrCodeMessageIncrDisabled                        ErrorCode = 10168
+	JSErrCodeMessageIncrInvalid                         ErrorCode = 10171
+	JSErrCodeMessageIncrMissing                         ErrorCode = 10169
+	JSErrCodeMessageIncrPayload                         ErrorCode = 10170
+	JSErrCodeMessageSchedulesDisabled                   ErrorCode = 10188
+	JSErrCodeMessageSchedulesPatternInvalid             ErrorCode = 10189
+	JSErrCodeMessageSchedulesRollupInvalid              ErrorCode = 10192
+	JSErrCodeMessageSchedulesTTLInvalid                 ErrorCode = 10191
+	JSErrCodeMessageSchedulesTargetInvalid              ErrorCode = 10190
+	JSErrCodeMessageTTLDisabled                         ErrorCode = 10166
+	JSErrCodeMessageTTLInvalid                          ErrorCode = 10165
+	JSErrCodeMirrorConsumerSetupFailed                  ErrorCode = 10029
+	JSErrCodeMirrorInvalidStreamName                    ErrorCode = 10142
+	JSErrCodeMirrorInvalidSubjectFilter                 ErrorCode = 10151
+	JSErrCodeMirrorInvalidTransformDestination          ErrorCode = 10154
+	JSErrCodeMirrorMaxMessageSizeTooBig                 ErrorCode = 10030
+	JSErrCodeMirrorMultipleFiltersNotAllowed            ErrorCode = 10150
+	JSErrCodeMirrorOverlappingSubjectFilters            ErrorCode = 10152
+	JSErrCodeMirrorWithAtomicPublish                    ErrorCode = 10198
+	JSErrCodeMirrorWithCounters                         ErrorCode = 10173
+	JSErrCodeMirrorWithFirstSeq                         ErrorCode = 10143
+	JSErrCodeMirrorWithMsgSchedules                     ErrorCode = 10186
+	JSErrCodeMirrorWithSources                          ErrorCode = 10031
+	JSErrCodeMirrorWithStartSeqAndTime                  ErrorCode = 10032
+	JSErrCodeMirrorWithSubjectFilters                   ErrorCode = 10033
+	JSErrCodeMirrorWithSubjects                         ErrorCode = 10034
+	JSErrCodeNoAccount                                  ErrorCode = 10035
+	JSErrCodeNoLimits                                   ErrorCode = 10120
+	JSErrCodeNoMessageFound                             ErrorCode = 10037
+	JSErrCodeNotEmptyRequest                            ErrorCode = 10038
+	JSErrCodeNotEnabled                                 ErrorCode = 10076
+	JSErrCodeNotEnabledForAccount                       ErrorCode = 10039
+	JSErrCodePedantic                                   ErrorCode = 10157
+	JSErrCodePeerRemap                                  ErrorCode = 10075
+	JSErrCodeRaftGeneral                                ErrorCode = 10041
+	JSErrCodeReplicasCountCannotBeNegative              ErrorCode = 10133
+	JSErrCodeRequiredAPILevel                           ErrorCode = 10185
+	JSErrCodeRestoreSubscribeFailed                     ErrorCode = 10042
+	JSErrCodeSequenceNotFound                           ErrorCode = 10043
+	JSErrCodeSnapshotDeliverSubjectInvalid              ErrorCode = 10015
+	JSErrCodeSourceConsumerSetupFailed                  ErrorCode = 10045
+	JSErrCodeSourceDuplicateDetected                    ErrorCode = 10140
+	JSErrCodeSourceInvalidStreamName                    ErrorCode = 10141
+	JSErrCodeSourceInvalidSubjectFilter                 ErrorCode = 10145
+	JSErrCodeSourceInvalidTransformDestination          ErrorCode = 10146
+	JSErrCodeSourceMaxMessageSizeTooBig                 ErrorCode = 10046
+	JSErrCodeSourceMultipleFiltersNotAllowed            ErrorCode = 10144
+	JSErrCodeSourceOverlappingSubjectFilters            ErrorCode = 10147
+	JSErrCodeSourceWithMsgSchedules                     ErrorCode = 10187
+	JSErrCodeStorageResourcesExceeded                   ErrorCode = 10047
+	JSErrCodeStreamAssignment                           ErrorCode = 10048
+	JSErrCodeStreamCreate                               ErrorCode = 10049
+	JSErrCodeStreamDelete                               ErrorCode = 10050
+	JSErrCodeStreamDuplicateMessageConflict             ErrorCode = 10158
+	JSErrCodeStreamExpectedLastSeqPerSubjectInvalid     ErrorCode = 10193
+	JSErrCodeStreamExpectedLastSeqPerSubjectNotReady    ErrorCode = 10163
+	JSErrCodeStreamExternalAPIOverlap                   ErrorCode = 10021
+	JSErrCodeStreamExternalDelPrefixOverlaps            ErrorCode = 10022
+	JSErrCodeStreamGeneralError                         ErrorCode = 10051
+	JSErrCodeStreamHeaderExceedsMaximum                 ErrorCode = 10097
+	JSErrCodeStreamInfoMaxSubjects                      ErrorCode = 10117
+	JSErrCodeStreamInvalidConfig                        ErrorCode = 10052
+	JSErrCodeStreamInvalid                              ErrorCode = 10096
+	JSErrCodeStreamInvalidExternalDeliverySubj          ErrorCode = 10024
+	JSErrCodeStreamLimits                               ErrorCode = 10053
+	JSErrCodeStreamMaxBytesRequired                     ErrorCode = 10113
+	JSErrCodeStreamMaxStreamBytesExceeded               ErrorCode = 10122
+	JSErrCodeStreamMessageExceedsMaximum                ErrorCode = 10054
+	JSErrCodeStreamMinLastSeq                           ErrorCode = 10180
+	JSErrCodeStreamMirrorNotUpdatable                   ErrorCode = 10055
+	JSErrCodeStreamMismatch                             ErrorCode = 10056
+	JSErrCodeStreamMoveAndScale                         ErrorCode = 10123
+	JSErrCodeStreamMoveInProgress                       ErrorCode = 10124
+	JSErrCodeStreamMoveNotInProgress                    ErrorCode = 10129
+	JSErrCodeStreamMsgDeleteFailed                      ErrorCode = 10057
+	JSErrCodeStreamNameContainsPathSeparators           ErrorCode = 10128
+	JSErrCodeStreamNameExist                            ErrorCode = 10058
+	JSErrCodeStreamNameExistRestoreFailed               ErrorCode = 10130
+	JSErrCodeStreamNotMatch                             ErrorCode = 10060
+	JSErrCodeStreamOffline                              ErrorCode = 10118
+	JSErrCodeStreamOfflineReason                        ErrorCode = 10194
+	JSErrCodeStreamPurgeFailed                          ErrorCode = 10110
+	JSErrCodeStreamReplicasNotSupported                 ErrorCode = 10074
+	JSErrCodeStreamReplicasNotUpdatable                 ErrorCode = 10061
+	JSErrCodeStreamRestore                              ErrorCode = 10062
+	JSErrCodeStreamRollupFailed                         ErrorCode = 10111
+	JSErrCodeStreamSealed                               ErrorCode = 10109
+	JSErrCodeStreamSequenceNotMatch                     ErrorCode = 10063
+	JSErrCodeStreamSnapshot                             ErrorCode = 10064
+	JSErrCodeStreamStoreFailed                          ErrorCode = 10077
+	JSErrCodeStreamSubjectOverlap                       ErrorCode = 10065
+	JSErrCodeStreamTemplateCreate                       ErrorCode = 10066
+	JSErrCodeStreamTemplateDelete                       ErrorCode = 10067
+	JSErrCodeStreamTemplateNotFound                     ErrorCode = 10068
+	JSErrCodeStreamTooManyRequests                      ErrorCode = 10167
+	JSErrCodeStreamTransformInvalidDestination          ErrorCode = 10156
+	JSErrCodeStreamTransformInvalidSource               ErrorCode = 10155
+	JSErrCodeStreamUpdate                               ErrorCode = 10069
+	JSErrCodeStreamWrongLastMsgID                       ErrorCode = 10070
+	JSErrCodeStreamWrongLastSequenceConstant            ErrorCode = 10164
+	JSErrCodeTempStorageFailed                          ErrorCode = 10072
+	JSErrCodeTemplateNameNotMatchSubject                ErrorCode = 10073
 )
 
 var (
@@ -430,6 +623,11 @@ var (
 	ErrUpdateMetaDeleted JetStreamError = &jsError{message: "cannot update meta for a deleted object"}
 )
 
+// Error prints the JetStream API error code.
+func (e ErrorCode) Error() string {
+	return fmt.Sprintf("nats: API error code: %d", e)
+}
+
 // Error prints the JetStream API error code and description.
 func (e *APIError) Error() string {
 	return fmt.Sprintf("nats: API error: code=%d err_code=%d description=%s", e.Code, e.ErrorCode, e.Description)
@@ -452,6 +650,14 @@ func (e *APIError) Is(err error) bool {
 		return ok
 	}
 	return e.ErrorCode == aerr.ErrorCode
+}
+
+// Unwrap allows matching via errors.Is to the embedded ErrorCode.
+func (e *APIError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.ErrorCode
 }
 
 func (err *jsError) APIError() *APIError {
