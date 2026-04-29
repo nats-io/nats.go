@@ -26,10 +26,10 @@ func main() {
 	})
 
 	// Publish to specific subjects
-	nc.Publish("orders.wholesale.placed", []byte("Order W73737"));
-	nc.Publish("orders.retail.placed", []byte("Order R65432"));
-	nc.Publish("orders.wholesale.shipped", []byte("Order W73001"));
-	nc.Publish("orders.retail.shipped", []byte("Order R65321"));
+	nc.Publish("orders.wholesale.placed", []byte("Order W73737"))
+	nc.Publish("orders.retail.placed", []byte("Order R65432"))
+	nc.Publish("orders.wholesale.shipped", []byte("Order W73001"))
+	nc.Publish("orders.retail.shipped", []byte("Order R65321"))
 	// NATS-DOC-END
 
 	time.Sleep(100 * time.Millisecond)
