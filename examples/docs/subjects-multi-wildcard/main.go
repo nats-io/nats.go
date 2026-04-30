@@ -12,15 +12,26 @@ func main() {
 	defer nc.Close()
 
 	// NATS-DOC-START
-	// Subscribe to all weather updates
-	nc.Subscribe("weather.>", func(m *nats.Msg) {
-		fmt.Printf("Received on %s: %s\n", m.Subject, string(m.Data))
+	// Subscribe to all non-critical alarms
+	nc.Subscribe("sensor.alarm.*", func(m *nats.Msg) {
+		fmt.Printf("[sensor.alarm.*]       %-15s (%s)\n", string(m.Data), m.Subject)
 	})
 
-	// All these match the subscription
-	nc.Publish("weather.us", []byte("US weather update"))
-	nc.Publish("weather.us.east", []byte("East coast update"))
-	nc.Publish("weather.eu.north.finland", []byte("Finland weather"))
+	// Subscribe to all critical
+	nc.Subscribe("sensor.*.*.critical", func(m *nats.Msg) {
+		fmt.Printf("[sensor.*.*.critical]  %-15s (%s)\n", string(m.Data), m.Subject)
+	})
+
+	// Subscribe to everything
+	nc.Subscribe("sensor.>", func(m *nats.Msg) {
+		fmt.Printf("[sensor.>]             %-15s (%s)\n", string(m.Data), m.Subject)
+	})
+
+	// Publish to specific subjects
+	nc.Publish("sensor.alarm.smoke", []byte("kitchen,14:22"))
+	nc.Publish("sensor.alarm.smoke.critical", []byte("kitchen,14:23"))
+	nc.Publish("sensor.alarm.water", []byte("basement,16:42"))
+	nc.Publish("sensor.alarm.water.critical", []byte("basement,16:43"))
 	// NATS-DOC-END
 
 	time.Sleep(100 * time.Millisecond)
