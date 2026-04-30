@@ -14,15 +14,15 @@ func main() {
 	// NATS-DOC-START
 	// Subscribe with single token wildcard
 	nc.Subscribe("orders.*.shipped", func(m *nats.Msg) {
-		fmt.Printf("[orders.*.shipped] %s: %s\n", string(m.Data), m.Subject)
+		fmt.Printf("[orders.*.shipped]  %s  (%s)\n", string(m.Data), m.Subject)
 	})
 
 	nc.Subscribe("orders.*.placed", func(m *nats.Msg) {
-		fmt.Printf("[orders.*.placed]  %s: %s\n", string(m.Data), m.Subject)
+		fmt.Printf("[orders.*.placed]   %s  (%s)\n", string(m.Data), m.Subject)
 	})
 
 	nc.Subscribe("orders.retail.*", func(m *nats.Msg) {
-		fmt.Printf("[orders.retail.*]  %s: %s\n", string(m.Data), m.Subject)
+		fmt.Printf("[orders.retail.*]   %s  (%s)\n", string(m.Data), m.Subject)
 	})
 
 	// Publish to specific subjects
