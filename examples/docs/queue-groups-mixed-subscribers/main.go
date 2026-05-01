@@ -23,7 +23,7 @@ func main() {
 
 	// Metrics collector - receives all messages
 	nc.Subscribe("orders.>", func(m *nats.Msg) {
-		updateMetrics(m.Subject)
+		log.Printf("[METRICS] %s: %s", m.Subject, string(m.Data))
 	})
 
 	// Workers in queue group - load balanced
@@ -37,12 +37,13 @@ func main() {
 		processOrder(m.Data)
 	})
 
-	// Publish order
+	// Publish orders
 	nc.Publish("orders.new", []byte("Order 123"))
-	// Audit and metrics see it, one worker processes it
+	nc.Publish("orders.new", []byte("Order 124"))
+	// Audit and metrics see them, one worker processes each
 	// NATS-DOC-END
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 }
 
 func updateMetrics(subject string) {
