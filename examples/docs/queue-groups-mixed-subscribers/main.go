@@ -46,10 +46,6 @@ func main() {
 	time.Sleep(500 * time.Millisecond)
 }
 
-func updateMetrics(subject string) {
-	// Update metrics implementation
-}
-
 func processOrder(data []byte) {
 	// Process order implementation
 }

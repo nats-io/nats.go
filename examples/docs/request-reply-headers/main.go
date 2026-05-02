@@ -17,7 +17,7 @@ func main() {
 		responseMsg := nats.NewMsg(msg.Reply)
 		responseMsg.Data = msg.Data
 		responseMsg.Header.Add("X-Response-ID", "123")
-		responseMsg.Header.Add("X-Request-ID", msg.Header.Get("X-Response-ID"))
+		responseMsg.Header.Add("X-Request-ID", msg.Header.Get("X-Request-ID"))
 		responseMsg.Header.Add("X-Priority", msg.Header.Get("X-Priority"))
 		nc.PublishMsg(responseMsg)
 	})
