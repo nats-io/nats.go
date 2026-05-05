@@ -121,6 +121,18 @@ type (
 		// If consumer does not exist, ErrConsumerNotFound is returned.
 		UnpinConsumer(ctx context.Context, consumer string, group string) error
 
+		// ResetConsumer resets a consumer's delivery state without deleting
+		// and recreating it. The consumer is reset to deliver from
+		// ack_floor + 1.
+		ResetConsumer(ctx context.Context, consumer string) (*ConsumerResetResponse, error)
+
+		// ResetConsumerToSequence resets a consumer's delivery state to the
+		// given stream sequence. The seq must be compatible with the
+		// consumer's DeliverPolicy (e.g. for DeliverByStartSequencePolicy,
+		// seq must be >= OptStartSeq). If incompatible,
+		// ErrConsumerInvalidReset is returned.
+		ResetConsumerToSequence(ctx context.Context, consumer string, seq uint64) (*ConsumerResetResponse, error)
+
 		// CreateOrUpdatePushConsumer creates a push consumer on a given stream with
 		// given config. If consumer already exists, it will be updated (if
 		// possible). Consumer interface is returned, allowing to consume messages.
@@ -216,6 +228,26 @@ type (
 	consumerPauseApiResponse struct {
 		apiResponse
 		ConsumerPauseResponse
+	}
+
+	consumerResetRequest struct {
+		Seq uint64 `json:"seq,omitempty"`
+	}
+
+	// ConsumerResetResponse contains the result of a consumer reset operation.
+	// It carries the updated ConsumerInfo together with the stream sequence the
+	// server actually reset the consumer to.
+	ConsumerResetResponse struct {
+		*ConsumerInfo
+		// ResetSeq is the stream sequence the consumer was reset to. When
+		// ResetConsumer is called without an explicit sequence, this is the
+		// server-resolved value (typically ack_floor + 1).
+		ResetSeq uint64 `json:"reset_seq"`
+	}
+
+	consumerResetApiResponse struct {
+		apiResponse
+		ConsumerResetResponse
 	}
 
 	// GetMsgOpt is a function setting options for [Stream.GetMsg]
@@ -824,4 +856,15 @@ func (s *consumerLister) consumerNames(ctx context.Context, stream string) ([]st
 // If consumer does not exist, ErrConsumerNotFound is returned.
 func (s *stream) UnpinConsumer(ctx context.Context, consumer string, group string) error {
 	return unpinConsumer(ctx, s.js, s.name, consumer, group)
+}
+
+// ResetConsumer resets a consumer's delivery state. See [Stream.ResetConsumer].
+func (s *stream) ResetConsumer(ctx context.Context, consumer string) (*ConsumerResetResponse, error) {
+	return resetConsumer(ctx, s.js, s.name, consumer, 0)
+}
+
+// ResetConsumerToSequence resets a consumer's delivery state to the given
+// stream sequence. See [Stream.ResetConsumerToSequence].
+func (s *stream) ResetConsumerToSequence(ctx context.Context, consumer string, seq uint64) (*ConsumerResetResponse, error) {
+	return resetConsumer(ctx, s.js, s.name, consumer, seq)
 }

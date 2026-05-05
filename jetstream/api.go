@@ -107,6 +107,9 @@ const (
 
 	// apiConsumerUnpinT is the endpoint to unpin a consumer.
 	apiConsumerUnpinT = "CONSUMER.UNPIN.%s.%s"
+
+	// apiConsumerResetT is the endpoint to reset a consumer's delivery state.
+	apiConsumerResetT = "CONSUMER.RESET.%s.%s"
 )
 
 func (js *jetStream) apiRequestJSON(ctx context.Context, subject string, resp any, data ...[]byte) (*jetStreamMsg, error) {
