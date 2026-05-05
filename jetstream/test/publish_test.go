@@ -2036,3 +2036,588 @@ func TestPublishAsyncClearStall(t *testing.T) {
 		t.Fatalf("Expected 1 pending message; got: %d", js.PublishAsyncPending())
 	}
 }
+
+func TestPublishWithScheduleAt(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cons, err := stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+		FilterSubject: "target.>",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	schedTime := time.Now().Add(time.Second).UTC().Truncate(time.Second)
+	ack, err := js.Publish(ctx, "schedule.at", []byte("hello"),
+		jetstream.WithScheduleAt(schedTime),
+		jetstream.WithScheduleTarget("target.at"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "@at "+schedTime.Format(time.RFC3339) {
+		t.Fatalf("Expected schedule header %q; got: %q", "@at "+schedTime.Format(time.RFC3339), got)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleTargetHeader); got != "target.at" {
+		t.Fatalf("Expected schedule target header %q; got: %q", "target.at", got)
+	}
+
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if string(msg.Data()) != "hello" {
+		t.Fatalf("Expected message data %q; got: %q", "hello", string(msg.Data()))
+	}
+}
+
+func TestPublishWithScheduleEvery(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.Publish(ctx, "schedule.every", nil,
+		jetstream.WithScheduleEvery(5*time.Second),
+		jetstream.WithScheduleTarget("target.every"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// check if correct headers are set
+	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "@every 5s" {
+		t.Fatalf("Expected schedule header %q; got: %q", "@every 5s", got)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleTargetHeader); got != "target.every" {
+		t.Fatalf("Expected schedule target header %q; got: %q", "target.every", got)
+	}
+
+	// invalid duration (should be at least 1s)
+	_, err = js.Publish(ctx, "schedule.every", nil,
+		jetstream.WithScheduleEvery(500*time.Millisecond),
+		jetstream.WithScheduleTarget("target.every"),
+	)
+	if !errors.Is(err, jetstream.ErrInvalidOption) {
+		t.Fatalf("Expected ErrInvalidOption; got: %v", err)
+	}
+}
+
+func TestPublishWithScheduleMissingTarget(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish(ctx, "schedule.notarget", nil,
+		jetstream.WithScheduleAt(time.Now().Add(1*time.Hour)),
+	)
+	if !errors.Is(err, jetstream.ErrScheduleTargetInvalid) {
+		t.Fatalf("Expected ErrScheduleTargetInvalid; got: %v", err)
+	}
+}
+
+func TestPublishWithScheduleCron(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("6-field cron", func(t *testing.T) {
+		ack, err := js.Publish(ctx, "schedule.cron1", nil,
+			jetstream.WithScheduleCron("0 30 * * * *"),
+			jetstream.WithScheduleTarget("target.cron1"),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// check if correct headers are set
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "0 30 * * * *" {
+			t.Fatalf("Expected schedule header %q; got: %q", "0 30 * * * *", got)
+		}
+	})
+
+	t.Run("predefined schedule", func(t *testing.T) {
+		ack, err := js.Publish(ctx, "schedule.cron2", nil,
+			jetstream.WithScheduleCron(jetstream.ScheduleHourly),
+			jetstream.WithScheduleTarget("target.cron2"),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// check if correct headers are set
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "@hourly" {
+			t.Fatalf("Expected schedule header %q; got: %q", "@hourly", got)
+		}
+	})
+}
+
+func TestPublishWithScheduleSource(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>", "source.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+		FilterSubject: "target.>",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.Publish(ctx, "schedule.sample", nil,
+		jetstream.WithScheduleEvery(time.Second),
+		jetstream.WithScheduleTarget("target.sample"),
+		jetstream.WithScheduleSource("source.data"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleSourceHeader); got != "source.data" {
+		t.Fatalf("Expected schedule source header %q; got: %q", "source.data", got)
+	}
+
+	if _, err := js.Publish(ctx, "source.data", []byte("hello")); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if string(msg.Data()) != "hello" {
+		t.Fatalf("Expected message data %q; got: %q", "hello", string(msg.Data()))
+	}
+
+}
+
+func TestPublishWithScheduleTTL(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+		AllowMsgTTL:       true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("duration", func(t *testing.T) {
+		ack, err := js.Publish(ctx, "schedule.ttl1", nil,
+			jetstream.WithScheduleEvery(5*time.Second),
+			jetstream.WithScheduleTarget("target.ttl1"),
+			jetstream.WithScheduleTTL(10*time.Minute),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleTTLHeader); got != "10m0s" {
+			t.Fatalf("Expected schedule TTL header %q; got: %q", "10m0s", got)
+		}
+	})
+
+	t.Run("never", func(t *testing.T) {
+		ack, err := js.Publish(ctx, "schedule.ttl2", nil,
+			jetstream.WithScheduleEvery(5*time.Second),
+			jetstream.WithScheduleTarget("target.ttl2"),
+			jetstream.WithScheduleTTLNever(),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleTTLHeader); got != "never" {
+			t.Fatalf("Expected schedule TTL header %q; got: %q", "never", got)
+		}
+	})
+}
+
+func TestPublishWithScheduleTimeZone(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ack, err := js.Publish(ctx, "schedule.tz", nil,
+		jetstream.WithScheduleCron("0 0 9 * * *"),
+		jetstream.WithScheduleTarget("target.tz"),
+		jetstream.WithScheduleTimeZone("America/New_York"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleTimeZoneHeader); got != "America/New_York" {
+		t.Fatalf("Expected schedule time zone header %q; got: %q", "America/New_York", got)
+	}
+}
+
+func TestPublishAsyncWithSchedule(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	paf, err := js.PublishAsync("schedule.async", nil,
+		jetstream.WithScheduleEvery(5*time.Second),
+		jetstream.WithScheduleTarget("target.async"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var ack *jetstream.PubAck
+	select {
+	case ack = <-paf.Ok():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Did not receive ack")
+	}
+
+	gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleHeader); got != "@every 5s" {
+		t.Fatalf("Expected schedule header %q; got: %q", "@every 5s", got)
+	}
+	if got := gotMsg.Header.Get(jetstream.ScheduleTargetHeader); got != "target.async" {
+		t.Fatalf("Expected schedule target header %q; got: %q", "target.async", got)
+	}
+}
+
+func TestScheduleAtDelivery(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+		FilterSubject: "target.at",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish(ctx, "schedule.at", []byte("scheduled payload"),
+		jetstream.WithScheduleAt(time.Now().Add(2*time.Second)),
+		jetstream.WithScheduleTarget("target.at"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+	if err != nil {
+		t.Fatalf("Expected to receive scheduled message: %v", err)
+	}
+	if string(msg.Data()) != "scheduled payload" {
+		t.Fatalf("Expected payload %q; got: %q", "scheduled payload", string(msg.Data()))
+	}
+	if msg.Headers().Get(jetstream.SchedulerHeader) == "" {
+		t.Fatal("Expected Nats-Scheduler header to be set on delivered message")
+	}
+}
+
+func TestScheduleEveryDelivery(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+		FilterSubject: "target.every",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.Publish(ctx, "schedule.every", []byte("repeating"),
+		jetstream.WithScheduleEvery(1*time.Second),
+		jetstream.WithScheduleTarget("target.every"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Verify at least 2 deliveries to confirm repeating behavior.
+	for range 2 {
+		msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+		if err != nil {
+			t.Fatalf("Expected to receive scheduled message: %v", err)
+		}
+		if string(msg.Data()) != "repeating" {
+			t.Fatalf("Expected payload %q; got: %q", "repeating", string(msg.Data()))
+		}
+	}
+}
+
+func TestScheduleCronDelivery(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:              "SCHED",
+		Subjects:          []string{"schedule.>", "target.>"},
+		AllowMsgSchedules: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+		FilterSubject: "target.cron",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Schedule every second using 6-field cron.
+	_, err = js.Publish(ctx, "schedule.cron", []byte("cron payload"),
+		jetstream.WithScheduleCron("* * * * * *"),
+		jetstream.WithScheduleTarget("target.cron"),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msg, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+	if err != nil {
+		t.Fatalf("Expected to receive scheduled message: %v", err)
+	}
+	if string(msg.Data()) != "cron payload" {
+		t.Fatalf("Expected payload %q; got: %q", "cron payload", string(msg.Data()))
+	}
+	if next := msg.Headers().Get(jetstream.ScheduleNextHeader); next == "" {
+		t.Fatal("Expected Nats-Schedule-Next header to be set on delivered message")
+	}
+}
