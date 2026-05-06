@@ -397,10 +397,22 @@ type (
 		// account or JetStream domain.
 		External *ExternalStream `json:"external,omitempty"`
 
+		// Consumer is consumer information for durable sourcing.
+		Consumer *StreamConsumerSource `json:"consumer,omitempty"`
+
 		// Domain is used to configure a stream source in another JetStream
 		// domain. This setting will set the External field with the appropriate
 		// APIPrefix.
 		Domain string `json:"-"`
+	}
+
+	// StreamConsumerSource is consumer information for durable sourcing.
+	StreamConsumerSource struct {
+		// Name is the consumer name.
+		Name string `json:"name,omitempty"`
+
+		// DeliverSubject is the subject to deliver messages to.
+		DeliverSubject string `json:"deliver_subject,omitempty"`
 	}
 
 	// ExternalStream allows you to qualify access to a stream source in another
