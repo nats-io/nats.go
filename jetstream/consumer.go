@@ -521,6 +521,9 @@ func resetConsumer(ctx context.Context, js *jetStream, stream, consumer string, 
 		}
 		return nil, resp.Error
 	}
+	if resp.ConsumerInfo == nil {
+		return nil, ErrConsumerResetResponseEmpty
+	}
 	return &resp.ConsumerResetResponse, nil
 }
 

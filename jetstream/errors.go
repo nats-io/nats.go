@@ -143,6 +143,11 @@ var (
 	// with UpdateConsumer but a consumer with given name does not exist.
 	ErrConsumerDoesNotExist JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerDoesNotExist, Description: "consumer does not exist", Code: 400}}
 
+	// ErrConsumerResetResponseEmpty is returned when the response from the
+	// server to a consumer reset request is missing the ConsumerInfo
+	// payload. The reset may or may not have taken effect.
+	ErrConsumerResetResponseEmpty JetStreamError = &jsError{message: "consumer reset response is empty"}
+
 	// ErrConsumerInvalidReset is returned when ResetConsumerToSequence is
 	// called with a sequence that violates the consumer's DeliverPolicy
 	// constraints (e.g. seq below OptStartSeq, or non-zero seq with a
