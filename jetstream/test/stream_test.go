@@ -1743,3 +1743,200 @@ func TestPauseConsumer(t *testing.T) {
 		}
 	})
 }
+
+func TestStreamResetConsumer(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := range 10 {
+		if _, err := js.Publish(ctx, "foo", fmt.Appendf(nil, "msg-%d", i)); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	cons, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "cons",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Drain 5 messages without ack so ack_floor stays 0.
+	batch, err := cons.Fetch(5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	count := 0
+	for range batch.Messages() {
+		count++
+	}
+	if count != 5 {
+		t.Fatalf("Expected 5 messages, got %d", count)
+	}
+
+	resp, err := s.ResetConsumer(ctx, "cons")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp.ResetSeq != 1 {
+		t.Fatalf("Expected ResetSeq=1, got %d", resp.ResetSeq)
+	}
+	if resp.ConsumerInfo == nil {
+		t.Fatalf("Expected non-nil ConsumerInfo in response")
+	}
+	if resp.NumPending != 10 {
+		t.Fatalf("Expected NumPending=10 after reset, got %d", resp.NumPending)
+	}
+
+	batch2, err := cons.Fetch(1)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msg := <-batch2.Messages()
+	if msg == nil {
+		t.Fatalf("Expected message after reset")
+	}
+	meta, err := msg.Metadata()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if meta.Sequence.Stream != 1 {
+		t.Fatalf("Expected stream seq 1 after reset, got %d", meta.Sequence.Stream)
+	}
+}
+
+func TestStreamResetConsumerToSequence(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := range 10 {
+		if _, err := js.Publish(ctx, "foo", fmt.Appendf(nil, "msg-%d", i)); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	cons, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "cons",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	resp, err := s.ResetConsumerToSequence(ctx, "cons", 7)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp.ResetSeq != 7 {
+		t.Fatalf("Expected ResetSeq=7, got %d", resp.ResetSeq)
+	}
+	if resp.NumPending != 4 {
+		t.Fatalf("Expected NumPending=4 after reset to seq 7, got %d", resp.NumPending)
+	}
+
+	batch, err := cons.Fetch(1)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msg := <-batch.Messages()
+	if msg == nil {
+		t.Fatalf("Expected message after reset")
+	}
+	meta, err := msg.Metadata()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if meta.Sequence.Stream != 7 {
+		t.Fatalf("Expected stream seq 7 after reset, got %d", meta.Sequence.Stream)
+	}
+}
+
+func TestStreamResetConsumerInvalidReset(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := range 10 {
+		if _, err := js.Publish(ctx, "foo", fmt.Appendf(nil, "msg-%d", i)); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	_, err = s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:       "cons",
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverByStartSequencePolicy,
+		OptStartSeq:   5,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = s.ResetConsumerToSequence(ctx, "cons", 3)
+	if err == nil {
+		t.Fatalf("Expected ErrConsumerInvalidReset, got nil")
+	}
+	if !errors.Is(err, jetstream.ErrConsumerInvalidReset) {
+		t.Fatalf("Expected ErrConsumerInvalidReset, got: %v", err)
+	}
+}

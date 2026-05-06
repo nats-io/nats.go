@@ -1599,3 +1599,120 @@ func TestJetStreamPauseAndResumeConsumer(t *testing.T) {
 		}
 	})
 }
+
+func TestJetStreamResetConsumer(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	ctx := context.Background()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	for i := range 10 {
+		if _, err := js.Publish(ctx, "foo", fmt.Appendf(nil, "msg-%d", i)); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+	}
+
+	cons, err := js.CreateConsumer(ctx, "TEST", jetstream.ConsumerConfig{
+		Durable:   "cons",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Run("reset to ack floor", func(t *testing.T) {
+		// Drain 5 messages without ack so ack_floor stays 0 and the
+		// next fetch after reset is observably different from no-op.
+		batch, err := cons.Fetch(5)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for range batch.Messages() {
+		}
+
+		resp, err := js.ResetConsumer(ctx, "TEST", "cons")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if resp.ResetSeq != 1 {
+			t.Fatalf("Expected ResetSeq=1, got %d", resp.ResetSeq)
+		}
+
+		next, err := cons.Fetch(1)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msg := <-next.Messages()
+		if msg == nil {
+			t.Fatalf("Expected message after reset")
+		}
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if meta.Sequence.Stream != 1 {
+			t.Fatalf("Expected stream seq 1 after reset, got %d", meta.Sequence.Stream)
+		}
+	})
+
+	t.Run("reset to specific sequence", func(t *testing.T) {
+		resp, err := js.ResetConsumerToSequence(ctx, "TEST", "cons", 7)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if resp.ResetSeq != 7 {
+			t.Fatalf("Expected ResetSeq=7, got %d", resp.ResetSeq)
+		}
+		if resp.NumPending != 4 {
+			t.Fatalf("Expected NumPending=4, got %d", resp.NumPending)
+		}
+
+		next, err := cons.Fetch(1)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		msg := <-next.Messages()
+		if msg == nil {
+			t.Fatalf("Expected message after reset")
+		}
+		meta, err := msg.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if meta.Sequence.Stream != 7 {
+			t.Fatalf("Expected stream seq 7 after reset, got %d", meta.Sequence.Stream)
+		}
+	})
+
+	t.Run("reset with empty stream name", func(t *testing.T) {
+		_, err := js.ResetConsumer(ctx, "", "cons")
+		if err == nil {
+			t.Fatalf("Expected error for empty stream name")
+		}
+	})
+
+	t.Run("reset to seq with empty stream name", func(t *testing.T) {
+		_, err := js.ResetConsumerToSequence(ctx, "", "cons", 1)
+		if err == nil {
+			t.Fatalf("Expected error for empty stream name")
+		}
+	})
+}

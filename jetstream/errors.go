@@ -74,6 +74,8 @@ const (
 	JSErrCodeScheduleTTLInvalid       ErrorCode = 10191
 	JSErrCodeScheduleRollupInvalid    ErrorCode = 10192
 	JSErrCodeScheduleSourceInvalid    ErrorCode = 10203
+
+	JSErrCodeConsumerInvalidReset ErrorCode = 10204
 )
 
 var (
@@ -140,6 +142,12 @@ var (
 	// ErrConsumerNameExists is returned when attempting to update a consumer
 	// with UpdateConsumer but a consumer with given name does not exist.
 	ErrConsumerDoesNotExist JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerDoesNotExist, Description: "consumer does not exist", Code: 400}}
+
+	// ErrConsumerInvalidReset is returned when ResetConsumerToSequence is
+	// called with a sequence that violates the consumer's DeliverPolicy
+	// constraints (e.g. seq below OptStartSeq, or non-zero seq with a
+	// DeliverPolicy other than all/by-start-sequence/by-start-time).
+	ErrConsumerInvalidReset JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerInvalidReset, Description: "invalid reset", Code: 400}}
 
 	// ErrMsgNotFound is returned when message with provided sequence number
 	// does not exist.
