@@ -498,6 +498,13 @@ const (
 
 	// AckNonePolicy requires no acks for delivered messages.
 	AckNonePolicy
+
+	// AckFlowControlPolicy functions like AckAllPolicy, but acks based on
+	// responses to flow control. Used by durable stream sourcing and
+	// mirroring against an existing durable push consumer.
+	//
+	// This feature requires nats-server v2.14.0 or later.
+	AckFlowControlPolicy
 )
 
 func (p *AckPolicy) UnmarshalJSON(data []byte) error {
@@ -508,6 +515,8 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 		*p = AckAllPolicy
 	case jsonString("explicit"):
 		*p = AckExplicitPolicy
+	case jsonString("flow_control"):
+		*p = AckFlowControlPolicy
 	default:
 		return fmt.Errorf("nats: cannot unmarshal %q", data)
 	}
@@ -522,6 +531,8 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 		return json.Marshal("all")
 	case AckExplicitPolicy:
 		return json.Marshal("explicit")
+	case AckFlowControlPolicy:
+		return json.Marshal("flow_control")
 	}
 	return nil, fmt.Errorf("nats: unknown acknowledgement policy %v", p)
 }
@@ -534,6 +545,8 @@ func (p AckPolicy) String() string {
 		return "AckAll"
 	case AckExplicitPolicy:
 		return "AckExplicit"
+	case AckFlowControlPolicy:
+		return "AckFlowControl"
 	}
 	return "Unknown AckPolicy"
 }
