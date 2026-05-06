@@ -1,4 +1,4 @@
-// Copyright 2022-2025 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -2529,4 +2529,68 @@ func TestJetStreamConn(t *testing.T) {
 	if conn != nc {
 		t.Fatal("Expected Conn() to return the same connection")
 	}
+}
+
+func TestStreamSourceWithConsumer(t *testing.T) {
+	srv := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, srv)
+
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	upstream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "UP",
+		Subjects: []string{"up"},
+	})
+	if err != nil {
+		t.Fatalf("CreateStream upstream: %v", err)
+	}
+
+	if _, err := upstream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:        "C",
+		DeliverSubject: "deliver",
+		AckPolicy:      jetstream.AckFlowControlPolicy,
+		IdleHeartbeat:  time.Second,
+	}); err != nil {
+		t.Fatalf("CreateOrUpdateConsumer: %v", err)
+	}
+
+	down, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name: "DOWN",
+		Sources: []*jetstream.StreamSource{{
+			Name: "UP",
+			Consumer: &jetstream.StreamConsumerSource{
+				Name:           "C",
+				DeliverSubject: "deliver",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateStream down: %v", err)
+	}
+
+	if _, err := js.Publish(ctx, "up", []byte("hello")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	checkFor(t, 5*time.Second, 100*time.Millisecond, func() error {
+		info, err := down.Info(ctx)
+		if err != nil {
+			return err
+		}
+		if info.State.Msgs != 1 {
+			return fmt.Errorf("expected 1 msg in DOWN, got %d", info.State.Msgs)
+		}
+		return nil
+	})
 }

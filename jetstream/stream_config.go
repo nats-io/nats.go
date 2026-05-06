@@ -1,4 +1,4 @@
-// Copyright 2022-2024 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -398,6 +398,8 @@ type (
 		External *ExternalStream `json:"external,omitempty"`
 
 		// Consumer is consumer information for durable sourcing.
+		//
+		// This feature requires nats-server v2.14.0 or later.
 		Consumer *StreamConsumerSource `json:"consumer,omitempty"`
 
 		// Domain is used to configure a stream source in another JetStream
@@ -407,6 +409,8 @@ type (
 	}
 
 	// StreamConsumerSource is consumer information for durable sourcing.
+	//
+	// This feature requires nats-server v2.14.0 or later.
 	StreamConsumerSource struct {
 		// Name is the consumer name.
 		Name string `json:"name,omitempty"`
