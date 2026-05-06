@@ -12,7 +12,7 @@ func main() {
 	defer nc.Close()
 
 	// NATS-DOC-START
-	// Subscribe to all non-critical alarms
+	// Subscribe to all alarms
 	nc.Subscribe("sensor.alarm.*", func(m *nats.Msg) {
 		fmt.Printf("[sensor.alarm.*]       %-15s (%s)\n", string(m.Data), m.Subject)
 	})
