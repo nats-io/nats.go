@@ -237,6 +237,9 @@ type (
 	// ConsumerResetResponse contains the result of a consumer reset operation.
 	// It carries the updated ConsumerInfo together with the stream sequence the
 	// server actually reset the consumer to.
+	//
+	// The embedded *ConsumerInfo is guaranteed non-nil on a successful response;
+	// the helper returns ErrConsumerResetResponseEmpty if the server omits it.
 	ConsumerResetResponse struct {
 		*ConsumerInfo
 		// ResetSeq is the stream sequence the consumer was reset to. When
