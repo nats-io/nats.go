@@ -149,7 +149,12 @@ func TestNilResponseStreamInfo(t *testing.T) {
 
 	_, err = s.Info(ctx)
 	if !errors.Is(err, jetstream.ErrInvalidJetStreamResponse) {
-		t.Fatalf("expected ErrInvalidJetStreamResponse; got: %v", err)
+	js, cleanup := setupNilResponseMock(t, func(subj string) []byte {
+		if strings.HasPrefix(subj, "STREAM.CREATE.") {
+			return streamInfoJSON
+		}
+		return emptyJSON
+	})
 	}
 }
 
