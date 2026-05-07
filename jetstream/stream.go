@@ -477,6 +477,9 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 			}
 			return nil, resp.Error
 		}
+		if resp.StreamInfo == nil {
+			return nil, ErrInvalidJetStreamResponse
+		}
 		info = resp.StreamInfo
 		var total int
 		if resp.Total != 0 {
@@ -600,6 +603,9 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 			return nil, ErrMsgNotFound
 		}
 		return nil, resp.Error
+	}
+	if resp.Message == nil {
+		return nil, ErrInvalidJetStreamResponse
 	}
 
 	msg := resp.Message

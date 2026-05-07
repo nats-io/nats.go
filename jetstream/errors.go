@@ -135,6 +135,12 @@ var (
 	// the consumer may not have been created successfully.
 	ErrConsumerCreationResponseEmpty JetStreamError = &jsError{message: "consumer creation response is empty"}
 
+	// ErrInvalidJetStreamResponse is returned when the response from the server
+	// to a JetStream API call (stream CRUD, message get, etc.) does not contain
+	// the expected data payload. The operation may or may not have succeeded on
+	// the server side.
+	ErrInvalidJetStreamResponse JetStreamError = &jsError{message: "invalid jetstream api response"}
+
 	// ErrConsumerExists is returned when attempting to create a consumer with
 	// CreateConsumer but a consumer with given name already exists.
 	ErrConsumerExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeConsumerExists, Description: "consumer already exists", Code: 400}}

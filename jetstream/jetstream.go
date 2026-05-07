@@ -626,6 +626,9 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 		return nil, resp.Error
 	}
+	if resp.StreamInfo == nil {
+		return nil, ErrInvalidJetStreamResponse
+	}
 
 	// check that input subject transform (if used) is reflected in the returned StreamInfo
 	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
@@ -749,6 +752,9 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 		return nil, resp.Error
 	}
+	if resp.StreamInfo == nil {
+		return nil, ErrInvalidJetStreamResponse
+	}
 
 	// check that input subject transform (if used) is reflected in the returned StreamInfo
 	if cfg.SubjectTransform != nil && resp.StreamInfo.Config.SubjectTransform == nil {
@@ -817,6 +823,9 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 			return nil, ErrStreamNotFound
 		}
 		return nil, resp.Error
+	}
+	if resp.StreamInfo == nil {
+		return nil, ErrInvalidJetStreamResponse
 	}
 	return &stream{
 		js:   js,
