@@ -1,4 +1,4 @@
-// Copyright 2017-2022 The NATS Authors
+// Copyright 2012-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,17 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !tinygo
+//go:build tinygo
 
-package util
+package nats
 
-import "crypto/tls"
+import "net/url"
 
-// CloneTLSConfig returns a copy of c.
-func CloneTLSConfig(c *tls.Config) *tls.Config {
-	if c == nil {
-		return &tls.Config{}
-	}
+const wsScheme = "ws"
+const wsSchemeTLS = "wss"
 
-	return c.Clone()
-}
+type websocketReader struct{}
+
+func (wsr *websocketReader) Read(p []byte) (int, error) { return 0, ErrNoServers }
+func (wsr *websocketReader) doneWithConnect()           {}
+
+func isWebsocketScheme(u *url.URL) bool           { return false }
+func (nc *Conn) wsInitHandshake(u *url.URL) error { return ErrNoServers }
+func (nc *Conn) wsClose()                         {}

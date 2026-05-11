@@ -1,4 +1,4 @@
-// Copyright 2017-2022 The NATS Authors
+// Copyright 2012-2025 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,17 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !tinygo
+//go:build tinygo
 
-package util
+package nats
 
 import "crypto/tls"
 
-// CloneTLSConfig returns a copy of c.
-func CloneTLSConfig(c *tls.Config) *tls.Config {
-	if c == nil {
-		return &tls.Config{}
-	}
-
-	return c.Clone()
+func (nc *Conn) makeTLSConn() error { return ErrTLS }
+func (nc *Conn) TLSConnectionState() (tls.ConnectionState, error) {
+	return tls.ConnectionState{}, ErrConnectionNotTLS
 }
+func (nc *Conn) tlsHandshakeEOF(err error) error { return err }

@@ -40,8 +40,6 @@ import (
 
 	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
-
-	"github.com/nats-io/nats.go/util"
 )
 
 // Default Constants
@@ -2316,7 +2314,7 @@ func (nc *Conn) createConn() (err error) {
 	u := nc.current.URL
 
 	if !nc.Opts.SkipHostLookup && net.ParseIP(u.Hostname()) == nil {
-		addrs, _ := net.LookupHost(u.Hostname())
+		addrs, _ := lookupHost(u.Hostname())
 		for _, addr := range addrs {
 			hosts = append(hosts, net.JoinHostPort(addr, u.Port()))
 		}
@@ -2364,70 +2362,6 @@ func (nc *Conn) createConn() (err error) {
 
 type skipTLSDialer interface {
 	SkipTLSHandshake() bool
-}
-
-// makeTLSConn will wrap an existing Conn using TLS
-func (nc *Conn) makeTLSConn() error {
-	if nc.Opts.CustomDialer != nil {
-		// we do nothing when asked to skip the TLS wrapper
-		sd, ok := nc.Opts.CustomDialer.(skipTLSDialer)
-		if ok && sd.SkipTLSHandshake() {
-			return nil
-		}
-	}
-	// Allow the user to configure their own tls.Config structure.
-	tlsCopy := &tls.Config{}
-	if nc.Opts.TLSConfig != nil {
-		tlsCopy = util.CloneTLSConfig(nc.Opts.TLSConfig)
-	}
-	if nc.Opts.TLSCertCB != nil {
-		cert, err := nc.Opts.TLSCertCB()
-		if err != nil {
-			return err
-		}
-		tlsCopy.Certificates = []tls.Certificate{cert}
-	}
-	if nc.Opts.RootCAsCB != nil {
-		rootCAs, err := nc.Opts.RootCAsCB()
-		if err != nil {
-			return err
-		}
-		tlsCopy.RootCAs = rootCAs
-	}
-	// If its blank we will override it with the current host
-	if tlsCopy.ServerName == _EMPTY_ {
-		if nc.current.tlsName != _EMPTY_ {
-			tlsCopy.ServerName = nc.current.tlsName
-		} else {
-			h, _, _ := net.SplitHostPort(nc.current.URL.Host)
-			tlsCopy.ServerName = h
-		}
-	}
-	nc.conn = tls.Client(nc.conn, tlsCopy)
-	conn := nc.conn.(*tls.Conn)
-	if err := conn.Handshake(); err != nil {
-		return fmt.Errorf("%w: %w", ErrTLS, err)
-	}
-	nc.bindToNewConn()
-	return nil
-}
-
-// TLSConnectionState retrieves the state of the TLS connection to the server
-func (nc *Conn) TLSConnectionState() (tls.ConnectionState, error) {
-	if !nc.isConnected() {
-		return tls.ConnectionState{}, ErrDisconnected
-	}
-
-	nc.mu.RLock()
-	conn := nc.conn
-	nc.mu.RUnlock()
-
-	tc, ok := conn.(*tls.Conn)
-	if !ok {
-		return tls.ConnectionState{}, ErrConnectionNotTLS
-	}
-
-	return tc.ConnectionState(), nil
 }
 
 // waitForExits will wait for all socket watcher Go routines to
@@ -2683,22 +2617,6 @@ func (nc *Conn) setup() {
 	// Setup scratch outbound buffer for PUB/HPUB
 	pub := nc.scratch[:len(_HPUB_P_)]
 	copy(pub, _HPUB_P_)
-}
-
-// tlsHandshakeEOF wraps an error with context when it occurs right after
-// a completed TLS handshake, which typically indicates the remote side
-// rejected the client certificate (e.g. an mTLS proxy like nginx).
-// Depending on timing, the error may be io.EOF (read from closed conn)
-// or a "broken pipe"/"connection reset" (write to closed conn).
-func (nc *Conn) tlsHandshakeEOF(err error) error {
-	tlsConn, ok := nc.conn.(*tls.Conn)
-	if !ok || !tlsConn.ConnectionState().HandshakeComplete {
-		return err
-	}
-	if errors.Is(err, io.EOF) || isConnClosedError(err) {
-		return fmt.Errorf("%w: connection closed by remote after TLS handshake: %w", ErrTLS, err)
-	}
-	return err
 }
 
 // Process a connected connection and initialize properly.
