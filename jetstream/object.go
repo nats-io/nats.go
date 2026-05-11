@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -461,26 +460,14 @@ type (
 		stream     Stream
 		js         *jetStream
 	}
-
-	// ObjectResult impl.
-	objResult struct {
-		sync.Mutex
-		info   *ObjectInfo
-		r      io.ReadCloser
-		err    error
-		ctx    context.Context
-		cancel context.CancelFunc
-		digest hash.Hash
-	}
 )
 
 const (
-	objNameTmpl         = "OBJ_%s"     // OBJ_<bucket> // stream name
-	objAllChunksPreTmpl = "$O.%s.C.>"  // $O.<bucket>.C.> // chunk stream subject
-	objAllMetaPreTmpl   = "$O.%s.M.>"  // $O.<bucket>.M.> // meta stream subject
-	objChunksPreTmpl    = "$O.%s.C.%s" // $O.<bucket>.C.<object-nuid> // chunk message subject
-	objMetaPreTmpl      = "$O.%s.M.%s" // $O.<bucket>.M.<name-encoded> // meta message subject
-	objNoPending        = "0"
+	objNameTmpl         = "OBJ_%s"           // OBJ_<bucket> // stream name
+	objAllChunksPreTmpl = "$O.%s.C.>"        // $O.<bucket>.C.> // chunk stream subject
+	objAllMetaPreTmpl   = "$O.%s.M.>"        // $O.<bucket>.M.> // meta stream subject
+	objChunksPreTmpl    = "$O.%s.C.%s"       // $O.<bucket>.C.<object-nuid> // chunk message subject
+	objMetaPreTmpl      = "$O.%s.M.%s"       // $O.<bucket>.M.<name-encoded> // meta message subject
 	objDefaultChunkSize = uint32(128 * 1024) // 128k
 	objDigestType       = "SHA-256="
 	objDigestTmpl       = objDigestType + "%s"
@@ -1238,96 +1225,6 @@ func (obs *obs) Status(ctx context.Context) (ObjectStoreStatus, error) {
 	}
 
 	return status, nil
-}
-
-// Read impl.
-func (o *objResult) Read(p []byte) (n int, err error) {
-	o.Lock()
-	defer o.Unlock()
-	readDeadline := time.Now().Add(defaultAPITimeout)
-	if ctx := o.ctx; ctx != nil {
-		if deadline, ok := ctx.Deadline(); ok {
-			readDeadline = deadline
-		}
-		select {
-		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
-				o.err = ctx.Err()
-			} else {
-				o.err = nats.ErrTimeout
-			}
-		default:
-		}
-	}
-	if o.err != nil {
-		return 0, o.err
-	}
-	if o.r == nil {
-		return 0, io.EOF
-	}
-
-	r := o.r.(net.Conn)
-	_ = r.SetReadDeadline(readDeadline)
-	n, err = r.Read(p)
-	if err, ok := err.(net.Error); ok && err.Timeout() {
-		if ctx := o.ctx; ctx != nil {
-			select {
-			case <-ctx.Done():
-				if ctx.Err() == context.Canceled {
-					return 0, ctx.Err()
-				} else {
-					return 0, nats.ErrTimeout
-				}
-			default:
-				err = nil
-			}
-		}
-	}
-	if err == io.EOF {
-		// Make sure the digest matches.
-		sha := o.digest.Sum(nil)
-		rsha, decodeErr := DecodeObjectDigest(o.info.Digest)
-		if decodeErr != nil {
-			o.err = decodeErr
-			return 0, o.err
-		}
-		if !bytes.Equal(sha[:], rsha) {
-			o.err = ErrDigestMismatch
-			return 0, o.err
-		}
-	}
-	return n, err
-}
-
-// Close impl.
-func (o *objResult) Close() error {
-	o.Lock()
-	defer o.Unlock()
-	if o.cancel != nil {
-		o.cancel()
-	}
-	if o.r == nil {
-		return nil
-	}
-	return o.r.Close()
-}
-
-func (o *objResult) setErr(err error) {
-	o.Lock()
-	defer o.Unlock()
-	o.err = err
-}
-
-func (o *objResult) Info() (*ObjectInfo, error) {
-	o.Lock()
-	defer o.Unlock()
-	return o.info, o.err
-}
-
-func (o *objResult) Error() error {
-	o.Lock()
-	defer o.Unlock()
-	return o.err
 }
 
 // ObjectStoreNames is used to retrieve a list of bucket names
