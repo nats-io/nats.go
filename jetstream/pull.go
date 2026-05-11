@@ -959,8 +959,9 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
 					p.setPinID(pinId)
 				}
-				res.msgs <- p.js.toJSMsg(msg)
-				meta, err := msg.Metadata()
+				jsMsg := p.js.toJSMsg(msg)
+				res.msgs <- jsMsg
+				meta, err := jsMsg.Metadata()
 				if err != nil {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
 					res.done = true

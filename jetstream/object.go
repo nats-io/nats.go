@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/parser"
 	"github.com/nats-io/nuid"
 )
 
@@ -460,7 +459,6 @@ type (
 		name       string
 		streamName string
 		stream     Stream
-		pushJS     nats.JetStreamContext
 		js         *jetStream
 	}
 
@@ -503,12 +501,8 @@ func (js *jetStream) CreateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 		}
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+	return mapStreamToObjectStore(js, cfg.Bucket, stream), nil
 }
 
 func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
@@ -525,12 +519,8 @@ func (js *jetStream) UpdateObjectStore(ctx context.Context, cfg ObjectStoreConfi
 		}
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+	return mapStreamToObjectStore(js, cfg.Bucket, stream), nil
 }
 
 func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectStoreConfig) (ObjectStore, error) {
@@ -543,12 +533,8 @@ func (js *jetStream) CreateOrUpdateObjectStore(ctx context.Context, cfg ObjectSt
 	if err != nil {
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToObjectStore(js, pushJS, cfg.Bucket, stream), nil
+	return mapStreamToObjectStore(js, cfg.Bucket, stream), nil
 }
 
 func (js *jetStream) prepareObjectStoreConfig(cfg ObjectStoreConfig) (StreamConfig, error) {
@@ -608,11 +594,7 @@ func (js *jetStream) ObjectStore(ctx context.Context, bucket string) (ObjectStor
 		}
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
-	return mapStreamToObjectStore(js, pushJS, bucket, stream), nil
+	return mapStreamToObjectStore(js, bucket, stream), nil
 }
 
 // DeleteObjectStore will delete the underlying stream for the named object.
@@ -834,122 +816,7 @@ func (info *ObjectInfo) isLink() bool {
 
 // Get will pull the object from the underlying stream.
 func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (ObjectResult, error) {
-	ctx, cancel := obs.js.wrapContextWithoutDeadline(ctx)
-	var o getObjectOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt(&o); err != nil {
-				return nil, err
-			}
-		}
-	}
-	infoOpts := make([]GetObjectInfoOpt, 0)
-	if o.showDeleted {
-		infoOpts = append(infoOpts, GetObjectInfoShowDeleted())
-	}
-
-	// Grab meta info.
-	info, err := obs.GetInfo(ctx, name, infoOpts...)
-	if err != nil {
-		return nil, err
-	}
-	if info.NUID == "" {
-		return nil, ErrBadObjectMeta
-	}
-
-	// Check for object links. If single objects we do a pass through.
-	if info.isLink() {
-		if info.ObjectMeta.Opts.Link.Name == "" {
-			return nil, ErrCantGetBucket
-		}
-
-		// is the link in the same bucket?
-		lbuck := info.ObjectMeta.Opts.Link.Bucket
-		if lbuck == obs.name {
-			return obs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
-		}
-
-		// different bucket
-		lobs, err := obs.js.ObjectStore(ctx, lbuck)
-		if err != nil {
-			return nil, err
-		}
-		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
-	}
-
-	result := &objResult{info: info, ctx: ctx, cancel: cancel}
-	if info.Size == 0 {
-		return result, nil
-	}
-
-	pr, pw := net.Pipe()
-	result.r = pr
-
-	gotErr := func(m *nats.Msg, err error) {
-		pw.Close()
-		m.Sub.Unsubscribe()
-		result.setErr(err)
-	}
-
-	// For calculating sum256
-	result.digest = sha256.New()
-
-	processChunk := func(m *nats.Msg) {
-		var err error
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				if ctx.Err() == context.Canceled {
-					err = ctx.Err()
-				} else {
-					err = nats.ErrTimeout
-				}
-			default:
-			}
-			if err != nil {
-				gotErr(m, err)
-				return
-			}
-		}
-
-		tokens, err := parser.GetMetadataFields(m.Reply)
-		if err != nil {
-			gotErr(m, err)
-			return
-		}
-
-		// Write to our pipe.
-		for b := m.Data; len(b) > 0; {
-			n, err := pw.Write(b)
-			if err != nil {
-				gotErr(m, err)
-				return
-			}
-			b = b[n:]
-		}
-		// Update sha256
-		result.digest.Write(m.Data)
-
-		// Check if we are done.
-		if tokens[parser.AckNumPendingTokenPos] == objNoPending {
-			pw.Close()
-			m.Sub.Unsubscribe()
-		}
-	}
-
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	streamName := fmt.Sprintf(objNameTmpl, obs.name)
-	subscribeOpts := []nats.SubOpt{
-		nats.OrderedConsumer(),
-		nats.Context(ctx),
-		nats.BindStream(streamName),
-	}
-	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	return nil, errors.New("nats: legacy JetStream push-subscribe removed; watcher not yet ported to pull consumers")
 }
 
 // Delete will delete the object.
@@ -1276,76 +1143,7 @@ func (w *objWatcher) Stop() error {
 
 // Watch for changes in the underlying store and receive meta information updates.
 func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, error) {
-	var o watchOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configureWatcher(&o); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	var initDoneMarker bool
-
-	w := &objWatcher{updates: make(chan *ObjectInfo, 32)}
-
-	update := func(m *nats.Msg) {
-		var info ObjectInfo
-		if err := json.Unmarshal(m.Data, &info); err != nil {
-			return // TODO(dlc) - Communicate this upwards?
-		}
-		meta, err := m.Metadata()
-		if err != nil {
-			return
-		}
-
-		if !o.ignoreDeletes || !info.Deleted {
-			info.ModTime = meta.Timestamp
-			w.updates <- &info
-		}
-
-		// if UpdatesOnly is set, no not send nil to the channel
-		// as it would always be triggered after initializing the watcher
-		if !initDoneMarker && meta.NumPending == 0 {
-			initDoneMarker = true
-			w.updates <- nil
-		}
-	}
-
-	allMeta := fmt.Sprintf(objAllMetaPreTmpl, obs.name)
-	_, err := obs.stream.GetLastMsgForSubject(ctx, allMeta)
-	// if there are no messages on the stream and we are not watching
-	// updates only, send nil to the channel to indicate that the initial
-	// watch is done
-	if !o.updatesOnly {
-		if errors.Is(err, ErrMsgNotFound) {
-			initDoneMarker = true
-			w.updates <- nil
-		}
-	} else {
-		// if UpdatesOnly was used, mark initialization as complete
-		initDoneMarker = true
-	}
-
-	// Used ordered consumer to deliver results.
-	streamName := fmt.Sprintf(objNameTmpl, obs.name)
-	subOpts := []nats.SubOpt{nats.OrderedConsumer(), nats.BindStream(streamName)}
-	if !o.includeHistory {
-		subOpts = append(subOpts, nats.DeliverLastPerSubject())
-	}
-	if o.updatesOnly {
-		subOpts = append(subOpts, nats.DeliverNew())
-	}
-	subOpts = append(subOpts, nats.Context(ctx))
-	sub, err := obs.pushJS.Subscribe(allMeta, update, subOpts...)
-	if err != nil {
-		return nil, err
-	}
-	sub.SetClosedHandler(func(_ string) {
-		close(w.updates)
-	})
-	w.sub = sub
-	return w, nil
+	return nil, errors.New("nats: legacy JetStream push-subscribe removed; watcher not yet ported to pull consumers")
 }
 
 // List will list all the objects in this store.
@@ -1618,13 +1416,12 @@ func (ol *obsLister) Error() error {
 	return ol.err
 }
 
-func mapStreamToObjectStore(js *jetStream, pushJS nats.JetStreamContext, bucket string, stream Stream) *obs {
+func mapStreamToObjectStore(js *jetStream, bucket string, stream Stream) *obs {
 	info := stream.CachedInfo()
 
 	obs := &obs{
 		name:       bucket,
 		js:         js,
-		pushJS:     pushJS,
 		streamName: info.Config.Name,
 		stream:     stream,
 	}

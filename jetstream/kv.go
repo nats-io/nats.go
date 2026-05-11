@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/parser"
 )
 
 type (
@@ -436,7 +435,6 @@ type kvs struct {
 	streamName string
 	pre        string
 	putPre     string
-	pushJS     nats.JetStreamContext
 	js         *jetStream
 	stream     Stream
 	// If true, it means that APIPrefix/Domain was set in the context
@@ -520,12 +518,8 @@ func (js *jetStream) KeyValue(ctx context.Context, bucket string) (KeyValue, err
 	if stream.CachedInfo().Config.MaxMsgsPerSubject < 1 {
 		return nil, ErrBadBucket
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToKVS(js, pushJS, stream), nil
+	return mapStreamToKVS(js, stream), nil
 }
 
 func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
@@ -561,12 +555,8 @@ func (js *jetStream) CreateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 			return nil, err
 		}
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToKVS(js, pushJS, stream), nil
+	return mapStreamToKVS(js, stream), nil
 }
 
 func (js *jetStream) UpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
@@ -582,12 +572,8 @@ func (js *jetStream) UpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (Ke
 		}
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToKVS(js, pushJS, stream), nil
+	return mapStreamToKVS(js, stream), nil
 }
 
 func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueConfig) (KeyValue, error) {
@@ -600,12 +586,8 @@ func (js *jetStream) CreateOrUpdateKeyValue(ctx context.Context, cfg KeyValueCon
 	if err != nil {
 		return nil, err
 	}
-	pushJS, err := js.legacyJetStream()
-	if err != nil {
-		return nil, err
-	}
 
-	return mapStreamToKVS(js, pushJS, stream), nil
+	return mapStreamToKVS(js, stream), nil
 }
 
 func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConfig) (StreamConfig, error) {
@@ -882,20 +864,6 @@ func (kl *kvLister) Name() <-chan string {
 
 func (kl *kvLister) Error() error {
 	return kl.err
-}
-
-func (js *jetStream) legacyJetStream() (nats.JetStreamContext, error) {
-	opts := make([]nats.JSOpt, 0)
-	if js.opts.apiPrefix != "" {
-		opts = append(opts, nats.APIPrefix(js.opts.apiPrefix))
-	}
-	if js.opts.ClientTrace != nil {
-		opts = append(opts, nats.ClientTrace{
-			RequestSent:      js.opts.ClientTrace.RequestSent,
-			ResponseReceived: js.opts.ClientTrace.ResponseReceived,
-		})
-	}
-	return js.conn.JetStream(opts...)
 }
 
 func bucketValid(bucket string) bool {
@@ -1213,149 +1181,7 @@ func (w *watcher) Stop() error {
 // WatchFiltered will watch for any updates to keys that match the provided
 // key filters. It can be configured with the same options as Watch.
 func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOpt) (KeyWatcher, error) {
-	for _, key := range keys {
-		if !searchKeyValid(key) {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidKey, "key cannot be empty and must be a valid NATS subject")
-		}
-	}
-	var o watchOpts
-	for _, opt := range opts {
-		if opt != nil {
-			if err := opt.configureWatcher(&o); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	// Could be a pattern so don't check for validity as we normally do.
-	for i, key := range keys {
-		var b strings.Builder
-		b.WriteString(kv.pre)
-		b.WriteString(key)
-		keys[i] = b.String()
-	}
-
-	// if no keys are provided, watch all keys
-	if len(keys) == 0 {
-		var b strings.Builder
-		b.WriteString(kv.pre)
-		b.WriteString(AllKeys)
-		keys = []string{b.String()}
-	}
-
-	// We will block below on placing items on the chan. That is by design.
-	w := &watcher{updates: make(chan KeyValueEntry, 256)}
-
-	update := func(m *nats.Msg) {
-		tokens, err := parser.GetMetadataFields(m.Reply)
-		if err != nil {
-			return
-		}
-		if len(m.Subject) <= len(kv.pre) {
-			return
-		}
-		subj := m.Subject[len(kv.pre):]
-
-		var op KeyValueOp
-		if len(m.Header) > 0 {
-			if m.Header.Get(kvop) != "" {
-				switch m.Header.Get(kvop) {
-				case kvdel:
-					op = KeyValueDelete
-				case kvpurge:
-					op = KeyValuePurge
-				}
-			} else if m.Header.Get(MarkerReasonHeader) != "" {
-				switch m.Header.Get(MarkerReasonHeader) {
-				case "MaxAge", "Purge":
-					op = KeyValuePurge
-				case "Remove":
-					op = KeyValueDelete
-				}
-			}
-		}
-		delta := parser.ParseNum(tokens[parser.AckNumPendingTokenPos])
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		if !o.ignoreDeletes || (op != KeyValueDelete && op != KeyValuePurge) {
-			entry := &kve{
-				bucket:   kv.name,
-				key:      subj,
-				value:    m.Data,
-				revision: parser.ParseNum(tokens[parser.AckStreamSeqTokenPos]),
-				created:  time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos]))),
-				delta:    delta,
-				op:       op,
-			}
-			w.updates <- entry
-		}
-		// Check if done and initial values.
-		if !w.initDone {
-			w.received++
-			// Use the stable initPending value set at consumer creation.
-			// We're done if we've received all expected messages OR there are no more pending.
-			if w.received >= w.initPending || delta == 0 {
-				w.initDone = true
-				w.updates <- nil
-			}
-		}
-	}
-
-	// Used ordered consumer to deliver results.
-	subOpts := []nats.SubOpt{nats.BindStream(kv.streamName), nats.OrderedConsumer()}
-	if !o.includeHistory {
-		subOpts = append(subOpts, nats.DeliverLastPerSubject())
-	}
-	if o.updatesOnly {
-		subOpts = append(subOpts, nats.DeliverNew())
-	}
-	if o.metaOnly {
-		subOpts = append(subOpts, nats.HeadersOnly())
-	}
-	if o.resumeFromRevision > 0 {
-		subOpts = append(subOpts, nats.StartSequence(o.resumeFromRevision))
-	}
-	subOpts = append(subOpts, nats.Context(ctx))
-	// Create the sub and rest of initialization under the lock.
-	// We want to prevent the race between this code and the
-	// update() callback.
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	var sub *nats.Subscription
-	var err error
-	if len(keys) == 1 {
-		sub, err = kv.pushJS.Subscribe(keys[0], update, subOpts...)
-	} else {
-		subOpts = append(subOpts, nats.ConsumerFilterSubjects(keys...))
-		sub, err = kv.pushJS.Subscribe("", update, subOpts...)
-	}
-	if err != nil {
-		return nil, err
-	}
-	sub.SetClosedHandler(func(_ string) {
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		close(w.updates)
-	})
-	// If there were no pending messages at the time of the creation
-	// of the consumer, send the marker.
-	// Skip if UpdatesOnly() is set, since there will never be updates initially.
-	if !o.updatesOnly {
-		initialPending, err := sub.InitialConsumerPending()
-		if err == nil {
-			if initialPending == 0 {
-				w.initDone = true
-				w.updates <- nil
-			} else {
-				w.initPending = initialPending
-			}
-		}
-	} else {
-		// if UpdatesOnly was used, mark initialization as complete
-		w.initDone = true
-	}
-	w.sub = sub
-	return w, nil
+	return nil, errors.New("nats: legacy JetStream push-subscribe removed; watcher not yet ported to pull consumers")
 }
 
 // Watch for any updates to keys that match the keys argument which could include wildcards.
@@ -1561,7 +1387,7 @@ func (kv *kvs) Status(ctx context.Context) (KeyValueStatus, error) {
 	return &KeyValueBucketStatus{info: nfo, bucket: kv.name}, nil
 }
 
-func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) *kvs {
+func mapStreamToKVS(js *jetStream, stream Stream) *kvs {
 	info := stream.CachedInfo()
 	bucket := strings.TrimPrefix(info.Config.Name, kvBucketNamePre)
 	kv := &kvs{
@@ -1569,7 +1395,6 @@ func mapStreamToKVS(js *jetStream, pushJS nats.JetStreamContext, stream Stream) 
 		streamName: info.Config.Name,
 		pre:        fmt.Sprintf(kvSubjectsPreTmpl, bucket),
 		js:         js,
-		pushJS:     pushJS,
 		stream:     stream,
 		// Determine if we need to use the JS prefix in front of Put and Delete operations
 		useJSPfx:  js.opts.apiPrefix != DefaultAPIPrefix,

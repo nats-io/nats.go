@@ -917,7 +917,7 @@ func TestKeyValueDeleteTombstones(t *testing.T) {
 	// Try with context
 	ctx, cancel = context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err = kv.PurgeDeletes(nats.Context(ctx))
+	err = kv.PurgeDeletes(ctx)
 	expectOk(t, err)
 }
 
@@ -1598,7 +1598,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 
 	e := keyExists(t, kv, "v", "vv")
 	if e.Operation() != jetstream.KeyValuePut {
-		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), jetstream.KeyValuePut)
 	}
 	err = mkv.Delete(ctx, "v")
 	expectOk(t, err)
@@ -1626,7 +1626,7 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	expectOk(t, err)
 	e = keyExists(t, mkv, "v", "vv")
 	if e.Operation() != jetstream.KeyValuePut {
-		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), jetstream.KeyValuePut)
 	}
 	err = rkv.Delete(ctx, "v")
 	expectOk(t, err)

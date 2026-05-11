@@ -231,13 +231,13 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 	var err error
 	timeout := time.Now().Add(10 * time.Second)
 	for time.Now().Before(timeout) {
-		// Use a smaller MaxWait here since if it fails, we don't want
-		// to wait for too long since we are going to try again.
-		js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
+		js, err := jetstream.New(nc)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = js.AccountInfo()
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		_, err = js.AccountInfo(ctx)
+		cancel()
 		if err != nil {
 			continue
 		}
