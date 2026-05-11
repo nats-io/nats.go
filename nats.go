@@ -36,7 +36,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/nats-io/nkeys"
@@ -2700,15 +2699,6 @@ func (nc *Conn) tlsHandshakeEOF(err error) error {
 		return fmt.Errorf("%w: connection closed by remote after TLS handshake: %w", ErrTLS, err)
 	}
 	return err
-}
-
-// isConnClosedError reports whether the error indicates the remote
-// side closed the connection (broken pipe or connection reset).
-// NOTE: On Windows, connection resets use WSAECONNRESET which may not
-// match syscall.ECONNRESET. In that case, the error will not be
-// detected here but will still be returned unwrapped by the caller.
-func isConnClosedError(err error) bool {
-	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
 
 // Process a connected connection and initialize properly.
