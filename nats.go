@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -679,7 +678,7 @@ type Conn struct {
 	respSubLen    int                  // the length of the wildcard prefix excluding trailing .
 	respMux       *Subscription        // A single response subscription
 	respMap       map[string]chan *Msg // Request map for the response msg channels
-	respRand      *rand.Rand           // Used for generating suffix
+	respRand      *natsRand
 
 	// Msg filters for testing.
 	// Protected by subsMu
@@ -2131,8 +2130,7 @@ func (nc *Conn) shufflePool(offset int) {
 	if len(nc.srvPool) <= offset+1 {
 		return
 	}
-	source := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(source)
+	r := natsNewRand()
 	for i := offset; i < len(nc.srvPool); i++ {
 		j := offset + r.Intn(i+1-offset)
 		nc.srvPool[i], nc.srvPool[j] = nc.srvPool[j], nc.srvPool[i]
@@ -2341,7 +2339,7 @@ func (nc *Conn) createConn() (err error) {
 	}
 
 	if len(hosts) > 1 && !nc.Opts.NoRandomize {
-		rand.Shuffle(len(hosts), func(i, j int) {
+		natsRandShuffle(len(hosts), func(i, j int) {
 			hosts[i], hosts[j] = hosts[j], hosts[i]
 		})
 	}
@@ -3297,7 +3295,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 			} else {
 				st = rw
 				if jitter > 0 {
-					st += time.Duration(rand.Int63n(int64(jitter)))
+					st += time.Duration(natsRandInt63n(int64(jitter)))
 				}
 			}
 			if rt == nil {
@@ -4655,7 +4653,7 @@ func (nc *Conn) initNewResp() {
 	nc.respSubLen = len(nc.respSubPrefix)
 	nc.respSub = fmt.Sprintf("%s*", nc.respSubPrefix)
 	nc.respMap = make(map[string]chan *Msg)
-	nc.respRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	nc.respRand = natsNewRand()
 }
 
 // newRespInbox creates a new literal response subject
