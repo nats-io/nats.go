@@ -716,9 +716,6 @@ type Subscription struct {
 	// only be processed by one member of the group.
 	Queue string
 
-	// For holding information about a JetStream consumer.
-	jsi *jsSub
-
 	delivered      uint64
 	max            uint64
 	conn           *Conn
@@ -1889,11 +1886,7 @@ func defaultErrHandler(nc *Conn, sub *Subscription, err error) {
 	if sub != nil {
 		var subject string
 		sub.mu.Lock()
-		if sub.jsi != nil {
-			subject = sub.jsi.psubj
-		} else {
-			subject = sub.Subject
-		}
+		subject = sub.Subject
 		sub.mu.Unlock()
 		errStr = fmt.Sprintf("%s on connection [%d] for subscription on %q\n", err.Error(), cid, subject)
 	} else {
@@ -3607,20 +3600,11 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 		mcb := s.mcb
 		max = s.max
 		closed = s.closed
-		var fcReply string
 		if !s.closed {
 			s.delivered++
 			delivered = s.delivered
-			if s.jsi != nil {
-				fcReply = s.checkForFlowControlResponse()
-			}
 		}
 		s.mu.Unlock()
-
-		// Respond to flow control if applicable
-		if fcReply != _EMPTY_ {
-			nc.Publish(fcReply, nil)
-		}
 
 		if closed {
 			break
@@ -3704,9 +3688,6 @@ func (nc *Conn) processMsg(data []byte) {
 	// Check if we have headers encoded here.
 	var h Header
 	var err error
-	var ctrlMsg bool
-	var ctrlType int
-	var fcReply string
 
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
@@ -3749,100 +3730,47 @@ func (nc *Conn) processMsg(data []byte) {
 		return
 	}
 
-	// Skip flow control messages in case of using a JetStream context.
-	jsi := sub.jsi
-	if jsi != nil {
-		// There has to be a header for it to be a control message.
-		if h != nil {
-			ctrlMsg, ctrlType = isJSControlMessage(m)
-			if ctrlMsg && ctrlType == jsCtrlHB {
-				// Check if the heartbeat has a "Consumer Stalled" header, if
-				// so, the value is the FC reply to send a nil message to.
-				// We will send it at the end of this function.
-				fcReply = m.Header.Get(consumerStalledHdr)
-			}
+	// Subscription internal stats (applicable only for non ChanSubscription's)
+	if sub.typ != ChanSubscription {
+		sub.pMsgs++
+		if sub.pMsgs > sub.pMsgsMax {
+			sub.pMsgsMax = sub.pMsgs
 		}
-		// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
-		if !ctrlMsg && jsi.ordered && sub.checkOrderedMsgs(m) {
-			sub.mu.Unlock()
-			return
+		sub.pBytes += len(m.Data)
+		if sub.pBytes > sub.pBytesMax {
+			sub.pBytesMax = sub.pBytes
+		}
+
+		// Check for a Slow Consumer
+		if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
+			(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
+			goto slowConsumer
 		}
 	}
 
-	// Skip processing if this is a control message and
-	// if not a pull consumer heartbeat. For pull consumers,
-	// heartbeats have to be handled on per request basis.
-	if !ctrlMsg || (jsi != nil && jsi.pull) {
-		var chanSubCheckFC bool
-		// Subscription internal stats (applicable only for non ChanSubscription's)
-		if sub.typ != ChanSubscription {
-			sub.pMsgs++
-			if sub.pMsgs > sub.pMsgsMax {
-				sub.pMsgsMax = sub.pMsgs
+	// We have two modes of delivery. One is the channel, used by channel
+	// subscribers and syncSubscribers, the other is a linked list for async.
+	if sub.mch != nil {
+		select {
+		case sub.mch <- m:
+			// For ChanSubscribe, track delivered count here
+			if sub.typ == ChanSubscription {
+				sub.delivered++
 			}
-			sub.pBytes += len(m.Data)
-			if sub.pBytes > sub.pBytesMax {
-				sub.pBytesMax = sub.pBytes
-			}
-
-			// Check for a Slow Consumer
-			if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit) ||
-				(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit) {
-				goto slowConsumer
-			}
-		} else if jsi != nil {
-			chanSubCheckFC = true
+		default:
+			goto slowConsumer
 		}
-
-		// We have two modes of delivery. One is the channel, used by channel
-		// subscribers and syncSubscribers, the other is a linked list for async.
-		if sub.mch != nil {
-			select {
-			case sub.mch <- m:
-				// For ChanSubscribe, track delivered count here
-				if sub.typ == ChanSubscription {
-					sub.delivered++
-				}
-			default:
-				goto slowConsumer
+	} else {
+		// Push onto the async pList
+		if sub.pHead == nil {
+			sub.pHead = m
+			sub.pTail = m
+			if sub.pCond != nil {
+				sub.pCond.Signal()
 			}
 		} else {
-			// Push onto the async pList
-			if sub.pHead == nil {
-				sub.pHead = m
-				sub.pTail = m
-				if sub.pCond != nil {
-					sub.pCond.Signal()
-				}
-			} else {
-				sub.pTail.next = m
-				sub.pTail = m
-			}
-		}
-		if jsi != nil {
-			// Store the ACK metadata from the message to
-			// compare later on with the received heartbeat.
-			sub.trackSequences(m.Reply)
-			if chanSubCheckFC {
-				// For ChanSubscription, since we can't call this when a message
-				// is "delivered" (since user is pull from their own channel),
-				// we have a go routine that does this check, however, we do it
-				// also here to make it much more responsive. The go routine is
-				// really to avoid stalling when there is no new messages coming.
-				fcReply = sub.checkForFlowControlResponse()
-			}
-		}
-	} else if ctrlType == jsCtrlFC && m.Reply != _EMPTY_ {
-		// This is a flow control message.
-		// We will schedule the send of the FC reply once we have delivered the
-		// DATA message that was received before this flow control message, which
-		// has sequence `jsi.fciseq`. However, it is possible that this message
-		// has already been delivered, in that case, we need to send the FC reply now.
-		if sub.getJSDelivered() >= jsi.fciseq {
-			fcReply = m.Reply
-		} else {
-			// Schedule a reply after the previous message is delivered.
-			sub.scheduleFlowControlResponse(m.Reply)
+			sub.pTail.next = m
+			sub.pTail = m
 		}
 	}
 
@@ -3853,17 +3781,8 @@ func (nc *Conn) processMsg(data []byte) {
 	sub.sc = false
 	sub.mu.Unlock()
 
-	if fcReply != _EMPTY_ {
-		nc.Publish(fcReply, nil)
-	}
-
-	// Handle control heartbeat messages.
-	if ctrlMsg && ctrlType == jsCtrlHB && m.Reply == _EMPTY_ {
-		nc.checkForSequenceMismatch(m, sub, jsi)
-	}
-
 	// Check if we need to auto-unsubscribe for chan subscriptions
-	if sub.typ == ChanSubscription && sub.max > 0 && !ctrlMsg {
+	if sub.typ == ChanSubscription && sub.max > 0 {
 		sub.mu.Lock()
 		if sub.delivered >= sub.max {
 			sub.mu.Unlock()
@@ -4591,7 +4510,7 @@ func (nc *Conn) createNewRequestAndSend(subj string, hdr, data []byte) (chan *Ms
 		// Create the response subscription we will use for all new style responses.
 		// This will be on an _INBOX with an additional terminal token. The subscription
 		// will be on a wildcard.
-		s, err := nc.subscribeLocked(nc.respSub, _EMPTY_, nc.respHandler, nil, nil, false, nil)
+		s, err := nc.subscribeLocked(nc.respSub, _EMPTY_, nc.respHandler, nil, nil, false)
 		if err != nil {
 			nc.mu.Unlock()
 			return nil, token, err
@@ -4689,7 +4608,7 @@ func (nc *Conn) oldRequest(subj string, hdr, data []byte, timeout time.Duration)
 	inbox := nc.NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, nil, true, nil)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -4795,14 +4714,14 @@ func (nc *Conn) respToken(respInbox string) string {
 // since it can't match more than one token.
 // Messages will be delivered to the associated MsgHandler.
 func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, cb, nil, nil, false, nil)
+	return nc.subscribe(subj, _EMPTY_, cb, nil, nil, false)
 }
 
 // ChanSubscribe will express interest in the given subject and place
 // all messages received on the channel.
 // You should not close the channel until sub.Unsubscribe() has been called.
 func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, _EMPTY_, nil, ch, nil, false, nil)
+	return nc.subscribe(subj, _EMPTY_, nil, ch, nil, false)
 }
 
 // ChanQueueSubscribe will express interest in the given subject.
@@ -4812,7 +4731,7 @@ func (nc *Conn) ChanSubscribe(subj string, ch chan *Msg) (*Subscription, error) 
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than QueueSubscribeSyncWithChan.
 func (nc *Conn) ChanQueueSubscribe(subj, group string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, group, nil, ch, nil, false, nil)
+	return nc.subscribe(subj, group, nil, ch, nil, false)
 }
 
 // SubscribeSync will express interest on the given subject. Messages will
@@ -4826,7 +4745,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 	if nc.Opts.PermissionErrOnSubscribe {
 		errCh = make(chan error, 100)
 	}
-	return nc.subscribe(subj, _EMPTY_, nil, mch, errCh, true, nil)
+	return nc.subscribe(subj, _EMPTY_, nil, mch, errCh, true)
 }
 
 // QueueSubscribe creates an asynchronous queue subscriber on the given subject.
@@ -4834,7 +4753,7 @@ func (nc *Conn) SubscribeSync(subj string) (*Subscription, error) {
 // only one member of the group will be selected to receive any given
 // message asynchronously.
 func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error) {
-	return nc.subscribe(subj, queue, cb, nil, nil, false, nil)
+	return nc.subscribe(subj, queue, cb, nil, nil, false)
 }
 
 // QueueSubscribeSync creates a synchronous queue subscriber on the given
@@ -4847,7 +4766,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 	if nc.Opts.PermissionErrOnSubscribe {
 		errCh = make(chan error, 100)
 	}
-	return nc.subscribe(subj, queue, nil, mch, errCh, true, nil)
+	return nc.subscribe(subj, queue, nil, mch, errCh, true)
 }
 
 // QueueSubscribeSyncWithChan will express interest in the given subject.
@@ -4857,7 +4776,7 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // You should not close the channel until sub.Unsubscribe() has been called.
 // Note: This is the same than ChanQueueSubscribe.
 func (nc *Conn) QueueSubscribeSyncWithChan(subj, queue string, ch chan *Msg) (*Subscription, error) {
-	return nc.subscribe(subj, queue, nil, ch, nil, false, nil)
+	return nc.subscribe(subj, queue, nil, ch, nil, false)
 }
 
 // badSubject will do quick test on whether a subject is acceptable.
@@ -4881,16 +4800,16 @@ func badQueue(qname string) bool {
 }
 
 // subscribe is the internal subscribe function that indicates interest in a subject.
-func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, errCh chan (error), isSync bool, js *jsSub) (*Subscription, error) {
+func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, errCh chan (error), isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
-	return nc.subscribeLocked(subj, queue, cb, ch, errCh, isSync, js)
+	return nc.subscribeLocked(subj, queue, cb, ch, errCh, isSync)
 }
 
-func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, errCh chan (error), isSync bool, js *jsSub) (*Subscription, error) {
+func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg, errCh chan (error), isSync bool) (*Subscription, error) {
 	if nc == nil {
 		return nil, ErrInvalidConnection
 	}
@@ -4918,7 +4837,6 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 		Queue:   queue,
 		mcb:     cb,
 		conn:    nc,
-		jsi:     js,
 	}
 	// Set pending limits.
 	if ch != nil {
@@ -4986,18 +4904,6 @@ func (nc *Conn) removeSub(s *Subscription) {
 	}
 	s.mch = nil
 
-	// If JS subscription then stop HB timer.
-	if jsi := s.jsi; jsi != nil {
-		if jsi.hbc != nil {
-			jsi.hbc.Stop()
-			jsi.hbc = nil
-		}
-		if jsi.csfct != nil {
-			jsi.csfct.Stop()
-			jsi.csfct = nil
-		}
-	}
-
 	if s.typ != AsyncSubscription {
 		done := s.pDone
 		if done != nil {
@@ -5031,12 +4937,6 @@ func (s *Subscription) Type() SubscriptionType {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Pull subscriptions are really a SyncSubscription and we want this
-	// type to be set internally for all delivered messages management, etc..
-	// So check when to return PullSubscription to the user.
-	if s.jsi != nil && s.jsi.pull {
-		return PullSubscription
-	}
 	return s.typ
 }
 
@@ -5185,7 +5085,6 @@ func (s *Subscription) Unsubscribe() error {
 	s.mu.Lock()
 	conn := s.conn
 	closed := s.closed
-	dc := s.jsi != nil && s.jsi.dc
 	s.mu.Unlock()
 	if conn == nil || conn.IsClosed() {
 		return ErrConnectionClosed
@@ -5196,11 +5095,7 @@ func (s *Subscription) Unsubscribe() error {
 	if conn.IsDraining() {
 		return ErrConnectionDraining
 	}
-	err := conn.unsubscribe(s, 0, false)
-	if err == nil && dc {
-		err = s.deleteConsumer()
-	}
-	return err
+	return conn.unsubscribe(s, 0, false)
 }
 
 // checkDrained will watch for a subscription to be fully drained
@@ -5218,12 +5113,6 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 	// This allows us to know that whatever we have in the client pending
 	// is correct and the server will not send additional information.
 	nc.Flush()
-
-	sub.mu.Lock()
-	// For JS subscriptions, check if we are going to delete the
-	// JS consumer when drain completes.
-	dc := sub.jsi != nil && sub.jsi.dc
-	sub.mu.Unlock()
 
 	// Once we are here we just wait for Pending to reach 0 or
 	// any other state to exit this go routine.
@@ -5244,15 +5133,6 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 			nc.mu.Lock()
 			nc.removeSub(sub)
 			nc.mu.Unlock()
-			if dc {
-				if err := sub.deleteConsumer(); err != nil {
-					nc.mu.Lock()
-					if errCB := nc.Opts.AsyncErrorCB; errCB != nil {
-						nc.ach.push(func() { errCB(nc, sub, err) })
-					}
-					nc.mu.Unlock()
-				}
-			}
 			return
 		}
 
@@ -5334,19 +5214,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 		nc.kickFlusher()
 	}
 
-	// For JetStream subscriptions cancel the attached context if there is any.
-	var cancel func()
-	sub.mu.Lock()
-	jsi := sub.jsi
-	if jsi != nil {
-		cancel = jsi.cancel
-		jsi.cancel = nil
-	}
-	sub.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-
 	return nil
 }
 
@@ -5360,7 +5227,7 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	}
 
 	s.mu.Lock()
-	err := s.validateNextMsgState(false)
+	err := s.validateNextMsgState()
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -5432,7 +5299,7 @@ func (s *Subscription) nextMsgNoTimeout() (*Msg, error) {
 	}
 
 	s.mu.Lock()
-	err := s.validateNextMsgState(false)
+	err := s.validateNextMsgState()
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -5487,7 +5354,7 @@ func (s *Subscription) nextMsgNoTimeout() (*Msg, error) {
 // validateNextMsgState checks whether the subscription is in a valid
 // state to call NextMsg and be delivered another message synchronously.
 // This should be called while holding the lock.
-func (s *Subscription) validateNextMsgState(pullSubInternal bool) error {
+func (s *Subscription) validateNextMsgState() error {
 	if s.connClosed {
 		return ErrConnectionClosed
 	}
@@ -5511,11 +5378,6 @@ func (s *Subscription) validateNextMsgState(pullSubInternal bool) error {
 		s.changeSubStatus(SubscriptionActive)
 		s.sc = false
 		return ErrSlowConsumer
-	}
-	// Unless this is from an internal call, reject use of this API.
-	// Users should use Fetch() instead.
-	if !pullSubInternal && s.jsi != nil && s.jsi.pull {
-		return ErrTypeSubscription
 	}
 	return nil
 }
@@ -5541,23 +5403,15 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	nc := s.conn
 	max := s.max
 
-	var fcReply string
 	// Update some stats.
 	s.delivered++
 	delivered := s.delivered
-	if s.jsi != nil {
-		fcReply = s.checkForFlowControlResponse()
-	}
 
 	if s.typ == SyncSubscription {
 		s.pMsgs--
 		s.pBytes -= len(msg.Data)
 	}
 	s.mu.Unlock()
-
-	if fcReply != _EMPTY_ {
-		nc.Publish(fcReply, nil)
-	}
 
 	if max > 0 {
 		if delivered > max {

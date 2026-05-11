@@ -88,7 +88,7 @@ func (nc *Conn) oldRequestWithContext(ctx context.Context, subj string, hdr, dat
 	inbox := nc.NewInbox()
 	ch := make(chan *Msg, RequestChanLen)
 
-	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, nil, true, nil)
+	s, err := nc.subscribe(inbox, _EMPTY_, nil, ch, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,10 @@ func (nc *Conn) oldRequestWithContext(ctx context.Context, subj string, hdr, dat
 	return s.NextMsgWithContext(ctx)
 }
 
-func (s *Subscription) nextMsgWithContext(ctx context.Context, pullSubInternal, waitIfNoMsg bool) (*Msg, error) {
+// NextMsgWithContext takes a context and returns the next message
+// available to a synchronous subscriber, blocking until it is delivered
+// or context gets canceled.
+func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
 	if ctx == nil {
 		return nil, ErrInvalidContext
 	}
@@ -115,7 +118,7 @@ func (s *Subscription) nextMsgWithContext(ctx context.Context, pullSubInternal, 
 	}
 
 	s.mu.Lock()
-	err := s.validateNextMsgState(pullSubInternal)
+	err := s.validateNextMsgState()
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
@@ -139,11 +142,6 @@ func (s *Subscription) nextMsgWithContext(ctx context.Context, pullSubInternal, 
 		}
 		return msg, nil
 	default:
-		// If internal and we don't want to wait, signal that there is no
-		// message in the internal queue.
-		if pullSubInternal && !waitIfNoMsg {
-			return nil, errNoMessages
-		}
 	}
 
 	select {
@@ -159,13 +157,6 @@ func (s *Subscription) nextMsgWithContext(ctx context.Context, pullSubInternal, 
 	}
 
 	return msg, nil
-}
-
-// NextMsgWithContext takes a context and returns the next message
-// available to a synchronous subscriber, blocking until it is delivered
-// or context gets canceled.
-func (s *Subscription) NextMsgWithContext(ctx context.Context) (*Msg, error) {
-	return s.nextMsgWithContext(ctx, false, true)
 }
 
 // FlushWithContext will allow a context to control the duration

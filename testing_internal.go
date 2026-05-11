@@ -44,11 +44,6 @@ func (nc *Conn) RemoveMsgFilter(subject string) {
 	}
 }
 
-// IsJSControlMessage returns true if the message is a JetStream control message.
-func IsJSControlMessage(msg *Msg) (bool, int) {
-	return isJSControlMessage(msg)
-}
-
 // CloseTCPConn closes the underlying TCP connection.
 // It can be used to simulate a disconnect.
 func (nc *Conn) CloseTCPConn() {
