@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -2973,7 +2972,7 @@ func (nc *Conn) connectProto() (string, error) {
 		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho, hdrs, hdrs,
 	}
 
-	b, err := json.Marshal(cinfo)
+	b, err := marshalConnectInfo(cinfo)
 	if err != nil {
 		return _EMPTY_, ErrJsonParse
 	}
@@ -3970,7 +3969,7 @@ func (nc *Conn) processInfo(info string) error {
 		return nil
 	}
 	var ncInfo ServerInfo
-	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
+	if err := unmarshalServerInfo(info, &ncInfo); err != nil {
 		return err
 	}
 
