@@ -1106,28 +1106,6 @@ func (obs *obs) Seal(ctx context.Context) error {
 	return err
 }
 
-// Implementation for Watch
-type objWatcher struct {
-	updates chan *ObjectInfo
-	sub     *nats.Subscription
-}
-
-// Updates returns the interior channel.
-func (w *objWatcher) Updates() <-chan *ObjectInfo {
-	if w == nil {
-		return nil
-	}
-	return w.updates
-}
-
-// Stop will unsubscribe from the watcher.
-func (w *objWatcher) Stop() error {
-	if w == nil {
-		return nil
-	}
-	return w.sub.Unsubscribe()
-}
-
 // Watch for changes in the underlying store and receive meta information updates.
 func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, error) {
 	return nil, errors.New("nats: legacy JetStream push-subscribe removed; watcher not yet ported to pull consumers")

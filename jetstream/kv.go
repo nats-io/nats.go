@@ -22,7 +22,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -1150,32 +1149,6 @@ func purge() KVDeleteOpt {
 		opts.purge = true
 		return nil
 	})
-}
-
-// Implementation for Watch
-type watcher struct {
-	mu          sync.Mutex
-	updates     chan KeyValueEntry
-	sub         *nats.Subscription
-	initDone    bool
-	initPending uint64
-	received    uint64
-}
-
-// Updates returns the interior channel.
-func (w *watcher) Updates() <-chan KeyValueEntry {
-	if w == nil {
-		return nil
-	}
-	return w.updates
-}
-
-// Stop will unsubscribe from the watcher.
-func (w *watcher) Stop() error {
-	if w == nil {
-		return nil
-	}
-	return w.sub.Unsubscribe()
 }
 
 // WatchFiltered will watch for any updates to keys that match the provided
