@@ -624,7 +624,7 @@ func TestKeyValueWatch(t *testing.T) {
 		_, err = kv.Watch(ctx, "foo..bar")
 		expectErr(t, err, jetstream.ErrInvalidKey)
 
-		_, err = kv.Watch(ctx, "test..")
+		_, err = kv.Watch(ctx, "a..b.c")
 		expectErr(t, err, jetstream.ErrInvalidKey)
 
 		// conflicting options
