@@ -620,6 +620,13 @@ func TestKeyValueWatch(t *testing.T) {
 		_, err = kv.Watch(ctx, "foo.")
 		expectErr(t, err, jetstream.ErrInvalidKey)
 
+		// consecutive dots (empty token) must be rejected early, not passed to server
+		_, err = kv.Watch(ctx, "foo..bar")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
+		_, err = kv.Watch(ctx, "test..")
+		expectErr(t, err, jetstream.ErrInvalidKey)
+
 		// conflicting options
 		_, err = kv.Watch(ctx, "foo", jetstream.IncludeHistory(), jetstream.UpdatesOnly())
 		expectErr(t, err, jetstream.ErrInvalidOption)

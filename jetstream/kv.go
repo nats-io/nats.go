@@ -906,14 +906,14 @@ func bucketValid(bucket string) bool {
 }
 
 func keyValid(key string) bool {
-	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' || strings.Contains(key, "..") {
 		return false
 	}
 	return validKeyRe.MatchString(key)
 }
 
 func searchKeyValid(key string) bool {
-	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' {
+	if len(key) == 0 || key[0] == '.' || key[len(key)-1] == '.' || strings.Contains(key, "..") {
 		return false
 	}
 	return validSearchKeyRe.MatchString(key)
