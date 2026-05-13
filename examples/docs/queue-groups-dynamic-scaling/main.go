@@ -46,9 +46,8 @@ func main() {
 	}
 
 	// Scale down
-	if len(workers) > 0 {
-		Stop(workers[0])
-		workers = workers[1:]
+	for i := 1; i <= 5; i++ {
+		Stop(workers[i])
 	}
 	// NATS-DOC-END
 
