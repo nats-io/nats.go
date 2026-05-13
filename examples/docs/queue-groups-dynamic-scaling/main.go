@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Scale down
-	for i := 1; i <= 5; i++ {
+	for i := 0; i < 5; i++ {
 		Stop(workers[i])
 	}
 	// NATS-DOC-END
