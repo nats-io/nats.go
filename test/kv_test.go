@@ -413,6 +413,9 @@ func TestKeyValueWatch(t *testing.T) {
 
 		_, err = kv.Watch("foo.")
 		expectErr(t, err, nats.ErrInvalidKey)
+
+		_, err = kv.Watch("foo..bar")
+		expectErr(t, err, nats.ErrInvalidKey)
 	})
 
 	t.Run("filtered watch with no filters", func(t *testing.T) {
