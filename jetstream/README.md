@@ -384,20 +384,52 @@ consumer functionality. Ordered is strictly processing messages in the order
 that they were stored on the stream, providing a consistent and deterministic
 message ordering. It is also resilient to consumer deletion.
 
-Ordered consumers present the same set of message consumption methods as
-standard pull consumers.
+Ordered consumers are available in two flavors:
 
-> __NOTE__: Ordered consumers are not supported for push consumers.
+- __Pull-based__ (`Stream.OrderedConsumer` / `JetStream.OrderedConsumer`) —
+  returns a `Consumer` and exposes the same `Consume` / `Messages` / `Fetch`
+  methods as standard pull consumers.
+- __Push-based__ (`Stream.OrderedPushConsumer` /
+  `JetStream.OrderedPushConsumer`) — returns a `PushConsumer` whose `Consume`
+  method delivers messages via a server-driven push subscription. This is the
+  direct replacement for the legacy `nats.OrderedConsumer()` `SubOpt`.
+
+Both variants are ephemeral, no-ack, and transparently recreate the
+underlying server consumer when a sequence gap, missed heartbeat, consumer
+deletion, or reconnect is detected — picking up from the next expected
+stream sequence so the caller sees a continuous, monotonically-ordered
+stream from the configured start point.
 
 ```go
 js, _ := jetstream.New(nc)
 
-// create a consumer (this is an idempotent operation)
+// Pull-based ordered consumer (idempotent).
 cons, _ := js.OrderedConsumer(ctx, "ORDERS", jetstream.OrderedConsumerConfig{
     // Filter results from "ORDERS" stream by specific subject
     FilterSubjects: []string{"ORDERS.A"},
 })
 ```
+
+#### Push-based ordered consumer
+
+```go
+js, _ := jetstream.New(nc)
+
+pc, _ := js.OrderedPushConsumer(ctx, "ORDERS", jetstream.OrderedPushConsumerConfig{
+    FilterSubjects: []string{"ORDERS.A"},
+})
+
+cc, _ := pc.Consume(func(msg jetstream.Msg) {
+    fmt.Printf("received %q\n", msg.Data())
+})
+defer cc.Stop()
+```
+
+The underlying server consumer is created lazily on the first `Consume`
+call; it is ephemeral and forced to `AckNone` / `MaxDeliver=1` /
+`FlowControl=true`, with a default `IdleHeartbeat` of 5s. Configuration
+fields incompatible with ordered semantics (`Durable`, `AckPolicy`,
+`MaxDeliver`, `DeliverGroup`) are not exposed.
 
 ### Receiving messages from pull consumers
 

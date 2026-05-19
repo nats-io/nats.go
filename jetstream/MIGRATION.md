@@ -445,13 +445,20 @@ Ordered consumers provide strictly ordered, gap-free message delivery. The libra
 automatically recreates the underlying consumer on sequence gaps or heartbeat
 failures.
 
+The legacy `nats.OrderedConsumer()` SubOpt was always push-based. The new
+package exposes both flavors:
+
+- **Pull**: `js.OrderedConsumer(ctx, stream, cfg)` returns a `Consumer`.
+- **Push**: `js.OrderedPushConsumer(ctx, stream, cfg)` returns a `PushConsumer`
+  and is the direct replacement for the legacy SubOpt.
+
 **Legacy:**
 
 ```go
 sub, _ := js.Subscribe("ORDERS.*", handler, nats.OrderedConsumer())
 ```
 
-**New:**
+**New (pull):**
 
 ```go
 cons, _ := js.OrderedConsumer(ctx, "ORDERS", jetstream.OrderedConsumerConfig{
@@ -460,6 +467,19 @@ cons, _ := js.OrderedConsumer(ctx, "ORDERS", jetstream.OrderedConsumerConfig{
 
 // Use the same consumption methods as regular consumers
 cc, _ := cons.Consume(func(msg jetstream.Msg) {
+    fmt.Printf("Received: %s\n", string(msg.Data()))
+})
+defer cc.Stop()
+```
+
+**New (push):**
+
+```go
+pc, _ := js.OrderedPushConsumer(ctx, "ORDERS", jetstream.OrderedPushConsumerConfig{
+    FilterSubjects: []string{"ORDERS.*"},
+})
+
+cc, _ := pc.Consume(func(msg jetstream.Msg) {
     fmt.Printf("Received: %s\n", string(msg.Data()))
 })
 defer cc.Stop()
@@ -534,11 +554,11 @@ as subscription options.
 The following options have no direct equivalent — use the consumer handle
 directly instead:
 
-| Legacy SubOpt                 | New equivalent                                                      |
-|-------------------------------|---------------------------------------------------------------------|
-| `nats.Bind(stream, consumer)` | `js.Consumer(ctx, stream, consumer)` or `s.Consumer(ctx, consumer)` |
-| `nats.BindStream(stream)`     | Use `js.Stream(ctx, stream)` to get a stream handle                 |
-| `nats.OrderedConsumer()`      | `js.OrderedConsumer(ctx, stream, cfg)`                              |
+| Legacy SubOpt                 | New equivalent                                                                                                        |
+|-------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `nats.Bind(stream, consumer)` | `js.Consumer(ctx, stream, consumer)` or `s.Consumer(ctx, consumer)`                                                   |
+| `nats.BindStream(stream)`     | Use `js.Stream(ctx, stream)` to get a stream handle                                                                   |
+| `nats.OrderedConsumer()`      | `js.OrderedConsumer(ctx, stream, cfg)` (pull) or `js.OrderedPushConsumer(ctx, stream, cfg)` (push, direct replacement) |
 
 ### Consume/Messages Options
 

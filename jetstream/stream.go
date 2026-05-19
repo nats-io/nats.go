@@ -157,6 +157,16 @@ type (
 		//
 		// It returns ErrNotPushConsumer if the consumer is not a push consumer (deliver subject is not set).
 		PushConsumer(ctx context.Context, consumer string) (PushConsumer, error)
+
+		// OrderedPushConsumer returns a client-managed ordered push consumer.
+		// It delivers messages in stream order from the configured start point
+		// via a server-driven push subscription and transparently recovers from
+		// sequence gaps, missed heartbeats, consumer deletion, and reconnects
+		// by recreating the underlying ephemeral server consumer.
+		//
+		// The first call to Consume on the returned PushConsumer creates the
+		// underlying server consumer.
+		OrderedPushConsumer(ctx context.Context, cfg OrderedPushConsumerConfig) (PushConsumer, error)
 	}
 
 	RawStreamMsg struct {
@@ -414,6 +424,12 @@ func (s *stream) Consumer(ctx context.Context, name string) (Consumer, error) {
 
 func (s *stream) PushConsumer(ctx context.Context, name string) (PushConsumer, error) {
 	return getPushConsumer(ctx, s.js, s.name, name)
+}
+
+// OrderedPushConsumer returns a client-managed ordered push consumer. See
+// the Stream interface documentation for details.
+func (s *stream) OrderedPushConsumer(_ context.Context, cfg OrderedPushConsumerConfig) (PushConsumer, error) {
+	return newOrderedPushConsumer(s.js, s.name, cfg), nil
 }
 
 // DeleteConsumer removes a consumer with given name from a stream.

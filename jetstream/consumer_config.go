@@ -333,6 +333,81 @@ type (
 		NamePrefix string `json:"-"`
 	}
 
+	// OrderedPushConsumerConfig is the configuration of an ordered push-based
+	// JetStream consumer. It mirrors [OrderedConsumerConfig] but delivers
+	// messages via a server-driven push subscription instead of pull requests.
+	//
+	// Like the pull-based ordered consumer, the underlying server consumer is
+	// ephemeral, no-ack, and recreated automatically by the client when a
+	// sequence gap, missed heartbeat, consumer deletion, or reconnect is
+	// detected. The client tracks the last delivered stream sequence in memory
+	// and starts recreated consumers from the next expected sequence.
+	//
+	// Fields incompatible with ordered semantics (Durable, AckPolicy,
+	// MaxDeliver, MaxAckPending, BackOff, DeliverGroup) are not exposed and
+	// are forced or rejected by the implementation. Flow control is always
+	// enabled.
+	OrderedPushConsumerConfig struct {
+		// FilterSubjects allows filtering messages from a stream by subject.
+		// Requires nats-server v2.10.0 or later.
+		FilterSubjects []string `json:"filter_subjects,omitempty"`
+
+		// DeliverPolicy defines from which point to start delivering messages
+		// from the stream. Defaults to DeliverAllPolicy.
+		DeliverPolicy DeliverPolicy `json:"deliver_policy"`
+
+		// OptStartSeq is an optional sequence number from which to start
+		// message delivery. Only applicable when DeliverPolicy is set to
+		// DeliverByStartSequencePolicy.
+		OptStartSeq uint64 `json:"opt_start_seq,omitempty"`
+
+		// OptStartTime is an optional time from which to start message
+		// delivery. Only applicable when DeliverPolicy is set to
+		// DeliverByStartTimePolicy.
+		OptStartTime *time.Time `json:"opt_start_time,omitempty"`
+
+		// ReplayPolicy defines the rate at which messages are sent to the
+		// consumer. If ReplayOriginalPolicy is set, messages are sent in the
+		// same intervals in which they were stored on the stream. If
+		// ReplayInstantPolicy is set, messages are sent as fast as possible.
+		// Defaults to ReplayInstantPolicy.
+		ReplayPolicy ReplayPolicy `json:"replay_policy"`
+
+		// InactiveThreshold is a duration which instructs the server to clean
+		// up the consumer if it has been inactive for the specified duration.
+		// Defaults to 5m.
+		InactiveThreshold time.Duration `json:"inactive_threshold,omitempty"`
+
+		// HeadersOnly indicates whether only headers of messages should be sent
+		// (and no payload). Defaults to false.
+		HeadersOnly bool `json:"headers_only,omitempty"`
+
+		// MaxResetAttempts is the maximum number of attempts to recreate the
+		// consumer in a single recovery cycle. Defaults to unlimited.
+		MaxResetAttempts int
+
+		// Metadata is a set of application-defined key-value pairs for
+		// associating metadata with the consumer. Requires nats-server
+		// v2.10.0 or later.
+		Metadata map[string]string `json:"metadata,omitempty"`
+
+		// NamePrefix is an optional custom prefix for the consumer name.
+		// If provided, ordered consumer names will be generated as:
+		// {NamePrefix}_{sequence_number}. If empty, a NUID is used.
+		NamePrefix string `json:"-"`
+
+		// DeliverSubject is the subject to which messages are delivered.
+		// If empty, a unique inbox subject is generated and reused across
+		// consumer recreations.
+		DeliverSubject string `json:"deliver_subject,omitempty"`
+
+		// IdleHeartbeat is the interval at which the server sends idle
+		// heartbeats. If the client does not receive a heartbeat or a message
+		// within 2*IdleHeartbeat, the underlying consumer is recreated.
+		// Defaults to 5s.
+		IdleHeartbeat time.Duration `json:"idle_heartbeat,omitempty"`
+	}
+
 	// DeliverPolicy determines from which point to start delivering messages.
 	DeliverPolicy int
 

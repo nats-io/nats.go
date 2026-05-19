@@ -247,6 +247,14 @@ type (
 		//
 		// It returns ErrNotPushConsumer if the consumer is not a push consumer (delivery subject is not set).
 		PushConsumer(ctx context.Context, stream string, consumer string) (PushConsumer, error)
+
+		// OrderedPushConsumer returns a client-managed ordered push consumer
+		// for the given stream. It delivers messages in stream order from the
+		// configured start point via a server-driven push subscription and
+		// transparently recovers from sequence gaps, missed heartbeats,
+		// consumer deletion, and reconnects by recreating the underlying
+		// ephemeral server consumer.
+		OrderedPushConsumer(ctx context.Context, stream string, cfg OrderedPushConsumerConfig) (PushConsumer, error)
 	}
 
 	// StreamListOpt is a functional option for [StreamManager.ListStreams] and
@@ -972,6 +980,13 @@ func (js *jetStream) PushConsumer(ctx context.Context, stream string, name strin
 		return nil, err
 	}
 	return getPushConsumer(ctx, js, stream, name)
+}
+
+func (js *jetStream) OrderedPushConsumer(_ context.Context, stream string, cfg OrderedPushConsumerConfig) (PushConsumer, error) {
+	if err := validateStreamName(stream); err != nil {
+		return nil, err
+	}
+	return newOrderedPushConsumer(js, stream, cfg), nil
 }
 
 func (js *jetStream) PauseConsumer(ctx context.Context, stream string, consumer string, pauseUntil time.Time) (*ConsumerPauseResponse, error) {
