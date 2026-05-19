@@ -46,3 +46,12 @@ _testmain.go
 
 # VS Code
 .vscode
+
+# Claude Code local workspace (skills, memory, scratch)
+.claude/
+
+# Local-only docs (superpowers plans/specs)
+docs/
+
+# OpenSpec changes/specs (kept local, not committed)
+openspec/
