@@ -1,115 +1,244 @@
-# Subscription Type Safety with Embedded Concrete Types
+# Subscription API Consolidation
 
 ## Context
 
-There is one `*Subscription` type returned by all 7 subscribe methods. It has 18 public methods and 2 public fields (`Subject`, `Queue`). The problem: 8 of those methods return runtime errors depending on which subscribe method created the subscription (e.g., `NextMsg()` returns `ErrSyncSubRequired` on async subscriptions).
+The subscription API today has accumulated 7 subscribe methods reflecting three orthogonal axes:
+
+- **Receive mode**: callback (async), `NextMsg` (sync), channel
+- **Queue group**: plain or queue-distributed
+- **Channel + sync combo**: `QueueSubscribeSyncWithChan`
+
+```text
+Subscribe / QueueSubscribe                  (callback)
+SubscribeSync / QueueSubscribeSync          (NextMsg)
+ChanSubscribe / ChanQueueSubscribe          (channel)
+QueueSubscribeSyncWithChan                  (queue + sync + chan combo)
+```
+
+Three runtime errors enforce mode discipline at the API boundary:
+
+- `ErrSyncSubRequired` — `NextMsg` called on async sub
+- `ErrAsyncSubRequired` — async-specific methods called on sync sub
+- `ErrChanSubRequired` — chan-specific methods called on others
+
+These rarely fire in practice (call sites are usually a few lines from the constructor), so type-level protection of the *subscription type* is low-value. What does pay off:
+
+- Reducing the subscribe surface to a single decision (sync vs async) with options carrying everything else.
+- Removing channel subscriptions entirely (paradigm overlap with sync is real; niche use cases are recoverable via `SubscribeSync + Msgs()`).
+- Better backpressure / lifecycle / stats ergonomics on the resulting `*Subscription`.
+- Type-level safety on **options** so async-only options can't be passed to sync subscribes.
 
 ## Design
 
-### Remove channel subscriptions
+### Two subscribe methods
 
-`ChanSubscribe`, `ChanQueueSubscribe`, `QueueSubscribeSyncWithChan` are removed in v2. Users can achieve the same with a callback that sends to a channel. This leaves 4 creation methods.
-
-### Method breakdown after removing Chan
-
-Shared by both Async and Sync (15 methods + 2 fields):
-```
-Subject, Queue (fields)
-Type(), IsValid(), Drain(), IsDraining(), StatusChanged(), Unsubscribe(),
-AutoUnsubscribe(), SetClosedHandler(), Delivered(), Dropped(),
-Pending(), MaxPending(), ClearMaxPending(), PendingLimits(), SetPendingLimits()
-```
-
-Sync-only (3 methods — currently return `ErrSyncSubRequired` on Async):
-```
-NextMsg(timeout time.Duration) (*Msg, error)
-Msgs() iter.Seq2[*Msg, error]
-MsgsTimeout(timeout time.Duration) iter.Seq2[*Msg, error]
-```
-
-### Two concrete types using embedding
+Sync vs async is a fundamental consumption-model choice, so it gets its own method. Everything else — queue group, pending limits, error handler — is an option.
 
 ```go
-// Subscription is the base type for async (callback) subscriptions.
-// Returned by Subscribe() and QueueSubscribe().
+// Async callback
+func (nc *Conn) Subscribe(subject string, handler MsgHandler, opts ...AsyncSubscribeOption) (*Subscription, error)
+
+// Sync (NextMsg / Msgs iterator)
+func (nc *Conn) SubscribeSync(subject string, opts ...SubscribeOption) (*Subscription, error)
+```
+
+Both return the same `*Subscription` type — no type split.
+
+### Single `*Subscription` type
+
+```go
 type Subscription struct {
     Subject string
     Queue   string
-    // private fields...
+    // private fields
 }
-// Has all shared methods: Unsubscribe, Drain, Pending, Delivered, etc. (15 methods)
 
-// SyncSubscription embeds *Subscription and adds sync-specific methods.
-// Returned by SubscribeSync() and QueueSubscribeSync().
-type SyncSubscription struct {
-    *Subscription
-}
-// Adds: NextMsg, Msgs (Go iterator), MsgsTimeout (Go iterator)
+// Receive
+func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error)
+func (s *Subscription) Msgs() iter.Seq2[*Msg, error]
+func (s *Subscription) MsgsContext(ctx context.Context) iter.Seq2[*Msg, error]
+
+// Lifecycle
+func (s *Subscription) Unsubscribe() error
+func (s *Subscription) Drain() error
+func (s *Subscription) Drained() <-chan struct{}
+func (s *Subscription) AutoUnsubscribe(max int) error
+
+// Status
+func (s *Subscription) IsValid() bool
+func (s *Subscription) IsDraining() bool
+func (s *Subscription) Type() SubscriptionType
+func (s *Subscription) StatusChanged(statuses ...SubStatus) <-chan SubStatus
+func (s *Subscription) SetClosedHandler(handler SubClosedHandler)
+
+// Stats
+func (s *Subscription) Stats() SubStats
 ```
 
-### Creation methods
+Sync-only receive methods (`NextMsg`, `Msgs`, `MsgsContext`) called on a subscription created via `Subscribe` continue to return `ErrSyncSubRequired` at runtime. Two methods + option-level type discipline keep this rare without paying for a type split.
+
+### Stats snapshot
+
+Replaces five separate, race-prone getters (`Pending`, `Delivered`, `Dropped`, `MaxPending`, `PendingLimits`) with one atomic snapshot:
 
 ```go
-func (nc *Conn) Subscribe(subj string, cb MsgHandler) (*Subscription, error)
-func (nc *Conn) QueueSubscribe(subj, queue string, cb MsgHandler) (*Subscription, error)
-func (nc *Conn) SubscribeSync(subj string) (*SyncSubscription, error)
-func (nc *Conn) QueueSubscribeSync(subj, queue string) (*SyncSubscription, error)
+type SubStats struct {
+    Pending    uint64    // current pending msgs
+    Delivered  uint64    // cumulative
+    Dropped    uint64    // cumulative
+    MaxPending uint64    // high-water mark
+    Limits     SubLimits // configured limits
+}
+
+type SubLimits struct {
+    Msgs  int
+    Bytes int
+}
 ```
 
-### Usage
+`SetPendingLimits` becomes the `PendingLimits` option at subscribe time. Limits are set once and not mutated; if runtime mutability becomes necessary, expose explicitly later.
+
+### Option type hierarchy
+
+Sync-only and shared options use a marker interface so async-only options are compile-rejected when passed to `SubscribeSync`:
 
 ```go
-// Async — Subject/Queue stay as fields, unchanged from v1
-sub, _ := nc.Subscribe("foo", func(msg *nats.Msg) { ... })
-fmt.Println(sub.Subject)
-sub.Unsubscribe()
-// sub.NextMsg(time.Second)  // compile error — not on *Subscription
-
-// Sync — NextMsg, iterators available
-ss, _ := nc.SubscribeSync("foo")
-msg, _ := ss.NextMsg(time.Second)
-ss.Unsubscribe()                    // promoted from embedded *Subscription
-fmt.Println(ss.Subject)             // promoted field
-
-// Go 1.23+ iterator
-for msg, err := range ss.Msgs() {
-    // ...
+type SubscribeOption interface {
+    applyTo(*subOpts)
 }
 
-// Mixed collections — extract the base
-subs := []*nats.Subscription{asyncSub, syncSub.Subscription}
-for _, s := range subs {
-    s.Drain()
+type AsyncSubscribeOption interface {
+    SubscribeOption
+    asyncOnly() // unexported marker — compile-time block
 }
 ```
 
-### Internal implementation
+Built-in options:
 
 ```go
-// Subscription holds all the real state
-type Subscription struct {
-    Subject string
-    Queue   string
-    mu      sync.Mutex
-    sid     int64
-    mcb     MsgHandler
-    mch     chan *Msg
-    typ     SubscriptionType
-    // ... all existing private fields
+// Shared (SubscribeOption — applies to both Subscribe and SubscribeSync)
+func Queue(group string) SubscribeOption
+func PendingLimits(msgs, bytes int) SubscribeOption
+
+// Async-only (AsyncSubscribeOption — compile error on SubscribeSync)
+func SubErrorHandler(fn SubErrorHandlerFn) AsyncSubscribeOption
+```
+
+Resulting call sites:
+
+```go
+// Async with queue
+nc.Subscribe("orders", handleOrder, nats.Queue("workers"))
+
+// Async with sub-level error handler (async-only)
+nc.Subscribe("orders", handleOrder, nats.SubErrorHandler(onErr))
+
+// Sync with queue and pending limits
+nc.SubscribeSync("audits", nats.Queue("auditors"), nats.PendingLimits(10000, 0))
+
+// Compile error — async-only option on sync:
+nc.SubscribeSync("audits", nats.SubErrorHandler(onErr))   // ✗
+```
+
+### Drain completion signal
+
+`Drained()` returns a channel that closes when drain completes. Allocated lazily — callers that don't need it pay nothing.
+
+```go
+done := sub.Drained()
+if err := sub.Drain(); err != nil { /* ... */ }
+<-done   // wait for drain to finish
+```
+
+### Iterators
+
+```go
+// Iterate until subscription closes:
+for msg, err := range sub.Msgs() {
+    if err != nil { /* sub closed / drain / unsubscribe */ break }
+    handle(msg)
 }
 
-// SyncSubscription is a thin wrapper
-type SyncSubscription struct {
-    *Subscription
-}
-
-func (s *SyncSubscription) NextMsg(timeout time.Duration) (*Msg, error) {
-    return s.Subscription.nextMsg(timeout)
+// Iterate with cancellation:
+for msg, err := range sub.MsgsContext(ctx) {
+    if err != nil { break }
+    handle(msg)
 }
 ```
 
-### Key decisions
+`MsgsTimeout(timeout)` is intentionally **not** provided — `NextMsg(timeout)` in a `for` loop covers the same per-call-timeout case in one extra line.
 
-- **Embedding over interfaces** — `Subject` and `Queue` stay as fields (no migration for field access). Embedding is idiomatic Go and easy to extend with new methods.
-- **Mixed collections use base extraction** — `syncSub.Subscription` is slightly awkward but only matters in the "store for cleanup" case where you only need `Drain()`/`Unsubscribe()`.
-- **Single internal struct** — `SyncSubscription` is a thin wrapper. Minimal internal changes, no code duplication.
+### Iterator termination semantics
+
+Iterators terminate in three cases:
+
+1. **User `break`** — explicit `break` (or `return`) out of `for ... range`. Subscription remains active; any messages already queued in the subscription's internal buffer stay there. Range over `Msgs()`/`MsgsContext()` again to resume, or call `sub.Unsubscribe()` to fully tear down.
+2. **Clean shutdown** — `sub.Unsubscribe()`, `sub.Drain()` completing, or (for `MsgsContext`) the supplied `ctx` being canceled. Iterator yields no further messages and the loop exits without yielding an error.
+3. **Fatal error** — connection permanently closed, server-initiated subscription termination, or other non-recoverable state. Iterator yields one final `(nil, err)` pair and terminates.
+
+Transient conditions like slow-consumer drops do **not** interrupt iteration. They surface via `sub.Stats().Dropped` and via the connection-level or sub-level error handler. The iterator continues with the next available message.
+
+## What is removed
+
+- `QueueSubscribe`, `QueueSubscribeSync` — folded into `Queue(group)` option.
+- `ChanSubscribe`, `ChanQueueSubscribe`, `QueueSubscribeSyncWithChan` — channel paradigm dropped.
+- `MsgsTimeout` iterator — covered by `NextMsg(timeout)`.
+- `Pending()`, `Delivered()`, `Dropped()`, `MaxPending()`, `ClearMaxPending()`, `PendingLimits()` accessor methods — replaced by `Stats()` snapshot.
+- `SetPendingLimits()` post-subscribe — becomes the `PendingLimits` option at subscribe time.
+
+## Net method count
+
+```text
+Before:                              After:
+  7 subscribe methods                  2 subscribe methods
+  ~18 *Subscription methods            ~13 *Subscription methods
+  3 type-mismatch runtime errors       1 type-mismatch runtime error
+                                       (post legacy-JS removal)
+  1 subscription type                  1 subscription type
+```
+
+## Migration mapping
+
+| v1 | v2 |
+| -- | -- |
+| `Subscribe(subj, cb)` | `Subscribe(subj, cb)` |
+| `QueueSubscribe(subj, q, cb)` | `Subscribe(subj, cb, nats.Queue(q))` |
+| `SubscribeSync(subj)` | `SubscribeSync(subj)` |
+| `QueueSubscribeSync(subj, q)` | `SubscribeSync(subj, nats.Queue(q))` |
+| `ChanSubscribe(subj, ch)` | `SubscribeSync(subj)` + `Msgs()` iterator |
+| `ChanQueueSubscribe(subj, q, ch)` | `SubscribeSync(subj, nats.Queue(q))` + `Msgs()` |
+| `QueueSubscribeSyncWithChan(subj, q, ch)` | `SubscribeSync(subj, nats.Queue(q))` + `Msgs()` |
+| `sub.SetPendingLimits(m, b)` | `nats.PendingLimits(m, b)` option at subscribe |
+| `sub.Pending()` | `sub.Stats().Pending` |
+| `sub.Delivered()` | `sub.Stats().Delivered` |
+| `sub.Dropped()` | `sub.Stats().Dropped` |
+| `sub.MaxPending()` | `sub.Stats().MaxPending` |
+| `sub.PendingLimits()` | `sub.Stats().Limits` |
+| `sub.ClearMaxPending()` | removed |
+| `sub.Drain()` | unchanged |
+| — | `sub.Drained() <-chan struct{}` (new — completion signal) |
+| — | `sub.MsgsContext(ctx)` (new — ctx-aware iterator) |
+| `sub.NextMsg(timeout)` | unchanged |
+
+## Internal `jetstream` rewrite
+
+The `jetstream` package uses `nc.ChanSubscribe(inbox, ch)` in `pull.go` (and a handful of other places) to deliver pull-consumer messages directly into a channel without a per-sub dispatcher goroutine. Since `ChanSubscribe` is removed from the public API and `jetstream` is a separate module post-v2 (can't import unexported primitives), pull-consumer message delivery rewrites to:
+
+```go
+sub, _ := nc.SubscribeSync(inbox)
+for msg, err := range sub.MsgsContext(ctx) {
+    // process — direct mch receive underneath
+}
+```
+
+`Msgs()` / `MsgsContext()` are `iter.Seq2` wrappers over `nextMsgNoTimeout` (see `nats_iter.go`), which is a direct `<-sub.mch` receive. Go 1.23+ range-over-func compiles to a direct call (no goroutine, no allocation on yield), so overhead should be within noise of today's `ChanSubscribe` path.
+
+**Validation required before committing**: benchmark the rewrite under high message rate. Acceptance criterion: within ~5% of today's `ChanSubscribe`-based pull throughput.
+
+**Pending-buffer semantics**: `ChanSubscribe` lets the caller own the channel and its capacity. `SubscribeSync` uses an internal queue sized by `SyncQueueLen` (default 65536). For pull's batch-driven flow control this should be sufficient; verify during the rewrite.
+
+## Out of scope for v2.0
+
+- **Context-aware subscription lifecycle.** `SubscribeContext(ctx, ...)` / `SubscribeSyncContext(ctx, ...)` with auto-Drain-on-cancel — useful but adds a fourth axis (sync × async × ctx × no-ctx) and the "magic auto-cleanup" semantics warrant more user discussion. Save for v2.x as additive methods if demand surfaces.
+- **Pluggable slow-consumer policy.** Per-sub policy options (drop-oldest, block, custom) — purely additive, would benefit from cross-client parity. v2.x.
+- **Generic / typed subscriptions.** `Subscribe[T any](subj, func(T))` with header-driven decoding — encoding concern, not subscription concern. Out of scope.

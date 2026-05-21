@@ -58,16 +58,12 @@ func (e *SlowConsumerError) Is(target error) bool {
 
 ### Broad category types
 
+Each broad category is a single struct with a message field. No custom `Is()` method — sentinel matching uses pointer identity (handled by `errors.Is` natively), and type matching uses `errors.As`.
+
 ```go
 type ConnectionError struct{ msg string }
 
 func (e *ConnectionError) Error() string { return e.msg }
-func (e *ConnectionError) Is(target error) bool {
-    t, ok := target.(*ConnectionError)
-    if !ok { return false }
-    if t.msg == "" { return true }  // bare type match (any ConnectionError)
-    return e.msg == t.msg           // specific sentinel match
-}
 
 var ErrConnectionClosed       = &ConnectionError{"nats: connection closed"}
 var ErrDisconnected           = &ConnectionError{"nats: disconnected"}
@@ -80,7 +76,8 @@ var ErrReconnectBufExceeded   = &ConnectionError{"nats: outbound buffer limit ex
 
 
 type AuthError struct{ msg string }
-// Same Is() pattern as ConnectionError
+
+func (e *AuthError) Error() string { return e.msg }
 
 var ErrAuthorization      = &AuthError{"nats: authorization violation"}
 var ErrAuthExpired        = &AuthError{"nats: authentication expired"}
@@ -89,7 +86,8 @@ var ErrAccountAuthExpired = &AuthError{"nats: account authentication expired"}
 
 
 type ValidationError struct{ msg string }
-// Same Is() pattern
+
+func (e *ValidationError) Error() string { return e.msg }
 
 var ErrBadSubject      = &ValidationError{"nats: invalid subject"}
 var ErrBadQueueName    = &ValidationError{"nats: invalid queue name"}
@@ -102,7 +100,8 @@ var ErrNoDeadlineContext = &ValidationError{"nats: context requires a deadline"}
 
 
 type ServerError struct{ msg string }
-// Same Is() pattern
+
+func (e *ServerError) Error() string { return e.msg }
 
 var ErrMaxConnectionsExceeded   = &ServerError{"nats: server maximum connections exceeded"}
 var ErrMaxSubscriptionsExceeded = &ServerError{"nats: server maximum subscriptions exceeded"}
@@ -113,19 +112,35 @@ var ErrHeadersNotSupported      = &ServerError{"nats: headers not supported by t
 
 ### How matching works
 
+`errors.Is` performs pointer comparison along the unwrap chain, so sentinel matching works out of the box without a custom `Is()` method. Type matching (any error of a given category) uses `errors.As`.
+
 ```go
-// Specific sentinel:
-errors.Is(err, nats.ErrConnectionClosed)     // true for that exact error
-errors.Is(err, nats.ErrPermissionViolation)  // true for any *PermissionError
+// Specific sentinel — pointer identity through unwrap chain:
+errors.Is(err, nats.ErrConnectionClosed)     // true iff err is (or wraps) this sentinel
+errors.Is(err, nats.ErrPermissionViolation)  // true for any *PermissionError (custom Is)
 
 // Broad category (any connection error):
 var connErr *nats.ConnectionError
-errors.As(err, &connErr)  // true for ANY ConnectionError
+errors.As(err, &connErr)  // true for ANY *ConnectionError, including wrapped
 
 // Fine-grained with context:
 var permErr *nats.PermissionError
 errors.As(err, &permErr)  // true — and permErr has Subject, Operation, Sub fields
 ```
+
+### Returning broad-category errors from internal code
+
+Because identity is pointer-based, **internal code must return a named sentinel** (optionally wrapped with `fmt.Errorf` for context) rather than constructing a fresh `&ConnectionError{...}` with an ad-hoc message. A fresh instance is a different allocation and matches no sentinel.
+
+```go
+// Wrong — invisible to errors.Is(err, ErrConnectionWriteFailed):
+return &ConnectionError{"flush: write failed: " + err.Error()}
+
+// Right — wraps the sentinel with context:
+return fmt.Errorf("flush: %w", ErrConnectionWriteFailed)
+```
+
+When a new condition needs to be expressible as a broad-category error, add a new sentinel rather than creating ad-hoc instances.
 
 ### Key decisions
 
@@ -147,6 +162,22 @@ type ErrorHandler func(*Conn, error)
 
 `*Subscription` is removed from the signature — it's now a field on `PermissionError` and `SlowConsumerError` where relevant. No more nil-checking.
 
+### Scope of the connection `ErrorHandler`
+
+The connection-level `ErrorHandler` receives async errors — errors that are NOT the synchronous return value of an API call. Specifically:
+
+- Protocol-level read/write errors (`*ConnectionError`)
+- Permission violations on publish or subscribe (`*PermissionError`) — when no sub-level `SubErrorHandler` is set
+- Slow-consumer drops (`*SlowConsumerError`) — when no sub-level handler is set
+- Authentication expirations / revocations (`*AuthError`)
+- Server-side protocol violations and limit errors (`*ServerError`)
+
+It does NOT receive:
+
+- Errors returned directly from synchronous API calls (those are the caller's responsibility)
+- JetStream-package async errors — publish-ack failures, consumer heartbeat misses, ordered-consumer reset events, etc. These surface via the JetStream API's own callbacks (`PublishAsync` ack/err channels, `ConsumeContext`, iterator yields). They do not bubble up to the core connection handler.
+- Subscription-scoped errors (permission, slow consumer for a specific sub) when that subscription has a `SubErrorHandler` set — those route to the sub handler exclusively, per the "sub-only when set" delivery rule below.
+
 ### What the handler receives at each call site
 
 | Situation | Error received | Type |
@@ -156,7 +187,7 @@ type ErrorHandler func(*Conn, error)
 | Slow consumer | `&SlowConsumerError{Sub: sub, PendingMsgs: 65536, ...}` | `*SlowConsumerError` |
 | Auth expired | `ErrAuthExpired` | `*AuthError` |
 | Auth revoked | `ErrAuthRevoked` | `*AuthError` |
-| Flush/write error | `&ConnectionError{...}` | `*ConnectionError` |
+| Flush/write error | `fmt.Errorf("flush: %w", ErrConnectionWriteFailed)` (new sentinel, TBD name) | `*ConnectionError` |
 | Bad header | `ErrBadHeaderMsg` | TBD category |
 | Max subs exceeded | `ErrMaxSubscriptionsExceeded` | `*ServerError` |
 
@@ -195,7 +226,28 @@ sub, _ := nc.Subscribe("foo", msgHandler, nats.SubErrorHandler(func(err error) {
 }))
 ```
 
-**Delivery semantics:** when a subscription has a `SubErrorHandler`, subscription-level errors are delivered to **both** the per-subscription handler and the connection-level `ErrorHandler`. The connection handler provides global observability (logging, metrics), while the sub handler enables subscription-specific reactions.
+**Delivery semantics:** when a subscription has a `SubErrorHandler` set, subscription-level errors are delivered **only** to the per-subscription handler. The connection-level `ErrorHandler` does NOT fire for that subscription's errors. The user opts in to per-sub handling by setting the handler, and that's an explicit transfer of responsibility — they're handling it, the framework should not also fire global side-effects.
+
+Subscriptions without a `SubErrorHandler` continue to surface errors through the connection-level `ErrorHandler` as today.
+
+Suppression follows naturally: registering an empty handler silences a subscription's errors.
+
+```go
+sub, _ := nc.Subscribe("noisy-debug-topic", cb,
+    nats.SubErrorHandler(func(err error) { /* intentionally ignored */ }))
+```
+
+If a user wants per-sub side-effects AND global behavior, they chain explicitly — no framework convention required:
+
+```go
+func globalErrorHandler(c *nats.Conn, err error) { /* … */ }
+
+nc, _ := nats.Connect(url, nats.ErrorHandler(globalErrorHandler))
+nc.Subscribe("foo", cb, nats.SubErrorHandler(func(err error) {
+    notifyOps(err)               // sub-specific
+    globalErrorHandler(nc, err)  // explicit chain to global
+}))
+```
 
 For sync subscriptions, permission errors surface through `NextMsg()` directly — a `SubErrorHandler` is available but typically unnecessary.
 
@@ -203,7 +255,7 @@ For sync subscriptions, permission errors surface through `NextMsg()` directly �
 
 - Set at subscribe time only (subscribe option), not mutable after creation
 - Lives on `*Subscription` (base type), so available for both async and sync subscriptions
-- Both the per-sub handler and connection-level handler fire — not either/or
+- Setting a sub handler transfers responsibility for that subscription's errors to the user — connection-level handler does not also fire
 
 ### Other changes
 
