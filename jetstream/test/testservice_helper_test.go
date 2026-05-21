@@ -36,7 +36,9 @@ func newTester(t *testing.T) *testservice.Client {
 	if url == "" {
 		t.Skip("TESTER_NATS_URL not set; skipping testservice PoC")
 	}
-	return testservice.New(t, url)
+	c := testservice.New(t, url)
+	t.Cleanup(func() { c.Close(t) })
+	return c
 }
 
 // withTesterJSServer creates a single JetStream server via the tester, opens
@@ -70,9 +72,12 @@ func withTesterJSCluster(t *testing.T, size int, fn func(t *testing.T, nc *nats.
 	})
 }
 
-// withTesterCtx returns a 30s context. Most JS calls in tests take a context;
-// this keeps PoC tests terse.
-func withTesterCtx(t *testing.T) (context.Context, context.CancelFunc) {
+// withTesterCtx returns a 30s context whose cancel is registered with
+// t.Cleanup. Most JS calls in tests take a context; this keeps PoC tests
+// terse without leaking the cancel func.
+func withTesterCtx(t *testing.T) context.Context {
 	t.Helper()
-	return context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
