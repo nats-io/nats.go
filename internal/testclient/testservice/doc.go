@@ -20,5 +20,6 @@
 // To refresh:
 //  1. Pull the latest client.go and api.go from synadia-labs/testing.go.
 //  2. Rewrite the api import path to github.com/nats-io/nats.go/internal/testclient/api.
-//  3. Re-run the testservice CI job to confirm wire compatibility.
+//  3. Convert any C-style for loops (for i := 0; i < N; i++) to for range N — repo convention.
+//  4. Re-run the testservice CI job to confirm wire compatibility.
 package testservice
