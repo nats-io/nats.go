@@ -16,8 +16,12 @@ tester-up: tester-net
 	docker run -d --rm \
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \
+		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
+		-p 4222:4222 \
+		-p 30000-31000:30000-31000 \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
+	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
 
 tester-down:
 	-docker rm -f $(TESTER_NAME)
