@@ -75,3 +75,28 @@ jobs:
               uses: coverallsapp/github-action@v2
               with:
                file: acc.out
+
+    test-tester:
+        runs-on: ubuntu-latest
+        # Run the Go test binary inside an alpine container so it lives on the
+        # same docker network as the tester service and can dial the spawned
+        # NATS servers directly by service name.
+        container: golang:alpine
+        services:
+          nats:
+            image: synadia/server-tester:2.14.0
+            options: --name nats
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+
+            - name: Install build deps
+              run: |
+                apk add --no-cache gcc libc-dev git make
+
+            - name: Run testservice PoC tests
+              env:
+                TESTER_NATS_URL: nats://nats:4222
+                CGO_ENABLED: "1"
+              run: |
+                go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./jetstream/test/... -run TestTester
