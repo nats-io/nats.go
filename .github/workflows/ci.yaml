@@ -99,4 +99,4 @@ jobs:
                 TESTER_NATS_URL: nats://nats:4222
                 CGO_ENABLED: "1"
               run: |
-                go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./jetstream/test/... -run TestTester
+                go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./jetstream/test/... ./test/... -run 'TestServer$|^TestTester|Tester$'

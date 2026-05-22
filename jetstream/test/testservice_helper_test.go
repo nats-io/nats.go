@@ -18,6 +18,7 @@ package test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,19 +58,37 @@ func withTesterJSServer(t *testing.T, fn func(t *testing.T, nc *nats.Conn, js je
 }
 
 // withTesterJSCluster creates a JetStream cluster of `size` servers, opens a
-// connection to a random server plus a jetstream.JetStream handle, runs the
+// connection that lists every cluster member's URL (so reconnect survives any
+// single node going down), plus a jetstream.JetStream handle, runs the
 // callback (which receives the Instance handle so it can stop/start servers),
 // and destroys on return.
 func withTesterJSCluster(t *testing.T, size int, fn func(t *testing.T, nc *nats.Conn, js jetstream.JetStream, inst *testservice.Instance)) {
 	t.Helper()
 	c := newTester(t)
-	c.WithJetStreamCluster(t, size, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("jetstream.New: %v", err)
-		}
-		fn(t, nc, js, inst)
-	})
+	inst := c.CreateCluster(t, size, true)
+	defer inst.Destroy(t)
+
+	if len(inst.Servers) != size {
+		t.Fatalf("expected %d servers in cluster, got %d", size, len(inst.Servers))
+	}
+
+	urls := make([]string, len(inst.Servers))
+	for i, s := range inst.Servers {
+		urls[i] = s.URL
+	}
+	nc, err := nats.Connect(strings.Join(urls, ","), nats.MaxReconnects(-1))
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	defer nc.Close()
+
+	c.WaitForJetStream(t, nc)
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream.New: %v", err)
+	}
+	fn(t, nc, js, inst)
 }
 
 // withTesterCtx returns a 30s context whose cancel is registered with
