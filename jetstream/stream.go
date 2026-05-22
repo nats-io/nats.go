@@ -1,4 +1,4 @@
-// Copyright 2022-2025 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -477,6 +477,9 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 			}
 			return nil, resp.Error
 		}
+		if resp.StreamInfo == nil {
+			return nil, ErrInvalidJetStreamResponse
+		}
 		info = resp.StreamInfo
 		var total int
 		if resp.Total != 0 {
@@ -600,6 +603,9 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 			return nil, ErrMsgNotFound
 		}
 		return nil, resp.Error
+	}
+	if resp.Message == nil {
+		return nil, ErrInvalidJetStreamResponse
 	}
 
 	msg := resp.Message

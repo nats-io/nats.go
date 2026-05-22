@@ -1,4 +1,4 @@
-// Copyright 2022-2025 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -134,6 +134,12 @@ var (
 	// when creating a consumer is empty. This means that the state of the consumer is unknown and
 	// the consumer may not have been created successfully.
 	ErrConsumerCreationResponseEmpty JetStreamError = &jsError{message: "consumer creation response is empty"}
+
+	// ErrInvalidJetStreamResponse is returned when the response from the server
+	// to a JetStream API call (stream CRUD, message get, etc.) does not contain
+	// the expected data payload. The operation may or may not have succeeded on
+	// the server side.
+	ErrInvalidJetStreamResponse JetStreamError = &jsError{message: "invalid jetstream api response"}
 
 	// ErrConsumerExists is returned when attempting to create a consumer with
 	// CreateConsumer but a consumer with given name already exists.
