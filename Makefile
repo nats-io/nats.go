@@ -1,5 +1,15 @@
-# Local convenience targets for the testservice PoC.
-# Documented in docs/superpowers/plans/2026-05-21-testservice-poc.md.
+# Local convenience targets for running tests against the synadia/server-tester
+# service. The CI workflow runs the same suite via the `test-tester` job.
+#
+# Quick start:
+#   make tester-up        # start the tester container on a dedicated docker network
+#   make test-tester      # run the tagged tests inside a sibling container
+#   make tester-down      # tear everything down
+#
+# To run tests from the host (instead of a sibling container) point your shell at
+# the tester's published port and use the testservice build tag:
+#   export TESTER_NATS_URL=nats://localhost:4222
+#   go test -modfile=go_test.mod -tags=testservice ./...
 
 TESTER_IMAGE   ?= synadia/server-tester:2.14.0
 TESTER_NAME    ?= nats-tester
@@ -39,4 +49,4 @@ test-tester: tester-net
 		-e CGO_ENABLED=1 \
 		$(GO_IMAGE) sh -c '\
 			apk add --no-cache gcc libc-dev git make >/dev/null && \
-			go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./jetstream/test/... -run TestTester'
+			go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./test/... ./jetstream/test/... ./micro/test/...'
