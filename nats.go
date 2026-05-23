@@ -853,23 +853,140 @@ func (m *Msg) headerBytes() ([]byte, error) {
 		return hdr, nil
 	}
 
+	// Validate the keys/values and calculate the total encoded size
+	hdrSize := len(hdrLine) + len(crlf)
+	for k, vs := range m.Header {
+		if !isHeaderKeyValid(k) {
+			return nil, ErrBadHeaderMsg
+		}
+		for _, v := range vs {
+			if !isHeaderValueValid(v) {
+				return nil, ErrBadHeaderMsg
+			}
+			hdrSize += len(k) + len(v) + 4 // 4 is for the colon, space, CR, and LF
+		}
+	}
+
+	// NOTE: bytes.Buffer.WriteString() returns an error because bytes.Buffer
+	// is intended to be a valid implementation of the io.StringWriter interface.
+	// This implementation cannot actually fail in practice, so it is safe to
+	// ignore write errors here.
 	var b bytes.Buffer
-	_, err := b.WriteString(hdrLine)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
+	b.Grow(hdrSize)
+	_, _ = b.WriteString(hdrLine)
+	for k, vs := range m.Header {
+		for _, v := range vs {
+			_, _ = b.WriteString(k)
+			_, _ = b.WriteString(": ")
+			_, _ = b.WriteString(textproto.TrimString(v))
+			_, _ = b.WriteString(crlf)
+		}
 	}
-
-	err = http.Header(m.Header).Write(&b)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
-	}
-
-	_, err = b.WriteString(crlf)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
-	}
+	_, _ = b.WriteString(crlf)
 
 	return b.Bytes(), nil
+}
+
+// asciiSet is a 256-byte lookup table for fast ASCII character membership testing.
+// This implementation mirrors the one Go uses internally for many string operations,
+// including strings.Contains().
+//
+// References:
+//   - https://github.com/golang/go/blob/master/src/strings/strings.go
+type asciiSet [256]bool
+
+func (as *asciiSet) MatchesString(s string) bool {
+
+	// Implementation note: Our high level strategy is to compare each byte in
+	// 's' with the corresponding entry in 'as'. If the entry is 'true', the
+	// character is valid, so we can move forward with the next byte in 's'. If
+	// the entry in 'as' is 'false', the character is invalid, so we can bail
+	// out.
+	//
+	// Benchmarking shows there to be some benefit to manually unrolling the
+	// loop (up to ~35% faster in some cases), so that's what we've done here.
+
+	i := 0
+
+	// Process the string in batches of 8 bytes
+	for ; i <= len(s)-8; i += 8 {
+		if !as[s[i]] {
+			return false
+		}
+		if !as[s[i+1]] {
+			return false
+		}
+		if !as[s[i+2]] {
+			return false
+		}
+		if !as[s[i+3]] {
+			return false
+		}
+		if !as[s[i+4]] {
+			return false
+		}
+		if !as[s[i+5]] {
+			return false
+		}
+		if !as[s[i+6]] {
+			return false
+		}
+		if !as[s[i+7]] {
+			return false
+		}
+	}
+
+	// Handle any remaining bytes at the end of the string
+	for ; i < len(s); i++ {
+		if !as[s[i]] {
+			return false
+		}
+	}
+	return true
+}
+
+// The asciiSet that represents valid header keys can be precalculated and
+// cached since it will never change during the lifetime of the application.
+var validHeaderKeyChars = makeValidHeaderKeyAsciiSet()
+
+func makeValidHeaderKeyAsciiSet() asciiSet {
+
+	// ADR-4 specifies that header keys must be printable ASCII characters
+	// (e.g. those in the range [33, 126]), except for colons. This
+	// implementation is very slightly stricter, as it disallows several
+	// additional special characters.
+	const forbiddenChars = "\"()/,:;<=>?@[\\]{}"
+
+	var as asciiSet
+	for i := rune(33); i <= rune(126); i++ {
+		if !strings.ContainsRune(forbiddenChars, i) {
+			as[i] = true
+		}
+	}
+	return as
+}
+
+func isHeaderKeyValid(k string) bool {
+	if len(k) == 0 {
+		return false
+	}
+	return validHeaderKeyChars.MatchesString(k)
+}
+
+func isHeaderValueValid(v string) bool {
+
+	// ADR-4 specifies that header values must be ASCII characters and cannot
+	// include CR/LF, but the Go client implementation has historically been
+	// more lenient in that it also permits Unicode values. Because existing
+	// user code may rely on that behavior, we need to continue supporting the
+	// more lenient alphabet.
+
+	// NOTE: strings.IndexByte is SIMD-optimized (handling 16+ bytes at a time),
+	// making it (currently) faster to iterate over the strings twice (once for
+	// each invalid character) than it is to call `strings.ContainsAny(v, "\r\n")`
+	// directly.
+	return strings.IndexByte(v, '\r') == -1 &&
+		strings.IndexByte(v, '\n') == -1
 }
 
 type barrierInfo struct {
