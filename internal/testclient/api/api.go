@@ -92,8 +92,11 @@ type StopServerResponse struct {
 	Shutdown bool `json:"shutdown"`
 }
 
+// Tag fixed locally to "started"; upstream had "shutdown" (copy-paste from
+// StopServerResponse). Fix tracked in synadia-labs/testing.go#4 — drop this
+// comment when the next vendor refresh picks up the upstream fix.
 type StartServerResponse struct {
-	Started bool `json:"shutdown"`
+	Started bool `json:"started"`
 }
 
 type StatusRequest struct {
