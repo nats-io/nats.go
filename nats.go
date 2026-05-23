@@ -853,7 +853,11 @@ func (m *Msg) headerBytes() ([]byte, error) {
 		return hdr, nil
 	}
 
-	// Validate the keys/values and calculate the total encoded size
+	// Validate the keys/values and calculate an upper bound for the total
+	// encoded size. The size calculation may not be exact if any values
+	// contain leading/trailing whitespace (as those will be trimmed later),
+	// but a slight over-estimation here is more preferable than an
+	// under-estimation (which could lead to unnecessary memory allocations).
 	hdrSize := len(hdrLine) + len(crlf)
 	for k, vs := range m.Header {
 		if !isHeaderKeyValid(k) {
@@ -967,10 +971,7 @@ func makeValidHeaderKeyAsciiSet() asciiSet {
 }
 
 func isHeaderKeyValid(k string) bool {
-	if len(k) == 0 {
-		return false
-	}
-	return validHeaderKeyChars.MatchesString(k)
+	return len(k) > 0 && validHeaderKeyChars.MatchesString(k)
 }
 
 func isHeaderValueValid(v string) bool {

@@ -1692,6 +1692,7 @@ func TestHeaderValidKeys(t *testing.T) {
 
 func TestHeaderInvalidKeys(t *testing.T) {
 	testKeys := []string{
+		"",       // Empty string
 		":",      // Illegal printable ASCII character
 		"\r",     // Non-printable ASCII character
 		"\n",     // Non-printable ASCII character
