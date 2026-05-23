@@ -94,9 +94,9 @@ jobs:
               run: |
                 apk add --no-cache gcc libc-dev git make
 
-            - name: Run testservice PoC tests
+            - name: Run testservice tests
               env:
                 TESTER_NATS_URL: nats://nats:4222
                 CGO_ENABLED: "1"
               run: |
-                go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./jetstream/test/... -run TestTester
+                go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./test/... ./jetstream/test/... ./micro/test/... --failfast
