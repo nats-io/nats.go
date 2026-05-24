@@ -23,7 +23,6 @@ import (
 	"math"
 	"os"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,57 +31,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 )
-
-// This function returns the number of go routines ensuring
-// that runtime.NumGoroutine() returns the same value
-// several times in a row with little delay between captures.
-// This will check for at most 2s for value to be stable.
-func getStableNumGoroutine(t *testing.T) int {
-	t.Helper()
-	timeout := time.Now().Add(2 * time.Second)
-	var base, old, same int
-	for time.Now().Before(timeout) {
-		base = runtime.NumGoroutine()
-		if old == base {
-			same++
-			if same == 5 {
-				return base
-			}
-		} else {
-			same = 0
-		}
-		old = base
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("Unable to get stable number of go routines")
-	return 0
-}
-
-func checkNoGoroutineLeak(t *testing.T, base int, action string) {
-	t.Helper()
-	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
-		delta := (runtime.NumGoroutine() - base)
-		if delta > 0 {
-			return fmt.Errorf("%d Go routines still exist after %s", delta, action)
-		}
-		return nil
-	})
-}
-
-// Check the error channel for an error and if one is present,
-// calls t.Fatal(e.Error()). Note that this supports tests that
-// send nil to the error channel and so report error only if
-// e is != nil.
-func checkErrChannel(t *testing.T, errCh chan error) {
-	t.Helper()
-	select {
-	case e := <-errCh:
-		if e != nil {
-			t.Fatal(e.Error())
-		}
-	default:
-	}
-}
 
 func TestCloseLeakingGoRoutines(t *testing.T) {
 	s := RunDefaultServer()

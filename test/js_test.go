@@ -6594,22 +6594,6 @@ func waitForJSClusterReady(t *testing.T, nodes []*jsServer, size int) {
 	t.Fatalf("Timeout waiting for JS cluster of size %d to be ready", size)
 }
 
-func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
-	t.Helper()
-	timeout := time.Now().Add(totalWait)
-	var err error
-	for time.Now().Before(timeout) {
-		err = f()
-		if err == nil {
-			return
-		}
-		time.Sleep(sleepDur)
-	}
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-}
-
 func checkSubsPending(t *testing.T, sub *nats.Subscription, numExpected int) {
 	t.Helper()
 	checkFor(t, 4*time.Second, 20*time.Millisecond, func() error {

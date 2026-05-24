@@ -151,3 +151,85 @@ func createConfFile(t *testing.T, content []byte) string {
 	}
 	return fName
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Shared utility helpers (no embedded-server coupling — usable from both the
+// embedded test path and the testservice test path).
+////////////////////////////////////////////////////////////////////////////////
+
+// getStableNumGoroutine returns runtime.NumGoroutine() once the count is
+// observed stable for several consecutive samples. Used by goroutine-leak
+// tests to take a stable baseline.
+func getStableNumGoroutine(t *testing.T) int {
+	t.Helper()
+	timeout := time.Now().Add(2 * time.Second)
+	var base, old, same int
+	for time.Now().Before(timeout) {
+		base = runtime.NumGoroutine()
+		if old == base {
+			same++
+			if same == 5 {
+				return base
+			}
+		} else {
+			same = 0
+		}
+		old = base
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Unable to get stable number of go routines")
+	return 0
+}
+
+// checkNoGoroutineLeak asserts the goroutine count returns to base within
+// 2 seconds; otherwise reports the delta.
+func checkNoGoroutineLeak(t *testing.T, base int, action string) {
+	t.Helper()
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - base)
+		if delta > 0 {
+			return fmt.Errorf("%d Go routines still exist after %s", delta, action)
+		}
+		return nil
+	})
+}
+
+// checkErrChannel polls the error channel non-blockingly; if an error is
+// present, fails the test with it. Supports patterns where the producer may
+// send nil to signal absence-of-error.
+func checkErrChannel(t *testing.T, errCh chan error) {
+	t.Helper()
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	default:
+	}
+}
+
+// waitFor retries f every sleepDur up to totalWait, failing the test with the
+// last non-nil error if f never returns nil.
+func waitFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	timeout := time.Now().Add(totalWait)
+	var err error
+	for time.Now().Before(timeout) {
+		err = f()
+		if err == nil {
+			return
+		}
+		time.Sleep(sleepDur)
+	}
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+}
+
+// checkFor is an alias for waitFor used by JetStream-flavored tests; both
+// signatures exist in the historical code base, kept for callers'
+// convenience.
+func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	waitFor(t, totalWait, sleepDur, f)
+}
