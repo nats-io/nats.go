@@ -16,16 +16,17 @@ TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine
 
-.PHONY: tester-net tester-up tester-down tester-logs test-tester
+.PHONY: tester-net tester-up tester-down tester-restart tester-logs test-tester
 
 tester-net:
 	@docker network inspect $(TESTER_NETWORK) >/dev/null 2>&1 || \
 		docker network create $(TESTER_NETWORK)
 
 tester-up: tester-net
-	docker run -d --rm \
+	docker run -d \
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \
+		--restart unless-stopped \
 		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
@@ -33,9 +34,15 @@ tester-up: tester-net
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
 
+# tester-down stops AND removes the container; logs are lost. Use tester-restart
+# instead to keep the container (and its logs) around for debugging.
 tester-down:
 	-docker rm -f $(TESTER_NAME)
 	-docker network rm $(TESTER_NETWORK)
+
+tester-restart:
+	-docker restart $(TESTER_NAME)
+	@echo "Tester restarted; logs preserved (use 'make tester-logs')"
 
 tester-logs:
 	docker logs -f $(TESTER_NAME)
