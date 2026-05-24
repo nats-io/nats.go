@@ -26,6 +26,20 @@ import (
 	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
+// testConfigsMount is the absolute path inside the tester container at which
+// the host's test/configs directory is mounted (see Makefile and
+// .github/workflows/ci.yaml). Tests use containerPath to address files within
+// it — e.g. containerPath("certs/server.pem") returns
+// "/test-configs/certs/server.pem", suitable for embedding into a server config
+// snippet via testservice.WithTLS / WithTopLevel.
+const testConfigsMount = "/test-configs"
+
+// containerPath returns the absolute path inside the tester container for a
+// file relative to test/configs/.
+func containerPath(rel string) string {
+	return testConfigsMount + "/" + rel
+}
+
 // newTester returns a tester Client connected to the service at TESTER_NATS_URL.
 // Tests skip when the env var is unset so a -tags=testservice run does not
 // fail on machines without docker. Close is registered with t.Cleanup.

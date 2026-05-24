@@ -86,6 +86,8 @@ jobs:
           nats:
             image: synadia/server-tester:2.14.0
             options: --name nats
+            volumes:
+              - ${{ github.workspace }}/test/configs:/test-configs:ro
         steps:
             - name: Checkout code
               uses: actions/checkout@v6

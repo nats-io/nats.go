@@ -30,9 +30,11 @@ tester-up: tester-net
 		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
+		-v $(CURDIR)/test/configs:/test-configs:ro \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
+	@echo "test/configs mounted into the tester at /test-configs (read-only)"
 
 # tester-down stops AND removes the container; logs are lost. Use tester-restart
 # instead to keep the container (and its logs) around for debugging.
