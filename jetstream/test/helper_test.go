@@ -249,7 +249,7 @@ func waitForJSReady(t *testing.T, nc *nats.Conn) {
 func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream jetstream.StreamConfig, tfn func(t *testing.T, subject string, srvs ...*jsServer)) {
 	t.Helper()
 
-	withJSCluster(t, clusterName, size, func(t *testing.T, nodes ...*jsServer) {
+	embeddedWithJSCluster(t, clusterName, size, func(t *testing.T, nodes ...*jsServer) {
 		srvA := nodes[0]
 		nc, err := nats.Connect(srvA.ClientURL())
 		if err != nil {
@@ -289,7 +289,7 @@ func withJSClusterAndStream(t *testing.T, clusterName string, size int, stream j
 	})
 }
 
-func withJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testing.T, srvs ...*jsServer)) {
+func embeddedWithJSCluster(t *testing.T, clusterName string, size int, tfn func(t *testing.T, srvs ...*jsServer)) {
 	t.Helper()
 
 	nodes := setupJSClusterWithSize(t, clusterName, size)
