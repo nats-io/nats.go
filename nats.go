@@ -4230,12 +4230,22 @@ func (nc *Conn) Publish(subj string, data []byte) error {
 	return nc.publish(subj, _EMPTY_, false, nil, data)
 }
 
-// Header represents the optional Header for a NATS message,
-// based on the implementation of http.Header.
+// Header represents the optional Header for a NATS message.
+//
+// Header is a map-based type modeled after net/http.Header. When messages are
+// encoded for the wire, headers are serialized via http.Header.Write, which only
+// emits field names valid for HTTP (RFC 7230 token syntax). Field names that are
+// valid under NATS ADR-4 but invalid for HTTP—such as those containing '/'—are
+// stored in the map but silently omitted from the encoded message. Use
+// HTTP-compatible header names (e.g. "Thing-With-Slash" instead of
+// "thing/with/slash") when publishing headers that must survive a round trip.
 type Header map[string][]string
 
 // Add adds the key, value pair to the header. It is case-sensitive
 // and appends to any existing values associated with key.
+//
+// Keys must be valid HTTP header field names to be included when the message
+// is published; see Header for details.
 func (h Header) Add(key, value string) {
 	h[key] = append(h[key], value)
 }
@@ -4243,6 +4253,9 @@ func (h Header) Add(key, value string) {
 // Set sets the header entries associated with key to the single
 // element value. It is case-sensitive and replaces any existing
 // values associated with key.
+//
+// Keys must be valid HTTP header field names to be included when the message
+// is published; see Header for details.
 func (h Header) Set(key, value string) {
 	h[key] = []string{value}
 }
