@@ -458,6 +458,10 @@ func apiSubjWithPrefix(pre, subj string) string {
 	return b.String()
 }
 
+func (o *jsOpts) apiSubj(subj string) string {
+	return apiSubjWithPrefix(o.pre, subj)
+}
+
 // PubOpt configures options for publishing JetStream messages.
 type PubOpt interface {
 	configurePublish(opts *pubOpts) error
@@ -3511,12 +3515,12 @@ func (o *pullOpts) checkCtxErr(err error) error {
 func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), js.opts.wait)
 	defer cancel()
-	return js.getConsumerInfoContext(ctx, stream, consumer, js.opts.pre)
+	return js.getConsumerInfoContext(ctx, stream, consumer, js.opts)
 }
 
-func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer, pre string) (*ConsumerInfo, error) {
+func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string, o *jsOpts) (*ConsumerInfo, error) {
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
-	resp, err := js.apiRequestWithContext(ctx, apiSubjWithPrefix(pre, ccInfoSubj), nil)
+	resp, err := js.apiRequestWithContext(ctx, o.apiSubj(ccInfoSubj), nil)
 	if err != nil {
 		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled

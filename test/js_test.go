@@ -9070,6 +9070,16 @@ func TestJetStreamDomain(t *testing.T) {
 	if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "c2"}, nats.Domain("ABC")); err != nil {
 		t.Fatalf("AddConsumer with Domain opt failed: %v", err)
 	}
+	si, err := js.StreamInfo("foo", nats.Domain("ABC"))
+	if err != nil {
+		t.Fatalf("StreamInfo with Domain opt failed: %v", err)
+	}
+	if si == nil || si.Config.Name != "foo" {
+		t.Fatalf("Unexpected stream info: %+v", si)
+	}
+	if err = js.DeleteConsumer("foo", "c2", nats.Domain("ABC")); err != nil {
+		t.Fatalf("DeleteConsumer with Domain opt failed: %v", err)
+	}
 
 	// Using different domain not configured is an error.
 	jsb, err := nc.JetStream(nats.Domain("XYZ"))
