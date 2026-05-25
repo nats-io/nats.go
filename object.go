@@ -752,6 +752,23 @@ func publishMeta(info *ObjectInfo, js JetStreamContext) error {
 	return nil
 }
 
+func objectModTimeFromMeta(js *js, stream string, meta *MsgMetadata) time.Time {
+	if meta == nil {
+		return time.Time{}
+	}
+	if !meta.Timestamp.IsZero() {
+		return meta.Timestamp
+	}
+	if meta.Sequence.Stream == 0 {
+		return time.Time{}
+	}
+	rm, err := js.GetMsg(stream, meta.Sequence.Stream)
+	if err != nil || rm == nil || rm.Time.IsZero() {
+		return time.Time{}
+	}
+	return rm.Time
+}
+
 // AddLink will add a link to another object if it's not deleted and not another link
 // name is the name of this link object
 // obj is what is being linked too
@@ -1087,7 +1104,7 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 		}
 
 		if !o.ignoreDeletes || !info.Deleted {
-			info.ModTime = meta.Timestamp
+			info.ModTime = objectModTimeFromMeta(obs.js, obs.stream, meta)
 			w.updates <- &info
 		}
 

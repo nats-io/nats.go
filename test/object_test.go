@@ -588,6 +588,38 @@ func TestObjectWatch(t *testing.T) {
 		expectErr(t, err, nats.ErrUpdateMetaDeleted)
 	})
 
+	t.Run("watch modtime", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, js := jsClient(t, s)
+		defer nc.Close()
+
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "WATCH-MODTIME"})
+		expectOk(t, err)
+
+		_, err = obs.PutString("A", "AAA")
+		expectOk(t, err)
+
+		watcher, err := obs.Watch(nats.IncludeHistory())
+		expectOk(t, err)
+		defer watcher.Stop()
+
+		for {
+			select {
+			case info := <-watcher.Updates():
+				if info == nil {
+					return
+				}
+				if info.ModTime.IsZero() {
+					t.Fatalf("Expected watch update to include ModTime, got %+v", info)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for watch updates")
+			}
+		}
+	})
+
 	t.Run("watcher with update", func(t *testing.T) {
 		s := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, s)
