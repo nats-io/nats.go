@@ -445,11 +445,15 @@ func StreamListFilter(subject string) JSOpt {
 }
 
 func (js *js) apiSubj(subj string) string {
-	if js.opts.pre == _EMPTY_ {
+	return apiSubjWithPrefix(js.opts.pre, subj)
+}
+
+func apiSubjWithPrefix(pre, subj string) string {
+	if pre == _EMPTY_ {
 		return subj
 	}
 	var b strings.Builder
-	b.WriteString(js.opts.pre)
+	b.WriteString(pre)
 	b.WriteString(subj)
 	return b.String()
 }
@@ -3507,12 +3511,12 @@ func (o *pullOpts) checkCtxErr(err error) error {
 func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), js.opts.wait)
 	defer cancel()
-	return js.getConsumerInfoContext(ctx, stream, consumer)
+	return js.getConsumerInfoContext(ctx, stream, consumer, js.opts.pre)
 }
 
-func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string) (*ConsumerInfo, error) {
+func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer, pre string) (*ConsumerInfo, error) {
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
-	resp, err := js.apiRequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
+	resp, err := js.apiRequestWithContext(ctx, apiSubjWithPrefix(pre, ccInfoSubj), nil)
 	if err != nil {
 		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled

@@ -9000,6 +9000,10 @@ func TestJetStreamDomain(t *testing.T) {
 	}
 	jsd.Publish("foo", []byte("first"))
 
+	if _, err = jsd.AddConsumer("foo", &nats.ConsumerConfig{Durable: "c1"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
 	sub, err := jsd.SubscribeSync("foo")
 	if err != nil {
 		t.Fatal(err)
@@ -9053,6 +9057,18 @@ func TestJetStreamDomain(t *testing.T) {
 	expected = "second"
 	if got != expected {
 		t.Errorf("Got %v, expected: %v", got, expected)
+	}
+
+	// Per-request Domain option should be honored for consumer management APIs.
+	ci, err := js.ConsumerInfo("foo", "c1", nats.Domain("ABC"))
+	if err != nil {
+		t.Fatalf("ConsumerInfo with Domain opt failed: %v", err)
+	}
+	if ci == nil || ci.Name != "c1" {
+		t.Fatalf("Unexpected consumer info: %+v", ci)
+	}
+	if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "c2"}, nats.Domain("ABC")); err != nil {
+		t.Fatalf("AddConsumer with Domain opt failed: %v", err)
 	}
 
 	// Using different domain not configured is an error.
