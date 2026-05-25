@@ -533,7 +533,7 @@ func (js *js) upsertConsumer(stream, consumerName string, cfg *ConsumerConfig, o
 		}
 	}
 
-	resp, err := js.apiRequestWithContext(o.ctx, js.apiSubj(ccSubj), req)
+	resp, err := js.apiRequestWithContext(o.ctx, apiSubjWithPrefix(o.pre, ccSubj), req)
 	if err != nil {
 		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
@@ -645,7 +645,7 @@ func (js *js) ConsumerInfo(stream, consumer string, opts ...JSOpt) (*ConsumerInf
 	if cancel != nil {
 		defer cancel()
 	}
-	return js.getConsumerInfoContext(o.ctx, stream, consumer)
+	return js.getConsumerInfoContext(o.ctx, stream, consumer, o.pre)
 }
 
 // consumerLister fetches pages of ConsumerInfo objects. This object is not
