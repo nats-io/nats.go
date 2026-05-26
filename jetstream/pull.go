@@ -387,25 +387,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			case err := <-sub.errs:
 				sub.Lock()
 				if errors.Is(err, ErrNoHeartbeat) {
-					batchSize := sub.consumeOpts.MaxMessages
-					if sub.consumeOpts.StopAfter > 0 {
-						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
-					}
-					sub.fetchNext <- &pullRequest{
-						Expires:       sub.consumeOpts.Expires,
-						Batch:         batchSize,
-						MaxBytes:      sub.consumeOpts.MaxBytes,
-						Heartbeat:     sub.consumeOpts.Heartbeat,
-						MinPending:    sub.consumeOpts.MinPending,
-						MinAckPending: sub.consumeOpts.MinAckPending,
-						Priority:      sub.consumeOpts.Priority,
-						Group:         sub.consumeOpts.Group,
-						PinID:         p.getPinID(),
-					}
+					sub.requestNextPullLocked()
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 					}
-					sub.resetPendingMsgs()
 				}
 				sub.Unlock()
 				if sub.consumeOpts.ErrHandler != nil {
@@ -446,6 +431,39 @@ func (s *pullSubscription) decrementPendingMsgs(msg *nats.Msg) {
 // lock should be held before calling this method
 func (s *pullSubscription) incrementDeliveredMsgs() {
 	s.delivered++
+}
+
+// requestNextPullLocked schedules a new pull request.
+// lock should be held before calling this method.
+func (s *pullSubscription) requestNextPullLocked() {
+	batchSize := s.consumeOpts.MaxMessages
+	if s.consumeOpts.StopAfter > 0 {
+		batchSize = min(batchSize, s.consumeOpts.StopAfter-s.delivered)
+	}
+	if batchSize <= 0 {
+		return
+	}
+
+	pinID := ""
+	if s.consumer != nil {
+		pinID = s.consumer.getPinID()
+	}
+
+	select {
+	case s.fetchNext <- &pullRequest{
+		Expires:       s.consumeOpts.Expires,
+		Batch:         batchSize,
+		MaxBytes:      s.consumeOpts.MaxBytes,
+		Heartbeat:     s.consumeOpts.Heartbeat,
+		MinPending:    s.consumeOpts.MinPending,
+		MinAckPending: s.consumeOpts.MinAckPending,
+		Priority:      s.consumeOpts.Priority,
+		Group:         s.consumeOpts.Group,
+		PinID:         pinID,
+	}:
+		s.resetPendingMsgs()
+	default:
+	}
 }
 
 // checkPending verifies whether there are enough messages in
@@ -666,6 +684,7 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 					s.Stop()
 					return nil, termErr
 				}
+				s.checkPending()
 				continue
 			}
 			if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
@@ -730,6 +749,8 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) (error, 
 		if errors.Is(msgErr, ErrConsumerLeadershipChanged) {
 			s.pending.msgCount = 0
 			s.pending.byteCount = 0
+			s.fetchInProgress.Store(0)
+			s.requestNextPullLocked()
 		}
 		return nil, msgErr
 	}

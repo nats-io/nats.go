@@ -573,7 +573,7 @@ Some errors are terminal (stop consumption), while others are recoverable
 - `ErrNoHeartbeat` — missed idle heartbeats from server; a new pull request
   is issued automatically
 - `ErrConsumerLeadershipChanged` — consumer moved to a different server in the
-  cluster; pending counts are reset
+  cluster; pending counts are reset and a new pull request is issued automatically
 - `nats.ErrNoResponders` — no JetStream service available (temporary)
 
 #### Error handling with `Consume()`
