@@ -222,6 +222,39 @@ func TestSubscribeIterator(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("timeout does not yield phantom nil message", func(t *testing.T) {
+		s := RunServerOnPort(-1)
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		sub, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatal("Failed to subscribe: ", err)
+		}
+		defer sub.Unsubscribe()
+
+		// No messages are published, so every NextMsg should hit ErrTimeout.
+		// Read three iterations and confirm each one yielded the timeout
+		// error and not a phantom (nil, nil) following it.
+		var got []error
+		for _, err := range sub.MsgsTimeout(20 * time.Millisecond) {
+			got = append(got, err)
+			if len(got) == 3 {
+				break
+			}
+		}
+		for i, e := range got {
+			if !errors.Is(e, nats.ErrTimeout) {
+				t.Fatalf("yield %d: expected ErrTimeout, got %v", i, e)
+			}
+		}
+	})
 }
 
 func TestQueueSubscribeIterator(t *testing.T) {
