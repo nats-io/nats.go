@@ -681,6 +681,68 @@ func TestWSProxyPath(t *testing.T) {
 	}
 }
 
+func TestWSURLPath(t *testing.T) {
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("Error in listen: %v", err)
+	}
+	defer l.Close()
+
+	port := l.Addr().(*net.TCPAddr).Port
+
+	ch := make(chan string, 1)
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ch <- r.URL.Path
+		}),
+	}
+	defer srv.Shutdown(context.Background())
+	go srv.Serve(l)
+
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{"with path", "/mypath"},
+		{"with nested path", "/my/nested/path"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			url := fmt.Sprintf("ws://127.0.0.1:%d%s", port, test.path)
+			nc, err := Connect(url)
+			if err == nil {
+				nc.Close()
+				t.Fatal("Did not expect to connect")
+			}
+			select {
+			case got := <-ch:
+				if got != test.path {
+					t.Fatalf("Expected path %q, got %q", test.path, got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Server was not reached")
+			}
+		})
+	}
+
+	// ProxyPath option should take precedence over URL path.
+	t.Run("proxy path overrides url path", func(t *testing.T) {
+		url := fmt.Sprintf("ws://127.0.0.1:%d/url-path", port)
+		nc, err := Connect(url, ProxyPath("/override"))
+		if err == nil {
+			nc.Close()
+			t.Fatal("Did not expect to connect")
+		}
+		select {
+		case got := <-ch:
+			if got != "/override" {
+				t.Fatalf("Expected path %q, got %q", "/override", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Server was not reached")
+		}
+	})
+}
+
 // --- helpers ---
 
 func startHeaderCatcher(t *testing.T) (addr string, got chan []string, closer func()) {

@@ -622,6 +622,8 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 			proxyPath = "/" + proxyPath
 		}
 		ustr += proxyPath
+	} else if u.Path != "" {
+		ustr += u.Path
 	}
 
 	u, err = url.Parse(ustr)
