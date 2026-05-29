@@ -1558,8 +1558,11 @@ func Compression(enabled bool) Option {
 	}
 }
 
-// ProxyPath is an option for websocket connections that adds a path to connections url.
-// This is useful when connecting to NATS behind a proxy.
+// ProxyPath sets a path added to every WebSocket connection URL. This is
+// useful when NATS is behind a reverse proxy that routes by path. Unlike a
+// path in the connect URL, ProxyPath is also applied to server-discovered
+// URLs (which are bare host:port), so reconnects through the proxy still
+// work. When set, it overrides any path in the connection URL.
 func ProxyPath(path string) Option {
 	return func(o *Options) error {
 		o.ProxyPath = path
