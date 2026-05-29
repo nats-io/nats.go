@@ -625,6 +625,9 @@ func (nc *Conn) wsInitHandshake(u *url.URL) error {
 	} else if u.Path != "" {
 		ustr += u.Path
 	}
+	if u.RawQuery != "" {
+		ustr += "?" + u.RawQuery
+	}
 
 	u, err = url.Parse(ustr)
 	if err != nil {

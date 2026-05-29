@@ -693,18 +693,23 @@ func TestWSURLPath(t *testing.T) {
 	ch := make(chan string, 1)
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ch <- r.URL.Path
+			ch <- r.URL.RequestURI()
 		}),
 	}
 	defer srv.Shutdown(context.Background())
 	go srv.Serve(l)
 
 	for _, test := range []struct {
-		name string
-		path string
+		name     string
+		path     string
+		expected string
 	}{
-		{"with path", "/mypath"},
-		{"with nested path", "/my/nested/path"},
+		{"with path", "/mypath", "/mypath"},
+		{"with nested path", "/my/nested/path", "/my/nested/path"},
+		{"with query params", "/mypath?token=abc&foo=bar", "/mypath?token=abc&foo=bar"},
+		{"query only", "/?token=abc", "/?token=abc"},
+		{"encoded query value", "/mypath?msg=hello%20world", "/mypath?msg=hello%20world"},
+		{"trailing slash with query", "/mypath/?key=val", "/mypath/?key=val"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			url := fmt.Sprintf("ws://127.0.0.1:%d%s", port, test.path)
@@ -715,8 +720,8 @@ func TestWSURLPath(t *testing.T) {
 			}
 			select {
 			case got := <-ch:
-				if got != test.path {
-					t.Fatalf("Expected path %q, got %q", test.path, got)
+				if got != test.expected {
+					t.Fatalf("Expected URI %q, got %q", test.expected, got)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("Server was not reached")
@@ -735,7 +740,25 @@ func TestWSURLPath(t *testing.T) {
 		select {
 		case got := <-ch:
 			if got != "/override" {
-				t.Fatalf("Expected path %q, got %q", "/override", got)
+				t.Fatalf("Expected URI %q, got %q", "/override", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Server was not reached")
+		}
+	})
+
+	// Query params from the URL should be preserved even when ProxyPath is set.
+	t.Run("proxy path preserves query params", func(t *testing.T) {
+		url := fmt.Sprintf("ws://127.0.0.1:%d/ignored?token=secret", port)
+		nc, err := Connect(url, ProxyPath("/proxy"))
+		if err == nil {
+			nc.Close()
+			t.Fatal("Did not expect to connect")
+		}
+		select {
+		case got := <-ch:
+			if got != "/proxy?token=secret" {
+				t.Fatalf("Expected URI %q, got %q", "/proxy?token=secret", got)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("Server was not reached")
