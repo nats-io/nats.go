@@ -1730,19 +1730,17 @@ func TestHeaderValidValues(t *testing.T) {
 	}
 }
 
-func TestHeaderInvalidValues(t *testing.T) {
-	testValues := []string{
-		"\r",
-		"\n",
+func TestHeaderNewlineValue(t *testing.T) {
+	m := NewMsg("foo")
+	m.Header.Set("X-Test", "line1\nline2\rline3")
+
+	b, err := m.headerBytes()
+	if err != nil {
+		t.Fatal(err.Error())
 	}
-	for _, value := range testValues {
-		m := NewMsg("foo")
-		m.Header = Header{
-			"key": []string{value},
-		}
-		if _, err := m.headerBytes(); err == nil {
-			t.Fatalf("expected error for value '%s'", value)
-		}
+	out := string(b)
+	if !strings.Contains(out, "X-Test: line1 line2 line3") {
+		t.Fatalf("expected sanitized 'X-Test: line1 line2 line3', got: %q", out)
 	}
 }
 

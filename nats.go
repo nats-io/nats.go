@@ -853,20 +853,23 @@ func (m *Msg) headerBytes() ([]byte, error) {
 		return hdr, nil
 	}
 
-	// Validate the keys/values and calculate an upper bound for the total
-	// encoded size. The size calculation may not be exact if any values
-	// contain leading/trailing whitespace (as those will be trimmed later),
-	// but a slight over-estimation here is more preferable than an
-	// under-estimation (which could lead to unnecessary memory allocations).
+	// Validate the keys and calculate an upper bound for the total encoded
+	// size.
+	//
+	// The size calculation may not be exact if any values contain
+	// leading/trailing whitespace (as those will be trimmed later), but a
+	// slight over-estimation here is more preferable than an under-estimation
+	// (which could lead to unnecessary memory allocations).
+	//
+	// We don't perform any special validation on header values because we
+	// consider all strings to be valid values (including Unicode strings,
+	// special characters, etc.).
 	hdrSize := len(hdrLine) + len(crlf)
 	for k, vs := range m.Header {
 		if !isHeaderKeyValid(k) {
 			return nil, ErrBadHeaderMsg
 		}
 		for _, v := range vs {
-			if !isHeaderValueValid(v) {
-				return nil, ErrBadHeaderMsg
-			}
 			hdrSize += len(k) + len(v) + 4 // 4 is for the colon, space, CR, and LF
 		}
 	}
@@ -882,7 +885,7 @@ func (m *Msg) headerBytes() ([]byte, error) {
 		for _, v := range vs {
 			_, _ = b.WriteString(k)
 			_, _ = b.WriteString(": ")
-			_, _ = b.WriteString(textproto.TrimString(v))
+			writeHeaderValue(&b, v)
 			_, _ = b.WriteString(crlf)
 		}
 	}
@@ -974,20 +977,20 @@ func isHeaderKeyValid(k string) bool {
 	return len(k) > 0 && validHeaderKeyChars.MatchesString(k)
 }
 
-func isHeaderValueValid(v string) bool {
+var headerValueNewlineReplacer = strings.NewReplacer("\r", " ", "\n", " ")
 
-	// ADR-4 specifies that header values must be ASCII characters and cannot
-	// include CR/LF, but the Go client implementation has historically been
-	// more lenient in that it also permits Unicode values. Because existing
-	// user code may rely on that behavior, we need to continue supporting the
-	// more lenient alphabet.
+func writeHeaderValue(buffer *bytes.Buffer, value string) {
 
-	// NOTE: strings.IndexByte is SIMD-optimized (handling 16+ bytes at a time),
-	// making it (currently) faster to iterate over the strings twice (once for
-	// each invalid character) than it is to call `strings.ContainsAny(v, "\r\n")`
-	// directly.
-	return strings.IndexByte(v, '\r') == -1 &&
-		strings.IndexByte(v, '\n') == -1
+	// ADR-4 specifies that header values must be ASCII characters (except for
+	// '\r' or '\n'), however the Go implementation is slightly more lenient
+	// to maintain backwards compatibility with older versions of the library.
+	// We allow arbitrary UTF-8 strings to be used as values and deliberately
+	// sanitize '\r' and '\n' characters by replacing them with spaces.
+
+	// NOTE: It is safe to ignore the error returned by WriteString because
+	// we're writing to a bytes.Buffer object, and that implementation never
+	// returns an error.
+	_, _ = headerValueNewlineReplacer.WriteString(buffer, textproto.TrimString(value))
 }
 
 type barrierInfo struct {
