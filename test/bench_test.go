@@ -15,6 +15,7 @@ package test
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,6 +41,47 @@ func BenchmarkPublishSpeed(b *testing.B) {
 	// Make sure they are all processed.
 	nc.Flush()
 	b.StopTimer()
+}
+
+func BenchmarkPublishSpeedHeaders(b *testing.B) {
+	b.StopTimer()
+	s := RunDefaultServer()
+	defer s.Shutdown()
+	nc := NewDefaultConnection(b)
+	defer nc.Close()
+
+	headers := make(nats.Header, 10)
+	for i := range 10 {
+		headers.Add(
+			fmt.Sprintf("header_%d", i),
+			generateRandomString(32),
+		)
+	}
+	msg := &nats.Msg{
+		Subject: "foo",
+		Header:  headers,
+		Data:    []byte("Hello World"),
+	}
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		if err := nc.PublishMsg(msg); err != nil {
+			b.Fatalf("Error in benchmark during PublishMsg: %v\n", err)
+		}
+	}
+
+	// Make sure they are all processed.
+	nc.Flush()
+	b.StopTimer()
+}
+
+func generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.IntN(len(charset))]
+	}
+	return string(b)
 }
 
 func BenchmarkPubSubSpeed(b *testing.B) {
