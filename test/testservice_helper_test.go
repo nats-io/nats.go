@@ -116,6 +116,29 @@ func withServerInstance(t *testing.T, fn func(*testing.T, *nats.Conn, *testservi
 	fn(t, nc, inst)
 }
 
+// withJSServer creates a JetStream-enabled server, dials it, and waits for
+// JetStream to be ready. The callback receives the connection; tests in the
+// `test` package use the legacy nc.JetStream() API to obtain a context.
+// Cleanup via t.Cleanup.
+func withJSServer(t *testing.T, fn func(*testing.T, *nats.Conn), opts ...testservice.CreateOption) {
+	t.Helper()
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, _ *testservice.Instance) {
+		fn(t, nc)
+	}, opts...)
+}
+
+// withJSServerInstance is withJSServer plus the *testservice.Instance.
+func withJSServerInstance(t *testing.T, fn func(*testing.T, *nats.Conn, *testservice.Instance), opts ...testservice.CreateOption) {
+	t.Helper()
+	c := newTester(t)
+	inst := c.CreateServer(t, true, opts...)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	nc := dialInstance(t, inst)
+	c.WaitForJetStream(t, nc)
+	fn(t, nc, inst)
+}
+
 // dialInstance returns a connection that lists every server URL in inst, so
 // reconnect survives any single node going down. nats.MaxReconnects(-1) is
 // always set; additional connect options (e.g. credentials) may be passed.
