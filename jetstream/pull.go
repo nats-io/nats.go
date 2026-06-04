@@ -747,6 +747,16 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) (error, 
 			s.pending.byteCount = 0
 		}
 	}
+	// ErrTimeout and ErrBatchCompleted are part of normal pull flow control
+	// and intentionally do not reach the user's ErrHandler.
+	// ErrMaxBytesExceeded, however, signals that a message in the stream is
+	// larger than the configured PullMaxBytes and the consumer will keep
+	// retrying until the offending message is removed or PullMaxBytes is
+	// raised. Surface it so callers using ConsumeErrHandler can observe the
+	// condition instead of seeing the consumer silently spin.
+	if errors.Is(msgErr, ErrMaxBytesExceeded) {
+		return nil, msgErr
+	}
 	return nil, nil
 }
 
