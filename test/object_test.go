@@ -260,9 +260,7 @@ func TestObjectMulti(t *testing.T) {
 		_, err = js.StreamInfo("OBJ_TEST_FILES")
 		expectOk(t, err)
 
-		// object_test.go was deleted in Phase 4 cleanup; use this file's
-		// current name (still in `.`) as the deterministic Get target.
-		result, err := obs.Get("object_testservice_test.go")
+		result, err := obs.Get("object_test.go")
 		expectOk(t, err)
 		expectOk(t, result.Error())
 		defer result.Close()
@@ -273,7 +271,7 @@ func TestObjectMulti(t *testing.T) {
 		copy, err := io.ReadAll(result)
 		expectOk(t, err)
 
-		orig, err := os.ReadFile(path.Join(".", "object_testservice_test.go"))
+		orig, err := os.ReadFile(path.Join(".", "object_test.go"))
 		expectOk(t, err)
 
 		if !bytes.Equal(orig, copy) {

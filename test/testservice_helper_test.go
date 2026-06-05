@@ -14,13 +14,11 @@
 package test
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/internal/testclient/testservice"
@@ -84,15 +82,6 @@ func clientAdvertiseOpt(t *testing.T) testservice.CreateOption {
 	t.Helper()
 	host := testerHost(t)
 	return testservice.WithTopLevel(fmt.Sprintf("client_advertise: \"%s:{{ .ClientPort }}\"", host))
-}
-
-// newTesterCtx returns a context with the given timeout; cancel is registered
-// with t.Cleanup.
-func newTesterCtx(t *testing.T, d time.Duration) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), d)
-	t.Cleanup(cancel)
-	return ctx
 }
 
 // withServer creates a non-JetStream server and dials it. Cleanup via t.Cleanup.
