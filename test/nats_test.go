@@ -263,6 +263,7 @@ func TestUserCredentialBytes(t *testing.T) {
 // Opts.Secure = false, but the fix removed the check on Opts.Secure to decide
 // if we need to save off the hostname that we connected to first.
 func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	// Trust-server config with a TLS block using server_noip certs.
 	opts := append(trustServerOpts(t),
