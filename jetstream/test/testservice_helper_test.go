@@ -93,6 +93,13 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 // withJSSuperCluster creates a JetStream super-cluster (clusters × servers) and
 // dials all server URLs across every cluster. The *testservice.Instance is
 // always passed to fn for the same reason as withJSCluster.
+//
+// Currently unused: super-cluster meta-leader election doesn't complete against
+// synadia/server-tester:2.14.0 (see testservice_smoke_test.go's
+// TestTestserviceSmokeJSSuperCluster). Kept here so we don't re-derive it once
+// the upstream issue is resolved.
+//
+//lint:ignore U1000 see comment above
 func withJSSuperCluster(t *testing.T, clusters, servers int, fn func(*testing.T, *nats.Conn, jetstream.JetStream, *testservice.Instance), opts ...testservice.CreateOption) {
 	t.Helper()
 	c := newTester(t)
