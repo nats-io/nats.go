@@ -104,6 +104,20 @@ func TestWSBasic(t *testing.T) {
 	}
 }
 
+func TestWSConnectAuthFailureReturnsAuthorizationError(t *testing.T) {
+	sopts := testWSGetDefaultOptions(t, false)
+	sopts.Username = "derek"
+	sopts.Password = "foo"
+	s := RunServerWithOptions(sopts)
+	defer s.Shutdown()
+
+	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+	_, err := nats.Connect(url)
+	if !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected ErrAuthorization, got: %v", err)
+	}
+}
+
 func TestWSControlFrames(t *testing.T) {
 	sopts := testWSGetDefaultOptions(t, false)
 	s := RunServerWithOptions(sopts)
