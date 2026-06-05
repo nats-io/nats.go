@@ -4551,8 +4551,8 @@ func TestAccountInfo(t *testing.T) {
 					},
 				},
 				API: nats.APIStats{
-					Total:    0,
-					Errors:   0,
+					Total:  0,
+					Errors: 0,
 					// Level is populated from the server response below
 					// (was server.JSApiLevel in the embedded version; we
 					// don't pin a value since it bumps with each server release).
