@@ -52,8 +52,6 @@ jobs:
           nats:
             image: synadia/server-tester:2.14.0
             options: --name nats
-            volumes:
-              - ${{ github.workspace }}/test/configs:/test-configs:ro
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
@@ -63,7 +61,7 @@ jobs:
 
             - name: Install build deps
               run: |
-                apk add --no-cache gcc libc-dev git make bash
+                apk add --no-cache gcc libc-dev git make bash curl ca-certificates
                 go install github.com/mattn/goveralls@latest
                 go install github.com/wadey/gocovmerge@latest
 

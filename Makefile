@@ -29,25 +29,29 @@ tester-net:
 # 0.0.0.0:<port> inside the container's net namespace, racing the tester's
 # localhost:0 port-reservation handover and causing intermittent
 # "bind: address already in use" failures.
+#
+# No sysctl-constrained ephemeral port range either: the spawned servers can
+# use the full kernel default (typically 32768-60999), so churn-driven TIME_WAIT
+# accumulation never crowds the pool. The constrained range is only meaningful
+# when ports must match a host-published range (see tester-up-host).
 tester-up: tester-net
 	docker run -d \
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \
 		--restart unless-stopped \
-		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
-		-v $(CURDIR)/test/configs:/test-configs:ro \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Sibling-container mode: use 'make test-tester' to run the suite."
 	@echo "For host-side dev (running 'go test' directly), use 'make tester-up-host' instead."
-	@echo "test/configs mounted into the tester at /test-configs (read-only)"
 
 # tester-up-host runs the tester WITH host port publishing for host-side dev
-# workflows (running 'go test' directly from your terminal). Note: in this
-# mode, docker-proxy on macOS races the tester's port handover and causes
-# intermittent server-creation failures (~5-10% of runs in heavy suites);
-# rerun the failing test or restart the tester if it happens. Sibling-
-# container mode (tester-up + make test-tester) does not have this issue.
+# workflows (running 'go test' directly from your terminal). The
+# ip_local_port_range sysctl is intentionally narrowed to match the published
+# port range so the tester's net.Listen(":0") picks ports the host can reach.
+# Note: in this mode, docker-proxy on macOS races the tester's port handover
+# and causes intermittent server-creation failures (~5-10% of runs in heavy
+# suites); rerun the failing test or restart the tester if it happens.
+# Sibling-container mode (tester-up + make test-tester) does not have this issue.
 tester-up-host: tester-net
 	docker run -d \
 		--name $(TESTER_NAME) \
@@ -56,11 +60,9 @@ tester-up-host: tester-net
 		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
-		-v $(CURDIR)/test/configs:/test-configs:ro \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
-	@echo "test/configs mounted into the tester at /test-configs (read-only)"
 
 # tester-down stops AND removes the container; logs are lost. Use tester-restart
 # instead to keep the container (and its logs) around for debugging.
