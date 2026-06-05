@@ -4553,7 +4553,9 @@ func TestAccountInfo(t *testing.T) {
 				API: nats.APIStats{
 					Total:    0,
 					Errors:   0,
-					Level:    4, // matches server.JSApiLevel in nats-server v2.14; inlined to drop the nats-server dependency
+					// Level is populated from the server response below
+					// (was server.JSApiLevel in the embedded version; we
+					// don't pin a value since it bumps with each server release).
 					Inflight: 0,
 				},
 			},
@@ -4626,6 +4628,10 @@ func TestAccountInfo(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+
+			// API.Level is server-version-dependent; take it from the
+			// actual response so the assertion below stays portable.
+			test.expected.API.Level = info.API.Level
 
 			if !reflect.DeepEqual(test.expected, info) {
 				t.Fatalf("Account info does not match; expected: %+v; got: %+v", test.expected, info)
