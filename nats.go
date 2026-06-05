@@ -4177,7 +4177,7 @@ func (nc *Conn) processInfo(info string) error {
 	}
 	var ncInfo ServerInfo
 	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
-		return err
+		return fmt.Errorf("nats: invalid INFO message from server: %w", err)
 	}
 
 	// Copy content into connection's info structure.

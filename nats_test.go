@@ -1244,6 +1244,30 @@ func TestNoEchoOldServer(t *testing.T) {
 	}
 }
 
+func TestProcessInfoInvalidMessage(t *testing.T) {
+	nc := &Conn{}
+
+	tests := []struct {
+		name string
+		info string
+	}{
+		{name: "empty json object fragment", info: "{"},
+		{name: "whitespace only", info: "   "},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := nc.processInfo(test.info)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "invalid INFO message from server") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestExpiredAuthentication(t *testing.T) {
 	// The goal of these tests was to check how a client with an expiring JWT
 	// behaves. It should receive an async -ERR indicating that the auth
