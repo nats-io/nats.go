@@ -125,6 +125,74 @@ To find more information on `nats.go` JetStream API, visit
 The service API (`micro`) allows you to [easily build NATS services](micro/README.md) The
 services API is currently in beta release.
 
+## Client and Orbit
+
+NATS client functionality is split across two layers: the **core client**
+(`nats.go`, this repo) and **[Orbit](https://github.com/synadia-io/orbit.go)**,
+a separate set of packages with higher-level utilities.
+
+The split exists so the core can stay small, stable, and consistent across
+NATS clients in every language, while Orbit can iterate quickly on
+opinionated abstractions without dragging the core API along for the ride.
+
+### Core client (`nats.go`)
+
+- Direct API over Core NATS and JetStream as exposed by `nats-server`.
+- Lightweight, unopinionated, performance-oriented.
+- API surface kept in **parity** with other official NATS clients
+  (Rust, .NET, Java, JS, Python, C). A feature shipped here should look
+  the same shape everywhere.
+- Stable, conservative versioning. Breaking changes are rare and deliberate.
+
+### Orbit (`orbit.go`)
+
+- Higher-level, opinionated abstractions built **on top of** the core client.
+- Per-package versioning, so an experimental utility can iterate
+  without bumping every other piece.
+- Free to be language-specific: a Go-idiomatic API does not need to match
+  the equivalent in other languages.
+- May lag, omit, or extend cross-client parity items.
+
+### What goes where?
+
+| Concern                                            | Core (`nats.go`)    | Orbit |
+|----------------------------------------------------|:-------------------:|:-----:|
+| Connect, publish, subscribe, request/reply         | ✅                  |       |
+| JetStream publish, consumers, streams, KV, OS      | ✅                  |       |
+| Service API (request/reply micro-services)         | ✅                  |       |
+| Wire-protocol coverage, auth, TLS, reconnection    | ✅                  |       |
+| Cross-client parity, conservative semver           | ✅                  |       |
+| Opinionated helpers / sugar over core APIs         |                     | ✅    |
+| New experimental patterns (e.g. partitioned groups)|                     | ✅    |
+| KV codecs, distributed counters, NATS contexts     |                     | ✅    |
+| Go-idiomatic abstractions with no parity mandate   |                     | ✅    |
+| Per-utility versioning, faster API churn allowed   |                     | ✅    |
+
+> **Rule of thumb:** if it is a thin mapping of something `nats-server`
+> already speaks and every official client must expose it, it belongs in
+> core. If it is a pattern, helper, or abstraction layered on top, it
+> belongs in Orbit.
+
+### Layering
+
+```text
+   ┌──────────────────────────────────────────────────────┐
+   │  Application code                                    │
+   └──────────────┬───────────────────────────┬───────────┘
+                  │                           │
+                  ▼                           ▼
+        ┌───────────────────┐       ┌───────────────────┐
+        │ Orbit packages    │  uses │ nats.go (core)    │
+        │ (opinionated,     │──────▶│ (parity, stable,  │
+        │  per-pkg semver)  │       │  protocol-level)  │
+        └───────────────────┘       └─────────┬─────────┘
+                                              │
+                                              ▼
+                                       ┌─────────────┐
+                                       │ nats-server │
+                                       └─────────────┘
+```
+
 ## New Authentication (Nkeys and User Credentials)
 This requires server with version >= 2.0.0
 
