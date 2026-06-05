@@ -993,10 +993,6 @@ func TestRespInbox(t *testing.T) {
 	})
 }
 
-func TestInProcessConn(t *testing.T) {
-	t.Skip("DIVERGENCE: testservice runs servers out-of-process; nats.InProcessServer() requires an in-process *server.Server reference.")
-}
-
 func TestSkipSubjectValidation(t *testing.T) {
 	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
 		nc, err := nats.Connect(inst.Servers[0].URL, nats.SkipSubjectValidation())
