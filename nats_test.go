@@ -13,9 +13,9 @@
 
 package nats
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // Package scoped specific tests here..
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 
 import (
 	"bufio"
@@ -207,9 +207,9 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 // ServerPool tests
-////////////////////////////////////////////////////////////////////////////////
+// //////////////////////////////////////////////////////////////////////////////
 
 var testServers = []string{
 	"nats://localhost:1222",
@@ -1636,7 +1636,6 @@ func TestHeaderMultiLine(t *testing.T) {
 	http.Header(m.Header).Add("AUTHORIZATION", "s3cr3t")
 
 	// Multi Value Header becomes represented as multi-lines in the wire
-	// since internally using same Write from http stdlib.
 	m.Header.Set("X-Test", "First")
 	m.Header.Add("X-Test", "Second")
 	m.Header.Add("X-Test", "Third")
@@ -1647,24 +1646,101 @@ func TestHeaderMultiLine(t *testing.T) {
 	}
 	result := string(b)
 
-	expectedHeader := `NATS/1.0
-Accept-Encoding: json
-Authorization: s3cr3t
-CorrelationID: 123
-Msg-ID: 456
-X-NATS-Keys: A
-X-NATS-Keys: B
-X-NATS-Keys: C
-X-Test: First
-X-Test: Second
-X-Test: Third
-X-Test-Keys: D
-X-Test-Keys: E
-X-Test-Keys: F
+	// Require the header string to have a known prefix and suffix
+	if !strings.HasPrefix(result, "NATS/1.0\r\n") {
+		t.Fatalf("header prefix not present")
+	}
+	if !strings.HasSuffix(result, "\r\n\r\n") {
+		t.Fatalf("header suffix not present")
+	}
 
-`
-	if strings.Replace(expectedHeader, "\n", "\r\n", -1) != result {
-		t.Fatalf("Expected: %q, got: %q", expectedHeader, result)
+	// Require the header string to contain each of the following rows. Note
+	// that headers can be written in any order.
+	expectedHeaderLines := []string{
+		"Accept-Encoding: json\r\n",
+		"Authorization: s3cr3t\r\n",
+		"CorrelationID: 123\r\n",
+		"Msg-ID: 456\r\n",
+		"X-NATS-Keys: A\r\n",
+		"X-NATS-Keys: B\r\n",
+		"X-NATS-Keys: C\r\n",
+		"X-Test: First\r\n",
+		"X-Test: Second\r\n",
+		"X-Test: Third\r\n",
+		"X-Test-Keys: D\r\n",
+		"X-Test-Keys: E\r\n",
+		"X-Test-Keys: F\r\n",
+	}
+	for _, h := range expectedHeaderLines {
+		if !strings.Contains(result, h) {
+			t.Fatalf("expected header line '%s' to be present", h)
+		}
+	}
+}
+
+func TestHeaderValidKeys(t *testing.T) {
+	const validChars = "!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~"
+
+	m := NewMsg("foo")
+	m.Header = Header{
+		validChars: []string{"value"},
+	}
+	if _, err := m.headerBytes(); err != nil {
+		t.Fatal(err.Error())
+	}
+}
+
+func TestHeaderInvalidKeys(t *testing.T) {
+	testKeys := []string{
+		"",       // Empty string
+		":",      // Illegal printable ASCII character
+		"\r",     // Non-printable ASCII character
+		"\n",     // Non-printable ASCII character
+		"\t",     // Non-printable ASCII character
+		"\x00",   // Non-printable ASCII character
+		"→",      // Standard Unicode character
+		"\u200b", // Non-printable Unicode character
+	}
+	for _, key := range testKeys {
+		m := NewMsg("foo")
+		m.Header = Header{
+			key: []string{"value"},
+		}
+		if _, err := m.headerBytes(); err == nil {
+			t.Fatalf("expected error for key '%s'", key)
+		}
+	}
+}
+
+func TestHeaderValidValues(t *testing.T) {
+	testValues := []string{
+		"!\"#$%&'()*+,-./0123456789;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",                              // Printable ASCII characters
+		"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0b\x0c\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1c\x1d\x1e\x1f", // Invisible ASCII characters (except CR/LF)
+		"→",      // Standard Unicode characters
+		"\u200b", // Non-printable Unicode characters
+	}
+	for _, v := range testValues {
+		m := NewMsg(v)
+		m.Header = Header{
+			"key": []string{v},
+		}
+		if _, err := m.headerBytes(); err != nil {
+			t.Fatal(err.Error())
+		}
+	}
+}
+
+func TestHeaderNewlineValue(t *testing.T) {
+	m := NewMsg("foo")
+	m.Header.Set("X-Test", "line1\nline2\rline3")
+
+	b, err := m.headerBytes()
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	out := string(b)
+	if !strings.Contains(out, "X-Test: line1 line2 line3") {
+		t.Fatalf("expected sanitized 'X-Test: line1 line2 line3', got: %q", out)
 	}
 }
 

@@ -853,23 +853,144 @@ func (m *Msg) headerBytes() ([]byte, error) {
 		return hdr, nil
 	}
 
+	// Validate the keys and calculate an upper bound for the total encoded
+	// size.
+	//
+	// The size calculation may not be exact if any values contain
+	// leading/trailing whitespace (as those will be trimmed later), but a
+	// slight over-estimation here is more preferable than an under-estimation
+	// (which could lead to unnecessary memory allocations).
+	//
+	// We don't perform any special validation on header values because we
+	// consider all strings to be valid values (including Unicode strings,
+	// special characters, etc.).
+	hdrSize := len(hdrLine) + len(crlf)
+	for k, vs := range m.Header {
+		if !isHeaderKeyValid(k) {
+			return nil, ErrBadHeaderMsg
+		}
+		for _, v := range vs {
+			hdrSize += len(k) + len(v) + 4 // 4 is for the colon, space, CR, and LF
+		}
+	}
+
+	// NOTE: bytes.Buffer.WriteString() returns an error because bytes.Buffer
+	// is intended to be a valid implementation of the io.StringWriter interface.
+	// This implementation cannot actually fail in practice, so it is safe to
+	// ignore write errors here.
 	var b bytes.Buffer
-	_, err := b.WriteString(hdrLine)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
+	b.Grow(hdrSize)
+	_, _ = b.WriteString(hdrLine)
+	for k, vs := range m.Header {
+		for _, v := range vs {
+			_, _ = b.WriteString(k)
+			_, _ = b.WriteString(": ")
+			writeHeaderValue(&b, v)
+			_, _ = b.WriteString(crlf)
+		}
 	}
-
-	err = http.Header(m.Header).Write(&b)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
-	}
-
-	_, err = b.WriteString(crlf)
-	if err != nil {
-		return nil, ErrBadHeaderMsg
-	}
+	_, _ = b.WriteString(crlf)
 
 	return b.Bytes(), nil
+}
+
+// asciiSet is a 256-byte lookup table for fast ASCII character membership testing.
+// This implementation mirrors the one Go uses internally for many string operations,
+// including strings.Contains().
+//
+// References:
+//   - https://github.com/golang/go/blob/master/src/strings/strings.go
+type asciiSet [256]bool
+
+func (as *asciiSet) MatchesString(s string) bool {
+
+	// Implementation note: Our high level strategy is to compare each byte in
+	// 's' with the corresponding entry in 'as'. If the entry is 'true', the
+	// character is valid, so we can move forward with the next byte in 's'. If
+	// the entry in 'as' is 'false', the character is invalid, so we can bail
+	// out.
+	//
+	// Benchmarking shows there to be some benefit to manually unrolling the
+	// loop (up to ~35% faster in some cases), so that's what we've done here.
+
+	i := 0
+
+	// Process the string in batches of 8 bytes
+	for ; i <= len(s)-8; i += 8 {
+		if !as[s[i]] {
+			return false
+		}
+		if !as[s[i+1]] {
+			return false
+		}
+		if !as[s[i+2]] {
+			return false
+		}
+		if !as[s[i+3]] {
+			return false
+		}
+		if !as[s[i+4]] {
+			return false
+		}
+		if !as[s[i+5]] {
+			return false
+		}
+		if !as[s[i+6]] {
+			return false
+		}
+		if !as[s[i+7]] {
+			return false
+		}
+	}
+
+	// Handle any remaining bytes at the end of the string
+	for ; i < len(s); i++ {
+		if !as[s[i]] {
+			return false
+		}
+	}
+	return true
+}
+
+// The asciiSet that represents valid header keys can be precalculated and
+// cached since it will never change during the lifetime of the application.
+var validHeaderKeyChars = makeValidHeaderKeyAsciiSet()
+
+func makeValidHeaderKeyAsciiSet() asciiSet {
+
+	// ADR-4 specifies that header keys must be printable ASCII characters
+	// (e.g. those in the range [33, 126]), except for colons. This
+	// implementation is very slightly stricter, as it disallows several
+	// additional special characters.
+	const forbiddenChars = "\"()/,:;<=>?@[\\]{}"
+
+	var as asciiSet
+	for i := rune(33); i <= rune(126); i++ {
+		if !strings.ContainsRune(forbiddenChars, i) {
+			as[i] = true
+		}
+	}
+	return as
+}
+
+func isHeaderKeyValid(k string) bool {
+	return len(k) > 0 && validHeaderKeyChars.MatchesString(k)
+}
+
+var headerValueNewlineReplacer = strings.NewReplacer("\r", " ", "\n", " ")
+
+func writeHeaderValue(buffer *bytes.Buffer, value string) {
+
+	// ADR-4 specifies that header values must be ASCII characters (except for
+	// '\r' or '\n'), however the Go implementation is slightly more lenient
+	// to maintain backwards compatibility with older versions of the library.
+	// We allow arbitrary UTF-8 strings to be used as values and deliberately
+	// sanitize '\r' and '\n' characters by replacing them with spaces.
+
+	// NOTE: It is safe to ignore the error returned by WriteString because
+	// we're writing to a bytes.Buffer object, and that implementation never
+	// returns an error.
+	_, _ = headerValueNewlineReplacer.WriteString(buffer, textproto.TrimString(value))
 }
 
 type barrierInfo struct {
@@ -1558,8 +1679,12 @@ func Compression(enabled bool) Option {
 	}
 }
 
-// ProxyPath is an option for websocket connections that adds a path to connections url.
-// This is useful when connecting to NATS behind a proxy.
+// ProxyPath sets a path added to every WebSocket connection URL. This is
+// useful when NATS is behind a reverse proxy that routes by path. Unlike a
+// path in the connect URL, ProxyPath is also applied to server-discovered
+// URLs (which are bare host:port). Use ProxyPath for clustered setups
+// behind a proxy, so the client can connect to discovered servers on
+// failover. When set, it overrides any path in the connection URL.
 func ProxyPath(path string) Option {
 	return func(o *Options) error {
 		o.ProxyPath = path

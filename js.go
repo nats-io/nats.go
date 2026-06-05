@@ -445,13 +445,21 @@ func StreamListFilter(subject string) JSOpt {
 }
 
 func (js *js) apiSubj(subj string) string {
-	if js.opts.pre == _EMPTY_ {
+	return apiSubjWithPrefix(js.opts.pre, subj)
+}
+
+func apiSubjWithPrefix(pre, subj string) string {
+	if pre == _EMPTY_ {
 		return subj
 	}
 	var b strings.Builder
-	b.WriteString(js.opts.pre)
+	b.WriteString(pre)
 	b.WriteString(subj)
 	return b.String()
+}
+
+func (o *jsOpts) apiSubj(subj string) string {
+	return apiSubjWithPrefix(o.pre, subj)
 }
 
 // PubOpt configures options for publishing JetStream messages.
@@ -3507,12 +3515,12 @@ func (o *pullOpts) checkCtxErr(err error) error {
 func (js *js) getConsumerInfo(stream, consumer string) (*ConsumerInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), js.opts.wait)
 	defer cancel()
-	return js.getConsumerInfoContext(ctx, stream, consumer)
+	return js.getConsumerInfoContext(ctx, stream, consumer, js.opts)
 }
 
-func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string) (*ConsumerInfo, error) {
+func (js *js) getConsumerInfoContext(ctx context.Context, stream, consumer string, o *jsOpts) (*ConsumerInfo, error) {
 	ccInfoSubj := fmt.Sprintf(apiConsumerInfoT, stream, consumer)
-	resp, err := js.apiRequestWithContext(ctx, js.apiSubj(ccInfoSubj), nil)
+	resp, err := js.apiRequestWithContext(ctx, o.apiSubj(ccInfoSubj), nil)
 	if err != nil {
 		if errors.Is(err, ErrNoResponders) {
 			err = ErrJetStreamNotEnabled
@@ -3743,6 +3751,13 @@ const (
 	// AckExplicitPolicy requires ack or nack for all messages.
 	AckExplicitPolicy
 
+	// AckFlowControlPolicy functions like AckAllPolicy, but acks based on
+	// responses to flow control. Used by durable stream sourcing and
+	// mirroring against an existing durable push consumer.
+	//
+	// This feature requires nats-server v2.14.0 or later.
+	AckFlowControlPolicy
+
 	// For configuration mismatch check
 	ackPolicyNotSet = 99
 )
@@ -3759,6 +3774,8 @@ func (p *AckPolicy) UnmarshalJSON(data []byte) error {
 		*p = AckAllPolicy
 	case jsonString("explicit"):
 		*p = AckExplicitPolicy
+	case jsonString("flow_control"):
+		*p = AckFlowControlPolicy
 	default:
 		return fmt.Errorf("nats: can not unmarshal %q", data)
 	}
@@ -3774,6 +3791,8 @@ func (p AckPolicy) MarshalJSON() ([]byte, error) {
 		return json.Marshal("all")
 	case AckExplicitPolicy:
 		return json.Marshal("explicit")
+	case AckFlowControlPolicy:
+		return json.Marshal("flow_control")
 	default:
 		return nil, fmt.Errorf("nats: unknown acknowledgement policy %v", p)
 	}
@@ -3787,6 +3806,8 @@ func (p AckPolicy) String() string {
 		return "AckAll"
 	case AckExplicitPolicy:
 		return "AckExplicit"
+	case AckFlowControlPolicy:
+		return "AckFlowControl"
 	case ackPolicyNotSet:
 		return "Not Initialized"
 	default:
