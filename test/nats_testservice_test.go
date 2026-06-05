@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -586,9 +584,7 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 	dch := make(chan bool)
 	cch := make(chan bool)
 
-	// Force IPv4-only URLs. The default testservice URL uses "localhost",
-	// which resolves to both 127.0.0.1 and ::1 on dual-stack hosts.
-	urls := fmt.Sprintf("nats://127.0.0.1:%d, nats://127.0.0.1:%d", s1Inst.Servers[0].Port, s2Inst.Servers[0].Port)
+	urls := fmt.Sprintf("%s, %s", s1Inst.Servers[0].URL, s2Inst.Servers[0].URL)
 	nc, err := nats.Connect(urls,
 		nats.ReconnectWait(25*time.Millisecond),
 		nats.ReconnectJitter(0, 0),

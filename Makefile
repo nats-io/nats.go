@@ -16,13 +16,39 @@ TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine
 
-.PHONY: tester-net tester-up tester-down tester-restart tester-logs test-tester
+.PHONY: tester-net tester-up tester-up-host tester-down tester-restart tester-logs test-tester
 
 tester-net:
 	@docker network inspect $(TESTER_NETWORK) >/dev/null 2>&1 || \
 		docker network create $(TESTER_NETWORK)
 
+# tester-up runs the tester WITHOUT host port publishing. Use this when running
+# tests via `make test-tester` (sibling-container mode — the test container is
+# on the same docker network as the tester, so host port publishing is not
+# only unnecessary, it actively breaks server bring-up: docker-proxy holds
+# 0.0.0.0:<port> inside the container's net namespace, racing the tester's
+# localhost:0 port-reservation handover and causing intermittent
+# "bind: address already in use" failures.
 tester-up: tester-net
+	docker run -d \
+		--name $(TESTER_NAME) \
+		--network $(TESTER_NETWORK) \
+		--restart unless-stopped \
+		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
+		-v $(CURDIR)/test/configs:/test-configs:ro \
+		$(TESTER_IMAGE)
+	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
+	@echo "Sibling-container mode: use 'make test-tester' to run the suite."
+	@echo "For host-side dev (running 'go test' directly), use 'make tester-up-host' instead."
+	@echo "test/configs mounted into the tester at /test-configs (read-only)"
+
+# tester-up-host runs the tester WITH host port publishing for host-side dev
+# workflows (running 'go test' directly from your terminal). Note: in this
+# mode, docker-proxy on macOS races the tester's port handover and causes
+# intermittent server-creation failures (~5-10% of runs in heavy suites);
+# rerun the failing test or restart the tester if it happens. Sibling-
+# container mode (tester-up + make test-tester) does not have this issue.
+tester-up-host: tester-net
 	docker run -d \
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \

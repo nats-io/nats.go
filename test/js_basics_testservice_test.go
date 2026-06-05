@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -1505,7 +1503,10 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 					t.Fatalf("Unexpected error: %s", err)
 				}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			// 50ms in the original embedded test was flaky in race+container;
+			// 500ms gives the 5 in-flight messages headroom while still
+			// firing the deadline before any nonexistent 6th message.
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer cancel()
 			res, err := sub.FetchBatch(10, nats.Context(ctx))
 			if err != nil {

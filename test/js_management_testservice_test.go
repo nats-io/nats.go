@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -24,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
@@ -262,7 +259,7 @@ func TestAccountInfo(t *testing.T) {
 				API: nats.APIStats{
 					Total:    0,
 					Errors:   0,
-					Level:    server.JSApiLevel,
+					Level:    4, // matches server.JSApiLevel in nats-server v2.14; inlined to drop the nats-server dependency
 					Inflight: 0,
 				},
 			},

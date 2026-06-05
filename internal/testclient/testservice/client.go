@@ -154,7 +154,7 @@ func WithTemplate(body string) CreateOption {
 	return func(o *createOptions) { o.template = body }
 }
 
-func resolveCreateOptions(t *testing.T, opts []CreateOption) createOptions {
+func resolveCreateOptions(t testing.TB, opts []CreateOption) createOptions {
 	co := createOptions{description: t.Name()}
 	for _, o := range opts {
 		o(&co)
@@ -163,7 +163,7 @@ func resolveCreateOptions(t *testing.T, opts []CreateOption) createOptions {
 }
 
 // New connects to the management service of the test cluster manager
-func New(t *testing.T, server string, opts ...nats.Option) *Client {
+func New(t testing.TB, server string, opts ...nats.Option) *Client {
 	t.Helper()
 
 	u, err := url.Parse(server)
@@ -264,7 +264,7 @@ func (c *Client) withCluster(t *testing.T, servers int, js bool, h func(*testing
 }
 
 // WaitForJetStream polls '$JS.API.INFO' regularly waiting for Jetstream to be ready, fails after 5 seconds
-func (c *Client) WaitForJetStream(t *testing.T, nc *nats.Conn) {
+func (c *Client) WaitForJetStream(t testing.TB, nc *nats.Conn) {
 	t.Helper()
 
 	for range 40 {
@@ -324,7 +324,7 @@ func (c *Client) withSuperCluster(t *testing.T, clusters int, servers int, js bo
 }
 
 // CreateSuperCluster creates a super cluster
-func (c *Client) CreateSuperCluster(t *testing.T, clusters int, servers int, js bool, opts ...CreateOption) *Instance {
+func (c *Client) CreateSuperCluster(t testing.TB, clusters int, servers int, js bool, opts ...CreateOption) *Instance {
 	t.Helper()
 
 	co := resolveCreateOptions(t, opts)
@@ -344,7 +344,7 @@ func (c *Client) CreateSuperCluster(t *testing.T, clusters int, servers int, js 
 }
 
 // CreateCluster creates a cluster
-func (c *Client) CreateCluster(t *testing.T, servers int, js bool, opts ...CreateOption) *Instance {
+func (c *Client) CreateCluster(t testing.TB, servers int, js bool, opts ...CreateOption) *Instance {
 	t.Helper()
 
 	co := resolveCreateOptions(t, opts)
@@ -363,7 +363,7 @@ func (c *Client) CreateCluster(t *testing.T, servers int, js bool, opts ...Creat
 }
 
 // CreateServer creates a server
-func (c *Client) CreateServer(t *testing.T, js bool, opts ...CreateOption) *Instance {
+func (c *Client) CreateServer(t testing.TB, js bool, opts ...CreateOption) *Instance {
 	t.Helper()
 
 	co := resolveCreateOptions(t, opts)
@@ -380,10 +380,10 @@ func (c *Client) CreateServer(t *testing.T, js bool, opts ...CreateOption) *Inst
 	return c.doCreate(t, "tester.create.server", jreq)
 }
 
-func (c *Client) doCreate(t *testing.T, subject string, jreq []byte) *Instance {
+func (c *Client) doCreate(t testing.TB, subject string, jreq []byte) *Instance {
 	t.Helper()
 
-	msg, err := c.nc.Request(subject, jreq, 30*time.Second)
+	msg, err := c.nc.Request(subject, jreq, 60*time.Second)
 	if err != nil {
 		t.Fatalf("could not send create request to %s: %v", subject, err)
 	}
@@ -411,7 +411,7 @@ func (c *Client) doCreate(t *testing.T, subject string, jreq []byte) *Instance {
 
 // List returns a lightweight summary of every instance currently held by the
 // management service.
-func (c *Client) List(t *testing.T) *api.ListResponse {
+func (c *Client) List(t testing.TB) *api.ListResponse {
 	t.Helper()
 
 	msg, err := c.nc.Request("tester.list", nil, 10*time.Second)
@@ -432,7 +432,7 @@ func (c *Client) List(t *testing.T) *api.ListResponse {
 // Reset shuts down and removes all servers across every instance. Use sparingly
 // — most tests should call inst.Destroy() to scope cleanup to the instance they
 // own. Reset remains for CI safety nets between job stages.
-func (c *Client) Reset(t *testing.T) api.ResetResponse {
+func (c *Client) Reset(t testing.TB) api.ResetResponse {
 	t.Helper()
 
 	msg, err := c.nc.Request("tester.reset", nil, 10*time.Second)
@@ -455,7 +455,7 @@ func (c *Client) Reset(t *testing.T) api.ResetResponse {
 
 // Status returns status of all instances managed by the tester. Use
 // inst.Status() if you only care about a single instance.
-func (c *Client) Status(t *testing.T) *api.StatusResponse {
+func (c *Client) Status(t testing.TB) *api.StatusResponse {
 	t.Helper()
 
 	msg, err := c.nc.Request("tester.status", nil, 10*time.Second)
@@ -477,7 +477,7 @@ func (c *Client) Status(t *testing.T) *api.StatusResponse {
 }
 
 // Close closes the connection to the management service
-func (c *Client) Close(t *testing.T) {
+func (c *Client) Close(t testing.TB) {
 	t.Helper()
 
 	c.nc.Close()
@@ -485,7 +485,7 @@ func (c *Client) Close(t *testing.T) {
 
 // Destroy tears down this instance — shuts down its servers and removes its
 // storage dir. Other instances on the same management service are unaffected.
-func (i *Instance) Destroy(t *testing.T) *api.DestroyResponse {
+func (i *Instance) Destroy(t testing.TB) *api.DestroyResponse {
 	t.Helper()
 
 	jreq, err := json.Marshal(api.DestroyRequest{InstanceID: i.ID})
@@ -493,7 +493,7 @@ func (i *Instance) Destroy(t *testing.T) *api.DestroyResponse {
 		t.Fatalf("could not marshal DestroyRequest: %v", err)
 	}
 
-	msg, err := i.c.nc.Request("tester.destroy", jreq, 30*time.Second)
+	msg, err := i.c.nc.Request("tester.destroy", jreq, 60*time.Second)
 	if err != nil {
 		t.Fatalf("could not send DestroyRequest: %v", err)
 	}
@@ -509,7 +509,7 @@ func (i *Instance) Destroy(t *testing.T) *api.DestroyResponse {
 }
 
 // StopServer stops a single server within this instance.
-func (i *Instance) StopServer(t *testing.T, server *api.ManagedServer) *api.StopServerResponse {
+func (i *Instance) StopServer(t testing.TB, server *api.ManagedServer) *api.StopServerResponse {
 	t.Helper()
 
 	if server == nil || server.Name == "" {
@@ -541,7 +541,7 @@ func (i *Instance) StopServer(t *testing.T, server *api.ManagedServer) *api.Stop
 
 // StartServer starts a single server within this instance that was previously
 // stopped.
-func (i *Instance) StartServer(t *testing.T, server *api.ManagedServer) *api.StartServerResponse {
+func (i *Instance) StartServer(t testing.TB, server *api.ManagedServer) *api.StartServerResponse {
 	t.Helper()
 
 	if server == nil || server.Name == "" {
@@ -572,7 +572,7 @@ func (i *Instance) StartServer(t *testing.T, server *api.ManagedServer) *api.Sta
 }
 
 // Status returns the current status of just this instance.
-func (i *Instance) Status(t *testing.T) *api.InstanceStatus {
+func (i *Instance) Status(t testing.TB) *api.InstanceStatus {
 	t.Helper()
 
 	jreq, err := json.Marshal(api.StatusRequest{InstanceID: i.ID})

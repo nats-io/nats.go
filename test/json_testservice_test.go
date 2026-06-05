@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -28,7 +26,7 @@ import (
 
 // newJSONEncodedConn wraps an existing *nats.Conn as a JSON-encoded connection.
 // The wrapped conn's lifetime is managed by the helper that produced it.
-func newJSONEncodedConn(tl tLogger, nc *nats.Conn) *nats.EncodedConn {
+func newJSONEncodedConn(tl testing.TB, nc *nats.Conn) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)

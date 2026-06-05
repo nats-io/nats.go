@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -25,7 +23,7 @@ import (
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
 
 // newGobEncodedConn wraps an existing *nats.Conn as a Gob-encoded connection.
-func newGobEncodedConn(tl tLogger, nc *nats.Conn) *nats.EncodedConn {
+func newGobEncodedConn(tl testing.TB, nc *nats.Conn) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(nc, nats.GOB_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)

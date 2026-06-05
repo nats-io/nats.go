@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -201,6 +199,7 @@ func TestServerStopDisconnectedErrCB(t *testing.T) {
 }
 
 func TestServerSecureConnections(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
@@ -307,6 +306,7 @@ func TestServerSecureConnections(t *testing.T) {
 }
 
 func TestClientTLSConfig(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	inst := c.CreateServer(t, false, testservice.WithTLS(tlsVerifyConfBody()))
 	t.Cleanup(func() { inst.Destroy(t) })
@@ -410,6 +410,7 @@ func TestClientTLSConfig(t *testing.T) {
 }
 
 func TestClientCertificate(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	inst := c.CreateServer(t, false, testservice.WithTLS(tlsVerifyConfBody()))
 	t.Cleanup(func() { inst.Destroy(t) })
@@ -481,6 +482,7 @@ func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 }
 
 func TestServerTLSHintConnections(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
@@ -2778,6 +2780,7 @@ func TestGetClientID(t *testing.T) {
 }
 
 func TestTLSDontSkipVerify(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsNoIPConfBody())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
@@ -3168,6 +3171,7 @@ func TestRemoveStatusListener(t *testing.T) {
 }
 
 func TestTLSHandshakeFirst(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	// First server: classic tls.conf (no handshake_first). TLSHandshakeFirst
 	// client should fail to connect because the server still sends INFO before
@@ -3273,6 +3277,7 @@ func TestTLSHandshakeFirstEOFAfterHandshake(t *testing.T) {
 }
 
 func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
+	skipPendingTesterTLS(t)
 	// Test that when the NATS server itself does mTLS verification
 	// and rejects the client cert, the error is a clear TLS alert
 	// (not a wrapped EOF).

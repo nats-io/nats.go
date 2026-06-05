@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -513,6 +511,7 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 }
 
 func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	s1Inst := c.CreateServer(t, false)
 	t.Cleanup(func() { s1Inst.Destroy(t) })

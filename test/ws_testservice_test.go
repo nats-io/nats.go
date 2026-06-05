@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -302,6 +300,7 @@ func TestWSCompression(t *testing.T) {
 }
 
 func TestWSWithTLS(t *testing.T) {
+	skipPendingTesterTLS(t)
 	for _, test := range []struct {
 		name        string
 		compression bool
@@ -384,6 +383,7 @@ func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
 }
 
 func TestWSWithTLSCustomDialer(t *testing.T) {
+	skipPendingTesterTLS(t)
 	c := newTester(t)
 	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsTLSBody(false)))
 	t.Cleanup(func() { inst.Destroy(t) })

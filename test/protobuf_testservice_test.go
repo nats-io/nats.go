@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -30,7 +28,7 @@ import (
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
 
 // newProtoEncodedConn wraps an existing *nats.Conn as a Protobuf-encoded connection.
-func newProtoEncodedConn(tl tLogger, nc *nats.Conn) *nats.EncodedConn {
+func newProtoEncodedConn(tl testing.TB, nc *nats.Conn) *nats.EncodedConn {
 	ec, err := nats.NewEncodedConn(nc, protobuf.PROTOBUF_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)

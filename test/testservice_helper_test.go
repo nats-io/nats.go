@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build testservice
-
 package test
 
 import (
@@ -44,8 +42,9 @@ func containerPath(rel string) string {
 
 // newTester returns a tester Client connected to the service at TESTER_NATS_URL.
 // Tests skip when the env var is unset so a -tags=testservice run does not
-// fail on machines without docker. Close is registered with t.Cleanup.
-func newTester(t *testing.T) *testservice.Client {
+// fail on machines without docker. Close is registered with t.Cleanup. Accepts
+// any testing.TB so benchmarks (which use *testing.B) can share the helper.
+func newTester(t testing.TB) *testservice.Client {
 	t.Helper()
 	url := os.Getenv("TESTER_NATS_URL")
 	if url == "" {
@@ -143,8 +142,9 @@ func withJSServerInstance(t *testing.T, fn func(*testing.T, *nats.Conn, *testser
 // reconnect survives any single node going down. nats.MaxReconnects(-1) is
 // always set; additional connect options (e.g. credentials) may be passed.
 // Tests that need custom dial behavior call CreateServer/CreateCluster
-// themselves and then dialInstance directly.
-func dialInstance(t *testing.T, inst *testservice.Instance, opts ...nats.Option) *nats.Conn {
+// themselves and then dialInstance directly. Accepts testing.TB so benchmarks
+// can share the helper.
+func dialInstance(t testing.TB, inst *testservice.Instance, opts ...nats.Option) *nats.Conn {
 	t.Helper()
 	urls := make([]string, len(inst.Servers))
 	for i, s := range inst.Servers {
@@ -157,4 +157,28 @@ func dialInstance(t *testing.T, inst *testservice.Instance, opts ...nats.Option)
 	}
 	t.Cleanup(nc.Close)
 	return nc
+}
+
+// skipPendingTesterTLS skips a test that depends on filesystem-mounted TLS
+// certs at test/configs/certs/. These tests will be rewritten when the
+// testservice gains managed TLS (generated CA + certs per instance) so we
+// no longer need cert files on disk; filesystem mounts are unworkable in
+// CI (GitHub Actions service containers start before checkout, leaving the
+// mount point empty) and the existing certs are hostname-bound to
+// "localhost", which trips error-text assertions in sibling-container mode.
+func skipPendingTesterTLS(t *testing.T) {
+	t.Helper()
+	t.Skip("Pending testservice managed TLS support; filesystem-mounted certs are unworkable in CI")
+}
+
+// withServerB is the benchmark-flavored variant of withServer. Benchmarks use
+// *testing.B so the with*-style wrappers (whose callbacks take *testing.T)
+// don't fit; this helper inlines the same shape against testing.TB.
+func withServerB(b *testing.B, fn func(*testing.B, *nats.Conn), opts ...testservice.CreateOption) {
+	b.Helper()
+	c := newTester(b)
+	inst := c.CreateServer(b, false, opts...)
+	b.Cleanup(func() { inst.Destroy(b) })
+	nc := dialInstance(b, inst)
+	fn(b, nc)
 }

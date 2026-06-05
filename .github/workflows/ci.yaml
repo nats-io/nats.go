@@ -62,12 +62,18 @@ jobs:
 
             - name: Test and coverage
               shell: bash --noprofile --norc -x -eo pipefail {0}
+              env:
+                # ./test is testservice-only after Phase 4 and runs in the
+                # test-tester job. The embedded job still covers the root
+                # package and jetstream/test, micro/test (those packages
+                # migrate later).
+                EMBEDDED_PKGS: ". ./bench/... ./encoders/... ./internal/... ./jetstream/... ./micro/..."
               run: |
-                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
+                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 $EMBEDDED_PKGS --failfast -vet=off
                 if [ "${{ matrix.coverage }}" = "true" ]; then
                   ./scripts/cov.sh CI
                 else
-                  go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
+                  go test -modfile=go_test.mod -race -v -p=1 $EMBEDDED_PKGS --failfast -vet=off -tags=internal_testing
                 fi
 
             - name: Coveralls
