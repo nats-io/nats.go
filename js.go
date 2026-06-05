@@ -1955,7 +1955,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		} else if consName == "" {
 			consName = getHash(nuid.Next())
 		}
-		var info *ConsumerInfo
 		if o.ctx != nil {
 			info, err = js.upsertConsumer(stream, consName, ccreq.Config, Context(o.ctx))
 		} else {
@@ -1967,7 +1966,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 				return nil, err
 			}
-			if consumer == _EMPTY_ ||
+			lookupConsumer := consumer
+			if lookupConsumer == _EMPTY_ {
+				lookupConsumer = consName
+			}
+			if lookupConsumer == _EMPTY_ ||
 				(apiErr.ErrorCode != JSErrCodeConsumerAlreadyExists && apiErr.ErrorCode != JSErrCodeConsumerNameExists) {
 				cleanUpSub()
 				if errors.Is(apiErr, ErrStreamNotFound) {
@@ -1980,7 +1983,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 			}
 
-			info, err = js.ConsumerInfo(stream, consumer)
+			info, err = js.ConsumerInfo(stream, lookupConsumer)
 			if err != nil {
 				return nil, err
 			}
@@ -2015,8 +2018,17 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				hasHeartbeats = info.Config.Heartbeat > 0
 			}
 		} else {
+			if info == nil {
+				cleanUpSub()
+				return nil, ErrConsumerCreationResponseEmpty
+			}
 			// Since the library created the JS consumer, it will delete it on Unsubscribe()/Drain()
 			sub.mu.Lock()
+			if sub.jsi == nil {
+				sub.mu.Unlock()
+				cleanUpSub()
+				return nil, ErrConsumerCreationResponseEmpty
+			}
 			sub.jsi.dc = true
 			sub.jsi.pending = info.NumPending + info.Delivered.Consumer
 			// If this is an ephemeral, we did not have a consumer name, we get it from the info
@@ -2028,6 +2040,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				}
 			}
 			sub.mu.Unlock()
+		}
+		if info == nil {
+			cleanUpSub()
+			return nil, ErrConsumerCreationResponseEmpty
 		}
 		// Capture max ack pending from the info response here which covers both
 		// success and failure followed by consumer lookup.
