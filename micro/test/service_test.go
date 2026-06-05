@@ -1021,6 +1021,88 @@ func TestContextHandler(t *testing.T) {
 	}
 }
 
+func TestAddEndpoint_Options(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	config := micro.Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+	}
+
+	srv, err := micro.AddService(nc, config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer srv.Stop()
+
+	handler := micro.HandlerFunc(func(req micro.Request) {
+		req.Respond([]byte("OK"))
+	})
+
+	tests := []struct {
+		name     string
+		options  []micro.EndpointOpt
+		expected map[string]string
+	}{
+		{
+			name: "WithEndpointMetadata and WithEndpointMetadataKey",
+			options: []micro.EndpointOpt{
+				micro.WithEndpointMetadata(map[string]string{
+					"hello": "world",
+					"foo":   "bar",
+				}),
+				// override value from WithEndpointMetadata
+				micro.WithEndpointMetadataKey("foo", "baz"),
+			},
+			expected: map[string]string{
+				"hello": "world",
+				"foo":   "baz",
+			},
+		},
+		{
+			name: "WithEndpointMetadataKey",
+			options: []micro.EndpointOpt{
+				micro.WithEndpointMetadataKey("foo", "baz"),
+			},
+			expected: map[string]string{
+				"foo": "baz",
+			},
+		},
+	}
+	for i, test := range tests {
+		name := fmt.Sprintf("test%v", i+1)
+		err = srv.AddEndpoint(name, micro.HandlerFunc(handler), test.options...)
+		if err != nil {
+			t.Fatalf("Error adding endpoint: %v", err)
+		}
+
+		// Verify endpoint was created with metadata
+		info := srv.Info()
+
+		var endpoint *micro.EndpointInfo
+		for _, ep := range info.Endpoints {
+			if ep.Name == name {
+				endpoint = &ep
+				break
+			}
+		}
+		if endpoint == nil {
+			t.Fatalf("Expected endpoint %q to exist", name)
+		}
+
+		if !reflect.DeepEqual(test.expected, endpoint.Metadata) {
+			t.Fatalf("want: %v; got: %v", test.expected, endpoint.Metadata)
+		}
+	}
+}
+
 func TestAddEndpoint_Concurrency(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
