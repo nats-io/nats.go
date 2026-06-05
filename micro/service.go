@@ -33,6 +33,10 @@ type (
 		// AddEndpoint registers endpoint with given name on a specific subject.
 		AddEndpoint(string, Handler, ...EndpointOpt) error
 
+		// AddEndpointWithOptions registers endpoint with given name and options on
+		// a specific subject.
+		AddEndpointWithOptions(string, Handler, EndpointOpts) error
+
 		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
 		// A group can be used to register endpoints with given prefix.
 		AddGroup(string, ...GroupOpt) Group
@@ -66,16 +70,16 @@ type (
 		AddEndpoint(string, Handler, ...EndpointOpt) error
 	}
 
-	EndpointOpt func(*endpointOpts) error
+	EndpointOpt func(*EndpointOpts) error
 	GroupOpt    func(*groupOpts)
 
-	endpointOpts struct {
-		subject    string
-		metadata   map[string]string
-		queueGroup string
-		qgDisabled bool
-		msgLimit   int
-		bytesLimit int
+	EndpointOpts struct {
+		Subject    string
+		Metadata   map[string]string
+		QueueGroup string
+		QGDisabled bool
+		MsgLimit   int
+		BytesLimit int
 	}
 
 	groupOpts struct {
@@ -401,18 +405,22 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 }
 
 func (s *service) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) error {
-	var options endpointOpts
+	var options EndpointOpts
 	for _, opt := range opts {
 		if err := opt(&options); err != nil {
 			return err
 		}
 	}
+	return s.AddEndpointWithOptions(name, handler, options)
+}
+
+func (s *service) AddEndpointWithOptions(name string, handler Handler, options EndpointOpts) error {
 	subject := name
-	if options.subject != "" {
-		subject = options.subject
+	if options.Subject != "" {
+		subject = options.Subject
 	}
-	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, s.Config.QueueGroup, options.qgDisabled, s.Config.QueueGroupDisabled)
-	return addEndpoint(s, name, subject, handler, options.metadata, queueGroup, noQueue, options.msgLimit, options.bytesLimit)
+	queueGroup, noQueue := resolveQueueGroup(options.QueueGroup, s.Config.QueueGroup, options.QGDisabled, s.Config.QueueGroupDisabled)
+	return addEndpoint(s, name, subject, handler, options.Metadata, queueGroup, noQueue, options.MsgLimit, options.BytesLimit)
 }
 
 func addEndpoint(s *service, name, subject string, handler Handler, metadata map[string]string, queueGroup string, noQueue bool, msgLimit, bytesLimit int) error {
@@ -439,9 +447,9 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 
 	var sub *nats.Subscription
 	var err error
-	var options = endpointOpts{
-		msgLimit:   msgLimit,
-		bytesLimit: bytesLimit,
+	var options = EndpointOpts{
+		MsgLimit:   msgLimit,
+		BytesLimit: bytesLimit,
 	}
 
 	if !noQueue {
@@ -465,8 +473,8 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	}
 
 	// Apply pending limits if configured
-	if options.msgLimit != 0 || options.bytesLimit != 0 {
-		if err := sub.SetPendingLimits(options.msgLimit, options.bytesLimit); err != nil {
+	if options.MsgLimit != 0 || options.BytesLimit != 0 {
+		if err := sub.SetPendingLimits(options.MsgLimit, options.BytesLimit); err != nil {
 			return err
 		}
 	}
@@ -843,23 +851,23 @@ func (e *NATSError) Is(target error) bool {
 }
 
 func (g *group) AddEndpoint(name string, handler Handler, opts ...EndpointOpt) error {
-	var options endpointOpts
+	var options EndpointOpts
 	for _, opt := range opts {
 		if err := opt(&options); err != nil {
 			return err
 		}
 	}
 	subject := name
-	if options.subject != "" {
-		subject = options.subject
+	if options.Subject != "" {
+		subject = options.Subject
 	}
 	endpointSubject := fmt.Sprintf("%s.%s", g.prefix, subject)
 	if g.prefix == "" {
 		endpointSubject = subject
 	}
-	queueGroup, noQueue := resolveQueueGroup(options.queueGroup, g.queueGroup, options.qgDisabled, g.queueGroupDisabled)
+	queueGroup, noQueue := resolveQueueGroup(options.QueueGroup, g.queueGroup, options.QGDisabled, g.queueGroupDisabled)
 
-	return addEndpoint(g.service, name, endpointSubject, handler, options.metadata, queueGroup, noQueue, options.msgLimit, options.bytesLimit)
+	return addEndpoint(g.service, name, endpointSubject, handler, options.Metadata, queueGroup, noQueue, options.MsgLimit, options.BytesLimit)
 }
 
 func resolveQueueGroup(customQG, parentQG string, disabled, parentDisabled bool) (string, bool) {
@@ -952,29 +960,29 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 }
 
 func WithEndpointSubject(subject string) EndpointOpt {
-	return func(e *endpointOpts) error {
-		e.subject = subject
+	return func(e *EndpointOpts) error {
+		e.Subject = subject
 		return nil
 	}
 }
 
 func WithEndpointMetadata(metadata map[string]string) EndpointOpt {
-	return func(e *endpointOpts) error {
-		e.metadata = metadata
+	return func(e *EndpointOpts) error {
+		e.Metadata = metadata
 		return nil
 	}
 }
 
 func WithEndpointQueueGroup(queueGroup string) EndpointOpt {
-	return func(e *endpointOpts) error {
-		e.queueGroup = queueGroup
+	return func(e *EndpointOpts) error {
+		e.QueueGroup = queueGroup
 		return nil
 	}
 }
 
 func WithEndpointQueueGroupDisabled() EndpointOpt {
-	return func(e *endpointOpts) error {
-		e.qgDisabled = true
+	return func(e *EndpointOpts) error {
+		e.QGDisabled = true
 		return nil
 	}
 }
@@ -984,12 +992,12 @@ func WithEndpointQueueGroupDisabled() EndpointOpt {
 // memory before the subscription is terminated with nats.ErrSlowConsumer.
 // Either limit can be set to -1 to indicate no limit.
 func WithEndpointPendingLimits(msgLimit, bytesLimit int) EndpointOpt {
-	return func(e *endpointOpts) error {
+	return func(e *EndpointOpts) error {
 		if msgLimit == 0 && bytesLimit == 0 {
 			return fmt.Errorf("%w: at least one pending limit must be non-zero", ErrConfigValidation)
 		}
-		e.msgLimit = msgLimit
-		e.bytesLimit = bytesLimit
+		e.MsgLimit = msgLimit
+		e.BytesLimit = bytesLimit
 		return nil
 	}
 }

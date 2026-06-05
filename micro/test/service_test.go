@@ -1021,6 +1021,135 @@ func TestContextHandler(t *testing.T) {
 	}
 }
 
+func TestAddEndpointWithOptions(t *testing.T) {
+	s := RunServerOnPort(-1)
+	defer s.Shutdown()
+
+	nc, err := nats.Connect(s.ClientURL())
+	if err != nil {
+		t.Fatalf("Expected to connect to server, got %v", err)
+	}
+	defer nc.Close()
+
+	handler := micro.HandlerFunc(func(r micro.Request) {
+		r.Respond([]byte("ok"))
+	})
+
+	tests := []struct {
+		name             string
+		endpointName     string
+		opts             micro.EndpointOpts
+		expectedSubject  string
+		expectedMetadata map[string]string
+		expectedQG       string
+		wantErr          bool
+	}{
+		{
+			name:            "defaults only",
+			endpointName:    "ep1",
+			opts:            micro.EndpointOpts{},
+			expectedSubject: "ep1",
+			expectedQG:      "q",
+		},
+		{
+			name:         "custom subject",
+			endpointName: "ep2",
+			opts: micro.EndpointOpts{
+				Subject: "custom.subject",
+			},
+			expectedSubject: "custom.subject",
+			expectedQG:      "q",
+		},
+		{
+			name:         "with metadata",
+			endpointName: "ep3",
+			opts: micro.EndpointOpts{
+				Metadata: map[string]string{"key": "value", "foo": "bar"},
+			},
+			expectedSubject:  "ep3",
+			expectedMetadata: map[string]string{"key": "value", "foo": "bar"},
+			expectedQG:       "q",
+		},
+		{
+			name:         "custom queue group",
+			endpointName: "ep4",
+			opts: micro.EndpointOpts{
+				QueueGroup: "custom-qg",
+			},
+			expectedSubject: "ep4",
+			expectedQG:      "custom-qg",
+		},
+		{
+			name:         "all options",
+			endpointName: "ep5",
+			opts: micro.EndpointOpts{
+				Subject:    "all.opts",
+				Metadata:   map[string]string{"version": "2"},
+				QueueGroup: "my-qg",
+			},
+			expectedSubject:  "all.opts",
+			expectedMetadata: map[string]string{"version": "2"},
+			expectedQG:       "my-qg",
+		},
+		{
+			name:         "invalid endpoint name",
+			endpointName: "bad name!",
+			opts:         micro.EndpointOpts{},
+			wantErr:      true,
+		},
+		{
+			name:         "invalid subject",
+			endpointName: "ep6",
+			opts: micro.EndpointOpts{
+				Subject: "bad subject!",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test_service",
+				Version: "0.0.1",
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer srv.Stop()
+
+			err = srv.AddEndpointWithOptions(test.endpointName, handler, test.opts)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error; got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			info := srv.Info()
+			if len(info.Endpoints) != 1 {
+				t.Fatalf("Expected 1 endpoint; got: %d", len(info.Endpoints))
+			}
+			ep := info.Endpoints[0]
+			if ep.Name != test.endpointName {
+				t.Fatalf("Expected endpoint name %q; got: %q", test.endpointName, ep.Name)
+			}
+			if ep.Subject != test.expectedSubject {
+				t.Fatalf("Expected subject %q; got: %q", test.expectedSubject, ep.Subject)
+			}
+			if ep.QueueGroup != test.expectedQG {
+				t.Fatalf("Expected queue group %q; got: %q", test.expectedQG, ep.QueueGroup)
+			}
+			if !reflect.DeepEqual(ep.Metadata, test.expectedMetadata) {
+				t.Fatalf("Expected metadata %v; got: %v", test.expectedMetadata, ep.Metadata)
+			}
+		})
+	}
+}
+
 func TestAddEndpoint_Concurrency(t *testing.T) {
 	s := RunServerOnPort(-1)
 	defer s.Shutdown()
