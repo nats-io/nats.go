@@ -1744,6 +1744,25 @@ func TestHeaderNewlineValue(t *testing.T) {
 	}
 }
 
+func TestHeaderNonHTTPFieldNameOmitted(t *testing.T) {
+	m := NewMsg("foo")
+	m.Header.Set("Valid-Header", "ok")
+	m.Header.Set("thing/with/slash", "dropped")
+
+	b, err := m.headerBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := string(b)
+
+	if !strings.Contains(result, "Valid-Header: ok") {
+		t.Fatalf("expected valid header in encoded output, got: %q", result)
+	}
+	if strings.Contains(result, "thing/with/slash") {
+		t.Fatalf("expected non-HTTP header name to be omitted, got: %q", result)
+	}
+}
+
 func TestLameDuckMode(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
