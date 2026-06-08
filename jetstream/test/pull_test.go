@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -1097,6 +1098,172 @@ func TestPullConsumerFetch_WithCluster(t *testing.T) {
 			msg := <-msgs.Messages()
 			if msg != nil {
 				t.Fatalf("Expected no messages; got: %s", string(msg.Data()))
+			}
+		})
+	})
+}
+
+func TestPullConsumerRecoversAfterConsumerLeaderStepDown(t *testing.T) {
+	const (
+		streamName   = "LEADER_CHANGE"
+		consumerName = "leader-change-consumer"
+		subject      = "LC.1"
+	)
+
+	stream := jetstream.StreamConfig{
+		Name:     streamName,
+		Replicas: 3,
+		Subjects: []string{"LC.*"},
+	}
+
+	publish := func(t *testing.T, js jetstream.JetStream, payload string) {
+		t.Helper()
+		if _, err := js.Publish(context.Background(), subject, []byte(payload)); err != nil {
+			t.Fatalf("Unexpected error during publish: %s", err)
+		}
+	}
+
+	stepDown := func(t *testing.T, nc *nats.Conn) {
+		t.Helper()
+		resp, err := nc.Request(
+			fmt.Sprintf(server.JSApiConsumerLeaderStepDownT, streamName, consumerName),
+			nil,
+			2*time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error during consumer leader stepdown: %v", err)
+		}
+		if bytes.Contains(resp.Data, []byte(`"error"`)) {
+			t.Fatalf("Unexpected consumer leader stepdown response: %s", string(resp.Data))
+		}
+	}
+
+	t.Run("messages next", func(t *testing.T) {
+		withJSClusterAndStream(t, streamName, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
+			nc, err := nats.Connect(srvs[0].ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			js, err := jetstream.New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			s, err := js.Stream(ctx, streamName)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				Name:      consumerName,
+				AckPolicy: jetstream.AckExplicitPolicy,
+				Replicas:  3,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			it, err := c.Messages(
+				jetstream.PullMaxMessages(1),
+				jetstream.PullHeartbeat(500*time.Millisecond),
+				jetstream.PullExpiry(1*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer it.Stop()
+
+			publish(t, js, "m1")
+			msg, err := it.Next(jetstream.NextMaxWait(5 * time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if err := msg.Ack(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			stepDown(t, nc)
+			publish(t, js, "m2")
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				msg, err = it.Next(jetstream.NextMaxWait(1 * time.Second))
+				if err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("Unexpected error after consumer leader stepdown: %v", err)
+				}
+				if !errors.Is(err, jetstream.ErrNoHeartbeat) && !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("Unexpected error after consumer leader stepdown: %v", err)
+				}
+			}
+			if got := string(msg.Data()); got != "m2" {
+				t.Fatalf("Invalid msg; expected: m2; got: %s", got)
+			}
+			if err := msg.Ack(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	})
+
+	t.Run("consume callback", func(t *testing.T) {
+		withJSClusterAndStream(t, streamName, 3, stream, func(t *testing.T, subject string, srvs ...*jsServer) {
+			nc, err := nats.Connect(srvs[0].ClientURL())
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			js, err := jetstream.New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			s, err := js.Stream(ctx, streamName)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				Name:      consumerName,
+				AckPolicy: jetstream.AckExplicitPolicy,
+				Replicas:  3,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			received := make(chan string, 2)
+			l, err := c.Consume(func(msg jetstream.Msg) {
+				received <- string(msg.Data())
+				if err := msg.Ack(); err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}, jetstream.PullMaxMessages(1), jetstream.PullHeartbeat(500*time.Millisecond), jetstream.PullExpiry(1*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer l.Stop()
+
+			publish(t, js, "m1")
+			select {
+			case got := <-received:
+				if got != "m1" {
+					t.Fatalf("Invalid msg; expected: m1; got: %s", got)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Timed out waiting for first message")
+			}
+
+			stepDown(t, nc)
+			publish(t, js, "m2")
+			select {
+			case got := <-received:
+				if got != "m2" {
+					t.Fatalf("Invalid msg; expected: m2; got: %s", got)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Timed out waiting for message after consumer leader stepdown")
 			}
 		})
 	})
