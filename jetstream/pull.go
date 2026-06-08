@@ -449,6 +449,7 @@ func (s *pullSubscription) requestNextPullLocked() {
 		pinID = s.consumer.getPinID()
 	}
 
+	s.resetPendingMsgs()
 	select {
 	case s.fetchNext <- &pullRequest{
 		Expires:       s.consumeOpts.Expires,
@@ -461,7 +462,6 @@ func (s *pullSubscription) requestNextPullLocked() {
 		Group:         s.consumeOpts.Group,
 		PinID:         pinID,
 	}:
-		s.resetPendingMsgs()
 	default:
 	}
 }
@@ -749,6 +749,10 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) (error, 
 		if errors.Is(msgErr, ErrConsumerLeadershipChanged) {
 			s.pending.msgCount = 0
 			s.pending.byteCount = 0
+			// Clear the in-flight marker before queuing the replacement pull. The
+			// active pull goroutine may still store 0 after its publish returns, but
+			// a duplicate pull during that short window is benign and preferable to
+			// stalling recovery after a leadership change.
 			s.fetchInProgress.Store(0)
 			s.requestNextPullLocked()
 		}

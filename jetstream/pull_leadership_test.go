@@ -53,6 +53,30 @@ func TestPullSubscriptionLeadershipChangeRequestsNextPull(t *testing.T) {
 	}
 }
 
+func TestPullSubscriptionRequestNextPullResetsPendingWhenRequestAlreadyQueued(t *testing.T) {
+	consumeOpts, err := parseConsumeOpts(false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	sub := &pullSubscription{
+		fetchNext:   make(chan *pullRequest, 1),
+		consumeOpts: consumeOpts,
+	}
+	sub.fetchNext <- &pullRequest{}
+
+	sub.Lock()
+	sub.requestNextPullLocked()
+	sub.Unlock()
+
+	if sub.pending.msgCount != consumeOpts.MaxMessages {
+		t.Fatalf("Expected pending message count %d, got %d", consumeOpts.MaxMessages, sub.pending.msgCount)
+	}
+	if len(sub.fetchNext) != 1 {
+		t.Fatalf("Expected queued pull request to be preserved, got queue length %d", len(sub.fetchNext))
+	}
+}
+
 func TestCheckMsgLeadershipChange(t *testing.T) {
 	msg := &nats.Msg{
 		Header: nats.Header{
