@@ -43,10 +43,10 @@ type Instance struct {
 	c *Client
 }
 
-// CreateOption customises a Create* call.
+// CreateOption customizes a Create* call.
 type CreateOption interface{ applyCreate(*createOptions) }
 
-// UpdateOption customises an UpdateServer call.
+// UpdateOption customizes an UpdateServer call.
 type UpdateOption interface{ applyUpdate(*updateOptions) }
 
 type createOptions struct {
@@ -61,7 +61,7 @@ type updateOptions struct {
 	template string
 }
 
-// snippetOpt is the underlying type of every helper that customises the
+// snippetOpt is the underlying type of every helper that customizes the
 // rendered config. It satisfies both CreateOption and UpdateOption so the
 // same With* helper can be passed to either CreateServer or UpdateServer.
 type snippetOpt struct {
@@ -92,7 +92,7 @@ func (s snippetOpt) applyUpdate(o *updateOptions) {
 	o.snippets[s.key] = s.body
 }
 
-// createOpt is the underlying type for helpers that only customise Create*
+// createOpt is the underlying type for helpers that only customize Create*
 // calls.
 type createOpt func(*createOptions)
 
@@ -166,7 +166,7 @@ func WithJetStream(body string) snippetOpt { return snippetOpt{key: "jetstream",
 
 // WithTopLevel adds free-form top-level lines to the rendered config (limits,
 // debug, max_payload, …). Rendered above server_name in the merged config so
-// settings that must appear before the rest of the config are honoured.
+// settings that must appear before the rest of the config are honored.
 func WithTopLevel(body string) snippetOpt { return snippetOpt{key: "top", body: body} }
 
 // WithTemplate replaces the built-in main config template with the caller's
@@ -221,7 +221,7 @@ func New(t testing.TB, server string, opts ...nats.Option) *Client {
 }
 
 // WithJetStreamServer creates a server running JetStream and connects to it.
-// Pass CreateOptions to customise the rendered config (e.g. WithAccounts) and
+// Pass CreateOptions to customize the rendered config (e.g. WithAccounts) and
 // the post-create nats.Connect (e.g. WithConnectOptions(nats.UserInfo(...))).
 func (c *Client) WithJetStreamServer(t *testing.T, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -230,7 +230,7 @@ func (c *Client) WithJetStreamServer(t *testing.T, h func(*testing.T, *nats.Conn
 }
 
 // WithServer creates a non JetStream server and connects to it. Pass
-// CreateOptions to customise the rendered config and the post-create
+// CreateOptions to customize the rendered config and the post-create
 // nats.Connect.
 func (c *Client) WithServer(t *testing.T, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -256,7 +256,7 @@ func (c *Client) withServer(t *testing.T, js bool, h func(*testing.T, *nats.Conn
 }
 
 // WithJetStreamCluster creates a cluster with the given server count running
-// JetStream and connects to a random server. Pass CreateOptions to customise
+// JetStream and connects to a random server. Pass CreateOptions to customize
 // the rendered config and the post-create nats.Connect.
 func (c *Client) WithJetStreamCluster(t *testing.T, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -265,7 +265,7 @@ func (c *Client) WithJetStreamCluster(t *testing.T, servers int, h func(*testing
 }
 
 // WithCluster creates a non JetStream cluster with the given server count and
-// connects to a random server. Pass CreateOptions to customise the rendered
+// connects to a random server. Pass CreateOptions to customize the rendered
 // config and the post-create nats.Connect.
 func (c *Client) WithCluster(t *testing.T, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -302,7 +302,7 @@ func (c *Client) withCluster(t *testing.T, servers int, js bool, h func(*testing
 func (c *Client) WaitForJetStream(t testing.TB, nc *nats.Conn) {
 	t.Helper()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		_, err := nc.Request("$JS.API.INFO", nil, time.Second)
 		if err == nil {
 			return
@@ -318,7 +318,7 @@ func (c *Client) WaitForJetStream(t testing.TB, nc *nats.Conn) {
 
 // WithJetStreamSuperCluster creates a super-cluster with the given server and
 // cluster counts running JetStream and connects to a random server. Pass
-// CreateOptions to customise the rendered config and the post-create
+// CreateOptions to customize the rendered config and the post-create
 // nats.Connect.
 func (c *Client) WithJetStreamSuperCluster(t *testing.T, clusters int, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -328,7 +328,7 @@ func (c *Client) WithJetStreamSuperCluster(t *testing.T, clusters int, servers i
 
 // WithSuperCluster creates a non JetStream super-cluster with the given server
 // and cluster counts and connects to a random server. Pass CreateOptions to
-// customise the rendered config and the post-create nats.Connect.
+// customize the rendered config and the post-create nats.Connect.
 func (c *Client) WithSuperCluster(t *testing.T, clusters int, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
 
