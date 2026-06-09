@@ -763,6 +763,9 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 		}
 	}
 
+	// Set ModTime before marshaling so it is stored in the metadata and readable by other clients.
+	info.ModTime = time.Now().UTC()
+
 	// Prepare the meta message
 	metaSubj := fmt.Sprintf(objMetaPreTmpl, obs.name, encodeName(meta.Name))
 	mm := nats.NewMsg(metaSubj)
@@ -796,8 +799,6 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 	case <-ctx.Done():
 		return nil, nats.ErrTimeout
 	}
-
-	info.ModTime = time.Now().UTC() // This time is not actually the correct time
 
 	// Delete any original chunks.
 	if einfo != nil && !einfo.Deleted {
@@ -977,8 +978,8 @@ func (obs *obs) Delete(ctx context.Context, name string) error {
 }
 
 func publishMeta(ctx context.Context, info *ObjectInfo, js *jetStream) error {
-	// marshal the object into json, don't store an actual time
-	info.ModTime = time.Time{}
+	// Set ModTime before marshaling so it is stored in the metadata and readable by other clients.
+	info.ModTime = time.Now().UTC()
 	data, err := json.Marshal(info)
 	if err != nil {
 		return err
@@ -992,8 +993,6 @@ func publishMeta(ctx context.Context, info *ObjectInfo, js *jetStream) error {
 		return err
 	}
 
-	// set the ModTime in case it's returned to the user, even though it's not the correct time.
-	info.ModTime = time.Now().UTC()
 	return nil
 }
 
