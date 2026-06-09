@@ -11,7 +11,7 @@
 #   export TESTER_NATS_URL=nats://localhost:4222
 #   go test -modfile=go_test.mod -tags=testservice ./...
 
-TESTER_IMAGE   ?= synadia/server-tester:2.14.0
+TESTER_IMAGE   ?= synadia/server-tester:dev
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine

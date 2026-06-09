@@ -3889,7 +3889,46 @@ func TestJetStreamExpiredPullRequests(t *testing.T) {
 }
 
 func TestJetStreamSyncSubscribeWithMaxAckPending(t *testing.T) {
-	t.Skip("DIVERGENCE: original sets natsserver opts.JetStreamLimits.MaxAckPending = 123, which renders inside the server's `jetstream { max_ack_pending: 123 }` block. testservice's default template already renders a `jetstream:` block; adding another via WithTopLevel produces two coexisting blocks and the limit is lost. Same blocker as TestJetStreamDomain / TestJetStreamDomainInPubAck. Recommended resolution: upstream a `WithJetStreamLimits(...)` option (or general `WithJetStream(body string)` snippet) in testservice that injects limits into the rendered jetstream block.")
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "MAX_ACK_PENDING", Subjects: []string{"foo"}}); err != nil {
+			t.Fatalf("Error adding stream: %v", err)
+		}
+
+		// By default, the sync subscription will be created with a MaxAckPending equal
+		// to the internal sync queue len, which is 64K. So that should error out
+		// and make sure we get the actual limit
+
+		checkSub := func(pull bool) {
+			var sub *nats.Subscription
+			var err error
+			if pull {
+				_, err = js.PullSubscribe("foo", "bar")
+			} else {
+				_, err = js.SubscribeSync("foo")
+			}
+			if err == nil || !strings.Contains(err.Error(), "system limit of 123") {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// But it should work if we use MaxAckPending() with lower value
+			if pull {
+				sub, err = js.PullSubscribe("foo", "bar", nats.MaxAckPending(64))
+			} else {
+				sub, err = js.SubscribeSync("foo", nats.MaxAckPending(64))
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub.Unsubscribe()
+		}
+		checkSub(false)
+		checkSub(true)
+	}, testservice.WithJetStream(`limits { max_ack_pending: 123 }`))
 }
 
 func TestJetStreamClusterPlacement(t *testing.T) {
@@ -4562,7 +4601,62 @@ func TestAccountInfo(t *testing.T) {
 		},
 		{
 			name: "server with limits set",
-			skip: "DIVERGENCE: original sets root `jetstream: {domain: \"test-domain\"}`; testservice's default template already renders a `jetstream:` block, so an additional WithTopLevel('jetstream: {domain: ...}') produces two coexisting blocks and the domain is lost (see kv_testservice_test.go DIVERGENCE around TestKeyValueLeafNode). Recommended resolution: upstream a `WithJetStreamDomain(string)` option in testservice that injects `domain:` into the rendered jetstream block.",
+			setup: func(t *testing.T) *nats.Conn {
+				c := newTester(t)
+				accounts := `accounts: {
+  A {
+    users: [{ user: "foo" }]
+    jetstream: {
+      max_mem: 64MB,
+      max_file: 32MB,
+      max_streams: 10,
+      max_consumers: 20,
+      max_ack_pending: 100,
+      memory_max_stream_bytes: 2048,
+      store_max_stream_bytes: 4096,
+      max_stream_bytes: true
+    }
+  }
+}`
+				inst := c.CreateServer(t, true,
+					testservice.WithJetStream(`domain: "test-domain"`),
+					testservice.WithAccounts(accounts),
+					testservice.WithAuthorization("no_auth_user: foo"),
+					testservice.WithSystemAccount(noSystemAccountBody()),
+				)
+				t.Cleanup(func() { inst.Destroy(t) })
+				nc := dialInstance(t, inst, nats.UserInfo("foo", ""))
+				// Note: do NOT call WaitForJetStream here — it hits $JS.API.INFO
+				// and would inflate the account's API.Total counter from 0 to 1,
+				// breaking the equality assertion against the expected zero baseline.
+				return nc
+			},
+			expected: &nats.AccountInfo{
+				Tier: nats.Tier{
+					Memory:         0,
+					Store:          0,
+					Streams:        0,
+					Consumers:      0,
+					ReservedMemory: 0,
+					ReservedStore:  0,
+					Limits: nats.AccountLimits{
+						MaxMemory:            67108864,
+						MaxStore:             33554432,
+						MaxStreams:           10,
+						MaxConsumers:         20,
+						MaxAckPending:        100,
+						MemoryMaxStreamBytes: 2048,
+						StoreMaxStreamBytes:  4096,
+						MaxBytesRequired:     true,
+					},
+				},
+				Domain: "test-domain",
+				API: nats.APIStats{
+					Total:    0,
+					Errors:   0,
+					Inflight: 0,
+				},
+			},
 		},
 		{
 			name: "jetstream not enabled",
@@ -9397,7 +9491,118 @@ func TestJetStreamBindConsumer(t *testing.T) {
 }
 
 func TestJetStreamDomain(t *testing.T) {
-	t.Skip("DIVERGENCE: original sets root `jetstream: { domain: ABC }`; testservice's default template already renders a `jetstream:` block, so an additional WithTopLevel('jetstream: { domain: ABC }') produces two coexisting blocks and the domain is lost (same blocker noted on TestKeyValueMirrorCrossDomains and TestAccountInfo 'server with limits set'). Recommended resolution: upstream a `WithJetStreamDomain(string)` option in testservice that injects `domain:` into the rendered jetstream block. When unskipping, also incorporate main commit f0a83119's additions: an AddConsumer(\"foo\", {Durable: \"c1\"}) call after the first Publish, plus assertions that ConsumerInfo/AddConsumer/StreamInfo/DeleteConsumer honor a per-request nats.Domain(\"ABC\") option.")
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, _ *testservice.Instance) {
+		// JS with custom domain
+		jsd, err := nc.JetStream(nats.Domain("ABC"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		info, err := jsd.AccountInfo()
+		if err != nil {
+			t.Error(err)
+		}
+		got := info.Domain
+		expected := "ABC"
+		if got != expected {
+			t.Errorf("Got %v, expected: %v", got, expected)
+		}
+
+		if _, err = jsd.AddStream(&nats.StreamConfig{Name: "foo"}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		jsd.Publish("foo", []byte("first"))
+
+		if _, err = jsd.AddConsumer("foo", &nats.ConsumerConfig{Durable: "c1"}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		sub, err := jsd.SubscribeSync("foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = string(msg.Data)
+		expected = "first"
+		if got != expected {
+			t.Errorf("Got %v, expected: %v", got, expected)
+		}
+
+		// JS without explicit bound domain should also work.
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		info, err = js.AccountInfo()
+		if err != nil {
+			t.Error(err)
+		}
+		got = info.Domain
+		expected = "ABC"
+		if got != expected {
+			t.Errorf("Got %v, expected: %v", got, expected)
+		}
+
+		js.Publish("foo", []byte("second"))
+
+		sub2, err := js.SubscribeSync("foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err = sub2.NextMsg(time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = string(msg.Data)
+		expected = "first"
+		if got != expected {
+			t.Errorf("Got %v, expected: %v", got, expected)
+		}
+
+		msg, err = sub2.NextMsg(time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = string(msg.Data)
+		expected = "second"
+		if got != expected {
+			t.Errorf("Got %v, expected: %v", got, expected)
+		}
+
+		// Per-request Domain option should be honored for consumer management APIs.
+		ci, err := js.ConsumerInfo("foo", "c1", nats.Domain("ABC"))
+		if err != nil {
+			t.Fatalf("ConsumerInfo with Domain opt failed: %v", err)
+		}
+		if ci == nil || ci.Name != "c1" {
+			t.Fatalf("Unexpected consumer info: %+v", ci)
+		}
+		if _, err = js.AddConsumer("foo", &nats.ConsumerConfig{Durable: "c2"}, nats.Domain("ABC")); err != nil {
+			t.Fatalf("AddConsumer with Domain opt failed: %v", err)
+		}
+		si, err := js.StreamInfo("foo", nats.Domain("ABC"))
+		if err != nil {
+			t.Fatalf("StreamInfo with Domain opt failed: %v", err)
+		}
+		if si == nil || si.Config.Name != "foo" {
+			t.Fatalf("Unexpected stream info: %+v", si)
+		}
+		if err = js.DeleteConsumer("foo", "c2", nats.Domain("ABC")); err != nil {
+			t.Fatalf("DeleteConsumer with Domain opt failed: %v", err)
+		}
+
+		// Using different domain not configured is an error.
+		jsb, err := nc.JetStream(nats.Domain("XYZ"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = jsb.AccountInfo()
+		if err != nats.ErrJetStreamNotEnabled {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}, testservice.WithJetStream(`domain: ABC`))
 }
 
 func TestJetStreamMaxMsgsPerSubject(t *testing.T) {
@@ -9524,7 +9729,29 @@ func TestJetStreamDrainFailsToDeleteConsumer(t *testing.T) {
 }
 
 func TestJetStreamDomainInPubAck(t *testing.T) {
-	t.Skip("DIVERGENCE: original sets root `jetstream: { domain: HUB }` so the PubAck reports Domain=\"HUB\". testservice's default template already renders a `jetstream:` block; adding another via WithTopLevel produces two blocks and the configured domain is lost (PubAck Domain is empty). Same blocker as TestJetStreamDomain / TestKeyValueMirrorCrossDomains. Recommended resolution: upstream a `WithJetStreamDomain(string)` option in testservice.")
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		cfg := &nats.StreamConfig{
+			Name:     "TEST",
+			Storage:  nats.MemoryStorage,
+			Subjects: []string{"foo"},
+		}
+		if _, err := js.AddStream(cfg); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		pa, err := js.Publish("foo", []byte("msg"))
+		if err != nil {
+			t.Fatalf("Error on publish: %v", err)
+		}
+		if pa.Domain != "HUB" {
+			t.Fatalf("Expected PubAck to have domain of %q, got %q", "HUB", pa.Domain)
+		}
+	}, testservice.WithJetStream(`domain: "HUB"`))
 }
 
 func TestJetStreamStreamAndConsumerDescription(t *testing.T) {

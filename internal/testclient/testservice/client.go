@@ -30,7 +30,7 @@ type Client struct {
 	nc      *nats.Conn
 }
 
-// Instance is a testservice-side handle to a single managed instance (server,
+// Instance is a client-side handle to a single managed instance (server,
 // cluster, or super-cluster) hosted by the management service. Stop/Start
 // /Status/Destroy are scoped to this instance, which makes parallel tests
 // safe.
@@ -43,8 +43,11 @@ type Instance struct {
 	c *Client
 }
 
-// CreateOption customizes a Create* call.
-type CreateOption func(*createOptions)
+// CreateOption customises a Create* call.
+type CreateOption interface{ applyCreate(*createOptions) }
+
+// UpdateOption customises an UpdateServer call.
+type UpdateOption interface{ applyUpdate(*updateOptions) }
 
 type createOptions struct {
 	description    string
@@ -53,10 +56,52 @@ type createOptions struct {
 	connectOptions []nats.Option
 }
 
+type updateOptions struct {
+	snippets map[string]string
+	template string
+}
+
+// snippetOpt is the underlying type of every helper that customises the
+// rendered config. It satisfies both CreateOption and UpdateOption so the
+// same With* helper can be passed to either CreateServer or UpdateServer.
+type snippetOpt struct {
+	key    string // snippet key when isTmpl is false; ignored when isTmpl is true
+	body   string
+	isTmpl bool // if true, body replaces the main template
+}
+
+func (s snippetOpt) applyCreate(o *createOptions) {
+	if s.isTmpl {
+		o.template = s.body
+		return
+	}
+	if o.snippets == nil {
+		o.snippets = map[string]string{}
+	}
+	o.snippets[s.key] = s.body
+}
+
+func (s snippetOpt) applyUpdate(o *updateOptions) {
+	if s.isTmpl {
+		o.template = s.body
+		return
+	}
+	if o.snippets == nil {
+		o.snippets = map[string]string{}
+	}
+	o.snippets[s.key] = s.body
+}
+
+// createOpt is the underlying type for helpers that only customise Create*
+// calls.
+type createOpt func(*createOptions)
+
+func (f createOpt) applyCreate(o *createOptions) { f(o) }
+
 // WithDescription attaches a human-readable label to a managed instance. It
 // round-trips on the wire and surfaces in tester.list / tester.status — useful
 // for spotting which test owns which instance in service logs.
-func WithDescription(d string) CreateOption {
+func WithDescription(d string) createOpt {
 	return func(o *createOptions) { o.description = d }
 }
 
@@ -64,80 +109,65 @@ func WithDescription(d string) CreateOption {
 // call that the convenience helpers (WithServer, WithCluster,
 // WithSuperCluster, and their JetStream variants) make against the managed
 // instance. Use it when the instance configuration requires creds, TLS, or
-// any other testservice-side option to connect — e.g. paired with WithAccounts +
+// any other client-side option to connect — e.g. paired with WithAccounts +
 // WithAuthorization to authenticate as a custom user. Has no effect when
 // you call CreateServer / CreateCluster / CreateSuperCluster directly and
 // dial the returned servers yourself.
-func WithConnectOptions(opts ...nats.Option) CreateOption {
+func WithConnectOptions(opts ...nats.Option) createOpt {
 	return func(o *createOptions) { o.connectOptions = append(o.connectOptions, opts...) }
-}
-
-// setSnippet stores a snippet body under key, lazy-initializing the map. All
-// typed With* helpers funnel through here so callers can compose them in any
-// order without nil-map panics.
-func setSnippet(o *createOptions, key, body string) {
-	if o.snippets == nil {
-		o.snippets = map[string]string{}
-	}
-	o.snippets[key] = body
 }
 
 // WithAccounts replaces the built-in USERS1..USERS5 / $SYS accounts block
 // with the caller's accounts configuration. Keep a $SYS account if you don't
 // override system_account, and keep the user named by no_auth_user (default
 // user1) — or override authorization too with WithAuthorization.
-func WithAccounts(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "accounts", body) }
-}
+func WithAccounts(body string) snippetOpt { return snippetOpt{key: "accounts", body: body} }
 
 // WithSystemAccount replaces the built-in `system_account: "$SYS"` line with
 // the caller's directive. Pair with WithAccounts when the new accounts block
 // uses a different system-account name.
-func WithSystemAccount(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "system_account", body) }
+func WithSystemAccount(body string) snippetOpt {
+	return snippetOpt{key: "system_account", body: body}
 }
 
 // WithAuthorization replaces the built-in `no_auth_user: user1` line with the
 // caller's authorization block.
-func WithAuthorization(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "authorization", body) }
+func WithAuthorization(body string) snippetOpt {
+	return snippetOpt{key: "authorization", body: body}
 }
 
-// WithTLS adds a top-level TLS block (testservice TLS).
-func WithTLS(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "tls", body) }
-}
+// WithTLS adds a top-level TLS block (client TLS).
+func WithTLS(body string) snippetOpt { return snippetOpt{key: "tls", body: body} }
 
 // WithWebSocket adds a top-level websocket block. The service automatically
 // reserves a TCP port named "websocket" on every server in the instance and
 // exposes it as .Ports.websocket in the template env, so the caller's body
 // typically renders `port: {{ .Ports.websocket }}`. The reserved port surfaces
 // on ManagedServer.Ports["websocket"] for tests to dial via ws://.
-func WithWebSocket(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "websocket", body) }
-}
+func WithWebSocket(body string) snippetOpt { return snippetOpt{key: "websocket", body: body} }
 
 // WithMQTT adds a top-level mqtt block. The service automatically reserves a
 // TCP port named "mqtt" and exposes it as .Ports.mqtt in the template env.
 // The reserved port surfaces on ManagedServer.Ports["mqtt"].
-func WithMQTT(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "mqtt", body) }
-}
+func WithMQTT(body string) snippetOpt { return snippetOpt{key: "mqtt", body: body} }
 
 // WithLeafNode adds a top-level leafnode block. The service automatically
 // reserves a TCP port named "leafnode" and exposes it as .Ports.leafnode in
 // the template env. The reserved port surfaces on
 // ManagedServer.Ports["leafnode"].
-func WithLeafNode(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "leafnode", body) }
-}
+func WithLeafNode(body string) snippetOpt { return snippetOpt{key: "leafnode", body: body} }
+
+// WithJetStream supplies extra keys for the server's jetstream { } block, such
+// as domain or JetStream limits. The body is merged inside the block the
+// service renders, so the service keeps owning `enabled` and `store_dir` (the
+// store dir is available as .StoreDir if you need to reference it) — the body
+// carries only the extras. Requires a JetStream-enabled instance.
+func WithJetStream(body string) snippetOpt { return snippetOpt{key: "jetstream", body: body} }
 
 // WithTopLevel adds free-form top-level lines to the rendered config (limits,
 // debug, max_payload, …). Rendered above server_name in the merged config so
-// settings that must appear before the rest of the config are honored.
-func WithTopLevel(body string) CreateOption {
-	return func(o *createOptions) { setSnippet(o, "top", body) }
-}
+// settings that must appear before the rest of the config are honoured.
+func WithTopLevel(body string) snippetOpt { return snippetOpt{key: "top", body: body} }
 
 // WithTemplate replaces the built-in main config template with the caller's
 // body. Rendered through text/template against the same env exposed to
@@ -150,16 +180,22 @@ func WithTopLevel(body string) CreateOption {
 // Composes with the typed helpers: snippet files are still rendered to disk
 // and their paths exposed via .Snippets.<name>, so the custom template can
 // include them.
-func WithTemplate(body string) CreateOption {
-	return func(o *createOptions) { o.template = body }
-}
+func WithTemplate(body string) snippetOpt { return snippetOpt{body: body, isTmpl: true} }
 
 func resolveCreateOptions(t testing.TB, opts []CreateOption) createOptions {
 	co := createOptions{description: t.Name()}
 	for _, o := range opts {
-		o(&co)
+		o.applyCreate(&co)
 	}
 	return co
+}
+
+func resolveUpdateOptions(opts []UpdateOption) updateOptions {
+	uo := updateOptions{}
+	for _, o := range opts {
+		o.applyUpdate(&uo)
+	}
+	return uo
 }
 
 // New connects to the management service of the test cluster manager
@@ -168,25 +204,24 @@ func New(t testing.TB, server string, opts ...nats.Option) *Client {
 
 	u, err := url.Parse(server)
 	if err != nil {
-		t.Fatal("could not parse server URL: %w", err)
+		t.Fatalf("could not parse server URL: %v", err)
 	}
 
 	nopts := []nats.Option{
 		nats.Timeout(10 * time.Second),
 		nats.MaxReconnects(-1),
-		nats.IgnoreAuthErrorAbort(),
 	}
 
 	nc, err := nats.Connect(server, append(nopts, opts...)...)
 	if err != nil {
-		t.Fatal("failed to connect to NATS:", err)
+		t.Fatalf("failed to connect to NATS: %v", err)
 	}
 
 	return &Client{nc: nc, address: u.Hostname()}
 }
 
 // WithJetStreamServer creates a server running JetStream and connects to it.
-// Pass CreateOptions to customize the rendered config (e.g. WithAccounts) and
+// Pass CreateOptions to customise the rendered config (e.g. WithAccounts) and
 // the post-create nats.Connect (e.g. WithConnectOptions(nats.UserInfo(...))).
 func (c *Client) WithJetStreamServer(t *testing.T, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -195,7 +230,7 @@ func (c *Client) WithJetStreamServer(t *testing.T, h func(*testing.T, *nats.Conn
 }
 
 // WithServer creates a non JetStream server and connects to it. Pass
-// CreateOptions to customize the rendered config and the post-create
+// CreateOptions to customise the rendered config and the post-create
 // nats.Connect.
 func (c *Client) WithServer(t *testing.T, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -213,7 +248,7 @@ func (c *Client) withServer(t *testing.T, js bool, h func(*testing.T, *nats.Conn
 	connectOpts := append([]nats.Option{nats.MaxReconnects(-1)}, co.connectOptions...)
 	nc, err := nats.Connect(inst.Servers[0].URL, connectOpts...)
 	if err != nil {
-		t.Fatalf("failed to connect to NATS at %v: %v", inst.Servers[0].URL, err)
+		t.Fatal("failed to connect to NATS:", err)
 	}
 	defer nc.Close()
 
@@ -221,7 +256,7 @@ func (c *Client) withServer(t *testing.T, js bool, h func(*testing.T, *nats.Conn
 }
 
 // WithJetStreamCluster creates a cluster with the given server count running
-// JetStream and connects to a random server. Pass CreateOptions to customize
+// JetStream and connects to a random server. Pass CreateOptions to customise
 // the rendered config and the post-create nats.Connect.
 func (c *Client) WithJetStreamCluster(t *testing.T, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -230,7 +265,7 @@ func (c *Client) WithJetStreamCluster(t *testing.T, servers int, h func(*testing
 }
 
 // WithCluster creates a non JetStream cluster with the given server count and
-// connects to a random server. Pass CreateOptions to customize the rendered
+// connects to a random server. Pass CreateOptions to customise the rendered
 // config and the post-create nats.Connect.
 func (c *Client) WithCluster(t *testing.T, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -267,21 +302,23 @@ func (c *Client) withCluster(t *testing.T, servers int, js bool, h func(*testing
 func (c *Client) WaitForJetStream(t testing.TB, nc *nats.Conn) {
 	t.Helper()
 
-	for range 40 {
+	for i := 0; i < 10; i++ {
 		_, err := nc.Request("$JS.API.INFO", nil, time.Second)
 		if err == nil {
 			return
 		}
 
-		time.Sleep(200 * time.Millisecond)
-	}
+		time.Sleep(500 * time.Millisecond)
 
-	t.Fatalf("jetstream did not become ready")
+		if i == 9 {
+			t.Fatalf("jetstream did not become ready")
+		}
+	}
 }
 
 // WithJetStreamSuperCluster creates a super-cluster with the given server and
 // cluster counts running JetStream and connects to a random server. Pass
-// CreateOptions to customize the rendered config and the post-create
+// CreateOptions to customise the rendered config and the post-create
 // nats.Connect.
 func (c *Client) WithJetStreamSuperCluster(t *testing.T, clusters int, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
@@ -291,7 +328,7 @@ func (c *Client) WithJetStreamSuperCluster(t *testing.T, clusters int, servers i
 
 // WithSuperCluster creates a non JetStream super-cluster with the given server
 // and cluster counts and connects to a random server. Pass CreateOptions to
-// customize the rendered config and the post-create nats.Connect.
+// customise the rendered config and the post-create nats.Connect.
 func (c *Client) WithSuperCluster(t *testing.T, clusters int, servers int, h func(*testing.T, *nats.Conn, *Instance), opts ...CreateOption) {
 	t.Helper()
 
@@ -383,7 +420,7 @@ func (c *Client) CreateServer(t testing.TB, js bool, opts ...CreateOption) *Inst
 func (c *Client) doCreate(t testing.TB, subject string, jreq []byte) *Instance {
 	t.Helper()
 
-	msg, err := c.nc.Request(subject, jreq, 60*time.Second)
+	msg, err := c.nc.Request(subject, jreq, 30*time.Second)
 	if err != nil {
 		t.Fatalf("could not send create request to %s: %v", subject, err)
 	}
@@ -493,7 +530,7 @@ func (i *Instance) Destroy(t testing.TB) *api.DestroyResponse {
 		t.Fatalf("could not marshal DestroyRequest: %v", err)
 	}
 
-	msg, err := i.c.nc.Request("tester.destroy", jreq, 60*time.Second)
+	msg, err := i.c.nc.Request("tester.destroy", jreq, 30*time.Second)
 	if err != nil {
 		t.Fatalf("could not send DestroyRequest: %v", err)
 	}
@@ -566,6 +603,81 @@ func (i *Instance) StartServer(t testing.TB, server *api.ManagedServer) *api.Sta
 	err = json.Unmarshal(msg.Data, &resp)
 	if err != nil {
 		t.Fatalf("could not unmarshal StartServerResponse: %v: %v", string(msg.Data), err)
+	}
+
+	return &resp
+}
+
+// UpdateServer re-renders the server's config from the supplied snippets /
+// template (full-replace — the payload is the new config) and writes it to
+// disk. It does not reload the config: call ReloadServer or restart the
+// server to apply changes. Works whether the server is running or stopped.
+//
+// The set of port-bearing snippets present at create time (websocket, mqtt,
+// leafnode) is fixed for the server's lifetime; an update that adds or drops
+// one is rejected.
+func (i *Instance) UpdateServer(t testing.TB, server *api.ManagedServer, opts ...UpdateOption) *api.UpdateServerResponse {
+	t.Helper()
+
+	if server == nil || server.Name == "" {
+		t.Fatal("server is required")
+	}
+
+	uo := resolveUpdateOptions(opts)
+
+	req, err := json.Marshal(api.UpdateServerRequest{
+		Name:     server.Name,
+		Snippets: uo.snippets,
+		Template: uo.template,
+	})
+	if err != nil {
+		t.Fatalf("could not marshal UpdateServerRequest: %v", err)
+	}
+
+	msg, err := i.c.nc.Request("tester.update.server", req, 30*time.Second)
+	if err != nil {
+		t.Fatalf("could not send UpdateServerRequest: %v", err)
+	}
+
+	if e := msg.Header.Get("Nats-Service-Error"); e != "" {
+		t.Fatalf("Request failed: %v", e)
+	}
+
+	resp := api.UpdateServerResponse{}
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		t.Fatalf("could not unmarshal UpdateServerResponse: %v: %v", string(msg.Data), err)
+	}
+
+	return &resp
+}
+
+// ReloadServer signals the running server to re-read its on-disk config
+// (nats-server Reload()). Pair it with a prior UpdateServer to apply a staged
+// change without restarting.
+func (i *Instance) ReloadServer(t testing.TB, server *api.ManagedServer) *api.ReloadServerResponse {
+	t.Helper()
+
+	if server == nil || server.Name == "" {
+		t.Fatal("server is required")
+	}
+
+	req, err := json.Marshal(api.ReloadServerRequest{Name: server.Name})
+	if err != nil {
+		t.Fatalf("could not marshal ReloadServerRequest: %v", err)
+	}
+
+	msg, err := i.c.nc.Request("tester.reload.server", req, 30*time.Second)
+	if err != nil {
+		t.Fatalf("could not send ReloadServerRequest: %v", err)
+	}
+
+	if e := msg.Header.Get("Nats-Service-Error"); e != "" {
+		t.Fatalf("Request failed: %v", e)
+	}
+
+	resp := api.ReloadServerResponse{}
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		t.Fatalf("could not unmarshal ReloadServerResponse: %v: %v", string(msg.Data), err)
 	}
 
 	return &resp

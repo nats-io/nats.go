@@ -15,6 +15,7 @@ package test
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -24,6 +25,32 @@ import (
 	"github.com/nats-io/nats.go/internal/testclient/testservice"
 	"github.com/nats-io/nats.go/jetstream"
 )
+
+// testserviceHost returns the hostname clients use to reach the tester (and
+// the servers it spawns), parsed from TESTER_NATS_URL. Used by cross-domain
+// leafnode tests that need to embed the hub host:port in the leaf's remotes.
+func testserviceHost(t *testing.T) string {
+	t.Helper()
+	raw := os.Getenv("TESTER_NATS_URL")
+	if raw == "" {
+		t.Skip("TESTER_NATS_URL not set; skipping testservice test")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("could not parse TESTER_NATS_URL %q: %v", raw, err)
+	}
+	return u.Hostname()
+}
+
+// emptyAccountsBody clears the built-in USERS1..USERS5 / $SYS accounts block.
+func emptyAccountsBody() string {
+	return `# accounts block intentionally empty`
+}
+
+// noSystemAccountBody clears the built-in `system_account: "$SYS"` line.
+func noSystemAccountBody() string {
+	return `# system_account intentionally unset`
+}
 
 // newTester returns a tester Client connected to the service at TESTER_NATS_URL.
 // Tests skip when the env var is unset so a -tags=testservice run does not

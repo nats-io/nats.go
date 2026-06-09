@@ -36,10 +36,10 @@ func TestPublishMsg(t *testing.T) {
 		withError       func(*testing.T, error)
 	}
 	tests := []struct {
-		name      string
-		srvConfig []byte
-		timeout   time.Duration
-		msgs      []publishConfig
+		name    string
+		srvOpts []testservice.CreateOption
+		timeout time.Duration
+		msgs    []publishConfig
 	}{
 		{
 			name: "publish 3 simple messages, no opts",
@@ -487,12 +487,8 @@ func TestPublishMsg(t *testing.T) {
 			},
 		},
 		{
-			name: "publish 3 simple messages with domain set",
-			srvConfig: []byte(
-				`
-					listen: 127.0.0.1:-1
-					jetstream: {domain: "test-domain"}
-				`),
+			name:    "publish 3 simple messages with domain set",
+			srvOpts: []testservice.CreateOption{testservice.WithJetStream(`domain: "test-domain"`)},
 			msgs: []publishConfig{
 				{
 					msg: &nats.Msg{
@@ -608,9 +604,6 @@ func TestPublishMsg(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.srvConfig != nil {
-				t.Skip("DIVERGENCE: requires jetstream { domain: ... } override; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
-			}
 			withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 				ctx := newTesterCtx(t, 5*time.Second)
 				_, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxMsgSize: 128})
@@ -642,7 +635,7 @@ func TestPublishMsg(t *testing.T) {
 						t.Fatalf("Invalid ack received; want: %v; got: %v", pub.expectedAck, ack)
 					}
 				}
-			})
+			}, test.srvOpts...)
 		})
 	}
 }
@@ -831,10 +824,10 @@ func TestPublishMsgAsync(t *testing.T) {
 		withPublishError func(*testing.T, error)
 	}
 	tests := []struct {
-		name      string
-		msgs      []publishConfig
-		srvConfig []byte
-		timeout   time.Duration
+		name    string
+		msgs    []publishConfig
+		srvOpts []testservice.CreateOption
+		timeout time.Duration
 	}{
 		{
 			name: "publish 3 simple messages, no opts",
@@ -1321,12 +1314,8 @@ func TestPublishMsgAsync(t *testing.T) {
 			},
 		},
 		{
-			name: "publish 3 simple messages with domain set",
-			srvConfig: []byte(
-				`
-					listen: 127.0.0.1:-1
-					jetstream: {domain: "test-domain"}
-				`),
+			name:    "publish 3 simple messages with domain set",
+			srvOpts: []testservice.CreateOption{testservice.WithJetStream(`domain: "test-domain"`)},
 			msgs: []publishConfig{
 				{
 					msg: &nats.Msg{
@@ -1451,9 +1440,6 @@ func TestPublishMsgAsync(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.srvConfig != nil {
-				t.Skip("DIVERGENCE: requires jetstream { domain: ... } override; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
-			}
 			withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
 				opts := []jetstream.JetStreamOpt{}
 				if test.timeout != 0 {
@@ -1504,7 +1490,7 @@ func TestPublishMsgAsync(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatalf("Did not receive completion signal")
 				}
-			})
+			}, test.srvOpts...)
 		})
 	}
 }
@@ -2151,7 +2137,6 @@ func TestPublishWithScheduleTTL(t *testing.T) {
 }
 
 func TestPublishWithScheduleTimeZone(t *testing.T) {
-	t.Skip("DIVERGENCE: tester nats-server image (alpine) lacks tzdata; server-side time.LoadLocation(\"America/New_York\") fails with err_code=10223. Embedded-server runs of this test pass on systems with tzdata installed. Fix: rebuild synadia/server-tester image with `apk add tzdata` or build nats-server with `import _ \"time/tzdata\"`.")
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 5*time.Second)
 		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{

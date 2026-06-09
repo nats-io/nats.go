@@ -400,5 +400,59 @@ func TestConnectMissingCreds(t *testing.T) {
 }
 
 func TestUserInfoHandler(t *testing.T) {
-	t.Skip("DIVERGENCE: original test rewrites the server config file on disk and calls s.Reload() to swap user credentials live, then verifies the UserInfoHandler is consulted on reconnect. testservice has no in-place reconfigure / reload API (Instance only exposes Destroy/Stop/Start), so the post-reload reconnect path cannot be exercised.")
+	c := newTester(t)
+	initialAccounts := `accounts: {
+  A {
+    users: [{ user: "pp", password: "foo" }]
+  }
+}`
+	inst := c.CreateServer(t, false,
+		testservice.WithAccounts(initialAccounts),
+		testservice.WithAuthorization("# no_auth_user intentionally unset"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	user, pass := "pp", "foo"
+	userInfoCB := func() (string, string) {
+		return user, pass
+	}
+
+	// cannot set the user info twice
+	_, err := nats.Connect(inst.Servers[0].URL, nats.UserInfo("pp", "foo"), nats.UserInfoHandler(userInfoCB))
+	if !errors.Is(err, nats.ErrUserInfoAlreadySet) {
+		t.Fatalf("Expected ErrUserInfoAlreadySet, got: %v", err)
+	}
+
+	// user/pass from url takes precedence
+	badURL := fmt.Sprintf("nats://bad:bad@%s:%d", testerHost(t), inst.Servers[0].Port)
+	_, err = nats.Connect(badURL, nats.UserInfoHandler(userInfoCB))
+	if !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected ErrAuthorization, got: %v", err)
+	}
+
+	nc, err := nats.Connect(inst.Servers[0].URL,
+		nats.ReconnectWait(100*time.Millisecond),
+		nats.UserInfoHandler(userInfoCB))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+
+	// swap the user via UpdateServer + ReloadServer (SIGHUP)
+	newAccounts := `accounts: {
+  A {
+    users: [{ user: "dd", password: "bar" }]
+  }
+}`
+	inst.UpdateServer(t, inst.Servers[0],
+		testservice.WithAccounts(newAccounts),
+		testservice.WithAuthorization("# no_auth_user intentionally unset"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
+
+	user, pass = "dd", "bar"
+	status := nc.StatusChanged(nats.CONNECTED)
+	inst.ReloadServer(t, inst.Servers[0])
+	WaitOnChannel(t, status, nats.CONNECTED)
 }

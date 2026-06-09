@@ -117,7 +117,43 @@ func TestNewWithAPIPrefix(t *testing.T) {
 
 func TestNewWithDomain(t *testing.T) {
 	t.Run("jetstream account with domain", func(t *testing.T) {
-		t.Skip("DIVERGENCE: requires jetstream { domain: ABC } on the server; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			js, err := jetstream.NewWithDomain(nc, "ABC")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			accInfo, err := js.AccountInfo(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if accInfo.Domain != "ABC" {
+				t.Errorf("Invalid domain; want %v, got: %v", "ABC", accInfo.Domain)
+			}
+
+			opts := js.Options()
+			if opts.APIPrefix != "" {
+				t.Fatalf("Invalid API prefix; want: %v, got: %v", "", opts.APIPrefix)
+			}
+			if opts.Domain != "ABC" {
+				t.Fatalf("Invalid domain; want: %v, got: %v", "ABC", opts.Domain)
+			}
+
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = js.Publish(ctx, "foo", []byte("msg"))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}, testservice.WithJetStream(`domain: ABC`))
 	})
 
 	t.Run("empty domain", func(t *testing.T) {
@@ -313,7 +349,154 @@ func TestCreateStream(t *testing.T) {
 }
 
 func TestCreateStreamMirrorCrossDomains(t *testing.T) {
-	t.Skip("DIVERGENCE: requires jetstream { domain: HUB/LEAF } on hub and leaf servers plus a leafnode topology; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
+	test := []struct {
+		name         string
+		streamConfig *jetstream.StreamConfig
+	}{
+		{
+			name: "create stream mirror cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Mirror: &jetstream.StreamSource{
+					Name:   "TEST",
+					Domain: "HUB",
+				},
+			},
+		},
+		{
+			name: "create stream with source cross domains",
+			streamConfig: &jetstream.StreamConfig{
+				Name: "MIRROR",
+				Sources: []*jetstream.StreamSource{
+					{
+						Name:   "TEST",
+						Domain: "HUB",
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range test {
+		t.Run(test.name, func(t *testing.T) {
+			c := newTester(t)
+			host := testserviceHost(t)
+
+			hubInst := c.CreateServer(t, true,
+				testservice.WithJetStream(`domain: HUB`),
+				testservice.WithLeafNode(`leafnodes { port: {{ .Ports.leafnode }} }`),
+				testservice.WithAccounts(emptyAccountsBody()),
+				testservice.WithSystemAccount(noSystemAccountBody()),
+				testservice.WithAuthorization(`# no authorization required`),
+			)
+			t.Cleanup(func() { hubInst.Destroy(t) })
+
+			hubLeafPort := hubInst.Servers[0].Ports["leafnode"]
+			if hubLeafPort == 0 {
+				t.Fatalf("hub leafnode port not reserved")
+			}
+
+			leafInst := c.CreateServer(t, true,
+				testservice.WithJetStream(`domain: LEAF`),
+				testservice.WithLeafNode(fmt.Sprintf(`leafnodes { remotes = [ { url: "leaf://%s:%d" } ] }`, host, hubLeafPort)),
+				testservice.WithAccounts(emptyAccountsBody()),
+				testservice.WithSystemAccount(noSystemAccountBody()),
+				testservice.WithAuthorization(`# no authorization required`),
+			)
+			t.Cleanup(func() { leafInst.Destroy(t) })
+
+			nc := dialInstance(t, hubInst)
+			c.WaitForJetStream(t, nc)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			js, err := jetstream.New(nc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg1")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.Publish(ctx, "foo", []byte("msg2")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			lnc := dialInstance(t, leafInst)
+			c.WaitForJetStream(t, lnc)
+			ljs, err := jetstream.New(lnc)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			ccfg := *test.streamConfig
+			_, err = ljs.CreateStream(ctx, ccfg)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(test.streamConfig, &ccfg) {
+				t.Fatalf("Did not expect config to be altered: %+v vs %+v", test.streamConfig, ccfg)
+			}
+
+			// Make sure we sync.
+			checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
+				lStream, err := ljs.Stream(ctx, "MIRROR")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				if lStream.CachedInfo().State.Msgs == 2 {
+					return nil
+				}
+				return fmt.Errorf("Did not get synced messages: %d", lStream.CachedInfo().State.Msgs)
+			})
+			if _, err := ljs.Publish(ctx, "foo", []byte("msg3")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			lStream, err := ljs.Stream(ctx, "MIRROR")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
+				info, err := lStream.Info(ctx)
+				if err != nil {
+					return fmt.Errorf("Unexpected error when getting stream info: %v", err)
+				}
+				if info.State.Msgs != 3 {
+					return fmt.Errorf("Expected 3 msgs in stream; got: %d", lStream.CachedInfo().State.Msgs)
+				}
+				return nil
+			})
+
+			rjs, err := jetstream.NewWithDomain(lnc, "HUB")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			_, err = rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := rjs.Publish(ctx, "foo", []byte("msg4")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			rStream, err := rjs.Stream(ctx, "TEST")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if rStream.CachedInfo().State.Msgs != 4 {
+				t.Fatalf("Expected 4 msgs in stream; got: %d", rStream.CachedInfo().State.Msgs)
+			}
+		})
+	}
 }
 
 func TestCreateOrUpdateStream(t *testing.T) {
@@ -1848,7 +2031,124 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 }
 
 func TestCreateOrUpdateStreamCrossDomains(t *testing.T) {
-	t.Skip("DIVERGENCE: requires jetstream { domain: HUB/LEAF } on hub and leaf servers plus a leafnode topology; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
+	c := newTester(t)
+	host := testserviceHost(t)
+
+	hubInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: HUB`),
+		testservice.WithLeafNode(`leafnodes { port: {{ .Ports.leafnode }} }`),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { hubInst.Destroy(t) })
+
+	hubLeafPort := hubInst.Servers[0].Ports["leafnode"]
+	if hubLeafPort == 0 {
+		t.Fatalf("hub leafnode port not reserved")
+	}
+
+	leafInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: LEAF`),
+		testservice.WithLeafNode(fmt.Sprintf(`leafnodes { remotes = [ { url: "leaf://%s:%d" } ] }`, host, hubLeafPort)),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { leafInst.Destroy(t) })
+
+	ncHub := dialInstance(t, hubInst)
+	c.WaitForJetStream(t, ncHub)
+	jsHub, err := jetstream.New(ncHub)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create stream on HUB domain
+	_, err = jsHub.CreateStream(context.Background(), jetstream.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create source stream: %v", err)
+	}
+
+	ncLeaf := dialInstance(t, leafInst)
+	c.WaitForJetStream(t, ncLeaf)
+	jsLeaf, err := jetstream.New(ncLeaf)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Create stream with cross-domain source using CreateOrUpdateStream
+	streamConfig := jetstream.StreamConfig{
+		Name: "SOURCE",
+		Sources: []*jetstream.StreamSource{
+			{
+				Name:   "TEST",
+				Domain: "HUB",
+			},
+		},
+	}
+
+	// First call should create the stream
+	stream, err := jsLeaf.CreateOrUpdateStream(context.Background(), streamConfig)
+	if err != nil {
+		t.Fatalf("Failed to create stream: %v", err)
+	}
+
+	// Verify the stream was created with external configuration
+	info, err := stream.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to get stream info: %v", err)
+	}
+
+	if len(info.Config.Sources) != 1 {
+		t.Fatalf("Expected 1 source, got %d", len(info.Config.Sources))
+	}
+
+	firstSource := info.Config.Sources[0]
+	if firstSource.External == nil {
+		t.Fatal("Expected external configuration to be set after create")
+	}
+	if firstSource.External.APIPrefix == "" {
+		t.Fatal("Expected external APIPrefix to be set after create")
+	}
+	expectedAPIPrefix := firstSource.External.APIPrefix
+
+	// Second call should update the stream
+	// Add a subject to force an actual update
+	streamConfig.Subjects = []string{"bar"}
+	stream2, err := jsLeaf.CreateOrUpdateStream(context.Background(), streamConfig)
+	if err != nil {
+		t.Fatalf("Failed to update stream: %v", err)
+	}
+
+	// Verify the external configuration is preserved during update
+	info2, err := stream2.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to get updated stream info: %v", err)
+	}
+
+	if len(info2.Config.Sources) != 1 {
+		t.Fatalf("Expected 1 source after update, got %d", len(info2.Config.Sources))
+	}
+
+	updatedSource := info2.Config.Sources[0]
+	if updatedSource.External == nil {
+		t.Fatal("External configuration was removed during update - this is the bug!")
+	}
+	if updatedSource.External.APIPrefix != expectedAPIPrefix {
+		t.Fatalf("Expected APIPrefix %q to be preserved, got %q", expectedAPIPrefix, updatedSource.External.APIPrefix)
+	}
+
+	// Verify the subject was actually updated
+	if len(info2.Config.Subjects) != 1 {
+		t.Fatalf("Expected 1 subject after update, got %d", len(info2.Config.Subjects))
+	}
+	if info2.Config.Subjects[0] != "bar" {
+		t.Fatalf("Expected subject to be updated to 'bar', got %q", info2.Config.Subjects[0])
+	}
 }
 
 func TestPromoteMirrorToStream(t *testing.T) {

@@ -33,7 +33,7 @@ type CreateClusterRequest struct {
 type CreateSuperClusterRequest struct {
 	Servers     int               `json:"servers"`
 	Clusters    int               `json:"clusters"`
-	JetStream   bool              `json:"jetstream" yaml:"jetstream"`
+	JetStream   bool              `json:"jetstream"`
 	Description string            `json:"description,omitempty"`
 	Snippets    map[string]string `json:"snippets,omitempty"`
 	Template    string            `json:"template,omitempty"`
@@ -92,9 +92,6 @@ type StopServerResponse struct {
 	Shutdown bool `json:"shutdown"`
 }
 
-// Tag fixed locally to "started"; upstream had "shutdown" (copy-paste from
-// StopServerResponse). Fix tracked in synadia-labs/testing.go#4 — drop this
-// comment when the next vendor refresh picks up the upstream fix.
 type StartServerResponse struct {
 	Started bool `json:"started"`
 }
@@ -112,4 +109,22 @@ type InstanceStatus struct {
 
 type StatusResponse struct {
 	Instances []InstanceStatus `json:"instances"`
+}
+
+type UpdateServerRequest struct {
+	Name     string            `json:"name"`
+	Snippets map[string]string `json:"snippets,omitempty"`
+	Template string            `json:"template,omitempty"`
+}
+
+type UpdateServerResponse struct {
+	Updated bool `json:"updated"`
+}
+
+type ReloadServerRequest struct {
+	Name string `json:"name"`
+}
+
+type ReloadServerResponse struct {
+	Reloaded bool `json:"reloaded"`
 }

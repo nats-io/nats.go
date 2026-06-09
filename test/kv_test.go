@@ -1251,8 +1251,6 @@ func TestListKeyValueStores(t *testing.T) {
 }
 
 func TestKeyValueMirrorCrossDomains(t *testing.T) {
-	t.Skip("DIVERGENCE: needs HUB and LEAF JetStream servers with distinct domains wired via leafnode. The leafnode wiring is fine — WithLeafNode reserves a port and the leaf can reference the hub's port (read from hubInst.Servers[0].Ports[\"leafnode\"]) in its remotes list. The blocker is the JS domain: the testservice's default config template unconditionally renders `jetstream: { enabled: true, store_dir: ... }` after the WithTopLevel include, so a custom `jetstream { domain: HUB }` block coexists with the default and the domain is lost. CreateServer(t, false) + a complete jetstream block in WithTopLevel avoids the double-render but the rendered accounts still have per-account `jetstream: true` while no global jetstream context is in scope, and JS init fails (context deadline exceeded on stream operations). Clean fix: upstream `WithJetStreamDomain(string)` option in testservice that injects `domain:` into the rendered jetstream block. Less clean: rewrite this test with WithTemplate full-override on both servers (~50 lines of brittle template duplication).")
-
 	keyExists := func(t *testing.T, kv nats.KeyValue, key string, expected string) nats.KeyValueEntry {
 		var e nats.KeyValueEntry
 		var err error
@@ -1283,17 +1281,19 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	}
 
 	// Set up HUB and LEAF as two distinct JetStream domains, wired via
-	// leafnode. testservice doesn't expose a per-server JS-domain option
-	// directly, but we can pass JetStream=false to CreateServer and set the
-	// full `jetstream { domain: X, store_dir: ... }` block via WithTopLevel.
-	// WithLeafNode auto-reserves a "leafnode" port and surfaces it on
-	// Ports["leafnode"]; we read the hub's port after it's up and bake the
-	// remote URL into the leaf's leafnode block.
+	// leafnode. WithJetStream injects the `domain:` line into the rendered
+	// jetstream block; WithLeafNode auto-reserves a "leafnode" port and
+	// surfaces it on Ports["leafnode"]. We read the hub's port after it's up
+	// and bake the remote URL into the leaf's leafnode block.
 	c := newTester(t)
+	host := testerHost(t)
 
-	hubInst := c.CreateServer(t, false,
-		testservice.WithTopLevel(`jetstream { domain: HUB, store_dir: "{{ .ServerDir }}/js" }`),
+	hubInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: HUB`),
 		testservice.WithLeafNode(`leafnodes { port: {{ .Ports.leafnode }} }`),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
 	)
 	t.Cleanup(func() { hubInst.Destroy(t) })
 
@@ -1302,12 +1302,12 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		t.Fatalf("hub leafnode port not reserved")
 	}
 
-	leafInst := c.CreateServer(t, false,
-		testservice.WithTopLevel(`jetstream { domain: LEAF, store_dir: "{{ .ServerDir }}/js" }`),
-		testservice.WithLeafNode(fmt.Sprintf(`leafnodes {
-  port: {{ .Ports.leafnode }}
-  remotes = [ { url: "leaf://localhost:%d" } ]
-}`, hubLeafPort)),
+	leafInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: LEAF`),
+		testservice.WithLeafNode(fmt.Sprintf(`leafnodes { remotes = [ { url: "leaf://%s:%d" } ] }`, host, hubLeafPort)),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
 	)
 	t.Cleanup(func() { leafInst.Destroy(t) })
 

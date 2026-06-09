@@ -70,7 +70,67 @@ func createTmpFileTS(t *testing.T, content []byte) string {
 }
 
 func TestMaxConnectionsReconnect(t *testing.T) {
-	t.Skip("DIVERGENCE: original calls s.ReloadOptions(&newS1Opts) at runtime to lower max_connections from 2 to 1 and observe the second client get kicked off and reconnect to s2. testservice exposes no equivalent dynamic config-reload API; servers are immutable once created. Would need either a tester.reload endpoint or a config-template re-render hook before this can be migrated.")
+	c := newTester(t)
+	host := testerHost(t)
+	advertiseAndMax := func(maxConns int) string {
+		return fmt.Sprintf(
+			"client_advertise: \"%s:{{ .ClientPort }}\"\nmax_connections: %d",
+			host, maxConns,
+		)
+	}
+	inst := c.CreateCluster(t, 2, false, testservice.WithTopLevel(advertiseAndMax(2)))
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	s1URL := inst.Servers[0].URL
+
+	errCh := make(chan error, 2)
+	reconnectCh := make(chan struct{}, 2)
+	opts := []nats.Option{
+		nats.MaxReconnects(2),
+		nats.ReconnectWait(10 * time.Millisecond),
+		nats.Timeout(200 * time.Millisecond),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			if err != nil {
+				errCh <- err
+			}
+		}),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			reconnectCh <- struct{}{}
+		}),
+	}
+
+	nc1, err := nats.Connect(s1URL, opts...)
+	if err != nil {
+		t.Fatalf("Failed to connect first client: %v", err)
+	}
+	defer nc1.Close()
+	nc1.Flush()
+
+	nc2, err := nats.Connect(s1URL, opts...)
+	if err != nil {
+		t.Fatalf("Failed to connect second client: %v", err)
+	}
+	defer nc2.Close()
+	nc2.Flush()
+
+	// Lower s1's max_connections to 1 via reload — kicks one client.
+	inst.UpdateServer(t, inst.Servers[0], testservice.WithTopLevel(advertiseAndMax(1)))
+	inst.ReloadServer(t, inst.Servers[0])
+
+	select {
+	case err := <-errCh:
+		if err != nats.ErrMaxConnectionsExceeded {
+			t.Fatalf("Unexpected error %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for disconnect event")
+	}
+
+	select {
+	case <-reconnectCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for reconnect event")
+	}
 }
 
 func TestNoEcho(t *testing.T) {

@@ -1386,7 +1386,174 @@ func TestListKeyValueStores(t *testing.T) {
 }
 
 func TestKeyValueMirrorCrossDomains(t *testing.T) {
-	t.Skip("DIVERGENCE: requires jetstream { domain: HUB/LEAF } on hub and leaf servers; testservice has no WithJetStreamDomain option and the default jetstream block cannot be overridden via WithTopLevel")
+	keyExists := func(t *testing.T, kv jetstream.KeyValue, key string, expected string) jetstream.KeyValueEntry {
+		var e jetstream.KeyValueEntry
+		var err error
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			e, err = kv.Get(context.Background(), key)
+			if err != nil {
+				return err
+			}
+			if string(e.Value()) != expected {
+				return fmt.Errorf("Expected value to be %q, got %q", expected, e.Value())
+			}
+			return nil
+		})
+
+		return e
+	}
+
+	keyDeleted := func(t *testing.T, kv jetstream.KeyValue, key string) {
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			_, err := kv.Get(context.Background(), key)
+			if err == nil {
+				return errors.New("Expected key to be gone")
+			}
+			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+
+	c := newTester(t)
+	host := testserviceHost(t)
+
+	hubInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: HUB`),
+		testservice.WithLeafNode(`leafnodes { port: {{ .Ports.leafnode }} }`),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { hubInst.Destroy(t) })
+
+	hubLeafPort := hubInst.Servers[0].Ports["leafnode"]
+	if hubLeafPort == 0 {
+		t.Fatalf("hub leafnode port not reserved")
+	}
+
+	leafInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: LEAF`),
+		testservice.WithLeafNode(fmt.Sprintf(`leafnodes { remotes = [ { url: "leaf://%s:%d" } ] }`, host, hubLeafPort)),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { leafInst.Destroy(t) })
+
+	nc := dialInstance(t, hubInst)
+	c.WaitForJetStream(t, nc)
+	js, err := jetstream.New(nc)
+	expectOk(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "TEST"})
+	expectOk(t, err)
+
+	_, err = kv.PutString(ctx, "name", "derek")
+	expectOk(t, err)
+	_, err = kv.PutString(ctx, "age", "22")
+	expectOk(t, err)
+	_, err = kv.PutString(ctx, "v", "v")
+	expectOk(t, err)
+	err = kv.Delete(ctx, "v")
+	expectOk(t, err)
+
+	lnc := dialInstance(t, leafInst)
+	c.WaitForJetStream(t, lnc)
+	ljs, err := jetstream.New(lnc)
+	expectOk(t, err)
+
+	// Capture cfg so we can make sure it does not change.
+	// NOTE: We use different name to test all possibilities, etc, but in practice for truly nomadic applications
+	// this should be named the same, e.g. TEST.
+	cfg := jetstream.KeyValueConfig{
+		Bucket: "MIRROR",
+		Mirror: &jetstream.StreamSource{
+			Name:   "TEST",
+			Domain: "HUB",
+		},
+	}
+	ccfg := cfg
+
+	_, err = ljs.CreateKeyValue(ctx, cfg)
+	expectOk(t, err)
+
+	if !reflect.DeepEqual(cfg, ccfg) {
+		t.Fatalf("Did not expect config to be altered: %+v vs %+v", cfg, ccfg)
+	}
+
+	si, err := ljs.Stream(ctx, "KV_MIRROR")
+	expectOk(t, err)
+
+	// Make sure mirror direct set.
+	if !si.CachedInfo().Config.MirrorDirect {
+		t.Fatalf("Expected mirror direct to be set")
+	}
+
+	// Make sure we sync.
+	checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
+		si, err := ljs.Stream(ctx, "KV_MIRROR")
+		expectOk(t, err)
+		if si.CachedInfo().State.Msgs == 3 {
+			return nil
+		}
+		return fmt.Errorf("Did not get synched messages: %d", si.CachedInfo().State.Msgs)
+	})
+
+	// Bind locally from leafnode and make sure both get and put work.
+	mkv, err := ljs.KeyValue(ctx, "MIRROR")
+	expectOk(t, err)
+
+	_, err = mkv.PutString(ctx, "name", "rip")
+	expectOk(t, err)
+
+	_, err = mkv.PutString(ctx, "v", "vv")
+	expectOk(t, err)
+
+	e := keyExists(t, kv, "v", "vv")
+	if e.Operation() != jetstream.KeyValuePut {
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+	}
+	err = mkv.Delete(ctx, "v")
+	expectOk(t, err)
+	keyDeleted(t, kv, "v")
+
+	keyExists(t, kv, "name", "rip")
+
+	// Also make sure we can create a watcher on the mirror KV.
+	watcher, err := mkv.WatchAll(ctx)
+	expectOk(t, err)
+	defer watcher.Stop()
+
+	// Bind through leafnode connection but to origin KV.
+	rjs, err := jetstream.NewWithDomain(nc, "HUB")
+	expectOk(t, err)
+
+	rkv, err := rjs.KeyValue(ctx, "TEST")
+	expectOk(t, err)
+
+	_, err = rkv.PutString(ctx, "name", "ivan")
+	expectOk(t, err)
+
+	keyExists(t, mkv, "name", "ivan")
+	_, err = rkv.PutString(ctx, "v", "vv")
+	expectOk(t, err)
+	e = keyExists(t, mkv, "v", "vv")
+	if e.Operation() != jetstream.KeyValuePut {
+		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
+	}
+	err = rkv.Delete(ctx, "v")
+	expectOk(t, err)
+	keyDeleted(t, mkv, "v")
+
+	// Shutdown the hub and test get still works.
+	hubInst.StopServer(t, hubInst.Servers[0])
+
+	keyExists(t, mkv, "name", "ivan")
 }
 
 func TestKeyValueRePublish(t *testing.T) {
