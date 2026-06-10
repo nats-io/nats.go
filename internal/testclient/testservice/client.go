@@ -14,6 +14,8 @@
 package testservice
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -39,6 +41,10 @@ type Instance struct {
 	Description string
 	Kind        string
 	Servers     []*api.ManagedServer
+	// TLS carries the CA cert and (for mutual TLS) client cert/key minted
+	// by the service when WithGeneratedTLS was set on the create call.
+	// Nil otherwise. Use TLSConfig(inst) to build a *tls.Config from it.
+	TLS *api.TLSMaterial
 
 	c *Client
 }
@@ -54,6 +60,84 @@ type createOptions struct {
 	snippets       map[string]string
 	template       string
 	connectOptions []nats.Option
+	tls            *api.TLSOptions
+}
+
+// TLSOpt customizes a WithGeneratedTLS call.
+type TLSOpt func(*api.TLSOptions)
+
+// WithGeneratedTLS asks the service to mint a CA, server cert, and (for
+// mutual TLS) client cert, and to listen with TLS on every server's client
+// port. Gateways and routes stay plaintext. The CA cert plus client cert/key
+// are returned on Instance.TLS; the convenience helpers (WithServer,
+// WithCluster, WithSuperCluster, JetStream variants) auto-wire the returned
+// material into their nats.Connect, so a TLS test is a one-liner.
+//
+// Defaults to mutual TLS and SANs ["localhost","127.0.0.1","::1"]. Override
+// with TLSServerOnly, TLSMutual, TLSSANs, TLSHandshakeFirst.
+//
+// Mutually exclusive with WithTLSSnippet — the service rejects requests that
+// set both.
+func WithGeneratedTLS(opts ...TLSOpt) CreateOption {
+	return createOpt(func(o *createOptions) {
+		t := &api.TLSOptions{Mode: api.TLSModeMutual}
+		for _, opt := range opts {
+			opt(t)
+		}
+		o.tls = t
+	})
+}
+
+// TLSMutual selects mutual TLS — the server requires the issued client cert.
+// This is the default for WithGeneratedTLS; the helper exists for symmetry
+// with TLSServerOnly.
+func TLSMutual() TLSOpt {
+	return func(t *api.TLSOptions) { t.Mode = api.TLSModeMutual }
+}
+
+// TLSServerOnly selects one-way TLS — the server presents its cert but does
+// not require a client cert.
+func TLSServerOnly() TLSOpt {
+	return func(t *api.TLSOptions) { t.Mode = api.TLSModeServer }
+}
+
+// TLSSANs overrides the default Subject Alternative Names for the generated
+// server cert. Strings that parse as IPs are placed in IPAddresses; the rest
+// become DNSNames. Use when tests dial a hostname other than localhost (CI
+// runner names, container hostnames, etc.).
+func TLSSANs(sans ...string) TLSOpt {
+	return func(t *api.TLSOptions) { t.SANs = append([]string(nil), sans...) }
+}
+
+// TLSHandshakeFirst makes the server complete the TLS handshake before sending
+// the INFO protocol. The convenience helpers dial with nats.TLSHandshakeFirst
+// automatically; if you dial the returned servers yourself, pass that option
+// to your own nats.Connect alongside nats.Secure or the connection will hang.
+func TLSHandshakeFirst() TLSOpt {
+	return func(t *api.TLSOptions) { t.HandshakeFirst = true }
+}
+
+// TLSConfig builds a *tls.Config from an Instance's returned TLS material:
+// RootCAs from the CA cert, and (when mutual TLS was requested) a single
+// X509KeyPair from the client cert and key. Returns an error if inst.TLS
+// is nil or the PEM material is malformed.
+func TLSConfig(inst *Instance) (*tls.Config, error) {
+	if inst == nil || inst.TLS == nil {
+		return nil, fmt.Errorf("instance has no TLS material; was WithGeneratedTLS set on the create call?")
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(inst.TLS.CAPEM)) {
+		return nil, fmt.Errorf("could not load CA PEM into trust pool")
+	}
+	cfg := &tls.Config{RootCAs: pool}
+	if inst.TLS.ClientCertPEM != "" {
+		cert, err := tls.X509KeyPair([]byte(inst.TLS.ClientCertPEM), []byte(inst.TLS.ClientKeyPEM))
+		if err != nil {
+			return nil, fmt.Errorf("could not load client cert/key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 type updateOptions struct {
@@ -136,14 +220,31 @@ func WithAuthorization(body string) snippetOpt {
 	return snippetOpt{key: "authorization", body: body}
 }
 
-// WithTLS adds a top-level TLS block (client TLS).
-func WithTLS(body string) snippetOpt { return snippetOpt{key: "tls", body: body} }
+// WithTLSSnippet adds a top-level TLS block (client TLS) from a caller-
+// supplied snippet body. This is the escape hatch for tests that need to
+// pin specific certs or ciphers; for the common "just turn TLS on" case
+// use WithGeneratedTLS, which has the service mint a CA and certificates
+// and auto-wires the convenience helpers' nats.Connect.
+//
+// WithTLSSnippet and WithGeneratedTLS are mutually exclusive — the service
+// rejects requests that combine them.
+//
+// Like the other snippet helpers it satisfies both CreateOption and
+// UpdateOption, so it can also be passed to UpdateServer to swap the TLS block
+// of an existing instance (pair with ReloadServer to apply it live).
+func WithTLSSnippet(body string) snippetOpt { return snippetOpt{key: "tls", body: body} }
 
 // WithWebSocket adds a top-level websocket block. The service automatically
 // reserves a TCP port named "websocket" on every server in the instance and
 // exposes it as .Ports.websocket in the template env, so the caller's body
 // typically renders `port: {{ .Ports.websocket }}`. The reserved port surfaces
 // on ManagedServer.Ports["websocket"] for tests to dial via ws://.
+//
+// The websocket listener's TLS is independent of the client-port TLS that
+// WithGeneratedTLS configures. For wss, pair this with WithGeneratedTLS and
+// give the body its own tls{} block referencing the generated cert paths via
+// .TLS.CertFile/.TLS.KeyFile (and .TLS.CAFile for client-cert verification),
+// then dial wss:// with nats.Secure(TLSConfig(inst)).
 func WithWebSocket(body string) snippetOpt { return snippetOpt{key: "websocket", body: body} }
 
 // WithMQTT adds a top-level mqtt block. The service automatically reserves a
@@ -198,6 +299,27 @@ func resolveUpdateOptions(opts []UpdateOption) updateOptions {
 	return uo
 }
 
+// helperConnectOptions assembles the nats.Option slice used by the
+// convenience helpers. nats.Secure(cfg) is prepended when co.tls is set so
+// the post-create Connect uses TLS; user-supplied co.connectOptions compose
+// last and win on overlap.
+func helperConnectOptions(t *testing.T, co createOptions, inst *Instance) []nats.Option {
+	t.Helper()
+	opts := []nats.Option{nats.MaxReconnects(-1)}
+	if co.tls != nil {
+		cfg, err := TLSConfig(inst)
+		if err != nil {
+			t.Fatalf("could not build TLS config: %v", err)
+		}
+		opts = append(opts, nats.Secure(cfg))
+		if co.tls.HandshakeFirst {
+			opts = append(opts, nats.TLSHandshakeFirst())
+		}
+	}
+	opts = append(opts, co.connectOptions...)
+	return opts
+}
+
 // New connects to the management service of the test cluster manager
 func New(t testing.TB, server string, opts ...nats.Option) *Client {
 	t.Helper()
@@ -245,8 +367,7 @@ func (c *Client) withServer(t *testing.T, js bool, h func(*testing.T, *nats.Conn
 	inst := c.CreateServer(t, js, opts...)
 	defer inst.Destroy(t)
 
-	connectOpts := append([]nats.Option{nats.MaxReconnects(-1)}, co.connectOptions...)
-	nc, err := nats.Connect(inst.Servers[0].URL, connectOpts...)
+	nc, err := nats.Connect(inst.Servers[0].URL, helperConnectOptions(t, co, inst)...)
 	if err != nil {
 		t.Fatal("failed to connect to NATS:", err)
 	}
@@ -284,8 +405,7 @@ func (c *Client) withCluster(t *testing.T, servers int, js bool, h func(*testing
 		t.Fatalf("expected number of servers to be %d got %d", servers, len(inst.Servers))
 	}
 
-	connectOpts := append([]nats.Option{nats.MaxReconnects(-1)}, co.connectOptions...)
-	nc, err := nats.Connect(inst.RandomServer().URL, connectOpts...)
+	nc, err := nats.Connect(inst.RandomServer().URL, helperConnectOptions(t, co, inst)...)
 	if err != nil {
 		t.Fatal("failed to connect to NATS:", err)
 	}
@@ -346,8 +466,7 @@ func (c *Client) withSuperCluster(t *testing.T, clusters int, servers int, js bo
 		t.Fatalf("expected number of servers to be %d got %d", servers*clusters, len(inst.Servers))
 	}
 
-	connectOpts := append([]nats.Option{nats.MaxReconnects(-1)}, co.connectOptions...)
-	nc, err := nats.Connect(inst.RandomServer().URL, connectOpts...)
+	nc, err := nats.Connect(inst.RandomServer().URL, helperConnectOptions(t, co, inst)...)
 	if err != nil {
 		t.Fatal("failed to connect to NATS:", err)
 	}
@@ -372,6 +491,7 @@ func (c *Client) CreateSuperCluster(t testing.TB, clusters int, servers int, js 
 		Description: co.description,
 		Snippets:    co.snippets,
 		Template:    co.template,
+		TLS:         co.tls,
 	})
 	if err != nil {
 		t.Fatalf("could not marshal CreateSuperClusterRequest: %v", err)
@@ -391,6 +511,7 @@ func (c *Client) CreateCluster(t testing.TB, servers int, js bool, opts ...Creat
 		Description: co.description,
 		Snippets:    co.snippets,
 		Template:    co.template,
+		TLS:         co.tls,
 	})
 	if err != nil {
 		t.Fatalf("could not marshal CreateClusterRequest: %v", err)
@@ -409,6 +530,7 @@ func (c *Client) CreateServer(t testing.TB, js bool, opts ...CreateOption) *Inst
 		Description: co.description,
 		Snippets:    co.snippets,
 		Template:    co.template,
+		TLS:         co.tls,
 	})
 	if err != nil {
 		t.Fatalf("could not marshal CreateServerRequest: %v", err)
@@ -442,6 +564,7 @@ func (c *Client) doCreate(t testing.TB, subject string, jreq []byte) *Instance {
 		Description: resp.Description,
 		Kind:        resp.Kind,
 		Servers:     resp.Servers,
+		TLS:         resp.TLS,
 		c:           c,
 	}
 }

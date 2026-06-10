@@ -323,20 +323,25 @@ func TestUserCredentialBytes(t *testing.T) {
 // Opts.Secure = false, but the fix removed the check on Opts.Secure to decide
 // if we need to save off the hostname that we connected to first.
 func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	// Trust-server config with a TLS block using server_noip certs.
+	// Trust-server config with managed server-only TLS (SANs intentionally
+	// exclude IPs to preserve the original test's no-IP-SAN intent).
+	sans := []string{"localhost"}
+	if h := testerHost(t); h != "localhost" {
+		sans = append(sans, h)
+	}
 	opts := append(trustServerOpts(t),
-		testservice.WithTLS(tlsNoIPConfBody()),
+		testservice.WithGeneratedTLS(testservice.TLSServerOnly(), testservice.TLSSANs(sans...)),
 	)
 	inst := c.CreateCluster(t, 2, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, _, _ := tlsCertFiles(t, inst)
 
 	clientURL := inst.Servers[0].URL
 
 	// Make sure we get the right error here.
 	nc, err := nats.Connect(clientURL,
-		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.RootCAs(caPath),
 		nats.UserCredentials("filenotfound.creds"))
 
 	if err == nil {

@@ -511,7 +511,6 @@ func TestProperFalloutAfterMaxAttempts(t *testing.T) {
 }
 
 func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
 	s1Inst := c.CreateServer(t, false)
 	t.Cleanup(func() { s1Inst.Destroy(t) })
@@ -519,7 +518,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 
 	// Second server requires TLS with client cert verification; an
 	// untrusted plain-text client connection will fail auth handshake.
-	s2Inst := c.CreateServer(t, false, testservice.WithTLS(tlsVerifyConfBody()))
+	s2Inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
 	t.Cleanup(func() { s2Inst.Destroy(t) })
 	s2URL := s2Inst.Servers[0].URL
 

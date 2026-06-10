@@ -50,7 +50,7 @@ func hostFromURL(u string) string {
 }
 
 // tlsConfBody returns a `tls { ... }` snippet body suitable for
-// testservice.WithTLS that points at the test/configs server cert/key inside
+// testservice.WithTLSSnippet that points at the test/configs server cert/key inside
 // the tester container. The body must be the complete tls block (the snippet
 // replaces, rather than wraps, the rendered TLS section).
 func tlsConfBody() string {
@@ -199,18 +199,18 @@ func TestServerStopDisconnectedErrCB(t *testing.T) {
 }
 
 func TestServerSecureConnections(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	opts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, _, _ := tlsCertFiles(t, inst)
 
 	hostPort := hostPortFromURL(inst.Servers[0].URL)
 	host := hostFromURL(inst.Servers[0].URL)
 	secureURL := fmt.Sprintf("nats://derek:porkchop@%s/", hostPort)
 
 	// Make sure this succeeds
-	nc, err := nats.Connect(secureURL, nats.Secure(), nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err := nats.Connect(secureURL, nats.Secure(), nats.RootCAs(caPath))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestServerSecureConnections(t *testing.T) {
 	nc.Close()
 
 	// Server required, but not specified in Connect(), should switch automatically
-	nc, err = nats.Connect(secureURL, nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err = nats.Connect(secureURL, nats.RootCAs(caPath))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestServerSecureConnections(t *testing.T) {
 	dInst := c.CreateServer(t, false)
 	t.Cleanup(func() { dInst.Destroy(t) })
 
-	nc, err = nats.Connect(dInst.Servers[0].URL, nats.Secure(), nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err = nats.Connect(dInst.Servers[0].URL, nats.Secure(), nats.RootCAs(caPath))
 	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
 		if nc != nil {
 			nc.Close()
@@ -270,7 +270,7 @@ func TestServerSecureConnections(t *testing.T) {
 	// Let's be more TLS correct and verify servername, endpoint etc.
 	// Now do more advanced checking, verifying servername and using rootCA.
 	// Setup our own TLSConfig using RootCA from our self signed cert.
-	rootPEM, err := os.ReadFile("./configs/certs/ca.pem")
+	rootPEM, err := os.ReadFile(caPath)
 	if err != nil || rootPEM == nil {
 		t.Fatalf("failed to read root certificate")
 	}
@@ -286,7 +286,7 @@ func TestServerSecureConnections(t *testing.T) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	nc, err = nats.Connect(secureURL, nats.Secure(tls1), nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err = nats.Connect(secureURL, nats.Secure(tls1), nats.RootCAs(caPath))
 	if err != nil {
 		t.Fatalf("Got an error on Connect with Secure Options: %+v\n", err)
 	}
@@ -306,10 +306,10 @@ func TestServerSecureConnections(t *testing.T) {
 }
 
 func TestClientTLSConfig(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	inst := c.CreateServer(t, false, testservice.WithTLS(tlsVerifyConfBody()))
+	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, certPath, keyPath := tlsCertFiles(t, inst)
 
 	secureURL := fmt.Sprintf("nats://%s", hostPortFromURL(inst.Servers[0].URL))
 
@@ -319,15 +319,15 @@ func TestClientTLSConfig(t *testing.T) {
 		nc.Close()
 		t.Fatal("Should have failed (TLS) connection without client certificate")
 	}
-	cert, err := os.ReadFile("./configs/certs/client-cert.pem")
+	cert, err := os.ReadFile(certPath)
 	if err != nil {
 		t.Fatal("Failed to read client certificate")
 	}
-	key, err := os.ReadFile("./configs/certs/client-key.pem")
+	key, err := os.ReadFile(keyPath)
 	if err != nil {
 		t.Fatal("Failed to read client key")
 	}
-	rootCAs, err := os.ReadFile("./configs/certs/ca.pem")
+	rootCAs, err := os.ReadFile(caPath)
 	if err != nil {
 		t.Fatal("Failed to read root CAs")
 	}
@@ -362,7 +362,7 @@ func TestClientTLSConfig(t *testing.T) {
 	certErr := &tls.CertificateVerificationError{}
 	// Should fail because of missing CA
 	_, err = nats.Connect(secureURL,
-		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+		nats.ClientCert(certPath, keyPath))
 	if ok := errors.As(err, &certErr); !ok {
 		t.Fatalf("Expected error %q, got %q", nats.ErrClientCertOrRootCAsRequired, err)
 	}
@@ -410,10 +410,10 @@ func TestClientTLSConfig(t *testing.T) {
 }
 
 func TestClientCertificate(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	inst := c.CreateServer(t, false, testservice.WithTLS(tlsVerifyConfBody()))
+	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, certPath, keyPath := tlsCertFiles(t, inst)
 
 	secureURL := fmt.Sprintf("nats://%s", hostPortFromURL(inst.Servers[0].URL))
 
@@ -431,9 +431,9 @@ func TestClientCertificate(t *testing.T) {
 		t.Fatal("Should have failed due to invalid parameters")
 	}
 
-	// Should fail because wrong key
+	// Should fail because wrong key (CA pem reused as a "key" — parses but X509KeyPair mismatch)
 	nc, err = nats.Connect(secureURL,
-		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/key.pem"))
+		nats.ClientCert(certPath, caPath))
 	if err == nil {
 		nc.Close()
 		t.Fatal("Should have failed due to invalid key")
@@ -441,15 +441,15 @@ func TestClientCertificate(t *testing.T) {
 
 	// Should fail because no CA
 	nc, err = nats.Connect(secureURL,
-		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+		nats.ClientCert(certPath, keyPath))
 	if err == nil {
 		nc.Close()
 		t.Fatal("Should have failed due to missing ca")
 	}
 
 	nc, err = nats.Connect(secureURL,
-		nats.RootCAs("./configs/certs/ca.pem"),
-		nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem"))
+		nats.RootCAs(caPath),
+		nats.ClientCert(certPath, keyPath))
 	if err != nil {
 		t.Fatalf("Failed to create (TLS) connection: %v", err)
 	}
@@ -478,15 +478,128 @@ func TestClientCertificate(t *testing.T) {
 }
 
 func TestClientCertificateReloadOnServerRestart(t *testing.T) {
-	t.Skip("DIVERGENCE: relies on overwriting cert files on host between server restarts; the testservice container reads certs from its mounted /test-configs (read-only) and cannot observe in-test file swaps. Needs an alternative mechanism (e.g. a writable mount or a tester API to update server config) before this can be migrated.")
+	c := newTester(t)
+	// Server with managed mTLS — its CA signs the cert+key we'll connect with.
+	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, certFile, keyFile := tlsCertFiles(t, inst)
+
+	// Stranger instance: separate managed mTLS to obtain a client cert signed
+	// by a CA the target server does not trust. Used to simulate "invalid"
+	// cert files in the original test.
+	stranger := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	t.Cleanup(func() { stranger.Destroy(t) })
+	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
+
+	secureURL := fmt.Sprintf("nats://%s", hostPortFromURL(inst.Servers[0].URL))
+
+	dcChan, rcChan, errChan := make(chan bool, 1), make(chan bool, 1), make(chan error, 16)
+	nc, err := nats.Connect(secureURL,
+		nats.RootCAs(caPath),
+		nats.ClientCert(certFile, keyFile),
+		nats.ReconnectWait(100*time.Millisecond),
+		nats.MaxReconnects(-1),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			select {
+			case errChan <- err:
+			default:
+			}
+		}),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) {
+			select {
+			case dcChan <- true:
+			default:
+			}
+		}),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			select {
+			case rcChan <- true:
+			default:
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create (TLS) connection: %v", err)
+	}
+	defer nc.Close()
+
+	// Overwrite client cert/key with stranger's (untrusted) versions; the
+	// nats.go client re-reads these on every connection attempt.
+	swap := func(t *testing.T, srcCert, srcKey string) {
+		t.Helper()
+		for src, dst := range map[string]string{srcCert: certFile, srcKey: keyFile} {
+			b, err := os.ReadFile(src)
+			if err != nil {
+				t.Fatalf("read %s: %v", src, err)
+			}
+			if err := os.WriteFile(dst, b, 0o600); err != nil {
+				t.Fatalf("write %s: %v", dst, err)
+			}
+		}
+	}
+	swap(t, strangerCert, strangerKey)
+
+	// Restart the server to force a reconnect with the swapped cert.
+	inst.StopServer(t, inst.Servers[0])
+	inst.StartServer(t, inst.Servers[0])
+
+	if err := Wait(dcChan); err != nil {
+		t.Fatal("Failed to receive disconnect signal")
+	}
+
+	// Reconnection error should be a bad-certificate failure.
+	select {
+	case err := <-errChan:
+		if !strings.Contains(err.Error(), "bad certificate") && !strings.Contains(err.Error(), "certificate required") && !strings.Contains(err.Error(), "unknown certificate authority") {
+			t.Fatalf("Expected bad certificate error; got: %s", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Timeout waiting for reconnect error")
+	}
+
+	// Restore the valid cert+key from the target instance.
+	origCertPEM := inst.TLS.ClientCertPEM
+	origKeyPEM := inst.TLS.ClientKeyPEM
+	if err := os.WriteFile(certFile, []byte(origCertPEM), 0o600); err != nil {
+		t.Fatalf("restore cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, []byte(origKeyPEM), 0o600); err != nil {
+		t.Fatalf("restore key: %v", err)
+	}
+
+	// Subsequent reconnect should succeed.
+	if err := Wait(rcChan); err != nil {
+		t.Fatal("Failed to receive reconnect signal")
+	}
+
+	// Sanity: pub/sub round-trip.
+	omsg := []byte("Hello!")
+	checkRecv := make(chan bool)
+
+	received := 0
+	nc.Subscribe("foo", func(m *nats.Msg) {
+		received++
+		if !bytes.Equal(m.Data, omsg) {
+			t.Fatal("Message received does not match")
+		}
+		checkRecv <- true
+	})
+	if err := nc.Publish("foo", omsg); err != nil {
+		t.Fatalf("Failed to publish on secure (TLS) connection: %v", err)
+	}
+	nc.Flush()
+
+	if err := Wait(checkRecv); err != nil {
+		t.Fatal("Failed to receive message")
+	}
 }
 
 func TestServerTLSHintConnections(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	opts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, _, _ := tlsCertFiles(t, inst)
 
 	hostPort := hostPortFromURL(inst.Servers[0].URL)
 	secureURL := fmt.Sprintf("tls://derek:porkchop@%s/", hostPort)
@@ -497,7 +610,7 @@ func TestServerTLSHintConnections(t *testing.T) {
 		t.Fatal("Expected an error from bad RootCA file")
 	}
 
-	nc, err = nats.Connect(secureURL, nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err = nats.Connect(secureURL, nats.RootCAs(caPath))
 	if err != nil {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
@@ -844,7 +957,7 @@ func TestCallbacksOrder(t *testing.T) {
 	t.Skip("DIVERGENCE: original starts a TLS+auth server on a fixed port and uses nats.DefaultURL for the second URL, then verifies the async callback dispatcher exits within 5s after nc.Close()+ncp.Close(). When ported to testservice (two distinct managed servers, one TLS+auth and one plain), the async dispatcher consistently outlives the 5s window even though nc.Close()/ncp.Close() both fire ClosedHandler. Suspect interaction between the auth/TLS reject path and the dispatcher exit handshake. Needs targeted investigation in nats.go's async dispatcher (or a way to start the original auth server config in-process) to migrate.")
 	c := newTester(t)
 
-	authOpts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	authOpts := append([]testservice.CreateOption{testservice.WithTLSSnippet(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
 	authInst := c.CreateServer(t, false, authOpts...)
 	t.Cleanup(func() { authInst.Destroy(t) })
 
@@ -2780,11 +2893,20 @@ func TestGetClientID(t *testing.T) {
 }
 
 func TestTLSDontSkipVerify(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	opts := append([]testservice.CreateOption{testservice.WithTLS(tlsNoIPConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	// SANs intentionally exclude IPs so the 127.0.0.1 URL trips IP-SAN
+	// verification; the testerHost name is included so the host:port URL
+	// below verifies in both host-side ("localhost") and sibling-container
+	// ("nats") modes.
+	sans := []string{"localhost"}
+	if h := testerHost(t); h != "localhost" {
+		sans = append(sans, h)
+	}
+	tlsOpt := testservice.WithGeneratedTLS(testservice.TLSServerOnly(), testservice.TLSSANs(sans...))
+	opts := append([]testservice.CreateOption{tlsOpt}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, _, _ := tlsCertFiles(t, inst)
 
 	host := hostFromURL(inst.Servers[0].URL)
 	port := inst.Servers[0].Port
@@ -2793,7 +2915,7 @@ func TestTLSDontSkipVerify(t *testing.T) {
 	// The library will automatically switch to TLS, but we should
 	// not skip hostname verification.
 	sURL := fmt.Sprintf("nats://derek:porkchop@127.0.0.1:%d", port)
-	nc, err := nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err := nats.Connect(sURL, nats.RootCAs(caPath))
 	// Verify that error is about hostname verification
 	if err == nil || !strings.Contains(err.Error(), "IP SAN") {
 		if nc != nil {
@@ -2802,7 +2924,7 @@ func TestTLSDontSkipVerify(t *testing.T) {
 		t.Fatalf("Expected error about hostname verification, got %v", err)
 	}
 	// Check that we can override skip verify by providing our own TLS Config.
-	nc, err = nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"),
+	nc, err = nats.Connect(sURL, nats.RootCAs(caPath),
 		nats.Secure(&tls.Config{InsecureSkipVerify: true}))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -2812,7 +2934,7 @@ func TestTLSDontSkipVerify(t *testing.T) {
 	// Now change the URL to include hostname and verify that using
 	// nats:// scheme does work.
 	sURL = fmt.Sprintf("nats://derek:porkchop@%s:%d", host, port)
-	nc, err = nats.Connect(sURL, nats.RootCAs("./configs/certs/ca.pem"))
+	nc, err = nats.Connect(sURL, nats.RootCAs(caPath))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
 	}
@@ -2994,7 +3116,7 @@ func TestRetryOnFailedConnectWithAuthError(t *testing.T) {
 }
 
 func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
-	t.Skip("DIVERGENCE: original test starts a server with a deliberately tiny TLSTimeout (0.0001s) to force initial TLS handshake failures, then Shutdown/Restart with a sane timeout on the same port. testservice doesn't preserve port across destroy/create and offers no API to mutate TLS options on a running instance. Needs an in-place reconfigure API to migrate.")
+	t.Skip("DIVERGENCE: needs `tls_timeout: 0.0001` initially, then `tls_timeout: 2` on the same port — i.e. mutate one tls{} knob on a running instance. UpdateServer can swap a user-supplied tls snippet, but WithTLSSnippet and WithGeneratedTLS are mutually exclusive and the main template emits BOTH the user `tls` include and the managed `TLSInclude` when both are set — invalid config. Lift once managed TLS exposes a `TLSTimeout` TLSOpt (matching the HandshakeFirst pattern).")
 }
 
 func TestConnStatusChangedEvents(t *testing.T) {
@@ -3171,18 +3293,18 @@ func TestRemoveStatusListener(t *testing.T) {
 }
 
 func TestTLSHandshakeFirst(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	// First server: classic tls.conf (no handshake_first). TLSHandshakeFirst
+	// First server: managed TLS without handshake_first. TLSHandshakeFirst
 	// client should fail to connect because the server still sends INFO before
 	// handshake.
-	classicOpts := append([]testservice.CreateOption{testservice.WithTLS(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	classicOpts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	classicInst := c.CreateServer(t, false, classicOpts...)
 	t.Cleanup(func() { classicInst.Destroy(t) })
+	classicCA, _, _ := tlsCertFiles(t, classicInst)
 
 	secureURL := fmt.Sprintf("tls://derek:porkchop@localhost:%d", classicInst.Servers[0].Port)
 	nc, err := nats.Connect(secureURL,
-		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.RootCAs(classicCA),
 		nats.TLSHandshakeFirst())
 	if err == nil || !strings.Contains(err.Error(), "TLS handshake") {
 		if err == nil {
@@ -3193,19 +3315,14 @@ func TestTLSHandshakeFirst(t *testing.T) {
 
 	// Second server: handshake_first enabled. TLSHandshakeFirst client should
 	// connect and complete the TLS handshake.
-	hsBody := fmt.Sprintf(`tls {
-  cert_file:       %q
-  key_file:        %q
-  timeout:         2
-  handshake_first: true
-}`, containerPath("certs/server.pem"), containerPath("certs/key.pem"))
-	hsOpts := append([]testservice.CreateOption{testservice.WithTLS(hsBody)}, singleUserPassOpts(derekAuthBody())...)
+	hsOpts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly(), testservice.TLSHandshakeFirst())}, singleUserPassOpts(derekAuthBody())...)
 	hsInst := c.CreateServer(t, false, hsOpts...)
 	t.Cleanup(func() { hsInst.Destroy(t) })
+	hsCA, _, _ := tlsCertFiles(t, hsInst)
 
 	secureURL = fmt.Sprintf("tls://derek:porkchop@localhost:%d", hsInst.Servers[0].Port)
 	nc, err = nats.Connect(secureURL,
-		nats.RootCAs("./configs/certs/ca.pem"),
+		nats.RootCAs(hsCA),
 		nats.TLSHandshakeFirst())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -3277,30 +3394,30 @@ func TestTLSHandshakeFirstEOFAfterHandshake(t *testing.T) {
 }
 
 func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
-	skipPendingTesterTLS(t)
 	// Test that when the NATS server itself does mTLS verification
 	// and rejects the client cert, the error is a clear TLS alert
 	// (not a wrapped EOF).
 	c := newTester(t)
+	// Target server: managed mTLS + handshake_first.
 	inst := c.CreateServer(t, false,
-		testservice.WithTLS(fmt.Sprintf(`tls {
-  cert_file:       %q
-  key_file:        %q
-  ca_file:         %q
-  verify:          true
-  timeout:         2
-  handshake_first: true
-}`, containerPath("certs/server.pem"), containerPath("certs/key.pem"), containerPath("certs/ca.pem"))),
+		testservice.WithGeneratedTLS(testservice.TLSMutual(), testservice.TLSHandshakeFirst()),
 	)
 	t.Cleanup(func() { inst.Destroy(t) })
+	caPath, _, _ := tlsCertFiles(t, inst)
+
+	// Stranger instance: separate managed mTLS solely to mint a client cert
+	// signed by a CA the target server does not trust.
+	stranger := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	t.Cleanup(func() { stranger.Destroy(t) })
+	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
 
 	port := inst.Servers[0].Port
 
 	// Connect with a client cert signed by a different CA.
 	_, err := nats.Connect(
 		fmt.Sprintf("tls://127.0.0.1:%d", port),
-		nats.RootCAs("./configs/certs/ca.pem"),
-		nats.ClientCert("./configs/certs/client-cert-invalid.pem", "./configs/certs/client-key-invalid.pem"),
+		nats.RootCAs(caPath),
+		nats.ClientCert(strangerCert, strangerKey),
 		nats.TLSHandshakeFirst(),
 	)
 	if err == nil {

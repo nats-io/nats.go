@@ -47,13 +47,15 @@ func wsPlainBody(compress bool) string {
 // wsTLSBody returns a websocket{} snippet with a tls sub-block referencing the
 // server cert/key/ca mounted into the tester container. compress toggles
 // per-message deflate.
+// wsTLSBody returns a websocket{} body that wires the managed TLS cert/key
+// (exposed by the tester via .TLS.CertFile/.TLS.KeyFile) into the websocket
+// listener. Requires the create call to also include WithGeneratedTLS.
 func wsTLSBody(compress bool) string {
-	inner := fmt.Sprintf(`port: {{ .Ports.websocket }}
+	inner := `port: {{ .Ports.websocket }}
   tls {
-    cert_file: %q
-    key_file:  %q
-    ca_file:   %q
-  }`, containerPath("certs/server.pem"), containerPath("certs/key.pem"), containerPath("certs/ca.pem"))
+    cert_file: "{{ .TLS.CertFile }}"
+    key_file:  "{{ .TLS.KeyFile }}"
+  }`
 	if compress {
 		inner += "\n  compression: true"
 	}
@@ -300,7 +302,6 @@ func TestWSCompression(t *testing.T) {
 }
 
 func TestWSWithTLS(t *testing.T) {
-	skipPendingTesterTLS(t)
 	for _, test := range []struct {
 		name        string
 		compression bool
@@ -310,7 +311,10 @@ func TestWSWithTLS(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := newTester(t)
-			inst := c.CreateServer(t, false, testservice.WithWebSocket(wsTLSBody(test.compression)))
+			inst := c.CreateServer(t, false,
+				testservice.WithGeneratedTLS(testservice.TLSServerOnly()),
+				testservice.WithWebSocket(wsTLSBody(test.compression)),
+			)
 			t.Cleanup(func() { inst.Destroy(t) })
 
 			host := testerHost(t)
@@ -334,11 +338,13 @@ func TestWSWithTLS(t *testing.T) {
 			// since we used self signed certificates, this should fail without
 			// asking to skip server cert verification.
 			nc, err = nats.Connect(fmt.Sprintf("wss://%s:%d", host, port), copts...)
-			// Since Go 1.18, we had to regenerate certs to not have to use GODEBUG="x509sha1=1"
-			// But on macOS, with our test CA certs, no SCTs included, it will fail
-			// for the reason "x509: “localhost” certificate is not standards compliant"
-			// instead of "unknown authority".
-			if err == nil || (!strings.Contains(err.Error(), "authority") && !strings.Contains(err.Error(), "compliant")) {
+			// The verifier error wording is platform-dependent: Linux/Go x509
+			// says "unknown authority"; older macOS Security framework said
+			// "is not standards compliant" (missing SCTs); newer macOS just
+			// says "is not trusted". Accept any of the three.
+			if err == nil || (!strings.Contains(err.Error(), "authority") &&
+				!strings.Contains(err.Error(), "compliant") &&
+				!strings.Contains(err.Error(), "not trusted")) {
 				if nc != nil {
 					nc.Close()
 				}
@@ -383,9 +389,11 @@ func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
 }
 
 func TestWSWithTLSCustomDialer(t *testing.T) {
-	skipPendingTesterTLS(t)
 	c := newTester(t)
-	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsTLSBody(false)))
+	inst := c.CreateServer(t, false,
+		testservice.WithGeneratedTLS(testservice.TLSServerOnly()),
+		testservice.WithWebSocket(wsTLSBody(false)),
+	)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	host := testerHost(t)

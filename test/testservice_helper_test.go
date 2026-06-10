@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ import (
 // .github/workflows/ci.yaml). Tests use containerPath to address files within
 // it — e.g. containerPath("certs/server.pem") returns
 // "/test-configs/certs/server.pem", suitable for embedding into a server config
-// snippet via testservice.WithTLS / WithTopLevel.
+// snippet via testservice.WithTLSSnippet / WithTopLevel.
 const testConfigsMount = "/test-configs"
 
 // containerPath returns the absolute path inside the tester container for a
@@ -148,16 +149,33 @@ func dialInstance(t testing.TB, inst *testservice.Instance, opts ...nats.Option)
 	return nc
 }
 
-// skipPendingTesterTLS skips a test that depends on filesystem-mounted TLS
-// certs at test/configs/certs/. These tests will be rewritten when the
-// testservice gains managed TLS (generated CA + certs per instance) so we
-// no longer need cert files on disk; filesystem mounts are unworkable in
-// CI (GitHub Actions service containers start before checkout, leaving the
-// mount point empty) and the existing certs are hostname-bound to
-// "localhost", which trips error-text assertions in sibling-container mode.
-func skipPendingTesterTLS(t *testing.T) {
+// tlsCertFiles materializes the managed TLS material on inst to files under
+// t.TempDir() and returns their paths. caPath is always set; clientCertPath
+// and clientKeyPath are "" when the instance is not mutual TLS. Use this when
+// the test exercises file-based nats client options (RootCAs, ClientCert,
+// UserCredentials chained-files, etc.) — pure in-memory uses can call
+// testservice.TLSConfig(inst) directly instead.
+func tlsCertFiles(t *testing.T, inst *testservice.Instance) (caPath, clientCertPath, clientKeyPath string) {
 	t.Helper()
-	t.Skip("Pending testservice managed TLS support; filesystem-mounted certs are unworkable in CI")
+	if inst == nil || inst.TLS == nil {
+		t.Fatal("instance has no managed TLS material; was WithGeneratedTLS set?")
+	}
+	dir := t.TempDir()
+	caPath = filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte(inst.TLS.CAPEM), 0o600); err != nil {
+		t.Fatalf("could not write CA pem: %v", err)
+	}
+	if inst.TLS.ClientCertPEM != "" {
+		clientCertPath = filepath.Join(dir, "client-cert.pem")
+		clientKeyPath = filepath.Join(dir, "client-key.pem")
+		if err := os.WriteFile(clientCertPath, []byte(inst.TLS.ClientCertPEM), 0o600); err != nil {
+			t.Fatalf("could not write client cert: %v", err)
+		}
+		if err := os.WriteFile(clientKeyPath, []byte(inst.TLS.ClientKeyPEM), 0o600); err != nil {
+			t.Fatalf("could not write client key: %v", err)
+		}
+	}
+	return
 }
 
 // withServerB is the benchmark-flavored variant of withServer. Benchmarks use

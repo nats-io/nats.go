@@ -15,11 +15,49 @@ package api
 
 import "time"
 
+// TLSMode selects the verification posture for managed TLS. Absence of a
+// TLSOptions value disables TLS entirely; the modes only apply when TLS is
+// requested.
+type TLSMode string
+
+const (
+	// TLSModeServer is one-way TLS: the server presents a cert signed by the
+	// generated CA but does not require a client cert.
+	TLSModeServer TLSMode = "server"
+	// TLSModeMutual requires the client to present the issued client cert.
+	TLSModeMutual TLSMode = "mutual"
+)
+
+// TLSOptions opts a managed instance into generated TLS on its client ports.
+// Gateways and routes remain plaintext.
+type TLSOptions struct {
+	// Mode defaults to TLSModeMutual when empty.
+	Mode TLSMode `json:"mode,omitempty"`
+	// SANs are the Subject Alternative Names to embed in the server leaf.
+	// Strings that parse as IPs become IP SANs; everything else is treated
+	// as a DNS name. Empty means ["localhost","127.0.0.1","::1"].
+	SANs []string `json:"sans,omitempty"`
+	// HandshakeFirst makes the server perform the TLS handshake before sending
+	// the INFO protocol. Clients must dial with the matching handshake-first
+	// option; the convenience helpers wire it automatically.
+	HandshakeFirst bool `json:"handshake_first,omitempty"`
+}
+
+// TLSMaterial carries the cert material a caller needs to dial a managed
+// instance over TLS. ClientCertPEM/ClientKeyPEM are populated only for
+// TLSModeMutual; the server's private key never leaves the service.
+type TLSMaterial struct {
+	CAPEM         string `json:"ca_pem"`
+	ClientCertPEM string `json:"client_cert_pem,omitempty"`
+	ClientKeyPEM  string `json:"client_key_pem,omitempty"`
+}
+
 type CreateServerRequest struct {
 	JetStream   bool              `json:"jetstream"`
 	Description string            `json:"description,omitempty"`
 	Snippets    map[string]string `json:"snippets,omitempty"`
 	Template    string            `json:"template,omitempty"`
+	TLS         *TLSOptions       `json:"tls,omitempty"`
 }
 
 type CreateClusterRequest struct {
@@ -28,6 +66,7 @@ type CreateClusterRequest struct {
 	Description string            `json:"description,omitempty"`
 	Snippets    map[string]string `json:"snippets,omitempty"`
 	Template    string            `json:"template,omitempty"`
+	TLS         *TLSOptions       `json:"tls,omitempty"`
 }
 
 type CreateSuperClusterRequest struct {
@@ -37,6 +76,7 @@ type CreateSuperClusterRequest struct {
 	Description string            `json:"description,omitempty"`
 	Snippets    map[string]string `json:"snippets,omitempty"`
 	Template    string            `json:"template,omitempty"`
+	TLS         *TLSOptions       `json:"tls,omitempty"`
 }
 
 type ManagedServer struct {
@@ -53,6 +93,7 @@ type CreateResponse struct {
 	Description string           `json:"description,omitempty"`
 	Kind        string           `json:"kind"`
 	Servers     []*ManagedServer `json:"servers"`
+	TLS         *TLSMaterial     `json:"tls,omitempty"`
 }
 
 type DestroyRequest struct {
