@@ -182,7 +182,7 @@ func TestServerStopDisconnectedErrCB(t *testing.T) {
 
 func TestServerSecureConnections(t *testing.T) {
 	c := newTester(t)
-	opts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
+	opts := append([]testservice.CreateOption{managedTLSOpts(t, testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, _, _ := tlsCertFiles(t, inst)
@@ -289,7 +289,7 @@ func TestServerSecureConnections(t *testing.T) {
 
 func TestClientTLSConfig(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
+	inst := c.CreateServer(t, false, managedTLSOpts(t))
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, certPath, keyPath := tlsCertFiles(t, inst)
 
@@ -393,7 +393,7 @@ func TestClientTLSConfig(t *testing.T) {
 
 func TestClientCertificate(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
+	inst := c.CreateServer(t, false, managedTLSOpts(t))
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, certPath, keyPath := tlsCertFiles(t, inst)
 
@@ -462,14 +462,14 @@ func TestClientCertificate(t *testing.T) {
 func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 	c := newTester(t)
 	// Server with managed mTLS — its CA signs the cert+key we'll connect with.
-	inst := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	inst := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSMutual()))
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, certFile, keyFile := tlsCertFiles(t, inst)
 
 	// Stranger instance: separate managed mTLS to obtain a client cert signed
 	// by a CA the target server does not trust. Used to simulate "invalid"
 	// cert files in the original test.
-	stranger := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	stranger := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSMutual()))
 	t.Cleanup(func() { stranger.Destroy(t) })
 	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
 
@@ -578,7 +578,7 @@ func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 
 func TestServerTLSHintConnections(t *testing.T) {
 	c := newTester(t)
-	opts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
+	opts := append([]testservice.CreateOption{managedTLSOpts(t, testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	inst := c.CreateServer(t, false, opts...)
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, _, _ := tlsCertFiles(t, inst)
@@ -3279,7 +3279,7 @@ func TestTLSHandshakeFirst(t *testing.T) {
 	// First server: managed TLS without handshake_first. TLSHandshakeFirst
 	// client should fail to connect because the server still sends INFO before
 	// handshake.
-	classicOpts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
+	classicOpts := append([]testservice.CreateOption{managedTLSOpts(t, testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	classicInst := c.CreateServer(t, false, classicOpts...)
 	t.Cleanup(func() { classicInst.Destroy(t) })
 	classicCA, _, _ := tlsCertFiles(t, classicInst)
@@ -3297,7 +3297,7 @@ func TestTLSHandshakeFirst(t *testing.T) {
 
 	// Second server: handshake_first enabled. TLSHandshakeFirst client should
 	// connect and complete the TLS handshake.
-	hsOpts := append([]testservice.CreateOption{testservice.WithGeneratedTLS(testservice.TLSServerOnly(), testservice.TLSHandshakeFirst())}, singleUserPassOpts(derekAuthBody())...)
+	hsOpts := append([]testservice.CreateOption{managedTLSOpts(t, testservice.TLSServerOnly(), testservice.TLSHandshakeFirst())}, singleUserPassOpts(derekAuthBody())...)
 	hsInst := c.CreateServer(t, false, hsOpts...)
 	t.Cleanup(func() { hsInst.Destroy(t) })
 	hsCA, _, _ := tlsCertFiles(t, hsInst)
@@ -3382,14 +3382,14 @@ func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
 	c := newTester(t)
 	// Target server: managed mTLS + handshake_first.
 	inst := c.CreateServer(t, false,
-		testservice.WithGeneratedTLS(testservice.TLSMutual(), testservice.TLSHandshakeFirst()),
+		managedTLSOpts(t, testservice.TLSMutual(), testservice.TLSHandshakeFirst()),
 	)
 	t.Cleanup(func() { inst.Destroy(t) })
 	caPath, _, _ := tlsCertFiles(t, inst)
 
 	// Stranger instance: separate managed mTLS solely to mint a client cert
 	// signed by a CA the target server does not trust.
-	stranger := c.CreateServer(t, false, testservice.WithGeneratedTLS(testservice.TLSMutual()))
+	stranger := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSMutual()))
 	t.Cleanup(func() { stranger.Destroy(t) })
 	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
 

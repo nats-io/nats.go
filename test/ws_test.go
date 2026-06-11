@@ -312,7 +312,7 @@ func TestWSWithTLS(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			c := newTester(t)
 			inst := c.CreateServer(t, false,
-				testservice.WithGeneratedTLS(testservice.TLSServerOnly()),
+				managedTLSOpts(t, testservice.TLSServerOnly()),
 				testservice.WithWebSocket(wsTLSBody(test.compression)),
 			)
 			t.Cleanup(func() { inst.Destroy(t) })
@@ -391,7 +391,7 @@ func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
 func TestWSWithTLSCustomDialer(t *testing.T) {
 	c := newTester(t)
 	inst := c.CreateServer(t, false,
-		testservice.WithGeneratedTLS(testservice.TLSServerOnly()),
+		managedTLSOpts(t, testservice.TLSServerOnly()),
 		testservice.WithWebSocket(wsTLSBody(false)),
 	)
 	t.Cleanup(func() { inst.Destroy(t) })

@@ -149,6 +149,22 @@ func dialInstance(t testing.TB, inst *testservice.Instance, opts ...nats.Option)
 	return nc
 }
 
+// managedTLSOpts wraps WithGeneratedTLS so the generated server cert covers
+// the host clients actually dial — testerHost(t) — in addition to the upstream
+// defaults (localhost, 127.0.0.1, ::1). Locally testerHost is "localhost"
+// (already covered); in sibling-container / CI it's the docker service name
+// ("nats"), which the default cert does not include and would fail x509
+// verification on. Pass additional TLSOpts (TLSServerOnly, TLSHandshakeFirst,
+// etc.) through varargs.
+func managedTLSOpts(t *testing.T, opts ...testservice.TLSOpt) testservice.CreateOption {
+	t.Helper()
+	sans := []string{"localhost", "127.0.0.1", "::1"}
+	if h := testerHost(t); h != "" && h != "localhost" {
+		sans = append(sans, h)
+	}
+	return testservice.WithGeneratedTLS(append([]testservice.TLSOpt{testservice.TLSSANs(sans...)}, opts...)...)
+}
+
 // tlsCertFiles materializes the managed TLS material on inst to files under
 // t.TempDir() and returns their paths. caPath is always set; clientCertPath
 // and clientKeyPath are "" when the instance is not mutual TLS. Use this when

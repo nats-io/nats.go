@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
 // tsTestServers returns a slice of fabricated URLs that point at non-existent
@@ -518,7 +517,7 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 
 	// Second server requires TLS with client cert verification; an
 	// untrusted plain-text client connection will fail auth handshake.
-	s2Inst := c.CreateServer(t, false, testservice.WithGeneratedTLS())
+	s2Inst := c.CreateServer(t, false, managedTLSOpts(t))
 	t.Cleanup(func() { s2Inst.Destroy(t) })
 	s2URL := s2Inst.Servers[0].URL
 
