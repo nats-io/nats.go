@@ -2893,10 +2893,24 @@ func TestTLSDontSkipVerify(t *testing.T) {
 	host := hostFromURL(inst.Servers[0].URL)
 	port := inst.Servers[0].Port
 
+	// Resolve testerHost to an IP so the IP-SAN check below trips on a real
+	// reachable address. In host-side mode testerHost is "localhost" → 127.0.0.1
+	// is reachable directly; in sibling-container / CI mode 127.0.0.1 points at
+	// the test container itself and the spawned server lives behind the docker
+	// service name, so we have to dial via the resolved IP of testerHost.
+	ip := "127.0.0.1"
+	if host != "localhost" && host != "127.0.0.1" {
+		ips, lerr := net.LookupHost(host)
+		if lerr != nil || len(ips) == 0 {
+			t.Fatalf("could not resolve %q to an IP: %v", host, lerr)
+		}
+		ip = ips[0]
+	}
+
 	// Connect with nats:// prefix to a server that requires TLS.
 	// The library will automatically switch to TLS, but we should
 	// not skip hostname verification.
-	sURL := fmt.Sprintf("nats://derek:porkchop@127.0.0.1:%d", port)
+	sURL := fmt.Sprintf("nats://derek:porkchop@%s:%d", ip, port)
 	nc, err := nats.Connect(sURL, nats.RootCAs(caPath))
 	// Verify that error is about hostname verification
 	if err == nil || !strings.Contains(err.Error(), "IP SAN") {
