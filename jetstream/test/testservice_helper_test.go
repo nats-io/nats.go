@@ -117,32 +117,6 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 	fn(t, nc, js, inst)
 }
 
-// withJSSuperCluster creates a JetStream super-cluster (clusters × servers) and
-// dials all server URLs across every cluster. The *testservice.Instance is
-// always passed to fn for the same reason as withJSCluster.
-//
-// Currently unused: super-cluster meta-leader election doesn't complete against
-// synadia/server-tester:2.14.0 (see testservice_smoke_test.go's
-// TestTestserviceSmokeJSSuperCluster). Kept here so we don't re-derive it once
-// the upstream issue is resolved.
-//
-//lint:ignore U1000 see comment above
-func withJSSuperCluster(t *testing.T, clusters, servers int, fn func(*testing.T, *nats.Conn, jetstream.JetStream, *testservice.Instance), opts ...testservice.CreateOption) {
-	t.Helper()
-	c := newTester(t)
-	inst := c.CreateSuperCluster(t, clusters, servers, true, opts...)
-	t.Cleanup(func() { inst.Destroy(t) })
-
-	if want := clusters * servers; len(inst.Servers) != want {
-		t.Fatalf("expected %d servers in super-cluster, got %d", want, len(inst.Servers))
-	}
-
-	nc := dialInstance(t, inst)
-	c.WaitForJetStream(t, nc)
-	js := newJetStream(t, nc)
-	fn(t, nc, js, inst)
-}
-
 // dialInstance returns a connection that lists every server URL in inst, so
 // reconnect survives any single node going down. nats.MaxReconnects(-1) is
 // always set; additional connect options (e.g. credentials) may be passed.

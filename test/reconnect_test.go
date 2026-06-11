@@ -1335,13 +1335,6 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 	if err == nil {
 		t.Error("Expected connection to fail due to account max connections limit after reload")
 	}
-
-	// DIVERGENCE-narrow: the original test also exercised live JWT-based
-	// account-claims updates via s.LookupAccount + s.UpdateAccountClaims on
-	// the embedded server. testservice has no equivalent in-process server-
-	// API access. The account-limit behavior is observably equivalent via
-	// config reload (connections kicked/reconnected on limit change), so we
-	// cover the config-reload path here only.
 }
 
 func TestReconnectToServerCallback(t *testing.T) {
