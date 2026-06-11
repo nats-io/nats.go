@@ -3298,7 +3298,7 @@ func TestTLSHandshakeFirst(t *testing.T) {
 	t.Cleanup(func() { classicInst.Destroy(t) })
 	classicCA, _, _ := tlsCertFiles(t, classicInst)
 
-	secureURL := fmt.Sprintf("tls://derek:porkchop@localhost:%d", classicInst.Servers[0].Port)
+	secureURL := fmt.Sprintf("tls://derek:porkchop@%s:%d", hostFromURL(classicInst.Servers[0].URL), classicInst.Servers[0].Port)
 	nc, err := nats.Connect(secureURL,
 		nats.RootCAs(classicCA),
 		nats.TLSHandshakeFirst())
@@ -3316,7 +3316,7 @@ func TestTLSHandshakeFirst(t *testing.T) {
 	t.Cleanup(func() { hsInst.Destroy(t) })
 	hsCA, _, _ := tlsCertFiles(t, hsInst)
 
-	secureURL = fmt.Sprintf("tls://derek:porkchop@localhost:%d", hsInst.Servers[0].Port)
+	secureURL = fmt.Sprintf("tls://derek:porkchop@%s:%d", hostFromURL(hsInst.Servers[0].URL), hsInst.Servers[0].Port)
 	nc, err = nats.Connect(secureURL,
 		nats.RootCAs(hsCA),
 		nats.TLSHandshakeFirst())
@@ -3407,11 +3407,9 @@ func TestTLSHandshakeFirstMTLSReject(t *testing.T) {
 	t.Cleanup(func() { stranger.Destroy(t) })
 	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
 
-	port := inst.Servers[0].Port
-
 	// Connect with a client cert signed by a different CA.
 	_, err := nats.Connect(
-		fmt.Sprintf("tls://127.0.0.1:%d", port),
+		inst.Servers[0].URL,
 		nats.RootCAs(caPath),
 		nats.ClientCert(strangerCert, strangerKey),
 		nats.TLSHandshakeFirst(),
