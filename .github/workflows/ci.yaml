@@ -50,7 +50,7 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
-            image: synadia/server-tester:2.14.0
+            image: synadia/server-tester:2.14
             options: --name nats
         env:
           TESTER_NATS_URL: nats://nats:4222

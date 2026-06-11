@@ -61,24 +61,6 @@ func tlsConfBody() string {
 }`, containerPath("certs/server.pem"), containerPath("certs/key.pem"))
 }
 
-func tlsVerifyConfBody() string {
-	return fmt.Sprintf(`tls {
-  cert_file: %q
-  key_file:  %q
-  ca_file:   %q
-  verify:    true
-  timeout:   2
-}`, containerPath("certs/server.pem"), containerPath("certs/key.pem"), containerPath("certs/ca.pem"))
-}
-
-func tlsNoIPConfBody() string {
-	return fmt.Sprintf(`tls {
-  cert_file: %q
-  key_file:  %q
-  timeout:   2
-}`, containerPath("certs/server_noip.pem"), containerPath("certs/key_noip.pem"))
-}
-
 func derekAuthBody() string {
 	return `authorization {
   user:     derek
