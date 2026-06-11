@@ -15,9 +15,11 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"sort"
 	"sync"
@@ -133,14 +135,51 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 	}
 	nc.Flush()
 
+	// Churn goroutine bypasses inst.StopServer/StartServer because those
+	// fail via t.Fatalf from a non-test goroutine, which is illegal per the
+	// testing docs (FailNow → runtime.Goexit only terminates the calling
+	// goroutine; the parent test may continue obliviously). Drive the same
+	// tester RPCs directly and surface errors via an error channel that the
+	// test goroutine drains after the workload.
+	testerNc, err := nats.Connect(os.Getenv("TESTER_NATS_URL"))
+	if err != nil {
+		t.Fatalf("could not dial tester: %v", err)
+	}
+	defer testerNc.Close()
+
+	churnOp := func(subject, name string) error {
+		body, _ := json.Marshal(map[string]string{"name": name})
+		m, err := testerNc.Request(subject, body, 10*time.Second)
+		if err != nil {
+			return fmt.Errorf("%s: %w", subject, err)
+		}
+		if e := m.Header.Get("Nats-Service-Error"); e != "" {
+			return fmt.Errorf("%s: %s", subject, e)
+		}
+		return nil
+	}
+
+	errCh := make(chan error, 1)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	ch := make(chan struct{})
 	go func() {
 		defer wg.Done()
 		for {
-			inst.StopServer(t, churn)
-			inst.StartServer(t, churn)
+			if err := churnOp("tester.stop.server", churn.Name); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			if err := churnOp("tester.start.server", churn.Name); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
 			select {
 			case <-ch:
 				return
@@ -151,7 +190,7 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 
 	msg := nats.NewMsg(subject)
 	msg.Header["Hdr-Test"] = []string{"quux"}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		nc.RequestMsg(msg, time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		nc.RequestMsgWithContext(ctx, msg)
@@ -165,6 +204,11 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 
 	close(ch)
 	wg.Wait()
+	select {
+	case err := <-errCh:
+		t.Fatalf("churn goroutine failed: %v", err)
+	default:
+	}
 }
 
 func TestNoHeaderSupport(t *testing.T) {

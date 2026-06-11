@@ -109,5 +109,31 @@ func BenchmarkProtobufMarshalStruct(b *testing.B) {
 	}
 }
 
-// BenchmarkPublishProtobufStruct (original protobuf_test.go) deferred to task 4.13 —
-// testservice helpers take *testing.T, not *testing.B.
+func BenchmarkPublishProtobufStruct(b *testing.B) {
+	b.StopTimer()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ec := newProtoEncodedConn(b, nc)
+		defer ec.Close()
+		ch := make(chan bool)
+
+		me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*pb.Person)
+		me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+		ec.Subscribe("protobuf_test", func(p *pb.Person) {
+			if !reflect.DeepEqual(p.ProtoReflect(), me.ProtoReflect()) {
+				b.Fatalf("Did not receive the correct protobuf response")
+			}
+			ch <- true
+		})
+
+		b.StartTimer()
+		for range b.N {
+			ec.Publish("protobuf_test", me)
+			if e := Wait(ch); e != nil {
+				b.Fatal("Did not receive the message")
+			}
+		}
+	})
+}

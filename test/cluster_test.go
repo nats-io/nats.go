@@ -585,8 +585,8 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	// reach len(servers)*MaxReconnect. The client is not exceeding its
 	// per-server budget; assert the true upper bound.
 	reconnects := nc.Stats().Reconnects
-	if reconnects > uint64(len(myServers)*opts.MaxReconnect) {
-		t.Fatalf("Num reconnects was %v, expected <= %v", reconnects, len(myServers)*opts.MaxReconnect)
+	if reconnects < uint64(opts.MaxReconnect) || reconnects > uint64(len(myServers)*opts.MaxReconnect) {
+		t.Fatalf("Num reconnects was %v, expected within [%v, %v]", reconnects, opts.MaxReconnect, len(myServers)*opts.MaxReconnect)
 	}
 
 	// Make sure we are not still reconnecting..

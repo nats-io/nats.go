@@ -84,7 +84,7 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	s1URL := inst.Servers[0].URL
 
 	errCh := make(chan error, 2)
-	reconnectCh := make(chan struct{}, 2)
+	reconnectCh := make(chan *nats.Conn, 2)
 	opts := []nats.Option{
 		nats.MaxReconnects(2),
 		nats.ReconnectWait(10 * time.Millisecond),
@@ -94,8 +94,8 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 				errCh <- err
 			}
 		}),
-		nats.ReconnectHandler(func(_ *nats.Conn) {
-			reconnectCh <- struct{}{}
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			reconnectCh <- nc
 		}),
 	}
 
@@ -127,7 +127,12 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	}
 
 	select {
-	case <-reconnectCh:
+	case reconn := <-reconnectCh:
+		// Kicked client must land on the second cluster node — s1 still has
+		// max_connections=1 and is occupied by the survivor.
+		if got := reconn.ConnectedUrl(); got == s1URL {
+			t.Fatalf("Expected kicked client to reconnect to s2, got %s", got)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timed out waiting for reconnect event")
 	}
@@ -1072,4 +1077,60 @@ func TestSkipSubjectValidation(t *testing.T) {
 			t.Fatalf("Expected to publish to bad subject %q, got error: %v", badSubj, err)
 		}
 	})
+}
+
+func BenchmarkNextMsgNoTimeout(b *testing.B) {
+	c := newTester(b)
+	inst := c.CreateServer(b, false)
+	b.Cleanup(func() { inst.Destroy(b) })
+	url := inst.Servers[0].URL
+
+	ncp, err := nats.Connect(url)
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+	defer ncp.Close()
+	ncs, err := nats.Connect(url, nats.SyncQueueLen(b.N))
+	if err != nil {
+		b.Fatalf("Error connecting: %v", err)
+	}
+	defer ncs.Close()
+
+	// Test processing speed so no long subject or payloads.
+	subj := "a"
+
+	sub, err := ncs.SubscribeSync(subj)
+	if err != nil {
+		b.Fatalf("Error subscribing: %v", err)
+	}
+	ncs.Flush()
+
+	// Set it up so we can internally queue all the messages.
+	sub.SetPendingLimits(b.N, b.N*1000)
+
+	for range b.N {
+		ncp.Publish(subj, nil)
+	}
+	ncp.Flush()
+
+	// Wait for them to all be queued up, testing NextMsg not server here.
+	// Only wait at most one second.
+	wait := time.Now().Add(time.Second)
+	for time.Now().Before(wait) {
+		nm, _, err := sub.Pending()
+		if err != nil {
+			b.Fatalf("Error on Pending() - %v", err)
+		}
+		if nm >= b.N {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	b.ResetTimer()
+	for i := range b.N {
+		if _, err := sub.NextMsg(10 * time.Millisecond); err != nil {
+			b.Fatalf("Error getting message[%d]: %v", i, err)
+		}
+	}
 }

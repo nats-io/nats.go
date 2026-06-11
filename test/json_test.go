@@ -224,9 +224,34 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
 	}
 }
 
-// BenchmarkPublishJsonStruct (original json_test.go) is deferred — the testservice
-// helpers take *testing.T, not *testing.B. Revisit when bench_test.go migrates
-// (task 4.13) and the helper layer grows a testing.TB-shaped surface.
+func BenchmarkPublishJsonStruct(b *testing.B) {
+	b.StopTimer()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ec := newJSONEncodedConn(b, nc)
+		defer ec.Close()
+		ch := make(chan bool)
+
+		me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*person)
+		me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+
+		ec.Subscribe("json_benchmark_struct_publish", func(p *person) {
+			if !reflect.DeepEqual(p, me) {
+				b.Fatalf("Did not receive the correct struct response")
+			}
+			ch <- true
+		})
+
+		b.StartTimer()
+		for range b.N {
+			ec.Publish("json_benchmark_struct_publish", me)
+			if e := Wait(ch); e != nil {
+				b.Fatal("Did not receive the message")
+			}
+		}
+	})
+}
 
 func TestEncBuiltinNotMarshableToJson(t *testing.T) {
 	je := &builtin.JsonEncoder{}

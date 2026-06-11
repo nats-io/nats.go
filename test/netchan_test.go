@@ -299,5 +299,26 @@ func TestRecvChanMultipleMessages(t *testing.T) {
 	})
 }
 
-// BenchmarkPublishSpeedViaChan (original netchan_test.go) deferred to task 4.13 —
-// testservice helpers take *testing.T, not *testing.B.
+func BenchmarkPublishSpeedViaChan(b *testing.B) {
+	b.StopTimer()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ec, err := nats.NewEncodedConn(nc, nats.DEFAULT_ENCODER)
+		if err != nil {
+			b.Fatalf("Failed creating encoded connection: %v\n", err)
+		}
+		defer ec.Close()
+
+		ch := make(chan int32, 1024)
+		if err := ec.BindSendChan("foo", ch); err != nil {
+			b.Fatalf("Failed to bind to a send channel: %v\n", err)
+		}
+
+		b.StartTimer()
+		num := int32(22)
+		for range b.N {
+			ch <- num
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
+}

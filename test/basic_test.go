@@ -31,16 +31,25 @@ import (
 )
 
 func TestCloseLeakingGoRoutines(t *testing.T) {
-	withServer(t, func(t *testing.T, nc *nats.Conn) {
-		base := getStableNumGoroutine(t)
+	// Goroutine baseline must be captured BEFORE the connection is created;
+	// otherwise the conn's own goroutines are in the base and Close() trivially
+	// satisfies the leak check (they all exit, delta is non-positive).
+	c := newTester(t)
+	inst := c.CreateServer(t, false)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-		nc.Flush()
-		nc.Close()
+	base := getStableNumGoroutine(t)
 
-		checkNoGoroutineLeak(t, base, "Close()")
+	nc, err := nats.Connect(inst.Servers[0].URL)
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	nc.Flush()
+	nc.Close()
 
-		nc.Close()
-	})
+	checkNoGoroutineLeak(t, base, "Close()")
+
+	nc.Close()
 }
 
 func TestLeakingGoRoutinesOnFailedConnect(t *testing.T) {

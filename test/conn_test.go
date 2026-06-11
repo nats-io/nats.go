@@ -2755,7 +2755,11 @@ func TestGetClientID(t *testing.T) {
 	srvA := inst.Servers[0]
 	srvB := inst.Servers[1]
 
-	ch := make(chan bool, 2)
+	// Separate channels for discovery vs reconnect so the CID-stability check
+	// (CID must NOT change when an async INFO updates the server pool) is
+	// independent from the failover check (CID must change after reconnect).
+	discoveredCh := make(chan bool, 4)
+	reconnectCh := make(chan bool, 2)
 	// Pass both URLs so the client knows where to fail over to even if cluster
 	// discovery hasn't completed yet.
 	allURLs := srvA.URL + "," + srvB.URL
@@ -2765,12 +2769,12 @@ func TestGetClientID(t *testing.T) {
 		nats.DontRandomize(),
 		nats.DiscoveredServersHandler(func(_ *nats.Conn) {
 			select {
-			case ch <- true:
+			case discoveredCh <- true:
 			default:
 			}
 		}),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
-			ch <- true
+			reconnectCh <- true
 		}))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -2785,6 +2789,19 @@ func TestGetClientID(t *testing.T) {
 		t.Fatal("Unexpected cid value, make sure server is 1.2.0+")
 	}
 
+	// CID-stability: when the cluster gossips and an async INFO updates the
+	// server pool, the existing connection's CID must NOT change (only
+	// reconnect changes it). Wait for at least one discovery and re-check.
+	if err := Wait(discoveredCh); err == nil {
+		stableCID, err := nc1.GetClientID()
+		if err != nil {
+			t.Fatalf("Error getting CID after discovery: %v", err)
+		}
+		if stableCID != cid {
+			t.Fatalf("CID changed after async INFO discovery: %v -> %v", cid, stableCID)
+		}
+	}
+
 	// Create a client to server B
 	nc2, err := nats.Connect(srvB.URL)
 	if err != nil {
@@ -2795,7 +2812,7 @@ func TestGetClientID(t *testing.T) {
 	// Stop server A, nc1 will reconnect to B, and should have different CID
 	inst.StopServer(t, srvA)
 	// Wait for nc1 to reconnect
-	if err := Wait(ch); err != nil {
+	if err := Wait(reconnectCh); err != nil {
 		t.Fatal("Did not reconnect")
 	}
 	newCID, err := nc1.GetClientID()
@@ -3113,6 +3130,55 @@ func TestRetryOnFailedConnectWithAuthError(t *testing.T) {
 
 func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
 	t.Skip("DIVERGENCE: needs `tls_timeout: 0.0001` initially, then `tls_timeout: 2` on the same port — i.e. mutate one tls{} knob on a running instance. UpdateServer can swap a user-supplied tls snippet, but WithTLSSnippet and WithGeneratedTLS are mutually exclusive and the main template emits BOTH the user `tls` include and the managed `TLSInclude` when both are set — invalid config. Lift once managed TLS exposes a `TLSTimeout` TLSOpt (matching the HandshakeFirst pattern).")
+	// Original embedded-server body preserved verbatim below for future
+	// re-port (will not compile against the testservice-only branch — kept as
+	// a comment so re-enabling the test does not require git archeology).
+	/*
+		opts := test.DefaultTestOptions
+		opts.Port = 4222
+		tc := &server.TLSConfigOpts{
+			CertFile: "./configs/certs/server.pem",
+			KeyFile:  "./configs/certs/key.pem",
+			CaFile:   "./configs/certs/ca.pem",
+		}
+		var err error
+		if opts.TLSConfig, err = server.GenTLSConfig(tc); err != nil {
+			t.Fatalf("Can't build TLCConfig: %v", err)
+		}
+		opts.TLSTimeout = 0.0001
+
+		s := RunServerWithOptions(&opts)
+		defer s.Shutdown()
+
+		connectedCh := make(chan bool, 1)
+		nc, err := nats.Connect(nats.DefaultURL,
+			nats.Secure(&tls.Config{InsecureSkipVerify: true}),
+			nats.RetryOnFailedConnect(true),
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(15*time.Millisecond),
+			nats.ConnectHandler(func(_ *nats.Conn) {
+				connectedCh <- true
+			}),
+			nats.NoCallbacksAfterClientClose())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		// Wait for several failed attempts
+		time.Sleep(100 * time.Millisecond)
+		// Replace tls timeout to a reasonable value.
+		s.Shutdown()
+		opts.TLSTimeout = 2.0
+		s = RunServerWithOptions(&opts)
+		defer s.Shutdown()
+
+		select {
+		case <-connectedCh:
+		case <-time.After(time.Second):
+			t.Fatal("Should have connected")
+		}
+	*/
 }
 
 func TestConnStatusChangedEvents(t *testing.T) {
