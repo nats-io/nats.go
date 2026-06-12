@@ -74,7 +74,9 @@ type TLSOpt func(*api.TLSOptions)
 // material into their nats.Connect, so a TLS test is a one-liner.
 //
 // Defaults to mutual TLS and SANs ["localhost","127.0.0.1","::1"]. Override
-// with TLSServerOnly, TLSMutual, TLSSANs, TLSHandshakeFirst.
+// with TLSServerOnly, TLSMutual, TLSSANs, TLSHandshakeFirst, TLSTimeout. The
+// handshake timeout can also be changed at runtime via
+// UpdateServer(WithTLSTimeout(...)) + ReloadServer.
 //
 // Mutually exclusive with WithTLSSnippet — the service rejects requests that
 // set both.
@@ -117,6 +119,19 @@ func TLSHandshakeFirst() TLSOpt {
 	return func(t *api.TLSOptions) { t.HandshakeFirst = true }
 }
 
+// TLSTimeout sets the server's TLS handshake timeout (default 2s). Sub-second
+// values are honored: TLSTimeout(100*time.Microsecond) renders timeout: 0.0001.
+// A non-positive duration is ignored and the default applies. This is
+// server-side only and needs no matching client option (unlike
+// TLSHandshakeFirst). To change it at runtime, use WithTLSTimeout + ReloadServer.
+func TLSTimeout(d time.Duration) TLSOpt {
+	return func(t *api.TLSOptions) {
+		if d > 0 {
+			t.Timeout = d.Seconds()
+		}
+	}
+}
+
 // TLSConfig builds a *tls.Config from an Instance's returned TLS material:
 // RootCAs from the CA cert, and (when mutual TLS was requested) a single
 // X509KeyPair from the client cert and key. Returns an error if inst.TLS
@@ -141,8 +156,9 @@ func TLSConfig(inst *Instance) (*tls.Config, error) {
 }
 
 type updateOptions struct {
-	snippets map[string]string
-	template string
+	snippets   map[string]string
+	template   string
+	tlsTimeout *float64
 }
 
 // snippetOpt is the underlying type of every helper that customizes the
@@ -269,6 +285,30 @@ func WithJetStream(body string) snippetOpt { return snippetOpt{key: "jetstream",
 // debug, max_payload, …). Rendered above server_name in the merged config so
 // settings that must appear before the rest of the config are honored.
 func WithTopLevel(body string) snippetOpt { return snippetOpt{key: "top", body: body} }
+
+// updateOpt is the underlying type for helpers that only customize Update*
+// calls.
+type updateOpt func(*updateOptions)
+
+func (f updateOpt) applyUpdate(o *updateOptions) { f(o) }
+
+// WithTLSTimeout changes the TLS handshake timeout of a server created with
+// WithGeneratedTLS. Sub-second durations are honored. Apply it with a subsequent
+// ReloadServer; the server stays up on the same port. A non-positive duration is
+// ignored.
+//
+// UpdateServer is full-replace: every call re-renders the config from only the
+// options you pass. If your server has custom snippets or a template, re-supply
+// them on the same call or they revert to defaults. To set the timeout at
+// create time instead, use TLSTimeout (a WithGeneratedTLS sub-option).
+func WithTLSTimeout(d time.Duration) UpdateOption {
+	return updateOpt(func(o *updateOptions) {
+		if d > 0 {
+			secs := d.Seconds()
+			o.tlsTimeout = &secs
+		}
+	})
+}
 
 // WithTemplate replaces the built-in main config template with the caller's
 // body. Rendered through text/template against the same env exposed to
@@ -749,9 +789,10 @@ func (i *Instance) UpdateServer(t testing.TB, server *api.ManagedServer, opts ..
 	uo := resolveUpdateOptions(opts)
 
 	req, err := json.Marshal(api.UpdateServerRequest{
-		Name:     server.Name,
-		Snippets: uo.snippets,
-		Template: uo.template,
+		Name:       server.Name,
+		Snippets:   uo.snippets,
+		Template:   uo.template,
+		TLSTimeout: uo.tlsTimeout,
 	})
 	if err != nil {
 		t.Fatalf("could not marshal UpdateServerRequest: %v", err)

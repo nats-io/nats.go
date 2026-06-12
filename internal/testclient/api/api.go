@@ -41,6 +41,11 @@ type TLSOptions struct {
 	// the INFO protocol. Clients must dial with the matching handshake-first
 	// option; the convenience helpers wire it automatically.
 	HandshakeFirst bool `json:"handshake_first,omitempty"`
+	// Timeout is the TLS handshake timeout (the nats-server tls{} `timeout`)
+	// in seconds; fractional values are honored (0.0001 = 100us). Zero uses the
+	// managed default of 2 seconds. The Go client helpers set this from a
+	// time.Duration.
+	Timeout float64 `json:"timeout,omitempty"`
 }
 
 // TLSMaterial carries the cert material a caller needs to dial a managed
@@ -156,6 +161,10 @@ type UpdateServerRequest struct {
 	Name     string            `json:"name"`
 	Snippets map[string]string `json:"snippets,omitempty"`
 	Template string            `json:"template,omitempty"`
+	// TLSTimeout, when non-nil, sets the managed TLS handshake timeout (seconds)
+	// for a server created with generated TLS. Absent means no change. Apply it
+	// with a subsequent reload.
+	TLSTimeout *float64 `json:"tls_timeout,omitempty"`
 }
 
 type UpdateServerResponse struct {

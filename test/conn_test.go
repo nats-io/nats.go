@@ -3118,56 +3118,41 @@ func TestRetryOnFailedConnectWithAuthError(t *testing.T) {
 }
 
 func TestRetryOnFailedConnectWithTLSError(t *testing.T) {
-	t.Skip("DIVERGENCE: needs `tls_timeout: 0.0001` initially, then `tls_timeout: 2` on the same port — i.e. mutate one tls{} knob on a running instance. UpdateServer can swap a user-supplied tls snippet, but WithTLSSnippet and WithGeneratedTLS are mutually exclusive and the main template emits BOTH the user `tls` include and the managed `TLSInclude` when both are set — invalid config. Lift once managed TLS exposes a `TLSTimeout` TLSOpt (matching the HandshakeFirst pattern).")
-	// Original embedded-server body preserved verbatim below for future
-	// re-port (will not compile against the testservice-only branch — kept as
-	// a comment so re-enabling the test does not require git archeology).
-	/*
-		opts := test.DefaultTestOptions
-		opts.Port = 4222
-		tc := &server.TLSConfigOpts{
-			CertFile: "./configs/certs/server.pem",
-			KeyFile:  "./configs/certs/key.pem",
-			CaFile:   "./configs/certs/ca.pem",
-		}
-		var err error
-		if opts.TLSConfig, err = server.GenTLSConfig(tc); err != nil {
-			t.Fatalf("Can't build TLCConfig: %v", err)
-		}
-		opts.TLSTimeout = 0.0001
+	c := newTester(t)
+	// Server with a deliberately tiny TLS handshake timeout so the initial
+	// connect attempts trip the server's handshake timer, exercising the
+	// retry-on-failed-connect path.
+	inst := c.CreateServer(t, false,
+		managedTLSOpts(t, testservice.TLSServerOnly(), testservice.TLSTimeout(100*time.Microsecond)),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-		s := RunServerWithOptions(&opts)
-		defer s.Shutdown()
+	connectedCh := make(chan bool, 1)
+	nc, err := nats.Connect(inst.Servers[0].URL,
+		nats.Secure(&tls.Config{InsecureSkipVerify: true}),
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(15*time.Millisecond),
+		nats.ConnectHandler(func(_ *nats.Conn) {
+			connectedCh <- true
+		}),
+		nats.NoCallbacksAfterClientClose())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer nc.Close()
 
-		connectedCh := make(chan bool, 1)
-		nc, err := nats.Connect(nats.DefaultURL,
-			nats.Secure(&tls.Config{InsecureSkipVerify: true}),
-			nats.RetryOnFailedConnect(true),
-			nats.MaxReconnects(-1),
-			nats.ReconnectWait(15*time.Millisecond),
-			nats.ConnectHandler(func(_ *nats.Conn) {
-				connectedCh <- true
-			}),
-			nats.NoCallbacksAfterClientClose())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
+	// Wait for several failed attempts.
+	time.Sleep(100 * time.Millisecond)
+	// Bump TLS timeout to a reasonable value on the running server and reload.
+	inst.UpdateServer(t, inst.Servers[0], testservice.WithTLSTimeout(2*time.Second))
+	inst.ReloadServer(t, inst.Servers[0])
 
-		// Wait for several failed attempts
-		time.Sleep(100 * time.Millisecond)
-		// Replace tls timeout to a reasonable value.
-		s.Shutdown()
-		opts.TLSTimeout = 2.0
-		s = RunServerWithOptions(&opts)
-		defer s.Shutdown()
-
-		select {
-		case <-connectedCh:
-		case <-time.After(time.Second):
-			t.Fatal("Should have connected")
-		}
-	*/
+	select {
+	case <-connectedCh:
+	case <-time.After(time.Second):
+		t.Fatal("Should have connected")
+	}
 }
 
 func TestConnStatusChangedEvents(t *testing.T) {
