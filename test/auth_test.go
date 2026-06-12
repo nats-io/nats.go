@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,27 +17,28 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
 func TestAuth(t *testing.T) {
-	opts := test.DefaultTestOptions
-	opts.Port = 8232
-	opts.Username = "derek"
-	opts.Password = "foo"
-	s := RunServerWithOptions(&opts)
-	defer s.Shutdown()
+	c := newTester(t)
+	authBody := `authorization {
+  user:     derek
+  password: foo
+}`
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	_, err := nats.Connect("nats://127.0.0.1:8232")
+	url := inst.Servers[0].URL
+	hostPort := hostPortFromURL(url)
+
+	_, err := nats.Connect(url)
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
@@ -52,20 +53,20 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("Expected error '%v', got '%v'", nats.ErrAuthorization, err)
 	}
 
-	nc, err := nats.Connect("nats://derek:foo@127.0.0.1:8232")
+	nc, err := nats.Connect(fmt.Sprintf("nats://derek:foo@%s", hostPort))
 	if err != nil {
 		t.Fatal("Should have connected successfully with a token")
 	}
 	nc.Close()
 
 	// Use Options
-	nc, err = nats.Connect("nats://127.0.0.1:8232", nats.UserInfo("derek", "foo"))
+	nc, err = nats.Connect(url, nats.UserInfo("derek", "foo"))
 	if err != nil {
 		t.Fatalf("Should have connected successfully with a token: %v", err)
 	}
 	nc.Close()
 	// Verify that credentials in URL take precedence.
-	nc, err = nats.Connect("nats://derek:foo@127.0.0.1:8232", nats.UserInfo("foo", "bar"))
+	nc, err = nats.Connect(fmt.Sprintf("nats://derek:foo@%s", hostPort), nats.UserInfo("foo", "bar"))
 	if err != nil {
 		t.Fatalf("Should have connected successfully with a token: %v", err)
 	}
@@ -73,15 +74,16 @@ func TestAuth(t *testing.T) {
 }
 
 func TestAuthFailNoDisconnectErrCB(t *testing.T) {
-	opts := test.DefaultTestOptions
-	opts.Port = 8232
-	opts.Username = "derek"
-	opts.Password = "foo"
-	s := RunServerWithOptions(&opts)
-	defer s.Shutdown()
+	c := newTester(t)
+	authBody := `authorization {
+  user:     derek
+  password: foo
+}`
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
 
 	copts := nats.GetDefaultOptions()
-	copts.Url = "nats://127.0.0.1:8232"
+	copts.Url = inst.Servers[0].URL
 	receivedDisconnectErrCB := int32(0)
 	copts.DisconnectedErrCB = func(nc *nats.Conn, _ error) {
 		atomic.AddInt32(&receivedDisconnectErrCB, 1)
@@ -97,24 +99,26 @@ func TestAuthFailNoDisconnectErrCB(t *testing.T) {
 }
 
 func TestAuthFailAllowReconnect(t *testing.T) {
-	ts := RunServerOnPort(23232)
-	defer ts.Shutdown()
+	c := newTester(t)
 
-	var servers = []string{
-		"nats://127.0.0.1:23232",
-		"nats://127.0.0.1:23233",
-		"nats://127.0.0.1:23234",
+	ts := c.CreateServer(t, false)
+	t.Cleanup(func() { ts.Destroy(t) })
+
+	authBody := `authorization {
+  user:     ivan
+  password: foo
+}`
+	ts2 := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { ts2.Destroy(t) })
+
+	ts3 := c.CreateServer(t, false)
+	t.Cleanup(func() { ts3.Destroy(t) })
+
+	servers := []string{
+		ts.Servers[0].URL,
+		ts2.Servers[0].URL,
+		ts3.Servers[0].URL,
 	}
-
-	opts2 := test.DefaultTestOptions
-	opts2.Port = 23233
-	opts2.Username = "ivan"
-	opts2.Password = "foo"
-	ts2 := RunServerWithOptions(&opts2)
-	defer ts2.Shutdown()
-
-	ts3 := RunServerOnPort(23234)
-	defer ts3.Shutdown()
 
 	reconnectch := make(chan bool)
 	defer close(reconnectch)
@@ -142,7 +146,7 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
 
 	// Stop the server
-	ts.Shutdown()
+	ts.StopServer(t, ts.Servers[0])
 
 	// The client will try to connect to the second server, and that
 	// should fail. It should then try to connect to the third and succeed.
@@ -162,20 +166,25 @@ func TestAuthFailAllowReconnect(t *testing.T) {
 }
 
 func TestTokenHandlerReconnect(t *testing.T) {
-	var servers = []string{
-		"nats://127.0.0.1:8232",
-		"nats://127.0.0.1:8233",
-	}
+	c := newTester(t)
 
-	ts := RunServerOnPort(8232)
-	defer ts.Shutdown()
+	// Server 1 has no authorization at all — neutralize the default
+	// accounts/system_account/no_auth_user so any client (including ones
+	// sending a token) is allowed in.
+	ts := c.CreateServer(t, false, singleUserPassOpts(`# no authorization required`)...)
+	t.Cleanup(func() { ts.Destroy(t) })
 
-	opts2 := test.DefaultTestOptions
-	opts2.Port = 8233
 	secret := "S3Cr3T0k3n!"
-	opts2.Authorization = secret
-	ts2 := RunServerWithOptions(&opts2)
-	defer ts2.Shutdown()
+	authBody := fmt.Sprintf(`authorization {
+  token: %q
+}`, secret)
+	ts2 := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { ts2.Destroy(t) })
+
+	servers := []string{
+		ts.Servers[0].URL,
+		ts2.Servers[0].URL,
+	}
 
 	reconnectch := make(chan bool)
 	defer close(reconnectch)
@@ -204,7 +213,7 @@ func TestTokenHandlerReconnect(t *testing.T) {
 	defer nc.Close()
 
 	// Stop the server
-	ts.Shutdown()
+	ts.StopServer(t, ts.Servers[0])
 
 	// The client will try to connect to the second server and succeed.
 
@@ -223,19 +232,23 @@ func TestTokenHandlerReconnect(t *testing.T) {
 }
 
 func TestTokenAuth(t *testing.T) {
-	opts := test.DefaultTestOptions
-	opts.Port = 8232
+	c := newTester(t)
 	secret := "S3Cr3T0k3n!"
-	opts.Authorization = secret
-	s := RunServerWithOptions(&opts)
-	defer s.Shutdown()
+	authBody := fmt.Sprintf(`authorization {
+  token: %q
+}`, secret)
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	_, err := nats.Connect("nats://127.0.0.1:8232")
+	url := inst.Servers[0].URL
+	hostPort := hostPortFromURL(url)
+
+	_, err := nats.Connect(url)
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 
-	tokenURL := fmt.Sprintf("nats://%s@127.0.0.1:8232", secret)
+	tokenURL := fmt.Sprintf("nats://%s@%s", secret, hostPort)
 	nc, err := nats.Connect(tokenURL)
 	if err != nil {
 		t.Fatal("Should have connected successfully")
@@ -243,18 +256,18 @@ func TestTokenAuth(t *testing.T) {
 	nc.Close()
 
 	// Use Options
-	nc, err = nats.Connect("nats://127.0.0.1:8232", nats.Token(secret))
+	nc, err = nats.Connect(url, nats.Token(secret))
 	if err != nil {
 		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
 	// Verify that token cannot be set when token handler is provided.
-	_, err = nats.Connect("nats://127.0.0.1:8232", nats.TokenHandler(func() string { return secret }), nats.Token(secret))
+	_, err = nats.Connect(url, nats.TokenHandler(func() string { return secret }), nats.Token(secret))
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 	// Verify that token handler cannot be provided when token is set.
-	_, err = nats.Connect("nats://127.0.0.1:8232", nats.Token(secret), nats.TokenHandler(func() string { return secret }))
+	_, err = nats.Connect(url, nats.Token(secret), nats.TokenHandler(func() string { return secret }))
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
@@ -267,19 +280,23 @@ func TestTokenAuth(t *testing.T) {
 }
 
 func TestTokenHandlerAuth(t *testing.T) {
-	opts := test.DefaultTestOptions
-	opts.Port = 8232
+	c := newTester(t)
 	secret := "S3Cr3T0k3n!"
-	opts.Authorization = secret
-	s := RunServerWithOptions(&opts)
-	defer s.Shutdown()
+	authBody := fmt.Sprintf(`authorization {
+  token: %q
+}`, secret)
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	_, err := nats.Connect("nats://127.0.0.1:8232")
+	url := inst.Servers[0].URL
+	hostPort := hostPortFromURL(url)
+
+	_, err := nats.Connect(url)
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 
-	tokenURL := fmt.Sprintf("nats://%s@127.0.0.1:8232", secret)
+	tokenURL := fmt.Sprintf("nats://%s@%s", secret, hostPort)
 	nc, err := nats.Connect(tokenURL)
 	if err != nil {
 		t.Fatal("Should have connected successfully")
@@ -287,18 +304,18 @@ func TestTokenHandlerAuth(t *testing.T) {
 	nc.Close()
 
 	// Use Options
-	nc, err = nats.Connect("nats://127.0.0.1:8232", nats.TokenHandler(func() string { return secret }))
+	nc, err = nats.Connect(url, nats.TokenHandler(func() string { return secret }))
 	if err != nil {
 		t.Fatalf("Should have connected successfully: %v", err)
 	}
 	nc.Close()
 	// Verify that token cannot be set when token handler is provided.
-	_, err = nats.Connect("nats://127.0.0.1:8232", nats.TokenHandler(func() string { return secret }), nats.Token(secret))
+	_, err = nats.Connect(url, nats.TokenHandler(func() string { return secret }), nats.Token(secret))
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
 	// Verify that token handler cannot be provided when token is set.
-	_, err = nats.Connect("nats://127.0.0.1:8232", nats.Token(secret), nats.TokenHandler(func() string { return secret }))
+	_, err = nats.Connect(url, nats.Token(secret), nats.TokenHandler(func() string { return secret }))
 	if err == nil {
 		t.Fatal("Should have received an error while trying to connect")
 	}
@@ -310,27 +327,30 @@ func TestTokenHandlerAuth(t *testing.T) {
 }
 
 func TestPermViolation(t *testing.T) {
-	opts := test.DefaultTestOptions
-	opts.Port = 8232
-	opts.Users = []*server.User{
-		{
-			Username: "ivan",
-			Password: "pwd",
-			Permissions: &server.Permissions{
-				Publish:   &server.SubjectPermission{Allow: []string{"Foo"}},
-				Subscribe: &server.SubjectPermission{Allow: []string{"Bar"}},
-			},
-		},
-	}
-	s := RunServerWithOptions(&opts)
-	defer s.Shutdown()
+	c := newTester(t)
+	authBody := `authorization {
+  users: [
+    {
+      user: "ivan"
+      password: "pwd"
+      permissions: {
+        publish:   { allow: ["Foo"] }
+        subscribe: { allow: ["Bar"] }
+      }
+    }
+  ]
+}`
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	hostPort := hostPortFromURL(inst.Servers[0].URL)
 
 	errCh := make(chan error, 2)
 	errCB := func(_ *nats.Conn, _ *nats.Subscription, err error) {
 		errCh <- err
 	}
 	nc, err := nats.Connect(
-		fmt.Sprintf("nats://ivan:pwd@127.0.0.1:%d", opts.Port),
+		fmt.Sprintf("nats://ivan:pwd@%s", hostPort),
 		nats.ErrorHandler(errCB))
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -369,56 +389,49 @@ func TestPermViolation(t *testing.T) {
 }
 
 func TestConnectMissingCreds(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	// Using TEST-NET sample address from RFC 5737.
-	testnetaddr := "nats://192.0.2.2:4222"
-	_, err := nats.Connect(fmt.Sprintf("%s,%s", s.ClientURL(), testnetaddr), nats.UserCredentials("missing"), nats.DontRandomize())
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("Expected not exists error, got: %v", err)
-	}
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		// Using TEST-NET sample address from RFC 5737.
+		testnetaddr := "nats://192.0.2.2:4222"
+		_, err := nats.Connect(fmt.Sprintf("%s,%s", inst.Servers[0].URL, testnetaddr), nats.UserCredentials("missing"), nats.DontRandomize())
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Expected not exists error, got: %v", err)
+		}
+	})
 }
 
 func TestUserInfoHandler(t *testing.T) {
-	conf := createConfFile(t, []byte(`
-	listen: 127.0.0.1:-1
-	accounts: {
-	  A {
-		users: [{ user: "pp", password: "foo" }]
-	  }
-	}
-`))
-	defer os.Remove(conf)
-
-	s, _ := RunServerWithConfig(conf)
-	defer s.Shutdown()
+	c := newTester(t)
+	initialAccounts := `accounts: {
+  A {
+    users: [{ user: "pp", password: "foo" }]
+  }
+}`
+	inst := c.CreateServer(t, false,
+		testservice.WithAccounts(initialAccounts),
+		testservice.WithAuthorization("# no_auth_user intentionally unset"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
 
 	user, pass := "pp", "foo"
 	userInfoCB := func() (string, string) {
 		return user, pass
 	}
 
-	// check that we cannot set the user info twice
-	_, err := nats.Connect(s.ClientURL(), nats.UserInfo("pp", "foo"), nats.UserInfoHandler(userInfoCB))
+	// cannot set the user info twice
+	_, err := nats.Connect(inst.Servers[0].URL, nats.UserInfo("pp", "foo"), nats.UserInfoHandler(userInfoCB))
 	if !errors.Is(err, nats.ErrUserInfoAlreadySet) {
 		t.Fatalf("Expected ErrUserInfoAlreadySet, got: %v", err)
 	}
 
-	addr, ok := s.Addr().(*net.TCPAddr)
-	if !ok {
-		t.Fatalf("Expected a TCP address, got %T", addr)
-	}
-
-	// check that user/pass from url takes precedence
-	_, err = nats.Connect(fmt.Sprintf("nats://bad:bad@localhost:%d", addr.Port),
-		nats.UserInfoHandler(userInfoCB))
+	// user/pass from url takes precedence
+	badURL := fmt.Sprintf("nats://bad:bad@%s:%d", testerHost(t), inst.Servers[0].Port)
+	_, err = nats.Connect(badURL, nats.UserInfoHandler(userInfoCB))
 	if !errors.Is(err, nats.ErrAuthorization) {
 		t.Fatalf("Expected ErrAuthorization, got: %v", err)
 	}
 
-	// connect using the handler
-	nc, err := nats.Connect(s.ClientURL(),
+	nc, err := nats.Connect(inst.Servers[0].URL,
 		nats.ReconnectWait(100*time.Millisecond),
 		nats.UserInfoHandler(userInfoCB))
 	if err != nil {
@@ -426,28 +439,20 @@ func TestUserInfoHandler(t *testing.T) {
 	}
 	defer nc.Close()
 
-	// now change the password and reload the server
-	newConfig := []byte(`
-	listen: 127.0.0.1:-1
-	accounts: {
-	  A {
-		users: [{ user: "dd", password: "bar" }]
-	  }
-	}
-`)
-	if err := os.WriteFile(conf, newConfig, 0666); err != nil {
-		t.Fatalf("Error writing conf file: %v", err)
-	}
+	// swap the user via UpdateServer + ReloadServer (SIGHUP)
+	newAccounts := `accounts: {
+  A {
+    users: [{ user: "dd", password: "bar" }]
+  }
+}`
+	inst.UpdateServer(t, inst.Servers[0],
+		testservice.WithAccounts(newAccounts),
+		testservice.WithAuthorization("# no_auth_user intentionally unset"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
 
-	// update the user info used by the callback
 	user, pass = "dd", "bar"
-
 	status := nc.StatusChanged(nats.CONNECTED)
-
-	if err := s.Reload(); err != nil {
-		t.Fatalf("Error on reload: %v", err)
-	}
-
-	// we should get a reconnected event meaning the new credentials were used
+	inst.ReloadServer(t, inst.Servers[0])
 	WaitOnChannel(t, status, nats.CONNECTED)
 }

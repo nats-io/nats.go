@@ -1,4 +1,4 @@
-// Copyright 2019-2025 The NATS Authors
+// Copyright 2019-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,54 +21,53 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
 func TestNoRaceObjectContextOpt(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
+		expectOk(t, err)
 
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
-	expectOk(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		time.AfterFunc(100*time.Millisecond, cancel)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	time.AfterFunc(100*time.Millisecond, cancel)
+		start := time.Now()
+		_, err = obs.Put(&nats.ObjectMeta{Name: "TEST"}, &slow{1000}, nats.Context(ctx))
+		expectErr(t, err)
+		if delta := time.Since(start); delta > time.Second {
+			t.Fatalf("Cancel took too long: %v", delta)
+		}
+		si, err := js.StreamInfo("OBJ_OBJS")
+		expectOk(t, err)
+		if si.State.Msgs != 0 {
+			t.Fatalf("Expected no messages after canceling put, got %+v", si.State)
+		}
 
-	start := time.Now()
-	_, err = obs.Put(&nats.ObjectMeta{Name: "TEST"}, &slow{1000}, nats.Context(ctx))
-	expectErr(t, err)
-	if delta := time.Since(start); delta > time.Second {
-		t.Fatalf("Cancel took too long: %v", delta)
-	}
-	si, err := js.StreamInfo("OBJ_OBJS")
-	expectOk(t, err)
-	if si.State.Msgs != 0 {
-		t.Fatalf("Expected no messages after canceling put, got %+v", si.State)
-	}
+		// Now put a large object in there.
+		blob := make([]byte, 16*1024*1024)
+		rand.Read(blob)
+		_, err = obs.PutBytes("BLOB", blob)
+		expectOk(t, err)
 
-	// Now put a large object in there.
-	blob := make([]byte, 16*1024*1024)
-	rand.Read(blob)
-	_, err = obs.PutBytes("BLOB", blob)
-	expectOk(t, err)
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		time.AfterFunc(10*time.Millisecond, cancel)
 
-	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-	time.AfterFunc(10*time.Millisecond, cancel)
-
-	start = time.Now()
-	_, err = obs.GetBytes("BLOB", nats.Context(ctx))
-	expectErr(t, err)
-	if delta := time.Since(start); delta > 2500*time.Millisecond {
-		t.Fatalf("Cancel took too long: %v", delta)
-	}
+		start = time.Now()
+		_, err = obs.GetBytes("BLOB", nats.Context(ctx))
+		expectErr(t, err)
+		if delta := time.Since(start); delta > 2500*time.Millisecond {
+			t.Fatalf("Cancel took too long: %v", delta)
+		}
+	})
 }
 
 type slow struct{ n int }
@@ -84,107 +83,105 @@ func (sr *slow) Read(p []byte) (n int, err error) {
 }
 
 func TestNoRaceObjectDoublePut(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
+		expectOk(t, err)
 
-	obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
-	expectOk(t, err)
+		_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 1_000_000))
+		expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("A"), 1_000_000))
-	expectOk(t, err)
+		_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20_000_000))
+		expectOk(t, err)
 
-	_, err = obs.PutBytes("A", bytes.Repeat([]byte("a"), 20_000_000))
-	expectOk(t, err)
-
-	_, err = obs.GetBytes("A")
-	expectOk(t, err)
+		_, err = obs.GetBytes("A")
+		expectOk(t, err)
+	})
 }
 
 func TestNoRaceJetStreamConsumerSlowConsumer(t *testing.T) {
 	// This test fails many times, need to look harder at the imbalance.
 	t.SkipNow()
 
-	s := RunServerOnPort(-1)
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	if err := s.EnableJetStream(nil); err != nil {
-		t.Fatalf("Expected no error, got %v", err)
-	}
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	var err error
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "PENDING_TEST",
-		Subjects: []string{"js.p"},
-		Storage:  nats.MemoryStorage,
-	})
-	if err != nil {
-		t.Fatalf("stream create failed: %v", err)
-	}
-
-	// Override default handler for test.
-	nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
-
-	// Queue up 1M small messages.
-	toSend := uint64(1000000)
-	for i := uint64(0); i < toSend; i++ {
-		nc.Publish("js.p", []byte("ok"))
-	}
-	nc.Flush()
-
-	str, err := js.StreamInfo("PENDING_TEST")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if nm := str.State.Msgs; nm != toSend {
-		t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
-	}
-
-	var received uint64
-	done := make(chan bool, 1)
-
-	js.Subscribe("js.p", func(m *nats.Msg) {
-		received++
-		if received >= toSend {
-			done <- true
-		}
-		meta, err := m.Metadata()
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		if err != nil {
-			t.Fatalf("could not get message metadata: %s", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-		if meta.Sequence.Stream != received {
-			t.Errorf("Missed a sequence, was expecting %d but got %d, last error: '%v'", received, meta.Sequence.Stream, nc.LastError())
-			nc.Close()
-		}
-		m.Ack()
-	})
 
-	select {
-	case <-time.After(5 * time.Second):
-		t.Fatalf("Failed to get all %d messages, only got %d", toSend, received)
-	case <-done:
-	}
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "PENDING_TEST",
+			Subjects: []string{"js.p"},
+			Storage:  nats.MemoryStorage,
+		})
+		if err != nil {
+			t.Fatalf("stream create failed: %v", err)
+		}
+
+		// Override default handler for test.
+		nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {})
+
+		// Queue up 1M small messages.
+		toSend := uint64(1000000)
+		for i := uint64(0); i < toSend; i++ {
+			nc.Publish("js.p", []byte("ok"))
+		}
+		nc.Flush()
+
+		str, err := js.StreamInfo("PENDING_TEST")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if nm := str.State.Msgs; nm != toSend {
+			t.Fatalf("Expected to have stored all %d msgs, got only %d", toSend, nm)
+		}
+
+		var received uint64
+		done := make(chan bool, 1)
+
+		js.Subscribe("js.p", func(m *nats.Msg) {
+			received++
+			if received >= toSend {
+				done <- true
+			}
+			meta, err := m.Metadata()
+			if err != nil {
+				t.Fatalf("could not get message metadata: %s", err)
+			}
+			if meta.Sequence.Stream != received {
+				t.Errorf("Missed a sequence, was expecting %d but got %d, last error: '%v'", received, meta.Sequence.Stream, nc.LastError())
+				nc.Close()
+			}
+			m.Ack()
+		})
+
+		select {
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Failed to get all %d messages, only got %d", toSend, received)
+		case <-done:
+		}
+	})
 }
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
 	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
 		t.Logf("WARN: %s", err)
 	})
 
-	nc, js := jsClient(t, s, errHandler)
-	defer nc.Close()
+	c := newTester(t)
+	inst := c.CreateServer(t, true)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	var err error
+	nc := dialInstance(t, inst, errHandler)
+	c.WaitForJetStream(t, nc)
+
+	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -383,91 +380,94 @@ func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeSync(t *testing.T) {
 }
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_SubscribeAsync(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "TEST",
+			Subjects: []string{"foo"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	var err error
+		// Burst and try to hit the flow control limit of the server.
+		const totalMsgs = 16536
+		payload := strings.Repeat("A", 1024)
+		for i := 0; i < totalMsgs; i++ {
+			if _, err := js.Publish("foo", []byte(payload)); err != nil {
+				t.Fatal(err)
+			}
+		}
 
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"foo"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		recvd := make(chan *nats.Msg, totalMsgs)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	// Burst and try to hit the flow control limit of the server.
-	const totalMsgs = 16536
-	payload := strings.Repeat("A", 1024)
-	for i := 0; i < totalMsgs; i++ {
-		if _, err := js.Publish("foo", []byte(payload)); err != nil {
+		errCh := make(chan error)
+		hbTimer := 100 * time.Millisecond
+		sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
+			if len(msg.Data) == 0 {
+				errCh <- fmt.Errorf("Unexpected empty message: %+v", msg)
+			}
+			recvd <- msg
+
+			if len(recvd) == totalMsgs {
+				cancel()
+			}
+		}, nats.EnableFlowControl(), nats.IdleHeartbeat(hbTimer))
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
+		defer sub.Unsubscribe()
 
-	recvd := make(chan *nats.Msg, totalMsgs)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	errCh := make(chan error)
-	hbTimer := 100 * time.Millisecond
-	sub, err := js.Subscribe("foo", func(msg *nats.Msg) {
-		if len(msg.Data) == 0 {
-			errCh <- fmt.Errorf("Unexpected empty message: %+v", msg)
+		info, err := sub.ConsumerInfo()
+		if err != nil {
+			t.Fatal(err)
 		}
-		recvd <- msg
-
-		if len(recvd) == totalMsgs {
-			cancel()
+		if !info.Config.FlowControl {
+			t.Fatal("Expected Flow Control to be enabled")
 		}
-	}, nats.EnableFlowControl(), nats.IdleHeartbeat(hbTimer))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Unsubscribe()
+		if info.Config.Heartbeat != hbTimer {
+			t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
+		}
 
-	info, err := sub.ConsumerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Config.FlowControl {
-		t.Fatal("Expected Flow Control to be enabled")
-	}
-	if info.Config.Heartbeat != hbTimer {
-		t.Errorf("Expected %v, got: %v", hbTimer, info.Config.Heartbeat)
-	}
+		<-ctx.Done()
 
-	<-ctx.Done()
+		got := len(recvd)
+		expected := totalMsgs
+		if got != expected {
+			t.Errorf("Expected %v, got: %v", expected, got)
+		}
 
-	got := len(recvd)
-	expected := totalMsgs
-	if got != expected {
-		t.Errorf("Expected %v, got: %v", expected, got)
-	}
-
-	// Wait for a couple of heartbeats to arrive and confirm there is no error.
-	select {
-	case <-time.After(1 * time.Second):
-	case err := <-errCh:
-		t.Fatal(err)
-	}
+		// Wait for a couple of heartbeats to arrive and confirm there is no error.
+		select {
+		case <-time.After(1 * time.Second):
+		case err := <-errCh:
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestNoRaceJetStreamPushFlowControlHeartbeats_ChanSubscribe(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
 	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
 		t.Logf("WARN: %s : %v", err, sub.Subject)
 	})
 
-	nc, js := jsClient(t, s, errHandler)
-	defer nc.Close()
+	c := newTester(t)
+	inst := c.CreateServer(t, true)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	var err error
+	nc := dialInstance(t, inst, errHandler)
+	c.WaitForJetStream(t, nc)
+
+	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
@@ -604,18 +604,17 @@ Loop:
 }
 
 func TestNoRaceJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
 	errCh := make(chan error)
 	errHandler := nats.ErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
 		errCh <- err
 	})
-	nc, err := nats.Connect(s.ClientURL(), errHandler)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
+
+	c := newTester(t)
+	inst := c.CreateServer(t, true)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	nc := dialInstance(t, inst, errHandler)
+	c.WaitForJetStream(t, nc)
 
 	const totalMsgs = 10_000
 
@@ -700,28 +699,28 @@ func TestNoRaceJetStreamPushFlowControl_SubscribeAsyncAndChannel(t *testing.T) {
 }
 
 func TestNoRaceJetStreamChanSubscribeStall(t *testing.T) {
-	conf := createConfFile(t, []byte(`
-		listen: 127.0.0.1:-1
-		jetstream: enabled
-		no_auth_user: pc
-		accounts: {
-			JS: {
-				jetstream: enabled
-				users: [ {user: pc, password: foo} ]
-			},
-		}
-	`))
-	defer os.Remove(conf)
+	accounts := `accounts: {
+  JS: {
+    jetstream: enabled
+    users: [ {user: pc, password: foo} ]
+  },
+}`
+	c := newTester(t)
+	inst := c.CreateServer(t, true,
+		testservice.WithAccounts(accounts),
+		testservice.WithAuthorization("no_auth_user: pc"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	s, _ := RunServerWithConfig(conf)
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	nc := dialInstance(t, inst)
+	c.WaitForJetStream(t, nc)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
-	var err error
-
-	// Create a stream.
 	if _, err = js.AddStream(&nats.StreamConfig{Name: "STALL"}); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

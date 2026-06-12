@@ -29,41 +29,56 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 	"github.com/nats-io/nuid"
 )
 
-func testWSGetDefaultOptions(t *testing.T, tls bool) *server.Options {
-	t.Helper()
-	sopts := natsserver.DefaultTestOptions
-	sopts.Host = "127.0.0.1"
-	sopts.Port = -1
-	sopts.Websocket.Host = "127.0.0.1"
-	sopts.Websocket.Port = -1
-	sopts.Websocket.NoTLS = !tls
-	if tls {
-		tc := &server.TLSConfigOpts{
-			CertFile: "./configs/certs/server.pem",
-			KeyFile:  "./configs/certs/key.pem",
-			CaFile:   "./configs/certs/ca.pem",
-		}
-		tlsConfig, err := server.GenTLSConfig(tc)
-		if err != nil {
-			t.Fatalf("Can't build TLCConfig: %v", err)
-		}
-		sopts.Websocket.TLSConfig = tlsConfig
+// wsPlainBody returns a websocket{} snippet for a plaintext (no TLS) listener
+// on the auto-reserved "websocket" port. compress toggles per-message deflate.
+func wsPlainBody(compress bool) string {
+	inner := "port: {{ .Ports.websocket }}\n  no_tls: true"
+	if compress {
+		inner += "\n  compression: true"
 	}
-	return &sopts
+	return fmt.Sprintf("websocket {\n  %s\n}", inner)
+}
+
+// wsTLSBody returns a websocket{} snippet with a tls sub-block referencing the
+// server cert/key/ca mounted into the tester container. compress toggles
+// per-message deflate.
+// wsTLSBody returns a websocket{} body that wires the managed TLS cert/key
+// (exposed by the tester via .TLS.CertFile/.TLS.KeyFile) into the websocket
+// listener. Requires the create call to also include WithGeneratedTLS.
+func wsTLSBody(compress bool) string {
+	inner := `port: {{ .Ports.websocket }}
+  tls {
+    cert_file: "{{ .TLS.CertFile }}"
+    key_file:  "{{ .TLS.KeyFile }}"
+  }`
+	if compress {
+		inner += "\n  compression: true"
+	}
+	return fmt.Sprintf("websocket {\n  %s\n}", inner)
+}
+
+// wsPort returns the auto-reserved websocket port for the first server of inst,
+// failing the test if it was not published.
+func wsPort(t *testing.T, inst *testservice.Instance) int {
+	t.Helper()
+	p := inst.Servers[0].Ports["websocket"]
+	if p == 0 {
+		t.Fatalf("websocket port not reserved/published for instance %s", inst.ID)
+	}
+	return p
 }
 
 func TestWSBasic(t *testing.T) {
-	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	c := newTester(t)
+	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(false)))
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+	url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 	nc, err := nats.Connect(url)
 	if err != nil {
 		t.Fatalf("Error on connect: %v", err)
@@ -105,12 +120,13 @@ func TestWSBasic(t *testing.T) {
 }
 
 func TestWSControlFrames(t *testing.T) {
-	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	c := newTester(t)
+	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(false)))
+	t.Cleanup(func() { inst.Destroy(t) })
+	srv := inst.Servers[0]
 
 	rch := make(chan bool, 10)
-	ncSub, err := nats.Connect(s.ClientURL(),
+	ncSub, err := nats.Connect(srv.URL,
 		nats.ReconnectWait(50*time.Millisecond),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
 	)
@@ -128,7 +144,7 @@ func TestWSControlFrames(t *testing.T) {
 	}
 
 	dch := make(chan error, 10)
-	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+	url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 	nc, err := nats.Connect(url,
 		nats.ReconnectWait(50*time.Millisecond),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) { dch <- err }),
@@ -141,7 +157,7 @@ func TestWSControlFrames(t *testing.T) {
 
 	// Shutdown the server, which should send a close message, which by
 	// spec the client will try to echo back.
-	s.Shutdown()
+	inst.StopServer(t, srv)
 
 	select {
 	case <-dch:
@@ -150,8 +166,7 @@ func TestWSControlFrames(t *testing.T) {
 		t.Fatal("Should have been disconnected")
 	}
 
-	s = RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	inst.StartServer(t, srv)
 
 	// Wait for both connections to reconnect
 	if err := Wait(rch); err != nil {
@@ -182,11 +197,11 @@ func TestWSControlFrames(t *testing.T) {
 }
 
 func TestWSConcurrentConns(t *testing.T) {
-	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	c := newTester(t)
+	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(false)))
+	t.Cleanup(func() { inst.Destroy(t) })
 
-	url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+	url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 
 	total := 50
 	errCh := make(chan error, total)
@@ -235,12 +250,11 @@ func TestWSCompression(t *testing.T) {
 		{"srv_on_cli_on", true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			sopts := testWSGetDefaultOptions(t, false)
-			sopts.Websocket.Compression = test.srvCompression
-			s := RunServerWithOptions(sopts)
-			defer s.Shutdown()
+			c := newTester(t)
+			inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(test.srvCompression)))
+			t.Cleanup(func() { inst.Destroy(t) })
 
-			url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
+			url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 			var opts []nats.Option
 			if test.cliCompression {
 				opts = append(opts, nats.Compression(true))
@@ -296,10 +310,15 @@ func TestWSWithTLS(t *testing.T) {
 		{"with compression", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			sopts := testWSGetDefaultOptions(t, true)
-			sopts.Websocket.Compression = test.compression
-			s := RunServerWithOptions(sopts)
-			defer s.Shutdown()
+			c := newTester(t)
+			inst := c.CreateServer(t, false,
+				managedTLSOpts(t, testservice.TLSServerOnly()),
+				testservice.WithWebSocket(wsTLSBody(test.compression)),
+			)
+			t.Cleanup(func() { inst.Destroy(t) })
+
+			host := testerHost(t)
+			port := wsPort(t, inst)
 
 			var copts []nats.Option
 			if test.compression {
@@ -307,7 +326,7 @@ func TestWSWithTLS(t *testing.T) {
 			}
 
 			// Check that we fail to connect without proper TLS configuration.
-			nc, err := nats.Connect(fmt.Sprintf("ws://localhost:%d", sopts.Websocket.Port), copts...)
+			nc, err := nats.Connect(fmt.Sprintf("ws://%s:%d", host, port), copts...)
 			if err == nil {
 				if nc != nil {
 					nc.Close()
@@ -318,12 +337,14 @@ func TestWSWithTLS(t *testing.T) {
 			// Same but with wss protocol, which should translate to TLS, however,
 			// since we used self signed certificates, this should fail without
 			// asking to skip server cert verification.
-			nc, err = nats.Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
-			// Since Go 1.18, we had to regenerate certs to not have to use GODEBUG="x509sha1=1"
-			// But on macOS, with our test CA certs, no SCTs included, it will fail
-			// for the reason "x509: “localhost” certificate is not standards compliant"
-			// instead of "unknown authority".
-			if err == nil || (!strings.Contains(err.Error(), "authority") && !strings.Contains(err.Error(), "compliant")) {
+			nc, err = nats.Connect(fmt.Sprintf("wss://%s:%d", host, port), copts...)
+			// The verifier error wording is platform-dependent: Linux/Go x509
+			// says "unknown authority"; older macOS Security framework said
+			// "is not standards compliant" (missing SCTs); newer macOS just
+			// says "is not trusted". Accept any of the three.
+			if err == nil || (!strings.Contains(err.Error(), "authority") &&
+				!strings.Contains(err.Error(), "compliant") &&
+				!strings.Contains(err.Error(), "not trusted")) {
 				if nc != nil {
 					nc.Close()
 				}
@@ -332,7 +353,7 @@ func TestWSWithTLS(t *testing.T) {
 
 			// Skip server verification and we should be good.
 			copts = append(copts, nats.Secure(&tls.Config{InsecureSkipVerify: true}))
-			nc, err = nats.Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
+			nc, err = nats.Connect(fmt.Sprintf("wss://%s:%d", host, port), copts...)
 			if err != nil {
 				t.Fatalf("Error on connect: %v", err)
 			}
@@ -368,9 +389,15 @@ func (sd *testSkipTLSDialer) SkipTLSHandshake() bool {
 }
 
 func TestWSWithTLSCustomDialer(t *testing.T) {
-	sopts := testWSGetDefaultOptions(t, true)
-	s := RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	c := newTester(t)
+	inst := c.CreateServer(t, false,
+		managedTLSOpts(t, testservice.TLSServerOnly()),
+		testservice.WithWebSocket(wsTLSBody(false)),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	host := testerHost(t)
+	port := wsPort(t, inst)
 
 	sd := &testSkipTLSDialer{
 		dialer: &net.Dialer{
@@ -383,7 +410,7 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 	copts := make([]nats.Option, 0)
 	copts = append(copts, nats.Secure(&tls.Config{InsecureSkipVerify: true}))
 	copts = append(copts, nats.SetCustomDialer(sd))
-	_, err := nats.Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
+	_, err := nats.Connect(fmt.Sprintf("wss://%s:%d", host, port), copts...)
 	if err == nil {
 		t.Fatalf("Expected error on connect: %v", err)
 	}
@@ -401,7 +428,7 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 	}
 	copts = append(copts, nats.Secure(&tls.Config{InsecureSkipVerify: true}))
 	copts = append(copts, nats.SetCustomDialer(sd))
-	nc, err := nats.Connect(fmt.Sprintf("wss://localhost:%d", sopts.Websocket.Port), copts...)
+	nc, err := nats.Connect(fmt.Sprintf("wss://%s:%d", host, port), copts...)
 	if err != nil {
 		t.Fatalf("Unexpected error on connect: %v", err)
 	}
@@ -409,25 +436,23 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 }
 
 func TestWSGossipAndReconnect(t *testing.T) {
-	o1 := testWSGetDefaultOptions(t, false)
-	o1.ServerName = "A"
-	o1.Cluster.Host = "127.0.0.1"
-	o1.Cluster.Name = "abc"
-	o1.Cluster.Port = -1
-	s1 := RunServerWithOptions(o1)
-	defer s1.Shutdown()
+	c := newTester(t)
+	// 2-node cluster with a websocket listener on each node. The standard NATS
+	// port's advertise comes from the tester's NATS_ADVERTISE env var; the
+	// websocket block carries its own advertise because the listener has a
+	// separate port and address-family from the client port.
+	host := testerHost(t)
+	wsBody := fmt.Sprintf("websocket {\n  port: {{ .Ports.websocket }}\n  no_tls: true\n  advertise: \"%s:{{ .Ports.websocket }}\"\n}", host)
+	clusterInst := c.CreateCluster(t, 2, false, testservice.WithWebSocket(wsBody))
+	t.Cleanup(func() { clusterInst.Destroy(t) })
 
-	o2 := testWSGetDefaultOptions(t, false)
-	o2.ServerName = "B"
-	o2.Cluster.Host = "127.0.0.1"
-	o2.Cluster.Name = "abc"
-	o2.Cluster.Port = -1
-	o2.Routes = server.RoutesFromStr(fmt.Sprintf("nats://127.0.0.1:%d", o1.Cluster.Port))
-	s2 := RunServerWithOptions(o2)
-	defer s2.Shutdown()
+	s1 := clusterInst.Servers[0]
+	if s1.Ports["websocket"] == 0 {
+		t.Fatalf("websocket port not reserved/published for instance %s", clusterInst.ID)
+	}
 
 	rch := make(chan bool, 10)
-	url := fmt.Sprintf("ws://127.0.0.1:%d", o1.Websocket.Port)
+	url := fmt.Sprintf("ws://%s:%d", host, s1.Ports["websocket"])
 	nc, err := nats.Connect(url,
 		nats.ReconnectWait(50*time.Millisecond),
 		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
@@ -447,7 +472,7 @@ func TestWSGossipAndReconnect(t *testing.T) {
 	if len(nc.Servers()) == 1 {
 		t.Fatal("Did not discover server 2")
 	}
-	s1.Shutdown()
+	clusterInst.StopServer(t, s1)
 
 	// Wait for reconnect
 	if err := Wait(rch); err != nil {
@@ -482,10 +507,11 @@ func TestWSStress(t *testing.T) {
 		{"with_compression", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			sopts := testWSGetDefaultOptions(t, false)
-			sopts.Websocket.Compression = test.compress
-			s := RunServerWithOptions(sopts)
-			defer s.Shutdown()
+			c := newTester(t)
+			inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(test.compress)))
+			t.Cleanup(func() { inst.Destroy(t) })
+
+			url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 
 			var count int64
 			consDoneCh := make(chan struct{}, 1)
@@ -501,7 +527,7 @@ func TestWSStress(t *testing.T) {
 
 			createConn := func() *nats.Conn {
 				t.Helper()
-				nc, err := nats.Connect(fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port),
+				nc, err := nats.Connect(url,
 					nats.Compression(test.compress),
 					nats.ErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
 						if sub != nil {
@@ -594,11 +620,15 @@ func TestWSStress(t *testing.T) {
 }
 
 func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
-	o := testWSGetDefaultOptions(t, false)
-	o.Username = "user"
-	o.Password = "pwd"
-	s := RunServerWithOptions(o)
-	defer s.Shutdown()
+	c := newTester(t)
+	authOpts := singleUserPassOpts(`authorization {
+  user:     user
+  password: pwd
+  timeout:  1
+}`)
+	opts := append([]testservice.CreateOption{testservice.WithWebSocket(wsPlainBody(false))}, authOpts...)
+	inst := c.CreateServer(t, false, opts...)
+	t.Cleanup(func() { inst.Destroy(t) })
 
 	tm := time.AfterFunc(3*time.Second, func() {
 		buf := make([]byte, 1000000)
@@ -606,7 +636,7 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 		panic(fmt.Sprintf("Test has probably deadlocked!\n%s\n", buf[:n]))
 	})
 
-	if _, err := nats.Connect(fmt.Sprintf("ws://127.0.0.1:%d", o.Websocket.Port)); err == nil {
+	if _, err := nats.Connect(fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))); err == nil {
 		t.Fatal("Expected auth error, did not get any error")
 	}
 
@@ -614,9 +644,11 @@ func TestWSNoDeadlockOnAuthFailure(t *testing.T) {
 }
 
 func TestWsWithCustomHeaders(t *testing.T) {
-	sopts := testWSGetDefaultOptions(t, false)
-	s := RunServerWithOptions(sopts)
-	defer s.Shutdown()
+	c := newTester(t)
+	inst := c.CreateServer(t, false, testservice.WithWebSocket(wsPlainBody(false)))
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	url := fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
 
 	staticHeader := make(http.Header, 0)
 	staticHeader.Set("Authorization", "Bearer Random Token")
@@ -653,7 +685,6 @@ func TestWsWithCustomHeaders(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			url := fmt.Sprintf("ws://127.0.0.1:%d", sopts.Websocket.Port)
 			nc, err := nats.Connect(url, test.connectionOptions...)
 			if err != nil && test.wantErr {
 				return

@@ -17,136 +17,156 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
-func TestKeyValueBasics(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour})
-	expectOk(t, err)
-
-	if kv.Bucket() != "TEST" {
-		t.Fatalf("Expected bucket name to be %q, got %q", "TEST", kv.Bucket())
-	}
-
-	// Simple Put
-	r, err := kv.Put("name", []byte("derek"))
-	expectOk(t, err)
-	if r != 1 {
-		t.Fatalf("Expected 1 for the revision, got %d", r)
-	}
-	// Simple Get
-	e, err := kv.Get("name")
-	expectOk(t, err)
-	if string(e.Value()) != "derek" {
-		t.Fatalf("Got wrong value: %q vs %q", e.Value(), "derek")
-	}
-	if e.Revision() != 1 {
-		t.Fatalf("Expected 1 for the revision, got %d", e.Revision())
-	}
-
-	// Delete
-	err = kv.Delete("name")
-	expectOk(t, err)
-	_, err = kv.Get("name")
-	expectErr(t, err, nats.ErrKeyNotFound)
-	r, err = kv.Create("name", []byte("derek"))
-	expectOk(t, err)
-	if r != 3 {
-		t.Fatalf("Expected 3 for the revision, got %d", r)
-	}
-	err = kv.Delete("name", nats.LastRevision(4))
-	expectErr(t, err)
-	err = kv.Delete("name", nats.LastRevision(3))
-	expectOk(t, err)
-
-	// Conditional Updates.
-	r, err = kv.Update("name", []byte("rip"), 4)
-	expectOk(t, err)
-	_, err = kv.Update("name", []byte("ik"), 3)
-	expectErr(t, err)
-	_, err = kv.Update("name", []byte("ik"), r)
-	expectOk(t, err)
-	r, err = kv.Create("age", []byte("22"))
-	expectOk(t, err)
-	_, err = kv.Update("age", []byte("33"), r)
-	expectOk(t, err)
-
-	// Status
-	status, err := kv.Status()
-	expectOk(t, err)
-	if status.History() != 5 {
-		t.Fatalf("expected history of 5 got %d", status.History())
-	}
-	if status.Bucket() != "TEST" {
-		t.Fatalf("expected bucket TEST got %v", status.Bucket())
-	}
-	if status.TTL() != time.Hour {
-		t.Fatalf("expected 1 hour TTL got %v", status.TTL())
-	}
-	if status.Values() != 7 {
-		t.Fatalf("expected 7 values got %d", status.Values())
-	}
-	if status.BackingStore() != "JetStream" {
-		t.Fatalf("invalid backing store kind %s", status.BackingStore())
-	}
-
-	kvs := status.(*nats.KeyValueBucketStatus)
-	si := kvs.StreamInfo()
-	if si == nil {
-		t.Fatalf("StreamInfo not received")
+func expectOk(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
 }
 
+func expectErr(t *testing.T, err error, expected ...error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("Expected error but got none")
+	}
+	if len(expected) == 0 {
+		return
+	}
+	for _, e := range expected {
+		if errors.Is(err, e) {
+			return
+		}
+	}
+	t.Fatalf("Expected one of %+v, got '%v'", expected, err)
+}
+
+func TestKeyValueBasics(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
+
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: time.Hour})
+		expectOk(t, err)
+
+		if kv.Bucket() != "TEST" {
+			t.Fatalf("Expected bucket name to be %q, got %q", "TEST", kv.Bucket())
+		}
+
+		// Simple Put
+		r, err := kv.Put("name", []byte("derek"))
+		expectOk(t, err)
+		if r != 1 {
+			t.Fatalf("Expected 1 for the revision, got %d", r)
+		}
+		// Simple Get
+		e, err := kv.Get("name")
+		expectOk(t, err)
+		if string(e.Value()) != "derek" {
+			t.Fatalf("Got wrong value: %q vs %q", e.Value(), "derek")
+		}
+		if e.Revision() != 1 {
+			t.Fatalf("Expected 1 for the revision, got %d", e.Revision())
+		}
+
+		// Delete
+		err = kv.Delete("name")
+		expectOk(t, err)
+		_, err = kv.Get("name")
+		expectErr(t, err, nats.ErrKeyNotFound)
+		r, err = kv.Create("name", []byte("derek"))
+		expectOk(t, err)
+		if r != 3 {
+			t.Fatalf("Expected 3 for the revision, got %d", r)
+		}
+		err = kv.Delete("name", nats.LastRevision(4))
+		expectErr(t, err)
+		err = kv.Delete("name", nats.LastRevision(3))
+		expectOk(t, err)
+
+		// Conditional Updates.
+		r, err = kv.Update("name", []byte("rip"), 4)
+		expectOk(t, err)
+		_, err = kv.Update("name", []byte("ik"), 3)
+		expectErr(t, err)
+		_, err = kv.Update("name", []byte("ik"), r)
+		expectOk(t, err)
+		r, err = kv.Create("age", []byte("22"))
+		expectOk(t, err)
+		_, err = kv.Update("age", []byte("33"), r)
+		expectOk(t, err)
+
+		// Status
+		status, err := kv.Status()
+		expectOk(t, err)
+		if status.History() != 5 {
+			t.Fatalf("expected history of 5 got %d", status.History())
+		}
+		if status.Bucket() != "TEST" {
+			t.Fatalf("expected bucket TEST got %v", status.Bucket())
+		}
+		if status.TTL() != time.Hour {
+			t.Fatalf("expected 1 hour TTL got %v", status.TTL())
+		}
+		if status.Values() != 7 {
+			t.Fatalf("expected 7 values got %d", status.Values())
+		}
+		if status.BackingStore() != "JetStream" {
+			t.Fatalf("invalid backing store kind %s", status.BackingStore())
+		}
+
+		kvs := status.(*nats.KeyValueBucketStatus)
+		si := kvs.StreamInfo()
+		if si == nil {
+			t.Fatalf("StreamInfo not received")
+		}
+	})
+}
+
 func TestKeyValueHistory(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "LIST", History: 10})
-	expectOk(t, err)
-
-	for i := 0; i < 50; i++ {
-		age := strconv.FormatUint(uint64(i+22), 10)
-		_, err := kv.Put("age", []byte(age))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	vl, err := kv.History("age")
-	expectOk(t, err)
-
-	if len(vl) != 10 {
-		t.Fatalf("Expected %d values, got %d", 10, len(vl))
-	}
-	for i, v := range vl {
-		if v.Key() != "age" {
-			t.Fatalf("Expected key of %q, got %q", "age", v.Key())
-		}
-		if v.Revision() != uint64(i+41) {
-			// History of 10, sent 50..
-			t.Fatalf("Expected revision of %d, got %d", i+41, v.Revision())
-		}
-		age, err := strconv.Atoi(string(v.Value()))
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "LIST", History: 10})
 		expectOk(t, err)
-		if age != i+62 {
-			t.Fatalf("Expected data value of %d, got %d", i+22, age)
+
+		for i := 0; i < 50; i++ {
+			age := strconv.FormatUint(uint64(i+22), 10)
+			_, err := kv.Put("age", []byte(age))
+			expectOk(t, err)
 		}
-	}
+
+		vl, err := kv.History("age")
+		expectOk(t, err)
+
+		if len(vl) != 10 {
+			t.Fatalf("Expected %d values, got %d", 10, len(vl))
+		}
+		for i, v := range vl {
+			if v.Key() != "age" {
+				t.Fatalf("Expected key of %q, got %q", "age", v.Key())
+			}
+			if v.Revision() != uint64(i+41) {
+				// History of 10, sent 50..
+				t.Fatalf("Expected revision of %d, got %d", i+41, v.Revision())
+			}
+			age, err := strconv.Atoi(string(v.Value()))
+			expectOk(t, err)
+			if age != i+62 {
+				t.Fatalf("Expected data value of %d, got %d", i+22, age)
+			}
+		}
+	})
 }
 
 func TestKeyValueWatch(t *testing.T) {
@@ -210,809 +230,795 @@ func TestKeyValueWatch(t *testing.T) {
 	}
 
 	t.Run("default watcher", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-		expectOk(t, err)
+			watcher, err := kv.WatchAll()
+			expectOk(t, err)
+			defer watcher.Stop()
 
-		watcher, err := kv.WatchAll()
-		expectOk(t, err)
-		defer watcher.Stop()
+			expectInitDone := expectInitDoneF(t, watcher)
+			expectUpdate := expectUpdateF(t, watcher)
+			expectDelete := expectDeleteF(t, watcher)
+			// Make sure we already got an initial value marker.
+			expectInitDone()
 
-		expectInitDone := expectInitDoneF(t, watcher)
-		expectUpdate := expectUpdateF(t, watcher)
-		expectDelete := expectDeleteF(t, watcher)
-		// Make sure we already got an initial value marker.
-		expectInitDone()
+			kv.Create("name", []byte("derek"))
+			expectUpdate("name", "derek", 1)
+			kv.Put("name", []byte("rip"))
+			expectUpdate("name", "rip", 2)
+			kv.Put("name", []byte("ik"))
+			expectUpdate("name", "ik", 3)
+			kv.Put("age", []byte("22"))
+			expectUpdate("age", "22", 4)
+			kv.Put("age", []byte("33"))
+			expectUpdate("age", "33", 5)
+			kv.Delete("age")
+			expectDelete("age", 6)
 
-		kv.Create("name", []byte("derek"))
-		expectUpdate("name", "derek", 1)
-		kv.Put("name", []byte("rip"))
-		expectUpdate("name", "rip", 2)
-		kv.Put("name", []byte("ik"))
-		expectUpdate("name", "ik", 3)
-		kv.Put("age", []byte("22"))
-		expectUpdate("age", "22", 4)
-		kv.Put("age", []byte("33"))
-		expectUpdate("age", "33", 5)
-		kv.Delete("age")
-		expectDelete("age", 6)
+			// Stop first watcher.
+			watcher.Stop()
 
-		// Stop first watcher.
-		watcher.Stop()
+			// Now try wildcard matching and make sure we only get last value when starting.
+			kv.Put("t.name", []byte("rip"))
+			kv.Put("t.name", []byte("ik"))
+			kv.Put("t.age", []byte("22"))
+			kv.Put("t.age", []byte("44"))
 
-		// Now try wildcard matching and make sure we only get last value when starting.
-		kv.Put("t.name", []byte("rip"))
-		kv.Put("t.name", []byte("ik"))
-		kv.Put("t.age", []byte("22"))
-		kv.Put("t.age", []byte("44"))
+			watcher, err = kv.Watch("t.*")
+			expectOk(t, err)
 
-		watcher, err = kv.Watch("t.*")
-		expectOk(t, err)
+			expectInitDone = expectInitDoneF(t, watcher)
+			expectUpdate = expectUpdateF(t, watcher)
+			expectUpdate("t.name", "ik", 8)
+			expectUpdate("t.age", "44", 10)
+			expectInitDone()
+			watcher.Stop()
 
-		expectInitDone = expectInitDoneF(t, watcher)
-		expectUpdate = expectUpdateF(t, watcher)
-		expectUpdate("t.name", "ik", 8)
-		expectUpdate("t.age", "44", 10)
-		expectInitDone()
-		watcher.Stop()
-
-		// test watcher with multiple filters
-		watcher, err = kv.WatchFiltered([]string{"t.name", "name"})
-		expectOk(t, err)
-		expectInitDone = expectInitDoneF(t, watcher)
-		expectUpdate = expectUpdateF(t, watcher)
-		expectPurge := expectPurgeF(t, watcher)
-		expectUpdate("name", "ik", 3)
-		expectUpdate("t.name", "ik", 8)
-		expectInitDone()
-		err = kv.Purge("name")
-		expectOk(t, err)
-		expectPurge("name", 11)
-		defer watcher.Stop()
+			// test watcher with multiple filters
+			watcher, err = kv.WatchFiltered([]string{"t.name", "name"})
+			expectOk(t, err)
+			expectInitDone = expectInitDoneF(t, watcher)
+			expectUpdate = expectUpdateF(t, watcher)
+			expectPurge := expectPurgeF(t, watcher)
+			expectUpdate("name", "ik", 3)
+			expectUpdate("t.name", "ik", 8)
+			expectInitDone()
+			err = kv.Purge("name")
+			expectOk(t, err)
+			expectPurge("name", 11)
+			defer watcher.Stop()
+		})
 	})
 
 	t.Run("watcher with history included", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
-		expectOk(t, err)
+			kv.Create("name", []byte("derek"))
+			kv.Put("name", []byte("rip"))
+			kv.Put("name", []byte("ik"))
+			kv.Put("age", []byte("22"))
+			kv.Put("age", []byte("33"))
+			kv.Delete("age")
 
-		kv.Create("name", []byte("derek"))
-		kv.Put("name", []byte("rip"))
-		kv.Put("name", []byte("ik"))
-		kv.Put("age", []byte("22"))
-		kv.Put("age", []byte("33"))
-		kv.Delete("age")
+			// when using UpdatesOnly(), IncludeHistory() is not allowed
+			if _, err := kv.WatchAll(nats.IncludeHistory(), nats.UpdatesOnly()); !strings.Contains(err.Error(), "updates only can not be used with include history") {
+				t.Fatalf("Expected error to contain %q, got %q", "updates only can not be used with include history", err)
+			}
 
-		// when using UpdatesOnly(), IncludeHistory() is not allowed
-		if _, err := kv.WatchAll(nats.IncludeHistory(), nats.UpdatesOnly()); !strings.Contains(err.Error(), "updates only can not be used with include history") {
-			t.Fatalf("Expected error to contain %q, got %q", "updates only can not be used with include history", err)
-		}
+			watcher, err := kv.WatchAll(nats.IncludeHistory())
+			expectOk(t, err)
+			defer watcher.Stop()
+			expectInitDone := expectInitDoneF(t, watcher)
+			expectUpdate := expectUpdateF(t, watcher)
+			expectDelete := expectDeleteF(t, watcher)
+			expectUpdate("name", "derek", 1)
+			expectUpdate("name", "rip", 2)
+			expectUpdate("name", "ik", 3)
+			expectUpdate("age", "22", 4)
+			expectUpdate("age", "33", 5)
+			expectDelete("age", 6)
+			expectInitDone()
+			kv.Put("name", []byte("pp"))
+			expectUpdate("name", "pp", 7)
 
-		watcher, err := kv.WatchAll(nats.IncludeHistory())
-		expectOk(t, err)
-		defer watcher.Stop()
-		expectInitDone := expectInitDoneF(t, watcher)
-		expectUpdate := expectUpdateF(t, watcher)
-		expectDelete := expectDeleteF(t, watcher)
-		expectUpdate("name", "derek", 1)
-		expectUpdate("name", "rip", 2)
-		expectUpdate("name", "ik", 3)
-		expectUpdate("age", "22", 4)
-		expectUpdate("age", "33", 5)
-		expectDelete("age", 6)
-		expectInitDone()
-		kv.Put("name", []byte("pp"))
-		expectUpdate("name", "pp", 7)
+			// Stop first watcher.
+			watcher.Stop()
 
-		// Stop first watcher.
-		watcher.Stop()
+			kv.Put("t.name", []byte("rip"))
+			kv.Put("t.name", []byte("ik"))
+			kv.Put("t.age", []byte("22"))
+			kv.Put("t.age", []byte("44"))
 
-		kv.Put("t.name", []byte("rip"))
-		kv.Put("t.name", []byte("ik"))
-		kv.Put("t.age", []byte("22"))
-		kv.Put("t.age", []byte("44"))
+			// try wildcard watcher and make sure we get all historical values
+			watcher, err = kv.Watch("t.*", nats.IncludeHistory())
+			expectOk(t, err)
+			defer watcher.Stop()
+			expectInitDone = expectInitDoneF(t, watcher)
+			expectUpdate = expectUpdateF(t, watcher)
 
-		// try wildcard watcher and make sure we get all historical values
-		watcher, err = kv.Watch("t.*", nats.IncludeHistory())
-		expectOk(t, err)
-		defer watcher.Stop()
-		expectInitDone = expectInitDoneF(t, watcher)
-		expectUpdate = expectUpdateF(t, watcher)
+			expectUpdate("t.name", "rip", 8)
+			expectUpdate("t.name", "ik", 9)
+			expectUpdate("t.age", "22", 10)
+			expectUpdate("t.age", "44", 11)
+			expectInitDone()
 
-		expectUpdate("t.name", "rip", 8)
-		expectUpdate("t.name", "ik", 9)
-		expectUpdate("t.age", "22", 10)
-		expectUpdate("t.age", "44", 11)
-		expectInitDone()
-
-		kv.Put("t.name", []byte("pp"))
-		expectUpdate("t.name", "pp", 12)
+			kv.Put("t.name", []byte("pp"))
+			expectUpdate("t.name", "pp", 12)
+		})
 	})
 
 	t.Run("watcher with updates only", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH", History: 64})
-		expectOk(t, err)
+			kv.Create("name", []byte("derek"))
+			kv.Put("name", []byte("rip"))
+			kv.Put("age", []byte("22"))
 
-		kv.Create("name", []byte("derek"))
-		kv.Put("name", []byte("rip"))
-		kv.Put("age", []byte("22"))
+			// when using UpdatesOnly(), IncludeHistory() is not allowed
+			if _, err := kv.WatchAll(nats.UpdatesOnly(), nats.IncludeHistory()); !strings.Contains(err.Error(), "include history can not be used with updates only") {
+				t.Fatalf("Expected error to contain %q, got %q", "include history can not be used with updates only", err)
+			}
 
-		// when using UpdatesOnly(), IncludeHistory() is not allowed
-		if _, err := kv.WatchAll(nats.UpdatesOnly(), nats.IncludeHistory()); !strings.Contains(err.Error(), "include history can not be used with updates only") {
-			t.Fatalf("Expected error to contain %q, got %q", "include history can not be used with updates only", err)
-		}
+			watcher, err := kv.WatchAll(nats.UpdatesOnly())
+			expectOk(t, err)
+			defer watcher.Stop()
+			expectUpdate := expectUpdateF(t, watcher)
+			expectDelete := expectDeleteF(t, watcher)
 
-		watcher, err := kv.WatchAll(nats.UpdatesOnly())
-		expectOk(t, err)
-		defer watcher.Stop()
-		expectUpdate := expectUpdateF(t, watcher)
-		expectDelete := expectDeleteF(t, watcher)
+			// now update some keys and expect updates
+			kv.Put("name", []byte("pp"))
+			expectUpdate("name", "pp", 4)
+			kv.Put("age", []byte("44"))
+			expectUpdate("age", "44", 5)
+			kv.Delete("age")
+			expectDelete("age", 6)
 
-		// now update some keys and expect updates
-		kv.Put("name", []byte("pp"))
-		expectUpdate("name", "pp", 4)
-		kv.Put("age", []byte("44"))
-		expectUpdate("age", "44", 5)
-		kv.Delete("age")
-		expectDelete("age", 6)
+			// Stop first watcher.
+			watcher.Stop()
 
-		// Stop first watcher.
-		watcher.Stop()
+			kv.Put("t.name", []byte("rip"))
+			kv.Put("t.name", []byte("ik"))
+			kv.Put("t.age", []byte("22"))
+			kv.Put("t.age", []byte("44"))
 
-		kv.Put("t.name", []byte("rip"))
-		kv.Put("t.name", []byte("ik"))
-		kv.Put("t.age", []byte("22"))
-		kv.Put("t.age", []byte("44"))
+			// try wildcard watcher and make sure we do not get any values initially
+			watcher, err = kv.Watch("t.*", nats.UpdatesOnly())
+			expectOk(t, err)
+			defer watcher.Stop()
+			expectUpdate = expectUpdateF(t, watcher)
 
-		// try wildcard watcher and make sure we do not get any values initially
-		watcher, err = kv.Watch("t.*", nats.UpdatesOnly())
-		expectOk(t, err)
-		defer watcher.Stop()
-		expectUpdate = expectUpdateF(t, watcher)
-
-		// update some keys and expect updates
-		kv.Put("t.name", []byte("pp"))
-		expectUpdate("t.name", "pp", 11)
-		kv.Put("t.age", []byte("66"))
-		expectUpdate("t.age", "66", 12)
+			// update some keys and expect updates
+			kv.Put("t.name", []byte("pp"))
+			expectUpdate("t.name", "pp", 11)
+			kv.Put("t.age", []byte("66"))
+			expectUpdate("t.age", "66", 12)
+		})
 	})
 
 	t.Run("invalid watchers", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-		expectOk(t, err)
+			// empty keys
+			_, err = kv.Watch("")
+			expectErr(t, err, nats.ErrInvalidKey)
 
-		// empty keys
-		_, err = kv.Watch("")
-		expectErr(t, err, nats.ErrInvalidKey)
+			// invalid key
+			_, err = kv.Watch("a.>.b")
+			expectErr(t, err, nats.ErrInvalidKey)
 
-		// invalid key
-		_, err = kv.Watch("a.>.b")
-		expectErr(t, err, nats.ErrInvalidKey)
+			_, err = kv.Watch("foo.")
+			expectErr(t, err, nats.ErrInvalidKey)
 
-		_, err = kv.Watch("foo.")
-		expectErr(t, err, nats.ErrInvalidKey)
-
-		_, err = kv.Watch("foo..bar")
-		expectErr(t, err, nats.ErrInvalidKey)
+			_, err = kv.Watch("foo..bar")
+			expectErr(t, err, nats.ErrInvalidKey)
+		})
 	})
 
 	t.Run("filtered watch with no filters", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-		expectOk(t, err)
+			// this should behave like WatchAll
+			watcher, err := kv.WatchFiltered([]string{})
+			expectOk(t, err)
+			defer watcher.Stop()
 
-		// this should behave like WatchAll
-		watcher, err := kv.WatchFiltered([]string{})
-		expectOk(t, err)
-		defer watcher.Stop()
+			expectInitDone := expectInitDoneF(t, watcher)
+			expectUpdate := expectUpdateF(t, watcher)
+			expectDelete := expectDeleteF(t, watcher)
+			// Make sure we already got an initial value marker.
+			expectInitDone()
 
-		expectInitDone := expectInitDoneF(t, watcher)
-		expectUpdate := expectUpdateF(t, watcher)
-		expectDelete := expectDeleteF(t, watcher)
-		// Make sure we already got an initial value marker.
-		expectInitDone()
-
-		_, err = kv.Create("name", []byte("derek"))
-		expectOk(t, err)
-		expectUpdate("name", "derek", 1)
-		_, err = kv.Put("name", []byte("rip"))
-		expectOk(t, err)
-		expectUpdate("name", "rip", 2)
-		_, err = kv.Put("name", []byte("ik"))
-		expectOk(t, err)
-		expectUpdate("name", "ik", 3)
-		_, err = kv.Put("age", []byte("22"))
-		expectOk(t, err)
-		expectUpdate("age", "22", 4)
-		_, err = kv.Put("age", []byte("33"))
-		expectOk(t, err)
-		expectUpdate("age", "33", 5)
-		expectOk(t, kv.Delete("age"))
-		expectDelete("age", 6)
+			_, err = kv.Create("name", []byte("derek"))
+			expectOk(t, err)
+			expectUpdate("name", "derek", 1)
+			_, err = kv.Put("name", []byte("rip"))
+			expectOk(t, err)
+			expectUpdate("name", "rip", 2)
+			_, err = kv.Put("name", []byte("ik"))
+			expectOk(t, err)
+			expectUpdate("name", "ik", 3)
+			_, err = kv.Put("age", []byte("22"))
+			expectOk(t, err)
+			expectUpdate("age", "22", 4)
+			_, err = kv.Put("age", []byte("33"))
+			expectOk(t, err)
+			expectUpdate("age", "33", 5)
+			expectOk(t, kv.Delete("age"))
+			expectDelete("age", 6)
+		})
 	})
 
 	t.Run("stop watcher should not block", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-		expectOk(t, err)
+			watcher, err := kv.WatchAll()
+			expectOk(t, err)
 
-		watcher, err := kv.WatchAll()
-		expectOk(t, err)
+			expectInitDone := expectInitDoneF(t, watcher)
+			expectInitDone()
 
-		expectInitDone := expectInitDoneF(t, watcher)
-		expectInitDone()
+			err = watcher.Stop()
+			expectOk(t, err)
 
-		err = watcher.Stop()
-		expectOk(t, err)
-
-		select {
-		case _, ok := <-watcher.Updates():
-			if ok {
-				t.Fatalf("Expected channel to be closed")
+			select {
+			case _, ok := <-watcher.Updates():
+				if ok {
+					t.Fatalf("Expected channel to be closed")
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("Stop watcher did not return")
 			}
-		case <-time.After(100 * time.Millisecond):
-			t.Fatalf("Stop watcher did not return")
-		}
+		})
 	})
 
 	// Test channel-based error API integration with select patterns
 	t.Run("error channel with select", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+			expectOk(t, err)
 
-		nc, js := jsClient(t, s)
-		defer nc.Close()
+			kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH_ERROR"})
+			expectOk(t, err)
 
-		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH_ERROR"})
-		expectOk(t, err)
+			// Put some initial keys
+			_, err = kv.Put("test1", []byte("value1"))
+			expectOk(t, err)
+			_, err = kv.Put("test2", []byte("value2"))
+			expectOk(t, err)
 
-		// Put some initial keys
-		_, err = kv.Put("test1", []byte("value1"))
-		expectOk(t, err)
-		_, err = kv.Put("test2", []byte("value2"))
-		expectOk(t, err)
+			watcher, err := kv.WatchAll()
+			expectOk(t, err)
+			defer watcher.Stop()
 
-		watcher, err := kv.WatchAll()
-		expectOk(t, err)
-		defer watcher.Stop()
+			updateCount := 0
+			var watchCompleted bool
 
-		updateCount := 0
-		var watchCompleted bool
+		Outer:
+			for !watchCompleted {
+				select {
+				case entry := <-watcher.Updates():
+					if entry == nil {
+						break Outer
+					}
+					updateCount++
 
-	Outer:
-		for !watchCompleted {
-			select {
-			case entry := <-watcher.Updates():
-				if entry == nil {
-					break Outer
+				case err := <-watcher.Error():
+					if err != nil {
+						t.Fatalf("Unexpected error from watcher error channel: %v", err)
+					}
+
+				case <-time.After(2 * time.Second):
+					t.Fatalf("Timeout waiting for watcher completion")
 				}
-				updateCount++
-
-			case err := <-watcher.Error():
-				if err != nil {
-					t.Fatalf("Unexpected error from watcher error channel: %v", err)
-				}
-
-			case <-time.After(2 * time.Second):
-				t.Fatalf("Timeout waiting for watcher completion")
 			}
-		}
 
-		if updateCount < 2 {
-			t.Fatalf("Expected at least 2 updates, got %d", updateCount)
-		}
+			if updateCount < 2 {
+				t.Fatalf("Expected at least 2 updates, got %d", updateCount)
+			}
+		})
 	})
 }
 
 func TestKeyValueWatchContext(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
+		expectOk(t, err)
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
-	expectOk(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		watcher, err := kv.WatchAll(nats.Context(ctx))
+		expectOk(t, err)
+		defer watcher.Stop()
 
-	watcher, err := kv.WatchAll(nats.Context(ctx))
-	expectOk(t, err)
-	defer watcher.Stop()
+		// Trigger unsubscribe internally.
+		cancel()
 
-	// Trigger unsubscribe internally.
-	cancel()
+		// Wait for a bit for unsubscribe to be done.
+		time.Sleep(500 * time.Millisecond)
 
-	// Wait for a bit for unsubscribe to be done.
-	time.Sleep(500 * time.Millisecond)
-
-	// Stopping watch that is already stopped via cancellation propagation is an error.
-	err = watcher.Stop()
-	if err == nil || err != nats.ErrBadSubscription {
-		t.Errorf("Expected invalid subscription, got: %v", err)
-	}
+		// Stopping watch that is already stopped via cancellation propagation is an error.
+		err = watcher.Stop()
+		if err == nil || err != nats.ErrBadSubscription {
+			t.Errorf("Expected invalid subscription, got: %v", err)
+		}
+	})
 }
 
 func TestKeyValueWatchContextUpdates(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
+		expectOk(t, err)
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCHCTX"})
-	expectOk(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		watcher, err := kv.WatchAll(nats.Context(ctx))
+		expectOk(t, err)
+		defer watcher.Stop()
 
-	watcher, err := kv.WatchAll(nats.Context(ctx))
-	expectOk(t, err)
-	defer watcher.Stop()
-
-	// Pull the initial state done marker which is nil.
-	select {
-	case v := <-watcher.Updates():
-		if v != nil {
-			t.Fatalf("Expected nil marker, got %+v", v)
+		// Pull the initial state done marker which is nil.
+		select {
+		case v := <-watcher.Updates():
+			if v != nil {
+				t.Fatalf("Expected nil marker, got %+v", v)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive nil marker like expected")
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive nil marker like expected")
-	}
 
-	// Fire a timer and cancel the context after 250ms.
-	time.AfterFunc(250*time.Millisecond, cancel)
+		// Fire a timer and cancel the context after 250ms.
+		time.AfterFunc(250*time.Millisecond, cancel)
 
-	// Make sure canceling will break us out here.
-	select {
-	case <-watcher.Updates():
-	case <-time.After(5 * time.Second):
-		t.Fatalf("Did not break out like expected")
-	}
+		// Make sure canceling will break us out here.
+		select {
+		case <-watcher.Updates():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not break out like expected")
+		}
+	})
 }
 
 func TestKeyValueBindStore(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
 
-	_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-	expectOk(t, err)
+		// Now bind to it..
+		_, err = js.KeyValue("WATCH")
+		expectOk(t, err)
 
-	// Now bind to it..
-	_, err = js.KeyValue("WATCH")
-	expectOk(t, err)
+		// Make sure we can't bind to a non-kv style stream.
+		// We have some protection with stream name prefix.
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "KV_TEST",
+			Subjects: []string{"foo"},
+		})
+		expectOk(t, err)
 
-	// Make sure we can't bind to a non-kv style stream.
-	// We have some protection with stream name prefix.
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "KV_TEST",
-		Subjects: []string{"foo"},
+		_, err = js.KeyValue("TEST")
+		expectErr(t, err)
+		if err != nats.ErrBadBucket {
+			t.Fatalf("Expected %v but got %v", nats.ErrBadBucket, err)
+		}
 	})
-	expectOk(t, err)
-
-	_, err = js.KeyValue("TEST")
-	expectErr(t, err)
-	if err != nats.ErrBadBucket {
-		t.Fatalf("Expected %v but got %v", nats.ErrBadBucket, err)
-	}
 }
 
 func TestKeyValueDeleteStore(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
+		expectOk(t, err)
 
-	_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "WATCH"})
-	expectOk(t, err)
+		err = js.DeleteKeyValue("WATCH")
+		expectOk(t, err)
 
-	err = js.DeleteKeyValue("WATCH")
-	expectOk(t, err)
-
-	_, err = js.KeyValue("WATCH")
-	expectErr(t, err)
+		_, err = js.KeyValue("WATCH")
+		expectErr(t, err)
+	})
 }
 
 func TestKeyValueDeleteVsPurge(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
-	expectOk(t, err)
-
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(key, []byte(value))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	// Put in a few names and ages.
-	put("name", "derek")
-	put("age", "22")
-	put("name", "ivan")
-	put("age", "33")
-	put("name", "rip")
-	put("age", "44")
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
+		expectOk(t, err)
 
-	kv.Delete("age")
-	entries, err := kv.History("age")
-	expectOk(t, err)
-	// Expect three entries and delete marker.
-	if len(entries) != 4 {
-		t.Fatalf("Expected 4 entries for age after delete, got %d", len(entries))
-	}
-	err = kv.Purge("name", nats.LastRevision(4))
-	expectErr(t, err)
-	err = kv.Purge("name", nats.LastRevision(5))
-	expectOk(t, err)
-	// Check marker
-	e, err := kv.Get("name")
-	expectErr(t, err, nats.ErrKeyNotFound)
-	if e != nil {
-		t.Fatalf("Expected a nil entry but got %v", e)
-	}
-	entries, err = kv.History("name")
-	expectOk(t, err)
-	if len(entries) != 1 {
-		t.Fatalf("Expected only 1 entry for age after delete, got %d", len(entries))
-	}
-	// Make sure history also reports the purge operation.
-	if e := entries[0]; e.Operation() != nats.KeyValuePurge {
-		t.Fatalf("Expected a purge operation but got %v", e.Operation())
-	}
+		put := func(key, value string) {
+			t.Helper()
+			_, err := kv.Put(key, []byte(value))
+			expectOk(t, err)
+		}
+
+		// Put in a few names and ages.
+		put("name", "derek")
+		put("age", "22")
+		put("name", "ivan")
+		put("age", "33")
+		put("name", "rip")
+		put("age", "44")
+
+		kv.Delete("age")
+		entries, err := kv.History("age")
+		expectOk(t, err)
+		// Expect three entries and delete marker.
+		if len(entries) != 4 {
+			t.Fatalf("Expected 4 entries for age after delete, got %d", len(entries))
+		}
+		err = kv.Purge("name", nats.LastRevision(4))
+		expectErr(t, err)
+		err = kv.Purge("name", nats.LastRevision(5))
+		expectOk(t, err)
+		// Check marker
+		e, err := kv.Get("name")
+		expectErr(t, err, nats.ErrKeyNotFound)
+		if e != nil {
+			t.Fatalf("Expected a nil entry but got %v", e)
+		}
+		entries, err = kv.History("name")
+		expectOk(t, err)
+		if len(entries) != 1 {
+			t.Fatalf("Expected only 1 entry for age after delete, got %d", len(entries))
+		}
+		// Make sure history also reports the purge operation.
+		if e := entries[0]; e.Operation() != nats.KeyValuePurge {
+			t.Fatalf("Expected a purge operation but got %v", e.Operation())
+		}
+	})
 }
 
 func TestKeyValueDeleteTombstones(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
-	expectOk(t, err)
-
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(key, []byte(value))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	v := strings.Repeat("ABC", 33)
-	for i := 1; i <= 100; i++ {
-		put(fmt.Sprintf("key-%d", i), v)
-	}
-	// Now delete them.
-	for i := 1; i <= 100; i++ {
-		err := kv.Delete(fmt.Sprintf("key-%d", i))
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
 		expectOk(t, err)
-	}
 
-	// Now cleanup.
-	err = kv.PurgeDeletes(nats.DeleteMarkersOlderThan(-1))
-	expectOk(t, err)
+		put := func(key, value string) {
+			t.Helper()
+			_, err := kv.Put(key, []byte(value))
+			expectOk(t, err)
+		}
 
-	si, err := js.StreamInfo("KV_KVS")
-	expectOk(t, err)
-	if si.State.Msgs != 0 {
-		t.Fatalf("Expected no stream msgs to be left, got %d", si.State.Msgs)
-	}
+		v := strings.Repeat("ABC", 33)
+		for i := 1; i <= 100; i++ {
+			put(fmt.Sprintf("key-%d", i), v)
+		}
+		// Now delete them.
+		for i := 1; i <= 100; i++ {
+			err := kv.Delete(fmt.Sprintf("key-%d", i))
+			expectOk(t, err)
+		}
 
-	// Try with context
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	err = kv.PurgeDeletes(nats.Context(ctx))
-	expectOk(t, err)
+		// Now cleanup.
+		err = kv.PurgeDeletes(nats.DeleteMarkersOlderThan(-1))
+		expectOk(t, err)
+
+		si, err := js.StreamInfo("KV_KVS")
+		expectOk(t, err)
+		if si.State.Msgs != 0 {
+			t.Fatalf("Expected no stream msgs to be left, got %d", si.State.Msgs)
+		}
+
+		// Try with context
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		err = kv.PurgeDeletes(nats.Context(ctx))
+		expectOk(t, err)
+	})
 }
 
 func TestKeyValuePurgeDeletesMarkerThreshold(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
-	expectOk(t, err)
-
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(key, []byte(value))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	put("foo", "foo1")
-	put("bar", "bar1")
-	put("foo", "foo2")
-	err = kv.Delete("foo")
-	expectOk(t, err)
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 10})
+		expectOk(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+		put := func(key, value string) {
+			t.Helper()
+			_, err := kv.Put(key, []byte(value))
+			expectOk(t, err)
+		}
 
-	err = kv.Delete("bar")
-	expectOk(t, err)
+		put("foo", "foo1")
+		put("bar", "bar1")
+		put("foo", "foo2")
+		err = kv.Delete("foo")
+		expectOk(t, err)
 
-	err = kv.PurgeDeletes(nats.DeleteMarkersOlderThan(100 * time.Millisecond))
-	expectOk(t, err)
+		time.Sleep(200 * time.Millisecond)
 
-	// The key foo should have been completely cleared of the data
-	// and the delete marker.
-	fooEntries, err := kv.History("foo")
-	if err != nats.ErrKeyNotFound {
-		t.Fatalf("Expected all entries for key foo to be gone, got err=%v entries=%v", err, fooEntries)
-	}
-	barEntries, err := kv.History("bar")
-	expectOk(t, err)
-	if len(barEntries) != 1 {
-		t.Fatalf("Expected 1 entry, got %v", barEntries)
-	}
-	if e := barEntries[0]; e.Operation() != nats.KeyValueDelete {
-		t.Fatalf("Unexpected entry: %+v", e)
-	}
+		err = kv.Delete("bar")
+		expectOk(t, err)
+
+		err = kv.PurgeDeletes(nats.DeleteMarkersOlderThan(100 * time.Millisecond))
+		expectOk(t, err)
+
+		// The key foo should have been completely cleared of the data
+		// and the delete marker.
+		fooEntries, err := kv.History("foo")
+		if err != nats.ErrKeyNotFound {
+			t.Fatalf("Expected all entries for key foo to be gone, got err=%v entries=%v", err, fooEntries)
+		}
+		barEntries, err := kv.History("bar")
+		expectOk(t, err)
+		if len(barEntries) != 1 {
+			t.Fatalf("Expected 1 entry, got %v", barEntries)
+		}
+		if e := barEntries[0]; e.Operation() != nats.KeyValueDelete {
+			t.Fatalf("Unexpected entry: %+v", e)
+		}
+	})
 }
 
 func TestKeyValueKeys(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 2})
-	expectOk(t, err)
-
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(key, []byte(value))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	_, err = kv.Keys()
-	expectErr(t, err, nats.ErrNoKeysFound)
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 2})
+		expectOk(t, err)
 
-	// Put in a few names and ages.
-	put("name", "derek")
-	put("age", "22")
-	put("country", "US")
-	put("name", "ivan")
-	put("age", "33")
-	put("country", "US")
-	put("name", "rip")
-	put("age", "44")
-	put("country", "MT")
-
-	keys, err := kv.Keys()
-	expectOk(t, err)
-
-	kmap := make(map[string]struct{})
-	for _, key := range keys {
-		if _, ok := kmap[key]; ok {
-			t.Fatalf("Already saw %q", key)
+		put := func(key, value string) {
+			t.Helper()
+			_, err := kv.Put(key, []byte(value))
+			expectOk(t, err)
 		}
-		kmap[key] = struct{}{}
-	}
-	if len(kmap) != 3 {
-		t.Fatalf("Expected 3 total keys, got %d", len(kmap))
-	}
-	expected := map[string]struct{}{
-		"name":    struct{}{},
-		"age":     struct{}{},
-		"country": struct{}{},
-	}
-	if !reflect.DeepEqual(kmap, expected) {
-		t.Fatalf("Expected %+v but got %+v", expected, kmap)
-	}
-	// Make sure delete and purge do the right thing and not return the keys.
-	err = kv.Delete("name")
-	expectOk(t, err)
-	err = kv.Purge("country")
-	expectOk(t, err)
 
-	keys, err = kv.Keys()
-	expectOk(t, err)
+		_, err = kv.Keys()
+		expectErr(t, err, nats.ErrNoKeysFound)
 
-	kmap = make(map[string]struct{})
-	for _, key := range keys {
-		if _, ok := kmap[key]; ok {
-			t.Fatalf("Already saw %q", key)
+		// Put in a few names and ages.
+		put("name", "derek")
+		put("age", "22")
+		put("country", "US")
+		put("name", "ivan")
+		put("age", "33")
+		put("country", "US")
+		put("name", "rip")
+		put("age", "44")
+		put("country", "MT")
+
+		keys, err := kv.Keys()
+		expectOk(t, err)
+
+		kmap := make(map[string]struct{})
+		for _, key := range keys {
+			if _, ok := kmap[key]; ok {
+				t.Fatalf("Already saw %q", key)
+			}
+			kmap[key] = struct{}{}
 		}
-		kmap[key] = struct{}{}
-	}
-	if len(kmap) != 1 {
-		t.Fatalf("Expected 1 total key, got %d", len(kmap))
-	}
-	if _, ok := kmap["age"]; !ok {
-		t.Fatalf("Expected %q to be only key present", "age")
-	}
+		if len(kmap) != 3 {
+			t.Fatalf("Expected 3 total keys, got %d", len(kmap))
+		}
+		expected := map[string]struct{}{
+			"name":    struct{}{},
+			"age":     struct{}{},
+			"country": struct{}{},
+		}
+		if !reflect.DeepEqual(kmap, expected) {
+			t.Fatalf("Expected %+v but got %+v", expected, kmap)
+		}
+		// Make sure delete and purge do the right thing and not return the keys.
+		err = kv.Delete("name")
+		expectOk(t, err)
+		err = kv.Purge("country")
+		expectOk(t, err)
+
+		keys, err = kv.Keys()
+		expectOk(t, err)
+
+		kmap = make(map[string]struct{})
+		for _, key := range keys {
+			if _, ok := kmap[key]; ok {
+				t.Fatalf("Already saw %q", key)
+			}
+			kmap[key] = struct{}{}
+		}
+		if len(kmap) != 1 {
+			t.Fatalf("Expected 1 total key, got %d", len(kmap))
+		}
+		if _, ok := kmap["age"]; !ok {
+			t.Fatalf("Expected %q to be only key present", "age")
+		}
+	})
 }
 
 func TestKeyValueListKeys(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 2})
-	expectOk(t, err)
-
-	put := func(key, value string) {
-		t.Helper()
-		_, err := kv.Put(key, []byte(value))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-	}
 
-	// Put in a few names and ages.
-	put("name", "derek")
-	put("age", "22")
-	put("country", "US")
-	put("name", "ivan")
-	put("age", "33")
-	put("country", "US")
-	put("name", "rip")
-	put("age", "44")
-	put("country", "MT")
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS", History: 2})
+		expectOk(t, err)
 
-	keys, err := kv.ListKeys()
-	expectOk(t, err)
-
-	kmap := make(map[string]struct{})
-	for key := range keys.Keys() {
-		if _, ok := kmap[key]; ok {
-			t.Fatalf("Already saw %q", key)
+		put := func(key, value string) {
+			t.Helper()
+			_, err := kv.Put(key, []byte(value))
+			expectOk(t, err)
 		}
-		kmap[key] = struct{}{}
-	}
-	if len(kmap) != 3 {
-		t.Fatalf("Expected 3 total keys, got %d", len(kmap))
-	}
-	expected := map[string]struct{}{
-		"name":    struct{}{},
-		"age":     struct{}{},
-		"country": struct{}{},
-	}
-	if !reflect.DeepEqual(kmap, expected) {
-		t.Fatalf("Expected %+v but got %+v", expected, kmap)
-	}
-	// Make sure delete and purge do the right thing and not return the keys.
-	err = kv.Delete("name")
-	expectOk(t, err)
-	err = kv.Purge("country")
-	expectOk(t, err)
 
-	keys, err = kv.ListKeys()
-	expectOk(t, err)
+		// Put in a few names and ages.
+		put("name", "derek")
+		put("age", "22")
+		put("country", "US")
+		put("name", "ivan")
+		put("age", "33")
+		put("country", "US")
+		put("name", "rip")
+		put("age", "44")
+		put("country", "MT")
 
-	kmap = make(map[string]struct{})
-	for key := range keys.Keys() {
-		if _, ok := kmap[key]; ok {
-			t.Fatalf("Already saw %q", key)
-		}
-		kmap[key] = struct{}{}
-	}
-	if len(kmap) != 1 {
-		t.Fatalf("Expected 1 total key, got %d", len(kmap))
-	}
-	if _, ok := kmap["age"]; !ok {
-		t.Fatalf("Expected %q to be only key present", "age")
-	}
-
-	// Test channel-based error API patterns
-	t.Run("error channel with select", func(t *testing.T) {
 		keys, err := kv.ListKeys()
 		expectOk(t, err)
-		defer keys.Stop()
 
-		var keyList []string
-		var completed bool
+		kmap := make(map[string]struct{})
+		for key := range keys.Keys() {
+			if _, ok := kmap[key]; ok {
+				t.Fatalf("Already saw %q", key)
+			}
+			kmap[key] = struct{}{}
+		}
+		if len(kmap) != 3 {
+			t.Fatalf("Expected 3 total keys, got %d", len(kmap))
+		}
+		expected := map[string]struct{}{
+			"name":    struct{}{},
+			"age":     struct{}{},
+			"country": struct{}{},
+		}
+		if !reflect.DeepEqual(kmap, expected) {
+			t.Fatalf("Expected %+v but got %+v", expected, kmap)
+		}
+		// Make sure delete and purge do the right thing and not return the keys.
+		err = kv.Delete("name")
+		expectOk(t, err)
+		err = kv.Purge("country")
+		expectOk(t, err)
 
-		for !completed {
-			select {
-			case key, ok := <-keys.Keys():
-				if !ok {
-					completed = true
-					break
-				}
-				keyList = append(keyList, key)
+		keys, err = kv.ListKeys()
+		expectOk(t, err)
 
-			case err := <-keys.Error():
-				if err != nil {
-					t.Fatalf("Unexpected error from error channel: %v", err)
+		kmap = make(map[string]struct{})
+		for key := range keys.Keys() {
+			if _, ok := kmap[key]; ok {
+				t.Fatalf("Already saw %q", key)
+			}
+			kmap[key] = struct{}{}
+		}
+		if len(kmap) != 1 {
+			t.Fatalf("Expected 1 total key, got %d", len(kmap))
+		}
+		if _, ok := kmap["age"]; !ok {
+			t.Fatalf("Expected %q to be only key present", "age")
+		}
+
+		// Test channel-based error API patterns
+		t.Run("error channel with select", func(t *testing.T) {
+			keys, err := kv.ListKeys()
+			expectOk(t, err)
+			defer keys.Stop()
+
+			var keyList []string
+			var completed bool
+
+			for !completed {
+				select {
+				case key, ok := <-keys.Keys():
+					if !ok {
+						completed = true
+						break
+					}
+					keyList = append(keyList, key)
+
+				case err := <-keys.Error():
+					if err != nil {
+						t.Fatalf("Unexpected error from error channel: %v", err)
+					}
 				}
 			}
-		}
 
-		if len(keyList) != 1 {
-			t.Fatalf("Expected 1 key using select pattern, got %d", len(keyList))
-		}
-	})
+			if len(keyList) != 1 {
+				t.Fatalf("Expected 1 key using select pattern, got %d", len(keyList))
+			}
+		})
 
-	t.Run("error check after completion", func(t *testing.T) {
-		keys, err := kv.ListKeys()
-		expectOk(t, err)
-		defer keys.Stop()
+		t.Run("error check after completion", func(t *testing.T) {
+			keys, err := kv.ListKeys()
+			expectOk(t, err)
+			defer keys.Stop()
 
-		var keyList []string
-		for key := range keys.Keys() {
-			keyList = append(keyList, key)
-		}
+			var keyList []string
+			for key := range keys.Keys() {
+				keyList = append(keyList, key)
+			}
 
-		// Check for errors after completion - should not block and return nil
-		if err := <-keys.Error(); err != nil {
-			t.Fatalf("Unexpected error after completion: %v", err)
-		}
+			// Check for errors after completion - should not block and return nil
+			if err := <-keys.Error(); err != nil {
+				t.Fatalf("Unexpected error after completion: %v", err)
+			}
 
-		if len(keyList) != 1 {
-			t.Fatalf("Expected 1 key after completion check, got %d", len(keyList))
-		}
+			if len(keyList) != 1 {
+				t.Fatalf("Expected 1 key after completion check, got %d", len(keyList))
+			}
+		})
 	})
 }
 
 func TestKeyValueCrossAccounts(t *testing.T) {
-	conf := createConfFile(t, []byte(`
-        jetstream: enabled
-        accounts: {
-           A: {
-               users: [ {user: a, password: a} ]
-               jetstream: enabled
-               exports: [
-                   {service: '$JS.API.>' }
-                   {service: '$KV.>'}
-                   {stream: 'accI.>'}
-               ]
-           },
-           I: {
-               users: [ {user: i, password: i} ]
-               imports: [
-                   {service: {account: A, subject: '$JS.API.>'}, to: 'fromA.>' }
-                   {service: {account: A, subject: '$KV.>'}, to: 'fromA.$KV.>' }
-                   {stream: {subject: 'accI.>', account: A}}
-               ]
-           }
-		}`))
-	defer os.Remove(conf)
-	s, _ := RunServerWithConfig(conf)
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	c := newTester(t)
+	accounts := `accounts: {
+   A: {
+       users: [ {user: a, password: a} ]
+       jetstream: enabled
+       exports: [
+           {service: '$JS.API.>' }
+           {service: '$KV.>'}
+           {stream: 'accI.>'}
+       ]
+   },
+   I: {
+       users: [ {user: i, password: i} ]
+       imports: [
+           {service: {account: A, subject: '$JS.API.>'}, to: 'fromA.>' }
+           {service: {account: A, subject: '$KV.>'}, to: 'fromA.$KV.>' }
+           {stream: {subject: 'accI.>', account: A}}
+       ]
+   }
+}`
+	inst := c.CreateServer(t, true,
+		testservice.WithAccounts(accounts),
+		testservice.WithAuthorization("# auth required, no no_auth_user"),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+	)
+	t.Cleanup(func() { inst.Destroy(t) })
 
 	watchNext := func(w nats.KeyWatcher) nats.KeyValueEntry {
 		t.Helper()
@@ -1025,8 +1031,10 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 		return nil
 	}
 
-	nc1, js1 := jsClient(t, s, nats.UserInfo("a", "a"))
-	defer nc1.Close()
+	nc1 := dialInstance(t, inst, nats.UserInfo("a", "a"))
+	c.WaitForJetStream(t, nc1)
+	js1, err := nc1.JetStream(nats.MaxWait(10 * time.Second))
+	expectOk(t, err)
 
 	kv1, err := js1.CreateKeyValue(&nats.KeyValueConfig{Bucket: "Map", History: 10})
 	if err != nil {
@@ -1041,11 +1049,7 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 		t.Fatalf("Expected nil entry, got %+v", e)
 	}
 
-	nc2, err := nats.Connect(s.ClientURL(), nats.UserInfo("i", "i"), nats.CustomInboxPrefix("accI"))
-	if err != nil {
-		t.Fatalf("Error on connect: %v", err)
-	}
-	defer nc2.Close()
+	nc2 := dialInstance(t, inst, nats.UserInfo("i", "i"), nats.CustomInboxPrefix("accI"))
 	js2, err := nc2.JetStream(nats.APIPrefix("fromA"))
 	if err != nil {
 		t.Fatalf("Error getting jetstream context: %v", err)
@@ -1168,75 +1172,30 @@ func TestKeyValueCrossAccounts(t *testing.T) {
 }
 
 func TestKeyValueDuplicatesWindow(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	checkWindow := func(ttl, expectedDuplicates time.Duration) {
-		t.Helper()
-
-		_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: ttl})
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		expectOk(t, err)
-		defer js.DeleteKeyValue("TEST")
 
-		si, err := js.StreamInfo("KV_TEST")
-		if err != nil {
-			t.Fatalf("StreamInfo error: %v", err)
+		checkWindow := func(ttl, expectedDuplicates time.Duration) {
+			t.Helper()
+
+			_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST", History: 5, TTL: ttl})
+			expectOk(t, err)
+			defer js.DeleteKeyValue("TEST")
+
+			si, err := js.StreamInfo("KV_TEST")
+			if err != nil {
+				t.Fatalf("StreamInfo error: %v", err)
+			}
+			if si.Config.Duplicates != expectedDuplicates {
+				t.Fatalf("Expected duplicates to be %v, got %v", expectedDuplicates, si.Config.Duplicates)
+			}
 		}
-		if si.Config.Duplicates != expectedDuplicates {
-			t.Fatalf("Expected duplicates to be %v, got %v", expectedDuplicates, si.Config.Duplicates)
-		}
-	}
 
-	checkWindow(0, 2*time.Minute)
-	checkWindow(time.Hour, 2*time.Minute)
-	checkWindow(5*time.Second, 5*time.Second)
-}
-
-// Helpers
-
-func client(t *testing.T, s *server.Server, opts ...nats.Option) *nats.Conn {
-	t.Helper()
-	nc, err := nats.Connect(s.ClientURL(), opts...)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	return nc
-}
-
-func jsClient(t *testing.T, s *server.Server, opts ...nats.Option) (*nats.Conn, nats.JetStreamContext) {
-	t.Helper()
-	nc := client(t, s, opts...)
-	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
-	if err != nil {
-		t.Fatalf("Unexpected error getting JetStream context: %v", err)
-	}
-	return nc, js
-}
-
-func expectOk(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-}
-
-func expectErr(t *testing.T, err error, expected ...error) {
-	t.Helper()
-	if err == nil {
-		t.Fatalf("Expected error but got none")
-	}
-	if len(expected) == 0 {
-		return
-	}
-	for _, e := range expected {
-		if errors.Is(err, e) {
-			return
-		}
-	}
-	t.Fatalf("Expected one of %+v, got '%v'", expected, err)
+		checkWindow(0, 2*time.Minute)
+		checkWindow(time.Hour, 2*time.Minute)
+		checkWindow(5*time.Second, 5*time.Second)
+	})
 }
 
 func TestListKeyValueStores(t *testing.T) {
@@ -1256,38 +1215,37 @@ func TestListKeyValueStores(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunBasicJetStreamServer()
-			defer shutdownJSServerAndRemoveStorage(t, s)
-
-			nc, js := jsClient(t, s)
-			defer nc.Close()
-			// create stream without the chunk subject, but with KV_ prefix
-			_, err := js.AddStream(&nats.StreamConfig{Name: "KV_FOO", Subjects: []string{"FOO.*"}})
-			expectOk(t, err)
-			// create stream with chunk subject, but without "KV_" prefix
-			_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", Subjects: []string{"$KV.ABC.>"}})
-			expectOk(t, err)
-			for i := 0; i < test.bucketsNum; i++ {
-				_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: fmt.Sprintf("KVS_%d", i), MaxBytes: 1024})
+			withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+				js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 				expectOk(t, err)
-			}
-			names := make([]string, 0)
-			for name := range js.KeyValueStoreNames() {
-				if strings.HasPrefix(name, "KV_") {
-					t.Fatalf("Expected name without KV_ prefix, got %q", name)
+				// create stream without the chunk subject, but with KV_ prefix
+				_, err = js.AddStream(&nats.StreamConfig{Name: "KV_FOO", Subjects: []string{"FOO.*"}})
+				expectOk(t, err)
+				// create stream with chunk subject, but without "KV_" prefix
+				_, err = js.AddStream(&nats.StreamConfig{Name: "FOO", Subjects: []string{"$KV.ABC.>"}})
+				expectOk(t, err)
+				for i := 0; i < test.bucketsNum; i++ {
+					_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: fmt.Sprintf("KVS_%d", i), MaxBytes: 1024})
+					expectOk(t, err)
 				}
-				names = append(names, name)
-			}
-			if len(names) != test.bucketsNum {
-				t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
-			}
-			infos := make([]nats.KeyValueStatus, 0)
-			for info := range js.KeyValueStores() {
-				infos = append(infos, info)
-			}
-			if len(infos) != test.bucketsNum {
-				t.Fatalf("Invalid number of streams; want: %d; got: %d", test.bucketsNum, len(infos))
-			}
+				names := make([]string, 0)
+				for name := range js.KeyValueStoreNames() {
+					if strings.HasPrefix(name, "KV_") {
+						t.Fatalf("Expected name without KV_ prefix, got %q", name)
+					}
+					names = append(names, name)
+				}
+				if len(names) != test.bucketsNum {
+					t.Fatalf("Invalid number of stream names; want: %d; got: %d", test.bucketsNum, len(names))
+				}
+				infos := make([]nats.KeyValueStatus, 0)
+				for info := range js.KeyValueStores() {
+					infos = append(infos, info)
+				}
+				if len(infos) != test.bucketsNum {
+					t.Fatalf("Invalid number of streams; want: %d; got: %d", test.bucketsNum, len(infos))
+				}
+			})
 		})
 	}
 }
@@ -1322,31 +1280,42 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		})
 	}
 
-	conf := createConfFile(t, []byte(`
-		server_name: HUB
-		listen: 127.0.0.1:-1
-		jetstream: { domain: HUB }
-		leafnodes { listen: 127.0.0.1:7422 }
-	}`))
-	defer os.Remove(conf)
-	s, _ := RunServerWithConfig(conf)
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	// Set up HUB and LEAF as two distinct JetStream domains, wired via
+	// leafnode. WithJetStream injects the `domain:` line into the rendered
+	// jetstream block; WithLeafNode auto-reserves a "leafnode" port and
+	// surfaces it on Ports["leafnode"]. We read the hub's port after it's up
+	// and bake the remote URL into the leaf's leafnode block.
+	c := newTester(t)
+	host := testerHost(t)
 
-	lconf := createConfFile(t, []byte(`
-		server_name: LEAF
-		listen: 127.0.0.1:-1
- 		jetstream: { domain:LEAF }
- 		leafnodes {
- 		 	remotes = [ { url: "leaf://127.0.0.1" } ]
- 		}
-	}`))
-	defer os.Remove(lconf)
-	ln, _ := RunServerWithConfig(lconf)
-	defer shutdownJSServerAndRemoveStorage(t, ln)
+	hubInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: HUB`),
+		testservice.WithLeafNode(`leafnodes { port: {{ .Ports.leafnode }} }`),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { hubInst.Destroy(t) })
 
-	// Create main KV on HUB
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+	hubLeafPort := hubInst.Servers[0].Ports["leafnode"]
+	if hubLeafPort == 0 {
+		t.Fatalf("hub leafnode port not reserved")
+	}
+
+	leafInst := c.CreateServer(t, true,
+		testservice.WithJetStream(`domain: LEAF`),
+		testservice.WithLeafNode(fmt.Sprintf(`leafnodes { remotes = [ { url: "leaf://%s:%d" } ] }`, host, hubLeafPort)),
+		testservice.WithAccounts(emptyAccountsBody()),
+		testservice.WithSystemAccount(noSystemAccountBody()),
+		testservice.WithAuthorization(`# no authorization required`),
+	)
+	t.Cleanup(func() { leafInst.Destroy(t) })
+
+	// Connect to the hub, wait for JS, and create the source KV.
+	nc := dialInstance(t, hubInst)
+	c.WaitForJetStream(t, nc)
+	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	expectOk(t, err)
 
 	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
 	expectOk(t, err)
@@ -1360,12 +1329,13 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	err = kv.Delete("v")
 	expectOk(t, err)
 
-	lnc, ljs := jsClient(t, ln)
-	defer lnc.Close()
+	// Connect to the leaf, wait for JS.
+	lnc := dialInstance(t, leafInst)
+	c.WaitForJetStream(t, lnc)
+	ljs, err := lnc.JetStream(nats.MaxWait(10 * time.Second))
+	expectOk(t, err)
 
 	// Capture cfg so we can make sure it does not change.
-	// NOTE: We use different name to test all possibilities, etc, but in practice for truly nomadic applications
-	// this should be named the same, e.g. TEST.
 	cfg := &nats.KeyValueConfig{
 		Bucket: "MIRROR",
 		Mirror: &nats.StreamSource{
@@ -1385,13 +1355,11 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	si, err := ljs.StreamInfo("KV_MIRROR")
 	expectOk(t, err)
 
-	// Make sure mirror direct set.
 	if !si.Config.MirrorDirect {
 		t.Fatalf("Expected mirror direct to be set")
 	}
 
-	// Make sure we sync.
-	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
+	checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
 		si, err := ljs.StreamInfo("KV_MIRROR")
 		expectOk(t, err)
 		if si.State.Msgs == 3 {
@@ -1400,7 +1368,6 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 		return fmt.Errorf("Did not get synched messages: %d", si.State.Msgs)
 	})
 
-	// Bind locally from leafnode and make sure both get and put work.
 	mkv, err := ljs.KeyValue("MIRROR")
 	expectOk(t, err)
 
@@ -1409,7 +1376,6 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 
 	_, err = mkv.PutString("v", "vv")
 	expectOk(t, err)
-	// wait for the key to be propagated to the mirror
 	e := keyExists(t, kv, "v", "vv")
 	if e.Operation() != nats.KeyValuePut {
 		t.Fatalf("Got wrong value: %q vs %q", e.Operation(), nats.KeyValuePut)
@@ -1420,7 +1386,6 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 
 	keyExists(t, kv, "name", "rip")
 
-	// Also make sure we can create a watcher on the mirror KV.
 	watcher, err := mkv.WatchAll()
 	expectOk(t, err)
 	defer watcher.Stop()
@@ -1446,521 +1411,499 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	expectOk(t, err)
 	keyDeleted(t, mkv, "v")
 
-	// Shutdown cluster and test get still work.
-	shutdownJSServerAndRemoveStorage(t, s)
+	// Shutdown the hub and verify mirror reads still work locally.
+	hubInst.StopServer(t, hubInst.Servers[0])
 
 	keyExists(t, mkv, "name", "ivan")
 }
 
 func TestKeyValueNonDirectGet(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+		if err != nil {
+			t.Fatalf("Error creating store: %v", err)
+		}
+		si, err := js.StreamInfo("KV_TEST")
+		if err != nil {
+			t.Fatalf("Error getting stream info: %v", err)
+		}
+		if !si.Config.AllowDirect {
+			t.Fatal("Expected allow direct to be set, it was not")
+		}
 
-	_, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
-	if err != nil {
-		t.Fatalf("Error creating store: %v", err)
-	}
-	si, err := js.StreamInfo("KV_TEST")
-	if err != nil {
-		t.Fatalf("Error getting stream info: %v", err)
-	}
-	if !si.Config.AllowDirect {
-		t.Fatal("Expected allow direct to be set, it was not")
-	}
+		cfg := si.Config
+		cfg.AllowDirect = false
+		if _, err := js.UpdateStream(&cfg); err != nil {
+			t.Fatalf("Error updating stream: %v", err)
+		}
+		kvi, err := js.KeyValue("TEST")
+		if err != nil {
+			t.Fatalf("Error getting kv: %v", err)
+		}
 
-	cfg := si.Config
-	cfg.AllowDirect = false
-	if _, err := js.UpdateStream(&cfg); err != nil {
-		t.Fatalf("Error updating stream: %v", err)
-	}
-	kvi, err := js.KeyValue("TEST")
-	if err != nil {
-		t.Fatalf("Error getting kv: %v", err)
-	}
-
-	if _, err := kvi.PutString("key1", "val1"); err != nil {
-		t.Fatalf("Error putting key: %v", err)
-	}
-	if _, err := kvi.PutString("key2", "val2"); err != nil {
-		t.Fatalf("Error putting key: %v", err)
-	}
-	if v, err := kvi.Get("key2"); err != nil || string(v.Value()) != "val2" {
-		t.Fatalf("Error on get: v=%+v err=%v", v, err)
-	}
-	if v, err := kvi.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
-		t.Fatalf("Error on get revision: v=%+v err=%v", v, err)
-	}
-	if v, err := kvi.GetRevision("key1", 2); err == nil {
-		t.Fatalf("Expected error, got %+v", v)
-	}
+		if _, err := kvi.PutString("key1", "val1"); err != nil {
+			t.Fatalf("Error putting key: %v", err)
+		}
+		if _, err := kvi.PutString("key2", "val2"); err != nil {
+			t.Fatalf("Error putting key: %v", err)
+		}
+		if v, err := kvi.Get("key2"); err != nil || string(v.Value()) != "val2" {
+			t.Fatalf("Error on get: v=%+v err=%v", v, err)
+		}
+		if v, err := kvi.GetRevision("key1", 1); err != nil || string(v.Value()) != "val1" {
+			t.Fatalf("Error on get revision: v=%+v err=%v", v, err)
+		}
+		if v, err := kvi.GetRevision("key1", 2); err == nil {
+			t.Fatalf("Expected error, got %+v", v)
+		}
+	})
 }
 
 func TestKeyValueRePublish(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket: "TEST_UPDATE",
+		}); err != nil {
+			t.Fatalf("Error creating store: %v", err)
+		}
+		// This is expected to fail since server does not support as of now
+		// the update of RePublish.
+		if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:    "TEST_UPDATE",
+			RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
+		}); err == nil {
+			t.Fatal("Expected failure, did not get one")
+		}
 
-	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket: "TEST_UPDATE",
-	}); err != nil {
-		t.Fatalf("Error creating store: %v", err)
-	}
-	// This is expected to fail since server does not support as of now
-	// the update of RePublish.
-	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:    "TEST_UPDATE",
-		RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
-	}); err == nil {
-		t.Fatal("Expected failure, did not get one")
-	}
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:    "TEST",
+			RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
+		})
+		if err != nil {
+			t.Fatalf("Error creating store: %v", err)
+		}
+		si, err := js.StreamInfo("KV_TEST")
+		if err != nil {
+			t.Fatalf("Error getting stream info: %v", err)
+		}
+		if si.Config.RePublish == nil {
+			t.Fatal("Expected republish to be set, it was not")
+		}
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:    "TEST",
-		RePublish: &nats.RePublish{Source: ">", Destination: "bar.>"},
+		sub, err := nc.SubscribeSync("bar.>")
+		if err != nil {
+			t.Fatalf("Error on sub: %v", err)
+		}
+		if _, err := kv.Put("foo", []byte("value")); err != nil {
+			t.Fatalf("Error on put: %v", err)
+		}
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			t.Fatalf("Error on next: %v", err)
+		}
+		if v := string(msg.Data); v != "value" {
+			t.Fatalf("Unexpected value: %s", v)
+		}
+		// The message should also have a header with the actual subject
+		kvSubjectsPreTmpl := "$KV.%s."
+		expected := fmt.Sprintf(kvSubjectsPreTmpl, "TEST") + "foo"
+		if v := msg.Header.Get(nats.JSSubject); v != expected {
+			t.Fatalf("Expected subject header %q, got %q", expected, v)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Error creating store: %v", err)
-	}
-	si, err := js.StreamInfo("KV_TEST")
-	if err != nil {
-		t.Fatalf("Error getting stream info: %v", err)
-	}
-	if si.Config.RePublish == nil {
-		t.Fatal("Expected republish to be set, it was not")
-	}
-
-	sub, err := nc.SubscribeSync("bar.>")
-	if err != nil {
-		t.Fatalf("Error on sub: %v", err)
-	}
-	if _, err := kv.Put("foo", []byte("value")); err != nil {
-		t.Fatalf("Error on put: %v", err)
-	}
-	msg, err := sub.NextMsg(time.Second)
-	if err != nil {
-		t.Fatalf("Error on next: %v", err)
-	}
-	if v := string(msg.Data); v != "value" {
-		t.Fatalf("Unexpected value: %s", v)
-	}
-	// The message should also have a header with the actual subject
-	kvSubjectsPreTmpl := "$KV.%s."
-	expected := fmt.Sprintf(kvSubjectsPreTmpl, "TEST") + "foo"
-	if v := msg.Header.Get(nats.JSSubject); v != expected {
-		t.Fatalf("Expected subject header %q, got %q", expected, v)
-	}
 }
 
 func TestKeyValueMirrorDirectGet(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:         "MIRROR",
+			Mirror:       &nats.StreamSource{Name: "KV_TEST"},
+			MirrorDirect: true,
+		})
+		if err != nil {
+			t.Fatalf("Error creating mirror: %v", err)
+		}
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:         "MIRROR",
-		Mirror:       &nats.StreamSource{Name: "KV_TEST"},
-		MirrorDirect: true,
+		for i := 0; i < 100; i++ {
+			key := fmt.Sprintf("KEY.%d", i)
+			if _, err := kv.PutString(key, "42"); err != nil {
+				t.Fatalf("Error adding key: %v", err)
+			}
+		}
+
+		// Make sure all gets work.
+		for i := 0; i < 100; i++ {
+			if _, err := kv.Get("KEY.22"); err != nil {
+				t.Fatalf("Got error getting key: %v", err)
+			}
+		}
 	})
-	if err != nil {
-		t.Fatalf("Error creating mirror: %v", err)
-	}
-
-	for i := 0; i < 100; i++ {
-		key := fmt.Sprintf("KEY.%d", i)
-		if _, err := kv.PutString(key, "42"); err != nil {
-			t.Fatalf("Error adding key: %v", err)
-		}
-	}
-
-	// Make sure all gets work.
-	for i := 0; i < 100; i++ {
-		if _, err := kv.Get("KEY.22"); err != nil {
-			t.Fatalf("Got error getting key: %v", err)
-		}
-	}
 }
 
 func TestKeyValueCreate(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:       "TEST",
+			Description:  "Test KV",
+			MaxValueSize: 128,
+			History:      10,
+			TTL:          1 * time.Hour,
+			MaxBytes:     1024,
+			Storage:      nats.FileStorage,
+		})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:       "TEST",
-		Description:  "Test KV",
-		MaxValueSize: 128,
-		History:      10,
-		TTL:          1 * time.Hour,
-		MaxBytes:     1024,
-		Storage:      nats.FileStorage,
+		expectedStreamConfig := nats.StreamConfig{
+			Name:              "KV_TEST",
+			Description:       "Test KV",
+			Subjects:          []string{"$KV.TEST.>"},
+			MaxMsgs:           -1,
+			MaxBytes:          1024,
+			Discard:           nats.DiscardNew,
+			MaxAge:            1 * time.Hour,
+			MaxMsgsPerSubject: 10,
+			MaxMsgSize:        128,
+			Storage:           nats.FileStorage,
+			DenyDelete:        true,
+			AllowRollup:       true,
+			AllowDirect:       true,
+			MaxConsumers:      -1,
+			Replicas:          1,
+			Duplicates:        2 * time.Minute,
+		}
+
+		si, err := js.StreamInfo("KV_TEST")
+		if err != nil {
+			t.Fatalf("Error getting stream info: %v", err)
+		}
+		// Metadata is set by the server, so we need to set it here.
+		expectedStreamConfig.Metadata = si.Config.Metadata
+		if !reflect.DeepEqual(si.Config, expectedStreamConfig) {
+			t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, si.Config)
+		}
+
+		_, err = kv.Create("key", []byte("1"))
+		if err != nil {
+			t.Fatalf("Error creating key: %v", err)
+		}
+
+		_, err = kv.Create("key", []byte("1"))
+		expected := "nats: wrong last sequence: 1: key exists"
+		if err.Error() != expected {
+			t.Fatalf("Expected %q, got: %v", expected, err)
+		}
+		if !errors.Is(err, nats.ErrKeyExists) {
+			t.Fatalf("Expected ErrKeyExists, got: %v", err)
+		}
+		aerr := &nats.APIError{}
+		if !errors.As(err, &aerr) {
+			t.Fatalf("Expected APIError, got: %v", err)
+		}
+		if aerr.Description != "wrong last sequence: 1" {
+			t.Fatalf("Unexpected APIError message, got: %v", aerr.Description)
+		}
+		if aerr.ErrorCode != 10071 {
+			t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
+		}
+		if aerr.Code != nats.ErrKeyExists.APIError().Code {
+			t.Fatalf("Unexpected error code, got: %v", aerr.Code)
+		}
+		var kerr nats.JetStreamError
+		if !errors.As(err, &kerr) {
+			t.Fatalf("Expected KeyValueError, got: %v", err)
+		}
+		if kerr.APIError().ErrorCode != 10071 {
+			t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	expectedStreamConfig := nats.StreamConfig{
-		Name:              "KV_TEST",
-		Description:       "Test KV",
-		Subjects:          []string{"$KV.TEST.>"},
-		MaxMsgs:           -1,
-		MaxBytes:          1024,
-		Discard:           nats.DiscardNew,
-		MaxAge:            1 * time.Hour,
-		MaxMsgsPerSubject: 10,
-		MaxMsgSize:        128,
-		Storage:           nats.FileStorage,
-		DenyDelete:        true,
-		AllowRollup:       true,
-		AllowDirect:       true,
-		MaxConsumers:      -1,
-		Replicas:          1,
-		Duplicates:        2 * time.Minute,
-	}
-
-	si, err := js.StreamInfo("KV_TEST")
-	if err != nil {
-		t.Fatalf("Error getting stream info: %v", err)
-	}
-	// Metadata is set by the server, so we need to set it here.
-	expectedStreamConfig.Metadata = si.Config.Metadata
-	if !reflect.DeepEqual(si.Config, expectedStreamConfig) {
-		t.Fatalf("Expected stream config to be %+v, got %+v", expectedStreamConfig, si.Config)
-	}
-
-	_, err = kv.Create("key", []byte("1"))
-	if err != nil {
-		t.Fatalf("Error creating key: %v", err)
-	}
-
-	_, err = kv.Create("key", []byte("1"))
-	expected := "nats: wrong last sequence: 1: key exists"
-	if err.Error() != expected {
-		t.Fatalf("Expected %q, got: %v", expected, err)
-	}
-	if !errors.Is(err, nats.ErrKeyExists) {
-		t.Fatalf("Expected ErrKeyExists, got: %v", err)
-	}
-	aerr := &nats.APIError{}
-	if !errors.As(err, &aerr) {
-		t.Fatalf("Expected APIError, got: %v", err)
-	}
-	if aerr.Description != "wrong last sequence: 1" {
-		t.Fatalf("Unexpected APIError message, got: %v", aerr.Description)
-	}
-	if aerr.ErrorCode != 10071 {
-		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
-	}
-	if aerr.Code != nats.ErrKeyExists.APIError().Code {
-		t.Fatalf("Unexpected error code, got: %v", aerr.Code)
-	}
-	var kerr nats.JetStreamError
-	if !errors.As(err, &kerr) {
-		t.Fatalf("Expected KeyValueError, got: %v", err)
-	}
-	if kerr.APIError().ErrorCode != 10071 {
-		t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
-	}
 }
 
 func TestKeyValueSourcing(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kvA, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "A"})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	_, err = kvA.Create("keyA", []byte("1"))
-	if err != nil {
-		t.Fatalf("Error creating key: %v", err)
-	}
-
-	if _, err := kvA.Get("keyA"); err != nil {
-		t.Fatalf("Got error getting keyA from A: %v", err)
-	}
-
-	kvB, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "B"})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	_, err = kvB.Create("keyB", []byte("1"))
-	if err != nil {
-		t.Fatalf("Error creating key: %v", err)
-	}
-
-	kvC, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "C", Sources: []*nats.StreamSource{{Name: "A"}, {Name: "B"}}})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	i := 0
-	for {
-		status, err := kvC.Status()
+		kvA, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "A"})
 		if err != nil {
-			t.Fatalf("Error getting bucket status: %v", err)
+			t.Fatalf("Error creating kv: %v", err)
 		}
-		if status.Values() == 2 {
-			break
-		} else {
-			i++
-			if i > 10 {
-				t.Fatalf("Error sourcing bucket does not contain the expected number of values")
+
+		_, err = kvA.Create("keyA", []byte("1"))
+		if err != nil {
+			t.Fatalf("Error creating key: %v", err)
+		}
+
+		if _, err := kvA.Get("keyA"); err != nil {
+			t.Fatalf("Got error getting keyA from A: %v", err)
+		}
+
+		kvB, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "B"})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
+
+		_, err = kvB.Create("keyB", []byte("1"))
+		if err != nil {
+			t.Fatalf("Error creating key: %v", err)
+		}
+
+		kvC, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "C", Sources: []*nats.StreamSource{{Name: "A"}, {Name: "B"}}})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
+
+		i := 0
+		for {
+			status, err := kvC.Status()
+			if err != nil {
+				t.Fatalf("Error getting bucket status: %v", err)
 			}
+			if status.Values() == 2 {
+				break
+			} else {
+				i++
+				if i > 10 {
+					t.Fatalf("Error sourcing bucket does not contain the expected number of values")
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
 
-	if _, err := kvC.Get("keyA"); err != nil {
-		t.Fatalf("Got error getting keyA from C: %v", err)
-	}
+		if _, err := kvC.Get("keyA"); err != nil {
+			t.Fatalf("Got error getting keyA from C: %v", err)
+		}
 
-	if _, err := kvC.Get("keyB"); err != nil {
-		t.Fatalf("Got error getting keyB from C: %v", err)
-	}
+		if _, err := kvC.Get("keyB"); err != nil {
+			t.Fatalf("Got error getting keyB from C: %v", err)
+		}
+	})
 }
 
 func TestKeyValueCompression(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:      "A",
+			Compression: true,
+		})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
 
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:      "A",
-		Compression: true,
+		status, err := kv.Status()
+		if err != nil {
+			t.Fatalf("Error getting bucket status: %v", err)
+		}
+
+		if !status.IsCompressed() {
+			t.Fatalf("Expected bucket to be compressed")
+		}
+
+		kvStream, err := js.StreamInfo("KV_A")
+		if err != nil {
+			t.Fatalf("Error getting stream info: %v", err)
+		}
+
+		if kvStream.Config.Compression != nats.S2Compression {
+			t.Fatalf("Expected stream to be compressed with S2")
+		}
 	})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	status, err := kv.Status()
-	if err != nil {
-		t.Fatalf("Error getting bucket status: %v", err)
-	}
-
-	if !status.IsCompressed() {
-		t.Fatalf("Expected bucket to be compressed")
-	}
-
-	kvStream, err := js.StreamInfo("KV_A")
-	if err != nil {
-		t.Fatalf("Error getting stream info: %v", err)
-	}
-
-	if kvStream.Config.Compression != nats.S2Compression {
-		t.Fatalf("Expected stream to be compressed with S2")
-	}
 }
 
 func TestListKeysFromPurgedStream(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Error on connect: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
-	if err != nil {
-		t.Fatalf("Error getting jetstream context: %v", err)
-	}
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "A"})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-
-	for i := range 10000 {
-		if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
-			t.Fatalf("Error putting key: %v", err)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+		if err != nil {
+			t.Fatalf("Error getting jetstream context: %v", err)
 		}
-	}
 
-	// purge the stream after a bit
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		if err := js.PurgeStream("KV_A"); err != nil {
-			t.Logf("Error purging stream: %v", err)
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "A"})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
 		}
-	}()
-	keys, err := kv.ListKeys()
-	if err != nil {
-		t.Fatalf("Error listing keys: %v", err)
-	}
 
-	// there should not be a deadlock here
-	for {
-		select {
-		case _, ok := <-keys.Keys():
-			if !ok {
-				return
+		for i := range 10000 {
+			if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
+				t.Fatalf("Error putting key: %v", err)
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Timeout waiting for keys")
 		}
-	}
+
+		// purge the stream after a bit
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			if err := js.PurgeStream("KV_A"); err != nil {
+				t.Logf("Error purging stream: %v", err)
+			}
+		}()
+		keys, err := kv.ListKeys()
+		if err != nil {
+			t.Fatalf("Error listing keys: %v", err)
+		}
+
+		// there should not be a deadlock here
+		for {
+			select {
+			case _, ok := <-keys.Keys():
+				if !ok {
+					return
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for keys")
+			}
+		}
+	})
 }
 
 func TestKeyValueWatcherStopTimer(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Error on connect: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
-	if err != nil {
-		t.Fatalf("Error getting jetstream context: %v", err)
-	}
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
-	if err != nil {
-		t.Fatalf("Error creating kv: %v", err)
-	}
-	for i := range 1000 {
-		if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
-			t.Fatalf("Error putting key: %v", err)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(100 * time.Millisecond))
+		if err != nil {
+			t.Fatalf("Error getting jetstream context: %v", err)
 		}
-	}
 
-	w, err := kv.WatchAll()
-	if err != nil {
-		t.Fatalf("Error creating watcher: %v", err)
-	}
-	if err := w.Stop(); err != nil {
-		t.Fatalf("Error stopping watcher: %v", err)
-	}
-	time.Sleep(500 * time.Millisecond)
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+		if err != nil {
+			t.Fatalf("Error creating kv: %v", err)
+		}
+		for i := range 1000 {
+			if _, err := kv.Put(fmt.Sprintf("key-%d", i), []byte("val")); err != nil {
+				t.Fatalf("Error putting key: %v", err)
+			}
+		}
+
+		w, err := kv.WatchAll()
+		if err != nil {
+			t.Fatalf("Error creating watcher: %v", err)
+		}
+		if err := w.Stop(); err != nil {
+			t.Fatalf("Error stopping watcher: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	})
 }
 
 func TestKeyValueKeysDeduplicate(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST_KV", History: 5})
-	if err != nil {
-		t.Fatalf("Error creating KV: %v", err)
-	}
-
-	for i := range 10 {
-		key := fmt.Sprintf("key_%d", i)
-		if _, err := kv.PutString(key, "initial"); err != nil {
-			t.Fatalf("Error putting key %s: %v", key, err)
+		kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST_KV", History: 5})
+		if err != nil {
+			t.Fatalf("Error creating KV: %v", err)
 		}
-	}
 
-	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				for i := range 5 {
-					key := fmt.Sprintf("key_%d", i)
-					kv.PutString(key, "updated")
+		for i := range 10 {
+			key := fmt.Sprintf("key_%d", i)
+			if _, err := kv.PutString(key, "initial"); err != nil {
+				t.Fatalf("Error putting key %s: %v", key, err)
+			}
+		}
+
+		done := make(chan bool)
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					for i := range 5 {
+						key := fmt.Sprintf("key_%d", i)
+						kv.PutString(key, "updated")
+					}
 				}
 			}
-		}
-	}()
+		}()
 
-	for range 20 {
-		keys, err := kv.Keys()
-		if err != nil {
-			t.Fatalf("Error getting keys: %v", err)
-		}
-
-		seen := make(map[string]struct{})
-		for _, key := range keys {
-			if _, exists := seen[key]; exists {
-				t.Fatalf("Duplicate key found: %s", key)
+		for range 20 {
+			keys, err := kv.Keys()
+			if err != nil {
+				t.Fatalf("Error getting keys: %v", err)
 			}
-			seen[key] = struct{}{}
-		}
-	}
 
-	close(done)
+			seen := make(map[string]struct{})
+			for _, key := range keys {
+				if _, exists := seen[key]; exists {
+					t.Fatalf("Duplicate key found: %s", key)
+				}
+				seen[key] = struct{}{}
+			}
+		}
+
+		close(done)
+	})
 }
 
 func TestKeyValueConfig(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		expectOk(t, err)
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		originalCfg := &nats.KeyValueConfig{
+			Bucket:       "CONFIG_TEST",
+			Description:  "test bucket for config retrieval",
+			MaxValueSize: 1024,
+			History:      10,
+			TTL:          2 * time.Hour,
+			MaxBytes:     1024 * 1024,
+			Storage:      nats.FileStorage,
+			Replicas:     1,
+		}
 
-	originalCfg := &nats.KeyValueConfig{
-		Bucket:       "CONFIG_TEST",
-		Description:  "test bucket for config retrieval",
-		MaxValueSize: 1024,
-		History:      10,
-		TTL:          2 * time.Hour,
-		MaxBytes:     1024 * 1024,
-		Storage:      nats.FileStorage,
-		Replicas:     1,
-	}
+		kv, err := js.CreateKeyValue(originalCfg)
+		if err != nil {
+			t.Fatalf("Error creating KV: %v", err)
+		}
 
-	kv, err := js.CreateKeyValue(originalCfg)
-	if err != nil {
-		t.Fatalf("Error creating KV: %v", err)
-	}
+		status, err := kv.Status()
+		if err != nil {
+			t.Fatalf("Error getting status: %v", err)
+		}
 
-	status, err := kv.Status()
-	if err != nil {
-		t.Fatalf("Error getting status: %v", err)
-	}
+		retrievedCfg := status.Config()
 
-	retrievedCfg := status.Config()
-
-	if retrievedCfg.Bucket != originalCfg.Bucket {
-		t.Errorf("Expected bucket %q, got %q", originalCfg.Bucket, retrievedCfg.Bucket)
-	}
-	if retrievedCfg.Description != originalCfg.Description {
-		t.Errorf("Expected description %q, got %q", originalCfg.Description, retrievedCfg.Description)
-	}
-	if retrievedCfg.MaxValueSize != originalCfg.MaxValueSize {
-		t.Errorf("Expected MaxValueSize %d, got %d", originalCfg.MaxValueSize, retrievedCfg.MaxValueSize)
-	}
-	if retrievedCfg.History != originalCfg.History {
-		t.Errorf("Expected history %d, got %d", originalCfg.History, retrievedCfg.History)
-	}
-	if retrievedCfg.TTL != originalCfg.TTL {
-		t.Errorf("Expected TTL %v, got %v", originalCfg.TTL, retrievedCfg.TTL)
-	}
-	if retrievedCfg.MaxBytes != originalCfg.MaxBytes {
-		t.Errorf("Expected MaxBytes %d, got %d", originalCfg.MaxBytes, retrievedCfg.MaxBytes)
-	}
-	if retrievedCfg.Storage != originalCfg.Storage {
-		t.Errorf("Expected storage %v, got %v", originalCfg.Storage, retrievedCfg.Storage)
-	}
-	if retrievedCfg.Replicas != originalCfg.Replicas {
-		t.Errorf("Expected replicas %d, got %d", originalCfg.Replicas, retrievedCfg.Replicas)
-	}
+		if retrievedCfg.Bucket != originalCfg.Bucket {
+			t.Errorf("Expected bucket %q, got %q", originalCfg.Bucket, retrievedCfg.Bucket)
+		}
+		if retrievedCfg.Description != originalCfg.Description {
+			t.Errorf("Expected description %q, got %q", originalCfg.Description, retrievedCfg.Description)
+		}
+		if retrievedCfg.MaxValueSize != originalCfg.MaxValueSize {
+			t.Errorf("Expected MaxValueSize %d, got %d", originalCfg.MaxValueSize, retrievedCfg.MaxValueSize)
+		}
+		if retrievedCfg.History != originalCfg.History {
+			t.Errorf("Expected history %d, got %d", originalCfg.History, retrievedCfg.History)
+		}
+		if retrievedCfg.TTL != originalCfg.TTL {
+			t.Errorf("Expected TTL %v, got %v", originalCfg.TTL, retrievedCfg.TTL)
+		}
+		if retrievedCfg.MaxBytes != originalCfg.MaxBytes {
+			t.Errorf("Expected MaxBytes %d, got %d", originalCfg.MaxBytes, retrievedCfg.MaxBytes)
+		}
+		if retrievedCfg.Storage != originalCfg.Storage {
+			t.Errorf("Expected storage %v, got %v", originalCfg.Storage, retrievedCfg.Storage)
+		}
+		if retrievedCfg.Replicas != originalCfg.Replicas {
+			t.Errorf("Expected replicas %d, got %d", originalCfg.Replicas, retrievedCfg.Replicas)
+		}
+	})
 }

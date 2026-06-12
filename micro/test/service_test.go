@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -25,170 +25,159 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
-
-	natsserver "github.com/nats-io/nats-server/v2/test"
 )
 
 func TestServiceBasics(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
-
-	// Stub service.
-	doAdd := func(req micro.Request) {
-		if rand.Intn(10) == 0 {
-			if err := req.Error("500", "Unexpected error!", nil); err != nil {
-				t.Fatalf("Unexpected error when sending error response: %v", err)
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		// Stub service.
+		doAdd := func(req micro.Request) {
+			if rand.Intn(10) == 0 {
+				if err := req.Error("500", "Unexpected error!", nil); err != nil {
+					t.Fatalf("Unexpected error when sending error response: %v", err)
+				}
+				return
 			}
-			return
-		}
-		// Happy Path.
-		// Random delay between 5-10ms
-		time.Sleep(5*time.Millisecond + time.Duration(rand.Intn(5))*time.Millisecond)
-		if err := req.Respond([]byte("42")); err != nil {
-			if err := req.Error("500", "Unexpected error!", nil); err != nil {
-				t.Fatalf("Unexpected error when sending error response: %v", err)
+			// Happy Path.
+			// Random delay between 5-10ms
+			time.Sleep(5*time.Millisecond + time.Duration(rand.Intn(5))*time.Millisecond)
+			if err := req.Respond([]byte("42")); err != nil {
+				if err := req.Error("500", "Unexpected error!", nil); err != nil {
+					t.Fatalf("Unexpected error when sending error response: %v", err)
+				}
+				return
 			}
-			return
 		}
-	}
 
-	var svcs []micro.Service
+		var svcs []micro.Service
 
-	// Create 5 service responders.
-	config := micro.Config{
-		Name:        "CoolAddService",
-		Version:     "0.1.0",
-		Description: "Add things together",
-		Metadata:    map[string]string{"basic": "metadata"},
-		Endpoint: &micro.EndpointConfig{
-			Subject: "svc.add",
-			Handler: micro.HandlerFunc(doAdd),
-		},
-	}
+		// Create 5 service responders.
+		config := micro.Config{
+			Name:        "CoolAddService",
+			Version:     "0.1.0",
+			Description: "Add things together",
+			Metadata:    map[string]string{"basic": "metadata"},
+			Endpoint: &micro.EndpointConfig{
+				Subject: "svc.add",
+				Handler: micro.HandlerFunc(doAdd),
+			},
+		}
 
-	for i := 0; i < 5; i++ {
-		svc, err := micro.AddService(nc, config)
+		for i := 0; i < 5; i++ {
+			svc, err := micro.AddService(nc, config)
+			if err != nil {
+				t.Fatalf("Expected to create Service, got %v", err)
+			}
+			defer svc.Stop()
+			svcs = append(svcs, svc)
+		}
+
+		// Now send 50 requests.
+		for i := 0; i < 50; i++ {
+			_, err := nc.Request("svc.add", []byte(`{ "x": 22, "y": 11 }`), time.Second)
+			if err != nil {
+				t.Fatalf("Expected a response, got %v", err)
+			}
+		}
+
+		for _, svc := range svcs {
+			info := svc.Info()
+			if info.Name != "CoolAddService" {
+				t.Fatalf("Expected %q, got %q", "CoolAddService", info.Name)
+			}
+			if len(info.Description) == 0 || len(info.Version) == 0 {
+				t.Fatalf("Expected non empty description and version")
+			}
+			if !reflect.DeepEqual(info.Metadata, map[string]string{"basic": "metadata"}) {
+				t.Fatalf("invalid metadata: %v", info.Metadata)
+			}
+		}
+
+		// Make sure we can request info, 1 response.
+		// This could be exported as well as main ServiceImpl.
+		subj, err := micro.ControlSubject(micro.InfoVerb, "CoolAddService", "")
 		if err != nil {
-			t.Fatalf("Expected to create Service, got %v", err)
+			t.Fatalf("Failed to building info subject %v", err)
 		}
-		defer svc.Stop()
-		svcs = append(svcs, svc)
-	}
-
-	// Now send 50 requests.
-	for i := 0; i < 50; i++ {
-		_, err := nc.Request("svc.add", []byte(`{ "x": 22, "y": 11 }`), time.Second)
+		info, err := nc.Request(subj, nil, time.Second)
 		if err != nil {
 			t.Fatalf("Expected a response, got %v", err)
 		}
-	}
-
-	for _, svc := range svcs {
-		info := svc.Info()
-		if info.Name != "CoolAddService" {
-			t.Fatalf("Expected %q, got %q", "CoolAddService", info.Name)
-		}
-		if len(info.Description) == 0 || len(info.Version) == 0 {
-			t.Fatalf("Expected non empty description and version")
-		}
-		if !reflect.DeepEqual(info.Metadata, map[string]string{"basic": "metadata"}) {
-			t.Fatalf("invalid metadata: %v", info.Metadata)
-		}
-	}
-
-	// Make sure we can request info, 1 response.
-	// This could be exported as well as main ServiceImpl.
-	subj, err := micro.ControlSubject(micro.InfoVerb, "CoolAddService", "")
-	if err != nil {
-		t.Fatalf("Failed to building info subject %v", err)
-	}
-	info, err := nc.Request(subj, nil, time.Second)
-	if err != nil {
-		t.Fatalf("Expected a response, got %v", err)
-	}
-	var inf micro.Info
-	if err := json.Unmarshal(info.Data, &inf); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Ping all services. Multiple responses.
-	inbox := nats.NewInbox()
-	sub, err := nc.SubscribeSync(inbox)
-	if err != nil {
-		t.Fatalf("subscribe failed: %s", err)
-	}
-	pingSubject, err := micro.ControlSubject(micro.PingVerb, "CoolAddService", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if err := nc.PublishRequest(pingSubject, inbox, nil); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	var pingCount int
-	for {
-		_, err := sub.NextMsg(250 * time.Millisecond)
-		if err != nil {
-			break
-		}
-		pingCount++
-	}
-	if pingCount != 5 {
-		t.Fatalf("Expected 5 ping responses, got: %d", pingCount)
-	}
-
-	// Get stats from all services
-	statsInbox := nats.NewInbox()
-	sub, err = nc.SubscribeSync(statsInbox)
-	if err != nil {
-		t.Fatalf("subscribe failed: %s", err)
-	}
-	statsSubject, err := micro.ControlSubject(micro.StatsVerb, "CoolAddService", "")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if err := nc.PublishRequest(statsSubject, statsInbox, nil); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	stats := make([]micro.Stats, 0)
-	var requestsNum int
-	for {
-		resp, err := sub.NextMsg(250 * time.Millisecond)
-		if err != nil {
-			break
-		}
-		var srvStats micro.Stats
-		if err := json.Unmarshal(resp.Data, &srvStats); err != nil {
+		var inf micro.Info
+		if err := json.Unmarshal(info.Data, &inf); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		requestsNum += srvStats.Endpoints[0].NumRequests
-		stats = append(stats, srvStats)
-	}
-	if len(stats) != 5 {
-		t.Fatalf("Expected stats for 5 services, got: %d", len(stats))
-	}
 
-	// Services should process 50 requests total
-	if requestsNum != 50 {
-		t.Fatalf("Expected a total of 50 requests processed, got: %d", requestsNum)
-	}
-	// Reset stats for a service
-	svcs[0].Reset()
+		// Ping all services. Multiple responses.
+		inbox := nats.NewInbox()
+		sub, err := nc.SubscribeSync(inbox)
+		if err != nil {
+			t.Fatalf("subscribe failed: %s", err)
+		}
+		pingSubject, err := micro.ControlSubject(micro.PingVerb, "CoolAddService", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if err := nc.PublishRequest(pingSubject, inbox, nil); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	if svcs[0].Stats().Endpoints[0].NumRequests != 0 {
-		t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
-	}
+		var pingCount int
+		for {
+			_, err := sub.NextMsg(250 * time.Millisecond)
+			if err != nil {
+				break
+			}
+			pingCount++
+		}
+		if pingCount != 5 {
+			t.Fatalf("Expected 5 ping responses, got: %d", pingCount)
+		}
+
+		// Get stats from all services
+		statsInbox := nats.NewInbox()
+		sub, err = nc.SubscribeSync(statsInbox)
+		if err != nil {
+			t.Fatalf("subscribe failed: %s", err)
+		}
+		statsSubject, err := micro.ControlSubject(micro.StatsVerb, "CoolAddService", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if err := nc.PublishRequest(statsSubject, statsInbox, nil); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		stats := make([]micro.Stats, 0)
+		var requestsNum int
+		for {
+			resp, err := sub.NextMsg(250 * time.Millisecond)
+			if err != nil {
+				break
+			}
+			var srvStats micro.Stats
+			if err := json.Unmarshal(resp.Data, &srvStats); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			requestsNum += srvStats.Endpoints[0].NumRequests
+			stats = append(stats, srvStats)
+		}
+		if len(stats) != 5 {
+			t.Fatalf("Expected stats for 5 services, got: %d", len(stats))
+		}
+
+		// Services should process 50 requests total
+		if requestsNum != 50 {
+			t.Fatalf("Expected a total of 50 requests processed, got: %d", requestsNum)
+		}
+		// Reset stats for a service
+		svcs[0].Reset()
+
+		if svcs[0].Stats().Endpoints[0].NumRequests != 0 {
+			t.Fatalf("Expected empty stats after reset; got: %+v", svcs[0].Stats())
+		}
+	})
 }
 
 func TestAddService(t *testing.T) {
@@ -433,124 +422,117 @@ func TestAddService(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunServerOnPort(-1)
-			defer s.Shutdown()
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				nc.SetErrorHandler(test.natsErrorHandler)
+				nc.SetClosedHandler(test.natsClosedHandler)
+				// cleanup handlers since we invoke them manually
+				defer nc.SetClosedHandler(nil)
+				defer nc.SetErrorHandler(nil)
 
-			nc, err := nats.Connect(s.ClientURL(),
-				nats.ErrorHandler(test.natsErrorHandler),
-				nats.ClosedHandler(test.natsClosedHandler),
-			)
-			if err != nil {
-				t.Fatalf("Expected to connect to server, got %v", err)
-			}
-			defer nc.Close()
-			// cleanup handlers since we invoke them manually
-			defer nc.SetClosedHandler(nil)
-			defer nc.SetErrorHandler(nil)
-
-			srv, err := micro.AddService(nc, test.givenConfig)
-			if test.withError != nil {
-				if !errors.Is(err, test.withError) {
-					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+				srv, err := micro.AddService(nc, test.givenConfig)
+				if test.withError != nil {
+					if !errors.Is(err, test.withError) {
+						t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+					}
+					return
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			for _, endpoint := range test.endpoints {
-				if err := srv.AddEndpoint(endpoint, micro.HandlerFunc(testHandler)); err != nil {
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-			}
+				for _, endpoint := range test.endpoints {
+					if err := srv.AddEndpoint(endpoint, micro.HandlerFunc(testHandler)); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
 
-			info := srv.Info()
-			subjectsNum := len(test.endpoints)
-			if test.givenConfig.Endpoint != nil {
-				subjectsNum += 1
-			}
-			if subjectsNum != len(info.Endpoints) {
-				t.Fatalf("Invalid number of registered endpoints; want: %d; got: %d", subjectsNum, len(info.Endpoints))
-			}
-			pingSubject, err := micro.ControlSubject(micro.PingVerb, info.Name, info.ID)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			pingResp, err := nc.Request(pingSubject, nil, 1*time.Second)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			var ping micro.Ping
-			if err := json.Unmarshal(pingResp.Data, &ping); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+				info := srv.Info()
+				subjectsNum := len(test.endpoints)
+				if test.givenConfig.Endpoint != nil {
+					subjectsNum += 1
+				}
+				if subjectsNum != len(info.Endpoints) {
+					t.Fatalf("Invalid number of registered endpoints; want: %d; got: %d", subjectsNum, len(info.Endpoints))
+				}
+				pingSubject, err := micro.ControlSubject(micro.PingVerb, info.Name, info.ID)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				pingResp, err := nc.Request(pingSubject, nil, 1*time.Second)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				var ping micro.Ping
+				if err := json.Unmarshal(pingResp.Data, &ping); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 
-			test.expectedPing.ID = info.ID
-			if !reflect.DeepEqual(test.expectedPing, ping) {
-				t.Fatalf("Invalid ping response; want: %+v; got: %+v", test.expectedPing, ping)
-			}
+				test.expectedPing.ID = info.ID
+				if !reflect.DeepEqual(test.expectedPing, ping) {
+					t.Fatalf("Invalid ping response; want: %+v; got: %+v", test.expectedPing, ping)
+				}
 
-			if test.givenConfig.DoneHandler != nil {
-				go nc.Opts.ClosedCB(nc)
-				select {
-				case <-doneService:
-				case <-time.After(1 * time.Second):
-					t.Fatalf("Timeout on DoneHandler")
+				if test.givenConfig.DoneHandler != nil {
+					go nc.Opts.ClosedCB(nc)
+					select {
+					case <-doneService:
+					case <-time.After(1 * time.Second):
+						t.Fatalf("Timeout on DoneHandler")
+					}
+					if test.natsClosedHandler != nil {
+						select {
+						case <-closedNats:
+						case <-time.After(1 * time.Second):
+							t.Fatalf("Timeout on ClosedHandler")
+						}
+					}
+				}
+
+				if test.givenConfig.ErrorHandler != nil {
+					go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
+					select {
+					case <-errService:
+					case <-time.After(1 * time.Second):
+						t.Fatalf("Timeout on ErrorHandler")
+					}
+					if test.natsErrorHandler != nil {
+						select {
+						case <-errNats:
+						case <-time.After(1 * time.Second):
+							t.Fatalf("Timeout on AsyncErrHandler")
+						}
+					}
+				}
+
+				if err := srv.Stop(); err != nil {
+					t.Fatalf("Unexpected error when stopping the service: %v", err)
 				}
 				if test.natsClosedHandler != nil {
+					go nc.Opts.ClosedCB(nc)
+					select {
+					case <-doneService:
+						t.Fatalf("Expected to restore nats closed handler")
+					case <-time.After(50 * time.Millisecond):
+					}
 					select {
 					case <-closedNats:
 					case <-time.After(1 * time.Second):
 						t.Fatalf("Timeout on ClosedHandler")
 					}
 				}
-			}
-
-			if test.givenConfig.ErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
-				select {
-				case <-errService:
-				case <-time.After(1 * time.Second):
-					t.Fatalf("Timeout on ErrorHandler")
-				}
 				if test.natsErrorHandler != nil {
+					go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
+					select {
+					case <-errService:
+						t.Fatalf("Expected to restore nats error handler")
+					case <-time.After(50 * time.Millisecond):
+					}
 					select {
 					case <-errNats:
 					case <-time.After(1 * time.Second):
 						t.Fatalf("Timeout on AsyncErrHandler")
 					}
 				}
-			}
-
-			if err := srv.Stop(); err != nil {
-				t.Fatalf("Unexpected error when stopping the service: %v", err)
-			}
-			if test.natsClosedHandler != nil {
-				go nc.Opts.ClosedCB(nc)
-				select {
-				case <-doneService:
-					t.Fatalf("Expected to restore nats closed handler")
-				case <-time.After(50 * time.Millisecond):
-				}
-				select {
-				case <-closedNats:
-				case <-time.After(1 * time.Second):
-					t.Fatalf("Timeout on ClosedHandler")
-				}
-			}
-			if test.natsErrorHandler != nil {
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
-				select {
-				case <-errService:
-					t.Fatalf("Expected to restore nats error handler")
-				case <-time.After(50 * time.Millisecond):
-				}
-				select {
-				case <-errNats:
-				case <-time.After(1 * time.Second):
-					t.Fatalf("Timeout on AsyncErrHandler")
-				}
-			}
+			})
 		})
 	}
 }
@@ -614,43 +596,37 @@ func TestErrHandlerSubjectMatch(t *testing.T) {
 				errHandler := func(s micro.Service, err *micro.NATSError) {
 					errChan <- struct{}{}
 				}
-				s := RunServerOnPort(-1)
-				defer s.Shutdown()
+				withServer(t, func(t *testing.T, nc *nats.Conn) {
+					nc.SetErrorHandler(cb)
+					svc, err := micro.AddService(nc, micro.Config{
+						Name:         "test_service",
+						Version:      "0.0.1",
+						ErrorHandler: micro.ErrHandler(errHandler),
+						Endpoint: &micro.EndpointConfig{
+							Subject: test.endpointSubject,
+							Handler: micro.HandlerFunc(func(r micro.Request) {}),
+						},
+					})
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					defer svc.Stop()
 
-				nc, err := nats.Connect(s.ClientURL())
-				if err != nil {
-					t.Fatalf("Expected to connect to server, got %v", err)
-				}
-				defer nc.Close()
-				nc.SetErrorHandler(cb)
-				svc, err := micro.AddService(nc, micro.Config{
-					Name:         "test_service",
-					Version:      "0.0.1",
-					ErrorHandler: micro.ErrHandler(errHandler),
-					Endpoint: &micro.EndpointConfig{
-						Subject: test.endpointSubject,
-						Handler: micro.HandlerFunc(func(r micro.Request) {}),
-					},
+					go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.errSubject}, errors.New("oops"))
+					if test.expectServiceErr {
+						select {
+						case <-errChan:
+						case <-time.After(10 * time.Millisecond):
+							t.Fatalf("Expected service error callback")
+						}
+					} else {
+						select {
+						case <-errChan:
+							t.Fatalf("Expected no service error callback")
+						case <-time.After(10 * time.Millisecond):
+						}
+					}
 				})
-				if err != nil {
-					t.Fatalf("Unexpected error: %v", err)
-				}
-				defer svc.Stop()
-
-				go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.errSubject}, errors.New("oops"))
-				if test.expectServiceErr {
-					select {
-					case <-errChan:
-					case <-time.After(10 * time.Millisecond):
-						t.Fatalf("Expected service error callback")
-					}
-				} else {
-					select {
-					case <-errChan:
-						t.Fatalf("Expected no service error callback")
-					case <-time.After(10 * time.Millisecond):
-					}
-				}
 			}
 		})
 	}
@@ -716,368 +692,339 @@ func TestGroups(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunServerOnPort(-1)
-			defer s.Shutdown()
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:    "test_service",
+					Version: "0.0.1",
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer srv.Stop()
 
-			nc, err := nats.Connect(s.ClientURL())
-			if err != nil {
-				t.Fatalf("Expected to connect to server, got %v", err)
-			}
-			defer nc.Close()
+				if len(test.groups) > 0 {
+					group := srv.AddGroup(test.groups[0])
+					for _, g := range test.groups[1:] {
+						group = group.AddGroup(g)
+					}
+					err = group.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				} else {
+					err = srv.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
 
-			srv, err := micro.AddService(nc, micro.Config{
-				Name:    "test_service",
-				Version: "0.0.1",
+				info := srv.Info()
+				if len(info.Endpoints) != 1 {
+					t.Fatalf("Expected 1 registered endpoint; got: %d", len(info.Endpoints))
+				}
+				if !reflect.DeepEqual(info.Endpoints[0], test.expectedEndpoint) {
+					t.Fatalf("Invalid endpoint; want: %s, got: %s", test.expectedEndpoint, info.Endpoints[0])
+				}
 			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer srv.Stop()
-
-			if len(test.groups) > 0 {
-				group := srv.AddGroup(test.groups[0])
-				for _, g := range test.groups[1:] {
-					group = group.AddGroup(g)
-				}
-				err = group.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
-				if err != nil {
-					t.Fatalf("Unexpected error: %v", err)
-				}
-			} else {
-				err = srv.AddEndpoint(test.endpointName, micro.HandlerFunc(func(r micro.Request) {}))
-				if err != nil {
-					t.Fatalf("Unexpected error: %v", err)
-				}
-			}
-
-			info := srv.Info()
-			if len(info.Endpoints) != 1 {
-				t.Fatalf("Expected 1 registered endpoint; got: %d", len(info.Endpoints))
-			}
-			if !reflect.DeepEqual(info.Endpoints[0], test.expectedEndpoint) {
-				t.Fatalf("Invalid endpoint; want: %s, got: %s", test.expectedEndpoint, info.Endpoints[0])
-			}
 		})
 	}
 }
 
 func TestMonitoringHandlers(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
-
-	asyncErr := make(chan struct{})
-	errHandler := func(s micro.Service, n *micro.NATSError) {
-		asyncErr <- struct{}{}
-	}
-
-	config := micro.Config{
-		Name:         "test_service",
-		Version:      "0.1.0",
-		ErrorHandler: errHandler,
-		Endpoint: &micro.EndpointConfig{
-			Subject:  "test.func",
-			Handler:  micro.HandlerFunc(func(r micro.Request) {}),
-			Metadata: map[string]string{"basic": "schema"},
-		},
-	}
-	srv, err := micro.AddService(nc, config)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer func() {
-		srv.Stop()
-		if !srv.Stopped() {
-			t.Fatalf("Expected service to be stopped")
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		asyncErr := make(chan struct{})
+		errHandler := func(s micro.Service, n *micro.NATSError) {
+			asyncErr <- struct{}{}
 		}
-	}()
 
-	info := srv.Info()
+		config := micro.Config{
+			Name:         "test_service",
+			Version:      "0.1.0",
+			ErrorHandler: errHandler,
+			Endpoint: &micro.EndpointConfig{
+				Subject:  "test.func",
+				Handler:  micro.HandlerFunc(func(r micro.Request) {}),
+				Metadata: map[string]string{"basic": "schema"},
+			},
+		}
+		srv, err := micro.AddService(nc, config)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer func() {
+			srv.Stop()
+			if !srv.Stopped() {
+				t.Fatalf("Expected service to be stopped")
+			}
+		}()
 
-	tests := []struct {
-		name             string
-		subject          string
-		withError        bool
-		expectedResponse any
-	}{
-		{
-			name:    "PING all",
-			subject: "$SRV.PING",
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-			},
-		},
-		{
-			name:    "PING name",
-			subject: "$SRV.PING.test_service",
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-			},
-		},
-		{
-			name:    "PING ID",
-			subject: fmt.Sprintf("$SRV.PING.test_service.%s", info.ID),
-			expectedResponse: micro.Ping{
-				Type: micro.PingResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-			},
-		},
-		{
-			name:    "INFO all",
-			subject: "$SRV.INFO",
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-				Endpoints: []micro.EndpointInfo{
-					{
-						Name:       "default",
-						Subject:    "test.func",
-						QueueGroup: "q",
-						Metadata:   map[string]string{"basic": "schema"},
+		info := srv.Info()
+
+		tests := []struct {
+			name             string
+			subject          string
+			withError        bool
+			expectedResponse any
+		}{
+			{
+				name:    "PING all",
+				subject: "$SRV.PING",
+				expectedResponse: micro.Ping{
+					Type: micro.PingResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
 					},
 				},
 			},
-		},
-		{
-			name:    "INFO name",
-			subject: "$SRV.INFO.test_service",
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-				Endpoints: []micro.EndpointInfo{
-					{
-						Name:       "default",
-						Subject:    "test.func",
-						QueueGroup: "q",
-						Metadata:   map[string]string{"basic": "schema"},
+			{
+				name:    "PING name",
+				subject: "$SRV.PING.test_service",
+				expectedResponse: micro.Ping{
+					Type: micro.PingResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
 					},
 				},
 			},
-		},
-		{
-			name:    "INFO ID",
-			subject: fmt.Sprintf("$SRV.INFO.test_service.%s", info.ID),
-			expectedResponse: micro.Info{
-				Type: micro.InfoResponseType,
-				ServiceIdentity: micro.ServiceIdentity{
-					Name:     "test_service",
-					Version:  "0.1.0",
-					ID:       info.ID,
-					Metadata: map[string]string{},
-				},
-				Endpoints: []micro.EndpointInfo{
-					{
-						Name:       "default",
-						Subject:    "test.func",
-						QueueGroup: "q",
-						Metadata:   map[string]string{"basic": "schema"},
+			{
+				name:    "PING ID",
+				subject: fmt.Sprintf("$SRV.PING.test_service.%s", info.ID),
+				expectedResponse: micro.Ping{
+					Type: micro.PingResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
 					},
 				},
 			},
-		},
-		{
-			name:      "PING error",
-			subject:   "$SRV.PING",
-			withError: true,
-		},
-		{
-			name:      "INFO error",
-			subject:   "$SRV.INFO",
-			withError: true,
-		},
-		{
-			name:      "STATS error",
-			subject:   "$SRV.STATS",
-			withError: true,
-		},
-	}
+			{
+				name:    "INFO all",
+				subject: "$SRV.INFO",
+				expectedResponse: micro.Info{
+					Type: micro.InfoResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
+					},
+					Endpoints: []micro.EndpointInfo{
+						{
+							Name:       "default",
+							Subject:    "test.func",
+							QueueGroup: "q",
+							Metadata:   map[string]string{"basic": "schema"},
+						},
+					},
+				},
+			},
+			{
+				name:    "INFO name",
+				subject: "$SRV.INFO.test_service",
+				expectedResponse: micro.Info{
+					Type: micro.InfoResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
+					},
+					Endpoints: []micro.EndpointInfo{
+						{
+							Name:       "default",
+							Subject:    "test.func",
+							QueueGroup: "q",
+							Metadata:   map[string]string{"basic": "schema"},
+						},
+					},
+				},
+			},
+			{
+				name:    "INFO ID",
+				subject: fmt.Sprintf("$SRV.INFO.test_service.%s", info.ID),
+				expectedResponse: micro.Info{
+					Type: micro.InfoResponseType,
+					ServiceIdentity: micro.ServiceIdentity{
+						Name:     "test_service",
+						Version:  "0.1.0",
+						ID:       info.ID,
+						Metadata: map[string]string{},
+					},
+					Endpoints: []micro.EndpointInfo{
+						{
+							Name:       "default",
+							Subject:    "test.func",
+							QueueGroup: "q",
+							Metadata:   map[string]string{"basic": "schema"},
+						},
+					},
+				},
+			},
+			{
+				name:      "PING error",
+				subject:   "$SRV.PING",
+				withError: true,
+			},
+			{
+				name:      "INFO error",
+				subject:   "$SRV.INFO",
+				withError: true,
+			},
+			{
+				name:      "STATS error",
+				subject:   "$SRV.STATS",
+				withError: true,
+			},
+		}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if test.withError {
-				// use publish instead of request, so Respond will fail inside the handler
-				if err := nc.Publish(test.subject, nil); err != nil {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				if test.withError {
+					// use publish instead of request, so Respond will fail inside the handler
+					if err := nc.Publish(test.subject, nil); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					select {
+					case <-asyncErr:
+						return
+					case <-time.After(1 * time.Second):
+						t.Fatalf("Timeout waiting for async error")
+					}
+					return
+				}
+
+				resp, err := nc.Request(test.subject, nil, 1*time.Second)
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				select {
-				case <-asyncErr:
-					return
-				case <-time.After(1 * time.Second):
-					t.Fatalf("Timeout waiting for async error")
+
+				respMap := make(map[string]any)
+				if err := json.Unmarshal(resp.Data, &respMap); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
 				}
-				return
-			}
-
-			resp, err := nc.Request(test.subject, nil, 1*time.Second)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			respMap := make(map[string]any)
-			if err := json.Unmarshal(resp.Data, &respMap); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			expectedResponseJSON, err := json.Marshal(test.expectedResponse)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			expectedRespMap := make(map[string]any)
-			if err := json.Unmarshal(expectedResponseJSON, &expectedRespMap); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(respMap, expectedRespMap) {
-				t.Fatalf("Invalid response; want: %+v; got: %+v", expectedRespMap, respMap)
-			}
-		})
-	}
+				expectedResponseJSON, err := json.Marshal(test.expectedResponse)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				expectedRespMap := make(map[string]any)
+				if err := json.Unmarshal(expectedResponseJSON, &expectedRespMap); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if !reflect.DeepEqual(respMap, expectedRespMap) {
+					t.Fatalf("Invalid response; want: %+v; got: %+v", expectedRespMap, respMap)
+				}
+			})
+		}
+	})
 }
 
 func TestContextHandler(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
+		type key string
+		ctx = context.WithValue(ctx, key("key"), []byte("val"))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	type key string
-	ctx = context.WithValue(ctx, key("key"), []byte("val"))
-
-	handler := func(ctx context.Context, req micro.Request) {
-		select {
-		case <-ctx.Done():
-			req.Error("400", "context canceled", nil)
-		default:
-			v := ctx.Value(key("key"))
-			req.Respond(v.([]byte))
+		handler := func(ctx context.Context, req micro.Request) {
+			select {
+			case <-ctx.Done():
+				req.Error("400", "context canceled", nil)
+			default:
+				v := ctx.Value(key("key"))
+				req.Respond(v.([]byte))
+			}
 		}
-	}
-	config := micro.Config{
-		Name:    "test_service",
-		Version: "0.1.0",
-		Endpoint: &micro.EndpointConfig{
-			Subject: "test.func",
-			Handler: micro.ContextHandler(ctx, handler),
-		},
-	}
+		config := micro.Config{
+			Name:    "test_service",
+			Version: "0.1.0",
+			Endpoint: &micro.EndpointConfig{
+				Subject: "test.func",
+				Handler: micro.ContextHandler(ctx, handler),
+			},
+		}
 
-	srv, err := micro.AddService(nc, config)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer srv.Stop()
+		srv, err := micro.AddService(nc, config)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
 
-	resp, err := nc.Request("test.func", nil, 1*time.Second)
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	if string(resp.Data) != "val" {
-		t.Fatalf("Invalid response; want: %q; got: %q", "val", string(resp.Data))
-	}
-	cancel()
-	resp, err = nc.Request("test.func", nil, 1*time.Second)
-	if err != nil {
-		t.Fatalf("Unexpected error: %s", err)
-	}
-	if resp.Header.Get(micro.ErrorCodeHeader) != "400" {
-		t.Fatalf("Expected error response after canceling context; got: %q", string(resp.Data))
-	}
+		resp, err := nc.Request("test.func", nil, 1*time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if string(resp.Data) != "val" {
+			t.Fatalf("Invalid response; want: %q; got: %q", "val", string(resp.Data))
+		}
+		cancel()
+		resp, err = nc.Request("test.func", nil, 1*time.Second)
+		if err != nil {
+			t.Fatalf("Unexpected error: %s", err)
+		}
+		if resp.Header.Get(micro.ErrorCodeHeader) != "400" {
+			t.Fatalf("Expected error response after canceling context; got: %q", string(resp.Data))
+		}
+	})
 }
 
 func TestAddEndpoint_Concurrency(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx := context.Background()
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
-
-	ctx := context.Background()
-
-	handler := func(ctx context.Context, req micro.Request) {
-		req.RespondJSON(map[string]any{"hello": "world"})
-	}
-	config := micro.Config{
-		Name:    "test_service",
-		Version: "0.1.0",
-	}
-
-	srv, err := micro.AddService(nc, config)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer srv.Stop()
-
-	res := make(chan error, 10)
-	wg := sync.WaitGroup{}
-	wg.Add(10)
-
-	// now add a few endpoints concurrently
-	// and make sure they are added successfully
-	// and there is no race
-	for i := 0; i < 10; i++ {
-		go func(i int) {
-			wg.Wait()
-			res <- srv.AddEndpoint(fmt.Sprintf("test%d", i), micro.ContextHandler(ctx, handler))
-		}(i)
-		// after all goroutines are started, release the lock
-	}
-	wg.Add(-10)
-
-	for i := 0; i < 10; i++ {
-		select {
-		case err := <-res:
-			if err != nil {
-				t.Fatalf("Unexpected error: %s", err)
-			}
-		case <-time.After(1 * time.Second):
-			t.Fatalf("Timeout waiting for endpoint to be added")
+		handler := func(ctx context.Context, req micro.Request) {
+			req.RespondJSON(map[string]any{"hello": "world"})
 		}
-	}
+		config := micro.Config{
+			Name:    "test_service",
+			Version: "0.1.0",
+		}
 
-	if len(srv.Info().Endpoints) != 10 {
-		t.Fatalf("Expected 11 endpoints, got: %d", len(srv.Info().Endpoints))
-	}
+		srv, err := micro.AddService(nc, config)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
 
+		res := make(chan error, 10)
+		wg := sync.WaitGroup{}
+		wg.Add(10)
+
+		// now add a few endpoints concurrently
+		// and make sure they are added successfully
+		// and there is no race
+		for i := 0; i < 10; i++ {
+			go func(i int) {
+				wg.Wait()
+				res <- srv.AddEndpoint(fmt.Sprintf("test%d", i), micro.ContextHandler(ctx, handler))
+			}(i)
+			// after all goroutines are started, release the lock
+		}
+		wg.Add(-10)
+
+		for i := 0; i < 10; i++ {
+			select {
+			case err := <-res:
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+			case <-time.After(1 * time.Second):
+				t.Fatalf("Timeout waiting for endpoint to be added")
+			}
+		}
+
+		if len(srv.Info().Endpoints) != 10 {
+			t.Fatalf("Expected 11 endpoints, got: %d", len(srv.Info().Endpoints))
+		}
+	})
 }
 
 func TestServiceStats(t *testing.T) {
@@ -1127,96 +1074,89 @@ func TestServiceStats(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunServerOnPort(-1)
-			defer s.Shutdown()
-
-			nc, err := nats.Connect(s.ClientURL())
-			if err != nil {
-				t.Fatalf("Expected to connect to server, got %v", err)
-			}
-			defer nc.Close()
-
-			srv, err := micro.AddService(nc, test.config)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if test.config.Endpoint == nil {
-				opts := []micro.EndpointOpt{micro.WithEndpointSubject("test.func")}
-				if err := srv.AddEndpoint("func", micro.HandlerFunc(handler), opts...); err != nil {
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				srv, err := micro.AddService(nc, test.config)
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-			}
-			defer srv.Stop()
-			for i := 0; i < 10; i++ {
-				if _, err := nc.Request("test.func", []byte("msg"), time.Second); err != nil {
+				if test.config.Endpoint == nil {
+					opts := []micro.EndpointOpt{micro.WithEndpointSubject("test.func")}
+					if err := srv.AddEndpoint("func", micro.HandlerFunc(handler), opts...); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+				defer srv.Stop()
+				for i := 0; i < 10; i++ {
+					if _, err := nc.Request("test.func", []byte("msg"), time.Second); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+
+				// Malformed request, missing reply subjtct
+				// This should be reflected in errors
+				if err := nc.Publish("test.func", []byte("err")); err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-			}
+				time.Sleep(10 * time.Millisecond)
 
-			// Malformed request, missing reply subjtct
-			// This should be reflected in errors
-			if err := nc.Publish("test.func", []byte("err")); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			time.Sleep(10 * time.Millisecond)
-
-			info := srv.Info()
-			resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			var stats micro.Stats
-			if err := json.Unmarshal(resp.Data, &stats); err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			if len(stats.Endpoints) != 1 {
-				t.Fatalf("Unexpected number of endpoints: want: %d; got: %d", 1, len(stats.Endpoints))
-			}
-			if stats.Name != info.Name {
-				t.Errorf("Unexpected service name; want: %s; got: %s", info.Name, stats.Name)
-			}
-			if stats.ID != info.ID {
-				t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
-			}
-			if test.config.Endpoint == nil && stats.Endpoints[0].Name != "func" {
-				t.Errorf("Invalid endpoint name; want: %s; got: %s", "func", stats.Endpoints[0].Name)
-			}
-			if test.config.Endpoint != nil && stats.Endpoints[0].Name != "default" {
-				t.Errorf("Invalid endpoint name; want: %s; got: %s", "default", stats.Endpoints[0].Name)
-			}
-			if stats.Endpoints[0].Subject != "test.func" {
-				t.Errorf("Invalid endpoint subject; want: %s; got: %s", "test.func", stats.Endpoints[0].Subject)
-			}
-			if stats.Endpoints[0].NumRequests != 11 {
-				t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.Endpoints[0].NumRequests)
-			}
-			if stats.Endpoints[0].NumErrors != 1 {
-				t.Errorf("Unexpected num_errors; want: 1; got: %d", stats.Endpoints[0].NumErrors)
-			}
-			if stats.Endpoints[0].AverageProcessingTime == 0 {
-				t.Errorf("Expected non-empty AverageProcessingTime")
-			}
-			if stats.Endpoints[0].ProcessingTime == 0 {
-				t.Errorf("Expected non-empty ProcessingTime")
-			}
-			if stats.Started.IsZero() {
-				t.Errorf("Expected non-empty start time")
-			}
-			if stats.Type != micro.StatsResponseType {
-				t.Errorf("Invalid response type; want: %s; got: %s", micro.StatsResponseType, stats.Type)
-			}
-
-			if test.expectedStats != nil {
-				var data map[string]any
-				if err := json.Unmarshal(stats.Endpoints[0].Data, &data); err != nil {
+				info := srv.Info()
+				resp, err := nc.Request(fmt.Sprintf("$SRV.STATS.test_service.%s", info.ID), nil, 1*time.Second)
+				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				if !reflect.DeepEqual(data, test.expectedStats) {
-					t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, data)
+
+				var stats micro.Stats
+				if err := json.Unmarshal(resp.Data, &stats); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
 				}
-			}
+
+				if len(stats.Endpoints) != 1 {
+					t.Fatalf("Unexpected number of endpoints: want: %d; got: %d", 1, len(stats.Endpoints))
+				}
+				if stats.Name != info.Name {
+					t.Errorf("Unexpected service name; want: %s; got: %s", info.Name, stats.Name)
+				}
+				if stats.ID != info.ID {
+					t.Errorf("Unexpected service name; want: %s; got: %s", info.ID, stats.ID)
+				}
+				if test.config.Endpoint == nil && stats.Endpoints[0].Name != "func" {
+					t.Errorf("Invalid endpoint name; want: %s; got: %s", "func", stats.Endpoints[0].Name)
+				}
+				if test.config.Endpoint != nil && stats.Endpoints[0].Name != "default" {
+					t.Errorf("Invalid endpoint name; want: %s; got: %s", "default", stats.Endpoints[0].Name)
+				}
+				if stats.Endpoints[0].Subject != "test.func" {
+					t.Errorf("Invalid endpoint subject; want: %s; got: %s", "test.func", stats.Endpoints[0].Subject)
+				}
+				if stats.Endpoints[0].NumRequests != 11 {
+					t.Errorf("Unexpected num_requests; want: 11; got: %d", stats.Endpoints[0].NumRequests)
+				}
+				if stats.Endpoints[0].NumErrors != 1 {
+					t.Errorf("Unexpected num_errors; want: 1; got: %d", stats.Endpoints[0].NumErrors)
+				}
+				if stats.Endpoints[0].AverageProcessingTime == 0 {
+					t.Errorf("Expected non-empty AverageProcessingTime")
+				}
+				if stats.Endpoints[0].ProcessingTime == 0 {
+					t.Errorf("Expected non-empty ProcessingTime")
+				}
+				if stats.Started.IsZero() {
+					t.Errorf("Expected non-empty start time")
+				}
+				if stats.Type != micro.StatsResponseType {
+					t.Errorf("Invalid response type; want: %s; got: %s", micro.StatsResponseType, stats.Type)
+				}
+
+				if test.expectedStats != nil {
+					var data map[string]any
+					if err := json.Unmarshal(stats.Endpoints[0].Data, &data); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					if !reflect.DeepEqual(data, test.expectedStats) {
+						t.Fatalf("Invalid data from stats handler; want: %v; got: %v", test.expectedStats, data)
+					}
+				}
+			})
 		})
 	}
 }
@@ -1303,145 +1243,128 @@ func TestRequestRespond(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunServerOnPort(-1)
-			defer s.Shutdown()
-
-			nc, err := nats.Connect(s.ClientURL())
-			if err != nil {
-				t.Fatalf("Expected to connect to server, got %v", err)
-			}
-			defer nc.Close()
-
-			respData := test.respondData
-			respError := test.withRespondError
-			errCode := test.errCode
-			errDesc := test.errDescription
-			errData := test.errData
-			handler := func(req micro.Request) {
-				if errors.Is(test.withRespondError, micro.ErrRespond) {
-					nc.Close()
-					return
-				}
-				if val := req.Headers().Get("key"); val != "value" {
-					t.Fatalf("Expected headers in the request")
-				}
-				if !bytes.Equal(req.Data(), []byte("req")) {
-					t.Fatalf("Invalid request data; want: %q; got: %q", "req", req.Data())
-				}
-				if errCode == "" && errDesc == "" {
-					if resp, ok := respData.([]byte); ok {
-						err := req.Respond(resp, micro.WithHeaders(test.respondHeaders))
-						if respError != nil {
-							if !errors.Is(err, respError) {
-								t.Fatalf("Expected error: %v; got: %v", respError, err)
-							}
-							return
-						}
-						if err != nil {
-							t.Fatalf("Unexpected error when sending response: %v", err)
-						}
-					} else {
-						err := req.RespondJSON(respData, micro.WithHeaders(test.respondHeaders))
-						if respError != nil {
-							if !errors.Is(err, respError) {
-								t.Fatalf("Expected error: %v; got: %v", respError, err)
-							}
-							return
-						}
-						if err != nil {
-							t.Fatalf("Unexpected error when sending response: %v", err)
-						}
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				respData := test.respondData
+				respError := test.withRespondError
+				errCode := test.errCode
+				errDesc := test.errDescription
+				errData := test.errData
+				handler := func(req micro.Request) {
+					if errors.Is(test.withRespondError, micro.ErrRespond) {
+						nc.Close()
+						return
 					}
-					return
+					if val := req.Headers().Get("key"); val != "value" {
+						t.Fatalf("Expected headers in the request")
+					}
+					if !bytes.Equal(req.Data(), []byte("req")) {
+						t.Fatalf("Invalid request data; want: %q; got: %q", "req", req.Data())
+					}
+					if errCode == "" && errDesc == "" {
+						if resp, ok := respData.([]byte); ok {
+							err := req.Respond(resp, micro.WithHeaders(test.respondHeaders))
+							if respError != nil {
+								if !errors.Is(err, respError) {
+									t.Fatalf("Expected error: %v; got: %v", respError, err)
+								}
+								return
+							}
+							if err != nil {
+								t.Fatalf("Unexpected error when sending response: %v", err)
+							}
+						} else {
+							err := req.RespondJSON(respData, micro.WithHeaders(test.respondHeaders))
+							if respError != nil {
+								if !errors.Is(err, respError) {
+									t.Fatalf("Expected error: %v; got: %v", respError, err)
+								}
+								return
+							}
+							if err != nil {
+								t.Fatalf("Unexpected error when sending response: %v", err)
+							}
+						}
+						return
+					}
+
+					err := req.Error(errCode, errDesc, errData, micro.WithHeaders(test.respondHeaders))
+					if respError != nil {
+						if !errors.Is(err, respError) {
+							t.Fatalf("Expected error: %v; got: %v", respError, err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("Unexpected error when sending response: %v", err)
+					}
 				}
 
-				err := req.Error(errCode, errDesc, errData, micro.WithHeaders(test.respondHeaders))
-				if respError != nil {
-					if !errors.Is(err, respError) {
-						t.Fatalf("Expected error: %v; got: %v", respError, err)
+				svc, err := micro.AddService(nc, micro.Config{
+					Name:        "CoolService",
+					Version:     "0.1.0",
+					Description: "test service",
+					Endpoint: &micro.EndpointConfig{
+						Subject: "test.func",
+						Handler: micro.HandlerFunc(handler),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer svc.Stop()
+
+				nfo := svc.Info()
+				if nfo.Metadata == nil {
+					t.Fatalf("Produced nil metadata")
+				}
+
+				resp, err := nc.RequestMsg(&nats.Msg{
+					Subject: "test.func",
+					Data:    []byte("req"),
+					Header:  nats.Header{"key": []string{"value"}},
+				}, 50*time.Millisecond)
+				if test.withRespondError != nil {
+					if err == nil {
+						t.Fatalf("Expected error when receiving response")
 					}
 					return
 				}
 				if err != nil {
-					t.Fatalf("Unexpected error when sending response: %v", err)
+					t.Fatalf("request error: %v", err)
 				}
-			}
 
-			svc, err := micro.AddService(nc, micro.Config{
-				Name:        "CoolService",
-				Version:     "0.1.0",
-				Description: "test service",
-				Endpoint: &micro.EndpointConfig{
-					Subject: "test.func",
-					Handler: micro.HandlerFunc(handler),
-				},
-			})
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			defer svc.Stop()
+				if test.errCode != "" {
+					description := resp.Header.Get("Nats-Service-Error")
+					if description != test.expectedMessage {
+						t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
+					}
+					expectedHeaders := micro.Headers{
+						"Nats-Service-Error-Code": []string{resp.Header.Get("Nats-Service-Error-Code")},
+						"Nats-Service-Error":      []string{resp.Header.Get("Nats-Service-Error")},
+					}
+					for k, v := range test.respondHeaders {
+						expectedHeaders[k] = v
+					}
+					if !reflect.DeepEqual(expectedHeaders, micro.Headers(resp.Header)) {
+						t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
+					}
+					return
+				}
 
-			nfo := svc.Info()
-			if nfo.Metadata == nil {
-				t.Fatalf("Produced nil metadata")
-			}
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 
-			resp, err := nc.RequestMsg(&nats.Msg{
-				Subject: "test.func",
-				Data:    []byte("req"),
-				Header:  nats.Header{"key": []string{"value"}},
-			}, 50*time.Millisecond)
-			if test.withRespondError != nil {
-				if err == nil {
-					t.Fatalf("Expected error when receiving response")
+				if !bytes.Equal(bytes.TrimSpace(resp.Data), bytes.TrimSpace(test.expectedResponse)) {
+					t.Fatalf("Invalid response; want: %s; got: %s", string(test.expectedResponse), string(resp.Data))
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("request error: %v", err)
-			}
 
-			if test.errCode != "" {
-				description := resp.Header.Get("Nats-Service-Error")
-				if description != test.expectedMessage {
-					t.Fatalf("Invalid response message; want: %q; got: %q", test.expectedMessage, description)
-				}
-				expectedHeaders := micro.Headers{
-					"Nats-Service-Error-Code": []string{resp.Header.Get("Nats-Service-Error-Code")},
-					"Nats-Service-Error":      []string{resp.Header.Get("Nats-Service-Error")},
-				}
-				for k, v := range test.respondHeaders {
-					expectedHeaders[k] = v
-				}
-				if !reflect.DeepEqual(expectedHeaders, micro.Headers(resp.Header)) {
+				if !reflect.DeepEqual(test.respondHeaders, micro.Headers(resp.Header)) {
 					t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
 				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			if !bytes.Equal(bytes.TrimSpace(resp.Data), bytes.TrimSpace(test.expectedResponse)) {
-				t.Fatalf("Invalid response; want: %s; got: %s", string(test.expectedResponse), string(resp.Data))
-			}
-
-			if !reflect.DeepEqual(test.respondHeaders, micro.Headers(resp.Header)) {
-				t.Fatalf("Invalid response headers; want: %v; got: %v", test.respondHeaders, resp.Header)
-			}
+			})
 		})
 	}
-}
-
-func RunServerOnPort(port int) *server.Server {
-	opts := natsserver.DefaultTestOptions
-	opts.Port = port
-	return RunServerWithOptions(&opts)
-}
-
-func RunServerWithOptions(opts *server.Options) *server.Server {
-	return natsserver.RunServer(opts)
 }
 
 func TestControlSubject(t *testing.T) {
@@ -1757,336 +1680,309 @@ func TestCustomQueueGroup(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := RunServerOnPort(-1)
-			defer s.Shutdown()
-
-			nc, err := nats.Connect(s.ClientURL())
-			if err != nil {
-				t.Fatalf("Expected to connect to server, got %v", err)
-			}
-			defer nc.Close()
-			srv := test.endpointInit(t, nc)
-			if srv == nil {
-				return
-			}
-			defer srv.Stop()
-			info := srv.Info()
-			endpoints := make(map[string]micro.EndpointInfo)
-			for _, e := range info.Endpoints {
-				endpoints[e.Name] = e
-			}
-			if len(endpoints) != len(test.expectedQueueGroups) {
-				t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpoints))
-			}
-			for name, expectedGroup := range test.expectedQueueGroups {
-				if endpoints[name].QueueGroup != expectedGroup {
-					t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpoints[name].QueueGroup)
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				srv := test.endpointInit(t, nc)
+				if srv == nil {
+					return
 				}
-			}
-
-			stats := srv.Stats()
-			// make sure the same queue groups are on stats
-			endpointStats := make(map[string]*micro.EndpointStats)
-
-			for _, e := range stats.Endpoints {
-				endpointStats[e.Name] = e
-			}
-			if len(endpointStats) != len(test.expectedQueueGroups) {
-				t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpointStats))
-			}
-			for name, expectedGroup := range test.expectedQueueGroups {
-				if endpointStats[name].QueueGroup != expectedGroup {
-					t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpointStats[name].QueueGroup)
+				defer srv.Stop()
+				info := srv.Info()
+				endpoints := make(map[string]micro.EndpointInfo)
+				for _, e := range info.Endpoints {
+					endpoints[e.Name] = e
 				}
-			}
+				if len(endpoints) != len(test.expectedQueueGroups) {
+					t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpoints))
+				}
+				for name, expectedGroup := range test.expectedQueueGroups {
+					if endpoints[name].QueueGroup != expectedGroup {
+						t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpoints[name].QueueGroup)
+					}
+				}
+
+				stats := srv.Stats()
+				// make sure the same queue groups are on stats
+				endpointStats := make(map[string]*micro.EndpointStats)
+
+				for _, e := range stats.Endpoints {
+					endpointStats[e.Name] = e
+				}
+				if len(endpointStats) != len(test.expectedQueueGroups) {
+					t.Fatalf("Expected %d endpoints; got: %d", len(test.expectedQueueGroups), len(endpointStats))
+				}
+				for name, expectedGroup := range test.expectedQueueGroups {
+					if endpointStats[name].QueueGroup != expectedGroup {
+						t.Fatalf("Invalid queue group for endpoint %q; want: %q; got: %q", name, expectedGroup, endpointStats[name].QueueGroup)
+					}
+				}
+			})
 		})
 	}
 }
 
 func TestCustomQueueGroupMultipleResponses(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
-
-	for i := 0; i < 5; i++ {
-		f := func(i int) func(r micro.Request) {
-			return func(r micro.Request) {
-				time.Sleep(10 * time.Millisecond)
-				r.Respond([]byte(fmt.Sprintf("%d", i)))
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		for i := 0; i < 5; i++ {
+			f := func(i int) func(r micro.Request) {
+				return func(r micro.Request) {
+					time.Sleep(10 * time.Millisecond)
+					r.Respond([]byte(fmt.Sprintf("%d", i)))
+				}
+			}
+			service, err := micro.AddService(nc, micro.Config{
+				Name:       "test_service",
+				Version:    "0.0.1",
+				QueueGroup: fmt.Sprintf("q-%d", i),
+				Endpoint: &micro.EndpointConfig{
+					Subject: "foo",
+					Handler: micro.HandlerFunc(f(i)),
+				},
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer service.Stop()
+		}
+		err := nc.PublishRequest("foo", "rply", []byte("req"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		sub, err := nc.SubscribeSync("rply")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		expectedResponses := map[string]bool{
+			"0": false,
+			"1": false,
+			"2": false,
+			"3": false,
+			"4": false,
+		}
+		defer sub.Unsubscribe()
+		for i := 0; i < 5; i++ {
+			msg, err := sub.NextMsg(1 * time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			expectedResponses[string(msg.Data)] = true
+		}
+		msg, err := sub.NextMsg(100 * time.Millisecond)
+		if err == nil {
+			t.Fatalf("Unexpected message: %v", string(msg.Data))
+		}
+		for k, v := range expectedResponses {
+			if !v {
+				t.Fatalf("Did not receive response from service %s", k)
 			}
 		}
-		service, err := micro.AddService(nc, micro.Config{
-			Name:       "test_service",
-			Version:    "0.0.1",
-			QueueGroup: fmt.Sprintf("q-%d", i),
-			Endpoint: &micro.EndpointConfig{
-				Subject: "foo",
-				Handler: micro.HandlerFunc(f(i)),
-			},
-		})
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer service.Stop()
-	}
-	err = nc.PublishRequest("foo", "rply", []byte("req"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	sub, err := nc.SubscribeSync("rply")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	expectedResponses := map[string]bool{
-		"0": false,
-		"1": false,
-		"2": false,
-		"3": false,
-		"4": false,
-	}
-	defer sub.Unsubscribe()
-	for i := 0; i < 5; i++ {
-		msg, err := sub.NextMsg(1 * time.Second)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		expectedResponses[string(msg.Data)] = true
-	}
-	msg, err := sub.NextMsg(100 * time.Millisecond)
-	if err == nil {
-		t.Fatalf("Unexpected message: %v", string(msg.Data))
-	}
-	for k, v := range expectedResponses {
-		if !v {
-			t.Fatalf("Did not receive response from service %s", k)
-		}
-	}
+	})
 }
 
 func TestDisableQueueGroup(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		wg := sync.WaitGroup{}
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Expected to connect to server, got %v", err)
-	}
-	defer nc.Close()
-	wg := sync.WaitGroup{}
+		// Create 5 service responders.
+		config := micro.Config{
+			Name:        "CoolAddService",
+			Version:     "0.1.0",
+			Description: "Add things together",
+			Metadata:    map[string]string{"basic": "metadata"},
+			Endpoint: &micro.EndpointConfig{
+				Subject: "svc.add",
+				Handler: micro.HandlerFunc(func(r micro.Request) {
+					r.Respond(nil)
+					wg.Done()
+				}),
+			},
+			QueueGroupDisabled: true,
+		}
 
-	// Create 5 service responders.
-	config := micro.Config{
-		Name:        "CoolAddService",
-		Version:     "0.1.0",
-		Description: "Add things together",
-		Metadata:    map[string]string{"basic": "metadata"},
-		Endpoint: &micro.EndpointConfig{
-			Subject: "svc.add",
-			Handler: micro.HandlerFunc(func(r micro.Request) {
-				r.Respond(nil)
-				wg.Done()
-			}),
-		},
-		QueueGroupDisabled: true,
-	}
-
-	for range 10 {
-		srv, err := micro.AddService(nc, config)
-		if err != nil {
+		for range 10 {
+			srv, err := micro.AddService(nc, config)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer srv.Stop()
+		}
+		wg.Add(10)
+		// Send a request to the service.
+		if err := nc.PublishRequest("svc.add", "rply", []byte("req")); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer srv.Stop()
-	}
-	wg.Add(10)
-	// Send a request to the service.
-	if err = nc.PublishRequest("svc.add", "rply", []byte("req")); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	wg.Wait()
-
+		wg.Wait()
+	})
 }
 
 func TestEndpointPendingLimits(t *testing.T) {
-	s := RunServerOnPort(-1)
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Error connecting to server: %v", err)
-	}
-	defer nc.Close()
-
-	handler := micro.HandlerFunc(func(req micro.Request) {
-		time.Sleep(10 * time.Millisecond)
-		req.Respond([]byte("OK"))
-	})
-
-	t.Run("with pending limits", func(t *testing.T) {
-		srv, err := micro.AddService(nc, micro.Config{
-			Name:    "test-service",
-			Version: "1.0.0",
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		handler := micro.HandlerFunc(func(req micro.Request) {
+			time.Sleep(10 * time.Millisecond)
+			req.Respond([]byte("OK"))
 		})
-		if err != nil {
-			t.Fatalf("Error adding service: %v", err)
-		}
-		defer srv.Stop()
 
-		msgLimit := 10
-		bytesLimit := 1024
-
-		err = srv.AddEndpoint("test", handler,
-			micro.WithEndpointSubject("test.pending"),
-			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
-		if err != nil {
-			t.Fatalf("Error adding endpoint: %v", err)
-		}
-
-		// Verify endpoint was created
-		info := srv.Info()
-		if len(info.Endpoints) != 1 {
-			t.Fatalf("Expected 1 endpoint, got %d", len(info.Endpoints))
-		}
-
-		// Send messages and verify they're handled
-		for i := range 5 {
-			resp, err := nc.Request("test.pending", []byte("test"), 100*time.Millisecond)
+		t.Run("with pending limits", func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service",
+				Version: "1.0.0",
+			})
 			if err != nil {
-				t.Fatalf("Error on request %d: %v", i, err)
+				t.Fatalf("Error adding service: %v", err)
+			}
+			defer srv.Stop()
+
+			msgLimit := 10
+			bytesLimit := 1024
+
+			err = srv.AddEndpoint("test", handler,
+				micro.WithEndpointSubject("test.pending"),
+				micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+			if err != nil {
+				t.Fatalf("Error adding endpoint: %v", err)
+			}
+
+			// Verify endpoint was created
+			info := srv.Info()
+			if len(info.Endpoints) != 1 {
+				t.Fatalf("Expected 1 endpoint, got %d", len(info.Endpoints))
+			}
+
+			// Send messages and verify they're handled
+			for i := range 5 {
+				resp, err := nc.Request("test.pending", []byte("test"), 100*time.Millisecond)
+				if err != nil {
+					t.Fatalf("Error on request %d: %v", i, err)
+				}
+				if string(resp.Data) != "OK" {
+					t.Fatalf("Expected OK response, got %s", string(resp.Data))
+				}
+			}
+		})
+
+		t.Run("with only msg limit", func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service-msg-only",
+				Version: "1.0.0",
+			})
+			if err != nil {
+				t.Fatalf("Error adding service: %v", err)
+			}
+			defer srv.Stop()
+
+			msgLimit := 50
+			bytesLimit := -1
+
+			err = srv.AddEndpoint("test", handler,
+				micro.WithEndpointSubject("test.msg.only"),
+				micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+			if err != nil {
+				t.Fatalf("Error adding endpoint: %v", err)
+			}
+
+			resp, err := nc.Request("test.msg.only", []byte("test"), 100*time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on request: %v", err)
 			}
 			if string(resp.Data) != "OK" {
 				t.Fatalf("Expected OK response, got %s", string(resp.Data))
 			}
-		}
-	})
-
-	t.Run("with only msg limit", func(t *testing.T) {
-		srv, err := micro.AddService(nc, micro.Config{
-			Name:    "test-service-msg-only",
-			Version: "1.0.0",
-		})
-		if err != nil {
-			t.Fatalf("Error adding service: %v", err)
-		}
-		defer srv.Stop()
-
-		msgLimit := 50
-		bytesLimit := -1
-
-		err = srv.AddEndpoint("test", handler,
-			micro.WithEndpointSubject("test.msg.only"),
-			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
-		if err != nil {
-			t.Fatalf("Error adding endpoint: %v", err)
-		}
-
-		resp, err := nc.Request("test.msg.only", []byte("test"), 100*time.Millisecond)
-		if err != nil {
-			t.Fatalf("Error on request: %v", err)
-		}
-		if string(resp.Data) != "OK" {
-			t.Fatalf("Expected OK response, got %s", string(resp.Data))
-		}
-	})
-
-	t.Run("with only bytes limit", func(t *testing.T) {
-		srv, err := micro.AddService(nc, micro.Config{
-			Name:    "test-service-bytes-only",
-			Version: "1.0.0",
-		})
-		if err != nil {
-			t.Fatalf("Error adding service: %v", err)
-		}
-		defer srv.Stop()
-
-		msgLimit := -1
-		bytesLimit := 4096
-
-		err = srv.AddEndpoint("test", handler,
-			micro.WithEndpointSubject("test.bytes.only"),
-			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
-		if err != nil {
-			t.Fatalf("Error adding endpoint: %v", err)
-		}
-
-		resp, err := nc.Request("test.bytes.only", []byte("test"), 100*time.Millisecond)
-		if err != nil {
-			t.Fatalf("Error on request: %v", err)
-		}
-		if string(resp.Data) != "OK" {
-			t.Fatalf("Expected OK response, got %s", string(resp.Data))
-		}
-	})
-
-	t.Run("invalid limits", func(t *testing.T) {
-		srv, err := micro.AddService(nc, micro.Config{
-			Name:    "test-service-invalid",
-			Version: "1.0.0",
-		})
-		if err != nil {
-			t.Fatalf("Error adding service: %v", err)
-		}
-		defer srv.Stop()
-
-		err = srv.AddEndpoint("test", handler,
-			micro.WithEndpointPendingLimits(0, 0))
-		if !errors.Is(err, micro.ErrConfigValidation) {
-			t.Fatal("Expected error when both limits are zero")
-		}
-	})
-
-	t.Run("pending limits trigger slow consumer error", func(t *testing.T) {
-		errCh := make(chan error, 1)
-
-		srv, err := micro.AddService(nc, micro.Config{
-			Name:    "test-service-slow",
-			Version: "1.0.0",
-			ErrorHandler: func(svc micro.Service, natsErr *micro.NATSError) {
-				errCh <- natsErr
-			},
-		})
-		if err != nil {
-			t.Fatalf("Error adding service: %v", err)
-		}
-		defer srv.Stop()
-
-		msgLimit := 2
-		bytesLimit := -1
-
-		slowHandler := micro.HandlerFunc(func(req micro.Request) {
-			time.Sleep(100 * time.Millisecond)
-			req.Respond([]byte("OK"))
 		})
 
-		err = srv.AddEndpoint("slow", slowHandler,
-			micro.WithEndpointSubject("test.slow"),
-			micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
-		if err != nil {
-			t.Fatalf("Error adding endpoint: %v", err)
-		}
-
-		// Publish 20 requests to force slow consumer
-		for i := range 20 {
-			if err := nc.Publish("test.slow", []byte("test")); err != nil {
-				t.Fatalf("Error publishing message %d: %v", i, err)
+		t.Run("with only bytes limit", func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service-bytes-only",
+				Version: "1.0.0",
+			})
+			if err != nil {
+				t.Fatalf("Error adding service: %v", err)
 			}
-		}
+			defer srv.Stop()
 
-		if err := nc.Flush(); err != nil {
-			t.Fatalf("Error flushing: %v", err)
-		}
+			msgLimit := -1
+			bytesLimit := 4096
 
-		select {
-		case err := <-errCh:
-			if !errors.Is(err, nats.ErrSlowConsumer) {
-				t.Fatalf("Expected ErrSlowConsumer but got: %v", err)
+			err = srv.AddEndpoint("test", handler,
+				micro.WithEndpointSubject("test.bytes.only"),
+				micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+			if err != nil {
+				t.Fatalf("Error adding endpoint: %v", err)
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("Expected ErrSlowConsumer to be triggered within timeout")
-		}
+
+			resp, err := nc.Request("test.bytes.only", []byte("test"), 100*time.Millisecond)
+			if err != nil {
+				t.Fatalf("Error on request: %v", err)
+			}
+			if string(resp.Data) != "OK" {
+				t.Fatalf("Expected OK response, got %s", string(resp.Data))
+			}
+		})
+
+		t.Run("invalid limits", func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service-invalid",
+				Version: "1.0.0",
+			})
+			if err != nil {
+				t.Fatalf("Error adding service: %v", err)
+			}
+			defer srv.Stop()
+
+			err = srv.AddEndpoint("test", handler,
+				micro.WithEndpointPendingLimits(0, 0))
+			if !errors.Is(err, micro.ErrConfigValidation) {
+				t.Fatal("Expected error when both limits are zero")
+			}
+		})
+
+		t.Run("pending limits trigger slow consumer error", func(t *testing.T) {
+			errCh := make(chan error, 1)
+
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service-slow",
+				Version: "1.0.0",
+				ErrorHandler: func(svc micro.Service, natsErr *micro.NATSError) {
+					errCh <- natsErr
+				},
+			})
+			if err != nil {
+				t.Fatalf("Error adding service: %v", err)
+			}
+			defer srv.Stop()
+
+			msgLimit := 2
+			bytesLimit := -1
+
+			slowHandler := micro.HandlerFunc(func(req micro.Request) {
+				time.Sleep(100 * time.Millisecond)
+				req.Respond([]byte("OK"))
+			})
+
+			err = srv.AddEndpoint("slow", slowHandler,
+				micro.WithEndpointSubject("test.slow"),
+				micro.WithEndpointPendingLimits(msgLimit, bytesLimit))
+			if err != nil {
+				t.Fatalf("Error adding endpoint: %v", err)
+			}
+
+			// Publish 20 requests to force slow consumer
+			for i := range 20 {
+				if err := nc.Publish("test.slow", []byte("test")); err != nil {
+					t.Fatalf("Error publishing message %d: %v", i, err)
+				}
+			}
+
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error flushing: %v", err)
+			}
+
+			select {
+			case err := <-errCh:
+				if !errors.Is(err, nats.ErrSlowConsumer) {
+					t.Fatalf("Expected ErrSlowConsumer but got: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Expected ErrSlowConsumer to be triggered within timeout")
+			}
+		})
 	})
 }
