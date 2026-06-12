@@ -764,8 +764,6 @@ func (d *checkPoolUpdatedDialer) Dial(network, address string) (net.Conn, error)
 }
 
 func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
-	t.Skip("DIVERGENCE (partial): clientAdvertiseOpt fixes the pool-membership half — every checkPool() assertion passes now. The remaining failure is the back-half custom-dialer assertion `d.ra == 20` (reconnect-count preservation across an INFO update): testservice deterministically yields 50, not 20. nc.Servers() shows the expected 3 URLs, but the reconnect loop makes 50 = 5*10 attempts, suggesting the internal srvPool holds ~5 entries (the 3 dialed URLs plus near-duplicate gossiped client_advertise URLs that dedupe in Servers() but not in the reconnect bookkeeping). Needs investigation: either a real client dedup gap between display and reconnect accounting, or a testservice cluster-gossip artifact. TestIgnoreDiscoveredServers (same client_advertise fix) passes, so the core gossip-URL issue is resolved; this is a narrower reconnect-accounting concern.")
-
 	c := newTester(t)
 	// Build a 3-node cluster so client-server URL gossip is exercised.
 	// CreateCluster wires the routes between the three servers itself.
@@ -902,11 +900,18 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	// We should have all 3 servers running now...
 
 	// Create a client connection with special dialer.
+	//
+	// SkipHostLookup() keeps the srvPool entries 1:1 with the gossiped URLs.
+	// Without it, hostnames like "localhost" are expanded by net.LookupHost
+	// to both 127.0.0.1 and ::1 — every gossiped URL doubles, and the
+	// reconnect-count assertion below (designed for IP-URLs, the original
+	// test used nats.DefaultURL) loses its alignment with the pool size.
 	d := &checkPoolUpdatedDialer{first: true}
 	nc, err = nats.Connect(s1Url,
 		nats.MaxReconnects(10),
 		nats.ReconnectWait(15*time.Millisecond),
 		nats.ReconnectJitter(0, 0),
+		nats.SkipHostLookup(),
 		nats.SetCustomDialer(d),
 		nats.ReconnectHandler(connHandler),
 		nats.ClosedHandler(connHandler))

@@ -49,18 +49,6 @@ func hostFromURL(u string) string {
 	return h
 }
 
-// tlsConfBody returns a `tls { ... }` snippet body suitable for
-// testservice.WithTLSSnippet that points at the test/configs server cert/key inside
-// the tester container. The body must be the complete tls block (the snippet
-// replaces, rather than wraps, the rendered TLS section).
-func tlsConfBody() string {
-	return fmt.Sprintf(`tls {
-  cert_file: %q
-  key_file:  %q
-  timeout:   2
-}`, containerPath("certs/server.pem"), containerPath("certs/key.pem"))
-}
-
 func derekAuthBody() string {
 	return `authorization {
   user:     derek
@@ -930,21 +918,23 @@ func isRunningInAsyncCBDispatcher() error {
 	return fmt.Errorf("callback not executed from dispatcher:\n %s", strStacks)
 }
 
-func isAsyncDispatcherRunning() bool {
-	strStacks := getStacks(true)
-	return strings.Contains(strStacks, "asyncCBDispatcher")
-}
-
 func TestCallbacksOrder(t *testing.T) {
-	t.Skip("DIVERGENCE: original starts a TLS+auth server on a fixed port and uses nats.DefaultURL for the second URL, then verifies the async callback dispatcher exits within 5s after nc.Close()+ncp.Close(). When ported to testservice (two distinct managed servers, one TLS+auth and one plain), the async dispatcher consistently outlives the 5s window even though nc.Close()/ncp.Close() both fire ClosedHandler. Suspect interaction between the auth/TLS reject path and the dispatcher exit handshake. Needs targeted investigation in nats.go's async dispatcher (or a way to start the original auth server config in-process) to migrate.")
 	c := newTester(t)
 
-	authOpts := append([]testservice.CreateOption{testservice.WithTLSSnippet(tlsConfBody())}, singleUserPassOpts(derekAuthBody())...)
+	authOpts := append([]testservice.CreateOption{managedTLSOpts(t, testservice.TLSServerOnly())}, singleUserPassOpts(derekAuthBody())...)
 	authInst := c.CreateServer(t, false, authOpts...)
 	t.Cleanup(func() { authInst.Destroy(t) })
 
 	plainInst := c.CreateServer(t, false)
 	t.Cleanup(func() { plainInst.Destroy(t) })
+
+	// Capture baseline asyncCBDispatcher count *after* the tester management
+	// conn is up but *before* we create test connections. The original test
+	// was written for embedded servers where there were no other live conns;
+	// in the testservice port the tester client owns its own dispatcher that
+	// must legitimately survive the test body. The post-Close assertion below
+	// checks that the count returns to this baseline, not to zero.
+	baselineDispatchers := strings.Count(getStacks(true), "asyncCBDispatcher")
 
 	firstDisconnect := true
 	var connTime, dtime1, dtime2, rtime, atime1, atime2, ctime time.Time
@@ -1144,17 +1134,16 @@ func TestCallbacksOrder(t *testing.T) {
 	// Close the other connection
 	ncp.Close()
 
-	// Check that the go routine is gone. Allow plenty of time
-	// to avoid flappers.
+	// Check that the test-created dispatchers are gone (count returned to
+	// baseline). Allow plenty of time to avoid flappers.
 	timeout := time.Now().Add(5 * time.Second)
 	for time.Now().Before(timeout) {
-		if !isAsyncDispatcherRunning() {
-			// Good, we are done!
+		if strings.Count(getStacks(true), "asyncCBDispatcher") <= baselineDispatchers {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("The async callback dispatcher(s) should have stopped")
+	t.Fatalf("The async callback dispatcher(s) should have stopped (baseline %d, still running)", baselineDispatchers)
 }
 
 func TestReconnectErrHandler(t *testing.T) {
