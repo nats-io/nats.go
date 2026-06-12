@@ -437,13 +437,13 @@ func TestWSWithTLSCustomDialer(t *testing.T) {
 
 func TestWSGossipAndReconnect(t *testing.T) {
 	c := newTester(t)
-	// 2-node cluster with a websocket listener on each node. clientAdvertiseOpt
-	// makes each node advertise "<testerHost>:<its client port>" for the
-	// standard NATS port, and the websocket block carries its own advertise so
-	// the gossiped ws URL points at the address the client can dial.
+	// 2-node cluster with a websocket listener on each node. The standard NATS
+	// port's advertise comes from the tester's NATS_ADVERTISE env var; the
+	// websocket block carries its own advertise because the listener has a
+	// separate port and address-family from the client port.
 	host := testerHost(t)
 	wsBody := fmt.Sprintf("websocket {\n  port: {{ .Ports.websocket }}\n  no_tls: true\n  advertise: \"%s:{{ .Ports.websocket }}\"\n}", host)
-	clusterInst := c.CreateCluster(t, 2, false, testservice.WithWebSocket(wsBody), clientAdvertiseOpt(t))
+	clusterInst := c.CreateCluster(t, 2, false, testservice.WithWebSocket(wsBody))
 	t.Cleanup(func() { clusterInst.Destroy(t) })
 
 	s1 := clusterInst.Servers[0]

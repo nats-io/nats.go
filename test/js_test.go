@@ -2837,7 +2837,7 @@ func TestJetStreamClusterStreamLeaderChangeClientErr(t *testing.T) {
 
 func TestJetStreamConsumerConfigReplicasAndMemStorage(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateCluster(t, 3, true, clientAdvertiseOpt(t))
+	inst := c.CreateCluster(t, 3, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	nc := dialInstance(t, inst)
@@ -3063,7 +3063,7 @@ func TestJetStreamDirectGetMsg(t *testing.T) {
 
 func TestJetStreamConsumerReplicasOption(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateCluster(t, 3, true, clientAdvertiseOpt(t))
+	inst := c.CreateCluster(t, 3, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	nc := dialInstance(t, inst)
@@ -3134,7 +3134,7 @@ func TestJetStreamMsgAckShouldErrForConsumerAckNone(t *testing.T) {
 func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	t.Skip("DIVERGENCE: pre-existing data race in (*Subscription).resetOrderedConsumer (js.go:2266 write vs js.go:2289 read via json.Marshal in upsertConsumer). Two activityCheck-spawned goroutines overlap when reconnect+RTT through testservice is slow enough for the second tick to fire before the first reset completes. On embedded server the in-process reconnect always beats the next tick, so the race is latent. Needs a fix in resetOrderedConsumer (likely a mutex around the consumer-config swap) — tracked alongside [[project_ordered_push_followups]].")
 	c := newTester(t)
-	inst := c.CreateServer(t, true, clientAdvertiseOpt(t))
+	inst := c.CreateServer(t, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	// monitor for ErrConsumerNotActive error and suppress logging
@@ -3337,7 +3337,7 @@ func TestJetStreamCreateStreamDiscardPolicy(t *testing.T) {
 
 func TestJetStreamStreamInfoAlternates(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateCluster(t, 3, true, clientAdvertiseOpt(t))
+	inst := c.CreateCluster(t, 3, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	nc := dialInstance(t, inst)
@@ -8075,9 +8075,9 @@ func withClusterAndStream(t *testing.T, size int, stream *nats.StreamConfig, fn 
 	c := newTester(t)
 	var inst *testservice.Instance
 	if size == 1 {
-		inst = c.CreateServer(t, true, clientAdvertiseOpt(t))
+		inst = c.CreateServer(t, true)
 	} else {
-		inst = c.CreateCluster(t, size, true, clientAdvertiseOpt(t))
+		inst = c.CreateCluster(t, size, true)
 	}
 	t.Cleanup(func() { inst.Destroy(t) })
 
@@ -8385,7 +8385,7 @@ func TestJetStream_ClusterReconnect(t *testing.T) {
 
 func TestJetStreamPullSubscribeOptions(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateCluster(t, 3, true, clientAdvertiseOpt(t))
+	inst := c.CreateCluster(t, 3, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	nc := dialInstance(t, inst)
@@ -9833,7 +9833,7 @@ func TestJetStreamMsgSubjectRewrite(t *testing.T) {
 
 func TestJetStreamPullSubscribeFetchContext(t *testing.T) {
 	c := newTester(t)
-	inst := c.CreateCluster(t, 3, true, clientAdvertiseOpt(t))
+	inst := c.CreateCluster(t, 3, true)
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	nc := dialInstance(t, inst)

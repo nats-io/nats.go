@@ -71,14 +71,10 @@ func createTmpFileTS(t *testing.T, content []byte) string {
 
 func TestMaxConnectionsReconnect(t *testing.T) {
 	c := newTester(t)
-	host := testerHost(t)
-	advertiseAndMax := func(maxConns int) string {
-		return fmt.Sprintf(
-			"client_advertise: \"%s:{{ .ClientPort }}\"\nmax_connections: %d",
-			host, maxConns,
-		)
+	maxConns := func(n int) string {
+		return fmt.Sprintf("max_connections: %d", n)
 	}
-	inst := c.CreateCluster(t, 2, false, testservice.WithTopLevel(advertiseAndMax(2)))
+	inst := c.CreateCluster(t, 2, false, testservice.WithTopLevel(maxConns(2)))
 	t.Cleanup(func() { inst.Destroy(t) })
 
 	s1URL := inst.Servers[0].URL
@@ -114,7 +110,7 @@ func TestMaxConnectionsReconnect(t *testing.T) {
 	nc2.Flush()
 
 	// Lower s1's max_connections to 1 via reload — kicks one client.
-	inst.UpdateServer(t, inst.Servers[0], testservice.WithTopLevel(advertiseAndMax(1)))
+	inst.UpdateServer(t, inst.Servers[0], testservice.WithTopLevel(maxConns(1)))
 	inst.ReloadServer(t, inst.Servers[0])
 
 	select {
@@ -634,22 +630,14 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 
 	c := newTester(t)
 
-	// clientAdvertiseOpt makes each server advertise "<testerHost>:<its
-	// port>" via INFO connect_urls so the gossiped URL matches the one the
-	// client dialed (rather than the server's container-internal bind
-	// address). Without this, the gossiped URL would be added to the
-	// srvPool as a separate entry, and the client would discover an
-	// alternate path to s2 — inflating the Reconnects count this test
-	// asserts on.
-	s1Inst := c.CreateServer(t, false, clientAdvertiseOpt(t))
+	s1Inst := c.CreateServer(t, false)
 	t.Cleanup(func() { s1Inst.Destroy(t) })
 
 	authBody := `authorization {
   user:     ivan
   password: pwd
 }`
-	s2Opts := append([]testservice.CreateOption{clientAdvertiseOpt(t)}, singleUserPassOpts(authBody)...)
-	s2Inst := c.CreateServer(t, false, s2Opts...)
+	s2Inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
 	t.Cleanup(func() { s2Inst.Destroy(t) })
 
 	dch := make(chan bool)

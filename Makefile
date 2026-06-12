@@ -11,7 +11,7 @@
 #   export TESTER_NATS_URL=nats://localhost:4222
 #   go test -modfile=go_test.mod -tags=testservice ./...
 
-TESTER_IMAGE   ?= synadia/server-tester:dev
+TESTER_IMAGE   ?= synadia/server-tester:nightly-main-nats-main
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine
@@ -39,6 +39,7 @@ tester-up: tester-net
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \
 		--restart unless-stopped \
+		-e NATS_ADVERTISE=$(TESTER_NAME) \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Sibling-container mode: use 'make test-tester' to run the suite."
@@ -60,6 +61,7 @@ tester-up-host: tester-net
 		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
+		-e NATS_ADVERTISE=localhost \
 		$(TESTER_IMAGE)
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"

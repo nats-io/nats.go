@@ -14,7 +14,6 @@
 package test
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,20 +54,6 @@ func testerHost(t *testing.T) string {
 		t.Fatalf("could not parse TESTER_NATS_URL %q: %v", raw, err)
 	}
 	return u.Hostname()
-}
-
-// clientAdvertiseOpt returns a CreateOption that makes every server in the
-// instance advertise "<testerHost>:<its client port>" to clients via INFO
-// connect_urls, instead of the server's own bind address (which inside docker
-// is a container-internal IP unreachable from the test process). The host is
-// resolved at test time from TESTER_NATS_URL; the per-server port is filled by
-// the tester's template engine via .ClientPort. This makes gossiped pool URLs
-// match the inst.Servers[i].URL values the client dialed, so pool-membership
-// assertions hold in both the host-side and CI (sibling-container) topologies.
-func clientAdvertiseOpt(t *testing.T) testservice.CreateOption {
-	t.Helper()
-	host := testerHost(t)
-	return testservice.WithTopLevel(fmt.Sprintf("client_advertise: \"%s:{{ .ClientPort }}\"", host))
 }
 
 // withServer creates a non-JetStream server and dials it. Cleanup via t.Cleanup.

@@ -766,12 +766,10 @@ func (d *checkPoolUpdatedDialer) Dial(network, address string) (net.Conn, error)
 func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	c := newTester(t)
 	// Build a 3-node cluster so client-server URL gossip is exercised.
-	// CreateCluster wires the routes between the three servers itself.
-	// clientAdvertiseOpt makes each node gossip "<testerHost>:<its port>"
-	// (the address the client actually dials) rather than its
-	// container-internal bind address, so the gossiped pool URLs match the
-	// inst.Servers[i].URL values below.
-	clusterInst := c.CreateCluster(t, 3, false, clientAdvertiseOpt(t))
+	// The tester's NATS_ADVERTISE env var makes each node gossip a host:port
+	// the client can dial (localhost in host mode, the service name in CI),
+	// so the gossiped pool URLs match the inst.Servers[i].URL values below.
+	clusterInst := c.CreateCluster(t, 3, false)
 	t.Cleanup(func() { clusterInst.Destroy(t) })
 
 	s1 := clusterInst.Servers[0]
@@ -962,9 +960,7 @@ func TestIgnoreDiscoveredServers(t *testing.T) {
 	// CreateCluster brings up both servers connected via routes. To match
 	// the original's "connect first, then start the second server" pattern,
 	// we stop the second server immediately and restart it inside each subtest.
-	// clientAdvertiseOpt makes the gossiped URLs match the dialed addresses so
-	// the pool-size assertions are deterministic across host-side and CI.
-	clusterInst := c.CreateCluster(t, 2, false, clientAdvertiseOpt(t))
+	clusterInst := c.CreateCluster(t, 2, false)
 	t.Cleanup(func() { clusterInst.Destroy(t) })
 
 	s1 := clusterInst.Servers[0]
