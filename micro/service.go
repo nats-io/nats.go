@@ -965,6 +965,9 @@ func WithEndpointMetadata(metadata map[string]string) EndpointOpt {
 	}
 }
 
+// WithEndpointMetadataKey adds a key-value pair to the endpoints's metadata.
+// Prefer using WithEndpointMetadata when you have all the key-value pairs you
+// want to add at once or when you want to replace any existing metadata.
 func WithEndpointMetadataKey(key, value string) EndpointOpt {
 	return func(e *endpointOpts) error {
 		if e.metadata == nil {
