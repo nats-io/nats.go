@@ -58,6 +58,11 @@ const (
 	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 	JSErrCodeJetStreamNotEnabled     ErrorCode = 10076
 
+	// JSErrCodeStreamWrongLastSequenceConstant is returned instead of
+	// JSErrCodeStreamWrongLastSequence for CAS conflicts on replicated (R>1)
+	// streams. The two are equivalent "wrong last sequence" responses.
+	JSErrCodeStreamWrongLastSequenceConstant ErrorCode = 10164
+
 	JSErrCodeConsumerAlreadyExists ErrorCode = 10105
 
 	JSErrCodeDuplicateFilterSubjects   ErrorCode = 10136

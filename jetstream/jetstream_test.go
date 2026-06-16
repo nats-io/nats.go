@@ -527,6 +527,19 @@ func TestPullConsumer_checkPending(t *testing.T) {
 	}
 }
 
+func TestIsWrongLastSeqErr(t *testing.T) {
+	// 10164 is the replicated-stream variant of the 10071 "wrong last
+	// sequence" CAS conflict; both must be recognized (issue #2097).
+	for _, code := range []ErrorCode{JSErrCodeStreamWrongLastSequence, JSErrCodeStreamWrongLastSequenceConstant} {
+		if !isWrongLastSeqErr(&APIError{Code: 400, ErrorCode: code}) {
+			t.Fatalf("err code %d should be recognized as wrong-last-sequence", code)
+		}
+	}
+	if isWrongLastSeqErr(&APIError{Code: 404, ErrorCode: JSErrCodeStreamNotFound}) {
+		t.Fatal("unrelated error code should not be recognized")
+	}
+}
+
 func TestKV_keyValid(t *testing.T) {
 	tests := []struct {
 		key string
