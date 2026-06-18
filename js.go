@@ -2267,8 +2267,13 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		jsi.cmeta = _EMPTY_
 		jsi.fcr, jsi.fcd = _EMPTY_, 0
 		jsi.deliver = newDeliver
-		// Reset consumer request for starting policy.
-		cfg := jsi.ccreq.Config
+		// Reset consumer request for starting policy. Take a value copy of the
+		// ConsumerConfig so concurrent activityCheck-spawned resets don't race
+		// on a shared *ConsumerConfig — a later goroutine's writes here would
+		// otherwise overlap an earlier goroutine's json.Marshal in
+		// upsertConsumer below (called outside sub.mu).
+		cfgCopy := *jsi.ccreq.Config
+		cfg := &cfgCopy
 		cfg.DeliverSubject = newDeliver
 		cfg.DeliverPolicy = DeliverByStartSequencePolicy
 		cfg.OptStartSeq = sseq

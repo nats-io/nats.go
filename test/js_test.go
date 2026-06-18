@@ -3132,7 +3132,6 @@ func TestJetStreamMsgAckShouldErrForConsumerAckNone(t *testing.T) {
 }
 
 func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
-	t.Skip("DIVERGENCE: pre-existing data race in (*Subscription).resetOrderedConsumer (js.go:2266 write vs js.go:2289 read via json.Marshal in upsertConsumer). Two activityCheck-spawned goroutines overlap when reconnect+RTT through testservice is slow enough for the second tick to fire before the first reset completes. On embedded server the in-process reconnect always beats the next tick, so the race is latent. Needs a fix in resetOrderedConsumer (likely a mutex around the consumer-config swap) — tracked alongside [[project_ordered_push_followups]].")
 	c := newTester(t)
 	inst := c.CreateServer(t, true)
 	t.Cleanup(func() { inst.Destroy(t) })
