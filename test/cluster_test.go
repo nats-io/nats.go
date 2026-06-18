@@ -868,18 +868,26 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	}
 	checkPool([]string{s1Url, s2Url, s3Url})
 
-	// Check the server we reconnected to.
+	// Check the server we reconnected to. Compare by port for the same reason
+	// checkPool above does (the bridge-IP form of the URL may be what's
+	// reported in CI, while the dialed/expected URLs use the hostname form).
+	portOf := func(u string) string {
+		_, port, _ := net.SplitHostPort(strings.TrimPrefix(u, "nats://"))
+		return port
+	}
 	reConnectedTo := nc.ConnectedUrl()
+	reConnectedPort := portOf(reConnectedTo)
 	expected := []string{s1Url}
 	restartS2 := false
-	if reConnectedTo == s2Url {
+	switch reConnectedPort {
+	case portOf(s2Url):
 		restartS2 = true
 		clusterInst.StopServer(t, s2)
 		expected = append(expected, s3Url)
-	} else if reConnectedTo == s3Url {
+	case portOf(s3Url):
 		clusterInst.StopServer(t, s3)
 		expected = append(expected, s2Url)
-	} else {
+	default:
 		t.Fatalf("Unexpected server client has reconnected to: %v", reConnectedTo)
 	}
 	// Wait for reconnect
