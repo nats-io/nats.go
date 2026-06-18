@@ -50,10 +50,8 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
-            image: synadia/server-tester:2.14
+            image: synadia/server-tester:nightly-main-nats-main
             options: --name nats
-            env:
-              NATS_ADVERTISE: nats
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
