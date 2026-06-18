@@ -807,24 +807,34 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 		t.Fatal("New server callback was not invoked")
 	}
 
+	// Compare pool membership by PORT only. Each spawned tester server has a
+	// unique client port, but nats-server can advertise multiple URLs for the
+	// same server (configured client_advertise PLUS the bind interface IPs).
+	// Locally only the configured URL appears, but in CI's docker bridge mode
+	// both forms appear. The test cares about which servers are in the pool,
+	// not which URL form represents them, so we normalize on port.
+	portsOf := func(urls []string) map[string]struct{} {
+		out := make(map[string]struct{}, len(urls))
+		for _, u := range urls {
+			if _, port, err := net.SplitHostPort(strings.TrimPrefix(u, "nats://")); err == nil {
+				out[port] = struct{}{}
+			}
+		}
+		return out
+	}
 	checkPool := func(expected []string) {
-		// Don't use discovered here, but Servers to have the full list.
-		// Also, there may be cases where the mesh is not formed yet,
-		// so try again on failure.
+		want := portsOf(expected)
 		var (
 			ds      []string
 			timeout = time.Now().Add(5 * time.Second)
 		)
 		for time.Now().Before(timeout) {
 			ds = nc.Servers()
-			if len(ds) == len(expected) {
-				m := make(map[string]struct{}, len(ds))
-				for _, url := range ds {
-					m[url] = struct{}{}
-				}
+			got := portsOf(ds)
+			if len(got) == len(want) {
 				ok := true
-				for _, url := range expected {
-					if _, present := m[url]; !present {
+				for p := range want {
+					if _, present := got[p]; !present {
 						ok = false
 						break
 					}
@@ -835,7 +845,7 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		stackFatalf(t, "Expected %v, got %v", expected, ds)
+		stackFatalf(t, "Expected ports for %v, got %v", expected, ds)
 	}
 	// Verify that we now know about s2
 	checkPool([]string{s1Url, s2Url})
