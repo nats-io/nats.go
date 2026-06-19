@@ -844,10 +844,6 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		// DBG TEMP: also dump info.ConnectURLs raw via DiscoveredServers and Servers.
-		t.Logf("DBG nc.Servers()=%v", ds)
-		t.Logf("DBG nc.DiscoveredServers()=%v", nc.DiscoveredServers())
-		t.Logf("DBG nc.ConnectedUrl()=%v", nc.ConnectedUrl())
 		stackFatalf(t, "Expected %v, got %v", expected, ds)
 	}
 	// Verify that we now know about s2
