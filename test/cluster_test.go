@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/api"
 )
 
 // tsTestServers returns a slice of fabricated URLs that point at non-existent
@@ -844,10 +845,24 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		// DBG TEMP: also dump info.ConnectURLs raw via DiscoveredServers and Servers.
+		// DBG TEMP: also dump info.ConnectURLs raw via DiscoveredServers and Servers,
+		// plus the raw INFO from each spawned server, so we can see whether their
+		// connect_urls reflect a configured client_advertise.
 		t.Logf("DBG nc.Servers()=%v", ds)
 		t.Logf("DBG nc.DiscoveredServers()=%v", nc.DiscoveredServers())
 		t.Logf("DBG nc.ConnectedUrl()=%v", nc.ConnectedUrl())
+		for _, srv := range []*api.ManagedServer{s1, s2, s3} {
+			conn, derr := net.Dial("tcp", fmt.Sprintf("%s:%d", testerHost(t), srv.Port))
+			if derr != nil {
+				t.Logf("DBG dial %s err: %v", srv.Name, derr)
+				continue
+			}
+			buf := make([]byte, 4096)
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, _ := conn.Read(buf)
+			t.Logf("DBG INFO from %s (port %d):\n%s", srv.Name, srv.Port, string(buf[:n]))
+			conn.Close()
+		}
 		stackFatalf(t, "Expected %v, got %v", expected, ds)
 	}
 	// Verify that we now know about s2
