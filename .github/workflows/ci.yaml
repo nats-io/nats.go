@@ -52,6 +52,8 @@ jobs:
           nats:
             image: synadia/server-tester:nightly-main-nats-main
             options: --name nats
+            env:
+              NATS_ADVERTISE: nats
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
