@@ -1,4 +1,4 @@
-// Copyright 2023 The NATS Authors
+// Copyright 2023-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -26,310 +26,305 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
 // Need access to internals for loss testing.
 func TestJetStreamOrderedConsumer(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	var err error
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "OBJECT",
-		Subjects: []string{"a"},
-		Storage:  nats.MemoryStorage,
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	// Will be used as start time to validate proper reset to sequence on retries.
-	startTime := time.Now()
-
-	// Create a sample asset.
-	msg := make([]byte, 1024*1024)
-	rand.Read(msg)
-	msg = []byte(base64.StdEncoding.EncodeToString(msg))
-	mlen, sum := len(msg), sha256.Sum256(msg)
-
-	// Now send into the stream as chunks.
-	const chunkSize = 1024
-	for i := 0; i < mlen; i += chunkSize {
-		var chunk []byte
-		if mlen-i <= chunkSize {
-			chunk = msg[i:]
-		} else {
-			chunk = msg[i : i+chunkSize]
-		}
-		msg := nats.NewMsg("a")
-		msg.Data = chunk
-		msg.Header.Set("data", "true")
-		js.PublishMsgAsync(msg)
-	}
-	js.PublishAsync("a", nil) // eof
-
-	select {
-	case <-js.PublishAsyncComplete():
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive completion signal")
-	}
-
-	// Do some tests on simple misconfigurations first.
-	// For ordered delivery a couple of things need to be set properly.
-	// Can't be durable or have ack policy that is not ack none or max deliver set.
-	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.Durable("dlc"))
-	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
-		t.Fatalf("Expected an error, got %v", err)
-	}
-
-	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.AckExplicit())
-	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
-		t.Fatalf("Expected an error, got %v", err)
-	}
-
-	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.MaxDeliver(10))
-	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
-		t.Fatalf("Expected an error, got %v", err)
-	}
-
-	_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.DeliverSubject("some.subject"))
-	if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
-		t.Fatalf("Expected an error, got %v", err)
-	}
-
-	si, err := js.StreamInfo("OBJECT")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	testConsumer := func() {
-		t.Helper()
-		var received uint32
-		var rmsg []byte
-		done := make(chan bool, 1)
-
-		cb := func(m *nats.Msg) {
-			// Check for eof
-			if len(m.Data) == 0 {
-				done <- true
-				return
-			}
-			atomic.AddUint32(&received, 1)
-			rmsg = append(rmsg, m.Data...)
-		}
-		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
-		sub, err := js.Subscribe("a", cb, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond), nats.StartTime(startTime))
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer sub.Unsubscribe()
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "OBJECT",
+			Subjects: []string{"a"},
+			Storage:  nats.MemoryStorage,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Will be used as start time to validate proper reset to sequence on retries.
+		// Use the server's own clock via StreamInfo to avoid host/container clock skew.
+		si0, err := js.StreamInfo("OBJECT")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// startTime is just before the first publish — use the server's "now"
+		// via Created time of the stream (which is right after creation).
+		startTime := si0.Created
+
+		// Create a sample asset.
+		msg := make([]byte, 1024*1024)
+		rand.Read(msg)
+		msg = []byte(base64.StdEncoding.EncodeToString(msg))
+		mlen, sum := len(msg), sha256.Sum256(msg)
+
+		// Now send into the stream as chunks.
+		const chunkSize = 1024
+		for i := 0; i < mlen; i += chunkSize {
+			var chunk []byte
+			if mlen-i <= chunkSize {
+				chunk = msg[i:]
+			} else {
+				chunk = msg[i : i+chunkSize]
+			}
+			msg := nats.NewMsg("a")
+			msg.Data = chunk
+			msg.Header.Set("data", "true")
+			js.PublishMsgAsync(msg)
+		}
+		js.PublishAsync("a", nil) // eof
 
 		select {
-		case <-done:
-			if rsum := sha256.Sum256(rmsg); rsum != sum {
-				t.Fatalf("Objects do not match")
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("Did not receive all chunks, only %d of %d total", atomic.LoadUint32(&received), si.State.Msgs-1)
+		case <-js.PublishAsyncComplete():
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive completion signal")
 		}
-	}
 
-	testSyncConsumer := func() {
-		t.Helper()
-		var received int
-		var rmsg []byte
+		// Do some tests on simple misconfigurations first.
+		_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.Durable("dlc"))
+		if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+			t.Fatalf("Expected an error, got %v", err)
+		}
 
-		// OrderedConsumer does not need HB, it sets it on its own, but for test we override which is ok.
-		sub, err := js.SubscribeSync("a", nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond), nats.StartTime(startTime))
+		_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.AckExplicit())
+		if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+			t.Fatalf("Expected an error, got %v", err)
+		}
+
+		_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.MaxDeliver(10))
+		if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+			t.Fatalf("Expected an error, got %v", err)
+		}
+
+		_, err = js.SubscribeSync("a", nats.OrderedConsumer(), nats.DeliverSubject("some.subject"))
+		if err == nil || !strings.Contains(err.Error(), "ordered consumer") {
+			t.Fatalf("Expected an error, got %v", err)
+		}
+
+		si, err := js.StreamInfo("OBJECT")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		defer sub.Unsubscribe()
 
-		var done bool
-		expires := time.Now().Add(5 * time.Second)
-		for time.Now().Before(expires) {
-			m, err := sub.NextMsg(time.Second)
+		testConsumer := func() {
+			t.Helper()
+			var received uint32
+			var rmsg []byte
+			done := make(chan bool, 1)
+
+			cb := func(m *nats.Msg) {
+				if len(m.Data) == 0 {
+					done <- true
+					return
+				}
+				atomic.AddUint32(&received, 1)
+				rmsg = append(rmsg, m.Data...)
+			}
+			sub, err := js.Subscribe("a", cb, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond), nats.StartTime(startTime))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			if len(m.Data) == 0 {
-				done = true
-				break
+			defer sub.Unsubscribe()
+
+			select {
+			case <-done:
+				if rsum := sha256.Sum256(rmsg); rsum != sum {
+					t.Fatalf("Objects do not match")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive all chunks, only %d of %d total", atomic.LoadUint32(&received), si.State.Msgs-1)
 			}
-			received++
-			rmsg = append(rmsg, m.Data...)
 		}
-		if !done {
-			t.Fatalf("Did not receive all chunks, only %d of %d total", received, si.State.Msgs-1)
-		}
-		if rsum := sha256.Sum256(rmsg); rsum != sum {
-			t.Fatalf("Objects do not match")
-		}
-	}
 
-	// Now run normal test.
-	testConsumer()
-	testSyncConsumer()
+		testSyncConsumer := func() {
+			t.Helper()
+			var received int
+			var rmsg []byte
 
-	// Now introduce some loss.
-	singleLoss := func(m *nats.Msg) *nats.Msg {
-		if rand.Intn(100) <= 10 && m.Header.Get("data") != "" {
-			nc.RemoveMsgFilter("a")
-			return nil
+			sub, err := js.SubscribeSync("a", nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond), nats.StartTime(startTime))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer sub.Unsubscribe()
+
+			var done bool
+			expires := time.Now().Add(5 * time.Second)
+			for time.Now().Before(expires) {
+				m, err := sub.NextMsg(time.Second)
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if len(m.Data) == 0 {
+					done = true
+					break
+				}
+				received++
+				rmsg = append(rmsg, m.Data...)
+			}
+			if !done {
+				t.Fatalf("Did not receive all chunks, only %d of %d total", received, si.State.Msgs-1)
+			}
+			if rsum := sha256.Sum256(rmsg); rsum != sum {
+				t.Fatalf("Objects do not match")
+			}
 		}
-		return m
-	}
-	nc.AddMsgFilter("a", singleLoss)
-	testConsumer()
-	nc.AddMsgFilter("a", singleLoss)
-	testSyncConsumer()
 
-	multiLoss := func(m *nats.Msg) *nats.Msg {
-		if rand.Intn(100) <= 10 && m.Header.Get("data") != "" {
-			return nil
-		}
-		return m
-	}
-	nc.AddMsgFilter("a", multiLoss)
-	testConsumer()
-	testSyncConsumer()
+		testConsumer()
+		testSyncConsumer()
 
-	firstOnly := func(m *nats.Msg) *nats.Msg {
-		if meta, err := m.Metadata(); err == nil {
-			if meta.Sequence.Consumer == 1 {
+		// Now introduce some loss.
+		singleLoss := func(m *nats.Msg) *nats.Msg {
+			if rand.Intn(100) <= 10 && m.Header.Get("data") != "" {
 				nc.RemoveMsgFilter("a")
 				return nil
 			}
+			return m
 		}
-		return m
-	}
-	nc.AddMsgFilter("a", firstOnly)
-	testConsumer()
-	nc.AddMsgFilter("a", firstOnly)
-	testSyncConsumer()
+		nc.AddMsgFilter("a", singleLoss)
+		testConsumer()
+		nc.AddMsgFilter("a", singleLoss)
+		testSyncConsumer()
 
-	lastOnly := func(m *nats.Msg) *nats.Msg {
-		if meta, err := m.Metadata(); err == nil {
-			if meta.Sequence.Stream >= si.State.LastSeq-1 {
-				nc.RemoveMsgFilter("a")
+		multiLoss := func(m *nats.Msg) *nats.Msg {
+			if rand.Intn(100) <= 10 && m.Header.Get("data") != "" {
 				return nil
 			}
+			return m
 		}
-		return m
-	}
-	nc.AddMsgFilter("a", lastOnly)
-	testConsumer()
-	nc.AddMsgFilter("a", lastOnly)
-	testSyncConsumer()
+		nc.AddMsgFilter("a", multiLoss)
+		testConsumer()
+		testSyncConsumer()
+
+		firstOnly := func(m *nats.Msg) *nats.Msg {
+			if meta, err := m.Metadata(); err == nil {
+				if meta.Sequence.Consumer == 1 {
+					nc.RemoveMsgFilter("a")
+					return nil
+				}
+			}
+			return m
+		}
+		nc.AddMsgFilter("a", firstOnly)
+		testConsumer()
+		nc.AddMsgFilter("a", firstOnly)
+		testSyncConsumer()
+
+		lastOnly := func(m *nats.Msg) *nats.Msg {
+			if meta, err := m.Metadata(); err == nil {
+				if meta.Sequence.Stream >= si.State.LastSeq-1 {
+					nc.RemoveMsgFilter("a")
+					return nil
+				}
+			}
+			return m
+		}
+		nc.AddMsgFilter("a", lastOnly)
+		testConsumer()
+		nc.AddMsgFilter("a", lastOnly)
+		testSyncConsumer()
+	})
 }
 
 func TestJetStreamOrderedConsumerWithAutoUnsub(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "OBJECT",
+			Subjects: []string{"a"},
+			Storage:  nats.MemoryStorage,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	nc, js := jsClient(t, s)
-	defer nc.Close()
+		count := int32(0)
+		sub, err := js.Subscribe("a", func(m *nats.Msg) {
+			atomic.AddInt32(&count, 1)
+		}, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	var err error
+		sub.AutoUnsubscribe(10)
 
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "OBJECT",
-		Subjects: []string{"a"},
-		Storage:  nats.MemoryStorage,
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		dm := 0
+		singleLoss := func(m *nats.Msg) *nats.Msg {
+			if m.Header.Get("data") != "" {
+				dm++
+				if dm == 5 {
+					nc.RemoveMsgFilter("a")
+					return nil
+				}
+			}
+			return m
+		}
+		nc.AddMsgFilter("a", singleLoss)
 
-	count := int32(0)
-	sub, err := js.Subscribe("a", func(m *nats.Msg) {
-		atomic.AddInt32(&count, 1)
-	}, nats.OrderedConsumer(), nats.IdleHeartbeat(250*time.Millisecond))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		for i := 0; i < 20; i++ {
+			msg := nats.NewMsg("a")
+			msg.Data = []byte(fmt.Sprintf("msg_%d", i+1))
+			msg.Header.Set("data", "true")
+			js.PublishMsgAsync(msg)
+		}
 
-	// Ask to auto-unsub after 10 messages.
-	sub.AutoUnsubscribe(10)
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
 
-	// Set a message filter that will drop 1 message
-	dm := 0
-	singleLoss := func(m *nats.Msg) *nats.Msg {
-		if m.Header.Get("data") != "" {
-			dm++
-			if dm == 5 {
-				nc.RemoveMsgFilter("a")
-				return nil
+		deadline := time.Now().Add(time.Second)
+		ok := false
+		for time.Now().Before(deadline) {
+			if !sub.IsValid() {
+				ok = true
+				break
 			}
 		}
-		return m
-	}
-	nc.AddMsgFilter("a", singleLoss)
-
-	// Now produce 20 messages
-	for i := 0; i < 20; i++ {
-		msg := nats.NewMsg("a")
-		msg.Data = []byte(fmt.Sprintf("msg_%d", i+1))
-		msg.Header.Set("data", "true")
-		js.PublishMsgAsync(msg)
-	}
-
-	select {
-	case <-js.PublishAsyncComplete():
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive completion signal")
-	}
-
-	// Wait for the subscription to be marked as invalid
-	deadline := time.Now().Add(time.Second)
-	ok := false
-	for time.Now().Before(deadline) {
-		if !sub.IsValid() {
-			ok = true
-			break
+		if !ok {
+			t.Fatalf("Subscription still valid")
 		}
-	}
-	if !ok {
-		t.Fatalf("Subscription still valid")
-	}
 
-	// Wait a bit to make sure we are not receiving more than expected,
-	// and give a chance for the server to process the auto-unsub
-	// protocol.
-	time.Sleep(500 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 
-	if n := atomic.LoadInt32(&count); n != 10 {
-		t.Fatalf("Sub should have received only 10 messages, got %v", n)
-	}
+		if n := atomic.LoadInt32(&count); n != 10 {
+			t.Fatalf("Sub should have received only 10 messages, got %v", n)
+		}
 
-	// Now capture the in msgs count for the connection
-	inMsgs := nc.Stats().InMsgs
+		inMsgs := nc.Stats().InMsgs
 
-	// Send one more message and this count should not increase if the
-	// server had properly processed the auto-unsub after the
-	// reset of the ordered consumer. Use a different connection
-	// to send.
-	nc2, js2 := jsClient(t, s)
-	defer nc2.Close()
+		// Use a separate connection (against the same testservice instance) to
+		// publish — mirror the original test's nc2 path.
+		nc2 := dialInstance(t, inst)
+		js2, err := nc2.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	js2.Publish("a", []byte("should not be received"))
+		js2.Publish("a", []byte("should not be received"))
 
-	newInMsgs := nc.Stats().InMsgs
-	if inMsgs != newInMsgs {
-		t.Fatal("Seems that AUTO-UNSUB was not properly handled")
-	}
+		newInMsgs := nc.Stats().InMsgs
+		if inMsgs != newInMsgs {
+			t.Fatal("Seems that AUTO-UNSUB was not properly handled")
+		}
+	})
 }
 
 func TestJetStreamSubscribeReconnect(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	// Custom ReconnectHandler needed, so build manually rather than using
+	// withJSServer (which dials with default options).
+	c := newTester(t)
+	jsInst := c.CreateServer(t, true)
+	t.Cleanup(func() { jsInst.Destroy(t) })
 
 	rch := make(chan struct{}, 1)
-	nc, err := nats.Connect(s.ClientURL(),
+	nc, err := nats.Connect(jsInst.Servers[0].URL,
 		nats.ReconnectWait(50*time.Millisecond),
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			select {
@@ -341,13 +336,13 @@ func TestJetStreamSubscribeReconnect(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	defer nc.Close()
+	c.WaitForJetStream(t, nc)
 
 	js, err := nc.JetStream(nats.MaxWait(250 * time.Millisecond))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Create the stream using our client API.
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "TEST",
 		Subjects: []string{"foo"},
@@ -390,70 +385,61 @@ func TestJetStreamSubscribeReconnect(t *testing.T) {
 
 	sendAndReceive("msg1")
 
-	// Cause a disconnect...
+	// Cause a disconnect via CloseTCPConn (internal_testing helper).
 	nc.CloseTCPConn()
 
-	// Wait for reconnect
 	select {
 	case <-rch:
 	case <-time.After(time.Second):
 		t.Fatal("Did not reconnect")
 	}
 
-	// Make sure we can send and receive the msg
 	sendAndReceive("msg2")
 }
 
 func TestJetStreamFlowControlStalled(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
-
-	nc, js := jsClient(t, s)
-	defer nc.Close()
-
-	var err error
-
-	_, err = js.AddStream(&nats.StreamConfig{
-		Name:     "TEST",
-		Subjects: []string{"a"},
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	if _, err := js.SubscribeSync("a",
-		nats.DeliverSubject("ds"),
-		nats.Durable("dur"),
-		nats.IdleHeartbeat(200*time.Millisecond),
-		nats.EnableFlowControl()); err != nil {
-		t.Fatalf("Error on subscribe: %v", err)
-	}
-
-	// Drop all incoming FC control messages.
-	jsCtrlFC := 2
-	fcLoss := func(m *nats.Msg) *nats.Msg {
-		if _, ctrlType := nats.IsJSControlMessage(m); ctrlType == jsCtrlFC {
-			return nil
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-		return m
-	}
-	nc.AddMsgFilter("ds", fcLoss)
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     "TEST",
+			Subjects: []string{"a"},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	// Have a subscription on the FC subject to make sure that the library
-	// respond to the requests for un-stall
-	checkSub, err := nc.SubscribeSync("$JS.FC.>")
-	if err != nil {
-		t.Fatalf("Error on sub: %v", err)
-	}
+		if _, err := js.SubscribeSync("a",
+			nats.DeliverSubject("ds"),
+			nats.Durable("dur"),
+			nats.IdleHeartbeat(200*time.Millisecond),
+			nats.EnableFlowControl()); err != nil {
+			t.Fatalf("Error on subscribe: %v", err)
+		}
 
-	// Publish bunch of messages.
-	payload := make([]byte, 100*1024)
-	for i := 0; i < 250; i++ {
-		nc.Publish("a", payload)
-	}
+		jsCtrlFC := 2
+		fcLoss := func(m *nats.Msg) *nats.Msg {
+			if _, ctrlType := nats.IsJSControlMessage(m); ctrlType == jsCtrlFC {
+				return nil
+			}
+			return m
+		}
+		nc.AddMsgFilter("ds", fcLoss)
 
-	// Now wait that we respond to a stalled FC
-	if _, err := checkSub.NextMsg(2 * time.Second); err != nil {
-		t.Fatal("Library did not send FC")
-	}
+		checkSub, err := nc.SubscribeSync("$JS.FC.>")
+		if err != nil {
+			t.Fatalf("Error on sub: %v", err)
+		}
+
+		payload := make([]byte, 100*1024)
+		for i := 0; i < 250; i++ {
+			nc.Publish("a", payload)
+		}
+
+		if _, err := checkSub.NextMsg(2 * time.Second); err != nil {
+			t.Fatal("Library did not send FC")
+		}
+	})
 }

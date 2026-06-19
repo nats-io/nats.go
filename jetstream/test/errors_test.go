@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,52 +14,40 @@
 package test
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 func TestJetStreamErrors(t *testing.T) {
 	t.Run("API error", func(t *testing.T) {
-		conf := createConfFile(t, []byte(`
-			listen: 127.0.0.1:-1
-			no_auth_user: rip
-			jetstream: {max_mem_store: 64GB, max_file_store: 10TB}
-			accounts: {
-				JS: {
-					jetstream: enabled
-					users: [ {user: dlc, password: foo} ]
-				},
-				IU: {
-					users: [ {user: rip, password: bar} ]
-				},
-			}
-		`))
-		defer os.Remove(conf)
+		c := newTester(t)
+		accounts := `accounts: {
+  JS: {
+    jetstream: enabled
+    users: [ {user: dlc, password: foo} ]
+  },
+  IU: {
+    users: [ {user: rip, password: bar} ]
+  }
+}`
+		inst := c.CreateServer(t, true,
+			testservice.WithAccounts(accounts),
+			testservice.WithAuthorization("no_auth_user: rip"),
+			testservice.WithSystemAccount("# system_account intentionally unset"),
+		)
+		t.Cleanup(func() { inst.Destroy(t) })
 
-		s, _ := RunServerWithConfig(conf)
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		nc := dialInstance(t, inst)
+		js := newJetStream(t, nc)
+		ctx := newTesterCtx(t, 5*time.Second)
 
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
-
-		_, err = js.AccountInfo(ctx)
+		_, err := js.AccountInfo(ctx)
 		// check directly to var (backwards compatible)
 		if err != jetstream.ErrJetStreamNotEnabledForAccount {
 			t.Fatalf("Did not get the proper error, got %v", err)
@@ -139,73 +127,60 @@ func TestJetStreamErrors(t *testing.T) {
 	})
 
 	t.Run("test non-api error", func(t *testing.T) {
-		s := RunBasicJetStreamServer()
-		defer shutdownJSServerAndRemoveStorage(t, s)
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
 
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+			// stream with empty name
+			_, err := js.CreateStream(ctx, jetstream.StreamConfig{})
+			if err == nil {
+				t.Fatalf("Expected error, got nil")
+			}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		js, err := jetstream.New(nc)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
-		defer nc.Close()
+			// check directly to var (backwards compatible)
+			if err != jetstream.ErrStreamNameRequired {
+				t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
+			}
 
-		// stream with empty name
-		_, err = js.CreateStream(ctx, jetstream.StreamConfig{})
-		if err == nil {
-			t.Fatalf("Expected error, got nil")
-		}
+			// matching via errors.Is
+			if ok := errors.Is(err, jetstream.ErrStreamNameRequired); !ok {
+				t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
+			}
 
-		// check directly to var (backwards compatible)
-		if err != jetstream.ErrStreamNameRequired {
-			t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
-		}
+			// matching wrapped via error.Is
+			err2 := fmt.Errorf("custom error: %w", jetstream.ErrStreamNameRequired)
+			if ok := errors.Is(err2, jetstream.ErrStreamNameRequired); !ok {
+				t.Fatal("Expected wrapped ErrStreamNameRequired")
+			}
 
-		// matching via errors.Is
-		if ok := errors.Is(err, jetstream.ErrStreamNameRequired); !ok {
-			t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamNameRequired, err)
-		}
+			// via classic type assertion.
+			jserr, ok := err.(jetstream.JetStreamError)
+			if !ok {
+				t.Fatal("Expected a jetstream.JetStreamError")
+			}
+			if jserr.APIError() != nil {
+				t.Fatalf("Expected: empty APIError; got: %v", jserr.APIError())
+			}
 
-		// matching wrapped via error.Is
-		err2 := fmt.Errorf("custom error: %w", jetstream.ErrStreamNameRequired)
-		if ok := errors.Is(err2, jetstream.ErrStreamNameRequired); !ok {
-			t.Fatal("Expected wrapped ErrStreamNameRequired")
-		}
+			// matching to interface via errors.As(...)
+			var jserr2 jetstream.JetStreamError
+			ok = errors.As(err, &jserr2)
+			if !ok {
+				t.Fatal("Expected a jetstream.JetStreamError")
+			}
+			if jserr2.APIError() != nil {
+				t.Fatalf("Expected: empty APIError; got: %v", jserr2.APIError())
+			}
+			expectedMessage := "nats: stream name is required"
+			if jserr2.Error() != expectedMessage {
+				t.Fatalf("Expected: %v, got: %v", expectedMessage, jserr2.Error())
+			}
 
-		// via classic type assertion.
-		jserr, ok := err.(jetstream.JetStreamError)
-		if !ok {
-			t.Fatal("Expected a jetstream.JetStreamError")
-		}
-		if jserr.APIError() != nil {
-			t.Fatalf("Expected: empty APIError; got: %v", jserr.APIError())
-		}
-
-		// matching to interface via errors.As(...)
-		var jserr2 jetstream.JetStreamError
-		ok = errors.As(err, &jserr2)
-		if !ok {
-			t.Fatal("Expected a jetstream.JetStreamError")
-		}
-		if jserr2.APIError() != nil {
-			t.Fatalf("Expected: empty APIError; got: %v", jserr2.APIError())
-		}
-		expectedMessage := "nats: stream name is required"
-		if jserr2.Error() != expectedMessage {
-			t.Fatalf("Expected: %v, got: %v", expectedMessage, jserr2.Error())
-		}
-
-		// matching to concrete type via errors.As(...)
-		var aerr *jetstream.APIError
-		ok = errors.As(err, &aerr)
-		if ok {
-			t.Fatal("Expected ErrStreamNameRequired not to map to APIError")
-		}
+			// matching to concrete type via errors.As(...)
+			var aerr *jetstream.APIError
+			ok = errors.As(err, &aerr)
+			if ok {
+				t.Fatal("Expected ErrStreamNameRequired not to map to APIError")
+			}
+		})
 	})
-
 }

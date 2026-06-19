@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -2016,5 +2017,90 @@ func TestWriteBufferSizeDefault(t *testing.T) {
 
 	if nc.bw.limit != defaultBufSize {
 		t.Fatalf("Expected default write buffer limit of %d, got %d", defaultBufSize, nc.bw.limit)
+	}
+}
+
+// errInProcessProvider is a stub InProcessConnProvider that always fails. Used
+// to confirm Connect routes through InProcessConn and surfaces its errors.
+type errInProcessProvider struct{ err error }
+
+func (e *errInProcessProvider) InProcessConn() (net.Conn, error) { return nil, e.err }
+
+// TestInProcessServerOption verifies that nats.InProcessServer wires the
+// provider into Options. White-box because the embedded-server-backed
+// integration test (the original TestInProcessConn) is incompatible with the
+// remote-tester migration; the field-level test here keeps the option's
+// contract covered.
+func TestInProcessServerOption(t *testing.T) {
+	provider := &errInProcessProvider{err: errors.New("placeholder")}
+	opts := Options{}
+	if err := InProcessServer(provider)(&opts); err != nil {
+		t.Fatalf("InProcessServer option returned error: %v", err)
+	}
+	if opts.InProcessServer == nil {
+		t.Fatal("Expected InProcessServer to be stored on Options")
+	}
+	if opts.InProcessServer != InProcessConnProvider(provider) {
+		t.Fatal("Expected stored provider to equal supplied provider")
+	}
+}
+
+// TestInProcessServerConnectError verifies that errors from the provider's
+// InProcessConn() call surface from Connect (wrapped, errors.Is-compatible).
+func TestInProcessServerConnectError(t *testing.T) {
+	providerErr := errors.New("provider broken")
+	provider := &errInProcessProvider{err: providerErr}
+
+	// URL is required for Options parsing but ignored when InProcessServer is set.
+	_, err := Connect("nats://placeholder:4222", InProcessServer(provider))
+	if err == nil {
+		t.Fatal("Expected error from Connect when provider fails")
+	}
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("Expected error to wrap %v, got: %v", providerErr, err)
+	}
+}
+
+// TestParseServerURLPreservesTLSName covers the implicit-IP-URL → preserved-
+// hostname behavior in parseServerURL: when a gossiped (implicit) server URL
+// is an IP and the connection is secure, the entry's tlsName is set to the
+// hostname of the currently-connected URL so the TLS handshake (later, at
+// nats.go:2533) uses that hostname for ServerName verification instead of
+// the dialed IP. This is the same invariant the integration test
+// TestReconnectTLSHostNoIP exercises end-to-end (skipped: needs per-server
+// cluster config asymmetry the testservice does not expose); the white-box
+// form covers the same 14-line correctness boundary without the scaffolding.
+func TestParseServerURLPreservesTLSName(t *testing.T) {
+	current, err := url.Parse("tls://localhost:5222")
+	if err != nil {
+		t.Fatalf("could not parse current URL: %v", err)
+	}
+	nc := &Conn{current: &Server{URL: current}}
+
+	cases := []struct {
+		name         string
+		input        string
+		implicit     bool
+		saveTLSName  bool
+		expectedName string
+	}{
+		{"gossiped IP secure", "tls://127.0.0.1:5224", true, true, "localhost"},
+		{"gossiped hostname secure", "tls://other.example.com:5224", true, true, ""},
+		{"gossiped IP insecure", "tls://127.0.0.1:5224", true, false, ""},
+		{"explicit IP", "tls://127.0.0.1:5224", false, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := nc.parseServerURL(tc.input, tc.implicit, tc.saveTLSName)
+			if err != nil {
+				t.Fatalf("parseServerURL: %v", err)
+			}
+			if s.tlsName != tc.expectedName {
+				t.Fatalf("tlsName = %q, want %q", s.tlsName, tc.expectedName)
+			}
+			if s.isImplicit != tc.implicit {
+				t.Fatalf("isImplicit = %v, want %v", s.isImplicit, tc.implicit)
+			}
+		})
 	}
 }

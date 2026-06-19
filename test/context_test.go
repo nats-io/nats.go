@@ -1,4 +1,4 @@
-// Copyright 2012-2022 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/testclient/testservice"
 )
 
 func TestContextRequestWithNilConnection(t *testing.T) {
@@ -115,26 +116,16 @@ func testContextRequestWithTimeout(t *testing.T, nc *nats.Conn) {
 }
 
 func TestContextRequestWithTimeout(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	testContextRequestWithTimeout(t, nc)
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		testContextRequestWithTimeout(t, nc)
+	})
 }
 
 func TestOldContextRequestWithTimeout(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
-
-	testContextRequestWithTimeout(t, nc)
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc := dialInstance(t, inst, nats.UseOldRequestStyle())
+		testContextRequestWithTimeout(t, nc)
+	})
 }
 
 func testContextRequestWithTimeoutCanceled(t *testing.T, nc *nats.Conn) {
@@ -186,26 +177,16 @@ func testContextRequestWithTimeoutCanceled(t *testing.T, nc *nats.Conn) {
 }
 
 func TestContextRequestWithTimeoutCanceled(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	testContextRequestWithTimeoutCanceled(t, nc)
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		testContextRequestWithTimeoutCanceled(t, nc)
+	})
 }
 
 func TestOldContextRequestWithTimeoutCanceled(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
-
-	testContextRequestWithTimeoutCanceled(t, nc)
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc := dialInstance(t, inst, nats.UseOldRequestStyle())
+		testContextRequestWithTimeoutCanceled(t, nc)
+	})
 }
 
 func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
@@ -288,57 +269,42 @@ func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 }
 
 func TestContextOldRequestClosed(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc := dialInstance(t, inst, nats.UseOldRequestStyle())
 
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
+		ctx, cancelCB := context.WithTimeout(context.Background(), time.Second)
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	ctx, cancelCB := context.WithTimeout(context.Background(), time.Second)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	errCh := make(chan error, 1)
-	start := time.Now()
-	go func() {
-		sub, _ := nc.SubscribeSync("checkClose")
-		defer sub.Unsubscribe()
-		_, err = nc.RequestWithContext(ctx, "checkClose", []byte("should be kicked out on close"))
-		errCh <- err
-	}()
-	time.Sleep(100 * time.Millisecond)
-	nc.Close()
-	if e := <-errCh; e != nats.ErrConnectionClosed {
-		t.Fatalf("Unexpected error: %v", e)
-	}
-	if dur := time.Since(start); dur >= time.Second {
-		t.Fatalf("Request took too long to bail out: %v", dur)
-	}
+		errCh := make(chan error, 1)
+		start := time.Now()
+		go func() {
+			sub, _ := nc.SubscribeSync("checkClose")
+			defer sub.Unsubscribe()
+			_, err := nc.RequestWithContext(ctx, "checkClose", []byte("should be kicked out on close"))
+			errCh <- err
+		}()
+		time.Sleep(100 * time.Millisecond)
+		nc.Close()
+		if e := <-errCh; e != nats.ErrConnectionClosed {
+			t.Fatalf("Unexpected error: %v", e)
+		}
+		if dur := time.Since(start); dur >= time.Second {
+			t.Fatalf("Request took too long to bail out: %v", dur)
+		}
+	})
 }
 
 func TestContextRequestWithCancel(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	testContextRequestWithCancel(t, nc)
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		testContextRequestWithCancel(t, nc)
+	})
 }
 
 func TestOldContextRequestWithCancel(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
-
-	testContextRequestWithCancel(t, nc)
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc := dialInstance(t, inst, nats.UseOldRequestStyle())
+		testContextRequestWithCancel(t, nc)
+	})
 }
 
 func testContextRequestWithDeadline(t *testing.T, nc *nats.Conn) {
@@ -387,435 +353,392 @@ func testContextRequestWithDeadline(t *testing.T, nc *nats.Conn) {
 }
 
 func TestContextRequestWithDeadline(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	testContextRequestWithDeadline(t, nc)
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		testContextRequestWithDeadline(t, nc)
+	})
 }
 
 func TestOldContextRequestWithDeadline(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
-
-	testContextRequestWithDeadline(t, nc)
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc := dialInstance(t, inst, nats.UseOldRequestStyle())
+		testContextRequestWithDeadline(t, nc)
+	})
 }
 
 func TestContextSubNextMsgWithTimeout(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	sub, err := nc.SubscribeSync("slow")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	for i := 0; i < 2; i++ {
-		err := nc.Publish("slow", []byte("OK"))
+		sub, err := nc.SubscribeSync("slow")
 		if err != nil {
-			t.Fatalf("Expected publish to not fail: %s", err)
+			t.Fatalf("Expected to be able to subscribe: %s", err)
 		}
-		// Enough time to get a couple of messages
-		time.Sleep(40 * time.Millisecond)
 
-		msg, err := sub.NextMsgWithContext(ctx)
-		if err != nil {
-			t.Fatalf("Expected to receive message: %s", err)
+		for i := 0; i < 2; i++ {
+			err := nc.Publish("slow", []byte("OK"))
+			if err != nil {
+				t.Fatalf("Expected publish to not fail: %s", err)
+			}
+			// Enough time to get a couple of messages
+			time.Sleep(40 * time.Millisecond)
+
+			msg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Expected to receive message: %s", err)
+			}
+			got := string(msg.Data)
+			expected := "OK"
+			if got != expected {
+				t.Errorf("Expected to receive %s, got: %s", expected, got)
+			}
 		}
-		got := string(msg.Data)
-		expected := "OK"
-		if got != expected {
-			t.Errorf("Expected to receive %s, got: %s", expected, got)
+
+		// Third message will fail because the context will be canceled by now
+		_, err = sub.NextMsgWithContext(ctx)
+		if err == nil {
+			t.Fatal("Expected to fail receiving a message")
 		}
-	}
 
-	// Third message will fail because the context will be canceled by now
-	_, err = sub.NextMsgWithContext(ctx)
-	if err == nil {
-		t.Fatal("Expected to fail receiving a message")
-	}
-
-	// Reported error is "context deadline exceeded" from Context package,
-	// which implements net.Error Timeout interface.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	timeoutErr, ok := err.(timeoutError)
-	if !ok || !timeoutErr.Timeout() {
-		t.Errorf("Expected to have a timeout error")
-	}
-	expected := `context deadline exceeded`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
+		// Reported error is "context deadline exceeded" from Context package,
+		// which implements net.Error Timeout interface.
+		type timeoutError interface {
+			Timeout() bool
+		}
+		timeoutErr, ok := err.(timeoutError)
+		if !ok || !timeoutErr.Timeout() {
+			t.Errorf("Expected to have a timeout error")
+		}
+		expected := `context deadline exceeded`
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Expected %q error, got: %q", expected, err.Error())
+		}
+	})
 }
 
 func TestContextSubNextMsgWithTimeoutCanceled(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	ctx, cancelCB := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	sub, err := nc.SubscribeSync("fast")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	for i := 0; i < 2; i++ {
-		err := nc.Publish("fast", []byte("OK"))
+		sub, err := nc.SubscribeSync("fast")
 		if err != nil {
-			t.Fatalf("Expected publish to not fail: %s", err)
+			t.Fatalf("Expected to be able to subscribe: %s", err)
 		}
-		// Enough time to get a couple of messages
-		time.Sleep(40 * time.Millisecond)
 
-		msg, err := sub.NextMsgWithContext(ctx)
-		if err != nil {
-			t.Fatalf("Expected to receive message: %s", err)
+		for i := 0; i < 2; i++ {
+			err := nc.Publish("fast", []byte("OK"))
+			if err != nil {
+				t.Fatalf("Expected publish to not fail: %s", err)
+			}
+			// Enough time to get a couple of messages
+			time.Sleep(40 * time.Millisecond)
+
+			msg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Expected to receive message: %s", err)
+			}
+			got := string(msg.Data)
+			expected := "OK"
+			if got != expected {
+				t.Errorf("Expected to receive %s, got: %s", expected, got)
+			}
 		}
-		got := string(msg.Data)
-		expected := "OK"
-		if got != expected {
-			t.Errorf("Expected to receive %s, got: %s", expected, got)
+
+		// Cancel the context already so that rest of NextMsg calls fail.
+		cancelCB()
+
+		_, err = sub.NextMsgWithContext(ctx)
+		if err == nil {
+			t.Fatal("Expected request with timeout context to fail")
 		}
-	}
 
-	// Cancel the context already so that rest of NextMsg calls fail.
-	cancelCB()
-
-	_, err = sub.NextMsgWithContext(ctx)
-	if err == nil {
-		t.Fatal("Expected request with timeout context to fail")
-	}
-
-	// Reported error is "context canceled" from Context package,
-	// which is not a timeout error.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	if _, ok := err.(timeoutError); ok {
-		t.Errorf("Expected to not have a timeout error")
-	}
-	expected := `context canceled`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
+		// Reported error is "context canceled" from Context package,
+		// which is not a timeout error.
+		type timeoutError interface {
+			Timeout() bool
+		}
+		if _, ok := err.(timeoutError); ok {
+			t.Errorf("Expected to not have a timeout error")
+		}
+		expected := `context canceled`
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Expected %q error, got: %q", expected, err.Error())
+		}
+	})
 }
 
 func TestContextSubNextMsgWithCancel(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithCancel(context.Background())
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
+		// timer which cancels the context though can also be arbitrarily extended
+		time.AfterFunc(100*time.Millisecond, func() {
+			cancelCB()
+		})
 
-	ctx, cancelCB := context.WithCancel(context.Background())
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
+		sub1, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
+		sub2, err := nc.SubscribeSync("bar")
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
 
-	// timer which cancels the context though can also be arbitrarily extended
-	time.AfterFunc(100*time.Millisecond, func() {
-		cancelCB()
-	})
-
-	sub1, err := nc.SubscribeSync("foo")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-	sub2, err := nc.SubscribeSync("bar")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	for i := 0; i < 2; i++ {
-		err := nc.Publish("foo", []byte("OK"))
+		for i := 0; i < 2; i++ {
+			err := nc.Publish("foo", []byte("OK"))
+			if err != nil {
+				t.Fatalf("Expected publish to not fail: %s", err)
+			}
+			resp, err := sub1.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Expected request with context to not fail: %s", err)
+			}
+			got := string(resp.Data)
+			expected := "OK"
+			if got != expected {
+				t.Errorf("Expected to receive %s, got: %s", expected, got)
+			}
+		}
+		err = nc.Publish("bar", []byte("Also OK"))
 		if err != nil {
 			t.Fatalf("Expected publish to not fail: %s", err)
 		}
-		resp, err := sub1.NextMsgWithContext(ctx)
+
+		resp, err := sub2.NextMsgWithContext(ctx)
 		if err != nil {
 			t.Fatalf("Expected request with context to not fail: %s", err)
 		}
 		got := string(resp.Data)
-		expected := "OK"
+		expected := "Also OK"
 		if got != expected {
 			t.Errorf("Expected to receive %s, got: %s", expected, got)
 		}
-	}
-	err = nc.Publish("bar", []byte("Also OK"))
-	if err != nil {
-		t.Fatalf("Expected publish to not fail: %s", err)
-	}
 
-	resp, err := sub2.NextMsgWithContext(ctx)
-	if err != nil {
-		t.Fatalf("Expected request with context to not fail: %s", err)
-	}
-	got := string(resp.Data)
-	expected := "Also OK"
-	if got != expected {
-		t.Errorf("Expected to receive %s, got: %s", expected, got)
-	}
+		// We do not have another message pending so timer will
+		// cancel the context.
+		_, err = sub2.NextMsgWithContext(ctx)
+		if err == nil {
+			t.Fatal("Expected request with context to fail")
+		}
 
-	// We do not have another message pending so timer will
-	// cancel the context.
-	_, err = sub2.NextMsgWithContext(ctx)
-	if err == nil {
-		t.Fatal("Expected request with context to fail")
-	}
-
-	// Reported error is "context canceled" from Context package,
-	// which is not a timeout error.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	if _, ok := err.(timeoutError); ok {
-		t.Errorf("Expected to not have a timeout error")
-	}
-	expected = `context canceled`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
+		// Reported error is "context canceled" from Context package,
+		// which is not a timeout error.
+		type timeoutError interface {
+			Timeout() bool
+		}
+		if _, ok := err.(timeoutError); ok {
+			t.Errorf("Expected to not have a timeout error")
+		}
+		expected = `context canceled`
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Expected %q error, got: %q", expected, err.Error())
+		}
+	})
 }
 
 func TestContextSubNextMsgWithDeadline(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		deadline := time.Now().Add(100 * time.Millisecond)
+		ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	deadline := time.Now().Add(100 * time.Millisecond)
-	ctx, cancelCB := context.WithDeadline(context.Background(), deadline)
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	sub, err := nc.SubscribeSync("slow")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	for i := 0; i < 2; i++ {
-		err := nc.Publish("slow", []byte("OK"))
+		sub, err := nc.SubscribeSync("slow")
 		if err != nil {
-			t.Fatalf("Expected publish to not fail: %s", err)
+			t.Fatalf("Expected to be able to subscribe: %s", err)
 		}
-		// Enough time to get a couple of messages
-		time.Sleep(40 * time.Millisecond)
 
-		msg, err := sub.NextMsgWithContext(ctx)
-		if err != nil {
-			t.Fatalf("Expected to receive message: %s", err)
+		for i := 0; i < 2; i++ {
+			err := nc.Publish("slow", []byte("OK"))
+			if err != nil {
+				t.Fatalf("Expected publish to not fail: %s", err)
+			}
+			// Enough time to get a couple of messages
+			time.Sleep(40 * time.Millisecond)
+
+			msg, err := sub.NextMsgWithContext(ctx)
+			if err != nil {
+				t.Fatalf("Expected to receive message: %s", err)
+			}
+			got := string(msg.Data)
+			expected := "OK"
+			if got != expected {
+				t.Errorf("Expected to receive %s, got: %s", expected, got)
+			}
 		}
-		got := string(msg.Data)
-		expected := "OK"
-		if got != expected {
-			t.Errorf("Expected to receive %s, got: %s", expected, got)
+
+		// Third message will fail because the context will be canceled by now
+		_, err = sub.NextMsgWithContext(ctx)
+		if err == nil {
+			t.Fatal("Expected to fail receiving a message")
 		}
-	}
 
-	// Third message will fail because the context will be canceled by now
-	_, err = sub.NextMsgWithContext(ctx)
-	if err == nil {
-		t.Fatal("Expected to fail receiving a message")
-	}
-
-	// Reported error is "context deadline exceeded" from Context package,
-	// which implements net.Error Timeout interface.
-	type timeoutError interface {
-		Timeout() bool
-	}
-	timeoutErr, ok := err.(timeoutError)
-	if !ok || !timeoutErr.Timeout() {
-		t.Errorf("Expected to have a timeout error")
-	}
-	expected := `context deadline exceeded`
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected %q error, got: %q", expected, err.Error())
-	}
+		// Reported error is "context deadline exceeded" from Context package,
+		// which implements net.Error Timeout interface.
+		type timeoutError interface {
+			Timeout() bool
+		}
+		timeoutErr, ok := err.(timeoutError)
+		if !ok || !timeoutErr.Timeout() {
+			t.Errorf("Expected to have a timeout error")
+		}
+		expected := `context deadline exceeded`
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Expected %q error, got: %q", expected, err.Error())
+		}
+	})
 }
 
 func TestContextRequestConnClosed(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithCancel(context.Background())
+		defer cancelCB()
 
-	nc := NewDefaultConnection(t)
-	ctx, cancelCB := context.WithCancel(context.Background())
-	defer cancelCB()
+		time.AfterFunc(100*time.Millisecond, func() {
+			cancelCB()
+		})
 
-	time.AfterFunc(100*time.Millisecond, func() {
-		cancelCB()
+		nc.Close()
+		_, err := nc.RequestWithContext(ctx, "foo", []byte(""))
+		if err == nil {
+			t.Fatal("Expected request to fail with error")
+		}
+		if err != nats.ErrConnectionClosed {
+			t.Errorf("Expected request to fail with connection closed error: %s", err)
+		}
 	})
-
-	nc.Close()
-	_, err := nc.RequestWithContext(ctx, "foo", []byte(""))
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrConnectionClosed {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
 }
 
 func TestContextBadSubscription(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithCancel(context.Background())
+		defer cancelCB()
+		time.AfterFunc(100*time.Millisecond, func() {
+			cancelCB()
+		})
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-	ctx, cancelCB := context.WithCancel(context.Background())
-	defer cancelCB()
-	time.AfterFunc(100*time.Millisecond, func() {
-		cancelCB()
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
+
+		err = sub.Unsubscribe()
+		if err != nil {
+			t.Fatalf("Expected to be able to unsubscribe: %s", err)
+		}
+
+		_, err = sub.NextMsgWithContext(ctx)
+		if err == nil {
+			t.Fatal("Expected to fail getting next message with context")
+		}
+
+		if err != nats.ErrBadSubscription {
+			t.Errorf("Expected request to fail with connection closed error: %s", err)
+		}
 	})
-
-	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	err = sub.Unsubscribe()
-	if err != nil {
-		t.Fatalf("Expected to be able to unsubscribe: %s", err)
-	}
-
-	_, err = sub.NextMsgWithContext(ctx)
-	if err == nil {
-		t.Fatal("Expected to fail getting next message with context")
-	}
-
-	if err != nats.ErrBadSubscription {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
 }
 
 func TestFlushWithContext(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+		ctx := context.Background()
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	ctx := context.Background()
-
-	// No context should error.
-	//lint:ignore SA1012 testing that passing nil fails
-	if err := nc.FlushWithContext(nil); err != nats.ErrInvalidContext {
-		t.Fatalf("Expected '%v', got '%v'", nats.ErrInvalidContext, err)
-	}
-	// A context with no deadline set should error also.
-	if err := nc.FlushWithContext(ctx); err != nats.ErrNoDeadlineContext {
-		t.Fatalf("Expected '%v', got '%v'", nats.ErrNoDeadlineContext, err)
-	}
-
-	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	cancel()
-
-	// A closed context should error.
-	if err := nc.FlushWithContext(dctx); err != context.Canceled {
-		t.Fatalf("Expected '%v', got '%v'", context.Canceled, err)
-	}
-
-	t.Run("flush on closed connection", func(t *testing.T) {
-		nc2 := NewDefaultConnection(t)
-		nc2.Close()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		defer cancel()
-
-		err := nc2.FlushWithContext(ctx)
-		if err != nats.ErrConnectionClosed {
-			t.Fatalf("Expected '%v', got '%v'", nats.ErrConnectionClosed, err)
+		// No context should error.
+		//lint:ignore SA1012 testing that passing nil fails
+		if err := nc.FlushWithContext(nil); err != nats.ErrInvalidContext {
+			t.Fatalf("Expected '%v', got '%v'", nats.ErrInvalidContext, err)
 		}
+		// A context with no deadline set should error also.
+		if err := nc.FlushWithContext(ctx); err != nats.ErrNoDeadlineContext {
+			t.Fatalf("Expected '%v', got '%v'", nats.ErrNoDeadlineContext, err)
+		}
+
+		dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		cancel()
+
+		// A closed context should error.
+		if err := nc.FlushWithContext(dctx); err != context.Canceled {
+			t.Fatalf("Expected '%v', got '%v'", context.Canceled, err)
+		}
+
+		t.Run("flush on closed connection", func(t *testing.T) {
+			nc2 := dialInstance(t, inst)
+			nc2.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+
+			err := nc2.FlushWithContext(ctx)
+			if err != nats.ErrConnectionClosed {
+				t.Fatalf("Expected '%v', got '%v'", nats.ErrConnectionClosed, err)
+			}
+		})
 	})
 }
 
 func TestUnsubscribeAndNextMsgWithContext(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancelCB := context.WithCancel(context.Background())
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
-
-	ctx, cancelCB := context.WithCancel(context.Background())
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	sub, err := nc.SubscribeSync("foo")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-	sub.Unsubscribe()
-	if _, err = sub.NextMsgWithContext(ctx); err != nats.ErrBadSubscription {
-		t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err)
-	}
-
-	ctx, cancelCB = context.WithCancel(context.Background())
-	defer cancelCB() // should always be called, not discarded, to prevent context leak
-
-	sub, err = nc.SubscribeSync("foo")
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	// Now make sure we get same error when unsubscribing from separate routine
-	// while in the call.
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
+		sub, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
 		sub.Unsubscribe()
-		wg.Done()
-	}()
+		if _, err = sub.NextMsgWithContext(ctx); err != nats.ErrBadSubscription {
+			t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err)
+		}
 
-	if _, err = sub.NextMsgWithContext(ctx); err != nats.ErrBadSubscription {
-		t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err)
-	}
-	wg.Wait()
+		ctx, cancelCB = context.WithCancel(context.Background())
+		defer cancelCB() // should always be called, not discarded, to prevent context leak
+
+		sub, err = nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
+
+		// Now make sure we get same error when unsubscribing from separate routine
+		// while in the call.
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			sub.Unsubscribe()
+			wg.Done()
+		}()
+
+		if _, err = sub.NextMsgWithContext(ctx); err != nats.ErrBadSubscription {
+			t.Fatalf("Expected '%v', but got: '%v'", nats.ErrBadSubscription, err)
+		}
+		wg.Wait()
+	})
 }
 
 func TestContextInvalid(t *testing.T) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		//lint:ignore SA1012 testing that passing nil fails
+		_, err := nc.RequestWithContext(nil, "foo", []byte(""))
+		if err == nil {
+			t.Fatal("Expected request to fail with error")
+		}
+		if err != nats.ErrInvalidContext {
+			t.Errorf("Expected request to fail with connection closed error: %s", err)
+		}
 
-	nc := NewDefaultConnection(t)
-	defer nc.Close()
+		sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
+		if err != nil {
+			t.Fatalf("Expected to be able to subscribe: %s", err)
+		}
 
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err := nc.RequestWithContext(nil, "foo", []byte(""))
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
-
-	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {})
-	if err != nil {
-		t.Fatalf("Expected to be able to subscribe: %s", err)
-	}
-
-	//lint:ignore SA1012 testing that passing nil fails
-	_, err = sub.NextMsgWithContext(nil)
-	if err == nil {
-		t.Fatal("Expected request to fail with error")
-	}
-	if err != nats.ErrInvalidContext {
-		t.Errorf("Expected request to fail with connection closed error: %s", err)
-	}
+		//lint:ignore SA1012 testing that passing nil fails
+		_, err = sub.NextMsgWithContext(nil)
+		if err == nil {
+			t.Fatal("Expected request to fail with error")
+		}
+		if err != nats.ErrInvalidContext {
+			t.Errorf("Expected request to fail with connection closed error: %s", err)
+		}
+	})
 }
