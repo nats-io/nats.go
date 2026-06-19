@@ -616,6 +616,21 @@ func TestConsumerPinned(t *testing.T) {
 
 			count.Store(0)
 			ip.Stop()
+			// Wait for ip's queued pull requests to drain server-side before
+			// publishing. Otherwise the server can dispatch one of the new
+			// messages to ip's stale pull (delivered to a dead inbox →
+			// ack_pending until AckWait), leaving np with 99 of 100 and the
+			// test hanging on the 10s timeout.
+			checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+				ci, err := c.Info(ctx)
+				if err != nil {
+					return err
+				}
+				if ci.NumWaiting > 1 {
+					return fmt.Errorf("waiting for ip pull drain: NumWaiting=%d", ci.NumWaiting)
+				}
+				return nil
+			})
 			for range 100 {
 				_, err = js.Publish(ctx, "FOO.bar", []byte("hello"))
 				if err != nil {
