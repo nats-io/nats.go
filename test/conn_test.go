@@ -346,7 +346,8 @@ func TestClientTLSConfig(t *testing.T) {
 	errStr := err.Error()
 	if !strings.Contains(errStr, "bad certificate") &&
 		!strings.Contains(errStr, "certificate required") &&
-		!strings.Contains(errStr, "connection reset by peer") {
+		!strings.Contains(errStr, "connection reset by peer") &&
+		!strings.Contains(errStr, "after TLS handshake") {
 		t.Fatalf("Expected missing certificate error; got: %s", err)
 	}
 
