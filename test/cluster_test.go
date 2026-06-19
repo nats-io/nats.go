@@ -791,7 +791,16 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	connHandler := func(_ *nats.Conn) {
 		chch <- true
 	}
+	// SkipHostLookup keeps srvPool entries 1:1 with the bootstrap URL and the
+	// gossiped connect_urls. Without it, nats.go's parseServerURL does
+	// net.LookupHost on any non-IP host (the bootstrap "nats://nats:port" and
+	// every gossiped hostname URL) and adds every resolved IP as a separate
+	// pool entry alongside the original — inflating the pool with bridge-IP
+	// duplicates in CI's docker bridge mode and on dual-stack hosts that
+	// expand "localhost" to both 127.0.0.1 and ::1. The original embedded
+	// test sidestepped this because nats.DefaultURL is an IP literal.
 	nc, err := nats.Connect(s1Url,
+		nats.SkipHostLookup(),
 		nats.ReconnectHandler(connHandler),
 		nats.DiscoveredServersHandler(func(_ *nats.Conn) {
 			ch <- true
@@ -807,34 +816,24 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 		t.Fatal("New server callback was not invoked")
 	}
 
-	// Compare pool membership by PORT only. Each spawned tester server has a
-	// unique client port, but nats-server can advertise multiple URLs for the
-	// same server (configured client_advertise PLUS the bind interface IPs).
-	// Locally only the configured URL appears, but in CI's docker bridge mode
-	// both forms appear. The test cares about which servers are in the pool,
-	// not which URL form represents them, so we normalize on port.
-	portsOf := func(urls []string) map[string]struct{} {
-		out := make(map[string]struct{}, len(urls))
-		for _, u := range urls {
-			if _, port, err := net.SplitHostPort(strings.TrimPrefix(u, "nats://")); err == nil {
-				out[port] = struct{}{}
-			}
-		}
-		return out
-	}
 	checkPool := func(expected []string) {
-		want := portsOf(expected)
+		// Don't use discovered here, but Servers to have the full list.
+		// Also, there may be cases where the mesh is not formed yet,
+		// so try again on failure.
 		var (
 			ds      []string
 			timeout = time.Now().Add(5 * time.Second)
 		)
 		for time.Now().Before(timeout) {
 			ds = nc.Servers()
-			got := portsOf(ds)
-			if len(got) == len(want) {
+			if len(ds) == len(expected) {
+				m := make(map[string]struct{}, len(ds))
+				for _, url := range ds {
+					m[url] = struct{}{}
+				}
 				ok := true
-				for p := range want {
-					if _, present := got[p]; !present {
+				for _, url := range expected {
+					if _, present := m[url]; !present {
 						ok = false
 						break
 					}
@@ -845,7 +844,7 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		stackFatalf(t, "Expected ports for %v, got %v", expected, ds)
+		stackFatalf(t, "Expected %v, got %v", expected, ds)
 	}
 	// Verify that we now know about s2
 	checkPool([]string{s1Url, s2Url})
@@ -868,26 +867,18 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	}
 	checkPool([]string{s1Url, s2Url, s3Url})
 
-	// Check the server we reconnected to. Compare by port for the same reason
-	// checkPool above does (the bridge-IP form of the URL may be what's
-	// reported in CI, while the dialed/expected URLs use the hostname form).
-	portOf := func(u string) string {
-		_, port, _ := net.SplitHostPort(strings.TrimPrefix(u, "nats://"))
-		return port
-	}
+	// Check the server we reconnected to.
 	reConnectedTo := nc.ConnectedUrl()
-	reConnectedPort := portOf(reConnectedTo)
 	expected := []string{s1Url}
 	restartS2 := false
-	switch reConnectedPort {
-	case portOf(s2Url):
+	if reConnectedTo == s2Url {
 		restartS2 = true
 		clusterInst.StopServer(t, s2)
 		expected = append(expected, s3Url)
-	case portOf(s3Url):
+	} else if reConnectedTo == s3Url {
 		clusterInst.StopServer(t, s3)
 		expected = append(expected, s2Url)
-	default:
+	} else {
 		t.Fatalf("Unexpected server client has reconnected to: %v", reConnectedTo)
 	}
 	// Wait for reconnect
