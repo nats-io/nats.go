@@ -32,7 +32,7 @@ func main() {
 	cons, err := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
 		Durable:       "orders-reader",
 		DeliverPolicy: jetstream.DeliverAllPolicy,
-		AckPolicy:     jetstream.AckNonePolicy,
+		AckPolicy:     jetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		panic(err)

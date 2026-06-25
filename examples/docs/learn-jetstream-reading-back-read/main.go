@@ -59,6 +59,11 @@ func main() {
 		}
 		fmt.Printf("stream seq=%d consumer seq=%d payload=%s\n",
 			meta.Sequence.Stream, meta.Sequence.Consumer, string(msg.Data()))
+
+		// Acknowledge so the server advances the consumer past this message.
+		if err := msg.Ack(); err != nil {
+			panic(err)
+		}
 	}
 	if msgs.Error() != nil {
 		panic(msgs.Error())
