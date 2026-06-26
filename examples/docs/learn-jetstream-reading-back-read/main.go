@@ -28,7 +28,7 @@ func main() {
 
 	// NATS-DOC-START
 	// Bind to the durable consumer created earlier.
-	cons, err := js.Consumer(ctx, "ORDERS", "orders-reader")
+	cons, err := js.Consumer(ctx, "ORDERS", "billing")
 	if err != nil {
 		panic(err)
 	}

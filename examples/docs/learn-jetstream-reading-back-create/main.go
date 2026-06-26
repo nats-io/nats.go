@@ -30,7 +30,7 @@ func main() {
 	// Create a durable consumer on the ORDERS stream. The durable name lets a
 	// reader bind to the same consumer later and pick up where it left off.
 	cons, err := js.CreateOrUpdateConsumer(ctx, "ORDERS", jetstream.ConsumerConfig{
-		Durable:       "orders-reader",
+		Durable:       "billing",
 		DeliverPolicy: jetstream.DeliverAllPolicy,
 		AckPolicy:     jetstream.AckExplicitPolicy,
 	})
