@@ -715,14 +715,29 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 		return kv.Update(key, value, e.Revision())
 	}
 
-	// Check if the expected last subject sequence is not zero which implies
-	// the key already exists.
-	if errors.Is(err, ErrKeyExists) {
-		jserr := ErrKeyExists.(*jsError)
-		return 0, fmt.Errorf("%w: %s", err, jserr.message)
+	// A wrong-last-sequence response means the key already exists.
+	if isWrongLastSeqErr(err) {
+		// 10071 matches ErrKeyExists via its code and keeps its original
+		// message; 10164 (replicated streams) must wrap ErrKeyExists explicitly.
+		if errors.Is(err, ErrKeyExists) {
+			jserr := ErrKeyExists.(*jsError)
+			return 0, fmt.Errorf("%w: %s", err, jserr.message)
+		}
+		return 0, fmt.Errorf("%w: %w", err, ErrKeyExists)
 	}
 
 	return 0, err
+}
+
+// isWrongLastSeqErr reports whether err is a "wrong last sequence" API error.
+// Replicated (R>1) streams report CAS conflicts as 10164 instead of 10071.
+func isWrongLastSeqErr(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.ErrorCode == JSErrCodeStreamWrongLastSequence ||
+		apiErr.ErrorCode == JSErrCodeStreamWrongLastSequenceConstant
 }
 
 // Update will update the value if the latest revision matches.

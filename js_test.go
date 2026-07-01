@@ -22,6 +22,19 @@ import (
 	"testing"
 )
 
+func TestIsWrongLastSeqErr(t *testing.T) {
+	// 10164 is the replicated-stream variant of the 10071 "wrong last
+	// sequence" CAS conflict; both must be recognized (issue #2097).
+	for _, code := range []ErrorCode{JSErrCodeStreamWrongLastSequence, JSErrCodeStreamWrongLastSequenceConstant} {
+		if !isWrongLastSeqErr(&APIError{Code: 400, ErrorCode: code}) {
+			t.Fatalf("err code %d should be recognized as wrong-last-sequence", code)
+		}
+	}
+	if isWrongLastSeqErr(&APIError{Code: 404, ErrorCode: JSErrCodeStreamNotFound}) {
+		t.Fatal("unrelated error code should not be recognized")
+	}
+}
+
 func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	// This test checks the conversion of a "direct get message" response
 	// to a JS message based on the content of specific NATS headers.
