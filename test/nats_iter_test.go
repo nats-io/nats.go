@@ -79,6 +79,41 @@ func TestSubscribeIterator(t *testing.T) {
 		}
 	})
 
+	t.Run("timeout keeps yielding only ErrTimeout", func(t *testing.T) {
+		s := RunServerOnPort(-1)
+		defer s.Shutdown()
+
+		nc, err := nats.Connect(s.ClientURL(), nats.PermissionErrOnSubscribe(true))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		sub, err := nc.SubscribeSync("foo")
+		if err != nil {
+			t.Fatal("Failed to subscribe: ", err)
+		}
+		defer sub.Unsubscribe()
+
+		// No message is ever published, so every NextMsg call times out.
+		// ErrTimeout is not fatal, so a consumer is allowed to keep iterating.
+		// In that case the iterator must only ever yield (nil, ErrTimeout); it
+		// must not yield a spurious (nil, nil) pair between timeouts.
+		iterations := 0
+		for msg, err := range sub.MsgsTimeout(50 * time.Millisecond) {
+			if err == nil {
+				t.Fatalf("iteration %d: got msg=%v with nil error, expected ErrTimeout", iterations, msg)
+			}
+			if !errors.Is(err, nats.ErrTimeout) {
+				t.Fatalf("iteration %d: unexpected error: %v", iterations, err)
+			}
+			iterations++
+			if iterations >= 3 {
+				break
+			}
+		}
+	})
+
 	t.Run("no timeout", func(t *testing.T) {
 		s := RunServerOnPort(-1)
 		defer s.Shutdown()
