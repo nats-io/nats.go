@@ -253,15 +253,15 @@ fmt.Println(cachedInfo.Config.Name)
 
 Both pull and push consumers are supported in `jetstream` package. For most use
 cases, we recommend using pull consumers as they allow for more fine-grained
-control over the message processing and can often prevent issues such as e.g.
-slow consumers. However, unlike the JetStream API in `nats` package, pull
-consumers allow for continuous message retrieval (similarly to how
-`nats.Subscribe()` works). Because of that, push consumers can be easily
-replaced by pull consumers for most of the use cases. Push consumers are
-supported mainly for the purpose of ease of migration from `nats` package. The
-interfaces for consuming messages via push and pull consumers are similar, with
-the main difference being that push consumers do not support fetching individual
-batches of messages.
+control over the message processing and can often prevent issues such as slow
+consumers. However, unlike the JetStream API in `nats` package, pull consumers
+allow for continuous message retrieval (similarly to how `nats.Subscribe()`
+works). Because of that, push consumers can be easily replaced by pull
+consumers for most of the use cases. Push consumers are supported mainly for
+the purpose of ease of migration from `nats` package. The interfaces for
+consuming messages via push and pull consumers are similar, with the main
+difference being that push consumers do not support fetching individual batches
+of messages.
 
 ### Consumers management
 
