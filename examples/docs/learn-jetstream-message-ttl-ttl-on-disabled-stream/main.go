@@ -39,7 +39,7 @@ func main() {
 	// Publishing with a TTL to a stream that hasn't enabled AllowMsgTTL fails.
 	// The server returns "per-message TTL is disabled" (err_code 10166) and
 	// stores nothing. The fix is to opt the stream in with AllowMsgTTL: true.
-	_, err = js.Publish(ctx, "no-ttl.msg", []byte("order 42 cancelled"),
+	_, err = js.Publish(ctx, "no-ttl.msg", []byte("order 42 canceled"),
 		jetstream.WithMsgTTL(60*time.Second))
 	if err != nil {
 		fmt.Printf("Publish rejected, message not stored: %s\n", err)

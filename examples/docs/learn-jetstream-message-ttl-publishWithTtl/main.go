@@ -40,7 +40,7 @@ func main() {
 	// Publish with a 60-second TTL. WithMsgTTL sets the Nats-TTL header, so the
 	// server deletes this single message 60s after it is stored, ahead of the
 	// stream's MaxAge.
-	ack, err := js.Publish(ctx, "orders.cancelled", []byte("order 42 cancelled"),
+	ack, err := js.Publish(ctx, "orders.canceled", []byte("order 42 canceled"),
 		jetstream.WithMsgTTL(60*time.Second))
 	if err != nil {
 		panic(err)
