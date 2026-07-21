@@ -28,6 +28,10 @@ func main() {
 	// Print each advisory as it arrives.
 	for {
 		msg, err := sub.NextMsg(nats.DefaultTimeout)
+		if err == nats.ErrTimeout {
+			// No advisory yet; keep waiting.
+			continue
+		}
 		if err != nil {
 			panic(err)
 		}

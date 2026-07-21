@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"runtime"
 
 	"github.com/nats-io/nats.go"
 )
@@ -25,6 +24,6 @@ func main() {
 
 	log.Println("Listening for messages on 'hello'...")
 
-	// Keep the connection alive
-	runtime.Goexit()
+	// Keep the process running
+	select {}
 }
