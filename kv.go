@@ -353,6 +353,12 @@ var (
 
 var (
 	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
+
+	// ErrKeyRevisionMismatch is returned by Update when the provided revision
+	// does not match the key's current revision (an optimistic-concurrency
+	// conflict). Replicated (R>1) streams report this as error code 10164
+	// instead of 10071; both map to this error.
+	ErrKeyRevisionMismatch JetStreamError = &jsError{message: "key revision mismatch"}
 )
 
 const (
@@ -704,7 +710,7 @@ func (kv *kvs) PutString(key string, value string) (revision uint64, err error) 
 
 // Create will add the key/value pair if it does not exist.
 func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
-	v, err := kv.Update(key, value, 0)
+	v, err := kv.update(key, value, 0)
 	if err == nil {
 		return v, nil
 	}
@@ -712,7 +718,7 @@ func (kv *kvs) Create(key string, value []byte) (revision uint64, err error) {
 	// TODO(dlc) - Since we have tombstones for DEL ops for watchers, this could be from that
 	// so we need to double check.
 	if e, err := kv.get(key, kvLatestRevision); errors.Is(err, ErrKeyDeleted) {
-		return kv.Update(key, value, e.Revision())
+		return kv.update(key, value, e.Revision())
 	}
 
 	// A wrong-last-sequence response means the key already exists.
@@ -740,8 +746,25 @@ func isWrongLastSeqErr(err error) bool {
 		apiErr.ErrorCode == JSErrCodeStreamWrongLastSequenceConstant
 }
 
+// mapRevisionMismatch wraps a wrong-last-sequence error with
+// ErrKeyRevisionMismatch so callers can detect CAS conflicts regardless of
+// whether the stream reported code 10071 or 10164.
+func mapRevisionMismatch(err error) error {
+	if err != nil && isWrongLastSeqErr(err) {
+		return fmt.Errorf("%w: %w", err, ErrKeyRevisionMismatch)
+	}
+	return err
+}
+
 // Update will update the value if the latest revision matches.
+// If the provided revision does not match the key's current revision,
+// ErrKeyRevisionMismatch is returned.
 func (kv *kvs) Update(key string, value []byte, revision uint64) (uint64, error) {
+	rev, err := kv.update(key, value, revision)
+	return rev, mapRevisionMismatch(err)
+}
+
+func (kv *kvs) update(key string, value []byte, revision uint64) (uint64, error) {
 	if !keyValid(key) {
 		return 0, ErrInvalidKey
 	}

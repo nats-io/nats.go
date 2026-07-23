@@ -123,7 +123,8 @@ type (
 		Create(ctx context.Context, key string, value []byte, opts ...KVCreateOpt) (uint64, error)
 
 		// Update will update the value if the latest revision matches.
-		// If the provided revision is not the latest, Update will return an error.
+		// If the provided revision does not match the key's current revision,
+		// ErrKeyRevisionMismatch is returned.
 		// Update also resets the TTL associated with the key (if any).
 		Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
 
@@ -1100,9 +1101,20 @@ func isWrongLastSeqErr(err error) bool {
 		apiErr.ErrorCode == JSErrCodeStreamWrongLastSequenceConstant
 }
 
+// mapRevisionMismatch wraps a wrong-last-sequence error with
+// ErrKeyRevisionMismatch so callers can detect CAS conflicts regardless of
+// whether the stream reported code 10071 or 10164.
+func mapRevisionMismatch(err error) error {
+	if err != nil && isWrongLastSeqErr(err) {
+		return fmt.Errorf("%w: %w", err, ErrKeyRevisionMismatch)
+	}
+	return err
+}
+
 // Update will update the value if the latest revision matches.
 func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error) {
-	return kv.updateRevision(ctx, key, value, revision, 0)
+	rev, err := kv.updateRevision(ctx, key, value, revision, 0)
+	return rev, mapRevisionMismatch(err)
 }
 
 func (kv *kvs) updateRevision(ctx context.Context, key string, value []byte, revision uint64, ttl time.Duration) (uint64, error) {

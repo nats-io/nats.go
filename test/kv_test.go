@@ -1653,6 +1653,9 @@ func TestKeyValueCreate(t *testing.T) {
 	if !errors.Is(err, nats.ErrKeyExists) {
 		t.Fatalf("Expected ErrKeyExists, got: %v", err)
 	}
+	if errors.Is(err, nats.ErrKeyRevisionMismatch) {
+		t.Fatalf("Create conflict should not match ErrKeyRevisionMismatch, got: %v", err)
+	}
 	aerr := &nats.APIError{}
 	if !errors.As(err, &aerr) {
 		t.Fatalf("Expected APIError, got: %v", err)
@@ -1672,6 +1675,36 @@ func TestKeyValueCreate(t *testing.T) {
 	}
 	if kerr.APIError().ErrorCode != 10071 {
 		t.Fatalf("Unexpected error code, got: %v", kerr.APIError().ErrorCode)
+	}
+}
+
+func TestKeyValueUpdateRevisionMismatch(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	rev, err := kv.Create("key", []byte("1"))
+	if err != nil {
+		t.Fatalf("Error creating key: %v", err)
+	}
+
+	_, err = kv.Update("key", []byte("2"), rev+1)
+	if !errors.Is(err, nats.ErrKeyRevisionMismatch) {
+		t.Fatalf("Expected ErrKeyRevisionMismatch, got: %v", err)
+	}
+	aerr := &nats.APIError{}
+	if !errors.As(err, &aerr) {
+		t.Fatalf("Expected APIError, got: %v", err)
+	}
+	if aerr.ErrorCode != 10071 {
+		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
 	}
 }
 

@@ -380,6 +380,12 @@ var (
 	// exists.
 	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
 
+	// ErrKeyRevisionMismatch is returned by Update when the provided revision
+	// does not match the key's current revision (an optimistic-concurrency
+	// conflict). Replicated (R>1) streams report this as error code 10164
+	// instead of 10071; both map to this error.
+	ErrKeyRevisionMismatch JetStreamError = &jsError{message: "key revision mismatch"}
+
 	// ErrKeyValueConfigRequired is returned when attempting to create a bucket
 	// without a config.
 	ErrKeyValueConfigRequired JetStreamError = &jsError{message: "config required"}

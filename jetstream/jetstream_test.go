@@ -540,6 +540,32 @@ func TestIsWrongLastSeqErr(t *testing.T) {
 	}
 }
 
+func TestMapRevisionMismatch(t *testing.T) {
+	// Both 10071 and its replicated-stream variant 10164 must map to
+	// ErrKeyRevisionMismatch, while preserving the underlying
+	// APIError for callers that inspect the code.
+	for _, code := range []ErrorCode{JSErrCodeStreamWrongLastSequence, JSErrCodeStreamWrongLastSequenceConstant} {
+		err := mapRevisionMismatch(&APIError{Code: 400, ErrorCode: code})
+		if !errors.Is(err, ErrKeyRevisionMismatch) {
+			t.Fatalf("err code %d should map to ErrKeyRevisionMismatch, got: %v", code, err)
+		}
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.ErrorCode != code {
+			t.Fatalf("underlying APIError (code %d) should be preserved, got: %v", code, err)
+		}
+	}
+
+	// Unrelated errors pass through untouched.
+	other := &APIError{Code: 404, ErrorCode: JSErrCodeStreamNotFound}
+	if err := mapRevisionMismatch(other); err != other || errors.Is(err, ErrKeyRevisionMismatch) {
+		t.Fatalf("unrelated error should pass through unchanged, got: %v", err)
+	}
+
+	if mapRevisionMismatch(nil) != nil {
+		t.Fatal("nil should map to nil")
+	}
+}
+
 func TestKV_keyValid(t *testing.T) {
 	tests := []struct {
 		key string
