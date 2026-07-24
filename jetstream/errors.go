@@ -378,12 +378,19 @@ var (
 
 	// ErrKeyExists is returned when attempting to create a key that already
 	// exists.
+	//
+	// Note: ErrKeyExists matches errors by code 10071, which CAS conflicts
+	// from Update/Delete/Purge also carry on non-replicated streams;
+	// replicated (R>1) streams report code 10164 instead and will not match.
+	// Do not use ErrKeyExists to detect revision conflicts - use
+	// ErrKeyRevisionMismatch.
 	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
 
-	// ErrKeyRevisionMismatch is returned by Update when the provided revision
-	// does not match the key's current revision (an optimistic-concurrency
-	// conflict). Replicated (R>1) streams report this as error code 10164
-	// instead of 10071; both map to this error.
+	// ErrKeyRevisionMismatch is returned by Update, and by Delete/Purge when
+	// the LastRevision option is used, if the provided revision does not
+	// match the key's current revision (an optimistic-concurrency conflict).
+	// Replicated (R>1) streams report this as error code 10164 instead of
+	// 10071; both map to this error.
 	ErrKeyRevisionMismatch JetStreamError = &jsError{message: "key revision mismatch"}
 
 	// ErrKeyValueConfigRequired is returned when attempting to create a bucket

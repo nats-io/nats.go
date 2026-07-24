@@ -134,7 +134,8 @@ type (
 		// will not remove any previous revisions from the underlying stream.
 		//
 		// [LastRevision] option can be specified to only perform delete if the
-		// latest revision the provided one.
+		// latest revision matches the provided one; if it does not,
+		// ErrKeyRevisionMismatch is returned.
 		Delete(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Purge will place a delete marker and remove all previous revisions.
@@ -143,7 +144,8 @@ type (
 		// previous revisions from the underlying streams.
 		//
 		// [LastRevision] option can be specified to only perform purge if the
-		// latest revision the provided one.
+		// latest revision matches the provided one; if it does not,
+		// ErrKeyRevisionMismatch is returned.
 		Purge(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Watch for any updates to keys that match the keys argument which
@@ -1195,7 +1197,7 @@ func (kv *kvs) Delete(ctx context.Context, key string, opts ...KVDeleteOpt) erro
 	}
 
 	_, err := kv.js.PublishMsg(ctx, m, pubOpts...)
-	return err
+	return mapRevisionMismatch(err)
 }
 
 // Purge will place a delete marker and remove all previous revisions.

@@ -55,11 +55,19 @@ type KeyValue interface {
 	// Create will add the key/value pair iff it does not exist.
 	Create(key string, value []byte) (revision uint64, err error)
 	// Update will update the value iff the latest revision matches.
+	// If the provided revision does not match the key's current revision,
+	// ErrKeyRevisionMismatch is returned.
 	// Update also resets the TTL associated with the key (if any).
 	Update(key string, value []byte, last uint64) (revision uint64, err error)
-	// Delete will place a delete marker and leave all revisions.
+	// Delete will place a delete marker and leave all revisions. The
+	// LastRevision option can be specified to only perform the delete if the
+	// latest revision matches the provided one; if it does not,
+	// ErrKeyRevisionMismatch is returned.
 	Delete(key string, opts ...DeleteOpt) error
-	// Purge will place a delete marker and remove all previous revisions.
+	// Purge will place a delete marker and remove all previous revisions. The
+	// LastRevision option can be specified to only perform the purge if the
+	// latest revision matches the provided one; if it does not,
+	// ErrKeyRevisionMismatch is returned.
 	Purge(key string, opts ...DeleteOpt) error
 	// Watch for any updates to keys that match the keys argument which could include wildcards.
 	// Watch will send a nil entry when it has received all initial values.
@@ -352,12 +360,21 @@ var (
 )
 
 var (
+	// ErrKeyExists is returned when attempting to create a key that already
+	// exists.
+	//
+	// Note: ErrKeyExists matches errors by code 10071, which CAS conflicts
+	// from Update/Delete/Purge also carry on non-replicated streams;
+	// replicated (R>1) streams report code 10164 instead and will not match.
+	// Do not use ErrKeyExists to detect revision conflicts - use
+	// ErrKeyRevisionMismatch.
 	ErrKeyExists JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamWrongLastSequence, Code: 400}, message: "key exists"}
 
-	// ErrKeyRevisionMismatch is returned by Update when the provided revision
-	// does not match the key's current revision (an optimistic-concurrency
-	// conflict). Replicated (R>1) streams report this as error code 10164
-	// instead of 10071; both map to this error.
+	// ErrKeyRevisionMismatch is returned by Update, and by Delete/Purge when
+	// the LastRevision option is used, if the provided revision does not
+	// match the key's current revision (an optimistic-concurrency conflict).
+	// Replicated (R>1) streams report this as error code 10164 instead of
+	// 10071; both map to this error.
 	ErrKeyRevisionMismatch JetStreamError = &jsError{message: "key revision mismatch"}
 )
 
@@ -787,6 +804,9 @@ func (kv *kvs) update(key string, value []byte, revision uint64) (uint64, error)
 }
 
 // Delete will place a delete marker and leave all revisions.
+// The LastRevision option can be specified to only perform the delete if the
+// latest revision matches the provided one; if it does not,
+// ErrKeyRevisionMismatch is returned.
 func (kv *kvs) Delete(key string, opts ...DeleteOpt) error {
 	if !keyValid(key) {
 		return ErrInvalidKey
@@ -827,10 +847,13 @@ func (kv *kvs) Delete(key string, opts ...DeleteOpt) error {
 	}
 
 	_, err := kv.js.PublishMsg(m)
-	return err
+	return mapRevisionMismatch(err)
 }
 
 // Purge will remove the key and all revisions.
+// The LastRevision option can be specified to only perform the purge if the
+// latest revision matches the provided one; if it does not,
+// ErrKeyRevisionMismatch is returned.
 func (kv *kvs) Purge(key string, opts ...DeleteOpt) error {
 	return kv.Delete(key, append(opts, purge())...)
 }

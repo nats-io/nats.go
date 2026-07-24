@@ -1703,8 +1703,47 @@ func TestKeyValueUpdateRevisionMismatch(t *testing.T) {
 	if !errors.As(err, &aerr) {
 		t.Fatalf("Expected APIError, got: %v", err)
 	}
-	if aerr.ErrorCode != 10071 {
+	if aerr.ErrorCode != nats.JSErrCodeStreamWrongLastSequence {
 		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
+	}
+}
+
+func TestKeyValueDeleteRevisionMismatch(t *testing.T) {
+	s := RunBasicJetStreamServer()
+	defer shutdownJSServerAndRemoveStorage(t, s)
+
+	nc, js := jsClient(t, s)
+	defer nc.Close()
+
+	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "TEST"})
+	if err != nil {
+		t.Fatalf("Error creating kv: %v", err)
+	}
+
+	rev, err := kv.Create("key", []byte("1"))
+	if err != nil {
+		t.Fatalf("Error creating key: %v", err)
+	}
+
+	err = kv.Delete("key", nats.LastRevision(rev+1))
+	if !errors.Is(err, nats.ErrKeyRevisionMismatch) {
+		t.Fatalf("Expected ErrKeyRevisionMismatch, got: %v", err)
+	}
+	aerr := &nats.APIError{}
+	if !errors.As(err, &aerr) {
+		t.Fatalf("Expected APIError, got: %v", err)
+	}
+	if aerr.ErrorCode != nats.JSErrCodeStreamWrongLastSequence {
+		t.Fatalf("Unexpected error code, got: %v", aerr.ErrorCode)
+	}
+
+	err = kv.Purge("key", nats.LastRevision(rev+1))
+	if !errors.Is(err, nats.ErrKeyRevisionMismatch) {
+		t.Fatalf("Expected ErrKeyRevisionMismatch, got: %v", err)
+	}
+
+	if err := kv.Delete("key", nats.LastRevision(rev)); err != nil {
+		t.Fatalf("Delete with correct revision should succeed, got: %v", err)
 	}
 }
 
