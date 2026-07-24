@@ -45,6 +45,16 @@ func WithPublishAsyncErrHandler(cb MsgErrHandler) JetStreamOpt {
 	}
 }
 
+// WithPublishAsyncAckHandler sets an ack handler for async message publish,
+// invoked when a publish is successfully acked by the server. See
+// [MsgAckHandler] for constraints on the handler.
+func WithPublishAsyncAckHandler(cb MsgAckHandler) JetStreamOpt {
+	return func(opts *JetStreamOptions) error {
+		opts.publisherOpts.ackcb = cb
+		return nil
+	}
+}
+
 // WithPublishAsyncMaxPending sets the maximum outstanding async publishes that
 // can be inflight at one time.
 func WithPublishAsyncMaxPending(max int) JetStreamOpt {

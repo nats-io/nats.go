@@ -33,6 +33,8 @@ type (
 	asyncPublisherOpts struct {
 		// For async publish error handling.
 		aecb MsgErrHandler
+		// For async publish ack handling.
+		ackcb MsgAckHandler
 		// Max async pub ack in flight
 		maxpa int
 		// ackTimeout is the max time to wait for an ack.
@@ -103,6 +105,16 @@ type (
 	// PublishAsync. It will return the original message sent to the server for
 	// possible retransmitting and the error encountered.
 	MsgErrHandler func(JetStream, *nats.Msg, error)
+
+	// MsgAckHandler is used to process asynchronous acks from JetStream
+	// PublishAsync. It will return the original message sent to the server
+	// and the resulting PubAck.
+	//
+	// The handler is invoked synchronously on the ack-processing goroutine,
+	// so it must not block or call methods on the PubAckFuture returned by
+	// the corresponding PublishAsync/PublishMsgAsync call, as doing so may
+	// deadlock.
+	MsgAckHandler func(JetStream, *nats.Msg, *PubAck)
 
 	asyncPublishContext struct {
 		sync.RWMutex
@@ -577,7 +589,11 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 	if paf.doneCh != nil {
 		paf.doneCh <- paf.ack
 	}
+	cb := js.publisher.asyncPublisherOpts.ackcb
 	js.publisher.Unlock()
+	if cb != nil {
+		cb(js, paf.msg, paf.ack)
+	}
 }
 
 func (js *jetStream) resetPendingAcksOnReconnect() {
