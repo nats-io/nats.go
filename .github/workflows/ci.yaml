@@ -50,10 +50,12 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
-            image: synadia/server-tester:nightly-main-nats-main
+            image: synadia/ntf-server:2.14
+            # The ntf-server entrypoint is the tester binary; `serve` starts the
+            # management API. `--advertise nats` makes gossiped cluster addresses
+            # (and generated TLS cert SANs) resolve as `nats` from inside the job.
+            command: serve --advertise nats
             options: --name nats
-            env:
-              NATS_ADVERTISE: nats
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"

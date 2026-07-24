@@ -8,15 +8,17 @@ jobs:
         runs-on: ubuntu-latest-8-cores
         # Run inside an alpine container on the same docker network as the
         # tester service, matching ci.yaml. The nightly-latest-nats-main image
-        # is built daily by the upstream synadia/server-tester repo against the
+        # is built daily by the upstream synadia/ntf-server repo against the
         # current nats-server main branch.
         container: golang:1.26-alpine
         services:
           nats:
-            image: synadia/server-tester:nightly-latest-nats-main
+            image: synadia/ntf-server:nightly-latest-nats-main
+            # The ntf-server entrypoint is the tester binary; `serve` starts the
+            # management API. `--advertise nats` makes gossiped cluster addresses
+            # (and generated TLS cert SANs) resolve as `nats` from inside the job.
+            command: serve --advertise nats
             options: --name nats
-            env:
-              NATS_ADVERTISE: nats
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"

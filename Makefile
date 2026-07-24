@@ -1,4 +1,4 @@
-# Local convenience targets for running tests against the synadia/server-tester
+# Local convenience targets for running tests against the synadia/ntf-server
 # service. The CI workflow runs the same suite via the `test-tester` job.
 #
 # Quick start:
@@ -11,7 +11,7 @@
 #   export TESTER_NATS_URL=nats://localhost:4222
 #   go test -modfile=go_test.mod -tags=testservice ./...
 
-TESTER_IMAGE   ?= synadia/server-tester:nightly-main-nats-main
+TESTER_IMAGE   ?= synadia/ntf-server:2.14
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine
@@ -40,7 +40,7 @@ tester-up: tester-net
 		--network $(TESTER_NETWORK) \
 		--restart unless-stopped \
 		-e NATS_ADVERTISE=$(TESTER_NAME) \
-		$(TESTER_IMAGE)
+		$(TESTER_IMAGE) serve
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Sibling-container mode: use 'make test-tester' to run the suite."
 	@echo "For host-side dev (running 'go test' directly), use 'make tester-up-host' instead."
@@ -62,7 +62,7 @@ tester-up-host: tester-net
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
 		-e NATS_ADVERTISE=localhost \
-		$(TESTER_IMAGE)
+		$(TESTER_IMAGE) serve
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
 	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
 
