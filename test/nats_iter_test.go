@@ -92,6 +92,40 @@ func TestSubscribeIterator(t *testing.T) {
 		})
 	})
 
+	t.Run("timeout keeps yielding only ErrTimeout", func(t *testing.T) {
+		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
+			}
+			defer nc.Close()
+
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
+			}
+			defer sub.Unsubscribe()
+
+			// No message is ever published, so every NextMsg call times out.
+			// ErrTimeout is not fatal, so a consumer is allowed to keep iterating.
+			// In that case the iterator must only ever yield (nil, ErrTimeout); it
+			// must not yield a spurious (nil, nil) pair between timeouts.
+			iterations := 0
+			for msg, err := range sub.MsgsTimeout(50 * time.Millisecond) {
+				if err == nil {
+					t.Fatalf("iteration %d: got msg=%v with nil error, expected ErrTimeout", iterations, msg)
+				}
+				if !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("iteration %d: unexpected error: %v", iterations, err)
+				}
+				iterations++
+				if iterations >= 3 {
+					break
+				}
+			}
+		})
+	})
+
 	t.Run("no timeout", func(t *testing.T) {
 		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
 			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
@@ -300,5 +334,31 @@ func TestQueueSubscribeIterator(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Did not get the permission error")
 		}
+	})
+
+	t.Run("timeout does not yield phantom nil message", func(t *testing.T) {
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
+			}
+			defer sub.Unsubscribe()
+
+			// No messages are published, so every NextMsg should hit ErrTimeout.
+			// Read three iterations and confirm each one yielded the timeout
+			// error and not a phantom (nil, nil) following it.
+			var got []error
+			for _, err := range sub.MsgsTimeout(20 * time.Millisecond) {
+				got = append(got, err)
+				if len(got) == 3 {
+					break
+				}
+			}
+			for i, e := range got {
+				if !errors.Is(e, nats.ErrTimeout) {
+					t.Fatalf("yield %d: expected ErrTimeout, got %v", i, e)
+				}
+			}
+		})
 	})
 }

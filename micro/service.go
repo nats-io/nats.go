@@ -646,7 +646,10 @@ func matchEndpointSubject(endpointSubject, literalSubject string) bool {
 			return false
 		}
 	}
-	return true
+	// Without a trailing ">", every subject token must be consumed; otherwise a
+	// shorter endpoint would over-match a longer subject (e.g. "foo" vs
+	// "foo.bar").
+	return len(endpointTokens) == len(subjectTokens)
 }
 
 // addVerbHandlers generates control handlers for a specific verb.

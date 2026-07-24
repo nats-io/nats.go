@@ -1955,7 +1955,6 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		} else if consName == "" {
 			consName = getHash(nuid.Next())
 		}
-		var info *ConsumerInfo
 		if o.ctx != nil {
 			info, err = js.upsertConsumer(stream, consName, ccreq.Config, Context(o.ctx))
 		} else {
@@ -1967,7 +1966,11 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 				return nil, err
 			}
-			if consumer == _EMPTY_ ||
+			lookupConsumer := consumer
+			if lookupConsumer == _EMPTY_ {
+				lookupConsumer = consName
+			}
+			if lookupConsumer == _EMPTY_ ||
 				(apiErr.ErrorCode != JSErrCodeConsumerAlreadyExists && apiErr.ErrorCode != JSErrCodeConsumerNameExists) {
 				cleanUpSub()
 				if errors.Is(apiErr, ErrStreamNotFound) {
@@ -1980,7 +1983,7 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 				cleanUpSub()
 			}
 
-			info, err = js.ConsumerInfo(stream, consumer)
+			info, err = js.ConsumerInfo(stream, lookupConsumer)
 			if err != nil {
 				return nil, err
 			}

@@ -123,7 +123,8 @@ type (
 		Create(ctx context.Context, key string, value []byte, opts ...KVCreateOpt) (uint64, error)
 
 		// Update will update the value if the latest revision matches.
-		// If the provided revision is not the latest, Update will return an error.
+		// If the provided revision does not match the key's current revision,
+		// ErrKeyRevisionMismatch is returned.
 		// Update also resets the TTL associated with the key (if any).
 		Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
 
@@ -133,7 +134,8 @@ type (
 		// will not remove any previous revisions from the underlying stream.
 		//
 		// [LastRevision] option can be specified to only perform delete if the
-		// latest revision the provided one.
+		// latest revision matches the provided one; if it does not,
+		// ErrKeyRevisionMismatch is returned.
 		Delete(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Purge will place a delete marker and remove all previous revisions.
@@ -142,7 +144,8 @@ type (
 		// previous revisions from the underlying streams.
 		//
 		// [LastRevision] option can be specified to only perform purge if the
-		// latest revision the provided one.
+		// latest revision matches the provided one; if it does not,
+		// ErrKeyRevisionMismatch is returned.
 		Purge(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Watch for any updates to keys that match the keys argument which
@@ -1075,19 +1078,45 @@ func (kv *kvs) Create(ctx context.Context, key string, value []byte, opts ...KVC
 		return kv.updateRevision(ctx, key, value, e.Revision(), o.ttl)
 	}
 
-	// Check if the expected last subject sequence is not zero which implies
-	// the key already exists.
-	if errors.Is(err, ErrKeyExists) {
-		jserr := ErrKeyExists.(*jsError)
-		return 0, fmt.Errorf("%w: %s", err, jserr.message)
+	// A wrong-last-sequence response means the key already exists.
+	if isWrongLastSeqErr(err) {
+		// 10071 matches ErrKeyExists via its code and keeps its original
+		// message; 10164 (replicated streams) must wrap ErrKeyExists explicitly.
+		if errors.Is(err, ErrKeyExists) {
+			jserr := ErrKeyExists.(*jsError)
+			return 0, fmt.Errorf("%w: %s", err, jserr.message)
+		}
+		return 0, fmt.Errorf("%w: %w", err, ErrKeyExists)
 	}
 
 	return 0, err
 }
 
+// isWrongLastSeqErr reports whether err is a "wrong last sequence" API error.
+// Replicated (R>1) streams report CAS conflicts as 10164 instead of 10071.
+func isWrongLastSeqErr(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.ErrorCode == JSErrCodeStreamWrongLastSequence ||
+		apiErr.ErrorCode == JSErrCodeStreamWrongLastSequenceConstant
+}
+
+// mapRevisionMismatch wraps a wrong-last-sequence error with
+// ErrKeyRevisionMismatch so callers can detect CAS conflicts regardless of
+// whether the stream reported code 10071 or 10164.
+func mapRevisionMismatch(err error) error {
+	if err != nil && isWrongLastSeqErr(err) {
+		return fmt.Errorf("%w: %w", err, ErrKeyRevisionMismatch)
+	}
+	return err
+}
+
 // Update will update the value if the latest revision matches.
 func (kv *kvs) Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error) {
-	return kv.updateRevision(ctx, key, value, revision, 0)
+	rev, err := kv.updateRevision(ctx, key, value, revision, 0)
+	return rev, mapRevisionMismatch(err)
 }
 
 func (kv *kvs) updateRevision(ctx context.Context, key string, value []byte, revision uint64, ttl time.Duration) (uint64, error) {
@@ -1168,7 +1197,7 @@ func (kv *kvs) Delete(ctx context.Context, key string, opts ...KVDeleteOpt) erro
 	}
 
 	_, err := kv.js.PublishMsg(ctx, m, pubOpts...)
-	return err
+	return mapRevisionMismatch(err)
 }
 
 // Purge will place a delete marker and remove all previous revisions.

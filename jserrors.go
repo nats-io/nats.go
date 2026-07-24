@@ -203,6 +203,11 @@ const (
 	JSStreamInvalidConfig ErrorCode = 10052
 
 	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
+
+	// JSErrCodeStreamWrongLastSequenceConstant is returned instead of
+	// JSErrCodeStreamWrongLastSequence for CAS conflicts on replicated (R>1)
+	// streams. The two are equivalent "wrong last sequence" responses.
+	JSErrCodeStreamWrongLastSequenceConstant ErrorCode = 10164
 )
 
 // APIError is included in all API responses if there was an error.
