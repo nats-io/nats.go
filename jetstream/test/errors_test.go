@@ -208,4 +208,101 @@ func TestJetStreamErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("stream message exceeds maximum", func(t *testing.T) {
+		s := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, s)
+
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+
+		_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:       "MAXSIZE",
+			Subjects:   []string{"maxsize.*"},
+			MaxMsgSize: 10,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		_, err = js.Publish(ctx, "maxsize.a", []byte("this payload is longer than 10 bytes"))
+		if err == nil {
+			t.Fatalf("Expected error, got nil")
+		}
+
+		// check directly to var (backwards compatible)
+		if err != jetstream.ErrStreamMessageExceedsMaximum {
+			t.Fatalf("Expected: %v; got: %v", jetstream.ErrStreamMessageExceedsMaximum, err)
+		}
+
+		// matching via errors.Is
+		if ok := errors.Is(err, jetstream.ErrStreamMessageExceedsMaximum); !ok {
+			t.Fatal("Expected jetstream.ErrStreamMessageExceedsMaximum")
+		}
+
+		// matching wrapped via error.Is
+		err2 := fmt.Errorf("custom error: %w", jetstream.ErrStreamMessageExceedsMaximum)
+		if ok := errors.Is(err2, jetstream.ErrStreamMessageExceedsMaximum); !ok {
+			t.Fatal("Expected wrapped ErrStreamMessageExceedsMaximum")
+		}
+
+		// via classic type assertion.
+		jserr, ok := err.(jetstream.JetStreamError)
+		if !ok {
+			t.Fatal("Expected a jetstream.JetStreamError")
+		}
+		expected := jetstream.JSErrCodeStreamMessageExceedsMaximum
+		if jserr.APIError().ErrorCode != expected {
+			t.Fatalf("Expected: %v, got: %v", expected, jserr.APIError().ErrorCode)
+		}
+		if jserr.APIError() == nil {
+			t.Fatal("Expected APIError")
+		}
+
+		// matching to interface via errors.As(...)
+		var apierr jetstream.JetStreamError
+		ok = errors.As(err, &apierr)
+		if !ok {
+			t.Fatal("Expected a jetstream.JetStreamError")
+		}
+		if apierr.APIError() == nil {
+			t.Fatal("Expected APIError")
+		}
+		if apierr.APIError().ErrorCode != expected {
+			t.Fatalf("Expected: %v, got: %v", expected, apierr.APIError().ErrorCode)
+		}
+		expectedMessage := "nats: API error: code=400 err_code=10054 description=message size exceeds maximum allowed"
+		if apierr.Error() != expectedMessage {
+			t.Fatalf("Expected: %v, got: %v", expectedMessage, apierr.Error())
+		}
+
+		// matching arbitrary custom error via errors.Is(...)
+		customErr := &jetstream.APIError{ErrorCode: expected}
+		if ok := errors.Is(customErr, jetstream.ErrStreamMessageExceedsMaximum); !ok {
+			t.Fatal("Expected wrapped jetstream.ErrStreamMessageExceedsMaximum")
+		}
+		customErr = &jetstream.APIError{ErrorCode: 1}
+		if ok := errors.Is(customErr, jetstream.ErrStreamMessageExceedsMaximum); ok {
+			t.Fatal("Expected to not match ErrStreamMessageExceedsMaximum")
+		}
+
+		// matching to concrete type via errors.As(...)
+		var aerr *jetstream.APIError
+		ok = errors.As(err, &aerr)
+		if !ok {
+			t.Fatal("Expected an APIError")
+		}
+		if aerr.ErrorCode != expected {
+			t.Fatalf("Expected: %v, got: %v", expected, aerr.ErrorCode)
+		}
+	})
 }
