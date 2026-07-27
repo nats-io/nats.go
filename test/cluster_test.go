@@ -1020,11 +1020,21 @@ func TestIgnoreDiscoveredServers(t *testing.T) {
 		}
 		defer nc.Close()
 
+		// Control connection to the same server, without the option under
+		// test. Waiting for its pool to grow proves the gossip was actually
+		// delivered; without that the negative assertion below races an
+		// arbitrary sleep and passes vacuously on a slow box.
+		control, err := nats.Connect(s1URL)
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer control.Close()
+
 		clusterInst.StartServer(t, s2)
 
-		// Give the cluster a moment to gossip its new node, then verify the
-		// client did not pick it up.
-		time.Sleep(2 * time.Second)
+		checkPoolSize(control, 2)
+		// The server writes the async INFO before answering this connection's
+		// PING, so once the flush returns nc has necessarily read it too.
 		nc.Flush()
 
 		if len(nc.Servers()) != 1 {
