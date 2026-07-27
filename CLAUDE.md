@@ -10,7 +10,9 @@ Official Go client library for the NATS messaging system. Provides core pub/sub,
 
 This project uses a **dual module** setup: `go.mod` for production (minimal deps) and `go_test.mod` for testing (protobuf encoder + jwt + nkeys + nuid). Always use `-modfile=go_test.mod` when running tests.
 
-Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against a remote **server-tester** docker service (`synadia/server-tester:2.14.0`) instead of an in-process nats-server. Bring it up first via the Makefile, then run tests with `TESTER_NATS_URL` pointing at it.
+Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against a remote **ntf-server** docker service (`synadia/ntf-server:2.14`) instead of an in-process nats-server. Bring it up first via the Makefile, then run tests with `TESTER_NATS_URL` pointing at it.
+
+Note: `go_test.mod` requires **Go 1.26.4+** (the `ntf-client` test dependency declares `go 1.26.4`). Production `go.mod` is unaffected.
 
 ```bash
 # Start the tester (host-side mode publishes the tester's ports so `go test`
@@ -76,7 +78,7 @@ If `TESTER_NATS_URL` is unset, the integration tests skip via `t.Skip` rather th
 ## CI Pipeline (ci.yaml)
 
 1. **lint** -- `go fmt`, `go vet`, `staticcheck`, `misspell` (all packages), `golangci-lint` (jetstream only).
-2. **test** -- Matrix of Go 1.25 and 1.26. Runs inside an `alpine` container on the same docker network as the `synadia/server-tester` service (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing`.
+2. **test** -- Go 1.26 (floor set by `go_test.mod`'s `go 1.26.4`). Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing`.
 
 ## Project Structure
 
@@ -134,16 +136,15 @@ test/                   # Integration tests for core package (package test)
 bench/                  # Benchmarking utilities
 examples/               # Example command-line tools (nats-pub, nats-sub, etc.)
 scripts/cov.sh          # Coverage collection script (currently parked — see openspec OQ3)
-
-internal/testclient/    # Vendored synadia-labs/testing.go client used by all integration tests
-  api/                  #   Wire types
-  testservice/          #   Client.New, CreateServer, CreateCluster, CreateSuperCluster
 ```
+
+The tester client is an external test-only dependency: `github.com/synadia-io/orbit.go/ntf-client`
+(package `ntf`, imported under the alias `testservice`). It lives in `go_test.mod` only.
 
 ## Test Architecture
 
 - **Root `nats_test.go`** (package `nats`) -- White-box unit tests with access to unexported internals.
-- **`test/`** (package `test`) -- Black-box integration tests. Tests bring up a NATS server via the testservice helpers (`withServer`, `withJSServer`, `withJSCluster`, ...) which talk to a remote `synadia/server-tester:2.14.0` docker service over NATS. `TESTER_NATS_URL` must point at that service; if unset, tests skip via `t.Skip`.
+- **`test/`** (package `test`) -- Black-box integration tests. Tests bring up a NATS server via the testservice helpers (`withServer`, `withJSServer`, `withJSCluster`, ...) which talk to a remote `synadia/ntf-server:2.14` docker service over NATS. `TESTER_NATS_URL` must point at that service; if unset, tests skip via `t.Skip`.
 - **`jetstream/test/`** (package `test`) -- Integration tests for the new JetStream API, same testservice harness.
 - **`micro/test/`** (package `micro_test`) -- Integration tests for the micro services framework, same testservice harness.
 - **NoRace tests** -- Prefixed `TestNoRace*`, guarded by `//go:build !race && !skip_no_race_tests`. Must be run separately without `-race`.

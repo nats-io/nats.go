@@ -24,7 +24,7 @@ import (
 	"github.com/nats-io/nats.go/encoders/builtin"
 	"github.com/nats-io/nats.go/encoders/protobuf"
 	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 // Need access to internals for loss testing.

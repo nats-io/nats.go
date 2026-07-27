@@ -26,8 +26,8 @@ import (
 
 	"github.com/nats-io/jwt/v2"
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
 	"github.com/nats-io/nkeys"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 // Seeds and account JWT used by the trust-server reconnect tests. These mirror

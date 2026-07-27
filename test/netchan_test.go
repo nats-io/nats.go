@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn

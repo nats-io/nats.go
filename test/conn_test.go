@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 // hostPortFromURL extracts the "host:port" portion of a "nats://host:port" URL.

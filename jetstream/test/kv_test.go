@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/internal/testclient/testservice"
 	"github.com/nats-io/nats.go/jetstream"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 func TestKeyValueBasics(t *testing.T) {
