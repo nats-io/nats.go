@@ -700,77 +700,16 @@ func TestReconnectBufSize(t *testing.T) {
 	})
 }
 
-func TestReconnectTLSHostNoIP(t *testing.T) {
-	t.Skip("DIVERGENCE: the original test asymmetrically configures two clustered servers — A listens on `localhost:5222`, B on `127.0.0.1:5224` — so the cluster gossips an IP-only URL to a client that connected via hostname, exercising TLS reconnect with a cert that has no IP SANs. testservice's `CreateCluster` gives every server identical config, so the hostname-vs-IP asymmetry the test relies on cannot be reproduced without per-server config overrides upstream. The 14-line nats.go invariant this test guards (preserving the dialed hostname as tlsName when a gossiped IP URL is added to a secure pool) is now covered by the white-box test TestParseServerURLPreservesTLSName in the root nats package's nats_test.go, which exercises the same code path at parseServerURL with no integration scaffolding.")
-	// Original embedded-server body preserved verbatim below for future
-	// re-port (will not compile against the testservice-only branch — kept as
-	// a comment so re-enabling the test does not require git archeology).
-	/*
-		sa, optsA := RunServerWithConfig("./configs/tls_noip_a.conf")
-		defer sa.Shutdown()
-		sb, optsB := RunServerWithConfig("./configs/tls_noip_b.conf")
-		defer sb.Shutdown()
-
-		// Wait for cluster to form.
-		wait := time.Now().Add(2 * time.Second)
-		for time.Now().Before(wait) {
-			sanr := sa.NumRoutes()
-			sbnr := sb.NumRoutes()
-			if sanr == 1 && sbnr == 1 {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-
-		endpoint := fmt.Sprintf("%s:%d", optsA.Host, optsA.Port)
-		secureURL := fmt.Sprintf("tls://%s:%s@%s/", optsA.Username, optsA.Password, endpoint)
-
-		dch := make(chan bool, 2)
-		dcb := func(_ *nats.Conn, _ error) { dch <- true }
-		rch := make(chan bool)
-		rcb := func(_ *nats.Conn) { rch <- true }
-
-		nc, err := nats.Connect(secureURL,
-			nats.RootCAs("./configs/certs/ca.pem"),
-			nats.DisconnectErrHandler(dcb),
-			nats.ReconnectHandler(rcb))
-		if err != nil {
-			t.Fatalf("Failed to create secure (TLS) connection: %v", err)
-		}
-		defer nc.Close()
-
-		// Wait for DiscoveredServers() to be 1.
-		wait = time.Now().Add(2 * time.Second)
-		for time.Now().Before(wait) {
-			if len(nc.DiscoveredServers()) == 1 {
-				break
-			}
-		}
-		// Make sure this is the server B info, and that it is an IP.
-		expectedDiscoverURL := fmt.Sprintf("tls://%s:%d", optsB.Host, optsB.Port)
-		eurl, err := url.Parse(expectedDiscoverURL)
-		if err != nil {
-			t.Fatalf("Expected to parse discovered server URL: %v", err)
-		}
-		if addr := net.ParseIP(eurl.Hostname()); addr == nil {
-			t.Fatalf("Expected the discovered server to be an IP, got %v", eurl.Hostname())
-		}
-		ds := nc.DiscoveredServers()
-		if ds[0] != expectedDiscoverURL {
-			t.Fatalf("Expected %q, got %q", expectedDiscoverURL, ds[0])
-		}
-
-		// Force us to switch servers.
-		sa.Shutdown()
-
-		if e := Wait(dch); e != nil {
-			t.Fatal("DisconnectedErrCB should have been triggered")
-		}
-		if e := WaitTime(rch, time.Second); e != nil {
-			t.Fatalf("ReconnectedCB should have been triggered: %v", nc.LastError())
-		}
-	*/
-}
+// TestReconnectTLSHostNoIP was removed with the testservice migration. It
+// needed two cluster members listening on different hosts (A on `localhost`,
+// B on `127.0.0.1`) so the cluster would gossip an IP-only URL to a client
+// that dialed by hostname, against a cert with no IP SANs. The testservice
+// gives every cluster member identical config, so that asymmetry cannot be
+// expressed. The invariant it guarded — the dialed hostname is preserved as
+// tlsName and reused as the TLS ServerName when reconnecting to a gossiped IP
+// — is covered by TestParseServerURLPreservesTLSName (assignment) and
+// TestMakeTLSConnUsesPreservedTLSName (use during the handshake), both in the
+// root package's nats_test.go.
 
 func TestConnCloseNoCallback(t *testing.T) {
 	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {

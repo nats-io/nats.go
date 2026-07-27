@@ -20,9 +20,16 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -2100,6 +2107,129 @@ func TestParseServerURLPreservesTLSName(t *testing.T) {
 			}
 			if s.isImplicit != tc.implicit {
 				t.Fatalf("isImplicit = %v, want %v", s.isImplicit, tc.implicit)
+			}
+		})
+	}
+}
+
+// hostOnlyTLSCert mints a self-signed cert carrying a single "localhost" DNS
+// SAN and deliberately no IP SANs, so verifying it against an IP-form
+// ServerName fails. Returns the server cert and a pool trusting it.
+func hostOnlyTLSCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
+}
+
+// TestMakeTLSConnUsesPreservedTLSName covers the consumer side of the tlsName
+// invariant: parseServerURL records the originally-dialed hostname on a pool
+// entry (see TestParseServerURLPreservesTLSName), and makeTLSConn must use it
+// as the TLS ServerName rather than the IP it is dialing.
+//
+// This is what lets a client reconnect over TLS to a server the cluster
+// gossiped as a bare IP, against a cert that only has hostname SANs. It used
+// to be covered end-to-end by test/reconnect_test.go's TestReconnectTLSHostNoIP,
+// which needed two cluster members listening on different hosts (one hostname,
+// one IP) — a per-server config asymmetry the testservice cannot express, so
+// that test was removed in favor of this one.
+func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tlsName   string
+		expectErr bool
+	}{
+		// Dialed by IP, but tlsName carries the hostname the pool entry was
+		// discovered from: handshake must verify against "localhost".
+		{"preserved name is used", "localhost", false},
+		// Without it, ServerName falls back to the dialed IP, which the cert
+		// does not cover. Guards against the assignment being dropped.
+		{"no preserved name fails against IP", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srvCert, pool := hostOnlyTLSCert(t)
+
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Listen: %v", err)
+			}
+			defer ln.Close()
+
+			sniCh := make(chan string, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				srv := tls.Server(conn, &tls.Config{
+					Certificates: []tls.Certificate{srvCert},
+					GetConfigForClient: func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+						sniCh <- chi.ServerName
+						return nil, nil
+					},
+				})
+				srv.Handshake()
+			}()
+
+			raw, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				t.Fatalf("Dial: %v", err)
+			}
+			defer raw.Close()
+
+			u, err := url.Parse("tls://" + ln.Addr().String())
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			nc := &Conn{
+				Opts:    Options{TLSConfig: &tls.Config{RootCAs: pool}},
+				conn:    raw,
+				current: &Server{URL: u, tlsName: tc.tlsName},
+			}
+			nc.newReaderWriter()
+
+			err = nc.makeTLSConn()
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("Expected TLS handshake to fail without a preserved tlsName")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("makeTLSConn: %v", err)
+			}
+
+			select {
+			case sni := <-sniCh:
+				if sni != "localhost" {
+					t.Fatalf("SNI = %q, want %q", sni, "localhost")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Did not receive ClientHello")
 			}
 		})
 	}
