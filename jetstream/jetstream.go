@@ -465,6 +465,7 @@ var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
@@ -511,6 +512,7 @@ func setReplyPrefix(nc *nats.Conn, jsOpts *JetStreamOptions) {
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
@@ -549,6 +551,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
