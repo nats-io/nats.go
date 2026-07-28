@@ -10,7 +10,7 @@ Official Go client library for the NATS messaging system. Provides core pub/sub,
 
 This project uses a **dual module** setup: `go.mod` for production (minimal deps) and `go_test.mod` for testing (protobuf encoder + jwt + nkeys + nuid). Always use `-modfile=go_test.mod` when running tests.
 
-Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against a remote **ntf-server** docker service (`synadia/ntf-server:2.14`) instead of an in-process nats-server. Bring it up first via the Makefile, then run tests with `TESTER_NATS_URL` pointing at it.
+Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against a remote **ntf-server** docker service (`synadia/ntf-server:v0.0.5-nats-2.14.3`) instead of an in-process nats-server. Bring it up first via the Makefile, then run tests with `TESTER_NATS_URL` pointing at it.
 
 ```bash
 # Start the tester (host-side mode publishes the tester's ports so `go test`
@@ -147,7 +147,7 @@ The tester client is an external test-only dependency: `github.com/synadia-io/or
 ## Test Architecture
 
 - **Root `nats_test.go`** (package `nats`) -- White-box unit tests with access to unexported internals.
-- **`test/`** (package `test`) -- Black-box integration tests. Tests bring up a NATS server via the testservice helpers (`withServer`, `withJSServer`, `withJSCluster`, ...) which talk to a remote `synadia/ntf-server:2.14` docker service over NATS. `TESTER_NATS_URL` must point at that service; if unset, tests skip via `t.Skip`.
+- **`test/`** (package `test`) -- Black-box integration tests. Tests bring up a NATS server via the testservice helpers (`withServer`, `withJSServer`, `withJSCluster`, ...) which talk to a remote `synadia/ntf-server:v0.0.5-nats-2.14.3` docker service over NATS. `TESTER_NATS_URL` must point at that service; if unset, tests skip via `t.Skip`.
 - **`jetstream/test/`** (package `test`) -- Integration tests for the new JetStream API, same testservice harness.
 - **`micro/test/`** (package `micro_test`) -- Integration tests for the micro services framework, same testservice harness.
 - **NoRace tests** -- Prefixed `TestNoRace*`, guarded by `//go:build !race && !skip_no_race_tests`. Must be run separately without `-race`.

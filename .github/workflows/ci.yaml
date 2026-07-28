@@ -50,7 +50,11 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
-            image: synadia/ntf-server:2.14
+            # Pinned tester build, kept in sync with the Makefile default. The
+            # floating `2.14` tag can change out from under the pinned
+            # ntf-client version in go_test.sum, so pin the full tag and bump
+            # both together.
+            image: synadia/ntf-server:v0.0.5-nats-2.14.3
             # The ntf-server entrypoint is the tester binary; `serve` starts the
             # management API. `--advertise nats` makes gossiped cluster addresses
             # (and generated TLS cert SANs) resolve as `nats` from inside the job.

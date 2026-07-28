@@ -19,10 +19,13 @@
 # `-p=1` is required: the tester does not tolerate concurrent CreateServer
 # calls from independent test binaries.
 
-TESTER_IMAGE   ?= synadia/ntf-server:2.14
+# Pinned tester build, kept in sync with ci.yaml. The floating `2.14` tag can
+# change out from under the pinned ntf-client version in go_test.sum, so pin
+# the full tag and bump both together.
+TESTER_IMAGE   ?= synadia/ntf-server:v0.0.5-nats-2.14.3
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
-GO_IMAGE       ?= golang:alpine
+GO_IMAGE       ?= golang:1.26-alpine
 
 # Host-side test runs (tester started with `make tester-up-host`).
 # T limits the run to a single test (-run, verbose); PKG limits the packages.
