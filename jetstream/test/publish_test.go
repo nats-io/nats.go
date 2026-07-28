@@ -1831,93 +1831,83 @@ func TestPublishAsyncAckTimeout(t *testing.T) {
 }
 
 func TestPublishAsyncAckHandler(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
+		ctx := newTesterCtx(t, 5*time.Second)
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
+		acks := make(chan *jetstream.PubAck, 1)
+		js, err := jetstream.New(nc, jetstream.WithPublishAsyncAckHandler(func(_ jetstream.JetStream, _ *nats.Msg, ack *jetstream.PubAck) {
+			acks <- ack
+		}))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	acks := make(chan *jetstream.PubAck, 1)
-	js, err := jetstream.New(nc, jetstream.WithPublishAsyncAckHandler(func(_ jetstream.JetStream, _ *nats.Msg, ack *jetstream.PubAck) {
-		acks <- ack
-	}))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		cfg := jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}}
+		if _, err := js.CreateStream(ctx, cfg); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		paf, err := js.PublishAsync("FOO.A", []byte("flightless, not fightless"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-	cfg := jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}}
-	if _, err := js.CreateStream(t.Context(), cfg); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	paf, err := js.PublishAsync("FOO.A", []byte("flightless, not fightless"))
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+		select {
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive ack from ack handler")
+		case <-acks: // the ack handler must fire when the publish is successful
+		}
 
-	select {
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive ack from ack handler")
-	case <-acks: // the ack handler must fire when the publish is successful
-	}
-
-	select {
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive ack from PubAckFuture")
-	case err := <-paf.Err():
-		t.Fatalf("Unexpected error: %v", err)
-	case <-paf.Ok(): // PubAckFuture must still resolve independently of the ack handler
-	}
+		select {
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive ack from PubAckFuture")
+		case err := <-paf.Err():
+			t.Fatalf("Unexpected error: %v", err)
+		case <-paf.Ok(): // PubAckFuture must still resolve independently of the ack handler
+		}
+	})
 }
 
 func TestPublishAsyncAckHandlerSkippedOnTimeout(t *testing.T) {
-	s := RunBasicJetStreamServer()
-	defer shutdownJSServerAndRemoveStorage(t, s)
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
+		ctx := newTesterCtx(t, 5*time.Second)
 
-	nc, err := nats.Connect(s.ClientURL())
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer nc.Close()
-
-	acks, errs := make(chan *jetstream.PubAck, 1), make(chan error, 1)
-	js, err := jetstream.New(nc,
-		jetstream.WithPublishAsyncTimeout(50*time.Millisecond),
-		jetstream.WithPublishAsyncAckHandler(func(_ jetstream.JetStream, _ *nats.Msg, ack *jetstream.PubAck) {
-			acks <- ack
-		}),
-		jetstream.WithPublishAsyncErrHandler(func(_ jetstream.JetStream, _ *nats.Msg, err error) {
-			errs <- err
-		}),
-	)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	cfg := jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true}
-	if _, err := js.CreateStream(t.Context(), cfg); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if _, err := js.PublishAsync("FOO.A", []byte("flightless, not fightless")); err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	select {
-	case err := <-errs:
-		if !errors.Is(err, jetstream.ErrAsyncPublishTimeout) {
-			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrAsyncPublishTimeout, err)
+		acks, errs := make(chan *jetstream.PubAck, 1), make(chan error, 1)
+		js, err := jetstream.New(nc,
+			jetstream.WithPublishAsyncTimeout(50*time.Millisecond),
+			jetstream.WithPublishAsyncAckHandler(func(_ jetstream.JetStream, _ *nats.Msg, ack *jetstream.PubAck) {
+				acks <- ack
+			}),
+			jetstream.WithPublishAsyncErrHandler(func(_ jetstream.JetStream, _ *nats.Msg, err error) {
+				errs <- err
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("Did not receive error from error handler")
-	}
 
-	select {
-	case ack := <-acks:
-		t.Fatalf("Did not expect ack handler to be called; got: %v", ack)
-	case <-time.After(100 * time.Millisecond): // the ack handler must not fire when the publish errors out.
-	}
+		cfg := jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, NoAck: true}
+		if _, err := js.CreateStream(ctx, cfg); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.PublishAsync("FOO.A", []byte("flightless, not fightless")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		select {
+		case err := <-errs:
+			if !errors.Is(err, jetstream.ErrAsyncPublishTimeout) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrAsyncPublishTimeout, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Did not receive error from error handler")
+		}
+
+		select {
+		case ack := <-acks:
+			t.Fatalf("Did not expect ack handler to be called; got: %v", ack)
+		case <-time.After(100 * time.Millisecond): // the ack handler must not fire when the publish errors out.
+		}
+	})
 }
 
 func TestPublishAsyncClearStall(t *testing.T) {
