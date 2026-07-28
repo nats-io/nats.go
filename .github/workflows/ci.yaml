@@ -22,19 +22,21 @@ jobs:
             - name: Install deps
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go get -t ./...
+                go mod download -modfile=go_test.mod
                 go install honnef.co/go/tools/cmd/staticcheck@latest
                 go install github.com/client9/misspell/cmd/misspell@latest
                 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
+              # golangci-lint needs the modfile GOFLAGS to typecheck the test
+              # packages, whose dependencies live in go_test.mod only.
               run: |
                 $(exit $(go fmt -modfile=go_test.mod  ./... | wc -l))
                 go vet -modfile=go_test.mod ./...
                 GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
                 find . -type f -name "*.go" | xargs misspell -error -locale US
-                golangci-lint run --timeout 5m0s ./jetstream/...
+                GOFLAGS="-mod=mod -modfile=go_test.mod" golangci-lint run --timeout 5m0s ./jetstream/...
 
     test:
         runs-on: ubuntu-latest-8-cores
