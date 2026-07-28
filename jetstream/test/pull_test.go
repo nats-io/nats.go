@@ -2611,6 +2611,69 @@ func TestPullConsumerConsume(t *testing.T) {
 		}
 	})
 
+	// Regression for https://github.com/nats-io/nats.go/issues/1718:
+	// when a message in the stream is larger than the configured PullMaxBytes,
+	// the consumer was previously stuck in a tight retry loop without ever
+	// surfacing the error to the user. Verify the ErrHandler now sees the
+	// ErrMaxBytesExceeded status.
+	t.Run("max bytes exceeded surfaces to ErrHandler", func(t *testing.T) {
+		srv := RunBasicJetStreamServer()
+		defer shutdownJSServerAndRemoveStorage(t, srv)
+		nc, err := nats.Connect(srv.ClientURL())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer nc.Close()
+		js, err := jetstream.New(nc)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Publish a single message that comfortably exceeds the
+		// PullMaxBytes set on the consumer below.
+		if _, err := js.Publish(ctx, "FOO.1", make([]byte, 1024)); err != nil {
+			t.Fatalf("Unexpected error publishing: %v", err)
+		}
+
+		errCh := make(chan error, 8)
+		l, err := c.Consume(
+			func(msg jetstream.Msg) {
+				t.Errorf("Unexpected message delivered: %s", string(msg.Data()))
+			},
+			jetstream.PullMaxBytes(100),
+			jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer l.Stop()
+
+		select {
+		case got := <-errCh:
+			if !errors.Is(got, jetstream.ErrMaxBytesExceeded) {
+				t.Fatalf("Expected ErrMaxBytesExceeded, got: %v", got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Timeout waiting for ErrMaxBytesExceeded on ConsumeErrHandler")
+		}
+	})
+
 	t.Run("with auto unsubscribe", func(t *testing.T) {
 		srv := RunBasicJetStreamServer()
 		defer shutdownJSServerAndRemoveStorage(t, srv)
