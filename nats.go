@@ -4439,7 +4439,10 @@ func DecodeHeadersMsg(data []byte) (Header, error) {
 	if len(l) > hdrPreEnd {
 		var description string
 		status := strings.TrimSpace(l[hdrPreEnd:])
-		if len(status) != statusLen {
+		if len(status) < statusLen {
+			return nil, ErrBadHeaderMsg
+		}
+		if len(status) > statusLen {
 			description = strings.TrimSpace(status[statusLen:])
 			status = status[:statusLen]
 		}
