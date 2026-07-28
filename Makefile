@@ -7,19 +7,41 @@
 #   make test-tester      # run the full suite inside a sibling container
 #   make tester-down      # tear everything down
 #
-# To run tests from the host (running `go test` directly from your terminal),
-# start the tester with `make tester-up-host` (publishes its ports) and point
-# TESTER_NATS_URL at it. `-p=1` is required: the tester does not tolerate
-# concurrent CreateServer calls from independent test binaries.
-#   export TESTER_NATS_URL=nats://localhost:4222
-#   go test -modfile=go_test.mod -tags=internal_testing -race -p=1 ./... --failfast -vet=off
+# Quick start (host-side mode — iterating on individual tests):
+#   make tester-up-host   # start the tester with its ports published
+#   make test T=TestName PKG=./test/...
+#   make tester-down
+#
+# `make test` wraps the full `go test` incantation (modfile, internal_testing
+# tag, -race, -p=1). The equivalent raw command is:
+#   TESTER_NATS_URL=nats://localhost:4222 \
+#     go test -modfile=go_test.mod -tags=internal_testing -race -p=1 ./... --failfast -vet=off
+# `-p=1` is required: the tester does not tolerate concurrent CreateServer
+# calls from independent test binaries.
 
 TESTER_IMAGE   ?= synadia/ntf-server:2.14
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:alpine
 
-.PHONY: tester-net tester-up tester-up-host tester-down tester-restart tester-logs test-tester
+# Host-side test runs (tester started with `make tester-up-host`).
+# T limits the run to a single test (-run, verbose); PKG limits the packages.
+TESTER_NATS_URL ?= nats://localhost:4222
+PKG ?= ./...
+
+.PHONY: tester-net tester-up tester-up-host tester-down tester-restart tester-logs test-tester test test-norace
+
+# test runs the race-enabled suite, like CI. Examples:
+#   make test                             # everything
+#   make test T=TestSubSubject            # one test, verbose
+#   make test PKG=./jetstream/test/...    # one package
+test:
+	TESTER_NATS_URL=$(TESTER_NATS_URL) go test -modfile=go_test.mod -tags=internal_testing -race -p=1 $(if $(T),-v -run '$(T)') $(PKG) --failfast -vet=off
+
+# test-norace runs the TestNoRace* tests, which must run with the race
+# detector off. T overrides the -run pattern within the NoRace suite.
+test-norace:
+	TESTER_NATS_URL=$(TESTER_NATS_URL) go test -modfile=go_test.mod -p=1 $(if $(T),-v) -run '$(or $(T),TestNoRace)' $(PKG) --failfast -vet=off
 
 tester-net:
 	@docker network inspect $(TESTER_NETWORK) >/dev/null 2>&1 || \
@@ -67,7 +89,9 @@ tester-up-host: tester-net
 		-e NATS_ADVERTISE=localhost \
 		$(TESTER_IMAGE) serve
 	@echo "Tester running on docker network $(TESTER_NETWORK) as host '$(TESTER_NAME)'"
-	@echo "Host-side access: TESTER_NATS_URL=nats://localhost:4222"
+	@echo "Run the full suite:  make test"
+	@echo "Run a single test:   make test T=TestName PKG=./test/..."
+	@echo "Or directly:         TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -tags=internal_testing -race -p=1 -v -run TestName ./test/..."
 
 # tester-down stops AND removes the container; logs are lost. Use tester-restart
 # instead to keep the container (and its logs) around for debugging.

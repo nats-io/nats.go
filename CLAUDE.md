@@ -35,6 +35,11 @@ TESTER_NATS_URL=nats://localhost:4222 \
 TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -race ./jetstream/test/... --failfast
 TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -race ./micro/test/... --failfast
 
+# Makefile wrappers for the above (TESTER_NATS_URL defaults to nats://localhost:4222)
+make test                          # full race-enabled suite with internal_testing tag
+make test T=TestName PKG=./test/... # single test, verbose
+make test-norace                   # NoRace suite
+
 # Stop the tester
 make tester-down
 
