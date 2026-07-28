@@ -14,25 +14,46 @@
 package test
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nats-io/nats.go"
 	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
+// testerProbe caches a one-time reachability check of the tester service so
+// that when it is down, every test fails fast with one actionable message
+// instead of its own raw dial error.
+var testerProbe struct {
+	once sync.Once
+	err  error
+}
+
 // newTester returns a tester Client connected to the service at TESTER_NATS_URL.
-// Tests skip when the env var is unset so a -tags=testservice run does not
-// fail on machines without docker. Close is registered with t.Cleanup. Accepts
-// any testing.TB so benchmarks (which use *testing.B) can share the helper.
+// Tests skip when the env var is unset so a plain `go test` run passes on
+// machines without docker. Close is registered with t.Cleanup. Accepts any
+// testing.TB so benchmarks (which use *testing.B) can share the helper.
 func newTester(t testing.TB) *testservice.Client {
 	t.Helper()
 	url := os.Getenv("TESTER_NATS_URL")
 	if url == "" {
-		t.Skip("TESTER_NATS_URL not set; skipping testservice test")
+		t.Skip("TESTER_NATS_URL not set; skipping testservice test (see 'make tester-up-host')")
+	}
+	testerProbe.once.Do(func() {
+		nc, err := nats.Connect(url)
+		if err != nil {
+			testerProbe.err = fmt.Errorf("cannot reach the tester at %s (is it running? see 'make tester-up-host'): %w", url, err)
+			return
+		}
+		nc.Close()
+	})
+	if testerProbe.err != nil {
+		t.Fatal(testerProbe.err)
 	}
 	c := testservice.New(t, url)
 	t.Cleanup(func() { c.Close(t) })
@@ -47,7 +68,7 @@ func testerHost(t *testing.T) string {
 	t.Helper()
 	raw := os.Getenv("TESTER_NATS_URL")
 	if raw == "" {
-		t.Skip("TESTER_NATS_URL not set; skipping testservice test")
+		t.Skip("TESTER_NATS_URL not set; skipping testservice test (see 'make tester-up-host')")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
