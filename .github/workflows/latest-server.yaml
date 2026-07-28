@@ -30,6 +30,16 @@ jobs:
               run: |
                 apk add --no-cache gcc libc-dev git make bash curl ca-certificates
 
+            # The nightly-latest-nats-main tag is mutable; if upstream stopped
+            # pushing it, this job would silently keep testing a stale server.
+            # The INFO line from the tester's management endpoint carries the
+            # bundled nats-server version, making staleness visible in the logs.
+            - name: Log server version
+              shell: bash --noprofile --norc -eo pipefail {0}
+              run: |
+                timeout 5 bash -c 'head -c 512 < /dev/tcp/nats/4222' || true
+                echo
+
             - name: NoRace tests
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
