@@ -29,8 +29,6 @@ jobs:
 
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
-              # golangci-lint needs the modfile GOFLAGS to typecheck the test
-              # packages, whose dependencies live in go_test.mod only.
               run: |
                 $(exit $(go fmt -modfile=go_test.mod  ./... | wc -l))
                 go vet -modfile=go_test.mod ./...
@@ -52,14 +50,7 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
-            # Pinned tester build, kept in sync with the Makefile default. The
-            # floating `2.14` tag can change out from under the pinned
-            # ntf-client version in go_test.sum, so pin the full tag and bump
-            # both together.
             image: synadia/ntf-server:v0.0.5-nats-2.14.3
-            # The ntf-server entrypoint is the tester binary; `serve` starts the
-            # management API. `--advertise nats` makes gossiped cluster addresses
-            # (and generated TLS cert SANs) resolve as `nats` from inside the job.
             command: serve --advertise nats
             options: --name nats
         env:

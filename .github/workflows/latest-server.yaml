@@ -14,9 +14,6 @@ jobs:
         services:
           nats:
             image: synadia/ntf-server:nightly-latest-nats-main
-            # The ntf-server entrypoint is the tester binary; `serve` starts the
-            # management API. `--advertise nats` makes gossiped cluster addresses
-            # (and generated TLS cert SANs) resolve as `nats` from inside the job.
             command: serve --advertise nats
             options: --name nats
         env:
@@ -30,10 +27,6 @@ jobs:
               run: |
                 apk add --no-cache gcc libc-dev git make bash curl ca-certificates
 
-            # The nightly-latest-nats-main tag is mutable; if upstream stopped
-            # pushing it, this job would silently keep testing a stale server.
-            # The INFO line from the tester's management endpoint carries the
-            # bundled nats-server version, making staleness visible in the logs.
             - name: Log server version
               shell: bash --noprofile --norc -eo pipefail {0}
               run: |
