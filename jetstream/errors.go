@@ -52,8 +52,9 @@ const (
 	JSErrCodeMessageNotFound               ErrorCode = 10037
 	JSErrCodeJetStreamNotEnabledForAccount ErrorCode = 10039
 
-	JSErrCodeStreamNameInUse ErrorCode = 10058
-	JSErrCodeStreamNotFound  ErrorCode = 10059
+	JSErrCodeStreamMessageExceedsMaximum ErrorCode = 10054
+	JSErrCodeStreamNameInUse             ErrorCode = 10058
+	JSErrCodeStreamNotFound              ErrorCode = 10059
 
 	JSErrCodeStreamWrongLastSequence ErrorCode = 10071
 	JSErrCodeJetStreamNotEnabled     ErrorCode = 10076
@@ -97,6 +98,10 @@ var (
 	// ErrJetStreamNotEnabledForAccount is an error returned when JetStream is
 	// not enabled for an account.
 	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled for account", Code: 503}}
+
+	// ErrStreamMessageExceedsMaximum is an error returned when a message exceeds the
+	// maximum allowed size configured for the stream.
+	ErrStreamMessageExceedsMaximum JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamMessageExceedsMaximum, Description: "message size exceeds maximum allowed", Code: 400}}
 
 	// ErrStreamNotFound is an error returned when stream with given name does
 	// not exist.

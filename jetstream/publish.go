@@ -25,8 +25,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
+
+	"github.com/nats-io/nats.go"
 )
 
 type (
@@ -265,6 +266,9 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 		return nil, ErrInvalidJSAck
 	}
 	if ackResp.Error != nil {
+		if ackResp.Error.ErrorCode == JSErrCodeStreamMessageExceedsMaximum {
+			return nil, ErrStreamMessageExceedsMaximum
+		}
 		return nil, fmt.Errorf("nats: %w", ackResp.Error)
 	}
 	if ackResp.PubAck == nil || ackResp.PubAck.Stream == "" {
