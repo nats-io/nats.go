@@ -64,8 +64,9 @@ var testerProbe struct {
 
 // newTester returns a tester Client connected to the service at TESTER_NATS_URL.
 // Tests skip when the env var is unset so a plain `go test` run passes on
-// machines without docker. Close is registered with t.Cleanup.
-func newTester(t *testing.T) *testservice.Client {
+// machines without docker. Close is registered with t.Cleanup. Accepts any
+// testing.TB so benchmarks (which use *testing.B) can share the helper.
+func newTester(t testing.TB) *testservice.Client {
 	t.Helper()
 	url := os.Getenv("TESTER_NATS_URL")
 	if url == "" {
@@ -142,8 +143,9 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 // reconnect survives any single node going down. nats.MaxReconnects(-1) is
 // always set; additional connect options (e.g. credentials) may be passed.
 // Tests that need custom dial behavior call CreateServer/CreateCluster
-// themselves and then dialInstance directly.
-func dialInstance(t *testing.T, inst *testservice.Instance, opts ...nats.Option) *nats.Conn {
+// themselves and then dialInstance directly. Accepts testing.TB so benchmarks
+// can share the helper.
+func dialInstance(t testing.TB, inst *testservice.Instance, opts ...nats.Option) *nats.Conn {
 	t.Helper()
 	urls := make([]string, len(inst.Servers))
 	for i, s := range inst.Servers {
