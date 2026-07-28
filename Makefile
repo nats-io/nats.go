@@ -19,10 +19,12 @@
 # `-p=1` is required: the tester does not tolerate concurrent CreateServer
 # calls from independent test binaries.
 
-# Pinned tester build, kept in sync with ci.yaml. The floating `2.14` tag can
-# change out from under the pinned ntf-client version in go_test.sum, so pin
-# the full tag and bump both together.
-TESTER_IMAGE   ?= synadia/ntf-server:v0.0.5-nats-2.14.3
+# The tester image is pinned in ci.yaml (the single source of truth); parse it
+# from there so server version bumps happen in one place.
+TESTER_IMAGE   ?= $(shell sed -n 's|^ *image: *\(synadia/ntf-server:[^ ]*\).*|\1|p' .github/workflows/ci.yaml)
+ifeq ($(strip $(TESTER_IMAGE)),)
+$(error could not parse the tester image from .github/workflows/ci.yaml)
+endif
 TESTER_NAME    ?= nats-tester
 TESTER_NETWORK ?= nats-tester-net
 GO_IMAGE       ?= golang:1.26-alpine

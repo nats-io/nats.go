@@ -7,6 +7,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
     lint:
         runs-on: ubuntu-latest-8-cores
@@ -50,9 +53,15 @@ jobs:
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
+            # Single source of truth for the tester image; the Makefile parses
+            # the tag from this line.
             image: synadia/ntf-server:v0.0.5-nats-2.14.3
             command: serve --advertise nats
-            options: --name nats
+            options: >-
+              --name nats
+              --health-cmd "nc -z localhost 4222"
+              --health-interval 1s
+              --health-retries 30
         env:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
