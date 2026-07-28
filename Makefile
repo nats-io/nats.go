@@ -1,15 +1,18 @@
 # Local convenience targets for running tests against the synadia/ntf-server
-# service. The CI workflow runs the same suite via the `test-tester` job.
+# service. The CI `test` job (.github/workflows/ci.yaml) runs the same suite,
+# with the tester attached as a docker service container.
 #
-# Quick start:
+# Quick start (sibling-container mode — full suite, matches CI):
 #   make tester-up        # start the tester container on a dedicated docker network
-#   make test-tester      # run the tagged tests inside a sibling container
+#   make test-tester      # run the full suite inside a sibling container
 #   make tester-down      # tear everything down
 #
-# To run tests from the host (instead of a sibling container) point your shell at
-# the tester's published port and use the testservice build tag:
+# To run tests from the host (running `go test` directly from your terminal),
+# start the tester with `make tester-up-host` (publishes its ports) and point
+# TESTER_NATS_URL at it. `-p=1` is required: the tester does not tolerate
+# concurrent CreateServer calls from independent test binaries.
 #   export TESTER_NATS_URL=nats://localhost:4222
-#   go test -modfile=go_test.mod -tags=testservice ./...
+#   go test -modfile=go_test.mod -tags=internal_testing -race -p=1 ./... --failfast -vet=off
 
 TESTER_IMAGE   ?= synadia/ntf-server:2.14
 TESTER_NAME    ?= nats-tester
@@ -79,6 +82,9 @@ tester-restart:
 tester-logs:
 	docker logs -f $(TESTER_NAME)
 
+# test-tester runs the same suite as the CI `test` job: the NoRace pass first
+# (needs the race detector off), then the full race-enabled suite with
+# -tags=internal_testing.
 test-tester: tester-net
 	docker run --rm \
 		--network $(TESTER_NETWORK) \
@@ -88,4 +94,5 @@ test-tester: tester-net
 		-e CGO_ENABLED=1 \
 		$(GO_IMAGE) sh -c '\
 			apk add --no-cache gcc libc-dev git make >/dev/null && \
-			go test -modfile=go_test.mod -tags=testservice -race -v -p=1 ./test/... ./jetstream/test/... ./micro/test/...'
+			go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off && \
+			go test -modfile=go_test.mod -tags=internal_testing -race -v -p=1 ./... --failfast -vet=off'
