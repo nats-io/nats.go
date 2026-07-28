@@ -1,4 +1,4 @@
-// Copyright 2015-2023 The NATS Authors
+// Copyright 2015-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -27,8 +27,9 @@ import (
 
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
 
-func NewProtoEncodedConn(tl TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), protobuf.PROTOBUF_ENCODER)
+// newProtoEncodedConn wraps an existing *nats.Conn as a Protobuf-encoded connection.
+func newProtoEncodedConn(tl testing.TB, nc *nats.Conn) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(nc, protobuf.PROTOBUF_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -36,65 +37,61 @@ func NewProtoEncodedConn(tl TestLogger) *nats.EncodedConn {
 }
 
 func TestEncProtoMarshalStruct(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newProtoEncodedConn(t, nc)
 
-	ec := NewProtoEncodedConn(t)
-	defer ec.Close()
+		me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*pb.Person)
 
-	me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
-	me.Children = make(map[string]*pb.Person)
+		me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
-	me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
-	me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+		ch := make(chan error, 1)
+		ec.Subscribe("protobuf_test", func(p *pb.Person) {
+			var err error
+			if !reflect.DeepEqual(p.ProtoReflect(), me.ProtoReflect()) {
+				err = errors.New("Did not receive the correct protobuf response")
+			}
+			ch <- err
+		})
 
-	ch := make(chan error, 1)
-	ec.Subscribe("protobuf_test", func(p *pb.Person) {
-		var err error
-		if !reflect.DeepEqual(p.ProtoReflect(), me.ProtoReflect()) {
-			err = errors.New("Did not receive the correct protobuf response")
+		ec.Publish("protobuf_test", me)
+		select {
+		case e := <-ch:
+			if e != nil {
+				t.Fatal(e.Error())
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Failed to receive message")
 		}
-		ch <- err
 	})
-
-	ec.Publish("protobuf_test", me)
-	select {
-	case e := <-ch:
-		if e != nil {
-			t.Fatal(e.Error())
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Failed to receive message")
-	}
 }
 
 func TestEncProtoNilRequest(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newProtoEncodedConn(t, nc)
 
-	ec := NewProtoEncodedConn(t)
-	defer ec.Close()
+		testPerson := &pb.Person{Name: "Anatolii", Age: 25, Address: "Ukraine, Nikolaev"}
 
-	testPerson := &pb.Person{Name: "Anatolii", Age: 25, Address: "Ukraine, Nikolaev"}
+		// Subscribe with empty interface shouldn't fail on empty message
+		ec.Subscribe("nil_test", func(_, reply string, _ any) {
+			ec.Publish(reply, testPerson)
+		})
 
-	//Subscribe with empty interface shouldn't failed on empty message
-	ec.Subscribe("nil_test", func(_, reply string, _ any) {
-		ec.Publish(reply, testPerson)
+		resp := new(pb.Person)
+
+		// Request with nil argument shouldn't fail
+		err := ec.Request("nil_test", nil, resp, 100*time.Millisecond)
+		ec.Flush()
+
+		if err != nil {
+			t.Error("Fail to send empty message via encoded proto connection")
+		}
+
+		if !reflect.DeepEqual(testPerson.ProtoReflect(), resp.ProtoReflect()) {
+			t.Error("Fail to receive encoded response")
+		}
 	})
-
-	resp := new(pb.Person)
-
-	//Request with nil argument shouldn't failed with nil argument
-	err := ec.Request("nil_test", nil, resp, 100*time.Millisecond)
-	ec.Flush()
-
-	if err != nil {
-		t.Error("Fail to send empty message via encoded proto connection")
-	}
-
-	if !reflect.DeepEqual(testPerson.ProtoReflect(), resp.ProtoReflect()) {
-		t.Error("Fail to receive encoded response")
-	}
 }
 
 func BenchmarkProtobufMarshalStruct(b *testing.B) {
@@ -113,36 +110,30 @@ func BenchmarkProtobufMarshalStruct(b *testing.B) {
 }
 
 func BenchmarkPublishProtobufStruct(b *testing.B) {
-	// stop benchmark for set-up
 	b.StopTimer()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ec := newProtoEncodedConn(b, nc)
+		defer ec.Close()
+		ch := make(chan bool)
 
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+		me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*pb.Person)
+		me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
-	ec := NewProtoEncodedConn(b)
-	defer ec.Close()
-	ch := make(chan bool)
+		ec.Subscribe("protobuf_test", func(p *pb.Person) {
+			if !reflect.DeepEqual(p.ProtoReflect(), me.ProtoReflect()) {
+				b.Fatalf("Did not receive the correct protobuf response")
+			}
+			ch <- true
+		})
 
-	me := &pb.Person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
-	me.Children = make(map[string]*pb.Person)
-
-	me.Children["sam"] = &pb.Person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
-	me.Children["meg"] = &pb.Person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
-
-	ec.Subscribe("protobuf_test", func(p *pb.Person) {
-		if !reflect.DeepEqual(p, me) {
-			b.Fatalf("Did not receive the correct protobuf response")
+		b.StartTimer()
+		for range b.N {
+			ec.Publish("protobuf_test", me)
+			if e := Wait(ch); e != nil {
+				b.Fatal("Did not receive the message")
+			}
 		}
-		ch <- true
 	})
-
-	// resume benchmark
-	b.StartTimer()
-
-	for n := 0; n < b.N; n++ {
-		ec.Publish("protobuf_test", me)
-		if e := Wait(ch); e != nil {
-			b.Fatal("Did not receive the message")
-		}
-	}
 }

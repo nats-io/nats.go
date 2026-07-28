@@ -1,4 +1,4 @@
-// Copyright 2012-2024 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,183 +18,175 @@ package test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
+
+const denyFooAuthSnippet = `
+authorization: {
+    users = [
+        {
+            user: test
+            password: test
+            permissions: {
+                subscribe: {
+                    deny: "foo"
+                }
+            }
+        }
+    ]
+}`
 
 func TestSubscribeIterator(t *testing.T) {
 	t.Run("with timeout", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.PermissionErrOnSubscribe(true))
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		sub, err := nc.SubscribeSync("foo")
-		if err != nil {
-			t.Fatal("Failed to subscribe: ", err)
-		}
-		defer sub.Unsubscribe()
-
-		total := 100
-		for i := 0; i < total/2; i++ {
-			if err := nc.Publish("foo", []byte("Hello")); err != nil {
-				t.Fatalf("Error on publish: %v", err)
+		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
 			}
-		}
+			defer nc.Close()
 
-		// publish some more messages asynchronously
-		errCh := make(chan error, 1)
-		go func() {
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
+			}
+			defer sub.Unsubscribe()
+
+			total := 100
 			for i := 0; i < total/2; i++ {
 				if err := nc.Publish("foo", []byte("Hello")); err != nil {
-					errCh <- err
-					return
+					t.Fatalf("Error on publish: %v", err)
 				}
-				time.Sleep(10 * time.Millisecond)
 			}
-			close(errCh)
-		}()
 
-		received := 0
-		for _, err := range sub.MsgsTimeout(100 * time.Millisecond) {
-			if err != nil {
-				if !errors.Is(err, nats.ErrTimeout) {
-					t.Fatalf("Error on subscribe: %v", err)
+			errCh := make(chan error, 1)
+			go func() {
+				for i := 0; i < total/2; i++ {
+					if err := nc.Publish("foo", []byte("Hello")); err != nil {
+						errCh <- err
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
 				}
-				break
-			} else {
-				received++
+				close(errCh)
+			}()
+
+			received := 0
+			for _, err := range sub.MsgsTimeout(100 * time.Millisecond) {
+				if err != nil {
+					if !errors.Is(err, nats.ErrTimeout) {
+						t.Fatalf("Error on subscribe: %v", err)
+					}
+					break
+				} else {
+					received++
+				}
 			}
-		}
-		if received != total {
-			t.Fatalf("Expected %d messages, got %d", total, received)
-		}
+			if received != total {
+				t.Fatalf("Expected %d messages, got %d", total, received)
+			}
+		})
 	})
 
 	t.Run("timeout keeps yielding only ErrTimeout", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.PermissionErrOnSubscribe(true))
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		sub, err := nc.SubscribeSync("foo")
-		if err != nil {
-			t.Fatal("Failed to subscribe: ", err)
-		}
-		defer sub.Unsubscribe()
-
-		// No message is ever published, so every NextMsg call times out.
-		// ErrTimeout is not fatal, so a consumer is allowed to keep iterating.
-		// In that case the iterator must only ever yield (nil, ErrTimeout); it
-		// must not yield a spurious (nil, nil) pair between timeouts.
-		iterations := 0
-		for msg, err := range sub.MsgsTimeout(50 * time.Millisecond) {
-			if err == nil {
-				t.Fatalf("iteration %d: got msg=%v with nil error, expected ErrTimeout", iterations, msg)
+		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
 			}
-			if !errors.Is(err, nats.ErrTimeout) {
-				t.Fatalf("iteration %d: unexpected error: %v", iterations, err)
+			defer nc.Close()
+
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
 			}
-			iterations++
-			if iterations >= 3 {
-				break
+			defer sub.Unsubscribe()
+
+			// No message is ever published, so every NextMsg call times out.
+			// ErrTimeout is not fatal, so a consumer is allowed to keep iterating.
+			// In that case the iterator must only ever yield (nil, ErrTimeout); it
+			// must not yield a spurious (nil, nil) pair between timeouts.
+			iterations := 0
+			for msg, err := range sub.MsgsTimeout(50 * time.Millisecond) {
+				if err == nil {
+					t.Fatalf("iteration %d: got msg=%v with nil error, expected ErrTimeout", iterations, msg)
+				}
+				if !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("iteration %d: unexpected error: %v", iterations, err)
+				}
+				iterations++
+				if iterations >= 3 {
+					break
+				}
 			}
-		}
+		})
 	})
 
 	t.Run("no timeout", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.PermissionErrOnSubscribe(true))
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		sub, err := nc.SubscribeSync("foo")
-		if err != nil {
-			t.Fatal("Failed to subscribe: ", err)
-		}
-		defer sub.Unsubscribe()
-
-		// Send some messages to ourselves.
-		total := 100
-		for i := 0; i < total/2; i++ {
-			if err := nc.Publish("foo", []byte("Hello")); err != nil {
-				t.Fatalf("Error on publish: %v", err)
+		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
 			}
-		}
+			defer nc.Close()
 
-		received := 0
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
+			}
+			defer sub.Unsubscribe()
 
-		// publish some more messages asynchronously
-		errCh := make(chan error, 1)
-		go func() {
+			total := 100
 			for i := 0; i < total/2; i++ {
 				if err := nc.Publish("foo", []byte("Hello")); err != nil {
-					errCh <- err
-					return
+					t.Fatalf("Error on publish: %v", err)
 				}
-				time.Sleep(10 * time.Millisecond)
 			}
-			close(errCh)
-		}()
 
-		for _, err := range sub.Msgs() {
-			if err != nil {
-				t.Fatalf("Error getting msg: %v", err)
+			received := 0
+
+			errCh := make(chan error, 1)
+			go func() {
+				for i := 0; i < total/2; i++ {
+					if err := nc.Publish("foo", []byte("Hello")); err != nil {
+						errCh <- err
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				close(errCh)
+			}()
+
+			for _, err := range sub.Msgs() {
+				if err != nil {
+					t.Fatalf("Error getting msg: %v", err)
+				}
+				received++
+				if received >= total {
+					break
+				}
 			}
-			received++
-			if received >= total {
-				break
+			if err = <-errCh; err != nil {
+				t.Fatalf("Error on publish: %v", err)
 			}
-		}
-		err = <-errCh
-		if err != nil {
-			t.Fatalf("Error on publish: %v", err)
-		}
-		_, err = sub.NextMsg(100 * time.Millisecond)
-		if !errors.Is(err, nats.ErrTimeout) {
-			t.Fatalf("Expected timeout waiting for next message, got %v", err)
-		}
+			if _, err = sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
+				t.Fatalf("Expected timeout waiting for next message, got %v", err)
+			}
+		})
 	})
 
 	t.Run("permissions violation", func(t *testing.T) {
-		conf := createConfFile(t, []byte(`
-			listen: 127.0.0.1:-1
-			authorization: {
-				users = [
-					{
-						user: test
-						password: test
-						permissions: {
-							subscribe: {
-								deny: "foo"
-							}
-						}
-					}
-				]
-			}
-		`))
-		defer os.Remove(conf)
+		c := newTester(t)
+		inst := c.CreateServer(t, false, testservice.WithAuthorization(denyFooAuthSnippet))
+		t.Cleanup(func() { inst.Destroy(t) })
 
-		s, _ := RunServerWithConfig(conf)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("test", "test"), nats.PermissionErrOnSubscribe(true))
+		nc, err := nats.Connect(inst.Servers[0].URL,
+			nats.UserInfo("test", "test"),
+			nats.PermissionErrOnSubscribe(true))
 		if err != nil {
 			t.Fatalf("Error on connect: %v", err)
 		}
@@ -224,154 +216,96 @@ func TestSubscribeIterator(t *testing.T) {
 			t.Fatalf("Did not get the permission error")
 		}
 
-		_, err = sub.NextMsg(100 * time.Millisecond)
-		if !errors.Is(err, nats.ErrPermissionViolation) {
+		if _, err = sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrPermissionViolation) {
 			t.Fatalf("Expected permissions violation error, got %v", err)
 		}
 	})
 
 	t.Run("attempt iterator on async sub", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.PermissionErrOnSubscribe(true))
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		sub, err := nc.Subscribe("foo", func(msg *nats.Msg) {})
-		if err != nil {
-			t.Fatal("Failed to subscribe: ", err)
-		}
-		defer sub.Unsubscribe()
-
-		for _, err := range sub.MsgsTimeout(100 * time.Millisecond) {
-			if !errors.Is(err, nats.ErrSyncSubRequired) {
-				t.Fatalf("Error on subscribe: %v", err)
+		withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+			nc, err := nats.Connect(inst.Servers[0].URL, nats.PermissionErrOnSubscribe(true))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
 			}
-		}
-		for _, err := range sub.Msgs() {
-			if !errors.Is(err, nats.ErrSyncSubRequired) {
-				t.Fatalf("Error on subscribe: %v", err)
+			defer nc.Close()
+
+			sub, err := nc.Subscribe("foo", func(msg *nats.Msg) {})
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
 			}
-		}
-	})
+			defer sub.Unsubscribe()
 
-	t.Run("timeout does not yield phantom nil message", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		sub, err := nc.SubscribeSync("foo")
-		if err != nil {
-			t.Fatal("Failed to subscribe: ", err)
-		}
-		defer sub.Unsubscribe()
-
-		// No messages are published, so every NextMsg should hit ErrTimeout.
-		// Read three iterations and confirm each one yielded the timeout
-		// error and not a phantom (nil, nil) following it.
-		var got []error
-		for _, err := range sub.MsgsTimeout(20 * time.Millisecond) {
-			got = append(got, err)
-			if len(got) == 3 {
-				break
+			for _, err := range sub.MsgsTimeout(100 * time.Millisecond) {
+				if !errors.Is(err, nats.ErrSyncSubRequired) {
+					t.Fatalf("Error on subscribe: %v", err)
+				}
 			}
-		}
-		for i, e := range got {
-			if !errors.Is(e, nats.ErrTimeout) {
-				t.Fatalf("yield %d: expected ErrTimeout, got %v", i, e)
+			for _, err := range sub.Msgs() {
+				if !errors.Is(err, nats.ErrSyncSubRequired) {
+					t.Fatalf("Error on subscribe: %v", err)
+				}
 			}
-		}
+		})
 	})
 }
 
 func TestQueueSubscribeIterator(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
-		s := RunServerOnPort(-1)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			t.Fatalf("Error on connect: %v", err)
-		}
-		defer nc.Close()
-
-		subs := make([]*nats.Subscription, 4)
-		for i := 0; i < 4; i++ {
-			sub, err := nc.QueueSubscribeSync("foo", "q")
-			if err != nil {
-				t.Fatal("Failed to subscribe: ", err)
-			}
-			subs[i] = sub
-			defer sub.Unsubscribe()
-		}
-
-		// Send some messages to ourselves.
-		total := 100
-		for i := 0; i < total; i++ {
-			if err := nc.Publish("foo", []byte(fmt.Sprintf("%d", i))); err != nil {
-				t.Fatalf("Error on publish: %v", err)
-			}
-		}
-
-		wg := sync.WaitGroup{}
-		wg.Add(100)
-		startWg := sync.WaitGroup{}
-		startWg.Add(4)
-
-		for i := range subs {
-			go func(i int) {
-				startWg.Done()
-				for _, err := range subs[i].MsgsTimeout(100 * time.Millisecond) {
-					if err != nil {
-						break
-					}
-					wg.Done()
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			subs := make([]*nats.Subscription, 4)
+			for i := 0; i < 4; i++ {
+				sub, err := nc.QueueSubscribeSync("foo", "q")
+				if err != nil {
+					t.Fatal("Failed to subscribe: ", err)
 				}
-			}(i)
-		}
-
-		startWg.Wait()
-
-		wg.Wait()
-
-		for _, sub := range subs {
-			if _, err = sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
-				t.Fatalf("Expected timeout waiting for next message, got %v", err)
+				subs[i] = sub
+				defer sub.Unsubscribe()
 			}
-		}
+
+			total := 100
+			for i := 0; i < total; i++ {
+				if err := nc.Publish("foo", []byte(fmt.Sprintf("%d", i))); err != nil {
+					t.Fatalf("Error on publish: %v", err)
+				}
+			}
+
+			wg := sync.WaitGroup{}
+			wg.Add(100)
+			startWg := sync.WaitGroup{}
+			startWg.Add(4)
+
+			for i := range subs {
+				go func(i int) {
+					startWg.Done()
+					for _, err := range subs[i].MsgsTimeout(100 * time.Millisecond) {
+						if err != nil {
+							break
+						}
+						wg.Done()
+					}
+				}(i)
+			}
+
+			startWg.Wait()
+
+			wg.Wait()
+
+			for _, sub := range subs {
+				if _, err := sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("Expected timeout waiting for next message, got %v", err)
+				}
+			}
+		})
 	})
 
 	t.Run("permissions violation", func(t *testing.T) {
-		conf := createConfFile(t, []byte(`
-			listen: 127.0.0.1:-1
-			authorization: {
-				users = [
-					{
-						user: test
-						password: test
-						permissions: {
-							subscribe: {
-								deny: "foo"
-							}
-						}
-					}
-				]
-			}
-		`))
-		defer os.Remove(conf)
+		c := newTester(t)
+		inst := c.CreateServer(t, false, testservice.WithAuthorization(denyFooAuthSnippet))
+		t.Cleanup(func() { inst.Destroy(t) })
 
-		s, _ := RunServerWithConfig(conf)
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL(), nats.UserInfo("test", "test"), nats.PermissionErrOnSubscribe(true))
+		nc, err := nats.Connect(inst.Servers[0].URL,
+			nats.UserInfo("test", "test"),
+			nats.PermissionErrOnSubscribe(true))
 		if err != nil {
 			t.Fatalf("Error on connect: %v", err)
 		}
@@ -400,5 +334,31 @@ func TestQueueSubscribeIterator(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Did not get the permission error")
 		}
+	})
+
+	t.Run("timeout does not yield phantom nil message", func(t *testing.T) {
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			sub, err := nc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatal("Failed to subscribe: ", err)
+			}
+			defer sub.Unsubscribe()
+
+			// No messages are published, so every NextMsg should hit ErrTimeout.
+			// Read three iterations and confirm each one yielded the timeout
+			// error and not a phantom (nil, nil) following it.
+			var got []error
+			for _, err := range sub.MsgsTimeout(20 * time.Millisecond) {
+				got = append(got, err)
+				if len(got) == 3 {
+					break
+				}
+			}
+			for i, e := range got {
+				if !errors.Is(e, nats.ErrTimeout) {
+					t.Fatalf("yield %d: expected ErrTimeout, got %v", i, e)
+				}
+			}
+		})
 	})
 }
