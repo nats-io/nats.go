@@ -41,12 +41,9 @@ jobs:
         # Run inside an alpine container on the same docker network as the
         # tester service so the spawned NATS servers are reachable by service
         # name (no host port publishing needed).
-        # Go 1.26+ only: the ntf-client test dependency declares `go 1.26.4`,
-        # which sets the floor for go_test.mod. Production go.mod is unaffected
-        # and still supports older toolchains.
         strategy:
             matrix:
-              go: [ "1.26" ]
+              go: [ "1.25", "1.26" ]
               include:
                 - go: "1.26"
                   coverage: true

@@ -12,8 +12,6 @@ This project uses a **dual module** setup: `go.mod` for production (minimal deps
 
 Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against a remote **ntf-server** docker service (`synadia/ntf-server:2.14`) instead of an in-process nats-server. Bring it up first via the Makefile, then run tests with `TESTER_NATS_URL` pointing at it.
 
-Note: `go_test.mod` requires **Go 1.26.4+** (the `ntf-client` test dependency declares `go 1.26.4`). Production `go.mod` is unaffected.
-
 ```bash
 # Start the tester (host-side mode publishes the tester's ports so `go test`
 # from your terminal can reach the spawned NATS servers via localhost).
@@ -78,7 +76,7 @@ If `TESTER_NATS_URL` is unset, the integration tests skip via `t.Skip` rather th
 ## CI Pipeline (ci.yaml)
 
 1. **lint** -- `go fmt`, `go vet`, `staticcheck`, `misspell` (all packages), `golangci-lint` (jetstream only).
-2. **test** -- Go 1.26 (floor set by `go_test.mod`'s `go 1.26.4`). Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing`.
+2. **test** -- Matrix of Go 1.25 and 1.26. Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing`.
 
 ## Project Structure
 
