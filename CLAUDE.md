@@ -82,7 +82,7 @@ If `TESTER_NATS_URL` is unset, the integration tests skip via `t.Skip` rather th
 ## CI Pipeline (ci.yaml)
 
 1. **lint** -- `go fmt`, `go vet`, `staticcheck`, `misspell` (all packages), `golangci-lint` (jetstream only).
-2. **test** -- Matrix of Go 1.25 and 1.26. Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing`.
+2. **test** -- Matrix of Go 1.25 and 1.26. Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing` (the Go 1.26 row runs `scripts/cov.sh` for coverage instead of the plain race run).
 
 ## Project Structure
 
@@ -139,7 +139,7 @@ test/                   # Integration tests for core package (package test)
 
 bench/                  # Benchmarking utilities
 examples/               # Example command-line tools (nats-pub, nats-sub, etc.)
-scripts/cov.sh          # Coverage collection script (currently parked — see openspec OQ3)
+scripts/cov.sh          # Coverage collection script (run by the CI coverage matrix row)
 ```
 
 The tester client is an external test-only dependency: `github.com/synadia-io/orbit.go/ntf-client`
