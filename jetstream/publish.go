@@ -62,8 +62,11 @@ type (
 		retryWait     time.Duration // Retry wait between attempts
 		retryAttempts int           // Retry attempts
 
-		// stallWait is the max wait of a async pub ack.
+		// stallWait is the max wait of an async pub ack.
 		stallWait time.Duration
+
+		// cb is the handler of an async message.
+		cb MsgAsyncHandler
 
 		// internal option to re-use existing paf in case of retry.
 		pafRetry *pubAckFuture
@@ -94,12 +97,19 @@ type (
 		doneCh     chan *PubAck
 		reply      string
 		timeout    *time.Timer
+		cb         MsgAsyncHandler
 	}
 
 	jetStreamClient struct {
 		asyncPublishContext
 		asyncPublisherOpts
 	}
+
+	// MsgAsyncHandler is a per-publish callback that can be set with
+	// [WithAsyncHandler] to process the outcome of an asynchronous publish.
+	// It is invoked with the original message sent to the server, the
+	// resulting PubAck (nil on error) and the error encountered (nil on success).
+	MsgAsyncHandler func(*nats.Msg, *PubAck, error)
 
 	// MsgErrHandler is used to process asynchronous errors from JetStream
 	// PublishAsync. It will return the original message sent to the server for
@@ -359,7 +369,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 			return nil, fmt.Errorf("nats: error creating async reply handler: %s", err)
 		}
 		id = reply[js.opts.replyPrefixLen:]
-		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
+		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply, cb: o.cb}
 		numPending, maxPending := js.registerPAF(id, paf)
 
 		if maxPending > 0 && numPending > maxPending {
@@ -396,7 +406,10 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 					paf.errCh <- paf.err
 				}
 
-				// call error callback if set
+				// call error callbacks if set
+				if paf.cb != nil {
+					paf.cb(paf.msg, nil, ErrAsyncPublishTimeout)
+				}
 				if js.publisher.asyncPublisherOpts.aecb != nil {
 					js.publisher.asyncPublisherOpts.aecb(js, paf.msg, ErrAsyncPublishTimeout)
 				}
@@ -526,6 +539,9 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		}
 		cb := js.publisher.asyncPublisherOpts.aecb
 		js.publisher.Unlock()
+		if paf.cb != nil {
+			paf.cb(paf.msg, nil, err)
+		}
 		if cb != nil {
 			cb(js, paf.msg, err)
 		}
@@ -584,13 +600,16 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		return
 	}
 
-	// So here we have received a proper puback.
+	// So here we have received a proper pubAck.
 	paf.ack = pa.PubAck
 	if paf.doneCh != nil {
 		paf.doneCh <- paf.ack
 	}
 	cb := js.publisher.asyncPublisherOpts.ackcb
 	js.publisher.Unlock()
+	if paf.cb != nil {
+		paf.cb(paf.msg, paf.ack, nil)
+	}
 	if cb != nil {
 		cb(js, paf.msg, paf.ack)
 	}

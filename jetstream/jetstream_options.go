@@ -830,6 +830,21 @@ func WithScheduleTimeZone(zone string) PublishOpt {
 	}
 }
 
+// WithAsyncHandler sets a callback for an individual async publish. The
+// callback is invoked when the message is acknowledged by the server or when
+// the publish fails, with the original message sent to the server, the
+// resulting PubAck (nil on error) and the error encountered (nil on success).
+//
+// Unlike [WithPublishAsyncErrHandler] and [WithPublishAsyncAckHandler], which
+// apply to all async publishes performed on the JetStream context, this option
+// is per-publish.
+func WithAsyncHandler(cb MsgAsyncHandler) PublishOpt {
+	return func(opts *pubOpts) error {
+		opts.cb = cb
+		return nil
+	}
+}
+
 type nextOptFunc func(*nextOpts)
 
 func (fn nextOptFunc) configureNext(opts *nextOpts) {

@@ -87,6 +87,9 @@ type (
 		// received by the server. It only guarantees that the message has been
 		// sent to the server and thus messages can be stored in the stream
 		// out of order in case of retries.
+		//
+		// A per-publish callback can be set with [WithAsyncHandler] to be
+		// notified when the publish is acknowledged or fails.
 		PublishAsync(subject string, payload []byte, opts ...PublishOpt) (PubAckFuture, error)
 
 		// PublishMsgAsync performs a publish to a stream and returns
@@ -98,6 +101,9 @@ type (
 		// received by the server. It only guarantees that the message has been
 		// sent to the server and thus messages can be stored in the stream
 		// out of order in case of retries.
+		//
+		// A per-publish callback can be set with [WithAsyncHandler] to be
+		// notified when the publish is acknowledged or fails.
 		PublishMsgAsync(msg *nats.Msg, opts ...PublishOpt) (PubAckFuture, error)
 
 		// PublishAsyncPending returns the number of async publishes outstanding
