@@ -2945,17 +2945,10 @@ func TestTLSDontSkipVerify(t *testing.T) {
 }
 
 func TestRetryOnFailedConnect(t *testing.T) {
-	// The original test had two phases:
-	//   Phase A (kept here): RetryOnFailedConnect retries until the server
-	//                        comes up, then exercises a normal stop/restart
-	//                        cycle so the reconnect handler fires.
-	//   Phase B (dropped):   restart the server with auth on and verify the
-	//                        connection eventually closes on auth failure.
-	//                        Equivalent coverage already exists in
-	//                        TestRetryOnFailedConnectWithAuthError below;
-	//                        Phase B's "flip auth ON between restarts"
-	//                        sequence needs a port-preserving reconfigure
-	//                        API we don't have in testservice.
+	// Phase B of the original (flip auth ON between restarts) is dropped: it
+	// needs a port-preserving reconfigure API the tester lacks. Not covered
+	// elsewhere — TestRetryOnFailedConnectWithAuthError caps MaxReconnects at
+	// 2, so its close cannot distinguish auth-abort from retry exhaustion.
 	c := newTester(t)
 	inst := c.CreateServer(t, false)
 	t.Cleanup(func() { inst.Destroy(t) })

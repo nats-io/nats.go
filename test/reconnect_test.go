@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1279,7 +1278,7 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected connection to fail due to account max connections limit")
 	}
-	if !strings.Contains(err.Error(), `maximum account active connections exceeded`) {
+	if !errors.Is(err, nats.ErrMaxAccountConnectionsExceeded) {
 		t.Fatalf("Expected second connection to be properly rejected: %v", err)
 	}
 
@@ -1343,11 +1342,11 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 
 	select {
 	case err := <-errCh1:
-		if !strings.Contains(err.Error(), "maximum account active connections exceeded") {
+		if !errors.Is(err, nats.ErrMaxAccountConnectionsExceeded) {
 			t.Fatalf("Expected account-limit error on nc1, got %v", err)
 		}
 	case err := <-errCh3:
-		if !strings.Contains(err.Error(), "maximum account active connections exceeded") {
+		if !errors.Is(err, nats.ErrMaxAccountConnectionsExceeded) {
 			t.Fatalf("Expected account-limit error on nc3, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
