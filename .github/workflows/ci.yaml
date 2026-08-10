@@ -66,14 +66,16 @@ jobs:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-
+            # git must exist before checkout, otherwise actions/checkout falls
+            # back to the REST API and leaves no .git in the workspace.
             - name: Install build deps
               run: |
                 apk add --no-cache gcc libc-dev git make bash curl ca-certificates
                 go install github.com/mattn/goveralls@latest
                 go install github.com/wadey/gocovmerge@latest
+
+            - name: Checkout code
+              uses: actions/checkout@v6
 
             - name: NoRace tests
               shell: bash --noprofile --norc -x -eo pipefail {0}

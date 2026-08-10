@@ -29,7 +29,7 @@ TESTER_NATS_URL=nats://localhost:4222 \
 
 # Run a specific test
 TESTER_NATS_URL=nats://localhost:4222 \
-  go test -modfile=go_test.mod -race -run TestName ./...
+  go test -modfile=go_test.mod -race -tags=internal_testing -run TestName ./...
 
 # Run tests for a specific package
 TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -race ./jetstream/test/... --failfast
@@ -135,7 +135,7 @@ test/                   # Integration tests for core package (package test)
   helper_test.go        #   Shared utility helpers (Wait, checkFor, getStableNumGoroutine, ...)
   norace_test.go        #   Tests that cannot run with -race (build tag guarded)
   js_internal_test.go   #   Tests requiring internal_testing tag
-  configs/              #   Server config files (cert material, etc.) mounted into the tester
+  configs/certs/        #   CA/server/key PEMs loaded by TLS tests (the *.conf files are unused)
 
 bench/                  # Benchmarking utilities
 examples/               # Example command-line tools (nats-pub, nats-sub, etc.)

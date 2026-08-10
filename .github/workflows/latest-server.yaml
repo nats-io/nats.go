@@ -27,12 +27,14 @@ jobs:
           TESTER_NATS_URL: nats://nats:4222
           CGO_ENABLED: "1"
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-
+            # git must exist before checkout, otherwise actions/checkout falls
+            # back to the REST API and leaves no .git in the workspace.
             - name: Install build deps
               run: |
                 apk add --no-cache gcc libc-dev git make bash curl ca-certificates
+
+            - name: Checkout code
+              uses: actions/checkout@v6
 
             - name: Log server version
               shell: bash --noprofile --norc -eo pipefail {0}
