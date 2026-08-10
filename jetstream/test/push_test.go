@@ -236,7 +236,7 @@ func TestPushConsumerConsume(t *testing.T) {
 			// restart the server: stop + start the single node
 			inst.StopServer(t, inst.Servers[0])
 			inst.StartServer(t, inst.Servers[0])
-			time.Sleep(10 * time.Millisecond)
+			waitForStream(t, js, "foo")
 			publishTestMsgs(t, js)
 			wg.Wait()
 		})

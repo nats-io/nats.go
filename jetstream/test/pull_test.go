@@ -1493,7 +1493,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			// restart the server
 			inst.StopServer(t, inst.Servers[0])
 			inst.StartServer(t, inst.Servers[0])
-			time.Sleep(10 * time.Millisecond)
+			waitForStream(t, js, "foo")
 			publishTestMsgs(t, js)
 
 			select {
@@ -2329,7 +2329,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			// restart the server
 			inst.StopServer(t, inst.Servers[0])
 			inst.StartServer(t, inst.Servers[0])
-			time.Sleep(10 * time.Millisecond)
+			waitForStream(t, js, "foo")
 			publishTestMsgs(t, js)
 			wg.Wait()
 		})

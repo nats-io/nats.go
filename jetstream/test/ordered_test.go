@@ -183,6 +183,7 @@ func TestOrderedConsumerConsume(t *testing.T) {
 
 			inst.StopServer(t, inst.Servers[0])
 			inst.StartServer(t, inst.Servers[0])
+			waitForStream(t, js, "foo")
 			wg.Add(len(testMsgs))
 			publishTestMsgs(t, js)
 			wg.Wait()
@@ -631,6 +632,7 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			}
 			inst.StopServer(t, inst.Servers[0])
 			inst.StartServer(t, inst.Servers[0])
+			waitForStream(t, js, "foo")
 			publishTestMsgs(t, js)
 			for range 5 {
 				msg, err := it.Next()

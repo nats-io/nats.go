@@ -136,7 +136,48 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
 	js := newJetStream(t, nc)
+	waitForJSCluster(t, js)
 	fn(t, nc, js, inst)
+}
+
+// waitForStream blocks until the stream is queryable again. StartServer
+// returns on ack, not on readiness, so a publish issued right after a restart
+// can race JetStream recovery.
+func waitForStream(t *testing.T, js jetstream.JetStream, name string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		_, err := js.Stream(ctx, name)
+		if err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("stream %q not ready after restart: %v", name, err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// waitForJSCluster blocks until the meta leader is elected. WaitForJetStream
+// only checks the transport error, so a leaderless cluster answering
+// JSClusterNotAvail satisfies it; AccountInfo parses the response body.
+func waitForJSCluster(t *testing.T, js jetstream.JetStream) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		_, err := js.AccountInfo(ctx)
+		if err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("jetstream cluster not ready: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // dialInstance returns a connection that lists every server URL in inst, so

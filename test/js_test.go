@@ -1540,7 +1540,10 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 					t.Fatalf("Unexpected error: %s", err)
 				}
 			}
-			res, err := sub.FetchBatch(10, nats.MaxWait(50*time.Millisecond))
+			// 500ms, not the original 50ms: only 5 of the 10 requested msgs
+			// exist, so the wait only bounds the round-trip, and 50ms is too
+			// tight once the server is a container hop away.
+			res, err := sub.FetchBatch(10, nats.MaxWait(500*time.Millisecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %s", err)
 			}
@@ -2842,6 +2845,7 @@ func TestJetStreamConsumerConfigReplicasAndMemStorage(t *testing.T) {
 
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
+	waitForJSCluster(t, nc)
 
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
@@ -3068,6 +3072,7 @@ func TestJetStreamConsumerReplicasOption(t *testing.T) {
 
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
+	waitForJSCluster(t, nc)
 
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
@@ -3189,7 +3194,7 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// restart the server (storage preserved by testservice across stop/start)
+	// restart the server (stop/start is observed to keep storage; not contractual)
 	inst.StopServer(t, inst.Servers[0])
 	inst.StartServer(t, inst.Servers[0])
 	c.WaitForJetStream(t, nc)
@@ -3341,6 +3346,7 @@ func TestJetStreamStreamInfoAlternates(t *testing.T) {
 
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
+	waitForJSCluster(t, nc)
 
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
@@ -4544,7 +4550,6 @@ func TestAccountInfo(t *testing.T) {
 		setup     func(t *testing.T) *nats.Conn
 		expected  *nats.AccountInfo
 		withError error
-		skip      string
 	}
 	tests := []tc{
 		{
@@ -4702,9 +4707,6 @@ func TestAccountInfo(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.skip != "" {
-				t.Skip(test.skip)
-			}
 			nc := test.setup(t)
 			defer nc.Close()
 			js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
@@ -5282,6 +5284,7 @@ func TestJetStreamManagement_GetMsg(t *testing.T) {
 		t.Cleanup(func() { inst.Destroy(t) })
 		nc := dialInstance(t, inst)
 		c.WaitForJetStream(t, nc)
+		waitForJSCluster(t, nc)
 		testJetStreamManagement_GetMsgBody(t, nc)
 	})
 }
@@ -8389,6 +8392,7 @@ func TestJetStreamPullSubscribeOptions(t *testing.T) {
 
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
+	waitForJSCluster(t, nc)
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -9837,6 +9841,7 @@ func TestJetStreamPullSubscribeFetchContext(t *testing.T) {
 
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
+	waitForJSCluster(t, nc)
 	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)

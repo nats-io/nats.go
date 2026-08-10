@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	testservice "github.com/synadia-io/orbit.go/ntf-client"
@@ -118,6 +119,28 @@ func withJSServerInstance(t *testing.T, fn func(*testing.T, *nats.Conn, *testser
 	nc := dialInstance(t, inst)
 	c.WaitForJetStream(t, nc)
 	fn(t, nc, inst)
+}
+
+// waitForJSCluster blocks until the meta leader is elected. WaitForJetStream
+// only checks the transport error, so a leaderless cluster answering
+// JSClusterNotAvail satisfies it; AccountInfo parses the response body.
+func waitForJSCluster(t *testing.T, nc *nats.Conn) {
+	t.Helper()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("nc.JetStream: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := js.AccountInfo()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("jetstream cluster not ready: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // dialInstance returns a connection that lists every server URL in inst, so
