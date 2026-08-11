@@ -20,11 +20,19 @@ package nats
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -2016,5 +2024,207 @@ func TestWriteBufferSizeDefault(t *testing.T) {
 
 	if nc.bw.limit != defaultBufSize {
 		t.Fatalf("Expected default write buffer limit of %d, got %d", defaultBufSize, nc.bw.limit)
+	}
+}
+
+// errInProcessProvider is a stub InProcessConnProvider that always fails. Used
+// to confirm Connect routes through InProcessConn and surfaces its errors.
+type errInProcessProvider struct{ err error }
+
+func (e *errInProcessProvider) InProcessConn() (net.Conn, error) { return nil, e.err }
+
+// TestInProcessServerOption verifies that nats.InProcessServer wires the
+// provider into Options. The happy path — reaching CONNECTED over an
+// in-process conn — needs an in-process server and is not covered.
+func TestInProcessServerOption(t *testing.T) {
+	provider := &errInProcessProvider{err: errors.New("placeholder")}
+	opts := Options{}
+	if err := InProcessServer(provider)(&opts); err != nil {
+		t.Fatalf("InProcessServer option returned error: %v", err)
+	}
+	if opts.InProcessServer == nil {
+		t.Fatal("Expected InProcessServer to be stored on Options")
+	}
+	if opts.InProcessServer != InProcessConnProvider(provider) {
+		t.Fatal("Expected stored provider to equal supplied provider")
+	}
+}
+
+// TestInProcessServerConnectError verifies that errors from the provider's
+// InProcessConn() call surface from Connect (wrapped, errors.Is-compatible).
+func TestInProcessServerConnectError(t *testing.T) {
+	providerErr := errors.New("provider broken")
+	provider := &errInProcessProvider{err: providerErr}
+
+	// URL is required for Options parsing but ignored when InProcessServer is set.
+	_, err := Connect("nats://placeholder:4222", InProcessServer(provider))
+	if err == nil {
+		t.Fatal("Expected error from Connect when provider fails")
+	}
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("Expected error to wrap %v, got: %v", providerErr, err)
+	}
+}
+
+// TestParseServerURLPreservesTLSName covers the implicit-IP-URL → preserved-
+// hostname behavior in parseServerURL: when a gossiped (implicit) server URL
+// is an IP and the connection is secure, the entry's tlsName is set to the
+// hostname of the currently-connected URL so the TLS handshake (later, at
+// nats.go:2533) uses that hostname for ServerName verification instead of
+// the dialed IP. This is the same invariant the integration test
+// TestReconnectTLSHostNoIP exercises end-to-end (skipped: needs per-server
+// cluster config asymmetry the testservice does not expose); the white-box
+// form covers the same 14-line correctness boundary without the scaffolding.
+func TestParseServerURLPreservesTLSName(t *testing.T) {
+	current, err := url.Parse("tls://localhost:5222")
+	if err != nil {
+		t.Fatalf("could not parse current URL: %v", err)
+	}
+	nc := &Conn{current: &Server{URL: current}}
+
+	cases := []struct {
+		name         string
+		input        string
+		implicit     bool
+		saveTLSName  bool
+		expectedName string
+	}{
+		{"gossiped IP secure", "tls://127.0.0.1:5224", true, true, "localhost"},
+		{"gossiped hostname secure", "tls://other.example.com:5224", true, true, ""},
+		{"gossiped IP insecure", "tls://127.0.0.1:5224", true, false, ""},
+		{"explicit IP", "tls://127.0.0.1:5224", false, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := nc.parseServerURL(tc.input, tc.implicit, tc.saveTLSName)
+			if err != nil {
+				t.Fatalf("parseServerURL: %v", err)
+			}
+			if s.tlsName != tc.expectedName {
+				t.Fatalf("tlsName = %q, want %q", s.tlsName, tc.expectedName)
+			}
+			if s.isImplicit != tc.implicit {
+				t.Fatalf("isImplicit = %v, want %v", s.isImplicit, tc.implicit)
+			}
+		})
+	}
+}
+
+// hostOnlyTLSCert mints a self-signed cert carrying a single "localhost" DNS
+// SAN and deliberately no IP SANs, so verifying it against an IP-form
+// ServerName fails. Returns the server cert and a pool trusting it.
+func hostOnlyTLSCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
+}
+
+// TestMakeTLSConnUsesPreservedTLSName covers the consumer side of the tlsName
+// invariant: parseServerURL records the originally-dialed hostname on a pool
+// entry (see TestParseServerURLPreservesTLSName), and makeTLSConn must use it
+// as the TLS ServerName rather than the IP it is dialing.
+//
+// This is what lets a client reconnect over TLS to a server the cluster
+// gossiped as a bare IP, against a cert that only has hostname SANs.
+func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tlsName   string
+		expectErr bool
+	}{
+		// Dialed by IP, but tlsName carries the hostname the pool entry was
+		// discovered from: handshake must verify against "localhost".
+		{"preserved name is used", "localhost", false},
+		// Without it, ServerName falls back to the dialed IP, which the cert
+		// does not cover. Guards against the assignment being dropped.
+		{"no preserved name fails against IP", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srvCert, pool := hostOnlyTLSCert(t)
+
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Listen: %v", err)
+			}
+			defer ln.Close()
+
+			sniCh := make(chan string, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				srv := tls.Server(conn, &tls.Config{
+					Certificates: []tls.Certificate{srvCert},
+					GetConfigForClient: func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+						sniCh <- chi.ServerName
+						return nil, nil
+					},
+				})
+				srv.Handshake()
+			}()
+
+			raw, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				t.Fatalf("Dial: %v", err)
+			}
+			defer raw.Close()
+
+			u, err := url.Parse("tls://" + ln.Addr().String())
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			nc := &Conn{
+				Opts:    Options{TLSConfig: &tls.Config{RootCAs: pool}},
+				conn:    raw,
+				current: &Server{URL: u, tlsName: tc.tlsName},
+			}
+			nc.newReaderWriter()
+
+			err = nc.makeTLSConn()
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("Expected TLS handshake to fail without a preserved tlsName")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("makeTLSConn: %v", err)
+			}
+
+			select {
+			case sni := <-sniCh:
+				if sni != "localhost" {
+					t.Fatalf("SNI = %q, want %q", sni, "localhost")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Did not receive ClientHello")
+			}
+		})
 	}
 }

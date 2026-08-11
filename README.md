@@ -385,6 +385,10 @@ Extending public interfaces with new methods is also not viewed as a breaking ch
 
 Additionally, this library always supports at least 2 latest minor Go versions. For example, if the latest Go version is 1.22, the library will support Go 1.21 and 1.22.
 
+## Testing
+
+See [TESTING.md](TESTING.md) for how to run the test suite locally.
+
 ## License
 
 Unless otherwise noted, the NATS source files are distributed

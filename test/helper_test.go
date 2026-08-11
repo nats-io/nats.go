@@ -1,4 +1,4 @@
-// Copyright 2015-2019 The NATS Authors
+// Copyright 2015-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,28 +16,11 @@ package test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/nats-io/nats-server/v2/server"
-	"github.com/nats-io/nats.go"
-
-	natsserver "github.com/nats-io/nats-server/v2/test"
 )
-
-const TEST_PORT = 8368
-
-// So that we can pass tests and benchmarks...
-type tLogger interface {
-	Fatalf(format string, args ...any)
-	Errorf(format string, args ...any)
-}
-
-// TestLogger
-type TestLogger tLogger
 
 // Dumb wait program to sync on callbacks, etc... Will timeout
 func Wait(ch chan bool) error {
@@ -66,7 +49,8 @@ func WaitOnChannel[T comparable](t *testing.T, ch <-chan T, expected T) {
 	}
 }
 
-func stackFatalf(t tLogger, f string, args ...any) {
+func stackFatalf(t testing.TB, f string, args ...any) {
+	t.Helper()
 	lines := make([]string, 0, 32)
 	msg := fmt.Sprintf(f, args...)
 	lines = append(lines, msg)
@@ -83,71 +67,79 @@ func stackFatalf(t tLogger, f string, args ...any) {
 	t.Fatalf("%s", strings.Join(lines, "\n"))
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Creating client connections
-////////////////////////////////////////////////////////////////////////////////
-
-// NewDefaultConnection
-func NewDefaultConnection(t tLogger) *nats.Conn {
-	return NewConnection(t, nats.DefaultPort)
-}
-
-// NewConnection forms connection on a given port.
-func NewConnection(t tLogger, port int) *nats.Conn {
-	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
-	nc, err := nats.Connect(url)
-	if err != nil {
-		t.Fatalf("Failed to create default connection: %v\n", err)
-		return nil
-	}
-	return nc
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Running nats server in separate Go routines
-////////////////////////////////////////////////////////////////////////////////
-
-// RunDefaultServer will run a server on the default port.
-func RunDefaultServer() *server.Server {
-	return RunServerOnPort(nats.DefaultPort)
-}
-
-// RunServerOnPort will run a server on the given port.
-func RunServerOnPort(port int) *server.Server {
-	opts := natsserver.DefaultTestOptions
-	opts.Port = port
-	opts.Cluster.Name = "testing"
-	return RunServerWithOptions(&opts)
-}
-
-// RunServerWithOptions will run a server with the given options.
-func RunServerWithOptions(opts *server.Options) *server.Server {
-	return natsserver.RunServer(opts)
-}
-
-// RunServerWithConfig will run a server with the given configuration file.
-func RunServerWithConfig(configFile string) (*server.Server, *server.Options) {
-	return natsserver.RunServerWithConfig(configFile)
-}
-
-func RunBasicJetStreamServer() *server.Server {
-	opts := natsserver.DefaultTestOptions
-	opts.Port = -1
-	opts.JetStream = true
-	return RunServerWithOptions(&opts)
-}
-
-func createConfFile(t *testing.T, content []byte) string {
+// getStableNumGoroutine returns runtime.NumGoroutine() once the count is
+// observed stable for several consecutive samples. Used by goroutine-leak
+// tests to take a stable baseline.
+func getStableNumGoroutine(t *testing.T) int {
 	t.Helper()
-	conf, err := os.CreateTemp("", "")
+	timeout := time.Now().Add(2 * time.Second)
+	var base, old, same int
+	for time.Now().Before(timeout) {
+		base = runtime.NumGoroutine()
+		if old == base {
+			same++
+			if same == 5 {
+				return base
+			}
+		} else {
+			same = 0
+		}
+		old = base
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Unable to get stable number of go routines")
+	return 0
+}
+
+// checkNoGoroutineLeak asserts the goroutine count returns to base within
+// 2 seconds; otherwise reports the delta.
+func checkNoGoroutineLeak(t *testing.T, base int, action string) {
+	t.Helper()
+	waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		delta := (runtime.NumGoroutine() - base)
+		if delta > 0 {
+			return fmt.Errorf("%d Go routines still exist after %s", delta, action)
+		}
+		return nil
+	})
+}
+
+// checkErrChannel polls the error channel non-blockingly; if an error is
+// present, fails the test with it. Supports patterns where the producer may
+// send nil to signal absence-of-error.
+func checkErrChannel(t *testing.T, errCh chan error) {
+	t.Helper()
+	select {
+	case e := <-errCh:
+		if e != nil {
+			t.Fatal(e.Error())
+		}
+	default:
+	}
+}
+
+// waitFor retries f every sleepDur up to totalWait, failing the test with the
+// last non-nil error if f never returns nil.
+func waitFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	timeout := time.Now().Add(totalWait)
+	var err error
+	for time.Now().Before(timeout) {
+		err = f()
+		if err == nil {
+			return
+		}
+		time.Sleep(sleepDur)
+	}
 	if err != nil {
-		t.Fatalf("Error creating conf file: %v", err)
+		t.Fatal(err.Error())
 	}
-	fName := conf.Name()
-	conf.Close()
-	if err := os.WriteFile(fName, content, 0666); err != nil {
-		os.Remove(fName)
-		t.Fatalf("Error writing conf file: %v", err)
-	}
-	return fName
+}
+
+// checkFor is an alias for waitFor used by JetStream-flavored tests; both
+// signatures exist in the historical code base, kept for callers'
+// convenience.
+func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
+	t.Helper()
+	waitFor(t, totalWait, sleepDur, f)
 }

@@ -66,15 +66,23 @@ send your question to the [NATS Google Group](https://groups.google.com/forum/#!
 
 ## Testing
 
+The integration tests run against real NATS servers spawned by the
+[synadia/ntf-server](https://hub.docker.com/r/synadia/ntf-server) docker service. See [TESTING.md](TESTING.md) for the
+full workflow; the short version:
+
+```shell
+make tester-up-host                  # once: start the test-server manager (requires docker)
+make test T=TestName PKG=./test/...  # iterate on a single test
+make test                            # full race-enabled suite
+make tester-down                     # tear everything down
+```
+
+Without a running tester (`TESTER_NATS_URL` unset), `go test ./...` runs only the unit tests — the integration suites
+skip silently, so a green run on a fresh checkout does not mean the integration tests passed.
+
 You should use `go_test.mod` to manage your testing dependencies. Please use the following command to update your
 dependencies and avoid changing the main `go.mod` in a PR:
 
 ```shell
 go mod tidy -modfile=go_test.mod
-```
-
-To the tests you can pass `-modfile=go_test.mod` flag to `go test` or instead you can also set `GOFLAGS="-modfile=go_test.mod"` as an environment variable:
-
-```shell
-go test ./... -modfile=go_test.mod
 ```
