@@ -2034,10 +2034,8 @@ type errInProcessProvider struct{ err error }
 func (e *errInProcessProvider) InProcessConn() (net.Conn, error) { return nil, e.err }
 
 // TestInProcessServerOption verifies that nats.InProcessServer wires the
-// provider into Options. White-box because the embedded-server-backed
-// integration test (the original TestInProcessConn) is incompatible with the
-// remote-tester migration; the field-level test here keeps the option's
-// contract covered.
+// provider into Options. The happy path — reaching CONNECTED over an
+// in-process conn — needs an in-process server and is not covered.
 func TestInProcessServerOption(t *testing.T) {
 	provider := &errInProcessProvider{err: errors.New("placeholder")}
 	opts := Options{}
@@ -2151,11 +2149,7 @@ func hostOnlyTLSCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 // as the TLS ServerName rather than the IP it is dialing.
 //
 // This is what lets a client reconnect over TLS to a server the cluster
-// gossiped as a bare IP, against a cert that only has hostname SANs. It used
-// to be covered end-to-end by test/reconnect_test.go's TestReconnectTLSHostNoIP,
-// which needed two cluster members listening on different hosts (one hostname,
-// one IP) — a per-server config asymmetry the testservice cannot express, so
-// that test was removed in favor of this one.
+// gossiped as a bare IP, against a cert that only has hostname SANs.
 func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

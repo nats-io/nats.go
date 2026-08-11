@@ -2834,14 +2834,7 @@ func TestPullConsumerConsume_WithCluster(t *testing.T) {
 				inst.StartServer(t, inst.Servers[1])
 				wg.Add(len(testMsgs))
 
-				for i := 0; i < 10; i++ {
-					time.Sleep(500 * time.Millisecond)
-					if _, err := js.Stream(context.Background(), stream.Name); err == nil {
-						break
-					} else if i == 9 {
-						t.Fatal("JetStream not recovered: ", err)
-					}
-				}
+				waitForStream(t, js, stream.Name)
 				publishTestMsgs(t, js)
 				wg.Wait()
 				if len(msgs) != 2*len(testMsgs) {

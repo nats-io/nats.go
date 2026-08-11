@@ -456,8 +456,7 @@ func TestClientCertificateReloadOnServerRestart(t *testing.T) {
 	caPath, certFile, keyFile := tlsCertFiles(t, inst)
 
 	// Stranger instance: separate managed mTLS to obtain a client cert signed
-	// by a CA the target server does not trust. Used to simulate "invalid"
-	// cert files in the original test.
+	// by a CA the target server does not trust.
 	stranger := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSMutual()))
 	t.Cleanup(func() { stranger.Destroy(t) })
 	_, strangerCert, strangerKey := tlsCertFiles(t, stranger)
@@ -929,12 +928,10 @@ func TestCallbacksOrder(t *testing.T) {
 	plainInst := c.CreateServer(t, false)
 	t.Cleanup(func() { plainInst.Destroy(t) })
 
-	// Capture baseline asyncCBDispatcher count *after* the tester management
-	// conn is up but *before* we create test connections. The original test
-	// was written for embedded servers where there were no other live conns;
-	// in the testservice port the tester client owns its own dispatcher that
-	// must legitimately survive the test body. The post-Close assertion below
-	// checks that the count returns to this baseline, not to zero.
+	// Baseline the asyncCBDispatcher count *after* the tester management conn
+	// is up but *before* the test connections: the tester client owns a
+	// dispatcher that must survive the test body, so the post-Close assertion
+	// checks the count returns to this baseline rather than to zero.
 	baselineDispatchers := strings.Count(getStacks(true), "asyncCBDispatcher")
 
 	firstDisconnect := true
@@ -2244,11 +2241,9 @@ func TestReconnectOnFlusherError(t *testing.T) {
 
 func TestNewServers(t *testing.T) {
 	c := newTester(t)
-	// Pre-create a 3-node cluster, immediately stop the third node so the
-	// observed-from-the-client state is a 2-node cluster. Clients connect.
-	// Then bring the third node back; the original test's assertion is
-	// that all three connections receive a DiscoveredServersHandler call
-	// when a new node joins.
+	// Pre-create a 3-node cluster, immediately stop the third node so clients
+	// connect to what looks like a 2-node cluster. Bringing the third node
+	// back must fire DiscoveredServersHandler on all three connections.
 	inst := c.CreateCluster(t, 3, false)
 	t.Cleanup(func() { inst.Destroy(t) })
 
@@ -2587,11 +2582,9 @@ func TestReceiveInfoRightAfterFirstPong(t *testing.T) {
 }
 
 func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
-	// The original test binds its own mock TCP listeners and never touches
-	// the testservice. The only host-side concern is that port 4222 is owned
-	// by the tester's management endpoint when running with the published
-	// port mapping; we shift the listener ports + advertised connect_urls to
-	// 50222/50223/50224 so the test is self-contained and conflict-free.
+	// Self-contained: this test binds its own mock TCP listeners. The ports are
+	// shifted off the defaults because 4222 belongs to the tester's management
+	// endpoint when its ports are published.
 	const (
 		listenPort1 = 50222
 		listenPort2 = 50223
@@ -2702,16 +2695,6 @@ func TestReceiveInfoWithEmptyConnectURLs(t *testing.T) {
 	nc.Close()
 	wg.Wait()
 }
-
-// TestConnectWithSimplifiedURLs (original test/conn_test.go) is intentionally
-// not migrated. The URL-parsing coverage it provides is fully duplicated by
-// TestSimplifiedURLs in nats_test.go (which exercises every simplified URL
-// form against the package-internal server pool, no live server required).
-// The unique residual behavior — auto-switching to Secure when the server on
-// port 4222 negotiates TLS — depends on a server on port 4222 inside the
-// tester, which we deliberately don't support. If that residual matters in
-// the future, prefer extending nats_test.go's TestSimplifiedURLs with a
-// targeted assertion rather than reviving this test.
 
 func TestNilOpts(t *testing.T) {
 	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
@@ -2945,10 +2928,10 @@ func TestTLSDontSkipVerify(t *testing.T) {
 }
 
 func TestRetryOnFailedConnect(t *testing.T) {
-	// Phase B of the original (flip auth ON between restarts) is dropped: it
-	// needs a port-preserving reconfigure API the tester lacks. Not covered
-	// elsewhere — TestRetryOnFailedConnectWithAuthError caps MaxReconnects at
-	// 2, so its close cannot distinguish auth-abort from retry exhaustion.
+	// Flipping auth on between restarts is not covered anywhere: it needs a
+	// port-preserving reconfigure API the tester lacks, and
+	// TestRetryOnFailedConnectWithAuthError caps MaxReconnects at 2, so its
+	// close cannot distinguish auth-abort from retry exhaustion.
 	c := newTester(t)
 	inst := c.CreateServer(t, false)
 	t.Cleanup(func() { inst.Destroy(t) })

@@ -88,9 +88,6 @@ func TestConnectedServer(t *testing.T) {
 		if name := nc.ConnectedServerName(); name == "" {
 			t.Fatalf("Expected a connected server name, got %s", name)
 		}
-		// Cluster name assertion dropped on migration: a single testservice
-		// server reports no cluster, while the embedded RunDefaultServer
-		// always set Cluster.Name="testing" in the helper.
 		if jsEnabled, _ := nc.ConnectedServerJetStream(); jsEnabled {
 			t.Fatalf("Expected JetStream to be disabled")
 		}
@@ -115,6 +112,27 @@ func TestConnectedServer(t *testing.T) {
 			t.Fatalf("Expected non-system account after close")
 		}
 	})
+}
+
+func TestConnectedClusterName(t *testing.T) {
+	c := newTester(t)
+	inst := c.CreateCluster(t, 3, false)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	want := inst.Servers[0].Cluster
+	if want == "" {
+		t.Fatal("Expected the tester to report a cluster name")
+	}
+
+	nc := dialInstance(t, inst)
+	if got := nc.ConnectedClusterName(); got != want {
+		t.Fatalf("Expected cluster name %q, got %q", want, got)
+	}
+
+	nc.Close()
+	if got := nc.ConnectedClusterName(); got != "" {
+		t.Fatalf("Expected an empty cluster name after close, got %q", got)
+	}
 }
 
 func TestConnectedServerJetStream(t *testing.T) {

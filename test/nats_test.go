@@ -36,8 +36,7 @@ import (
 // uJWT is the user JWT used by the trust-server-based tests below.
 var nstsUJWT = "eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJBSFQzRzNXRElDS1FWQ1FUWFJUTldPRlVVUFRWNE00RFZQV0JGSFpJQUROWEZIWEpQR0FBIiwiaWF0IjoxNTQ0MDcxODg5LCJpc3MiOiJBQVBRSlFVUEtWWEdXNUNaSDVHMkhGSlVMWVNLREVMQVpSVldKQTI2VkRaTzdXU0JVTklZUkZOUSIsInN1YiI6IlVBVDZCV0NTQ1dMVUtKVDZLNk1CSkpPRU9UWFo1QUpET1lLTkVWUkZDN1ZOTzZPQTQzTjRUUk5PIiwidHlwZSI6InVzZXIiLCJuYXRzIjp7InB1YiI6e30sInN1YiI6e319fQ._8A1XM88Q2kp7XVJZ42bQuO9E3QPsNAGKtVjAkDycj8A5PtRPby9UpqBUZzBwiJQQO3TUcD5GGqSvsMm6X8hCQ"
 
-// nstsChained mirrors the chained credentials file body used in the original
-// !testservice tests.
+// nstsChained is a chained credentials file body used by the auth tests.
 var nstsChained = `
 -----BEGIN NATS USER JWT-----
 eyJ0eXAiOiJqd3QiLCJhbGciOiJlZDI1NTE5In0.eyJqdGkiOiJBSFQzRzNXRElDS1FWQ1FUWFJUTldPRlVVUFRWNE00RFZQV0JGSFpJQUROWEZIWEpQR0FBIiwiaWF0IjoxNTQ0MDcxODg5LCJpc3MiOiJBQVBRSlFVUEtWWEdXNUNaSDVHMkhGSlVMWVNLREVMQVpSVldKQTI2VkRaTzdXU0JVTklZUkZOUSIsInN1YiI6IlVBVDZCV0NTQ1dMVUtKVDZLNk1CSkpPRU9UWFo1QUpET1lLTkVWUkZDN1ZOTzZPQTQzTjRUUk5PIiwidHlwZSI6InVzZXIiLCJuYXRzIjp7InB1YiI6e30sInN1YiI6e319fQ._8A1XM88Q2kp7XVJZ42bQuO9E3QPsNAGKtVjAkDycj8A5PtRPby9UpqBUZzBwiJQQO3TUcD5GGqSvsMm6X8hCQ
@@ -53,7 +52,7 @@ SUAMK2FG4MI6UE3ACF3FK3OIQBCEIEZV7NSWFFEW63UXMRLFM2XLAXK4GY
 `
 
 // createTmpFileTS writes content to a freshly-created temp file and returns
-// its path. Mirrors createTmpFile from the original !testservice file.
+// its path.
 func createTmpFileTS(t *testing.T, content []byte) string {
 	t.Helper()
 	conf, err := os.CreateTemp("", "")
@@ -325,8 +324,8 @@ func TestUserCredentialBytes(t *testing.T) {
 // if we need to save off the hostname that we connected to first.
 func TestUserCredentialsChainedFileNotFoundError(t *testing.T) {
 	c := newTester(t)
-	// Trust-server config with managed server-only TLS (SANs intentionally
-	// exclude IPs to preserve the original test's no-IP-SAN intent).
+	// Trust-server config with managed server-only TLS; SANs intentionally
+	// exclude IPs.
 	sans := []string{"localhost"}
 	if h := testerHost(t); h != "localhost" {
 		sans = append(sans, h)
@@ -420,17 +419,10 @@ func TestNkeyAuth(t *testing.T) {
 	}
 }
 
-// The original (embedded-server) versions of these tests start two servers on
-// the same port across different address families (127.0.0.1 + [::1]) and
-// connect to "localhost:PORT" 100 times, relying on net.LookupHost returning
-// both IPs and the client randomizing across them. testservice can't bind two
-// servers to the same port, so the migration uses the *equivalent* client
-// behavior: pass a comma-joined two-URL pool to nats.Connect. The client's
-// pool-shuffling logic is the same code path as the DNS-resolution multi-IP
-// path (both end up populating srvPool with N entries, which is then shuffled
-// or not based on NoRandomize). The DNS-specific edge of the original is lost,
-// but the property under test — that the client randomizes its server pool by
-// default and respects DontRandomize when set — is preserved end-to-end.
+// These drive the server-pool shuffle with a comma-joined two-URL pool. The
+// DNS multi-IP path (net.LookupHost returning several addresses for one host)
+// reaches the same srvPool shuffle but is not covered directly: the tester
+// cannot bind two servers to one port across address families.
 
 func TestLookupHostResultIsRandomized(t *testing.T) {
 	c := newTester(t)
@@ -674,16 +666,10 @@ func TestAuthErrorOnReconnect(t *testing.T) {
 		t.Fatalf("Did not receive a closed callback message, #reconnects: %v", reconnects)
 	}
 
-	// The original (in-process) test asserts exactly 2 reconnects. With
-	// testservice the reconnect loop deterministically yields 3 successful
-	// TCP connects before the auth-error abort fires (the StopServer
-	// listener-drain window briefly lets s1 accept a TCP connection too,
-	// inflating the global Reconnects counter by 1). The abort still kicks
-	// in after 2 auth violations; Reconnects (TCP-level successes, not
-	// auth outcomes) lands at 3.
-	// Relax to a bounded range: at least 2 (the auth-error count), at most
-	// 2*len(pool) = 4 (the worst-case for a 2-server pool where both can
-	// briefly accept TCP during shutdown).
+	// Reconnects counts TCP-level successes, not auth outcomes. The abort
+	// fires after 2 auth violations, but StopServer's listener-drain window
+	// lets a stopping server briefly accept TCP as well, so the range is 2
+	// (auth errors) to 2*len(pool) = 4 for this 2-server pool.
 	if reconnects := nc.Stats().Reconnects; reconnects < 2 || reconnects > 4 {
 		t.Fatalf("Expected 2-4 reconnects (2 auth errors + up to 2 drain-window TCP successes), got %v", reconnects)
 	}
@@ -867,7 +853,7 @@ func TestReconnectWaitJitter(t *testing.T) {
 		// Now close and expect the reconnect go routine to return..
 		nc.Close()
 		// Wait for the doReconnect goroutine to exit. The 50ms used by the
-		// original is racy under -race; poll up to 2s instead.
+		// exit; poll up to 2s since a fixed short sleep is racy under -race.
 		deadline := time.Now().Add(2 * time.Second)
 		var found bool
 		var snapshot []byte

@@ -55,9 +55,8 @@ func TestServersOption(t *testing.T) {
 	// However, on Windows, the connect() will get a i/o timeout, but
 	// we can't really suppress that one since we don't know if it is
 	// a real timeout or a failure to connect. So check differencly.
-	// NOTE: original used the implicit nats.DefaultURL (127.0.0.1:4222),
-	// but that is the tester management endpoint in this build, so we
-	// substitute a known-dead URL.
+	// Not nats.DefaultURL: 4222 is the tester's management endpoint here, so
+	// use a known-dead URL instead.
 	opts.Servers = []string{"nats://127.0.0.1:11221"}
 	_, err := opts.Connect()
 	if runtime.GOOS == "windows" {
@@ -114,8 +113,8 @@ func TestServersOption(t *testing.T) {
 func TestNewStyleServersOption(t *testing.T) {
 	c := newTester(t)
 
-	// NOTE: original used nats.DefaultURL (127.0.0.1:4222), but that is the
-	// tester management endpoint in this build, so we substitute a known-dead URL.
+	// Not nats.DefaultURL: 4222 is the tester's management endpoint here, so
+	// use a known-dead URL instead.
 	_, err := nats.Connect("nats://127.0.0.1:11221", nats.DontRandomize(), nats.Timeout(100*time.Millisecond))
 	if runtime.GOOS == "windows" {
 		if err == nil || !strings.Contains(err.Error(), "timeout") {
@@ -312,10 +311,8 @@ func TestHotSpotReconnect(t *testing.T) {
 		nats.ReconnectHandler(func(_ *nats.Conn) { wg.Done() }),
 	}
 
-	// Pre-create s2 and s3 but stop them immediately. They will be brought
-	// up only after every client has connected to s1, so each client lands
-	// on s1 initially (mirroring the original "only s1 running at first"
-	// pattern).
+	// Pre-create s2 and s3 but stop them immediately, so every client lands
+	// on s1 before they are brought up.
 	s2Inst := c.CreateServer(t, false)
 	t.Cleanup(func() { s2Inst.Destroy(t) })
 	s3Inst := c.CreateServer(t, false)
@@ -580,10 +577,9 @@ func TestProperFalloutAfterMaxAttemptsWithAuthMismatch(t *testing.T) {
 	// nc.Stats().Reconnects is a global counter that increments on every
 	// successful TCP-level reconnect across the whole pool; MaxReconnect caps
 	// attempts PER SERVER. With a 2-server pool where both briefly accept TCP
-	// (testservice's StopServer has a short listener-drain window, unlike the
-	// embedded server's instant refuse), the global count can legitimately
-	// reach len(servers)*MaxReconnect. The client is not exceeding its
-	// per-server budget; assert the true upper bound.
+	// (StopServer has a short listener-drain window), the global count can
+	// legitimately reach len(servers)*MaxReconnect. The client is not
+	// exceeding its per-server budget; assert the true upper bound.
 	reconnects := nc.Stats().Reconnects
 	if reconnects < uint64(opts.MaxReconnect) || reconnects > uint64(len(myServers)*opts.MaxReconnect) {
 		t.Fatalf("Num reconnects was %v, expected within [%v, %v]", reconnects, opts.MaxReconnect, len(myServers)*opts.MaxReconnect)
@@ -780,9 +776,8 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	s2Url := s2.URL
 	s3Url := s3.URL
 
-	// Stop s2 and s3 initially so the client sees them only after they are
-	// brought up — mirroring the original test where s2/s3 join after the
-	// initial connect to s1.
+	// Stop s2 and s3 initially so the client sees them only once they are
+	// brought up, after the initial connect to s1.
 	clusterInst.StopServer(t, s2)
 	clusterInst.StopServer(t, s3)
 
@@ -795,10 +790,9 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	// gossiped connect_urls. Without it, nats.go's parseServerURL does
 	// net.LookupHost on any non-IP host (the bootstrap "nats://nats:port" and
 	// every gossiped hostname URL) and adds every resolved IP as a separate
-	// pool entry alongside the original — inflating the pool with bridge-IP
+	// pool entry alongside the hostname — inflating the pool with bridge-IP
 	// duplicates in CI's docker bridge mode and on dual-stack hosts that
-	// expand "localhost" to both 127.0.0.1 and ::1. The original embedded
-	// test sidestepped this because nats.DefaultURL is an IP literal.
+	// expand "localhost" to both 127.0.0.1 and ::1.
 	nc, err := nats.Connect(s1Url,
 		nats.SkipHostLookup(),
 		nats.ReconnectHandler(connHandler),
@@ -911,8 +905,7 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 	// SkipHostLookup() keeps the srvPool entries 1:1 with the gossiped URLs.
 	// Without it, hostnames like "localhost" are expanded by net.LookupHost
 	// to both 127.0.0.1 and ::1 — every gossiped URL doubles, and the
-	// reconnect-count assertion below (designed for IP-URLs, the original
-	// test used nats.DefaultURL) loses its alignment with the pool size.
+	// reconnect-count assertion below loses its alignment with the pool size.
 	d := &checkPoolUpdatedDialer{first: true}
 	nc, err = nats.Connect(s1Url,
 		nats.MaxReconnects(10),
@@ -966,9 +959,9 @@ func TestServerPoolUpdatedWhenRouteGoesAway(t *testing.T) {
 
 func TestIgnoreDiscoveredServers(t *testing.T) {
 	c := newTester(t)
-	// CreateCluster brings up both servers connected via routes. To match
-	// the original's "connect first, then start the second server" pattern,
-	// we stop the second server immediately and restart it inside each subtest.
+	// CreateCluster brings both servers up connected via routes; stop the
+	// second immediately so each subtest can start it after the client
+	// connects.
 	clusterInst := c.CreateCluster(t, 2, false)
 	t.Cleanup(func() { clusterInst.Destroy(t) })
 

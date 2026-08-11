@@ -1508,9 +1508,8 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 					t.Fatalf("Unexpected error: %s", err)
 				}
 			}
-			// 50ms in the original embedded test was flaky in race+container;
-			// 500ms gives the 5 in-flight messages headroom while still
-			// firing the deadline before any nonexistent 6th message.
+			// 500ms so the 5 in-flight messages have headroom while the
+			// deadline still fires before any nonexistent 6th message.
 			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer cancel()
 			res, err := sub.FetchBatch(10, nats.Context(ctx))
@@ -1540,9 +1539,9 @@ func TestPullSubscribeFetchBatch(t *testing.T) {
 					t.Fatalf("Unexpected error: %s", err)
 				}
 			}
-			// 500ms, not the original 50ms: only 5 of the 10 requested msgs
-			// exist, so the wait only bounds the round-trip, and 50ms is too
-			// tight once the server is a container hop away.
+			// The batch is under-filled (5 of 10 requested exist), so the
+			// request always runs the wait out; 500ms leaves room to deliver
+			// the 5 with the server a container hop away.
 			res, err := sub.FetchBatch(10, nats.MaxWait(500*time.Millisecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %s", err)
@@ -4596,9 +4595,8 @@ func TestAccountInfo(t *testing.T) {
 				API: nats.APIStats{
 					Total:  0,
 					Errors: 0,
-					// Level is populated from the server response below
-					// (was server.JSApiLevel in the embedded version; we
-					// don't pin a value since it bumps with each server release).
+					// Level is populated from the server response below; not pinned
+					// because it bumps with each server release.
 					Inflight: 0,
 				},
 			},
@@ -7665,11 +7663,8 @@ func TestJetStreamStreamMirror(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		// Original uses Placement: { Tags: ["NODE_0"] } but the cluster
-		// helper only assigns NODE_x tags when size > 1. Single-server
-		// withJSServer in the original has no tags either; drop placement
-		// here so the stream creation succeeds on the testservice-managed
-		// single server.
+		// No placement tags: the cluster helper only assigns NODE_x tags when
+		// size > 1, so a single server has none to place on.
 		_, err = js.AddStream(&nats.StreamConfig{
 			Name:     "origin",
 			Storage:  nats.MemoryStorage,
@@ -8381,7 +8376,6 @@ func testJetStreamClusterMultipleFetchPullSubscribeTS(t *testing.T, subject stri
 }
 
 func TestJetStream_ClusterReconnect(t *testing.T) {
-	// Preserved INHERITED skip from the original test (js_test.go:7323).
 	t.Skip("This test need to be revisited")
 }
 
@@ -9016,7 +9010,6 @@ func TestPublishAsyncRetryInErrHandler(t *testing.T) {
 }
 
 func TestJetStreamPublishAsyncPerf(t *testing.T) {
-	// Preserved INHERITED skip from the original test (js_test.go:8427).
 	t.SkipNow()
 
 	withJSServer(t, func(t *testing.T, nc *nats.Conn) {

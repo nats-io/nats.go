@@ -699,17 +699,6 @@ func TestReconnectBufSize(t *testing.T) {
 	})
 }
 
-// TestReconnectTLSHostNoIP was removed with the testservice migration. It
-// needed two cluster members listening on different hosts (A on `localhost`,
-// B on `127.0.0.1`) so the cluster would gossip an IP-only URL to a client
-// that dialed by hostname, against a cert with no IP SANs. The testservice
-// gives every cluster member identical config, so that asymmetry cannot be
-// expressed. The invariant it guarded — the dialed hostname is preserved as
-// tlsName and reused as the TLS ServerName when reconnecting to a gossiped IP
-// — is covered by TestParseServerURLPreservesTLSName (assignment) and
-// TestMakeTLSConnUsesPreservedTLSName (use during the handshake), both in the
-// root package's nats_test.go.
-
 func TestConnCloseNoCallback(t *testing.T) {
 	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
 		serverURL := inst.Servers[0].URL
@@ -1213,6 +1202,8 @@ func TestAlwaysReconnectOnMaxConnectionsExceededErr(t *testing.T) {
 	}
 }
 
+// Covers the config-reload path only; driving the same limit through account
+// claims needs an RPC the tester does not expose.
 func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 	c := newTester(t)
 	initialAccounts := `accounts: {
@@ -1372,9 +1363,16 @@ func TestAlwaysReconnectOnAccountMaxConnectionsExceededErr(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Timed out waiting for reconnect event after re-loosen")
 	}
-	if !(nc1.IsConnected() || nc3.IsConnected()) {
-		t.Fatal("At least one ACCT1 client should have reconnected successfully")
-	}
+	// Both must end up connected: the survivor never dropped, and the kicked
+	// client reconnects once the limit is loosened. Polled because the
+	// reconnect is asynchronous.
+	checkFor(t, 3*time.Second, 50*time.Millisecond, func() error {
+		if !nc1.IsConnected() || !nc3.IsConnected() {
+			return fmt.Errorf("expected both ACCT1 clients connected, got nc1=%v nc3=%v",
+				nc1.IsConnected(), nc3.IsConnected())
+		}
+		return nil
+	})
 }
 
 func TestReconnectToServerCallback(t *testing.T) {

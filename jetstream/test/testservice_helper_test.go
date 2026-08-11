@@ -145,19 +145,20 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 // can race JetStream recovery.
 func waitForStream(t *testing.T, js jetstream.JetStream, name string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	for {
-		_, err := js.Stream(ctx, name)
+	// Per-attempt timeout so one slow lookup cannot eat the whole budget:
+	// after a cluster restart the first lookups block until a leader exists.
+	deadline := time.Now().Add(30 * time.Second)
+	var err error
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err = js.Stream(ctx, name)
+		cancel()
 		if err == nil {
 			return
 		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("stream %q not ready after restart: %v", name, err)
-		case <-time.After(100 * time.Millisecond):
-		}
+		time.Sleep(100 * time.Millisecond)
 	}
+	t.Fatalf("stream %q not ready after restart: %v", name, err)
 }
 
 // waitForJSCluster blocks until the meta leader is elected. WaitForJetStream

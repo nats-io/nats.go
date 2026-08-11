@@ -299,8 +299,7 @@ func TestJetStreamOrderedConsumerWithAutoUnsub(t *testing.T) {
 
 		inMsgs := nc.Stats().InMsgs
 
-		// Use a separate connection (against the same testservice instance) to
-		// publish — mirror the original test's nc2 path.
+		// Publish over a separate connection to the same instance.
 		nc2 := dialInstance(t, inst)
 		js2, err := nc2.JetStream(nats.MaxWait(10 * time.Second))
 		if err != nil {
