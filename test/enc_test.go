@@ -566,9 +566,7 @@ func TestVariousFailureConditions(t *testing.T) {
 	})
 }
 
-// TesEncodedConnRequest preserves the original (typoed) name; Go's test runner
-// does not pick it up. Behavior matches the embedded variant.
-func TesEncodedConnRequest(t *testing.T) {
+func TestEncodedConnRequest(t *testing.T) {
 	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
 		dch := make(chan bool)
 
