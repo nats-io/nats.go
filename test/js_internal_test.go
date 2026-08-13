@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -439,6 +440,77 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 
 		if _, err := checkSub.NextMsg(2 * time.Second); err != nil {
 			t.Fatal("Library did not send FC")
+		}
+	})
+}
+
+// Ordered consumer resets run from the connection read loop and swap the
+// subscription's sid. This exercises that against concurrent unsubscribes,
+// which is where the sid was previously read under a different lock.
+func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.AddStream(&nats.StreamConfig{
+			Name:     "SIDRACE",
+			Subjects: []string{"a"},
+			Storage:  nats.MemoryStorage,
+		}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for range 200 {
+			if _, err := js.PublishAsync("a", []byte("hello")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Did not receive completion signal")
+		}
+
+		// Drop roughly half of the delivered messages so that every ordered
+		// consumer keeps detecting gaps and resetting itself.
+		var dropped atomic.Uint64
+		nc.AddMsgFilter("a", func(m *nats.Msg) *nats.Msg {
+			if rand.Intn(2) == 0 {
+				dropped.Add(1)
+				return nil
+			}
+			return m
+		})
+		defer nc.RemoveMsgFilter("a")
+
+		const rounds, subsPerRound = 15, 12
+		for range rounds {
+			subs := make([]*nats.Subscription, 0, subsPerRound)
+			for range subsPerRound {
+				sub, err := js.Subscribe("a", func(m *nats.Msg) {},
+					nats.OrderedConsumer(), nats.IdleHeartbeat(100*time.Millisecond))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				subs = append(subs, sub)
+			}
+			// Let the resets start churning, then tear everything down from
+			// a set of independent go routines.
+			time.Sleep(time.Duration(20+rand.Intn(60)) * time.Millisecond)
+			var wg sync.WaitGroup
+			for _, sub := range subs {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					sub.Unsubscribe()
+				}()
+			}
+			wg.Wait()
+		}
+		// Not proof that a reset happened, but without injected gaps the
+		// test would not be exercising the reset path at all.
+		if n := dropped.Load(); n == 0 {
+			t.Fatalf("Expected the filter to drop messages, got %d", n)
 		}
 	})
 }
