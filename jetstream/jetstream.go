@@ -74,8 +74,8 @@ type (
 		Publish(ctx context.Context, subject string, payload []byte, opts ...PublishOpt) (*PubAck, error)
 
 		// PublishMsg performs a synchronous publish to a stream and waits for
-		// ack from server. It accepts subject name (which must be bound to a
-		// stream) and nats.Message.
+		// ack from server. It accepts [nats.Msg] (whose Subject must be bound
+		// to a stream) as payload.
 		PublishMsg(ctx context.Context, msg *nats.Msg, opts ...PublishOpt) (*PubAck, error)
 
 		// PublishAsync performs a publish to a stream and returns
@@ -91,8 +91,8 @@ type (
 
 		// PublishMsgAsync performs a publish to a stream and returns
 		// [PubAckFuture] interface, not blocking while waiting for an
-		// acknowledgement. It accepts subject name (which must
-		// be bound to a stream) and nats.Message.
+		// acknowledgement. It accepts [nats.Msg] (whose Subject must be bound
+		// to a stream) as payload.
 		//
 		// PublishMsgAsync does not guarantee that the message has been
 		// received by the server. It only guarantees that the message has been
