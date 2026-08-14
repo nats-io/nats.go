@@ -45,19 +45,23 @@ type (
 		Purge(ctx context.Context, opts ...StreamPurgeOpt) error
 
 		// GetMsg retrieves a raw stream message stored in JetStream by sequence number.
+		// Returns ErrMsgNotFound if the message with the provided sequence number does not exist.
 		GetMsg(ctx context.Context, seq uint64, opts ...GetMsgOpt) (*RawStreamMsg, error)
 
 		// GetLastMsgForSubject retrieves the last raw stream message stored in
 		// JetStream on a given subject.
+		// Returns ErrMsgNotFound if a message with the provided subject does not exist.
 		GetLastMsgForSubject(ctx context.Context, subject string) (*RawStreamMsg, error)
 
 		// DeleteMsg deletes a message from a stream.
 		// On the server, the message is marked as erased, but not overwritten.
+		// Returns ErrMsgNotFound if the message does not exist.
 		DeleteMsg(ctx context.Context, seq uint64) error
 
 		// SecureDeleteMsg deletes a message from a stream. The deleted message
 		// is overwritten with random data. As a result, this operation is slower
 		// than DeleteMsg.
+		// Returns ErrMsgNotFound if the message does not exist.
 		SecureDeleteMsg(ctx context.Context, seq uint64) error
 	}
 
