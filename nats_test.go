@@ -1607,6 +1607,9 @@ func TestHeaderParser(t *testing.T) {
 	shouldErr("NATS/1.0\r\n")
 	shouldErr("NATS/1.0\r\nk1:v1")
 	shouldErr("NATS/1.0\r\nk1:v1\r\n")
+	shouldErr("NATS/1.0 5\r\n")
+	shouldErr("NATS/1.0 41\r\n")
+	shouldErr("NATS/1.0 \r\n")
 
 	// Check that we can do inline status and descriptions
 	checkStatus := func(hdr string, status int, description string) {
