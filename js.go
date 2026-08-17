@@ -1,4 +1,4 @@
-// Copyright 2020-2025 The NATS Authors
+// Copyright 2020-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -2184,9 +2184,12 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	return false
 }
 
-// Update and replace sid.
+// Update and replace sid. Returns the old and the new sid.
 // Lock should be held on entry but will be unlocked to prevent lock inversion.
-func (sub *Subscription) applyNewSID() (osid int64) {
+// Since sub.sid is protected by the connection's subsMu (and not by sub.mu),
+// the new sid is returned to the caller rather than read back from sub.sid
+// once the subscription lock has been re-acquired.
+func (sub *Subscription) applyNewSID() (osid, nsid int64) {
 	nc := sub.conn
 	sub.mu.Unlock()
 
@@ -2195,13 +2198,13 @@ func (sub *Subscription) applyNewSID() (osid int64) {
 	delete(nc.subs, osid)
 	// Place new one.
 	nc.ssid++
-	nsid := nc.ssid
+	nsid = nc.ssid
 	nc.subs[nsid] = sub
+	sub.sid = nsid
 	nc.subsMu.Unlock()
 
 	sub.mu.Lock()
-	sub.sid = nsid
-	return osid
+	return osid, nsid
 }
 
 // We are here if we have detected a gap with an ordered consumer.
@@ -2222,26 +2225,28 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 			maxStr = strconv.Itoa(int(adjustedMax))
 		} else {
 			// We are already at the max, so we should just unsub the
-			// existing sub and be done
-			go func(sid int64) {
+			// existing sub and be done. The sid is read in the go routine
+			// because it is protected by subsMu, which cannot be acquired
+			// here since sub.mu is held.
+			go func() {
 				nc.mu.Lock()
+				nc.subsMu.RLock()
+				sid := sub.sid
+				nc.subsMu.RUnlock()
 				nc.bw.appendString(fmt.Sprintf(unsubProto, sid, _EMPTY_))
 				nc.kickFlusher()
 				nc.mu.Unlock()
-			}(sub.sid)
+			}()
 			return
 		}
 	}
 
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
-	osid := sub.applyNewSID()
+	osid, nsid := sub.applyNewSID()
 
 	// Grab new inbox.
 	newDeliver := nc.NewInbox()
 	sub.Subject = newDeliver
-
-	// Snapshot the new sid under sub lock.
-	nsid := sub.sid
 
 	// We are still in the low level readLoop for the connection so we need
 	// to spin a go routine to try to create the new consumer.
