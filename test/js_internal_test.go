@@ -446,7 +446,7 @@ func TestJetStreamFlowControlStalled(t *testing.T) {
 
 // Ordered consumer resets run from the connection read loop and swap the
 // subscription's sid. This exercises that against concurrent unsubscribes,
-// which is where the sid was previously read under a different lock.
+// which read the same field.
 func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
 	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
 		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
