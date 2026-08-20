@@ -10167,3 +10167,556 @@ func TestJetStreamSubscribeContextCancel(t *testing.T) {
 		})
 	})
 }
+
+// oscStream dials inst and creates the stream the ordered consumer tests use.
+func oscStream(t *testing.T, inst *testservice.Instance, opts ...nats.Option) (*nats.Conn, nats.JetStreamContext) {
+	t.Helper()
+	nc := dialInstance(t, inst, opts...)
+	t.Cleanup(nc.Close)
+	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := js.AddStream(&nats.StreamConfig{Name: "OSC", Subjects: []string{"osc.>"}}); err != nil {
+		t.Fatalf("Error adding stream: %v", err)
+	}
+	return nc, js
+}
+
+// countConsumerCreates watches consumer-create traffic from a separate connection.
+func countConsumerCreates(t *testing.T, inst *testservice.Instance) *atomic.Int64 {
+	t.Helper()
+	mon := dialInstance(t, inst)
+	t.Cleanup(mon.Close)
+	creates := &atomic.Int64{}
+	if _, err := mon.Subscribe("$JS.API.CONSUMER.CREATE.>", func(*nats.Msg) {
+		creates.Add(1)
+	}); err != nil {
+		t.Fatalf("Error subscribing monitor: %v", err)
+	}
+	if err := mon.Flush(); err != nil {
+		t.Fatalf("Error flushing monitor: %v", err)
+	}
+	return creates
+}
+
+// publishOSC publishes n messages to the stream and waits for the acks.
+func publishOSC(t *testing.T, js nats.JetStreamContext, n int) {
+	t.Helper()
+	for range n {
+		if _, err := js.PublishAsync("osc.a", []byte("x")); err != nil {
+			t.Fatalf("Error publishing: %v", err)
+		}
+	}
+	select {
+	case <-js.PublishAsyncComplete():
+	case <-time.After(30 * time.Second):
+		t.Fatalf("Timed out waiting for publishes to complete")
+	}
+}
+
+// seqRecorder records delivered stream sequences in arrival order.
+type seqRecorder struct {
+	mu       sync.Mutex
+	order    []uint64
+	metaErrs []error
+}
+
+func (r *seqRecorder) add(m *nats.Msg) {
+	meta, err := m.Metadata()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.metaErrs = append(r.metaErrs, err)
+		return
+	}
+	r.order = append(r.order, meta.Sequence.Stream)
+}
+
+func (r *seqRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.order)
+}
+
+// readChan drains ch into the recorder until the test ends.
+func (r *seqRecorder) readChan(t *testing.T, ch <-chan *nats.Msg) {
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case m := <-ch:
+				r.add(m)
+			}
+		}
+	}()
+}
+
+// verifyComplete asserts the whole stream arrived, in order and exactly once.
+func (r *seqRecorder) verifyComplete(t *testing.T, want int) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.metaErrs) != 0 {
+		t.Fatalf("Got %d metadata errors, first: %v", len(r.metaErrs), r.metaErrs[0])
+	}
+	if len(r.order) != want {
+		t.Fatalf("Expected %d messages, got %d", want, len(r.order))
+	}
+	for i, sseq := range r.order {
+		if sseq != uint64(i+1) {
+			t.Fatalf("Message %d out of order: expected stream seq %d, got %d", i, i+1, sseq)
+		}
+	}
+}
+
+// waitForDrops fails unless the subscription actually enters slow consumer.
+func waitForDrops(t *testing.T, sub *nats.Subscription) {
+	t.Helper()
+	checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+		if dropped, _ := sub.Dropped(); dropped == 0 {
+			return fmt.Errorf("no messages dropped yet")
+		}
+		return nil
+	})
+}
+
+// A slow consumer episode must not cost an ordered consumer any messages; what
+// it drops has to be refetched.
+func TestJetStreamOrderedConsumerSlowConsumerNoLoss(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		_, js := oscStream(t, inst, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
+
+		gate := make(chan struct{})
+		var once sync.Once
+		var rec seqRecorder
+
+		// Subscribe before publishing, so nothing is delivered under the default limits.
+		sub, err := js.Subscribe("osc.>", func(m *nats.Msg) {
+			rec.add(m)
+			// Stall the first callback so the pending queue overflows.
+			once.Do(func() { <-gate })
+		}, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+		// Also sets the wall clock cost: recovery absorbs about this much per round.
+		const pendingMsgs = 50
+		if err := sub.SetPendingLimits(pendingMsgs, 1024*1024); err != nil {
+			t.Fatalf("Error setting pending limits: %v", err)
+		}
+
+		const totalMsgs = 200
+		for range totalMsgs {
+			if _, err := js.Publish("osc.a", []byte("x")); err != nil {
+				t.Fatalf("Error publishing: %v", err)
+			}
+		}
+
+		waitForDrops(t, sub)
+		close(gate)
+
+		// Measured at two or three 5s heartbeat rounds (10-15s); the bound allows nine.
+		checkFor(t, 45*time.Second, 100*time.Millisecond, func() error {
+			if n := rec.count(); n < totalMsgs {
+				return fmt.Errorf("only %d of %d messages delivered", n, totalMsgs)
+			}
+			return nil
+		})
+		rec.verifyComplete(t, totalMsgs)
+	})
+}
+
+// A slow consumer episode must not turn every dropped message into a consumer
+// recreate. The async and unbuffered cases bound recreates only; the buffered
+// case also asserts that nothing was lost while doing so.
+func TestJetStreamOrderedConsumerNoResetStorm(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		totalMsgs  int
+		maxCreates int64
+		// subscribe returns the stalled subscription, the channel to drain after
+		// the stall (nil when the case asserts no delivery), and a stall-ending func.
+		subscribe func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func())
+	}{
+		{
+			name:      "async",
+			totalMsgs: 500,
+			// Only the heartbeat safety net should fire, about once per 5s
+			// heartbeat; the stall stays under the 10s activity check deadline.
+			maxCreates: 2,
+			subscribe: func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func()) {
+				gate := make(chan struct{})
+				var once sync.Once
+				sub, err := js.Subscribe("osc.>", func(*nats.Msg) {
+					once.Do(func() { <-gate })
+				}, nats.OrderedConsumer())
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				// Early deliveries under the default limits are fine: this counts recreates.
+				if err := sub.SetPendingLimits(20, 1024*1024); err != nil {
+					t.Fatalf("Error setting pending limits: %v", err)
+				}
+				return sub, nil, func() { close(gate) }
+			},
+		},
+		{
+			// An unbuffered channel reads len(mch) == cap(mch) == 0, so the capacity
+			// gate cannot predict a drop for it and every drop looks like a gap.
+			name:       "unbuffered chan",
+			totalMsgs:  500,
+			maxCreates: 10,
+			subscribe: func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func()) {
+				// Nothing ever reads from it, so every delivery drops. SetPendingLimits
+				// returns an error for a ChanSubscription, so there is nothing to tune.
+				ch := make(chan *nats.Msg)
+				sub, err := js.ChanSubscribe("osc.>", ch, nats.OrderedConsumer())
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				return sub, nil, func() {}
+			},
+		},
+		{
+			// A buffered ChanSubscription reaches the ordered check with a full
+			// channel: the pending guard only runs for other subscription types.
+			name:       "buffered chan",
+			totalMsgs:  200,
+			maxCreates: 10,
+			subscribe: func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func()) {
+				// Small buffer, read only after the stall, so it fills once and then drops.
+				ch := make(chan *nats.Msg, 20)
+				sub, err := js.ChanSubscribe("osc.>", ch, nats.OrderedConsumer())
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				return sub, ch, func() {}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+				_, js := oscStream(t, inst, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
+				creates := countConsumerCreates(t, inst)
+
+				// Publish first so the server has a backlog to blast at a stalled client.
+				publishOSC(t, js, test.totalMsgs)
+
+				sub, ch, endStall := test.subscribe(t, js)
+				defer sub.Unsubscribe()
+				// Subscribe creates the consumer synchronously; the baseline excludes that.
+				baseline := creates.Load()
+
+				waitForDrops(t, sub)
+
+				const stallFor = 5 * time.Second
+				time.Sleep(stallFor)
+				stalledCreates := creates.Load() - baseline
+				endStall()
+				if stalledCreates > test.maxCreates {
+					t.Fatalf("Ordered consumer recreated %d times during a %v stall; expected at most %d",
+						stalledCreates, stallFor, test.maxCreates)
+				}
+
+				if ch == nil {
+					return
+				}
+				// Bounding the resets must not cost messages: everything the
+				// buffer could not take still has to arrive.
+				var rec seqRecorder
+				rec.readChan(t, ch)
+				// Heartbeat-paced recovery, measured at two to five 5s rounds; bound allows twelve.
+				checkFor(t, 60*time.Second, 100*time.Millisecond, func() error {
+					if n := rec.count(); n < test.totalMsgs {
+						return fmt.Errorf("only %d of %d messages delivered", n, test.totalMsgs)
+					}
+					return nil
+				})
+				rec.verifyComplete(t, test.totalMsgs)
+			})
+		})
+	}
+}
+
+// Once a slow consumer episode has discarded the backlog and the server has
+// gone quiet, nothing arrives to trip the inline gap check and recovery is left
+// entirely to the heartbeat safety net.
+func TestJetStreamOrderedConsumerSlowConsumerRecoversWhenIdle(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		// Keep every async error so an unexpected one is reported rather than
+		// presenting as an opaque timeout.
+		var errMu sync.Mutex
+		var asyncErrs []error
+		_, js := oscStream(t, inst, nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			errMu.Lock()
+			asyncErrs = append(asyncErrs, err)
+			errMu.Unlock()
+		}))
+
+		// Deduplicated: the slow consumer errors run into the thousands.
+		summarizeAsyncErrs := func() string {
+			errMu.Lock()
+			defer errMu.Unlock()
+			counts := make(map[string]int)
+			var seen []string
+			for _, err := range asyncErrs {
+				msg := err.Error()
+				if _, ok := counts[msg]; !ok {
+					seen = append(seen, msg)
+				}
+				counts[msg]++
+			}
+			var b strings.Builder
+			for _, msg := range seen {
+				fmt.Fprintf(&b, "\n\t%dx %s", counts[msg], msg)
+			}
+			return b.String()
+		}
+
+		creates := countConsumerCreates(t, inst)
+
+		gate := make(chan struct{})
+		var once sync.Once
+		var rec seqRecorder
+
+		// Subscribe before publishing, so nothing is delivered under the default
+		// limits. The short heartbeat makes the reset happen well within the stall.
+		sub, err := js.Subscribe("osc.>", func(m *nats.Msg) {
+			rec.add(m)
+			once.Do(func() { <-gate })
+		}, nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+		if err := sub.SetPendingLimits(20, 1024*1024); err != nil {
+			t.Fatalf("Error setting pending limits: %v", err)
+		}
+
+		baseline := creates.Load()
+
+		const totalMsgs = 2000
+		publishOSC(t, js, totalMsgs)
+
+		// Hold the stall until the server goes quiet: a message arriving as the gate
+		// opens could be recovered by the inline gap check, masking the bug. Quiet is
+		// only reachable while the bug is present, so bound the wait either way.
+		const settleFor = 600 * time.Millisecond
+		stallDeadline := time.Now().Add(2 * time.Second)
+		lastDropped, movedAt := -1, time.Now()
+		for time.Now().Before(stallDeadline) {
+			dropped, _ := sub.Dropped()
+			if dropped != lastDropped {
+				lastDropped, movedAt = dropped, time.Now()
+			} else if time.Since(movedAt) >= settleFor {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// The stall has to have reached the state under test, or a pass is vacuous.
+		if n := creates.Load() - baseline; n == 0 {
+			t.Fatalf("No ordered consumer reset during the stall, so jsi.cmeta was never cleared; the test would be vacuous")
+		}
+		if dropped, _ := sub.Dropped(); dropped < totalMsgs {
+			t.Fatalf("Only %d messages dropped during the stall, want at least %d; the backlog was not discarded and the test would be vacuous",
+				dropped, totalMsgs)
+		}
+		close(gate)
+
+		checkFor(t, 30*time.Second, 100*time.Millisecond, func() error {
+			if n := rec.count(); n < totalMsgs {
+				return fmt.Errorf("only %d of %d messages delivered; async errors:%s",
+					n, totalMsgs, summarizeAsyncErrs())
+			}
+			return nil
+		})
+		rec.verifyComplete(t, totalMsgs)
+	})
+}
+
+// A healthy ordered consumer must never be recreated by the heartbeat path: the
+// heartbeat carries the server's last delivered sequence while jsi.dseq is the
+// next expected one, so caught up is ldseq == jsi.dseq-1, not equality.
+func TestJetStreamOrderedConsumerNoResetWhenHealthy(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		var errMu sync.Mutex
+		var asyncErrs []error
+		_, js := oscStream(t, inst, nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			errMu.Lock()
+			asyncErrs = append(asyncErrs, err)
+			errMu.Unlock()
+		}))
+		creates := countConsumerCreates(t, inst)
+
+		var rec seqRecorder
+		sub, err := js.Subscribe("osc.>", rec.add,
+			nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		baseline := creates.Load()
+
+		reportErrs := func() string {
+			errMu.Lock()
+			defer errMu.Unlock()
+			if len(asyncErrs) == 0 {
+				return " (no async errors)"
+			}
+			return fmt.Sprintf(" async errors: %v", asyncErrs)
+		}
+
+		// Six heartbeats, or the absence of resets would mean nothing.
+		const idleWindow = 1200 * time.Millisecond
+
+		// Nothing delivered yet: the server reports Nats-Last-Consumer 0, jsi.dseq is 1.
+		time.Sleep(idleWindow)
+		if n := creates.Load() - baseline; n != 0 {
+			t.Fatalf("Ordered consumer recreated %d times while idle on an empty stream; expected 0.%s",
+				n, reportErrs())
+		}
+
+		// Steady state: the server's last delivered now equals jsi.dseq-1.
+		const totalMsgs = 5
+		for range totalMsgs {
+			if _, err := js.Publish("osc.a", []byte("x")); err != nil {
+				t.Fatalf("Error publishing: %v", err)
+			}
+		}
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			if n := rec.count(); n < totalMsgs {
+				return fmt.Errorf("only %d of %d messages delivered", n, totalMsgs)
+			}
+			return nil
+		})
+
+		afterDelivery := creates.Load()
+		time.Sleep(idleWindow)
+		if n := creates.Load() - afterDelivery; n != 0 {
+			t.Fatalf("Ordered consumer recreated %d times while idle and caught up; expected 0.%s",
+				n, reportErrs())
+		}
+		// Also covers the whole run, in case a reset happened during delivery.
+		if n := creates.Load() - baseline; n != 0 {
+			t.Fatalf("Ordered consumer recreated %d times over a healthy run; expected 0.%s",
+				n, reportErrs())
+		}
+		rec.verifyComplete(t, totalMsgs)
+	})
+}
+
+// An unbuffered channel subscription must drain a backlog at wire speed and
+// never deliver out of order. The jsi.dseq > 1 term in the reset guard is what
+// allows the immediate resets; without it the subscription advances one message
+// per heartbeat interval, which a shortened heartbeat would hide.
+func TestJetStreamOrderedConsumerUnbufferedChanRecoveryLatency(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		_, js := oscStream(t, inst, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
+
+		// The first message is published alone so jsi.dseq > 1 before the timed
+		// phase; the last few keep traffic arriving behind the assertion window.
+		const totalMsgs = 25
+		const assertMsgs = 20
+
+		if _, err := js.Publish("osc.a", []byte("x")); err != nil {
+			t.Fatalf("Error publishing: %v", err)
+		}
+
+		ch := make(chan *nats.Msg)
+		recv := make(chan uint64, totalMsgs*4)
+		readErr := make(chan error, 1)
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				case m := <-ch:
+					meta, err := m.Metadata()
+					if err != nil {
+						select {
+						case readErr <- err:
+						default:
+						}
+						return
+					}
+					recv <- meta.Sequence.Stream
+				}
+			}
+		}()
+
+		sub, err := js.ChanSubscribe("osc.>", ch, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		// Untimed: it may be dropped and return on a heartbeat. Either way jsi.dseq is 2.
+		var order []uint64
+		select {
+		case sseq := <-recv:
+			order = append(order, sseq)
+		case err := <-readErr:
+			t.Fatalf("Error getting metadata: %v", err)
+		case <-time.After(20 * time.Second):
+			t.Fatalf("First message never delivered")
+		}
+
+		for range totalMsgs - 1 {
+			if _, err := js.PublishAsync("osc.a", []byte("x")); err != nil {
+				t.Fatalf("Error publishing: %v", err)
+			}
+		}
+
+		// The failure this guards against needs ~100s for 20 messages at the 5s default.
+		const recoverWithin = 3 * time.Second
+		start := time.Now()
+		deadline := time.After(recoverWithin)
+		for len(order) < assertMsgs {
+			select {
+			case sseq := <-recv:
+				order = append(order, sseq)
+			case err := <-readErr:
+				t.Fatalf("Error getting metadata: %v", err)
+			case <-deadline:
+				t.Fatalf("Only %d of %d messages delivered in %v (got %v); an unbuffered ordered consumer must not need a heartbeat per message to drain a backlog",
+					len(order), assertMsgs, time.Since(start).Round(time.Millisecond), order)
+			}
+		}
+
+		// Without drops the gap path never ran and the timing proves nothing.
+		if dropped, _ := sub.Dropped(); dropped == 0 {
+			t.Fatalf("No messages were dropped, so the gap path never ran and the test would be vacuous")
+		}
+
+		// The tail is refetched at the heartbeat's pace, so only completeness matters
+		// here; order[i] == i+1 over arrival order is what rules out reordering.
+		tailDeadline := time.After(60 * time.Second)
+		for len(order) < totalMsgs {
+			select {
+			case sseq := <-recv:
+				order = append(order, sseq)
+			case err := <-readErr:
+				t.Fatalf("Error getting metadata: %v", err)
+			case <-tailDeadline:
+				t.Fatalf("Only %d of %d messages delivered (got %v)", len(order), totalMsgs, order)
+			}
+		}
+		if len(order) != totalMsgs {
+			t.Fatalf("Expected %d messages, got %d", totalMsgs, len(order))
+		}
+		for i, sseq := range order {
+			if sseq != uint64(i+1) {
+				t.Fatalf("Message %d out of order: expected stream seq %d, got %d", i, i+1, sseq)
+			}
+		}
+	})
+}

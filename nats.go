@@ -3844,6 +3844,8 @@ func (nc *Conn) processMsg(data []byte) {
 	var ctrlMsg bool
 	var ctrlType int
 	var fcReply string
+	// Staged by checkOrderedDelivery, applied by commitOrderedMsg once queued.
+	var ordSeqs orderedSeqs
 
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
@@ -3899,11 +3901,6 @@ func (nc *Conn) processMsg(data []byte) {
 				fcReply = m.Header.Get(consumerStalledHdr)
 			}
 		}
-		// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
-		if !ctrlMsg && jsi.ordered && sub.checkOrderedMsgs(m) {
-			sub.mu.Unlock()
-			return
-		}
 	}
 
 	// Skip processing if this is a control message and
@@ -3929,6 +3926,21 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		} else if jsi != nil {
 			chanSubCheckFC = true
+		}
+
+		// Must run here, between the reservation above and the delivery below.
+		// See checkOrderedDelivery.
+		if jsi != nil && jsi.ordered {
+			var action jsMsgAction
+			action, ordSeqs = sub.checkOrderedDelivery(m)
+			switch action {
+			case jsMsgDropAtCapacity:
+				goto slowConsumer
+			case jsMsgDropGap:
+				// Fully handled, reservation included.
+				sub.mu.Unlock()
+				return
+			}
 		}
 
 		// We have two modes of delivery. One is the channel, used by channel
@@ -3957,6 +3969,8 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		}
 		if jsi != nil {
+			// Queued for delivery, so the ordered tracker can advance past it.
+			sub.commitOrderedMsg(ordSeqs)
 			// Store the ACK metadata from the message to
 			// compare later on with the received heartbeat.
 			sub.trackSequences(m.Reply)
@@ -4015,14 +4029,13 @@ func (nc *Conn) processMsg(data []byte) {
 	return
 
 slowConsumer:
+	// ordSeqs is deliberately not committed here: leaving the tracker behind is
+	// what makes the next message register as a gap and get refetched.
 	sub.dropped++
 	sc := !sub.sc
 	sub.sc = true
 	// Undo stats from above
-	if sub.typ != ChanSubscription {
-		sub.pMsgs--
-		sub.pBytes -= len(m.Data)
-	}
+	sub.releaseReserved(m)
 	if sc {
 		sub.changeSubStatus(SubscriptionSlowConsumer)
 		sub.mu.Unlock()
@@ -4037,6 +4050,16 @@ slowConsumer:
 		nc.mu.Unlock()
 	} else {
 		sub.mu.Unlock()
+	}
+}
+
+// releaseReserved undoes the pending accounting reserved for m earlier in
+// processMsg. pMsgsMax/pBytesMax are deliberately left alone: they are
+// high-water marks of what was reserved. Lock must be held.
+func (sub *Subscription) releaseReserved(m *Msg) {
+	if sub.typ != ChanSubscription {
+		sub.pMsgs--
+		sub.pBytes -= len(m.Data)
 	}
 }
 
