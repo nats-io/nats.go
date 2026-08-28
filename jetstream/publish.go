@@ -460,6 +460,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		go js.resetPendingAcksOnReconnect()
 	}
 	var sb strings.Builder
+	sb.Grow(len(js.publisher.replyPrefix) + aReplyTokensize)
 	sb.WriteString(js.publisher.replyPrefix)
 	for {
 		rn := js.publisher.rr.Int63()
