@@ -158,6 +158,9 @@ const (
 
 	// Default number of retries
 	DefaultPubRetryAttempts = 2
+
+	// Default max wait for an async pub ack if PublishAsyncMaxPending is exceeded.
+	defaultAsyncStallWait = 200 * time.Millisecond
 )
 
 const (
@@ -174,32 +177,28 @@ func (js *jetStream) Publish(ctx context.Context, subj string, data []byte, opts
 	return js.PublishMsg(ctx, &nats.Msg{Subject: subj, Data: data}, opts...)
 }
 
-// PublishMsg performs a synchronous publish to a stream and waits for
-// ack from server. It accepts subject name (which must be bound to a
-// stream) and nats.Message.
-func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
-	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
-	if cancel != nil {
-		defer cancel()
-	}
-	o := pubOpts{
+// applyPublishOpts parses opts into a fresh pubOpts.
+func applyPublishOpts(m *nats.Msg, opts []PublishOpt) (*pubOpts, error) {
+	o := &pubOpts{
 		retryWait:     DefaultPubRetryWait,
 		retryAttempts: DefaultPubRetryAttempts,
 	}
-	if len(opts) > 0 {
-		if m.Header == nil {
-			m.Header = nats.Header{}
-		}
-		for _, opt := range opts {
-			if err := opt(&o); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if o.stallWait > 0 {
-		return nil, fmt.Errorf("%w: stall wait cannot be set to sync publish", ErrInvalidOption)
+
+	if m.Header == nil {
+		m.Header = nats.Header{}
 	}
 
+	for _, opt := range opts {
+		if err := opt(o); err != nil {
+			return nil, err
+		}
+	}
+
+	return o, nil
+}
+
+// applyPublishHeaders translates o into message headers on m.
+func applyPublishHeaders(m *nats.Msg, o *pubOpts) {
 	if o.id != "" {
 		m.Header.Set(MsgIDHeader, o.id)
 	}
@@ -237,18 +236,50 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	if o.scheduleTZ != "" {
 		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
 	}
+}
 
+// PublishMsg performs a synchronous publish to a stream and waits for
+// ack from server. It accepts subject name (which must be bound to a
+// stream) and nats.Message.
+func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...PublishOpt) (*PubAck, error) {
+	ctx, cancel := js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	if len(opts) == 0 {
+		return js.publishMsg(ctx, m, DefaultPubRetryWait, DefaultPubRetryAttempts)
+	}
+
+	o, err := applyPublishOpts(m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// stallWait isn't valid for a synchronous publish; check before
+	// applyPublishHeaders writes anything to m.
+	if o.stallWait > 0 {
+		return nil, fmt.Errorf("%w: stall wait cannot be set to sync publish", ErrInvalidOption)
+	}
+
+	applyPublishHeaders(m, o)
+
+	return js.publishMsg(ctx, m, o.retryWait, o.retryAttempts)
+}
+
+// publishMsg sends m and waits for the JetStream ack, retrying on no
+// responders per retryWait/retryAttempts.
+func (js *jetStream) publishMsg(ctx context.Context, m *nats.Msg, retryWait time.Duration, retryAttempts int) (*PubAck, error) {
 	var resp *nats.Msg
 	var err error
 
 	resp, err = js.conn.RequestMsgWithContext(ctx, m)
 
 	if err != nil {
-		for r := 0; errors.Is(err, nats.ErrNoResponders) && (r < o.retryAttempts || o.retryAttempts < 0); r++ {
+		for r := 0; errors.Is(err, nats.ErrNoResponders) && (r < retryAttempts || retryAttempts < 0); r++ {
 			// To protect against small blips in leadership changes etc, if we get a no responders here retry.
 			select {
 			case <-ctx.Done():
-			case <-time.After(o.retryWait):
+			case <-time.After(retryWait):
 			}
 			resp, err = js.conn.RequestMsgWithContext(ctx, m)
 		}
@@ -284,66 +315,30 @@ func (js *jetStream) PublishAsync(subj string, data []byte, opts ...PublishOpt) 
 // returns [PubAckFuture] interface. It accepts subject name (which must
 // be bound to a stream) and nats.Message.
 func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFuture, error) {
-	o := pubOpts{
-		retryWait:     DefaultPubRetryWait,
-		retryAttempts: DefaultPubRetryAttempts,
+	if len(opts) == 0 {
+		return js.publishMsgAsync(m, DefaultPubRetryWait, DefaultPubRetryAttempts, defaultAsyncStallWait, nil)
 	}
-	if len(opts) > 0 {
-		if m.Header == nil {
-			m.Header = nats.Header{}
-		}
-		for _, opt := range opts {
-			if err := opt(&o); err != nil {
-				return nil, err
-			}
-		}
-	}
-	defaultStallWait := 200 * time.Millisecond
 
-	stallWait := defaultStallWait
+	o, err := applyPublishOpts(m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	applyPublishHeaders(m, o)
+
+	stallWait := defaultAsyncStallWait
 	if o.stallWait > 0 {
 		stallWait = o.stallWait
 	}
 
-	if o.id != "" {
-		m.Header.Set(MsgIDHeader, o.id)
-	}
-	if o.lastMsgID != "" {
-		m.Header.Set(ExpectedLastMsgIDHeader, o.lastMsgID)
-	}
-	if o.stream != "" {
-		m.Header.Set(ExpectedStreamHeader, o.stream)
-	}
-	if o.lastSeq != nil {
-		m.Header.Set(ExpectedLastSeqHeader, strconv.FormatUint(*o.lastSeq, 10))
-	}
-	if o.lastSubjectSeq != nil {
-		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
-	}
-	if o.lastSubject != "" {
-		m.Header.Set(ExpectedLastSubjSeqSubjHeader, o.lastSubject)
-		m.Header.Set(ExpectedLastSubjSeqHeader, strconv.FormatUint(*o.lastSubjectSeq, 10))
-	}
-	if o.ttl > 0 {
-		m.Header.Set(MsgTTLHeader, o.ttl.String())
-	}
-	if o.schedule != "" {
-		m.Header.Set(ScheduleHeader, o.schedule)
-	}
-	if o.scheduleTarget != "" {
-		m.Header.Set(ScheduleTargetHeader, o.scheduleTarget)
-	}
-	if o.scheduleSource != "" {
-		m.Header.Set(ScheduleSourceHeader, o.scheduleSource)
-	}
-	if o.scheduleTTL != "" {
-		m.Header.Set(ScheduleTTLHeader, o.scheduleTTL)
-	}
-	if o.scheduleTZ != "" {
-		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
-	}
+	return js.publishMsgAsync(m, o.retryWait, o.retryAttempts, stallWait, o.pafRetry)
+}
 
-	paf := o.pafRetry
+// publishMsgAsync performs the actual async publish and paf bookkeeping.
+// pafRetry is non-nil only when retrying an already-registered paf after
+// a no-responders error.
+func (js *jetStream) publishMsgAsync(m *nats.Msg, retryWait time.Duration, retryAttempts int, stallWait time.Duration, pafRetry *pubAckFuture) (PubAckFuture, error) {
+	paf := pafRetry
 	if paf == nil && m.Reply != "" {
 		return nil, ErrAsyncPublishReplySubjectSet
 	}
@@ -359,7 +354,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 			return nil, fmt.Errorf("nats: error creating async reply handler: %s", err)
 		}
 		id = reply[js.opts.replyPrefixLen:]
-		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
+		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: retryAttempts, retryWait: retryWait, reply: reply}
 		numPending, maxPending := js.registerPAF(id, paf)
 
 		if maxPending > 0 && numPending > maxPending {
