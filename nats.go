@@ -4857,6 +4857,7 @@ func (nc *Conn) NewInbox() string {
 	}
 
 	var sb strings.Builder
+	sb.Grow(len(nc.Opts.InboxPrefix) + 1 + nuidSize)
 	sb.WriteString(nc.Opts.InboxPrefix)
 	sb.WriteByte('.')
 	sb.WriteString(nuid.Next())
@@ -4881,6 +4882,7 @@ func (nc *Conn) newRespInbox() string {
 	}
 
 	var sb strings.Builder
+	sb.Grow(nc.respSubLen + replySuffixLen)
 	sb.WriteString(nc.respSubPrefix)
 
 	rn := nc.respRand.Int63()
