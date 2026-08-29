@@ -726,6 +726,7 @@ func (js *js) newAsyncReply() string {
 		go js.resetPendingAcksOnReconnect()
 	}
 	var sb strings.Builder
+	sb.Grow(len(js.rpre) + aReplyTokensize)
 	sb.WriteString(js.rpre)
 	for {
 		rn := js.rr.Int63()
@@ -3264,6 +3265,7 @@ func newFetchInbox(subj string) (string, string) {
 	}
 	reqID := nuid.Next()
 	var sb strings.Builder
+	sb.Grow(len(subj) - 1 + nuidSize)
 	sb.WriteString(subj[:len(subj)-1])
 	sb.WriteString(reqID)
 	return sb.String(), reqID
