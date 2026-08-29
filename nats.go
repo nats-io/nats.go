@@ -843,35 +843,43 @@ func (m *Msg) Size() int {
 	if m.wsz != 0 {
 		return m.wsz
 	}
-	hdr, _ := m.headerBytes()
-	return len(m.Subject) + len(m.Reply) + len(hdr) + len(m.Data)
+	hdrSize, _ := m.headerSize()
+	return len(m.Subject) + len(m.Reply) + hdrSize + len(m.Data)
+}
+
+// Validate the keys and calculate an upper bound for the total encoded
+// size.
+//
+// Trimm leading/tailing whitespaces right away, so the size calculation
+// is exact.
+//
+// We don't perform any special validation on header values because we
+// consider all strings to be valid values (including Unicode strings,
+// special characters, etc.).
+func (m *Msg) headerSize() (int, error) {
+	if len(m.Header) == 0 {
+		return 0, nil
+	}
+
+	hdrSize := len(hdrLine) + len(crlf)
+	for k, vs := range m.Header {
+		if !isHeaderKeyValid(k) {
+			return 0, ErrBadHeaderMsg
+		}
+		for i, v := range vs {
+			vs[i] = textproto.TrimString(v)
+			hdrSize += len(k) + len(vs[i]) + 4 // 4 is for the colon, space, CR, and LF
+		}
+	}
+
+	return hdrSize, nil
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
 	var hdr []byte
-	if len(m.Header) == 0 {
-		return hdr, nil
-	}
-
-	// Validate the keys and calculate an upper bound for the total encoded
-	// size.
-	//
-	// The size calculation may not be exact if any values contain
-	// leading/trailing whitespace (as those will be trimmed later), but a
-	// slight over-estimation here is more preferable than an under-estimation
-	// (which could lead to unnecessary memory allocations).
-	//
-	// We don't perform any special validation on header values because we
-	// consider all strings to be valid values (including Unicode strings,
-	// special characters, etc.).
-	hdrSize := len(hdrLine) + len(crlf)
-	for k, vs := range m.Header {
-		if !isHeaderKeyValid(k) {
-			return nil, ErrBadHeaderMsg
-		}
-		for _, v := range vs {
-			hdrSize += len(k) + len(v) + 4 // 4 is for the colon, space, CR, and LF
-		}
+	hdrSize, err := m.headerSize()
+	if hdrSize == 0 || err != nil {
+		return hdr, err
 	}
 
 	// NOTE: bytes.Buffer.WriteString() returns an error because bytes.Buffer
@@ -990,7 +998,7 @@ func writeHeaderValue(buffer *bytes.Buffer, value string) {
 	// NOTE: It is safe to ignore the error returned by WriteString because
 	// we're writing to a bytes.Buffer object, and that implementation never
 	// returns an error.
-	_, _ = headerValueNewlineReplacer.WriteString(buffer, textproto.TrimString(value))
+	_, _ = headerValueNewlineReplacer.WriteString(buffer, value)
 }
 
 type barrierInfo struct {
