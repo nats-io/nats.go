@@ -4795,7 +4795,10 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			return nil, ErrConnectionClosed
+			if nc.IsClosed() {
+				return nil, ErrConnectionClosed
+			}
+			return nil, ErrDisconnected
 		}
 	case <-t.C:
 		nc.mu.Lock()
