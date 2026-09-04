@@ -1,14 +1,6 @@
 #!/bin/bash -e
 # Run from the repo root: ./scripts/cov.sh [CI]
 #
-# Requires TESTER_NATS_URL to point at a running synadia/server-tester
-# instance (see `make tester-up` or `make tester-up-host`). The integration
-# tests in ./test, ./jetstream/test, ./micro/test all skip otherwise.
-
-if [ -z "$TESTER_NATS_URL" ]; then
-    echo "TESTER_NATS_URL must be set (e.g. nats://localhost:4222 after 'make tester-up-host')." >&2
-    exit 1
-fi
 
 rm -rf ./cov
 mkdir cov

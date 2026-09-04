@@ -46,9 +46,9 @@ jobs:
         # name (no host port publishing needed).
         strategy:
             matrix:
-              go: [ "1.25", "1.26" ]
+              go: [ "1.26", "1.27" ]
               include:
-                - go: "1.26"
+                - go: "1.27"
                   coverage: true
         container: golang:${{ matrix.go }}-alpine
         services:
