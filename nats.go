@@ -15,7 +15,6 @@
 package nats
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
@@ -4539,16 +4538,29 @@ const (
 	statusLen          = 3 // e.g. 20x, 40x, 50x
 )
 
+// nextHeaderLine returns the next line in s mirroring textproto.Reader
+func nextHeaderLine(s string) (line, rest string, ok bool) {
+	i := strings.IndexByte(s, '\n')
+	if i < 0 {
+		return "", "", false
+	}
+	line = s[:i]
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return line, s[i+1:], true
+}
+
 // DecodeHeadersMsg will decode and headers.
 func DecodeHeadersMsg(data []byte) (Header, error) {
-	br := bufio.NewReaderSize(bytes.NewReader(data), 128)
-	tp := textproto.NewReader(br)
-	l, err := tp.ReadLine()
-	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
+	// Copy the header block once; keys and values are substrings of it.
+	s := string(data)
+	l, s, ok := nextHeaderLine(s)
+	if !ok || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
 
-	mh, err := readMIMEHeader(tp)
+	h, err := readMIMEHeader(s)
 	if err != nil {
 		return nil, err
 	}
@@ -4564,25 +4576,27 @@ func DecodeHeadersMsg(data []byte) (Header, error) {
 			description = strings.TrimSpace(status[statusLen:])
 			status = status[:statusLen]
 		}
-		mh.Add(statusHdr, status)
+		h.Add(statusHdr, status)
 		if len(description) > 0 {
-			mh.Add(descrHdr, description)
+			h.Add(descrHdr, description)
 		}
 	}
-	return Header(mh), nil
+	return h, nil
 }
 
 // readMIMEHeader returns a MIMEHeader that preserves the
-// original case of the MIME header, based on the implementation
-// of textproto.ReadMIMEHeader.
-//
-// https://golang.org/pkg/net/textproto/#Reader.ReadMIMEHeader
-func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
-	m := make(textproto.MIMEHeader)
+// original case of the MIME header
+func readMIMEHeader(s string) (Header, error) {
+	m := make(Header)
 	for {
-		kv, err := tp.ReadLine()
+		kv, rest, ok := nextHeaderLine(s)
+		if !ok {
+			return nil, ErrBadHeaderMsg
+		}
+		s = rest
 		if len(kv) == 0 {
-			return m, err
+			// Blank line marks the end of the header block.
+			return m, nil
 		}
 
 		// Process key fetching original case.
@@ -4600,9 +4614,6 @@ func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
 			i++
 		}
 		m[key] = append(m[key], kv[i:])
-		if err != nil {
-			return m, err
-		}
 	}
 }
 
