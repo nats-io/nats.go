@@ -15,7 +15,6 @@
 package nats
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
@@ -40,6 +39,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/nats-io/nkeys"
 	"github.com/nats-io/nuid"
@@ -3820,6 +3820,9 @@ func (nc *Conn) processMsg(data []byte) {
 	// It's possible that we end-up not using the message, but that's ok.
 
 	// FIXME(dlc): Need to copy, should/can do COW?
+	// Copying has the advantage of essentially preallocating the header
+	// values, so when decoding we can unsafely slice the strings out of
+	// the []byte.
 	msgPayload := data
 	if !nc.ps.msgCopied {
 		msgPayload = make([]byte, len(data))
@@ -4421,56 +4424,71 @@ const (
 	statusLen          = 3 // e.g. 20x, 40x, 50x
 )
 
+// nextHeaderLine returns the next line in data mirroring textproto.Reader
+func nextHeaderLine(data []byte) (line, rest []byte, ok bool) {
+	i := bytes.IndexByte(data, '\n')
+	if i < 0 {
+		return nil, nil, false
+	}
+	line = data[:i]
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return line, data[i+1:], true
+}
+
 // DecodeHeadersMsg will decode and headers.
+// The values alias data, so the caller must not modify the data
+// as long as the Header remains valid.
 func DecodeHeadersMsg(data []byte) (Header, error) {
-	br := bufio.NewReaderSize(bytes.NewReader(data), 128)
-	tp := textproto.NewReader(br)
-	l, err := tp.ReadLine()
-	if err != nil || len(l) < hdrPreEnd || l[:hdrPreEnd] != hdrLine[:hdrPreEnd] {
+	l, data, ok := nextHeaderLine(data)
+	if !ok || len(l) < hdrPreEnd || string(l[:hdrPreEnd]) != hdrLine[:hdrPreEnd] {
 		return nil, ErrBadHeaderMsg
 	}
 
-	mh, err := readMIMEHeader(tp)
+	h, err := readMIMEHeader(data)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if we have an inlined status.
 	if len(l) > hdrPreEnd {
-		var description string
-		status := strings.TrimSpace(l[hdrPreEnd:])
+		var description []byte
+		status := bytes.TrimSpace(l[hdrPreEnd:])
 		if len(status) != statusLen {
-			description = strings.TrimSpace(status[statusLen:])
+			description = bytes.TrimSpace(status[statusLen:])
 			status = status[:statusLen]
 		}
-		mh.Add(statusHdr, status)
+		h.Add(statusHdr, *(*string)(unsafe.Pointer(&status)))
 		if len(description) > 0 {
-			mh.Add(descrHdr, description)
+			h.Add(descrHdr, *(*string)(unsafe.Pointer(&description)))
 		}
 	}
-	return Header(mh), nil
+	return h, nil
 }
 
 // readMIMEHeader returns a MIMEHeader that preserves the
-// original case of the MIME header, based on the implementation
-// of textproto.ReadMIMEHeader.
-//
-// https://golang.org/pkg/net/textproto/#Reader.ReadMIMEHeader
-func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
-	m := make(textproto.MIMEHeader)
+// original case of the MIME header
+func readMIMEHeader(data []byte) (Header, error) {
+	m := make(Header)
 	for {
-		kv, err := tp.ReadLine()
+		kv, rest, ok := nextHeaderLine(data)
+		if !ok {
+			return nil, ErrBadHeaderMsg
+		}
+		data = rest
 		if len(kv) == 0 {
-			return m, err
+			// Blank line marks the end of the header block.
+			return m, nil
 		}
 
 		// Process key fetching original case.
-		i := strings.IndexByte(kv, ':')
+		i := bytes.IndexByte(kv, ':')
 		if i < 0 {
 			return nil, ErrBadHeaderMsg
 		}
 		key := kv[:i]
-		if key == "" {
+		if len(key) == 0 {
 			// Skip empty keys.
 			continue
 		}
@@ -4478,10 +4496,9 @@ func readMIMEHeader(tp *textproto.Reader) (textproto.MIMEHeader, error) {
 		for i < len(kv) && (kv[i] == ' ' || kv[i] == '\t') {
 			i++
 		}
-		m[key] = append(m[key], kv[i:])
-		if err != nil {
-			return m, err
-		}
+		value := kv[i:]
+		keyStr := *(*string)(unsafe.Pointer(&key))
+		m[keyStr] = append(m[keyStr], *(*string)(unsafe.Pointer(&value)))
 	}
 }
 
