@@ -19,6 +19,7 @@ package nats
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -186,6 +187,57 @@ func TestApplyNewSIDUnregisteredSub(t *testing.T) {
 		sub.mu.Unlock()
 		if ok {
 			t.Fatal("expected the sid swap to be refused on a closed connection")
+		}
+	})
+}
+
+func TestRewireOrderedSub(t *testing.T) {
+	const osid, nsid, deliver, maxStr = 1, 2, "_INBOX.new", "5"
+	newConn := func() (*Conn, *Subscription) {
+		// A writer with a large limit never flushes, so the protocol lines
+		// stay in bufs for inspection.
+		nc := &Conn{subs: make(map[int64]*Subscription), bw: &natsWriter{limit: 1 << 20}}
+		sub := &Subscription{conn: nc, sid: nsid}
+		nc.ssid = nsid
+		nc.subs[nsid] = sub
+		return nc, sub
+	}
+	unsubOld := fmt.Sprintf(unsubProto, osid, _EMPTY_)
+	subNew := fmt.Sprintf(subProto, deliver, _EMPTY_, nsid)
+	unsubMax := fmt.Sprintf(unsubProto, nsid, maxStr)
+
+	t.Run("registered sub is moved to the new sid", func(t *testing.T) {
+		nc, sub := newConn()
+		if !nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to proceed for a registered sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld+subNew+unsubMax; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("removed sub only gets the old sid unsubscribed", func(t *testing.T) {
+		// Simulates Unsubscribe landing between applyNewSID and the
+		// goroutine that sends the protocol: it removed the sub under the
+		// new sid, so no interest (nor consumer) must be created for it.
+		nc, sub := newConn()
+		delete(nc.subs, nsid)
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused for an unregistered sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("closed connection only gets the old sid unsubscribed", func(t *testing.T) {
+		nc, sub := newConn()
+		nc.subs = nil
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused on a closed connection")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
 		}
 	})
 }
