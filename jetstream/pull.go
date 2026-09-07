@@ -560,17 +560,37 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	go sub.pullMessages(subject)
 
 	go func() {
+		// Connection state is tracked here, for the lifetime of the
+		// iterator, rather than inside Next: a reconnect that completes
+		// between two Next calls (for example when Next is driven with a
+		// short NextMaxWait) must still reset the pull request accounting,
+		// otherwise no new pull request is ever sent and the iterator goes
+		// silent on a healthy connection.
+		isConnected := true
 		for {
 			select {
 			case status, ok := <-sub.connStatusChanged:
 				if !ok {
 					return
 				}
-				if status == nats.CONNECTED {
-					sub.errs <- errConnected
-				}
-				if status == nats.RECONNECTING {
-					sub.errs <- errDisconnected
+				switch status {
+				case nats.RECONNECTING:
+					isConnected = false
+					select {
+					case sub.errs <- errDisconnected:
+					case <-sub.done:
+						return
+					}
+				case nats.CONNECTED:
+					if isConnected {
+						continue
+					}
+					isConnected = true
+					select {
+					case sub.errs <- errConnected:
+					case <-sub.done:
+						return
+					}
 				}
 			case <-sub.done:
 				return
@@ -633,7 +653,6 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 		}
 	}()
 
-	isConnected := true
 	if s.consumeOpts.StopAfter > 0 && s.delivered >= s.consumeOpts.StopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
@@ -686,24 +705,23 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 				}
 			}
 			if errors.Is(err, errConnected) {
-				if !isConnected {
-					isConnected = true
-
-					if s.consumeOpts.notifyOnReconnect {
-						return nil, errConnected
-					}
-					s.pending.msgCount = 0
-					s.pending.byteCount = 0
-					if hbMonitor != nil {
-						hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
-					}
+				// errConnected is only sent for a CONNECTED that follows a
+				// RECONNECTING, so this is always a real reconnect: the pull
+				// request parked on the previous server is gone and a new one
+				// has to be issued.
+				if s.consumeOpts.notifyOnReconnect {
+					return nil, errConnected
+				}
+				s.pending.msgCount = 0
+				s.pending.byteCount = 0
+				if hbMonitor != nil {
+					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 				}
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
 					hbMonitor.Stop()
 				}
-				isConnected = false
 			}
 		case <-timeoutCh:
 			return nil, nats.ErrTimeout

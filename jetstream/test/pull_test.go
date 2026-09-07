@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1503,6 +1504,72 @@ func TestPullConsumerMessages(t *testing.T) {
 				}
 			case err := <-errs:
 				t.Fatalf("Unexpected error: %s", err)
+			}
+		})
+	})
+
+	t.Run("with server restart and short Next timeout", func(t *testing.T) {
+		// Reconnect handling used to be tracked per Next call, so a reconnect
+		// that completed between two short Next calls was never acted on: the
+		// pull request parked on the old server was still counted as pending,
+		// no new pull request was sent and the iterator went silent on a
+		// healthy connection.
+		withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream, inst *testservice.Instance) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "cons", AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			it, err := c.Messages()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer it.Stop()
+
+			var received atomic.Int32
+			done := make(chan struct{})
+			errs := make(chan error, 1)
+			go func() {
+				for received.Load() < int32(2*len(testMsgs)) {
+					msg, err := it.Next(jetstream.NextMaxWait(100 * time.Millisecond))
+					if errors.Is(err, nats.ErrTimeout) {
+						continue
+					}
+					if err != nil {
+						errs <- err
+						return
+					}
+					msg.Ack()
+					received.Add(1)
+				}
+				close(done)
+			}()
+
+			publishTestMsgs(t, js)
+			checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+				if n := received.Load(); n != int32(len(testMsgs)) {
+					return fmt.Errorf("expected %d messages before restart; got %d", len(testMsgs), n)
+				}
+				return nil
+			})
+
+			// restart the server; the reconnect completes while no Next call
+			// is in flight for long enough to observe it
+			inst.StopServer(t, inst.Servers[0])
+			inst.StartServer(t, inst.Servers[0])
+			waitForStream(t, js, "foo")
+			publishTestMsgs(t, js)
+
+			select {
+			case <-done:
+			case err := <-errs:
+				t.Fatalf("Unexpected error: %s", err)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("Timeout waiting for messages after restart; got %d of %d", received.Load(), 2*len(testMsgs))
 			}
 		})
 	})
