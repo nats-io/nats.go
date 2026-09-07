@@ -2184,14 +2184,25 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	return false
 }
 
-// Update and replace sid. Returns the old and the new sid.
+// Update and replace sid. Returns the old and the new sid, and whether the
+// swap happened: it is refused (ok == false) when the subscription is no
+// longer registered on the connection.
 // Lock should be held on entry but will be unlocked to prevent lock inversion.
-func (sub *Subscription) applyNewSID() (osid, nsid int64) {
+func (sub *Subscription) applyNewSID() (osid, nsid int64, ok bool) {
 	nc := sub.conn
 	sub.mu.Unlock()
 
 	nc.subsMu.Lock()
 	osid = sub.sid
+	// While sub.mu was released, the subscription may have been removed by
+	// removeSub (Unsubscribe/Drain) or the connection may have been closed
+	// (nc.subs is nil then). Registering it under a new sid would resurrect
+	// a closed subscription (or panic on the nil map), so refuse the swap.
+	if nc.subs[osid] != sub {
+		nc.subsMu.Unlock()
+		sub.mu.Lock()
+		return osid, 0, false
+	}
 	delete(nc.subs, osid)
 	// Place new one.
 	nc.ssid++
@@ -2201,7 +2212,7 @@ func (sub *Subscription) applyNewSID() (osid, nsid int64) {
 	nc.subsMu.Unlock()
 
 	sub.mu.Lock()
-	return osid, nsid
+	return osid, nsid, true
 }
 
 // We are here if we have detected a gap with an ordered consumer.
@@ -2239,7 +2250,12 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	}
 
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
-	osid, nsid := sub.applyNewSID()
+	osid, nsid, ok := sub.applyNewSID()
+	if !ok {
+		// The subscription was unsubscribed or the connection was closed
+		// while sub.mu was released: there is nothing left to reset.
+		return
+	}
 
 	// Grab new inbox.
 	newDeliver := nc.NewInbox()

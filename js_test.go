@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -130,4 +130,62 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	if r.Header.Get("some") != "header" {
 		t.Fatalf("Wrong header: %v", r.Header)
 	}
+}
+
+func TestApplyNewSIDUnregisteredSub(t *testing.T) {
+	newConn := func() (*Conn, *Subscription) {
+		nc := &Conn{subs: make(map[int64]*Subscription)}
+		sub := &Subscription{conn: nc}
+		nc.ssid++
+		sub.sid = nc.ssid
+		nc.subs[sub.sid] = sub
+		return nc, sub
+	}
+
+	t.Run("registered sub is re-keyed", func(t *testing.T) {
+		nc, sub := newConn()
+		sub.mu.Lock()
+		osid, nsid, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if !ok {
+			t.Fatal("expected the sid swap to succeed for a registered sub")
+		}
+		if osid != 1 || nsid != 2 {
+			t.Fatalf("expected sids 1 -> 2, got %d -> %d", osid, nsid)
+		}
+		if sub.sid != nsid || nc.subs[nsid] != sub || len(nc.subs) != 1 {
+			t.Fatalf("sub not registered under the new sid only: sid=%d subs=%v", sub.sid, nc.subs)
+		}
+	})
+
+	t.Run("removed sub is not re-registered", func(t *testing.T) {
+		// Simulates removeSub winning the race: the sub was unsubscribed
+		// while applyNewSID had released sub.mu.
+		nc, sub := newConn()
+		delete(nc.subs, sub.sid)
+		sub.mu.Lock()
+		_, _, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if ok {
+			t.Fatal("expected the sid swap to be refused for an unregistered sub")
+		}
+		if len(nc.subs) != 0 {
+			t.Fatalf("unsubscribed sub was resurrected in the subs map: %v", nc.subs)
+		}
+		if sub.sid != 1 {
+			t.Fatalf("sid of an unregistered sub should be untouched, got %d", sub.sid)
+		}
+	})
+
+	t.Run("closed connection does not panic", func(t *testing.T) {
+		// close() sets nc.subs to nil, and writing to a nil map panics.
+		nc, sub := newConn()
+		nc.subs = nil
+		sub.mu.Lock()
+		_, _, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if ok {
+			t.Fatal("expected the sid swap to be refused on a closed connection")
+		}
+	})
 }
