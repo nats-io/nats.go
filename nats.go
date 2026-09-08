@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand"
 	"net"
 	"net/http"
@@ -647,16 +648,24 @@ type Conn struct {
 	mu sync.RWMutex
 	// Opts holds the configuration of the Conn.
 	// Modifying the configuration of a running Conn is a race.
-	Opts          Options
-	wg            sync.WaitGroup
-	srvPool       []*Server
-	current       *Server
-	urls          map[string]struct{} // Keep track of all known URLs (used by processInfo)
-	conn          net.Conn
-	bw            *natsWriter
-	br            *natsReader
-	fch           chan struct{}
-	info          ServerInfo
+	Opts    Options
+	wg      sync.WaitGroup
+	srvPool []*Server
+	current *Server
+	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
+	conn    net.Conn
+	bw      *natsWriter
+	br      *natsReader
+	fch     chan struct{}
+	info    ServerInfo
+	// subsMu protects subs, ssid and the sid of every Subscription in subs,
+	// so that a subscription and the id it is registered under always stay
+	// in sync.
+	//
+	// The lock ordering for a connection is nc.mu -> nc.subsMu -> sub.mu:
+	// each of these may be acquired while holding any of the ones to its
+	// left, and none of them may be acquired while holding one to its
+	// right.
 	ssid          int64
 	subsMu        sync.RWMutex
 	subs          map[int64]*Subscription
@@ -704,7 +713,10 @@ type natsWriter struct {
 
 // Subscription represents interest in a given subject.
 type Subscription struct {
-	mu  sync.Mutex
+	mu sync.Mutex
+
+	// Key under which this subscription is registered in conn.subs.
+	// Protected by conn.subsMu, not by the mutex above.
 	sid int64
 
 	// Subject that represents this subscription. This can be different
@@ -4051,6 +4063,7 @@ func (nc *Conn) processTransientError(err error) {
 				q = queueMatches[1]
 			}
 			subject := matches[1]
+			nc.subsMu.RLock()
 			for _, sub := range nc.subs {
 				if sub.Subject == subject && sub.Queue == q && sub.permissionsErr == nil {
 					sub.mu.Lock()
@@ -4061,6 +4074,7 @@ func (nc *Conn) processTransientError(err error) {
 					sub.mu.Unlock()
 				}
 			}
+			nc.subsMu.RUnlock()
 		}
 	}
 	if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
@@ -5071,8 +5085,9 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 
 	nc.subsMu.Lock()
 	nc.ssid++
-	sub.sid = nc.ssid
-	nc.subs[sub.sid] = sub
+	sid := nc.ssid
+	sub.sid = sid
+	nc.subs[sid] = sub
 	nc.subsMu.Unlock()
 
 	// Let's start the go routine now that it is fully setup and registered.
@@ -5083,7 +5098,7 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here if reconnecting.
 	if !nc.isReconnecting() {
-		nc.bw.appendString(fmt.Sprintf(subProto, subj, queue, sub.sid))
+		nc.bw.appendString(fmt.Sprintf(subProto, subj, queue, sid))
 		nc.kickFlusher()
 	}
 
@@ -5093,8 +5108,8 @@ func (nc *Conn) subscribeLocked(subj, queue string, cb MsgHandler, ch chan *Msg,
 
 // NumSubscriptions returns active number of subscriptions.
 func (nc *Conn) NumSubscriptions() int {
-	nc.mu.RLock()
-	defer nc.mu.RUnlock()
+	nc.subsMu.RLock()
+	defer nc.subsMu.RUnlock()
 	return len(nc.subs)
 }
 
@@ -5455,7 +5470,13 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		nc.bw.appendString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		// Deliberately re-read the sid: in the AutoUnsubscribe case removeSub
+		// is skipped, so an ordered consumer reset may have swapped it since
+		// the lookup above and the max has to apply to what the server knows.
+		nc.subsMu.RLock()
+		sid := s.sid
+		nc.subsMu.RUnlock()
+		nc.bw.appendString(fmt.Sprintf(unsubProto, sid, maxStr))
 		nc.kickFlusher()
 	}
 
@@ -5997,14 +6018,11 @@ func (nc *Conn) Buffered() (int, error) {
 func (nc *Conn) resendSubscriptions() {
 	// Since we are going to send protocols to the server, we don't want to
 	// be holding the subsMu lock (which is used in processMsg). So copy
-	// the subscriptions in a temporary array.
+	// the subscriptions in a temporary map, keyed by sid as nc.subs is.
 	nc.subsMu.RLock()
-	subs := make([]*Subscription, 0, len(nc.subs))
-	for _, s := range nc.subs {
-		subs = append(subs, s)
-	}
+	subs := maps.Clone(nc.subs)
 	nc.subsMu.RUnlock()
-	for _, s := range subs {
+	for sid, s := range subs {
 		adjustedMax := uint64(0)
 		s.mu.Lock()
 		// when resending subscriptions, the permissions error should be cleared
@@ -6018,11 +6036,11 @@ func (nc *Conn) resendSubscriptions() {
 			// reached the max, if so unsubscribe.
 			if adjustedMax == 0 {
 				s.mu.Unlock()
-				nc.bw.writeDirect(fmt.Sprintf(unsubProto, s.sid, _EMPTY_))
+				nc.bw.writeDirect(fmt.Sprintf(unsubProto, sid, _EMPTY_))
 				continue
 			}
 		}
-		subj, queue, sid := s.Subject, s.Queue, s.sid
+		subj, queue := s.Subject, s.Queue
 		s.mu.Unlock()
 
 		nc.bw.writeDirect(fmt.Sprintf(subProto, subj, queue, sid))
@@ -6215,6 +6233,7 @@ func (nc *Conn) drainConnection() {
 		return
 	}
 
+	nc.subsMu.RLock()
 	subs := make([]*Subscription, 0, len(nc.subs))
 	for _, s := range nc.subs {
 		if s == nc.respMux {
@@ -6224,6 +6243,7 @@ func (nc *Conn) drainConnection() {
 		}
 		subs = append(subs, s)
 	}
+	nc.subsMu.RUnlock()
 	errCB := nc.Opts.AsyncErrorCB
 	drainWait := nc.Opts.DrainTimeout
 	respMux := nc.respMux
