@@ -10,7 +10,7 @@ Official Go client library for the NATS messaging system. Provides core pub/sub,
 
 This project uses a **dual module** setup: `go.mod` for production (minimal deps) and `go_test.mod` for testing (protobuf encoder + jwt + nkeys + nuid + the ntf tester). Always use `-modfile=go_test.mod` when running tests.
 
-`go_test.mod` declares `go 1.26.0` while `go.mod` stays at `1.25.0`: `github.com/synadia-io/orbit.go/ntf` requires 1.26, and merely *requiring* a module raises the floor for the whole test module — a build tag on the import does **not** avoid this, because the check happens when the module graph loads, not when the package compiles. That is why CI tests Go 1.26 only. `go get`/`go mod tidy` will rewrite this line; leave it at 1.26.0.
+`go_test.mod` declares `go 1.26.0` while `go.mod` stays at `1.25.0`: `github.com/synadia-io/orbit.go/ntf` requires 1.26, and merely *requiring* a module raises the floor for the whole test module — a build tag on the import does **not** avoid this, because the check happens when the module graph loads, not when the package compiles. That is why 1.26 is the floor for the CI test matrix. `go get`/`go mod tidy` will rewrite this line; leave it at 1.26.0.
 
 Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against real servers spawned by a **tester** service, driven through `github.com/synadia-io/orbit.go/ntf-client`. There are two ways to run it:
 

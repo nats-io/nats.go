@@ -60,8 +60,8 @@ that a data race in `nats-server` surfaces here as a nats.go test failure.
 
 This is also why `go_test.mod` declares `go 1.26.0` while `go.mod` stays at
 `1.25.0` — `orbit.go/ntf` requires 1.26, and merely requiring a module raises the
-floor for the whole test module. Production builds are unaffected; CI tests Go
-1.26 only.
+floor for the whole test module. Production builds are unaffected; 1.26 is the
+floor for the CI test matrix.
 
 ## Testing against a different nats-server
 
@@ -136,7 +136,9 @@ TESTER_NATS_URL=nats://localhost:4222 \
 
 `-p=1` is required here: a shared container tester does not tolerate concurrent
 CreateServer calls from independent test binaries. The in-process tester is
-per-binary and has no such constraint, so `-p=1` is merely conservative there.
+per-binary and could run packages in parallel — measurably faster — but `-p=1`
+is kept deliberately, since more concurrent server churn risks intermittent
+connection failures and the wall-clock saving is not worth chasing flakes.
 
 Known caveat: on macOS, docker-proxy races the tester's port handover, so in
 heavy suites roughly 5-10% of server creations can fail with
