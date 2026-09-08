@@ -32,28 +32,27 @@ var testerProbe struct {
 	err  error
 }
 
-// newTester returns a tester Client connected to the service at TESTER_NATS_URL.
-// Tests skip when the env var is unset so a plain `go test` run passes on
-// machines without docker. Close is registered with t.Cleanup. Accepts any
-// testing.TB so benchmarks (which use *testing.B) can share the helper.
+// testerURL is set by TestMain: TESTER_NATS_URL when set, otherwise the
+// in-process tester it started.
+var testerURL string
+
+// newTester returns a tester Client connected to the tester service. Close is
+// registered with t.Cleanup.
 func newTester(t testing.TB) *testservice.Client {
 	t.Helper()
-	url := os.Getenv("TESTER_NATS_URL")
-	if url == "" {
-		t.Skip("TESTER_NATS_URL not set; skipping testservice test (see 'make tester-up-host')")
-	}
 	testerProbe.once.Do(func() {
-		nc, err := nats.Connect(url)
+		nc, err := nats.Connect(testerURL)
 		if err != nil {
-			testerProbe.err = fmt.Errorf("cannot reach the tester at %s (is it running? see 'make tester-up-host'): %w", url, err)
+			testerProbe.err = fmt.Errorf("cannot reach the tester at %s (unset TESTER_NATS_URL to use the in-process one, or start it with 'make tester-up-host'): %w", testerURL, err)
 			return
 		}
+		fmt.Fprintf(os.Stderr, "tester at %s: nats-server %s\n", testerURL, nc.ConnectedServerVersion())
 		nc.Close()
 	})
 	if testerProbe.err != nil {
 		t.Fatal(testerProbe.err)
 	}
-	c := testservice.New(t, url)
+	c := testservice.New(t, testerURL)
 	t.Cleanup(func() { c.Close(t) })
 	return c
 }
