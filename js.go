@@ -2186,9 +2186,6 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 
 // Update and replace sid. Returns the old and the new sid.
 // Lock should be held on entry but will be unlocked to prevent lock inversion.
-// Since sub.sid is protected by the connection's subsMu (and not by sub.mu),
-// the new sid is returned to the caller rather than read back from sub.sid
-// once the subscription lock has been re-acquired.
 func (sub *Subscription) applyNewSID() (osid, nsid int64) {
 	nc := sub.conn
 	sub.mu.Unlock()

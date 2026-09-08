@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand"
 	"net"
 	"net/http"
@@ -659,7 +660,7 @@ type Conn struct {
 	info    ServerInfo
 	// subsMu protects subs, ssid and the sid of every Subscription in subs,
 	// so that a subscription and the id it is registered under always stay
-	// in sync. Readers need RLock, writers need Lock.
+	// in sync.
 	//
 	// The lock ordering for a connection is nc.mu -> nc.subsMu -> sub.mu:
 	// each of these may be acquired while holding any of the ones to its
@@ -714,13 +715,8 @@ type natsWriter struct {
 type Subscription struct {
 	mu sync.Mutex
 
-	// The subscription id, which is also the key under which this
-	// subscription is registered in conn.subs. It is not protected by the
-	// mutex above but by the connection's subsMu, so that it always stays
-	// in sync with the conn.subs map (the ordered consumer reset path swaps
-	// both at once). Read it under conn.subsMu.RLock(), write it under
-	// conn.subsMu.Lock(), and mind the lock ordering documented on
-	// Conn.subsMu.
+	// Key under which this subscription is registered in conn.subs.
+	// Protected by conn.subsMu, not by the mutex above.
 	sid int64
 
 	// Subject that represents this subscription. This can be different
@@ -5474,11 +5470,9 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int, drainMode bool) error {
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
-		// Deliberately re-read the sid instead of reusing the one the
-		// lookup above was done with: in the AutoUnsubscribe case removeSub
-		// is skipped, so the connection stays subscribed and the max has to
-		// be applied to the sid the server currently knows about, which an
-		// ordered consumer reset may have changed in the meantime.
+		// Deliberately re-read the sid: in the AutoUnsubscribe case removeSub
+		// is skipped, so an ordered consumer reset may have swapped it since
+		// the lookup above and the max has to apply to what the server knows.
 		nc.subsMu.RLock()
 		sid := s.sid
 		nc.subsMu.RUnlock()
@@ -6024,19 +6018,11 @@ func (nc *Conn) Buffered() (int, error) {
 func (nc *Conn) resendSubscriptions() {
 	// Since we are going to send protocols to the server, we don't want to
 	// be holding the subsMu lock (which is used in processMsg). So copy
-	// the subscriptions in a temporary array.
+	// the subscriptions in a temporary map, keyed by sid as nc.subs is.
 	nc.subsMu.RLock()
-	subs := make([]*Subscription, 0, len(nc.subs))
-	// sids[i] is the sid of subs[i]: it is protected by subsMu, so it has
-	// to be captured here and not read back once the lock is released.
-	sids := make([]int64, 0, len(nc.subs))
-	for _, s := range nc.subs {
-		subs = append(subs, s)
-		sids = append(sids, s.sid)
-	}
+	subs := maps.Clone(nc.subs)
 	nc.subsMu.RUnlock()
-	for i, s := range subs {
-		sid := sids[i]
+	for sid, s := range subs {
 		adjustedMax := uint64(0)
 		s.mu.Lock()
 		// when resending subscriptions, the permissions error should be cleared
