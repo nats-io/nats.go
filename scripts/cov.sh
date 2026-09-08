@@ -1,6 +1,5 @@
 #!/bin/bash -e
 # Run from the repo root: ./scripts/cov.sh [CI]
-#
 
 rm -rf ./cov
 mkdir cov

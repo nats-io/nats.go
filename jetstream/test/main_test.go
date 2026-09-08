@@ -16,52 +16,32 @@ package test
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/synadia-io/orbit.go/ntf"
 )
 
+// Keep in sync with the copies in test and micro/test.
 func TestMain(m *testing.M) {
 	testerURL = os.Getenv("TESTER_NATS_URL")
 	if testerURL == "" {
 		// CI must use the pinned synadia/ntf-server image, which ships its own
-		// nats-server build. Falling back silently would change what CI tests
-		// against without anyone noticing.
-		if os.Getenv("CI") != "" {
+		// nats-server build.
+		if os.Getenv("GITHUB_ACTIONS") != "" {
 			fmt.Fprintln(os.Stderr, "TESTER_NATS_URL must be set in CI; refusing to fall back to the in-process tester")
 			os.Exit(1)
 		}
-		svc, err := startInProcessTester()
+		// ntf's embedded server binds the wildcard address, so ClientURL reports
+		// 0.0.0.0 — neither reachable nor a SAN on the certs it generates. Pin
+		// both this URL and what managed servers advertise to localhost.
+		svc, err := ntf.New(context.Background(), ntf.Options{AdvertiseHost: "localhost"})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, "could not start the in-process tester:", err)
 			os.Exit(1)
 		}
 		defer svc.Close()
+		testerURL = fmt.Sprintf("nats://localhost:%d", svc.Port())
 	}
 	m.Run()
-}
-
-// startInProcessTester runs the tester in this binary, so `go test` needs no
-// docker. The embedded server binds the wildcard address, so ClientURL reports
-// 0.0.0.0; the ntf client derives every managed server URL from that host, and
-// 0.0.0.0 is neither what the servers advertise nor a SAN on the generated certs.
-func startInProcessTester() (*ntf.Service, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	svc, err := ntf.New(ctx, ntf.Options{AdvertiseHost: "localhost"})
-	if err != nil {
-		return nil, fmt.Errorf("could not start the in-process tester: %w", err)
-	}
-	u, err := url.Parse(svc.ClientURL())
-	if err != nil {
-		svc.Close()
-		return nil, fmt.Errorf("could not parse the in-process tester URL %q: %w", svc.ClientURL(), err)
-	}
-	testerURL = "nats://" + net.JoinHostPort("localhost", u.Port())
-	return svc, nil
 }

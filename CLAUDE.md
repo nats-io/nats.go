@@ -10,14 +10,14 @@ Official Go client library for the NATS messaging system. Provides core pub/sub,
 
 This project uses a **dual module** setup: `go.mod` for production (minimal deps) and `go_test.mod` for testing (protobuf encoder + jwt + nkeys + nuid + the ntf tester). Always use `-modfile=go_test.mod` when running tests.
 
-`go_test.mod` declares `go 1.26.0` while `go.mod` stays at `1.25.0`: `github.com/synadia-io/orbit.go/ntf` requires 1.26, and merely *requiring* a module raises the floor for the whole test module — a build tag on the import does **not** avoid this, because the check happens when the module graph loads, not when the package compiles. That is why 1.26 is the floor for the CI test matrix. `go get`/`go mod tidy` will rewrite this line; leave it at 1.26.0.
+`go_test.mod` declares `go 1.26.0` while `go.mod` stays at `1.25.0`, because `github.com/synadia-io/orbit.go/ntf` requires 1.26 and that raises the floor for the whole test module. `go get`/`go mod tidy` will rewrite this line; leave it at 1.26.0. TESTING.md has the full derivation.
 
 Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against real servers spawned by a **tester** service, driven through `github.com/synadia-io/orbit.go/ntf-client`. There are two ways to run it:
 
 - **In-process, no docker (the default)** — a `TestMain` in each of the three test packages starts `github.com/synadia-io/orbit.go/ntf` inside the test binary. No build tag; this is what a plain `go test` does.
 - **Docker** (`synadia/ntf-server`, tag pinned in `.github/workflows/ci.yaml`) — located via `TESTER_NATS_URL`. This is what CI uses.
 
-`TESTER_NATS_URL` takes precedence: when set, it is used instead of starting an in-process tester. The two are **not** necessarily equivalent — in-process links whatever nats-server `orbit.go/ntf` depends on, the container ships its own — so `TestMain` hard-fails when `CI` is set without `TESTER_NATS_URL`, rather than silently changing what CI tests against.
+`TESTER_NATS_URL` takes precedence: when set, it is used instead of starting an in-process tester. The two are **not** necessarily equivalent — in-process links whatever nats-server `orbit.go/ntf` depends on, the container ships its own — so `TestMain` hard-fails when `GITHUB_ACTIONS` is set without `TESTER_NATS_URL`, rather than silently changing what CI tests against. (`GITHUB_ACTIONS`, not `CI`: devcontainers and other runners set that one too.)
 
 ```bash
 # Default local workflow: no docker, nothing to start or tear down.
@@ -58,8 +58,7 @@ make test-docker T=TestName PKG=./test/... # single test, verbose
 
 # Test against a different nats-server (branch/tag/commit/local checkout).
 # Adds a replace directive to go_test.mod — never commit it. Do NOT use
-# `go get ...@main`: a branch pseudo-version can sort below the release ntf
-# requires, and go get then drops ntf from the module graph entirely.
+# `go get ...@main`, which can drop ntf from the module graph (why: TESTING.md).
 make server-replace V=main
 make server-replace-drop
 
@@ -106,7 +105,7 @@ A plain `go test -modfile=go_test.mod ./...` now runs the integration suites too
 ## CI Pipeline (ci.yaml)
 
 1. **lint** -- `go fmt`, `go vet`, `staticcheck`, `misspell` (all packages), `golangci-lint` (jetstream only).
-2. **test** -- Matrix of Go 1.26 and 1.27; 1.26 is the floor because `go_test.mod` declares it (a lower row would silently fetch 1.26 via `GOTOOLCHAIN=auto`). The 1.27 row runs coverage. Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). CI sets `TESTER_NATS_URL` at job level so it uses the docker tester rather than the in-process default; `TestMain` fails the run if that variable ever goes missing under `CI`. Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing` (`scripts/cov.sh` runs for coverage instead of the plain race run).
+2. **test** -- Matrix of Go 1.26 and 1.27; 1.26 is the floor because `go_test.mod` declares it (a lower row would silently fetch 1.26 via `GOTOOLCHAIN=auto`). The 1.27 row runs coverage. Runs inside an `alpine` container on the same docker network as the `synadia/ntf-server` service, which is started with `command: serve --advertise nats` (the integration tests dial the spawned NATS servers by service name). CI sets `TESTER_NATS_URL` at job level so it uses the docker tester rather than the in-process default; `TestMain` fails the run if that variable ever goes missing under `GITHUB_ACTIONS`. Two steps: NoRace tests (without `-race`), then full race-enabled tests with `-tags=internal_testing` (`scripts/cov.sh` runs for coverage instead of the plain race run).
 
 ## Project Structure
 

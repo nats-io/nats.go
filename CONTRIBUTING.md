@@ -76,8 +76,7 @@ make test                            # full race-enabled suite, no docker
 make test T=TestName PKG=./test/...  # iterate on a single test
 ```
 
-Nothing to install or start: a `TestMain` runs the tester inside each test binary. Setting `TESTER_NATS_URL` points the
-tests at an external tester instead, which is how CI runs them.
+Nothing to install or start.
 
 You should use `go_test.mod` to manage your testing dependencies. Please use the following command to update your
 dependencies and avoid changing the main `go.mod` in a PR:

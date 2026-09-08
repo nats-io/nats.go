@@ -29,15 +29,29 @@ There are two ways to run that tester, and tests reach both the same way:
   `TESTER_NATS_URL` environment variable. This is what CI uses.
 
 `TESTER_NATS_URL` always wins: set it and the tests talk to that tester instead
-of starting their own. Because of this, a stale `TESTER_NATS_URL` exported in
-your shell silently overrides the in-process default — unset it if `make test`
-tries to reach a container you did not intend.
+of starting their own. The `make test` targets clear it so an exported value
+left over in your shell cannot silently redirect them, but a raw `go test`
+inherits it — unset it if a plain `go test` tries to reach a container you did
+not intend.
 
 The two paths do **not** necessarily run the same server build: in-process links
 whatever `nats-server` `orbit.go/ntf` depends on, while the container ships its
 own (pinned in `.github/workflows/ci.yaml`). To stop CI drifting onto the wrong
-one, `TestMain` refuses to start the in-process tester when `CI` is set but
-`TESTER_NATS_URL` is not.
+one, `TestMain` refuses to start the in-process tester when `GITHUB_ACTIONS` is
+set but `TESTER_NATS_URL` is not. `GITHUB_ACTIONS` rather than the more general
+`CI` because devcontainers and other runners set that one too, and they have no
+reason to be forced onto a container.
+
+That guard only catches a missing URL, not a version difference, so the first
+test to reach the tester prints the server it got:
+
+```text
+tester at nats://localhost:62354: nats-server 2.14.5
+```
+
+`go test` shows this whenever the package is run with `-v` (all CI steps are) or
+when a test in it fails. If a failure reproduces locally but not in CI, or the
+reverse, compare that line against the image tag in `ci.yaml` first.
 
 ## In-process mode (default, no docker)
 
@@ -189,10 +203,10 @@ Merges unit and integration coverage into `acc.out` and opens the HTML report
 - `cannot reach the tester at ...` — `TESTER_NATS_URL` is set but nothing is
   answering there. Either start the container (`make tester-up-host`) or unset
   the variable to use the in-process tester.
-- `TESTER_NATS_URL must be set in CI` — the `CI` environment variable is set but
-  `TESTER_NATS_URL` is not. This guard exists so CI cannot silently swap the
-  pinned container server for the in-process one, which is a different version.
-  Unset `CI` locally, or point `TESTER_NATS_URL` at a tester.
+- `TESTER_NATS_URL must be set in CI` — running under GitHub Actions without
+  `TESTER_NATS_URL`. This guard exists so CI cannot silently swap the pinned
+  container server for the in-process one, which is a different version. Point
+  `TESTER_NATS_URL` at a tester, or unset `GITHUB_ACTIONS`.
 - Tester container misbehaving — `docker logs -f nats-tester` shows server spawn
   and config errors; `docker restart nats-tester` restarts it while keeping
   those logs. `make tester-down` removes the container and discards them.

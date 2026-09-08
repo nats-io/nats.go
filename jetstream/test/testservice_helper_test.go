@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -62,8 +63,7 @@ var testerProbe struct {
 var testerURL string
 
 // newTester returns a tester Client connected to the tester service. Close is
-// registered with t.Cleanup. Accepts any testing.TB so benchmarks (which use
-// *testing.B) can share the helper.
+// registered with t.Cleanup.
 func newTester(t testing.TB) *testservice.Client {
 	t.Helper()
 	testerProbe.once.Do(func() {
@@ -72,6 +72,7 @@ func newTester(t testing.TB) *testservice.Client {
 			testerProbe.err = fmt.Errorf("cannot reach the tester at %s (unset TESTER_NATS_URL to use the in-process one, or start it with 'make tester-up-host'): %w", testerURL, err)
 			return
 		}
+		fmt.Fprintf(os.Stderr, "tester at %s: nats-server %s\n", testerURL, nc.ConnectedServerVersion())
 		nc.Close()
 	})
 	if testerProbe.err != nil {

@@ -4,8 +4,8 @@
 #   make test                            # full suite
 #   make test T=TestName PKG=./test/...  # one test
 #
-# TESTER_NATS_URL overrides that with an external tester, as CI does.
-# Docker modes and the server-replace workflow: see TESTING.md.
+# The test-docker targets run against an external tester instead. Docker modes
+# and the server-replace workflow: see TESTING.md.
 
 # Tester image is pinned in ci.yaml (single source of truth); parsed from there.
 TESTER_IMAGE   ?= $(shell sed -n 's|^ *image: *\(synadia/ntf-server:[^ ]*\).*|\1|p' .github/workflows/ci.yaml)
@@ -54,10 +54,8 @@ server-replace-drop:
 # test-docker run. -p=1: the shared container tester does not tolerate
 # concurrent CreateServer calls from independent test binaries.
 
-# TESTER_NATS_URL is deliberately not set here — TestMain prefers it when
-# present, so setting it would defeat the in-process default.
 test:
-	go test -modfile=go_test.mod -tags=internal_testing -race -p=1 -count=1 $(if $(T),-v -run '$(T)') $(PKG) --failfast -vet=off
+	TESTER_NATS_URL= go test -modfile=go_test.mod -tags=internal_testing -race -p=1 -count=1 $(if $(T),-v -run '$(T)') $(PKG) --failfast -vet=off
 
 # test-docker is test against the container started by `make tester-up-host`.
 test-docker:
@@ -65,7 +63,7 @@ test-docker:
 
 # TestNoRace* tests must run with the race detector off.
 test-norace:
-	go test -modfile=go_test.mod -p=1 -count=1 $(if $(T),-v) -run '$(or $(T),TestNoRace)' $(PKG) --failfast -vet=off
+	TESTER_NATS_URL= go test -modfile=go_test.mod -p=1 -count=1 $(if $(T),-v) -run '$(or $(T),TestNoRace)' $(PKG) --failfast -vet=off
 
 tester-net:
 	@docker network inspect $(TESTER_NETWORK) >/dev/null 2>&1 || \
@@ -119,5 +117,5 @@ test-tester: tester-net
 		-e CGO_ENABLED=1 \
 		$(GO_IMAGE) sh -c '\
 			apk add --no-cache gcc libc-dev git make >/dev/null && \
-			go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off && \
-			go test -modfile=go_test.mod -tags=internal_testing -race -v -p=1 ./... --failfast -vet=off'
+			go test -modfile=go_test.mod -v -run=TestNoRace -p=1 -count=1 ./... --failfast -vet=off && \
+			go test -modfile=go_test.mod -tags=internal_testing -race -v -p=1 -count=1 ./... --failfast -vet=off'
