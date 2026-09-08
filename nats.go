@@ -3708,6 +3708,9 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			s.pMsgs--
 			s.pBytes -= msgLen
 			msgLen = -1
+			if s.jsi != nil && s.jsi.resetPending {
+				s.tryResetOrderedConsumer()
+			}
 		}
 
 		if s.pHead == nil && !s.closed {
@@ -3877,6 +3880,15 @@ func (nc *Conn) processMsg(data []byte) {
 	// Skip flow control messages in case of using a JetStream context.
 	jsi := sub.jsi
 	if jsi != nil {
+		if jsi.resetPending {
+			// An ordered consumer reset is waiting for the buffer to have room.
+			// Everything still arriving belongs to the consumer that will be
+			// replaced and is redelivered by the reset, so it is not delivered
+			// and not counted as dropped.
+			sub.tryResetOrderedConsumer()
+			sub.mu.Unlock()
+			return
+		}
 		// There has to be a header for it to be a control message.
 		if h != nil {
 			ctrlMsg, ctrlType = isJSControlMessage(m)
@@ -3886,11 +3898,6 @@ func (nc *Conn) processMsg(data []byte) {
 				// We will send it at the end of this function.
 				fcReply = m.Header.Get(consumerStalledHdr)
 			}
-		}
-		// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
-		if !ctrlMsg && jsi.ordered && sub.checkOrderedMsgs(m) {
-			sub.mu.Unlock()
-			return
 		}
 	}
 
@@ -3917,6 +3924,26 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		} else if jsi != nil {
 			chanSubCheckFC = true
+		}
+
+		if jsi != nil && jsi.ordered {
+			// A full channel would drop the message below anyway, so bail out
+			// before the ordered check to avoid a reset on every dropped message.
+			if sub.mch != nil && cap(sub.mch) > 0 && len(sub.mch) == cap(sub.mch) {
+				goto slowConsumer
+			}
+
+			// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
+			// This runs after all drop checks, so a dropped message is never recorded as delivered.
+			if !ctrlMsg && sub.checkOrderedMsgs(m) {
+				// Not delivered, so undo the stats taken above.
+				if sub.typ != ChanSubscription {
+					sub.pMsgs--
+					sub.pBytes -= len(m.Data)
+				}
+				sub.mu.Unlock()
+				return
+			}
 		}
 
 		// We have two modes of delivery. One is the channel, used by channel
@@ -5677,6 +5704,9 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	if s.typ == SyncSubscription {
 		s.pMsgs--
 		s.pBytes -= len(msg.Data)
+	}
+	if s.jsi != nil && s.jsi.resetPending {
+		s.tryResetOrderedConsumer()
 	}
 	s.mu.Unlock()
 

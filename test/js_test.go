@@ -3250,6 +3250,169 @@ func TestJetStreamOrderedConsumerRecreateAfterReconnect(t *testing.T) {
 	}
 }
 
+func TestJetStreamOrderedConsumerSlowConsumer(t *testing.T) {
+	const (
+		total    = 200
+		buffered = 32
+		msgSize  = 8 * 1024
+		// Short, so that recovery through a heartbeat does not take long.
+		hb = 500 * time.Millisecond
+	)
+
+	type nextFunc func(time.Duration) (*nats.Msg, error)
+
+	// Both buffer exactly `buffered` messages before dropping.
+	subs := []struct {
+		name      string
+		subscribe func(js nats.JetStreamContext) (*nats.Subscription, nextFunc, error)
+	}{
+		{"SubscribeSync", func(js nats.JetStreamContext) (*nats.Subscription, nextFunc, error) {
+			sub, err := js.SubscribeSync("foo", nats.OrderedConsumer(), nats.IdleHeartbeat(hb))
+			if err != nil {
+				return nil, nil, err
+			}
+			if err = sub.SetPendingLimits(-1, buffered*msgSize); err != nil {
+				return nil, nil, err
+			}
+			return sub, sub.NextMsg, nil
+		}},
+		{"ChanSubscribe", func(js nats.JetStreamContext) (*nats.Subscription, nextFunc, error) {
+			ch := make(chan *nats.Msg, buffered)
+			sub, err := js.ChanSubscribe("foo", ch, nats.OrderedConsumer(), nats.IdleHeartbeat(hb))
+			if err != nil {
+				return nil, nil, err
+			}
+			next := func(d time.Duration) (*nats.Msg, error) {
+				select {
+				case m := <-ch:
+					return m, nil
+				case <-time.After(d):
+					return nil, nats.ErrTimeout
+				}
+			}
+			return sub, next, nil
+		}},
+	}
+
+	for _, test := range []struct {
+		name             string
+		publishAfterDrop bool
+	}{
+		{"NoSkippedMessages", true},
+		{"HeartbeatRecovery", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, sub := range subs {
+				t.Run(sub.name, func(t *testing.T) {
+					withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+						js, err := nc.JetStream()
+						if err != nil {
+							t.Fatalf("Unexpected error: %v", err)
+						}
+						if _, err = js.AddStream(&nats.StreamConfig{
+							Name:     "ORDERED",
+							Storage:  nats.MemoryStorage,
+							Subjects: []string{"foo"},
+						}); err != nil {
+							t.Fatalf("Error adding stream: %v", err)
+						}
+						payload := make([]byte, msgSize)
+						for range total {
+							if _, err = js.Publish("foo", payload); err != nil {
+								t.Fatalf("Error on publish: %v", err)
+							}
+						}
+
+						sub, next, err := sub.subscribe(js)
+						if err != nil {
+							t.Fatalf("Error on subscribe: %v", err)
+						}
+						defer sub.Unsubscribe()
+
+						checkFor(t, 3*time.Second, 10*time.Millisecond, func() error {
+							if d, _ := sub.Dropped(); d == 0 {
+								return fmt.Errorf("subscription never overflowed")
+							}
+							return nil
+						})
+
+						// Reads stream sequences from through to, inclusive.
+						read := func(from, to uint64) {
+							t.Helper()
+							for expected := from; expected <= to; {
+								msg, err := next(3 * time.Second)
+								// Reported once after a drop.
+								if err == nats.ErrSlowConsumer {
+									continue
+								}
+								if err != nil {
+									t.Fatalf("Stalled waiting for stream sequence %d of %d: %v", expected, to, err)
+								}
+								meta, err := msg.Metadata()
+								if err != nil {
+									t.Fatalf("Error getting metadata: %v", err)
+								}
+								if meta.Sequence.Stream != expected {
+									t.Fatalf("Ordered consumer skipped a stream sequence: expected %d, got %d (consumer seq %d)",
+										expected, meta.Sequence.Stream, meta.Sequence.Consumer)
+								}
+								expected++
+							}
+						}
+
+						if test.publishAfterDrop {
+							// The dropped messages must be redelivered before
+							// the one published after them.
+							read(1, buffered)
+							if _, err = js.Publish("foo", []byte("last")); err != nil {
+								t.Fatalf("Error on publish: %v", err)
+							}
+							read(buffered+1, total+1)
+						} else {
+							consumerName := func() string {
+								t.Helper()
+								ci, err := sub.ConsumerInfo()
+								if err != nil {
+									t.Fatalf("Error getting consumer info: %v", err)
+								}
+								return ci.Name
+							}
+							first := consumerName()
+
+							// Heartbeats report the gap while nothing is
+							// reading, but a reset now would only get its
+							// redelivery dropped into the same full buffer,
+							// again and again. It must wait until the reader
+							// has made room.
+							time.Sleep(3 * hb)
+							if name := consumerName(); name != first {
+								t.Fatalf("Ordered consumer was recreated while the buffer was full: %q -> %q", first, name)
+							}
+							read(1, buffered/2-1)
+							time.Sleep(2 * hb)
+							if name := consumerName(); name != first {
+								t.Fatalf("Ordered consumer was recreated while more than half the buffer was in use: %q -> %q", first, name)
+							}
+							read(buffered/2, buffered/2)
+							checkFor(t, 3*time.Second, 10*time.Millisecond, func() error {
+								ci, err := sub.ConsumerInfo()
+								if err != nil {
+									return err
+								}
+								if ci.Name == first {
+									return fmt.Errorf("ordered consumer not recreated after making room")
+								}
+								return nil
+							})
+							read(buffered/2+1, total)
+						}
+					})
+				})
+			}
+		})
+	}
+}
+
 func TestJetStreamCreateStreamDiscardPolicy(t *testing.T) {
 	tests := []struct {
 		name                 string
