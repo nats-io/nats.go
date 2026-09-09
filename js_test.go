@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -19,6 +19,7 @@ package nats
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -130,4 +131,127 @@ func TestJetStreamConvertDirectMsgResponseToMsg(t *testing.T) {
 	if r.Header.Get("some") != "header" {
 		t.Fatalf("Wrong header: %v", r.Header)
 	}
+}
+
+func TestApplyNewSIDUnregisteredSub(t *testing.T) {
+	newConn := func() (*Conn, *Subscription) {
+		nc := &Conn{subs: make(map[int64]*Subscription)}
+		sub := &Subscription{conn: nc}
+		nc.ssid++
+		sub.sid = nc.ssid
+		nc.subs[sub.sid] = sub
+		return nc, sub
+	}
+
+	t.Run("registered sub is re-keyed", func(t *testing.T) {
+		nc, sub := newConn()
+		sub.mu.Lock()
+		osid, nsid, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if !ok {
+			t.Fatal("expected the sid swap to succeed for a registered sub")
+		}
+		if osid != 1 || nsid != 2 {
+			t.Fatalf("expected sids 1 -> 2, got %d -> %d", osid, nsid)
+		}
+		if sub.sid != nsid || nc.subs[nsid] != sub || len(nc.subs) != 1 {
+			t.Fatalf("sub not registered under the new sid only: sid=%d subs=%v", sub.sid, nc.subs)
+		}
+	})
+
+	t.Run("removed sub is not re-registered", func(t *testing.T) {
+		// Simulates removeSub winning the race: the sub was unsubscribed
+		// while applyNewSID had released sub.mu.
+		nc, sub := newConn()
+		delete(nc.subs, sub.sid)
+		sub.mu.Lock()
+		_, _, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if ok {
+			t.Fatal("expected the sid swap to be refused for an unregistered sub")
+		}
+		if len(nc.subs) != 0 {
+			t.Fatalf("unsubscribed sub was resurrected in the subs map: %v", nc.subs)
+		}
+		if sub.sid != 1 {
+			t.Fatalf("sid of an unregistered sub should be untouched, got %d", sub.sid)
+		}
+	})
+
+	t.Run("closed connection does not panic", func(t *testing.T) {
+		// close() sets nc.subs to nil, and writing to a nil map panics.
+		nc, sub := newConn()
+		nc.subs = nil
+		sub.mu.Lock()
+		_, _, ok := sub.applyNewSID()
+		sub.mu.Unlock()
+		if ok {
+			t.Fatal("expected the sid swap to be refused on a closed connection")
+		}
+	})
+}
+
+func TestRewireOrderedSub(t *testing.T) {
+	const osid, nsid, deliver, maxStr = 1, 2, "_INBOX.new", "5"
+	newConn := func() (*Conn, *Subscription) {
+		// A writer with a large limit never flushes, so the protocol lines
+		// stay in bufs for inspection.
+		nc := &Conn{subs: make(map[int64]*Subscription), bw: &natsWriter{limit: 1 << 20}}
+		sub := &Subscription{conn: nc, sid: nsid}
+		nc.ssid = nsid
+		nc.subs[nsid] = sub
+		return nc, sub
+	}
+	unsubOld := fmt.Sprintf(unsubProto, osid, _EMPTY_)
+	subNew := fmt.Sprintf(subProto, deliver, _EMPTY_, nsid)
+	unsubMax := fmt.Sprintf(unsubProto, nsid, maxStr)
+
+	t.Run("registered sub is moved to the new sid", func(t *testing.T) {
+		nc, sub := newConn()
+		if !nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to proceed for a registered sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld+subNew+unsubMax; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("removed sub only gets the old sid unsubscribed", func(t *testing.T) {
+		// Simulates Unsubscribe landing between applyNewSID and the
+		// goroutine that sends the protocol: it removed the sub under the
+		// new sid, so no interest (nor consumer) must be created for it.
+		nc, sub := newConn()
+		delete(nc.subs, nsid)
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused for an unregistered sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("draining sub only gets the old sid unsubscribed", func(t *testing.T) {
+		// A draining sub stays in nc.subs until the drain completes, and it
+		// is then removed without an UNSUB, so subscribing the new sid would
+		// leave interest on the server for the life of the connection.
+		nc, sub := newConn()
+		sub.draining = true
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused for a draining sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("closed connection only gets the old sid unsubscribed", func(t *testing.T) {
+		nc, sub := newConn()
+		nc.subs = nil
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused on a closed connection")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
 }

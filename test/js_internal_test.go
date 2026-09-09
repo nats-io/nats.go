@@ -483,6 +483,12 @@ func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
 		})
 		defer nc.RemoveMsgFilter("a")
 
+		// Everything created below is torn down again, so the number of
+		// low level subscriptions must come back to this after every round:
+		// a reset racing with Unsubscribe used to re-register the removed
+		// subscription under a new sid.
+		baseSubs := nc.NumSubscriptions()
+
 		const rounds, subsPerRound = 15, 12
 		for range rounds {
 			subs := make([]*nats.Subscription, 0, subsPerRound)
@@ -506,6 +512,9 @@ func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
 				}()
 			}
 			wg.Wait()
+			if n := nc.NumSubscriptions(); n != baseSubs {
+				t.Fatalf("Expected %d subscriptions after unsubscribing, got %d", baseSubs, n)
+			}
 		}
 		// Not proof that a reset happened, but without injected gaps the
 		// test would not be exercising the reset path at all.

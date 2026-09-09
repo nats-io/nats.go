@@ -2184,14 +2184,23 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	return false
 }
 
-// Update and replace sid. Returns the old and the new sid.
+// Update and replace sid. Returns the old and the new sid. Returns ok == false,
+// leaving everything untouched, if the subscription is no longer registered on
+// the connection.
 // Lock should be held on entry but will be unlocked to prevent lock inversion.
-func (sub *Subscription) applyNewSID() (osid, nsid int64) {
+func (sub *Subscription) applyNewSID() (osid, nsid int64, ok bool) {
 	nc := sub.conn
 	sub.mu.Unlock()
 
 	nc.subsMu.Lock()
 	osid = sub.sid
+	// removeSub or close() may have run while sub.mu was released;
+	// re-registering would resurrect the sub or write to a nil nc.subs.
+	if nc.subs[osid] != sub {
+		nc.subsMu.Unlock()
+		sub.mu.Lock()
+		return osid, 0, false
+	}
 	delete(nc.subs, osid)
 	// Place new one.
 	nc.ssid++
@@ -2201,7 +2210,7 @@ func (sub *Subscription) applyNewSID() (osid, nsid int64) {
 	nc.subsMu.Unlock()
 
 	sub.mu.Lock()
-	return osid, nsid
+	return osid, nsid, true
 }
 
 // We are here if we have detected a gap with an ordered consumer.
@@ -2209,7 +2218,7 @@ func (sub *Subscription) applyNewSID() (osid, nsid int64) {
 // Lock should be held.
 func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	nc := sub.conn
-	if sub.jsi == nil || nc == nil || sub.closed {
+	if sub.jsi == nil || nc == nil || sub.closed || sub.draining {
 		return
 	}
 
@@ -2239,7 +2248,10 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	}
 
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
-	osid, nsid := sub.applyNewSID()
+	osid, nsid, ok := sub.applyNewSID()
+	if !ok {
+		return
+	}
 
 	// Grab new inbox.
 	newDeliver := nc.NewInbox()
@@ -2251,14 +2263,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		// Unsubscribe and subscribe with new inbox and sid.
 		// Remap a new low level sub into this sub since its client accessible.
 		// This is done here in this go routine to prevent lock inversion.
-		nc.mu.Lock()
-		nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
-		nc.bw.appendString(fmt.Sprintf(subProto, newDeliver, _EMPTY_, nsid))
-		if maxStr != _EMPTY_ {
-			nc.bw.appendString(fmt.Sprintf(unsubProto, nsid, maxStr))
+		if !nc.rewireOrderedSub(sub, osid, nsid, newDeliver, maxStr) {
+			return
 		}
-		nc.kickFlusher()
-		nc.mu.Unlock()
 
 		pushErr := func(err error) {
 			nc.handleConsumerSequenceMismatch(sub, fmt.Errorf("%w: recreating ordered consumer", err))
@@ -2324,9 +2331,46 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		}
 
 		sub.mu.Lock()
+		if sub.closed || sub.draining {
+			// Unsubscribed or drained while the consumer was being created.
+			// The consumer is not attached to anything anymore, so delete it
+			// rather than waiting for the inactivity threshold.
+			sub.mu.Unlock()
+			go js.DeleteConsumer(jsi.stream, cinfo.Name)
+			return
+		}
 		jsi.consumer = cinfo.Name
 		sub.mu.Unlock()
 	}()
+}
+
+// rewireOrderedSub moves the subscription from osid to nsid on the server.
+// The old sid is always unsubscribed; the new one is only subscribed if the
+// subscription is still registered and not draining, so that no interest is
+// created for a subscription that will not accept messages anymore. Returns
+// whether that happened. unsubscribe runs under nc.mu too, so the check is
+// exact.
+func (nc *Conn) rewireOrderedSub(sub *Subscription, osid, nsid int64, deliver, maxStr string) bool {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
+	nc.subsMu.RLock()
+	sub.mu.Lock()
+	// A draining subscription is only removed from nc.subs once the drain
+	// completes, and that removal sends no UNSUB, so subscribing the new sid
+	// here would leave interest on the server for the life of the connection.
+	registered := nc.subs[nsid] == sub && !sub.draining
+	sub.mu.Unlock()
+	nc.subsMu.RUnlock()
+	if registered {
+		nc.bw.appendString(fmt.Sprintf(subProto, deliver, _EMPTY_, nsid))
+		if maxStr != _EMPTY_ {
+			nc.bw.appendString(fmt.Sprintf(unsubProto, nsid, maxStr))
+		}
+	}
+	nc.kickFlusher()
+	return registered
 }
 
 // For jetstream subscriptions, returns the number of delivered messages.
