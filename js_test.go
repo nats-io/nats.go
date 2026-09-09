@@ -230,6 +230,20 @@ func TestRewireOrderedSub(t *testing.T) {
 		}
 	})
 
+	t.Run("draining sub only gets the old sid unsubscribed", func(t *testing.T) {
+		// A draining sub stays in nc.subs until the drain completes, and it
+		// is then removed without an UNSUB, so subscribing the new sid would
+		// leave interest on the server for the life of the connection.
+		nc, sub := newConn()
+		sub.draining = true
+		if nc.rewireOrderedSub(sub, osid, nsid, deliver, maxStr) {
+			t.Fatal("expected the rewire to be refused for a draining sub")
+		}
+		if got, want := string(nc.bw.bufs), unsubOld; got != want {
+			t.Fatalf("unexpected protocol:\n got %q\nwant %q", got, want)
+		}
+	})
+
 	t.Run("closed connection only gets the old sid unsubscribed", func(t *testing.T) {
 		nc, sub := newConn()
 		nc.subs = nil

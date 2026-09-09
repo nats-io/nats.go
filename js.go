@@ -2220,7 +2220,7 @@ func (sub *Subscription) applyNewSID() (osid, nsid int64, ok bool) {
 // Lock should be held.
 func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	nc := sub.conn
-	if sub.jsi == nil || nc == nil || sub.closed {
+	if sub.jsi == nil || nc == nil || sub.closed || sub.draining {
 		return
 	}
 
@@ -2337,9 +2337,9 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		}
 
 		sub.mu.Lock()
-		if sub.closed {
-			// Unsubscribed while the consumer was being created. The
-			// consumer is not attached to anything anymore, so delete it
+		if sub.closed || sub.draining {
+			// Unsubscribed or drained while the consumer was being created.
+			// The consumer is not attached to anything anymore, so delete it
 			// rather than waiting for the inactivity threshold.
 			sub.mu.Unlock()
 			go js.DeleteConsumer(jsi.stream, cinfo.Name)
@@ -2350,22 +2350,24 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	}()
 }
 
-// rewireOrderedSub sends the protocol that moves an ordered consumer
-// subscription from its old sid to its new sid and deliver subject: UNSUB for
-// the old sid, SUB for the new one and, if the subscription has a max set,
-// the UNSUB carrying the adjusted max. Returns whether the subscription is
-// still registered on the connection. If it is not (it was unsubscribed, or
-// the connection was closed, after applyNewSID re-keyed it), only the UNSUB
-// for the old sid is sent and false is returned, so that no interest is
-// created on the server for a subscription that no longer exists. Since
-// unsubscribe also runs under nc.mu, the check here is exact.
+// rewireOrderedSub moves the subscription from osid to nsid on the server.
+// The old sid is always unsubscribed; the new one is only subscribed if the
+// subscription is still registered and not draining, so that no interest is
+// created for a subscription that will not accept messages anymore. Returns
+// whether that happened. unsubscribe runs under nc.mu too, so the check is
+// exact.
 func (nc *Conn) rewireOrderedSub(sub *Subscription, osid, nsid int64, deliver, maxStr string) bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
 	nc.bw.appendString(fmt.Sprintf(unsubProto, osid, _EMPTY_))
 	nc.subsMu.RLock()
-	registered := nc.subs[nsid] == sub
+	sub.mu.Lock()
+	// A draining subscription is only removed from nc.subs once the drain
+	// completes, and that removal sends no UNSUB, so subscribing the new sid
+	// here would leave interest on the server for the life of the connection.
+	registered := nc.subs[nsid] == sub && !sub.draining
+	sub.mu.Unlock()
 	nc.subsMu.RUnlock()
 	if registered {
 		nc.bw.appendString(fmt.Sprintf(subProto, deliver, _EMPTY_, nsid))
