@@ -2184,9 +2184,9 @@ func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
 	return false
 }
 
-// Update and replace sid. Returns the old and the new sid, and whether the
-// swap happened: it is refused (ok == false) when the subscription is no
-// longer registered on the connection.
+// Update and replace sid. Returns the old and the new sid. Returns ok == false,
+// leaving everything untouched, if the subscription is no longer registered on
+// the connection.
 // Lock should be held on entry but will be unlocked to prevent lock inversion.
 func (sub *Subscription) applyNewSID() (osid, nsid int64, ok bool) {
 	nc := sub.conn
@@ -2194,10 +2194,8 @@ func (sub *Subscription) applyNewSID() (osid, nsid int64, ok bool) {
 
 	nc.subsMu.Lock()
 	osid = sub.sid
-	// While sub.mu was released, the subscription may have been removed by
-	// removeSub (Unsubscribe/Drain) or the connection may have been closed
-	// (nc.subs is nil then). Registering it under a new sid would resurrect
-	// a closed subscription (or panic on the nil map), so refuse the swap.
+	// removeSub or close() may have run while sub.mu was released;
+	// re-registering would resurrect the sub or write to a nil nc.subs.
 	if nc.subs[osid] != sub {
 		nc.subsMu.Unlock()
 		sub.mu.Lock()
@@ -2252,8 +2250,6 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	// Quick unsubscribe. Since we know this is a simple push subscriber we do in place.
 	osid, nsid, ok := sub.applyNewSID()
 	if !ok {
-		// The subscription was unsubscribed or the connection was closed
-		// while sub.mu was released: there is nothing left to reset.
 		return
 	}
 
@@ -2268,8 +2264,6 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		// Remap a new low level sub into this sub since its client accessible.
 		// This is done here in this go routine to prevent lock inversion.
 		if !nc.rewireOrderedSub(sub, osid, nsid, newDeliver, maxStr) {
-			// Unsubscribed (or connection closed) since applyNewSID:
-			// nothing to recreate.
 			return
 		}
 
