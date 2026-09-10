@@ -1437,6 +1437,8 @@ type jsSub struct {
 	dseq    uint64
 	sseq    uint64
 	ccreq   *createConsumerRequest
+	// A reset waits for the buffer to drain, see tryResetOrderedConsumer.
+	resetPending bool
 
 	// Heartbeats and Flow Control handling from push consumers.
 	hbc    *time.Timer
@@ -2215,10 +2217,19 @@ const (
 // sequence and reports what processMsg should do with it.
 //
 // The caller has verified that sub.jsi != nil and that the consumer is ordered.
-// Lock is held on entry and on return, but the gap path releases and reacquires
-// it to recreate the consumer.
+// Lock is held on entry and on return, but a reset releases and reacquires it
+// to recreate the consumer.
 func (sub *Subscription) checkOrderedDelivery(m *Msg) (jsMsgAction, orderedSeqs) {
-	if sub.chanFull() {
+	jsi := sub.jsi
+	// Everything still arriving belongs to the consumer about to be replaced
+	// and is refetched by the reset, which may have room by now.
+	if jsi.resetPending {
+		sub.tryResetOrderedConsumer()
+		return jsMsgDrop, orderedSeqs{}
+	}
+	// A full channel would drop the message below anyway; checking first keeps
+	// the drop from reading as a gap.
+	if sub.mch != nil && cap(sub.mch) > 0 && len(sub.mch) == cap(sub.mch) {
 		return jsMsgDrop, orderedSeqs{}
 	}
 
@@ -2227,7 +2238,6 @@ func (sub *Subscription) checkOrderedDelivery(m *Msg) (jsMsgAction, orderedSeqs)
 		return jsMsgDeliver, seqs
 	}
 
-	jsi := sub.jsi
 	// An unbuffered channel has no capacity signal. With nothing delivered
 	// since the last reset, resetting again would just refetch into the same
 	// wall, so leave it to the heartbeat. Once something has been delivered
@@ -2238,26 +2248,24 @@ func (sub *Subscription) checkOrderedDelivery(m *Msg) (jsMsgAction, orderedSeqs)
 		return jsMsgDrop, orderedSeqs{}
 	}
 	sub.releaseReserved(m)
-	sub.resetOrderedConsumer(jsi.sseq + 1)
+	sub.tryResetOrderedConsumer()
 	return jsMsgDropGap, orderedSeqs{}
 }
 
-// chanFull reports whether a buffered delivery channel cannot take another
-// message. Lock should be held.
-func (sub *Subscription) chanFull() bool {
-	return sub.mch != nil && cap(sub.mch) > 0 && len(sub.mch) == cap(sub.mch)
-}
-
-// pendingFull reports whether the subscription cannot take another message, so
-// that a reset now would only refetch into it. An unbuffered channel has no
-// capacity signal and never reports full. Lock should be held.
-func (sub *Subscription) pendingFull() bool {
-	if sub.typ != ChanSubscription &&
-		((sub.pMsgsLimit > 0 && sub.pMsgs >= sub.pMsgsLimit) ||
-			(sub.pBytesLimit > 0 && sub.pBytes >= sub.pBytesLimit)) {
-		return true
+// tryResetOrderedConsumer recreates the consumer after a gap, or defers that
+// while more than half of the subscription's buffer is in use, so the refetch
+// is not dropped into a buffer that is still nearly full. A deferred reset is
+// retried as messages are delivered and as messages and heartbeats arrive.
+// Lock should be held.
+func (sub *Subscription) tryResetOrderedConsumer() {
+	jsi := sub.jsi
+	if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit/2) ||
+		(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit/2) ||
+		(sub.mch != nil && len(sub.mch) > cap(sub.mch)/2) {
+		jsi.resetPending = true
+		return
 	}
-	return sub.chanFull()
+	sub.resetOrderedConsumer(jsi.sseq + 1)
 }
 
 // Update and replace sid. Returns the old and the new sid. Returns ok == false,
@@ -2297,6 +2305,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	if sub.jsi == nil || nc == nil || sub.closed || sub.draining {
 		return
 	}
+	sub.jsi.resetPending = false
 
 	var maxStr string
 	// If there was an AUTO_UNSUB done, we need to adjust the new value
@@ -2507,7 +2516,7 @@ func (sub *Subscription) activityCheck() {
 			return
 		}
 		sub.mu.Lock()
-		sub.resetOrderedConsumer(jsi.sseq + 1)
+		sub.tryResetOrderedConsumer()
 		sub.mu.Unlock()
 	}
 }
@@ -2560,12 +2569,10 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 		}
 		// jsi.dseq is the next sequence expected and advances only for messages
 		// handed off for delivery, so caught up means ldseq == jsi.dseq-1 and
-		// ldseq >= jsi.dseq means there is a gap. While the subscription is full
-		// a reset would only refetch into it; the first heartbeat after it
-		// drains picks the gap up.
+		// ldseq >= jsi.dseq means there is a gap.
 		s.mu.Lock()
-		if parser.ParseNum(ldseq) >= jsi.dseq && !s.pendingFull() {
-			s.resetOrderedConsumer(jsi.sseq + 1)
+		if parser.ParseNum(ldseq) >= jsi.dseq {
+			s.tryResetOrderedConsumer()
 		}
 		s.mu.Unlock()
 		return

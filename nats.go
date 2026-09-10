@@ -3720,6 +3720,9 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			s.pMsgs--
 			s.pBytes -= msgLen
 			msgLen = -1
+			if s.jsi != nil && s.jsi.resetPending {
+				s.tryResetOrderedConsumer()
+			}
 		}
 
 		if s.pHead == nil && !s.closed {
@@ -5724,6 +5727,9 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	if s.typ == SyncSubscription {
 		s.pMsgs--
 		s.pBytes -= len(msg.Data)
+	}
+	if s.jsi != nil && s.jsi.resetPending {
+		s.tryResetOrderedConsumer()
 	}
 	s.mu.Unlock()
 
