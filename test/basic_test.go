@@ -135,6 +135,27 @@ func TestConnectedClusterName(t *testing.T) {
 	}
 }
 
+func TestConnectedDomain(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		if got := nc.ConnectedDomain(); got != "ABC" {
+			t.Fatalf("Expected domain %q, got %q", "ABC", got)
+		}
+
+		nc.Close()
+		if got := nc.ConnectedDomain(); got != "" {
+			t.Fatalf("Expected an empty domain after close, got %q", got)
+		}
+	}, testservice.WithJetStream(`domain: ABC`))
+
+	t.Run("no domain configured", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			if got := nc.ConnectedDomain(); got != "" {
+				t.Fatalf("Expected an empty domain, got %q", got)
+			}
+		})
+	})
+}
+
 func TestConnectedServerJetStream(t *testing.T) {
 	c := newTester(t)
 	inst := c.CreateServer(t, true)
