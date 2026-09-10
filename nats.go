@@ -3844,7 +3844,6 @@ func (nc *Conn) processMsg(data []byte) {
 	var ctrlMsg bool
 	var ctrlType int
 	var fcReply string
-	// Staged by checkOrderedDelivery, applied by commitOrderedMsg once queued.
 	var ordSeqs orderedSeqs
 
 	if nc.ps.ma.hdr > 0 {
@@ -3934,10 +3933,9 @@ func (nc *Conn) processMsg(data []byte) {
 			var action jsMsgAction
 			action, ordSeqs = sub.checkOrderedDelivery(m)
 			switch action {
-			case jsMsgDropAtCapacity:
+			case jsMsgDrop:
 				goto slowConsumer
 			case jsMsgDropGap:
-				// Fully handled, reservation included.
 				sub.mu.Unlock()
 				return
 			}
@@ -3969,7 +3967,6 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		}
 		if jsi != nil {
-			// Queued for delivery, so the ordered tracker can advance past it.
 			sub.commitOrderedMsg(ordSeqs)
 			// Store the ACK metadata from the message to
 			// compare later on with the received heartbeat.
@@ -4031,6 +4028,12 @@ func (nc *Conn) processMsg(data []byte) {
 slowConsumer:
 	// ordSeqs is deliberately not committed here: leaving the tracker behind is
 	// what makes the next message register as a gap and get refetched.
+	// Except for the consumer's first message: with nothing delivered yet the
+	// tracker has no position, and a reset would resume from the start of the
+	// stream rather than from where the consumer was told to start.
+	if jsi != nil && jsi.ordered && jsi.sseq == 0 && ordSeqs.dseq == 1 {
+		jsi.sseq = ordSeqs.sseq - 1
+	}
 	sub.dropped++
 	sc := !sub.sc
 	sub.sc = true
