@@ -1,4 +1,4 @@
-// Copyright 2022-2025 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -360,15 +360,8 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		}
 		id = reply[js.opts.replyPrefixLen:]
 		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
-		numPending, maxPending := js.registerPAF(id, paf)
-
-		if maxPending > 0 && numPending > maxPending {
-			select {
-			case <-js.asyncStall():
-			case <-time.After(stallWait):
-				js.clearPAF(id)
-				return nil, ErrTooManyStalledMsgs
-			}
+		if err := js.registerPAF(id, paf, stallWait); err != nil {
+			return nil, err
 		}
 		if js.publisher.ackTimeout > 0 {
 			paf.timeout = time.AfterFunc(js.publisher.ackTimeout, func() {
@@ -625,17 +618,43 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 	}
 }
 
-// registerPAF will register for a PubAckFuture.
-func (js *jetStream) registerPAF(id string, paf *pubAckFuture) (int, int) {
-	js.publisher.Lock()
-	if js.publisher.acks == nil {
-		js.publisher.acks = make(map[string]*pubAckFuture)
+// registerPAF will register for a PubAckFuture. If max pending is set and
+// the publisher is already at the cap, it stalls until a slot frees or
+// stallWait elapses. The cap check and insert run under the same lock so
+// pending cannot exceed maxPending.
+func (js *jetStream) registerPAF(id string, paf *pubAckFuture, stallWait time.Duration) error {
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	for {
+		js.publisher.Lock()
+		if js.publisher.acks == nil {
+			js.publisher.acks = make(map[string]*pubAckFuture)
+		}
+		maxpa := js.publisher.asyncPublisherOpts.maxpa
+		if maxpa > 0 && len(js.publisher.acks) >= maxpa {
+			if js.publisher.stallCh == nil {
+				js.publisher.stallCh = make(chan struct{})
+			}
+			stc := js.publisher.stallCh
+			js.publisher.Unlock()
+			if timer == nil {
+				timer = time.NewTimer(stallWait)
+			}
+			select {
+			case <-stc:
+				continue
+			case <-timer.C:
+				return ErrTooManyStalledMsgs
+			}
+		}
+		js.publisher.acks[id] = paf
+		js.publisher.Unlock()
+		return nil
 	}
-	js.publisher.acks[id] = paf
-	np := len(js.publisher.acks)
-	maxpa := js.publisher.asyncPublisherOpts.maxpa
-	js.publisher.Unlock()
-	return np, maxpa
 }
 
 // Lock should be held.
@@ -651,16 +670,6 @@ func (js *jetStream) clearPAF(id string) {
 	js.publisher.Lock()
 	delete(js.publisher.acks, id)
 	js.publisher.Unlock()
-}
-
-func (js *jetStream) asyncStall() <-chan struct{} {
-	js.publisher.Lock()
-	if js.publisher.stallCh == nil {
-		js.publisher.stallCh = make(chan struct{})
-	}
-	stc := js.publisher.stallCh
-	js.publisher.Unlock()
-	return stc
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
