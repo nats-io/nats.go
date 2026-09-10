@@ -2230,7 +2230,10 @@ func (sub *Subscription) checkOrderedDelivery(m *Msg) (jsMsgAction, orderedSeqs)
 	jsi := sub.jsi
 	// An unbuffered channel has no capacity signal. With nothing delivered
 	// since the last reset, resetting again would just refetch into the same
-	// wall, so leave it to the heartbeat.
+	// wall, so leave it to the heartbeat. Once something has been delivered
+	// the reader is there and a drop means it was merely busy, so reset at
+	// once; deferring to the heartbeat here would drain a backlog one message
+	// per interval.
 	if sub.mch != nil && cap(sub.mch) == 0 && jsi.dseq == 1 {
 		return jsMsgDrop, orderedSeqs{}
 	}

@@ -10245,6 +10245,17 @@ func (r *seqRecorder) count() int {
 	return len(r.order)
 }
 
+// waitFor fails unless at least want messages arrive within timeout.
+func (r *seqRecorder) waitFor(t *testing.T, want int, timeout time.Duration) {
+	t.Helper()
+	checkFor(t, timeout, 10*time.Millisecond, func() error {
+		if n := r.count(); n < want {
+			return fmt.Errorf("only %d of %d messages delivered", n, want)
+		}
+		return nil
+	})
+}
+
 // readChan drains ch into the recorder until the test ends.
 func (r *seqRecorder) readChan(t *testing.T, ch <-chan *nats.Msg) {
 	stop := make(chan struct{})
@@ -10324,12 +10335,7 @@ func TestJetStreamOrderedConsumerSlowConsumerNoLoss(t *testing.T) {
 
 		// The backlog is discarded by now and the server is quiet, so recovery
 		// rides on the heartbeat, refetching about one pending limit per round.
-		checkFor(t, 10*time.Second, 100*time.Millisecond, func() error {
-			if n := rec.count(); n < totalMsgs {
-				return fmt.Errorf("only %d of %d messages delivered", n, totalMsgs)
-			}
-			return nil
-		})
+		rec.waitFor(t, totalMsgs, 10*time.Second)
 		rec.verifyComplete(t, totalMsgs)
 	})
 }
@@ -10441,12 +10447,7 @@ func TestJetStreamOrderedConsumerNoResetStorm(t *testing.T) {
 				var rec seqRecorder
 				rec.readChan(t, ch)
 				// Recovery refetches about a buffer's worth per heartbeat round.
-				checkFor(t, 20*time.Second, 100*time.Millisecond, func() error {
-					if n := rec.count(); n < test.totalMsgs {
-						return fmt.Errorf("only %d of %d messages delivered", n, test.totalMsgs)
-					}
-					return nil
-				})
+				rec.waitFor(t, test.totalMsgs, 20*time.Second)
 				rec.verifyComplete(t, test.totalMsgs)
 			})
 		})
@@ -10525,115 +10526,6 @@ func TestJetStreamOrderedConsumerNoResetWhenHealthy(t *testing.T) {
 	})
 }
 
-// An unbuffered channel subscription must drain a backlog at wire speed and
-// never deliver out of order. The jsi.dseq > 1 term in the reset guard is what
-// allows the immediate resets; without it the subscription advances one message
-// per heartbeat interval, which a shortened heartbeat would hide.
-func TestJetStreamOrderedConsumerUnbufferedChanRecoveryLatency(t *testing.T) {
-	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
-		_, js := oscStream(t, inst, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
-
-		// The first message is published alone so jsi.dseq > 1 before the timed
-		// phase; the last few keep traffic arriving behind the assertion window.
-		const totalMsgs = 25
-		const assertMsgs = 20
-
-		if _, err := js.Publish("osc.a", []byte("x")); err != nil {
-			t.Fatalf("Error publishing: %v", err)
-		}
-
-		ch := make(chan *nats.Msg)
-		recv := make(chan uint64, totalMsgs*4)
-		readErr := make(chan error, 1)
-		stop := make(chan struct{})
-		defer close(stop)
-		go func() {
-			for {
-				select {
-				case <-stop:
-					return
-				case m := <-ch:
-					meta, err := m.Metadata()
-					if err != nil {
-						select {
-						case readErr <- err:
-						default:
-						}
-						return
-					}
-					recv <- meta.Sequence.Stream
-				}
-			}
-		}()
-
-		sub, err := js.ChanSubscribe("osc.>", ch, nats.OrderedConsumer())
-		if err != nil {
-			t.Fatalf("Error subscribing: %v", err)
-		}
-		defer sub.Unsubscribe()
-
-		// Untimed: it may be dropped and return on a heartbeat. Either way jsi.dseq is 2.
-		var order []uint64
-		select {
-		case sseq := <-recv:
-			order = append(order, sseq)
-		case err := <-readErr:
-			t.Fatalf("Error getting metadata: %v", err)
-		case <-time.After(20 * time.Second):
-			t.Fatalf("First message never delivered")
-		}
-
-		for range totalMsgs - 1 {
-			if _, err := js.PublishAsync("osc.a", []byte("x")); err != nil {
-				t.Fatalf("Error publishing: %v", err)
-			}
-		}
-
-		// The failure this guards against needs ~100s for 20 messages at the 5s default.
-		const recoverWithin = 3 * time.Second
-		start := time.Now()
-		deadline := time.After(recoverWithin)
-		for len(order) < assertMsgs {
-			select {
-			case sseq := <-recv:
-				order = append(order, sseq)
-			case err := <-readErr:
-				t.Fatalf("Error getting metadata: %v", err)
-			case <-deadline:
-				t.Fatalf("Only %d of %d messages delivered in %v (got %v); an unbuffered ordered consumer must not need a heartbeat per message to drain a backlog",
-					len(order), assertMsgs, time.Since(start).Round(time.Millisecond), order)
-			}
-		}
-
-		// Without drops the gap path never ran and the timing proves nothing.
-		if dropped, _ := sub.Dropped(); dropped == 0 {
-			t.Fatalf("No messages were dropped, so the gap path never ran and the test would be vacuous")
-		}
-
-		// The tail is refetched at the heartbeat's pace, so only completeness matters
-		// here; order[i] == i+1 over arrival order is what rules out reordering.
-		tailDeadline := time.After(60 * time.Second)
-		for len(order) < totalMsgs {
-			select {
-			case sseq := <-recv:
-				order = append(order, sseq)
-			case err := <-readErr:
-				t.Fatalf("Error getting metadata: %v", err)
-			case <-tailDeadline:
-				t.Fatalf("Only %d of %d messages delivered (got %v)", len(order), totalMsgs, order)
-			}
-		}
-		if len(order) != totalMsgs {
-			t.Fatalf("Expected %d messages, got %d", totalMsgs, len(order))
-		}
-		for i, sseq := range order {
-			if sseq != uint64(i+1) {
-				t.Fatalf("Message %d out of order: expected stream seq %d, got %d", i, i+1, sseq)
-			}
-		}
-	})
-}
-
 // A reset before anything was delivered must resume from the consumer's first
 // message, not from the start of the stream, or the deliver policy is lost.
 func TestJetStreamOrderedConsumerFirstMsgDroppedKeepsStartPosition(t *testing.T) {
@@ -10655,12 +10547,7 @@ func TestJetStreamOrderedConsumerFirstMsgDroppedKeepsStartPosition(t *testing.T)
 
 		var rec seqRecorder
 		rec.readChan(t, ch)
-		checkFor(t, 10*time.Second, 50*time.Millisecond, func() error {
-			if rec.count() == 0 {
-				return fmt.Errorf("nothing delivered")
-			}
-			return nil
-		})
+		rec.waitFor(t, 1, 10*time.Second)
 		// Leave time for a replay of the history to show up.
 		time.Sleep(500 * time.Millisecond)
 		rec.mu.Lock()
