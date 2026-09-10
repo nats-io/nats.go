@@ -4509,7 +4509,7 @@ func TestConsumersLister(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				js.AddStream(&nats.StreamConfig{Name: "foo"})
+				js.AddStream(&nats.StreamConfig{Name: "foo", MaxConsumers: 2000})
 				for i := range test.consumersNum {
 					if _, err := js.AddConsumer("foo", &nats.ConsumerConfig{Durable: fmt.Sprintf("cons_%d", i), AckPolicy: nats.AckExplicitPolicy}); err != nil {
 						t.Fatalf("Unexpected error: %v", err)
