@@ -3736,6 +3736,9 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 			s.pMsgs--
 			s.pBytes -= msgLen
 			msgLen = -1
+			if s.jsi != nil && s.jsi.resetPending {
+				s.tryResetOrderedConsumer()
+			}
 		}
 
 		if s.pHead == nil && !s.closed {
@@ -3860,6 +3863,7 @@ func (nc *Conn) processMsg(data []byte) {
 	var ctrlMsg bool
 	var ctrlType int
 	var fcReply string
+	var ordSeqs orderedSeqs
 
 	if nc.ps.ma.hdr > 0 {
 		hbuf := msgPayload[:nc.ps.ma.hdr]
@@ -3915,11 +3919,6 @@ func (nc *Conn) processMsg(data []byte) {
 				fcReply = m.Header.Get(consumerStalledHdr)
 			}
 		}
-		// Check for ordered consumer here. If checkOrderedMsgs returns true that means it detected a gap.
-		if !ctrlMsg && jsi.ordered && sub.checkOrderedMsgs(m) {
-			sub.mu.Unlock()
-			return
-		}
 	}
 
 	// Skip processing if this is a control message and
@@ -3945,6 +3944,20 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		} else if jsi != nil {
 			chanSubCheckFC = true
+		}
+
+		// Must run here, between the reservation above and the delivery below.
+		// See checkOrderedDelivery.
+		if jsi != nil && jsi.ordered {
+			var action jsMsgAction
+			action, ordSeqs = sub.checkOrderedDelivery(m)
+			switch action {
+			case jsMsgDrop:
+				goto slowConsumer
+			case jsMsgDropGap:
+				sub.mu.Unlock()
+				return
+			}
 		}
 
 		// We have two modes of delivery. One is the channel, used by channel
@@ -3973,6 +3986,7 @@ func (nc *Conn) processMsg(data []byte) {
 			}
 		}
 		if jsi != nil {
+			sub.commitOrderedMsg(ordSeqs)
 			// Store the ACK metadata from the message to
 			// compare later on with the received heartbeat.
 			sub.trackSequences(m.Reply)
@@ -4031,14 +4045,19 @@ func (nc *Conn) processMsg(data []byte) {
 	return
 
 slowConsumer:
+	// ordSeqs is deliberately not committed here: leaving the tracker behind is
+	// what makes the next message register as a gap and get refetched.
+	// Except for the consumer's first message: with nothing delivered yet the
+	// tracker has no position, and a reset would resume from the start of the
+	// stream rather than from where the consumer was told to start.
+	if jsi != nil && jsi.ordered && jsi.sseq == 0 && ordSeqs.dseq == 1 {
+		jsi.sseq = ordSeqs.sseq - 1
+	}
 	sub.dropped++
 	sc := !sub.sc
 	sub.sc = true
 	// Undo stats from above
-	if sub.typ != ChanSubscription {
-		sub.pMsgs--
-		sub.pBytes -= len(m.Data)
-	}
+	sub.releaseReserved(m)
 	if sc {
 		sub.changeSubStatus(SubscriptionSlowConsumer)
 		sub.mu.Unlock()
@@ -4053,6 +4072,16 @@ slowConsumer:
 		nc.mu.Unlock()
 	} else {
 		sub.mu.Unlock()
+	}
+}
+
+// releaseReserved undoes the pending accounting reserved for m earlier in
+// processMsg. pMsgsMax/pBytesMax are deliberately left alone: they are
+// high-water marks of what was reserved. Lock must be held.
+func (sub *Subscription) releaseReserved(m *Msg) {
+	if sub.typ != ChanSubscription {
+		sub.pMsgs--
+		sub.pBytes -= len(m.Data)
 	}
 }
 
@@ -5714,6 +5743,9 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 	if s.typ == SyncSubscription {
 		s.pMsgs--
 		s.pBytes -= len(msg.Data)
+	}
+	if s.jsi != nil && s.jsi.resetPending {
+		s.tryResetOrderedConsumer()
 	}
 	s.mu.Unlock()
 

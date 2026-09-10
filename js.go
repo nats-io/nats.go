@@ -1437,6 +1437,8 @@ type jsSub struct {
 	dseq    uint64
 	sseq    uint64
 	ccreq   *createConsumerRequest
+	// A reset waits for the buffer to drain, see tryResetOrderedConsumer.
+	resetPending bool
 
 	// Heartbeats and Flow Control handling from push consumers.
 	hbc    *time.Timer
@@ -2157,31 +2159,113 @@ func (sub *Subscription) trackSequences(reply string) {
 	sub.jsi.cmeta = reply
 }
 
+// orderedSeqs carries the sequences of a message that passed the ordering check
+// but has not yet been handed off for delivery.
+type orderedSeqs struct {
+	dseq, sseq uint64
+}
+
 // Check to make sure messages are arriving in order.
-// Returns true if the sub had to be replaced. Will cause upper layers to return.
-// The caller has verified that sub.jsi != nil and that this is not a control message.
+// Returns true when m is not the message the ordered consumer was expecting
+// next. The tracker is not advanced here; the returned sequences are applied
+// with commitOrderedMsg once m is queued for delivery.
 // Lock should be held.
-func (sub *Subscription) checkOrderedMsgs(m *Msg) bool {
+func (sub *Subscription) checkOrderedMsgs(m *Msg) (bool, orderedSeqs) {
 	// Ignore msgs with no reply like HBs and flow control, they are handled elsewhere.
 	if m.Reply == _EMPTY_ {
-		return false
+		return false, orderedSeqs{}
 	}
 
 	// Normal message here.
 	tokens, err := parser.GetMetadataFields(m.Reply)
 	if err != nil {
-		return false
+		return false, orderedSeqs{}
 	}
 	sseq, dseq := parser.ParseNum(tokens[parser.AckStreamSeqTokenPos]), parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 
 	jsi := sub.jsi
 	if dseq != jsi.dseq {
-		sub.resetOrderedConsumer(jsi.sseq + 1)
-		return true
+		return true, orderedSeqs{}
 	}
-	// Update our tracking here.
-	jsi.dseq, jsi.sseq = dseq+1, sseq
-	return false
+	return false, orderedSeqs{dseq: dseq, sseq: sseq}
+}
+
+// commitOrderedMsg advances the ordered consumer tracker for a message that has
+// been queued for delivery. Pairs with checkOrderedMsgs.
+// Lock should be held.
+func (sub *Subscription) commitOrderedMsg(seqs orderedSeqs) {
+	if seqs.dseq == 0 {
+		return
+	}
+	sub.jsi.dseq, sub.jsi.sseq = seqs.dseq+1, seqs.sseq
+}
+
+// jsMsgAction tells processMsg what to do with a message once the ordered
+// consumer checks have run against it.
+type jsMsgAction int
+
+const (
+	jsMsgDeliver jsMsgAction = iota
+	// Cannot be delivered. The caller's slow consumer path counts it and
+	// releases the pending accounting reserved for it.
+	jsMsgDrop
+	// Out of order and fully handled. The caller only unlocks and returns.
+	jsMsgDropGap
+)
+
+// checkOrderedDelivery validates an ordered consumer message's place in the
+// sequence and reports what processMsg should do with it.
+//
+// The caller has verified that sub.jsi != nil and that the consumer is ordered.
+// Lock is held on entry and on return, but a reset releases and reacquires it
+// to recreate the consumer.
+func (sub *Subscription) checkOrderedDelivery(m *Msg) (jsMsgAction, orderedSeqs) {
+	jsi := sub.jsi
+	// Everything still arriving belongs to the consumer about to be replaced
+	// and is refetched by the reset, which may have room by now.
+	if jsi.resetPending {
+		sub.tryResetOrderedConsumer()
+		return jsMsgDrop, orderedSeqs{}
+	}
+	// A full channel would drop the message below anyway; checking first keeps
+	// the drop from reading as a gap.
+	if sub.mch != nil && cap(sub.mch) > 0 && len(sub.mch) == cap(sub.mch) {
+		return jsMsgDrop, orderedSeqs{}
+	}
+
+	gap, seqs := sub.checkOrderedMsgs(m)
+	if !gap {
+		return jsMsgDeliver, seqs
+	}
+
+	// An unbuffered channel has no capacity signal. With nothing delivered
+	// since the last reset, resetting again would just refetch into the same
+	// wall, so leave it to the heartbeat. Once something has been delivered
+	// the reader is there and a drop means it was merely busy, so reset at
+	// once; deferring to the heartbeat here would drain a backlog one message
+	// per interval.
+	if sub.mch != nil && cap(sub.mch) == 0 && jsi.dseq == 1 {
+		return jsMsgDrop, orderedSeqs{}
+	}
+	sub.releaseReserved(m)
+	sub.tryResetOrderedConsumer()
+	return jsMsgDropGap, orderedSeqs{}
+}
+
+// tryResetOrderedConsumer recreates the consumer after a gap, or defers that
+// while more than half of the subscription's buffer is in use, so the refetch
+// is not dropped into a buffer that is still nearly full. A deferred reset is
+// retried as messages are delivered and as messages and heartbeats arrive.
+// Lock should be held.
+func (sub *Subscription) tryResetOrderedConsumer() {
+	jsi := sub.jsi
+	if (sub.pMsgsLimit > 0 && sub.pMsgs > sub.pMsgsLimit/2) ||
+		(sub.pBytesLimit > 0 && sub.pBytes > sub.pBytesLimit/2) ||
+		(sub.mch != nil && len(sub.mch) > cap(sub.mch)/2) {
+		jsi.resetPending = true
+		return
+	}
+	sub.resetOrderedConsumer(jsi.sseq + 1)
 }
 
 // Update and replace sid. Returns the old and the new sid. Returns ok == false,
@@ -2221,6 +2305,7 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 	if sub.jsi == nil || nc == nil || sub.closed || sub.draining {
 		return
 	}
+	sub.jsi.resetPending = false
 
 	var maxStr string
 	// If there was an AUTO_UNSUB done, we need to adjust the new value
@@ -2431,7 +2516,7 @@ func (sub *Subscription) activityCheck() {
 			return
 		}
 		sub.mu.Lock()
-		sub.resetOrderedConsumer(jsi.sseq + 1)
+		sub.tryResetOrderedConsumer()
 		sub.mu.Unlock()
 	}
 }
@@ -2472,6 +2557,27 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 	jsi.active = true
 	s.mu.Unlock()
 
+	// The server reports the last consumer sequence it delivered.
+	var ldseq string
+	if hdr := msg.Header[lastConsumerSeqHdr]; len(hdr) == 1 {
+		ldseq = hdr[0]
+	}
+
+	if ordered {
+		if ldseq == _EMPTY_ {
+			return
+		}
+		// jsi.dseq is the next sequence expected and advances only for messages
+		// handed off for delivery, so caught up means ldseq == jsi.dseq-1 and
+		// ldseq >= jsi.dseq means there is a gap.
+		s.mu.Lock()
+		if parser.ParseNum(ldseq) >= jsi.dseq {
+			s.tryResetOrderedConsumer()
+		}
+		s.mu.Unlock()
+		return
+	}
+
 	if ctrl == _EMPTY_ {
 		return
 	}
@@ -2482,12 +2588,7 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 	}
 
 	// Consumer sequence.
-	var ldseq string
 	dseq := tokens[parser.AckConsumerSeqTokenPos]
-	hdr := msg.Header[lastConsumerSeqHdr]
-	if len(hdr) == 1 {
-		ldseq = hdr[0]
-	}
 
 	// Detect consumer sequence mismatch and whether
 	// should restart the consumer.
@@ -2495,18 +2596,12 @@ func (nc *Conn) checkForSequenceMismatch(msg *Msg, s *Subscription, jsi *jsSub) 
 		// Dispatch async error including details such as
 		// from where the consumer could be restarted.
 		sseq := parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
-		if ordered {
-			s.mu.Lock()
-			s.resetOrderedConsumer(jsi.sseq + 1)
-			s.mu.Unlock()
-		} else {
-			ecs := &ErrConsumerSequenceMismatch{
-				StreamResumeSequence: uint64(sseq),
-				ConsumerSequence:     parser.ParseNum(dseq),
-				LastConsumerSequence: parser.ParseNum(ldseq),
-			}
-			nc.handleConsumerSequenceMismatch(s, ecs)
+		ecs := &ErrConsumerSequenceMismatch{
+			StreamResumeSequence: uint64(sseq),
+			ConsumerSequence:     parser.ParseNum(dseq),
+			LastConsumerSequence: parser.ParseNum(ldseq),
 		}
+		nc.handleConsumerSequenceMismatch(s, ecs)
 	}
 }
 
