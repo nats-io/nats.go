@@ -1065,7 +1065,8 @@ type ServerInfo struct {
 	IsSystemAccount bool `json:"acc_is_sys,omitempty"`
 	// JSApiLevel is the JetStream API level advertised by the server.
 	// Requires nats-server v2.12.0 or later; older servers will report 0.
-	JSApiLevel int `json:"api_lvl,omitempty"`
+	JSApiLevel int    `json:"api_lvl,omitempty"`
+	Domain     string `json:"domain,omitempty"`
 }
 
 const (
@@ -2723,6 +2724,21 @@ func (nc *Conn) ConnectedServerName() string {
 		return _EMPTY_
 	}
 	return nc.info.Name
+}
+
+// ConnectedDomain reports the connected server's domain
+func (nc *Conn) ConnectedDomain() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.Domain
 }
 
 var semVerRe = regexp.MustCompile(`\Av?([0-9]+)\.?([0-9]+)?\.?([0-9]+)?`)
