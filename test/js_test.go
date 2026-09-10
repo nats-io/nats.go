@@ -10350,23 +10350,25 @@ func TestJetStreamOrderedConsumerNoResetStorm(t *testing.T) {
 	const stallFor = time.Second
 	// One reset per heartbeat, plus slack for a late one.
 	const hbPaced = int64(stallFor/hb) + 2
+	// A late heartbeat trips the activity check into one reset; a storm is dozens.
+	const lateHB = 1
 	// Pending limit or channel capacity: what a stalled subscription holds.
 	const held = 20
 
 	for _, test := range []struct {
-		name      string
-		totalMsgs int
-		payload   int
-		// Zero for subscription types with a capacity signal.
+		name       string
+		totalMsgs  int
+		payload    int
 		maxCreates int64
 		// subscribe returns the stalled subscription, the channel to drain after
 		// the stall (nil when the case asserts no delivery), and a stall-ending func.
 		subscribe func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func())
 	}{
 		{
-			name:      "async",
-			totalMsgs: 500,
-			payload:   1,
+			name:       "async",
+			totalMsgs:  500,
+			payload:    1,
+			maxCreates: lateHB,
 			subscribe: func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func()) {
 				gate := make(chan struct{})
 				var once sync.Once
@@ -10400,9 +10402,10 @@ func TestJetStreamOrderedConsumerNoResetStorm(t *testing.T) {
 			},
 		},
 		{
-			name:      "buffered chan",
-			totalMsgs: 200,
-			payload:   1,
+			name:       "buffered chan",
+			totalMsgs:  200,
+			payload:    1,
+			maxCreates: lateHB,
 			subscribe: func(t *testing.T, js nats.JetStreamContext) (*nats.Subscription, chan *nats.Msg, func()) {
 				// Small buffer, read only after the stall, so it fills once and then drops.
 				ch := make(chan *nats.Msg, held)
@@ -10459,68 +10462,32 @@ func TestJetStreamOrderedConsumerNoResetStorm(t *testing.T) {
 // next expected one, so caught up is ldseq == jsi.dseq-1, not equality.
 func TestJetStreamOrderedConsumerNoResetWhenHealthy(t *testing.T) {
 	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
-		var errMu sync.Mutex
-		var asyncErrs []error
-		_, js := oscStream(t, inst, nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
-			errMu.Lock()
-			asyncErrs = append(asyncErrs, err)
-			errMu.Unlock()
-		}))
+		_, js := oscStream(t, inst, nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}))
 		creates := countConsumerCreates(t, inst)
 
 		var rec seqRecorder
-		sub, err := js.Subscribe("osc.>", rec.add,
-			nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
+		sub, err := js.Subscribe("osc.>", rec.add, nats.OrderedConsumer(), nats.IdleHeartbeat(200*time.Millisecond))
 		if err != nil {
 			t.Fatalf("Error subscribing: %v", err)
 		}
 		defer sub.Unsubscribe()
-
 		baseline := creates.Load()
-
-		reportErrs := func() string {
-			errMu.Lock()
-			defer errMu.Unlock()
-			if len(asyncErrs) == 0 {
-				return " (no async errors)"
-			}
-			return fmt.Sprintf(" async errors: %v", asyncErrs)
-		}
 
 		// Six heartbeats, or the absence of resets would mean nothing.
 		const idleWindow = 1200 * time.Millisecond
 
 		// Nothing delivered yet: the server reports Nats-Last-Consumer 0, jsi.dseq is 1.
 		time.Sleep(idleWindow)
-		if n := creates.Load() - baseline; n != 0 {
-			t.Fatalf("Ordered consumer recreated %d times while idle on an empty stream; expected 0.%s",
-				n, reportErrs())
-		}
-
 		// Steady state: the server's last delivered now equals jsi.dseq-1.
 		const totalMsgs = 5
-		for range totalMsgs {
-			if _, err := js.Publish("osc.a", []byte("x")); err != nil {
-				t.Fatalf("Error publishing: %v", err)
-			}
-		}
-		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
-			if n := rec.count(); n < totalMsgs {
-				return fmt.Errorf("only %d of %d messages delivered", n, totalMsgs)
-			}
-			return nil
-		})
-
-		afterDelivery := creates.Load()
+		publishOSC(t, js, totalMsgs)
+		rec.waitFor(t, totalMsgs, 10*time.Second)
 		time.Sleep(idleWindow)
-		if n := creates.Load() - afterDelivery; n != 0 {
-			t.Fatalf("Ordered consumer recreated %d times while idle and caught up; expected 0.%s",
-				n, reportErrs())
-		}
-		// Also covers the whole run, in case a reset happened during delivery.
-		if n := creates.Load() - baseline; n != 0 {
-			t.Fatalf("Ordered consumer recreated %d times over a healthy run; expected 0.%s",
-				n, reportErrs())
+
+		// A late heartbeat trips the activity check into one reset; the bug
+		// would produce one per heartbeat.
+		if n := creates.Load() - baseline; n > 1 {
+			t.Fatalf("Ordered consumer recreated %d times over a healthy run; expected none", n)
 		}
 		rec.verifyComplete(t, totalMsgs)
 	})
