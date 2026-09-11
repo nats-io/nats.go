@@ -15,6 +15,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -135,9 +136,11 @@ func withJSCluster(t *testing.T, size int, fn func(*testing.T, *nats.Conn, jetst
 	fn(t, nc, js, inst)
 }
 
-// waitForStream blocks until the stream is queryable again. StartServer
-// returns on ack, not on readiness, so a publish issued right after a restart
-// can race JetStream recovery.
+// waitForStream blocks until the stream is queryable and has a leader.
+// StartServer returns on ack, not on readiness, so a publish issued right
+// after a restart can race JetStream recovery. A bare lookup is not enough:
+// a replica of a group that has been leaderless for a while answers
+// STREAM.INFO itself, and only the leader subscribes to the stream subjects.
 func waitForStream(t *testing.T, js jetstream.JetStream, name string) {
 	t.Helper()
 	// Per-attempt timeout so one slow lookup cannot eat the whole budget:
@@ -146,10 +149,14 @@ func waitForStream(t *testing.T, js jetstream.JetStream, name string) {
 	var err error
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_, err = js.Stream(ctx, name)
+		var s jetstream.Stream
+		s, err = js.Stream(ctx, name)
 		cancel()
 		if err == nil {
-			return
+			if ci := s.CachedInfo().Cluster; ci == nil || ci.Leader != "" {
+				return
+			}
+			err = errors.New("stream has no leader")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
