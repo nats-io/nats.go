@@ -2253,6 +2253,7 @@ func TestPublishWithScheduleRollup(t *testing.T) {
 			Name:              "SCHED",
 			Subjects:          []string{"schedule.>", "target.>"},
 			AllowMsgSchedules: true,
+			AllowRollup:       true,
 		})
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
