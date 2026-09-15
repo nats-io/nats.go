@@ -230,6 +230,10 @@ type (
 		// with stream/mirror.
 		Lag uint64 `json:"lag"`
 
+		// Seq is the last message sequence seen from the source stream. Not
+		// reported for mirrors.
+		Seq uint64 `json:"seq,omitempty"`
+
 		// Active informs when last the mirror or sourced stream had activity.
 		// Value will be -1 when there has been no activity.
 		Active time.Duration `json:"active"`
@@ -312,6 +316,80 @@ type (
 
 		// Replicas is the list of members of the RAFT cluster.
 		Replicas []*PeerInfo `json:"replicas,omitempty"`
+
+		// Desired is the desired set of servers that should make up the
+		// stream or consumer. Absent when no reconfiguration is in progress.
+		Desired *DesiredClusterInfo `json:"desired,omitempty"`
+	}
+
+	// DesiredClusterInfo shows the desired set of servers that should make up
+	// the stream or consumer.
+	DesiredClusterInfo struct {
+		// Created is when the desired state was recorded on the assignment.
+		Created time.Time `json:"created"`
+
+		// Name is the name of the target cluster the group should end up in.
+		Name string `json:"name,omitempty"`
+
+		// Replicas are the peers chosen to be the final peer set, whereas
+		// ClusterInfo.Replicas holds the peers that currently host the stream
+		// or consumer. Absent while scaling down until the final peer set is
+		// selected.
+		Replicas []*DesiredPeerInfo `json:"replicas,omitempty"`
+
+		// Origin is the configuration the reconfiguration can be rolled back
+		// to if it is canceled.
+		Origin *DesiredClusterInfoOrigin `json:"origin,omitempty"`
+
+		// Status is what the group leader is currently doing to reach the
+		// desired state, or what it is waiting on.
+		Status *DesiredClusterInfoStatus `json:"status,omitempty"`
+	}
+
+	// DesiredClusterInfoOrigin is the configuration the reconfiguration can
+	// be rolled back to if it is canceled.
+	DesiredClusterInfoOrigin struct {
+		// Replicas is the original replicas before it was updated.
+		Replicas int `json:"replicas"`
+
+		// Placement is the original placement before it was updated.
+		Placement *Placement `json:"placement,omitempty"`
+
+		// Retention remains active while changing between retention
+		// policies, until unset.
+		Retention *RetentionPolicy `json:"retention,omitempty"`
+	}
+
+	// DesiredPeerInfo is a minimal version of PeerInfo describing a peer in
+	// the desired peer set.
+	DesiredPeerInfo struct {
+		// Name is the unique name for the peer.
+		Name string `json:"name"`
+
+		// Offline indicates the peer has not been seen recently.
+		Offline bool `json:"offline,omitempty"`
+
+		// Peer is the unique ID for the peer.
+		Peer string `json:"peer"`
+	}
+
+	// DesiredClusterInfoStatus is what the group leader is currently doing to
+	// reach the desired state, or what it is waiting on.
+	DesiredClusterInfoStatus struct {
+		// Description is a short status line describing what the group leader
+		// is currently doing to move this group toward its desired state, or
+		// what it is waiting on.
+		Description string `json:"description"`
+
+		// Type classifies the description by what has to change for the
+		// migration to advance, so it can be matched on without parsing the
+		// status line.
+		Type MigrationStatusType `json:"type"`
+
+		// Err is the underlying failure behind this status, if it had one.
+		// Only set for faults that persist across cycles, never for races
+		// that resolve themselves.
+		Err string `json:"err,omitempty"`
 	}
 
 	// PeerInfo shows information about the peers in the cluster that are
@@ -333,6 +411,13 @@ type (
 		// Lag is the number of uncommitted operations this peer is behind the
 		// leader.
 		Lag uint64 `json:"lag,omitempty"`
+
+		// Peer is the unique ID for the peer.
+		Peer string `json:"peer"`
+
+		// Pending indicates the peer is part of the assignment, but is not a
+		// peer of the Raft group yet or is being removed.
+		Pending bool `json:"pending,omitempty"`
 	}
 
 	// SubjectTransformConfig is for applying a subject transform (to matching
@@ -457,6 +542,38 @@ type (
 
 	// PersistModeType determines what persistence mode the stream uses.
 	PersistModeType int
+
+	// MigrationStatusType classifies a migration status by what has to
+	// change for the migration to advance.
+	MigrationStatusType string
+)
+
+const (
+	// MigrationStatusMeta means the meta leader must record or advance the
+	// desired state.
+	MigrationStatusMeta MigrationStatusType = "meta"
+
+	// MigrationStatusMembership means a proposed membership change must
+	// commit.
+	MigrationStatusMembership MigrationStatusType = "membership"
+
+	// MigrationStatusSnapshot means a snapshot must be installed.
+	MigrationStatusSnapshot MigrationStatusType = "snapshot"
+
+	// MigrationStatusCatchup means more peers must catch up before one can
+	// be removed.
+	MigrationStatusCatchup MigrationStatusType = "catchup"
+
+	// MigrationStatusQuorum means more peers must come online before acting
+	// without losing quorum.
+	MigrationStatusQuorum MigrationStatusType = "quorum"
+
+	// MigrationStatusBlocked means another asset must move first.
+	MigrationStatusBlocked MigrationStatusType = "blocked"
+
+	// MigrationStatusUnavailable means there is nothing to do: shutting down,
+	// or the assignment is gone.
+	MigrationStatusUnavailable MigrationStatusType = "unavailable"
 )
 
 const (
