@@ -57,6 +57,7 @@ type (
 		scheduleSource string        // Source subject for sampling
 		scheduleTTL    string        // TTL for generated messages
 		scheduleTZ     string        // Time zone for cron schedules
+		scheduleRollup string        // Rollup for generated messages
 
 		// Publish retries for NoResponders err.
 		retryWait     time.Duration // Retry wait between attempts
@@ -237,6 +238,9 @@ func (js *jetStream) PublishMsg(ctx context.Context, m *nats.Msg, opts ...Publis
 	if o.scheduleTZ != "" {
 		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
 	}
+	if o.scheduleRollup != "" {
+		m.Header.Set(ScheduleRollupHeader, o.scheduleRollup)
+	}
 
 	var resp *nats.Msg
 	var err error
@@ -341,6 +345,9 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 	}
 	if o.scheduleTZ != "" {
 		m.Header.Set(ScheduleTimeZoneHeader, o.scheduleTZ)
+	}
+	if o.scheduleRollup != "" {
+		m.Header.Set(ScheduleRollupHeader, o.scheduleRollup)
 	}
 
 	paf := o.pafRetry

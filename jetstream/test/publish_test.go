@@ -2246,6 +2246,88 @@ func TestPublishWithScheduleTimeZone(t *testing.T) {
 	})
 }
 
+func TestPublishWithScheduleRollup(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 10*time.Second)
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:              "SCHED",
+			Subjects:          []string{"schedule.>", "target.>"},
+			AllowMsgSchedules: true,
+			AllowRollup:       true,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+			FilterSubject: "target.rollup",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ack, err := js.Publish(ctx, "schedule.rollup", []byte("tick"),
+			jetstream.WithScheduleEvery(time.Second),
+			jetstream.WithScheduleTarget("target.rollup"),
+			jetstream.WithScheduleRollup(),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleRollupHeader); got != jetstream.MsgRollupSubject {
+			t.Fatalf("Expected schedule rollup header %q; got: %q", jetstream.MsgRollupSubject, got)
+		}
+
+		first, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+		if err != nil {
+			t.Fatalf("Expected to receive scheduled message: %v", err)
+		}
+		if got := first.Headers().Get(jetstream.MsgRollup); got != jetstream.MsgRollupSubject {
+			t.Fatalf("Expected rollup header %q on delivered message; got: %q", jetstream.MsgRollupSubject, got)
+		}
+		firstMeta, err := first.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// The second firing must roll up the first one.
+		if _, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second)); err != nil {
+			t.Fatalf("Expected to receive second scheduled message: %v", err)
+		}
+		if _, err := stream.GetMsg(ctx, firstMeta.Sequence.Stream); !errors.Is(err, jetstream.ErrMsgNotFound) {
+			t.Fatalf("Expected first scheduled message to be rolled up; got: %v", err)
+		}
+
+		t.Run("async", func(t *testing.T) {
+			paf, err := js.PublishAsync("schedule.rollup.async", nil,
+				jetstream.WithScheduleEvery(time.Hour),
+				jetstream.WithScheduleTarget("target.rollup.async"),
+				jetstream.WithScheduleRollup(),
+			)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			var ack *jetstream.PubAck
+			select {
+			case ack = <-paf.Ok():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive ack")
+			}
+			gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if got := gotMsg.Header.Get(jetstream.ScheduleRollupHeader); got != jetstream.MsgRollupSubject {
+				t.Fatalf("Expected schedule rollup header %q; got: %q", jetstream.MsgRollupSubject, got)
+			}
+		})
+	})
+}
+
 func TestPublishAsyncWithSchedule(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 5*time.Second)
