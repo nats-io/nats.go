@@ -1834,13 +1834,16 @@ func TestUseCustomDialer(t *testing.T) {
 		if nc.Opts.Dialer != dialer {
 			t.Fatalf("Expected Dialer to be set to %v, got %v", dialer, nc.Opts.Dialer)
 		}
+		if nc.Opts.AllowMultipathTCP != nil {
+			t.Fatal("Expected AllowMultipathTCP to be unset")
+		}
 
 		// Should be possible to set via variadic func based Option setter
 		dialer2 := &net.Dialer{
 			Timeout:       5 * time.Second,
 			FallbackDelay: -1,
 		}
-		nc2, err := nats.Connect(serverURL, nats.Dialer(dialer2))
+		nc2, err := nats.Connect(serverURL, nats.Dialer(dialer2), nats.MultipathTCP(true))
 		if err != nil {
 			t.Fatalf("Unexpected error on connect: %v", err)
 		}
@@ -1848,15 +1851,21 @@ func TestUseCustomDialer(t *testing.T) {
 		if nc2.Opts.Dialer.FallbackDelay > 0 {
 			t.Fatalf("Expected for dialer to be customized to disable dual stack support")
 		}
+		if nc2.Opts.AllowMultipathTCP == nil || !*nc2.Opts.AllowMultipathTCP {
+			t.Fatal("Expected AllowMultipathTCP to be true")
+		}
 
 		// By default, dialer still uses the DefaultTimeout
-		nc3, err := nats.Connect(serverURL)
+		nc3, err := nats.Connect(serverURL, nats.MultipathTCP(false))
 		if err != nil {
 			t.Fatalf("Unexpected error on connect: %v", err)
 		}
 		defer nc3.Close()
 		if nc3.Opts.Dialer.Timeout != nats.DefaultTimeout {
 			t.Fatalf("Expected Dialer.Timeout to be set to %v, got %v", nats.DefaultTimeout, nc.Opts.Dialer.Timeout)
+		}
+		if nc3.Opts.AllowMultipathTCP == nil || *nc3.Opts.AllowMultipathTCP {
+			t.Fatal("Expected AllowMultipathTCP to be false")
 		}
 
 		// Create custom dialer that return error on Dial().

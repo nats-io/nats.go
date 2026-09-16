@@ -538,6 +538,11 @@ type Options struct {
 	// Deprecated: should use CustomDialer instead.
 	Dialer *net.Dialer
 
+	// AllowMultipathTCP controls MPTCP for connections made with Dialer.
+	// A nil value leaves Go's default unchanged. If MPTCP is unavailable,
+	// the dialer falls back to TCP. This option does not affect CustomDialer.
+	AllowMultipathTCP *bool
+
 	// CustomDialer allows to specify a custom dialer (not necessarily
 	// a *net.Dialer).
 	CustomDialer CustomDialer
@@ -1634,6 +1639,18 @@ func Dialer(dialer *net.Dialer) Option {
 	}
 }
 
+// MultipathTCP is an Option to enable or disable MPTCP for connections made
+// with the default dialer or a net.Dialer supplied through Dialer. If the
+// option is not specified, the dialer's existing setting or Go's default is
+// used. If MPTCP is unavailable, the dialer falls back to TCP. CustomDialer
+// takes precedence.
+func MultipathTCP(enabled bool) Option {
+	return func(o *Options) error {
+		o.AllowMultipathTCP = &enabled
+		return nil
+	}
+}
+
 // SetCustomDialer is an Option to set a custom dialer which will be
 // used when attempting to establish a connection. If both Dialer
 // and CustomDialer are specified, CustomDialer takes precedence.
@@ -2483,6 +2500,9 @@ func (nc *Conn) createConn() (err error) {
 		// We will copy and shorten the timeout if we have multiple hosts to try.
 		copyDialer := *nc.Opts.Dialer
 		copyDialer.Timeout = copyDialer.Timeout / time.Duration(len(hosts))
+		if nc.Opts.AllowMultipathTCP != nil {
+			copyDialer.SetMultipathTCP(*nc.Opts.AllowMultipathTCP)
+		}
 		dialer = &copyDialer
 	}
 
