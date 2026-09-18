@@ -91,12 +91,13 @@ type (
 	// - Close the KeyValue store
 	KeyValue interface {
 		// Get returns the latest value for the key. If the key does not exist,
-		// ErrKeyNotFound will be returned.
+		// ErrKeyNotFound will be returned. Returns ErrInvalidKey if the key name is invalid.
+		// Returns ErrKeyDeleted if the key was deleted.
 		Get(ctx context.Context, key string) (KeyValueEntry, error)
 
 		// GetRevision returns a specific revision value for the key. If the key
 		// does not exist or the provided revision does not exists,
-		// ErrKeyNotFound will be returned.
+		// ErrKeyNotFound will be returned. Returns ErrInvalidKey if the key name is invalid.
 		GetRevision(ctx context.Context, key string, revision uint64) (KeyValueEntry, error)
 
 		// Put will place the new value for the key into the store. If the key
@@ -104,7 +105,7 @@ type (
 		// be updated.
 		//
 		// A key has to consist of alphanumeric characters, dashes, underscores,
-		// equal signs, and dots.
+		// equal signs, and dots. Returns ErrInvalidKey if the key name is invalid.
 		Put(ctx context.Context, key string, value []byte) (uint64, error)
 
 		// PutString will place the string for the key into the store. If the
@@ -112,19 +113,19 @@ type (
 		// will be updated.
 		//
 		// A key has to consist of alphanumeric characters, dashes, underscores,
-		// equal signs, and dots.
+		// equal signs, and dots. Returns ErrInvalidKey if the key name is invalid.
 		PutString(ctx context.Context, key string, value string) (uint64, error)
 
 		// Create will add the key/value pair if it does not exist. If the key
 		// already exists, ErrKeyExists will be returned.
 		//
 		// A key has to consist of alphanumeric characters, dashes, underscores,
-		// equal signs, and dots.
+		// equal signs, and dots. Returns ErrInvalidKey if the key name is invalid.
 		Create(ctx context.Context, key string, value []byte, opts ...KVCreateOpt) (uint64, error)
 
 		// Update will update the value if the latest revision matches.
 		// If the provided revision does not match the key's current revision,
-		// ErrKeyRevisionMismatch is returned.
+		// ErrKeyRevisionMismatch is returned. Returns ErrInvalidKey if the key name is invalid.
 		// Update also resets the TTL associated with the key (if any).
 		Update(ctx context.Context, key string, value []byte, revision uint64) (uint64, error)
 
@@ -135,7 +136,7 @@ type (
 		//
 		// [LastRevision] option can be specified to only perform delete if the
 		// latest revision matches the provided one; if it does not,
-		// ErrKeyRevisionMismatch is returned.
+		// ErrKeyRevisionMismatch is returned. Returns ErrInvalidKey if the key name is invalid.
 		Delete(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Purge will place a delete marker and remove all previous revisions.
@@ -145,7 +146,7 @@ type (
 		//
 		// [LastRevision] option can be specified to only perform purge if the
 		// latest revision matches the provided one; if it does not,
-		// ErrKeyRevisionMismatch is returned.
+		// ErrKeyRevisionMismatch is returned. Returns ErrInvalidKey if the key name is invalid.
 		Purge(ctx context.Context, key string, opts ...KVDeleteOpt) error
 
 		// Watch for any updates to keys that match the keys argument which
@@ -191,7 +192,8 @@ type (
 		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
-		// KeyValueMaxHistory).
+		// KeyValueMaxHistory). Returns ErrKeyNotFound if the key does not exist.
+		// Returns ErrInvalidKey if the key name is invalid.
 		History(ctx context.Context, key string, opts ...WatchOpt) ([]KeyValueEntry, error)
 
 		// Bucket returns the KV store name.
