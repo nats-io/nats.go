@@ -527,18 +527,6 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		}
 	}
 
-	doErr := func(err error) {
-		paf.err = err
-		if paf.errCh != nil {
-			paf.errCh <- paf.err
-		}
-		cb := js.publisher.asyncPublisherOpts.aecb
-		js.publisher.Unlock()
-		if cb != nil {
-			cb(js, paf.msg, err)
-		}
-	}
-
 	if paf.timeout != nil {
 		paf.timeout.Stop()
 	}
@@ -560,7 +548,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 				})
 				if err != nil {
 					js.publisher.Lock()
-					doErr(err)
+					js.handleAsyncErrAndUnlock(paf, err)
 				}
 			})
 			js.publisher.Unlock()
@@ -569,7 +557,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 		delete(js.publisher.acks, id)
 		closeStc()
 		defer closeDchFn()()
-		doErr(ErrNoStreamResponse)
+		js.handleAsyncErrAndUnlock(paf, ErrNoStreamResponse)
 		return
 	}
 
@@ -580,15 +568,15 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 
 	var pa pubAckResponse
 	if err := json.Unmarshal(m.Data, &pa); err != nil {
-		doErr(ErrInvalidJSAck)
+		js.handleAsyncErrAndUnlock(paf, ErrInvalidJSAck)
 		return
 	}
 	if pa.Error != nil {
-		doErr(pa.Error)
+		js.handleAsyncErrAndUnlock(paf, pa.Error)
 		return
 	}
 	if pa.PubAck == nil || pa.PubAck.Stream == "" {
-		doErr(ErrInvalidJSAck)
+		js.handleAsyncErrAndUnlock(paf, ErrInvalidJSAck)
 		return
 	}
 
@@ -601,6 +589,18 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 	js.publisher.Unlock()
 	if cb != nil {
 		cb(js, paf.msg, paf.ack)
+	}
+}
+
+func (js *jetStream) handleAsyncErrAndUnlock(paf *pubAckFuture, err error) {
+	paf.err = err
+	if paf.errCh != nil {
+		paf.errCh <- paf.err
+	}
+	cb := js.publisher.asyncPublisherOpts.aecb
+	js.publisher.Unlock()
+	if cb != nil {
+		cb(js, paf.msg, err)
 	}
 }
 
