@@ -55,7 +55,7 @@ jobs:
           nats:
             # Single source of truth for the tester image; the Makefile parses
             # the tag from this line.
-            image: synadia/ntf-server:v0.0.5-nats-2.14.3
+            image: synadia/ntf-server:v0.0.7-nats-2.15.0
             command: serve --advertise nats
             options: >-
               --name nats
