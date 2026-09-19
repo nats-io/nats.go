@@ -203,7 +203,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	if handler == nil {
 		return nil, ErrHandlerRequired
 	}
-	consumeOpts, err := parseConsumeOpts(false, opts...)
+	consumeOpts, err := parseConsumeOpts(false, p.info.Config.MaxRequestBatch, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
@@ -502,7 +502,7 @@ func (s *pullSubscription) checkPending() {
 //
 // See [Consumer.Messages] for more details.
 func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error) {
-	consumeOpts, err := parseMessagesOpts(false, opts...)
+	consumeOpts, err := parseMessagesOpts(false, p.info.Config.MaxRequestBatch, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
@@ -1141,7 +1141,7 @@ func (s *pullSubscription) pull(req *pullRequest, subject string) error {
 	return nil
 }
 
-func parseConsumeOpts(ordered bool, opts ...PullConsumeOpt) (*consumeOpts, error) {
+func parseConsumeOpts(ordered bool, maxRequestBatch int, opts ...PullConsumeOpt) (*consumeOpts, error) {
 	consumeOpts := &consumeOpts{
 		MaxMessages:             unset,
 		MaxBytes:                unset,
@@ -1155,13 +1155,13 @@ func parseConsumeOpts(ordered bool, opts ...PullConsumeOpt) (*consumeOpts, error
 			return nil, err
 		}
 	}
-	if err := consumeOpts.setDefaults(ordered); err != nil {
+	if err := consumeOpts.setDefaults(ordered, maxRequestBatch); err != nil {
 		return nil, err
 	}
 	return consumeOpts, nil
 }
 
-func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, error) {
+func parseMessagesOpts(ordered bool, maxRequestBatch int, opts ...PullMessagesOpt) (*consumeOpts, error) {
 	consumeOpts := &consumeOpts{
 		MaxMessages:             unset,
 		MaxBytes:                unset,
@@ -1175,23 +1175,42 @@ func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, err
 			return nil, err
 		}
 	}
-	if err := consumeOpts.setDefaults(ordered); err != nil {
+	if err := consumeOpts.setDefaults(ordered, maxRequestBatch); err != nil {
 		return nil, err
 	}
 	return consumeOpts, nil
 }
 
-func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
+// setDefaults fills in defaults for options the caller did not set.
+// maxRequestBatch is the consumer's configured MaxRequestBatch (0 if
+// unset/not applicable, e.g. for ordered consumers), used to keep the
+// default batch size from silently exceeding what the server will accept
+// (see https://github.com/nats-io/nats.go/issues/1588): a request that
+// exceeds MaxRequestBatch fails server-side, and if the caller didn't
+// choose the value themselves, they have no reasonable way to predict it.
+func (consumeOpts *consumeOpts) setDefaults(ordered bool, maxRequestBatch int) error {
 	// we cannot use both max messages and max bytes unless we're using max bytes as fetch size limiter
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset && !consumeOpts.LimitSize {
 		return errors.New("only one of MaxMessages and MaxBytes can be specified")
 	}
 	if consumeOpts.MaxBytes != unset && !consumeOpts.LimitSize {
-		// we used PullMaxBytes setting, set MaxMessages to a high value
+		// we used PullMaxBytes setting, set MaxMessages to a high value,
+		// capped by the consumer's MaxRequestBatch if it is set lower
 		consumeOpts.MaxMessages = defaultBatchMaxBytesOnly
+		if maxRequestBatch > 0 && maxRequestBatch < consumeOpts.MaxMessages {
+			consumeOpts.MaxMessages = maxRequestBatch
+		}
 	} else if consumeOpts.MaxMessages == unset {
-		// otherwise, if max messages is not set, set it to default value
+		// otherwise, if max messages is not set, set it to default value,
+		// capped by the consumer's MaxRequestBatch if it is set lower
 		consumeOpts.MaxMessages = DefaultMaxMessages
+		if maxRequestBatch > 0 && maxRequestBatch < consumeOpts.MaxMessages {
+			consumeOpts.MaxMessages = maxRequestBatch
+		}
+	} else if maxRequestBatch > 0 && consumeOpts.MaxMessages > maxRequestBatch {
+		// the caller explicitly asked for more messages per pull than the
+		// consumer allows; fail now instead of on every subsequent pull
+		return fmt.Errorf("%w: PullMaxMessages (%d) exceeds consumer's MaxRequestBatch (%d)", ErrInvalidOption, consumeOpts.MaxMessages, maxRequestBatch)
 	}
 	// if user did not set max bytes, set it to 0
 	if consumeOpts.MaxBytes == unset {

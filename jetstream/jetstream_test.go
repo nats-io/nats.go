@@ -527,6 +527,74 @@ func TestPullConsumer_checkPending(t *testing.T) {
 	}
 }
 
+func TestConsumeOptsSetDefaults_MaxRequestBatch(t *testing.T) {
+	tests := []struct {
+		name            string
+		givenOpts       consumeOpts
+		maxRequestBatch int
+		expectedMaxMsgs int
+		expectedErr     error
+	}{
+		{
+			name:            "no MaxRequestBatch set on consumer, default is unaffected",
+			givenOpts:       consumeOpts{MaxMessages: unset, MaxBytes: unset},
+			maxRequestBatch: 0,
+			expectedMaxMsgs: DefaultMaxMessages,
+		},
+		{
+			name:            "MaxRequestBatch lower than default, default is capped down",
+			givenOpts:       consumeOpts{MaxMessages: unset, MaxBytes: unset},
+			maxRequestBatch: 1,
+			expectedMaxMsgs: 1,
+		},
+		{
+			name:            "MaxRequestBatch higher than default, default is unaffected",
+			givenOpts:       consumeOpts{MaxMessages: unset, MaxBytes: unset},
+			maxRequestBatch: DefaultMaxMessages + 100,
+			expectedMaxMsgs: DefaultMaxMessages,
+		},
+		{
+			name:            "explicit PullMaxMessages within MaxRequestBatch, unaffected",
+			givenOpts:       consumeOpts{MaxMessages: 10, MaxBytes: unset},
+			maxRequestBatch: 20,
+			expectedMaxMsgs: 10,
+		},
+		{
+			name:            "explicit PullMaxMessages exceeds MaxRequestBatch, error",
+			givenOpts:       consumeOpts{MaxMessages: 10, MaxBytes: unset},
+			maxRequestBatch: 5,
+			expectedErr:     ErrInvalidOption,
+		},
+		{
+			name:            "bytes-only mode, high internal default is capped by MaxRequestBatch",
+			givenOpts:       consumeOpts{MaxMessages: unset, MaxBytes: 1024, LimitSize: false},
+			maxRequestBatch: 1,
+			expectedMaxMsgs: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := test.givenOpts
+			// fields setDefaults() also touches but this test does not care about
+			opts.Expires = DefaultExpires
+			err := opts.setDefaults(false, test.maxRequestBatch)
+			if test.expectedErr != nil {
+				if !errors.Is(err, test.expectedErr) {
+					t.Fatalf("expected error %v; got %v", test.expectedErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts.MaxMessages != test.expectedMaxMsgs {
+				t.Fatalf("expected MaxMessages %d; got %d", test.expectedMaxMsgs, opts.MaxMessages)
+			}
+		})
+	}
+}
+
 func TestIsWrongLastSeqErr(t *testing.T) {
 	// 10164 is the replicated-stream variant of the 10071 "wrong last
 	// sequence" CAS conflict; both must be recognized (issue #2097).
