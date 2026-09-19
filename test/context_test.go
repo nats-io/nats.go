@@ -15,6 +15,7 @@ package test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -266,6 +267,27 @@ func testContextRequestWithCancel(t *testing.T, nc *nats.Conn) {
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected %q error, got: %q", expected, err.Error())
 	}
+}
+
+func TestRequestWithContextForceReconnectNotClosed(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := nc.RequestWithContext(ctx, "nobody-home", nil)
+			errCh <- err
+		}()
+		time.Sleep(20 * time.Millisecond)
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatal(err)
+		}
+		err := <-errCh
+		if errors.Is(err, nats.ErrConnectionClosed) {
+			t.Fatalf("RequestWithContext returned ErrConnectionClosed during reconnect: %v", err)
+		}
+	})
 }
 
 func TestContextOldRequestClosed(t *testing.T) {
