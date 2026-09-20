@@ -729,7 +729,7 @@ func (c *orderedConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		return nil, ErrConsumerNotFound
 	}
 
-	c.currentConsumer.info = resp.ConsumerInfo
+	c.currentConsumer.info.Store(resp.ConsumerInfo)
 	return resp.ConsumerInfo, nil
 }
 
@@ -742,7 +742,7 @@ func (c *orderedConsumer) CachedInfo() *ConsumerInfo {
 	if c.currentConsumer == nil {
 		return nil
 	}
-	return c.currentConsumer.info
+	return c.currentConsumer.info.Load()
 }
 
 type backoffOpts struct {

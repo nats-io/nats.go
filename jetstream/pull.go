@@ -89,7 +89,7 @@ type (
 		stream  string
 		durable bool
 		name    string
-		info    *ConsumerInfo
+		info    atomic.Pointer[ConsumerInfo]
 		subs    syncx.Map[string, *pullSubscription]
 		pinID   string
 	}
@@ -208,12 +208,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 
-	if len(p.info.Config.PriorityGroups) != 0 {
+	info := p.info.Load()
+	priorityGroups := info.Config.PriorityGroups
+	if len(priorityGroups) != 0 {
 		if consumeOpts.Group == "" {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
 		}
 
-		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+		if !slices.Contains(priorityGroups, consumeOpts.Group) {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
 		}
 	} else if consumeOpts.Group != "" {
@@ -507,12 +509,14 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 
-	if len(p.info.Config.PriorityGroups) != 0 {
+	info := p.info.Load()
+	priorityGroups := info.Config.PriorityGroups
+	if len(priorityGroups) != 0 {
 		if consumeOpts.Group == "" {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
 		}
 
-		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+		if !slices.Contains(priorityGroups, consumeOpts.Group) {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
 		}
 	} else if consumeOpts.Group != "" {
