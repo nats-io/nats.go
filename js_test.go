@@ -22,7 +22,41 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 )
+
+func TestJetStreamReconnectErrorCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		msg := &Msg{Subject: "events", Data: []byte("pending")}
+		called := make(chan struct{}, 1)
+		js := &js{
+			opts:         &jsOpts{},
+			connStatusCh: make(chan Status),
+			pafs:         map[string]*pubAckFuture{"pending": {msg: msg}},
+		}
+		js.opts.aecb = func(ctx JetStream, got *Msg, err error) {
+			if got != msg || !errors.Is(err, ErrDisconnected) {
+				t.Errorf("Unexpected callback: message=%p, error=%v", got, err)
+			}
+			if pending := ctx.PublishAsyncPending(); pending != 0 {
+				t.Errorf("Expected pending publishes to be cleared, got %d", pending)
+			}
+			called <- struct{}{}
+		}
+		go js.resetPendingAcksOnReconnect()
+		defer func() {
+			close(js.connStatusCh)
+			synctest.Wait()
+		}()
+		js.connStatusCh <- RECONNECTING
+		synctest.Wait()
+		select {
+		case <-called:
+		default:
+			t.Fatal("Reconnect error callback was deferred until shutdown")
+		}
+	})
+}
 
 func TestIsWrongLastSeqErr(t *testing.T) {
 	// 10164 is the replicated-stream variant of the 10071 "wrong last

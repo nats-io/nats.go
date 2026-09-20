@@ -17,10 +17,42 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/nats-io/nats.go"
 )
+
+func TestJetStreamReconnectErrorCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		msg := &nats.Msg{Subject: "events", Data: []byte("pending")}
+		called := make(chan struct{}, 1)
+		js := &jetStream{publisher: &jetStreamClient{}}
+		js.publisher.connStatusCh = make(chan nats.Status)
+		js.publisher.acks = map[string]*pubAckFuture{"pending": {msg: msg}}
+		js.publisher.aecb = func(ctx JetStream, got *nats.Msg, err error) {
+			if got != msg || !errors.Is(err, nats.ErrDisconnected) {
+				t.Errorf("Unexpected callback: message=%p, error=%v", got, err)
+			}
+			if pending := ctx.PublishAsyncPending(); pending != 0 {
+				t.Errorf("Expected pending publishes to be cleared, got %d", pending)
+			}
+			called <- struct{}{}
+		}
+		go js.resetPendingAcksOnReconnect()
+		defer func() {
+			close(js.publisher.connStatusCh)
+			synctest.Wait()
+		}()
+		js.publisher.connStatusCh <- nats.RECONNECTING
+		synctest.Wait()
+		select {
+		case <-called:
+		default:
+			t.Fatal("Reconnect error callback was deferred until shutdown")
+		}
+	})
+}
 
 func TestMessageMetadata(t *testing.T) {
 	tests := []struct {
