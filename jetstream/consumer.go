@@ -206,7 +206,7 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		return nil, ErrConsumerNotFound
 	}
 
-	p.info = resp.ConsumerInfo
+	p.info.Store(resp.ConsumerInfo)
 	return resp.ConsumerInfo, nil
 }
 
@@ -214,7 +214,7 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 // This method does not perform any network requests. The cached
 // ConsumerInfo is updated on every call to Info and Update.
 func (p *pullConsumer) CachedInfo() *ConsumerInfo {
-	return p.info
+	return p.info.Load()
 }
 
 // Info fetches current ConsumerInfo from the server.
@@ -239,7 +239,7 @@ func (p *pushConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 		return nil, ErrConsumerNotFound
 	}
 
-	p.info = resp.ConsumerInfo
+	p.info.Store(resp.ConsumerInfo)
 	return resp.ConsumerInfo, nil
 }
 
@@ -247,7 +247,7 @@ func (p *pushConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 // This method does not perform any network requests. The cached
 // ConsumerInfo is updated on every call to Info and Update.
 func (p *pushConsumer) CachedInfo() *ConsumerInfo {
-	return p.info
+	return p.info.Load()
 }
 
 func upsertPullConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (Consumer, error) {
@@ -256,14 +256,15 @@ func upsertPullConsumer(ctx context.Context, js *jetStream, stream string, cfg C
 		return nil, err
 	}
 
-	return &pullConsumer{
+	c := &pullConsumer{
 		js:      js,
 		stream:  stream,
 		name:    resp.Name,
 		durable: cfg.Durable != "",
-		info:    resp.ConsumerInfo,
 		subs:    syncx.Map[string, *pullSubscription]{},
-	}, nil
+	}
+	c.info.Store(resp.ConsumerInfo)
+	return c, nil
 }
 
 func upsertPushConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (PushConsumer, error) {
@@ -276,12 +277,13 @@ func upsertPushConsumer(ctx context.Context, js *jetStream, stream string, cfg C
 		return nil, err
 	}
 
-	return &pushConsumer{
+	c := &pushConsumer{
 		js:     js,
 		stream: stream,
 		name:   resp.Name,
-		info:   resp.ConsumerInfo,
-	}, nil
+	}
+	c.info.Store(resp.ConsumerInfo)
+	return c, nil
 }
 
 func upsertConsumer(ctx context.Context, js *jetStream, stream string, cfg ConsumerConfig, action string) (*consumerInfoResponse, error) {
@@ -380,9 +382,9 @@ func getConsumer(ctx context.Context, js *jetStream, stream, name string) (Consu
 		stream:  stream,
 		name:    name,
 		durable: info.Config.Durable != "",
-		info:    info,
 		subs:    syncx.Map[string, *pullSubscription]{},
 	}
+	cons.info.Store(info)
 
 	return cons, nil
 }
@@ -401,8 +403,8 @@ func getPushConsumer(ctx context.Context, js *jetStream, stream, name string) (P
 		js:     js,
 		stream: stream,
 		name:   name,
-		info:   info,
 	}
+	cons.info.Store(info)
 
 	return cons, nil
 }
