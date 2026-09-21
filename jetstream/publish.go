@@ -367,15 +367,8 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 		}
 		id = reply[js.opts.replyPrefixLen:]
 		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
-		numPending, maxPending := js.registerPAF(id, paf)
-
-		if maxPending > 0 && numPending > maxPending {
-			select {
-			case <-js.asyncStall():
-			case <-time.After(stallWait):
-				js.clearPAF(id)
-				return nil, ErrTooManyStalledMsgs
-			}
+		if err := js.registerPAF(id, paf, stallWait); err != nil {
+			return nil, err
 		}
 		if js.publisher.ackTimeout > 0 {
 			paf.timeout = time.AfterFunc(js.publisher.ackTimeout, func() {
@@ -611,6 +604,12 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 	for {
 		newStatus, ok := <-connStatusCh
 		if !ok || newStatus == nats.CLOSED {
+			js.publisher.Lock()
+			if js.publisher.stallCh != nil {
+				close(js.publisher.stallCh)
+				js.publisher.stallCh = nil
+			}
+			js.publisher.Unlock()
 			return
 		}
 		js.publisher.Lock()
@@ -625,6 +624,10 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			}
 			delete(js.publisher.acks, id)
 		}
+		if js.publisher.stallCh != nil {
+			close(js.publisher.stallCh)
+			js.publisher.stallCh = nil
+		}
 		if js.publisher.doneCh != nil {
 			close(js.publisher.doneCh)
 			js.publisher.doneCh = nil
@@ -633,17 +636,56 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 	}
 }
 
-// registerPAF will register for a PubAckFuture.
-func (js *jetStream) registerPAF(id string, paf *pubAckFuture) (int, int) {
-	js.publisher.Lock()
-	if js.publisher.acks == nil {
-		js.publisher.acks = make(map[string]*pubAckFuture)
+// registerPAF waits for capacity before registering a PubAckFuture. Unsent
+// waiters must not occupy pending slots needed to release other waiters.
+func (js *jetStream) registerPAF(id string, paf *pubAckFuture, stallWait time.Duration) error {
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	for {
+		select {
+		case <-timeout:
+			return ErrTooManyStalledMsgs
+		default:
+		}
+		js.publisher.Lock()
+		if js.conn.IsClosed() {
+			js.publisher.Unlock()
+			return nats.ErrConnectionClosed
+		}
+		if js.publisher.replySub == nil || !strings.HasPrefix(paf.reply, js.publisher.replyPrefix) {
+			js.publisher.Unlock()
+			return ErrJetStreamPublisherClosed
+		}
+		if js.publisher.maxpa <= 0 || len(js.publisher.acks) < js.publisher.maxpa {
+			if js.publisher.acks == nil {
+				js.publisher.acks = make(map[string]*pubAckFuture)
+			}
+			js.publisher.acks[id] = paf
+			js.publisher.Unlock()
+			return nil
+		}
+		// Check capacity and subscribe to its notification under the same lock.
+		if js.publisher.stallCh == nil {
+			js.publisher.stallCh = make(chan struct{})
+		}
+		stc := js.publisher.stallCh
+		js.publisher.Unlock()
+		if timer == nil {
+			timer = time.NewTimer(stallWait)
+			timeout = timer.C
+		}
+		select {
+		case <-stc:
+			// Notifications are shared; recheck capacity before claiming a slot.
+		case <-timeout:
+			return ErrTooManyStalledMsgs
+		}
 	}
-	js.publisher.acks[id] = paf
-	np := len(js.publisher.acks)
-	maxpa := js.publisher.asyncPublisherOpts.maxpa
-	js.publisher.Unlock()
-	return np, maxpa
 }
 
 // Lock should be held.
@@ -657,18 +699,19 @@ func (js *jetStream) getPAF(id string) *pubAckFuture {
 // clearPAF will remove a PubAckFuture that was registered.
 func (js *jetStream) clearPAF(id string) {
 	js.publisher.Lock()
-	delete(js.publisher.acks, id)
-	js.publisher.Unlock()
-}
-
-func (js *jetStream) asyncStall() <-chan struct{} {
-	js.publisher.Lock()
-	if js.publisher.stallCh == nil {
-		js.publisher.stallCh = make(chan struct{})
+	if paf := js.publisher.acks[id]; paf != nil && paf.timeout != nil {
+		paf.timeout.Stop()
 	}
-	stc := js.publisher.stallCh
+	delete(js.publisher.acks, id)
+	if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
+		close(js.publisher.stallCh)
+		js.publisher.stallCh = nil
+	}
+	if js.publisher.doneCh != nil && len(js.publisher.acks) == 0 {
+		close(js.publisher.doneCh)
+		js.publisher.doneCh = nil
+	}
 	js.publisher.Unlock()
-	return stc
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
