@@ -14,7 +14,7 @@
 package jetstream
 
 import (
-	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +29,10 @@ func TestPublishAsyncMaxPendingNotExceeded(t *testing.T) {
 	js := &jetStream{
 		publisher: &jetStreamClient{
 			asyncPublisherOpts: asyncPublisherOpts{maxpa: maxPending},
+			asyncPublishContext: asyncPublishContext{
+				replyPrefix: "test.",
+				rr:          rand.New(rand.NewSource(1)),
+			},
 		},
 	}
 
@@ -63,13 +67,13 @@ func TestPublishAsyncMaxPendingNotExceeded(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(n)
 	for i := 0; i < n; i++ {
-		go func(i int) {
+		go func() {
 			defer wg.Done()
 			<-start
 			paf := &pubAckFuture{jsClient: js.publisher}
-			_ = js.registerPAF(fmt.Sprintf("%d", i), paf, time.Second)
+			_, _ = js.registerPAF(paf, time.Second)
 			track()
-		}(i)
+		}()
 	}
 
 	close(start)
@@ -84,5 +88,47 @@ func TestPublishAsyncMaxPendingNotExceeded(t *testing.T) {
 
 	if got := observed.Load(); int(got) > maxPending {
 		t.Fatalf("PublishAsyncPending exceeded max pending: got %d, want <= %d", got, maxPending)
+	}
+}
+
+// clearPAF frees a pending slot; stalled registerPAF callers must be woken
+// instead of sitting out the full stallWait (review on #2126).
+func TestRegisterPAFUnstallOnClear(t *testing.T) {
+	const maxPending = 1
+	js := &jetStream{
+		publisher: &jetStreamClient{
+			asyncPublisherOpts: asyncPublisherOpts{maxpa: maxPending},
+			asyncPublishContext: asyncPublishContext{
+				replyPrefix: "test.",
+				rr:          rand.New(rand.NewSource(1)),
+			},
+		},
+	}
+
+	paf0 := &pubAckFuture{jsClient: js.publisher}
+	reply0, err := js.registerPAF(paf0, time.Second)
+	if err != nil {
+		t.Fatalf("registerPAF: %v", err)
+	}
+	id0 := reply0[len(js.publisher.replyPrefix):]
+
+	done := make(chan error, 1)
+	go func() {
+		paf := &pubAckFuture{jsClient: js.publisher}
+		_, err := js.registerPAF(paf, time.Second)
+		done <- err
+	}()
+
+	// Let the goroutine reach the stall wait.
+	time.Sleep(20 * time.Millisecond)
+	js.clearPAF(id0)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected registerPAF to succeed after clearPAF, got %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("registerPAF did not wake after clearPAF")
 	}
 }
