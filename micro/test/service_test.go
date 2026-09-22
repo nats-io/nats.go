@@ -537,6 +537,20 @@ func TestAddService(t *testing.T) {
 	}
 }
 
+func TestAddServiceClosedConnection(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		nc.Close()
+
+		_, err := micro.AddService(nc, micro.Config{
+			Name:    "test_service",
+			Version: "0.1.0",
+		})
+		if !errors.Is(err, nats.ErrConnectionClosed) {
+			t.Fatalf("Expected %v; got: %v", nats.ErrConnectionClosed, err)
+		}
+	})
+}
+
 func TestErrHandlerSubjectMatch(t *testing.T) {
 	tests := []struct {
 		name             string
