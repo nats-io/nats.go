@@ -767,13 +767,14 @@ func (js *js) resetPendingAcksOnReconnect() {
 			}
 			delete(js.pafs, id)
 		}
-		if js.dch != nil {
-			close(js.dch)
-			js.dch = nil
-		}
+		dch := js.dch
+		js.dch = nil
 		js.mu.Unlock()
 		for _, msg := range msgs {
 			errCb(js, msg, ErrDisconnected)
+		}
+		if dch != nil {
+			close(dch)
 		}
 	}
 }

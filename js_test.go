@@ -34,12 +34,18 @@ func TestJetStreamReconnectErrorCallback(t *testing.T) {
 			connStatusCh: make(chan Status),
 			pafs:         map[string]*pubAckFuture{"pending": {msg: msg}},
 		}
+		done := js.PublishAsyncComplete()
 		js.opts.aecb = func(ctx JetStream, got *Msg, err error) {
 			if got != msg || !errors.Is(err, ErrDisconnected) {
 				t.Errorf("Unexpected callback: message=%p, error=%v", got, err)
 			}
 			if pending := ctx.PublishAsyncPending(); pending != 0 {
 				t.Errorf("Expected pending publishes to be cleared, got %d", pending)
+			}
+			select {
+			case <-done:
+				t.Error("PublishAsyncComplete closed before the error callback returned")
+			default:
 			}
 			called <- struct{}{}
 		}
@@ -54,6 +60,11 @@ func TestJetStreamReconnectErrorCallback(t *testing.T) {
 		case <-called:
 		default:
 			t.Fatal("Reconnect error callback was deferred until shutdown")
+		}
+		select {
+		case <-done:
+		default:
+			t.Fatal("PublishAsyncComplete was not closed after the error callback returned")
 		}
 	})
 }

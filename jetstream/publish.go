@@ -626,13 +626,14 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			}
 			delete(js.publisher.acks, id)
 		}
-		if js.publisher.doneCh != nil {
-			close(js.publisher.doneCh)
-			js.publisher.doneCh = nil
-		}
+		dch := js.publisher.doneCh
+		js.publisher.doneCh = nil
 		js.publisher.Unlock()
 		for _, msg := range msgs {
 			errCb(js, msg, nats.ErrDisconnected)
+		}
+		if dch != nil {
+			close(dch)
 		}
 	}
 }
