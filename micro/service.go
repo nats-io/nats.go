@@ -678,7 +678,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		return err
 	}
 
-	s.verbSubs[name], err = nc.Subscribe(subj, func(msg *nats.Msg) {
+	sub, err := nc.Subscribe(subj, func(msg *nats.Msg) {
 		handler(&request{msg: msg})
 	})
 	if err != nil {
@@ -687,6 +687,7 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		}
 		return err
 	}
+	s.verbSubs[name] = sub
 	return nil
 }
 
