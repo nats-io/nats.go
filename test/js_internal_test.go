@@ -454,9 +454,10 @@ func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
 			t.Fatalf("Unexpected error: %v", err)
 		}
 		if _, err := js.AddStream(&nats.StreamConfig{
-			Name:     "SIDRACE",
-			Subjects: []string{"a"},
-			Storage:  nats.MemoryStorage,
+			Name:         "SIDRACE",
+			Subjects:     []string{"a"},
+			Storage:      nats.MemoryStorage,
+			MaxConsumers: 5000,
 		}); err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
