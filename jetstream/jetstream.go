@@ -1300,6 +1300,10 @@ func (js *jetStream) CleanupPublisher() {
 		}
 		delete(js.publisher.acks, id)
 	}
+	if js.publisher.stallCh != nil {
+		close(js.publisher.stallCh)
+		js.publisher.stallCh = nil
+	}
 	if js.publisher.doneCh != nil {
 		close(js.publisher.doneCh)
 		js.publisher.doneCh = nil
