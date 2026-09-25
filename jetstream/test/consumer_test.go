@@ -1562,3 +1562,99 @@ func TestJetStreamResetConsumer(t *testing.T) {
 		})
 	})
 }
+
+
+// TestConsumerInfoCacheConcurrent exercises the #2151 race shape as an
+// integration test: concurrent Info with CachedInfo, plus Consume and GetMsg.
+func TestConsumerInfoCacheConcurrent(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 30*time.Second)
+
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable:   "d",
+			AckPolicy: jetstream.AckExplicitPolicy,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		for i := 0; i < 20; i++ {
+			if _, err := js.Publish(ctx, "FOO.x", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatalf("Unexpected error during publish: %v", err)
+			}
+		}
+
+		var wg sync.WaitGroup
+		errCh := make(chan error, 64)
+		report := func(err error) {
+			if err == nil {
+				return
+			}
+			select {
+			case errCh <- err:
+			default:
+			}
+		}
+
+		for i := 0; i < 4; i++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 40; j++ {
+					_, err := c.Info(ctx)
+					report(err)
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 200; j++ {
+					_ = c.CachedInfo()
+				}
+			}()
+		}
+
+		for i := 0; i < 2; i++ {
+			wg.Add(3)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 20; j++ {
+					_, err := s.Info(ctx)
+					report(err)
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 200; j++ {
+					_ = s.CachedInfo()
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 40; j++ {
+					_, err := s.GetMsg(ctx, 1)
+					report(err)
+				}
+			}()
+		}
+
+		cc, err := c.Consume(func(msg jetstream.Msg) {
+			_ = msg.Ack()
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer cc.Stop()
+
+		wg.Wait()
+
+		select {
+		case err := <-errCh:
+			t.Fatalf("concurrent op error: %v", err)
+		default:
+		}
+	})
+}

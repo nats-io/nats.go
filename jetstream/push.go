@@ -17,7 +17,7 @@ type (
 		js      *jetStream
 		stream  string
 		name    string
-		info    *ConsumerInfo
+		info    atomic.Pointer[ConsumerInfo]
 		started atomic.Bool
 	}
 
@@ -58,7 +58,8 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 	p.Lock()
 	defer p.Unlock()
 
-	if p.info == nil {
+	info := p.info.Load()
+	if info == nil {
 		return nil, ErrConsumerNotFound
 	}
 
@@ -73,7 +74,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 		done:              make(chan struct{}, 1),
 		consumeOpts:       consumeOpts,
 		connStatusChanged: p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
-		idleHeartbeat:     p.info.Config.IdleHeartbeat,
+		idleHeartbeat:     info.Config.IdleHeartbeat,
 	}
 
 	sub.hbMonitor = sub.scheduleHeartbeatCheck(sub.idleHeartbeat)
@@ -105,10 +106,10 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 	}
 
 	var err error
-	if p.info.Config.DeliverGroup != "" {
-		sub.subscription, err = p.js.conn.QueueSubscribe(p.info.Config.DeliverSubject, p.info.Config.DeliverGroup, internalHandler)
+	if info.Config.DeliverGroup != "" {
+		sub.subscription, err = p.js.conn.QueueSubscribe(info.Config.DeliverSubject, info.Config.DeliverGroup, internalHandler)
 	} else {
-		sub.subscription, err = p.js.conn.Subscribe(p.info.Config.DeliverSubject, internalHandler)
+		sub.subscription, err = p.js.conn.Subscribe(info.Config.DeliverSubject, internalHandler)
 	}
 	if err != nil {
 		return nil, err
