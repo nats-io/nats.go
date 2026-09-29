@@ -2368,9 +2368,25 @@ func (w *natsWriter) flush() error {
 	// Do not skip calling w.w.Write() here if len(w.bufs) is 0 because
 	// the actual writer (if websocket for instance) may have things
 	// to do such as sending control frames, etc..
-	_, err := w.w.Write(w.bufs)
-	w.bufs = w.bufs[:0]
-	return err
+	// Handle partial writes: when the underlying writer accepts only part of
+	// the buffer (e.g. a write timeout after the kernel consumed the first
+	// bytes), keep the unsent remainder so a subsequent flush() completes the
+	// protocol frame.  Resetting the buffer on a partial write tears the frame
+	// and leaves the server's parser desynced (see #2158).
+	for len(w.bufs) > 0 {
+		n, err := w.w.Write(w.bufs)
+		if n > 0 {
+			w.bufs = w.bufs[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			// No progress; avoid spinning on a misbehaving writer.
+			break
+		}
+	}
+	return nil
 }
 
 func (w *natsWriter) buffered() int {
