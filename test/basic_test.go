@@ -206,6 +206,148 @@ accounts: {
 	}
 }
 
+func TestRemoteAccount(t *testing.T) {
+	const accountsSnippet = `
+accounts: {
+    SYS: {
+        users: [ {user: "sys", password: "pass"} ]
+    }
+    APP: {
+        users: [ {user: "app", password: "pass"} ]
+    }
+}`
+
+	c := newTester(t)
+	accInst := c.CreateServer(t, false,
+		testservice.WithAccounts(accountsSnippet),
+		testservice.WithAuthorization("# auth required, no no_auth_user"),
+		testservice.WithSystemAccount("system_account: SYS"),
+	)
+	t.Cleanup(func() { accInst.Destroy(t) })
+	globalInst := c.CreateServer(t, false,
+		testservice.WithAccounts("# no accounts, clients bind to $G"),
+		testservice.WithAuthorization("# no auth"),
+		testservice.WithSystemAccount("# default system account"),
+	)
+	t.Cleanup(func() { globalInst.Destroy(t) })
+
+	tests := []struct {
+		name    string
+		inst    *testservice.Instance
+		opts    []nats.Option
+		account string
+		isSys   bool
+	}{
+		{"named account", accInst, []nats.Option{nats.UserInfo("app", "pass")}, "APP", false},
+		{"system account", accInst, []nats.Option{nats.UserInfo("sys", "pass")}, "SYS", true},
+		{"global account", globalInst, nil, "$G", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nc := dialInstance(t, test.inst, test.opts...)
+			// The server sends the account in an INFO right after the PONG
+			// to the first PING, so it is in hand once Flush's PONG arrives.
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+			if acc := nc.RemoteAccount(); acc != test.account {
+				t.Fatalf("Expected account %q, got %q", test.account, acc)
+			}
+			if isSys := nc.IsSystemAccount(); isSys != test.isSys {
+				t.Fatalf("Expected IsSystemAccount %v, got %v", test.isSys, isSys)
+			}
+
+			nc.Close()
+			if acc := nc.RemoteAccount(); acc != "" {
+				t.Fatalf("Expected an empty account after close, got %q", acc)
+			}
+		})
+	}
+}
+
+func TestRemoteAccountKeptAcrossAsyncInfo(t *testing.T) {
+	c := newTester(t)
+	clusterInst := c.CreateCluster(t, 2, false,
+		testservice.WithAccounts(`accounts: { SYS: { users: [ {user: "sys", password: "pass"} ] } }`),
+		testservice.WithAuthorization("# auth required, no no_auth_user"),
+		testservice.WithSystemAccount("system_account: SYS"),
+	)
+	t.Cleanup(func() { clusterInst.Destroy(t) })
+	s1, s2 := clusterInst.Servers[0], clusterInst.Servers[1]
+	clusterInst.StopServer(t, s2)
+
+	nc, err := nats.Connect(s1.URL, nats.UserInfo("sys", "pass"))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Error on flush: %v", err)
+	}
+	check := func() {
+		t.Helper()
+		if acc := nc.RemoteAccount(); acc != "SYS" {
+			t.Fatalf("Expected account %q, got %q", "SYS", acc)
+		}
+		if !nc.IsSystemAccount() {
+			t.Fatalf("Expected system account")
+		}
+	}
+	check()
+
+	// s2 joining the cluster makes s1 send an INFO with new connect_urls
+	// and no account fields.
+	clusterInst.StartServer(t, s2)
+	checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+		if n := len(nc.Servers()); n != 2 {
+			return fmt.Errorf("expected 2 servers in the pool, got %d", n)
+		}
+		return nil
+	})
+	check()
+}
+
+func TestRemoteAccountRefreshedOnReconnect(t *testing.T) {
+	accounts := func(name string) string {
+		return fmt.Sprintf(`accounts: { %s: { users: [ {user: "app", password: "pass"} ] } }`, name)
+	}
+	noAuthUser := testservice.WithAuthorization("# auth required, no no_auth_user")
+	defaultSys := testservice.WithSystemAccount("# default system account")
+
+	c := newTester(t)
+	inst := c.CreateServer(t, false, testservice.WithAccounts(accounts("APP1")), noAuthUser, defaultSys)
+	t.Cleanup(func() { inst.Destroy(t) })
+	s := inst.Servers[0]
+
+	rch := make(chan bool, 1)
+	nc := dialInstance(t, inst,
+		nats.UserInfo("app", "pass"),
+		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectHandler(func(_ *nats.Conn) { rch <- true }),
+	)
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Error on flush: %v", err)
+	}
+	if acc := nc.RemoteAccount(); acc != "APP1" {
+		t.Fatalf("Expected account %q, got %q", "APP1", acc)
+	}
+
+	// Bind the same user to another account; the new connection must not
+	// report the previous connection's account.
+	inst.StopServer(t, s)
+	inst.UpdateServer(t, s, testservice.WithAccounts(accounts("APP2")), noAuthUser, defaultSys)
+	inst.StartServer(t, s)
+	if err := Wait(rch); err != nil {
+		t.Fatal("Did not reconnect")
+	}
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Error on flush: %v", err)
+	}
+	if acc := nc.RemoteAccount(); acc != "APP2" {
+		t.Fatalf("Expected account %q, got %q", "APP2", acc)
+	}
+}
+
 func TestMultipleClose(t *testing.T) {
 	withServer(t, func(t *testing.T, nc *nats.Conn) {
 		var wg sync.WaitGroup

@@ -1068,6 +1068,9 @@ type ServerInfo struct {
 	// IsSystemAccount indicates whether the connected client's account
 	// is the system account.
 	IsSystemAccount bool `json:"acc_is_sys,omitempty"`
+	// RemoteAccount is the name of the account the connected client is
+	// bound to.
+	RemoteAccount string `json:"remote_account,omitempty"`
 	// JSApiLevel is the JetStream API level advertised by the server.
 	// Requires nats-server v2.12.0 or later; older servers will report 0.
 	JSApiLevel int    `json:"api_lvl,omitempty"`
@@ -2856,6 +2859,26 @@ func (nc *Conn) IsSystemAccount() bool {
 	return nc.info.IsSystemAccount
 }
 
+// RemoteAccount returns the name of the account the connected client is
+// bound to, e.g. "$G" when the server has no accounts configured. The
+// server sends it in an INFO right after the PONG to the connection's
+// first PING, which is processed only after Connect returns, so call
+// Flush first when the value is needed immediately. The same applies
+// after a reconnect.
+func (nc *Conn) RemoteAccount() string {
+	if nc == nil {
+		return _EMPTY_
+	}
+
+	nc.mu.RLock()
+	defer nc.mu.RUnlock()
+
+	if nc.status != CONNECTED {
+		return _EMPTY_
+	}
+	return nc.info.RemoteAccount
+}
+
 // Low level setup for structs, etc
 func (nc *Conn) setup() {
 	nc.subs = make(map[int64]*Subscription)
@@ -4344,8 +4367,14 @@ func (nc *Conn) processInfo(info string) error {
 // protection.
 func (nc *Conn) processAsyncInfo(info []byte) {
 	nc.mu.Lock()
+	remoteAcc, isSysAcc := nc.info.RemoteAccount, nc.info.IsSystemAccount
 	// Ignore errors, we will simply not update the server pool...
 	nc.processInfo(string(info))
+	// Only the INFO following the first PONG carries the account; later
+	// ones (cluster topology, lame duck mode) must not clear it.
+	if nc.info.RemoteAccount == _EMPTY_ {
+		nc.info.RemoteAccount, nc.info.IsSystemAccount = remoteAcc, isSysAcc
+	}
 	nc.mu.Unlock()
 }
 
