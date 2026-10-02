@@ -727,6 +727,10 @@ func (js *jetStream) PublishAsyncPending() int {
 // PublishAsyncComplete returns a channel that will be closed when all
 // outstanding asynchronously published messages are acknowledged by the
 // server.
+//
+// Callers blocked in PublishMsgAsync waiting for a free slot under
+// PublishAsyncMaxPending are not outstanding yet, so the channel may be
+// closed while such a caller is still about to publish.
 func (js *jetStream) PublishAsyncComplete() <-chan struct{} {
 	js.publisher.Lock()
 	defer js.publisher.Unlock()

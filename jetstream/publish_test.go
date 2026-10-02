@@ -15,84 +15,12 @@ package jetstream
 
 import (
 	"math/rand"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// Concurrent registerPAF used to insert before stalling, so pending could
-// exceed WithPublishAsyncMaxPending (issue #1612). Cap check and insert now
-// share one lock; this white-box burst does not need a server.
-func TestPublishAsyncMaxPendingNotExceeded(t *testing.T) {
-	const maxPending = 1
-	js := &jetStream{
-		publisher: &jetStreamClient{
-			asyncPublisherOpts: asyncPublisherOpts{maxpa: maxPending},
-			asyncPublishContext: asyncPublishContext{
-				replyPrefix: "test.",
-				rr:          rand.New(rand.NewSource(1)),
-			},
-		},
-	}
-
-	const n = 32
-	var observed atomic.Int32
-	track := func() {
-		p := int32(js.PublishAsyncPending())
-		for {
-			cur := observed.Load()
-			if p <= cur || observed.CompareAndSwap(cur, p) {
-				return
-			}
-		}
-	}
-
-	stopPoll := make(chan struct{})
-	var pollWg sync.WaitGroup
-	pollWg.Add(1)
-	go func() {
-		defer pollWg.Done()
-		for {
-			select {
-			case <-stopPoll:
-				return
-			default:
-				track()
-			}
-		}
-	}()
-
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			<-start
-			paf := &pubAckFuture{jsClient: js.publisher}
-			_, _ = js.registerPAF(paf, time.Second)
-			track()
-		}()
-	}
-
-	close(start)
-	// Concurrent callers insert before stalling on unmodified code;
-	// sample while they are still in-flight / stalled.
-	time.Sleep(50 * time.Millisecond)
-	track()
-
-	wg.Wait()
-	close(stopPoll)
-	pollWg.Wait()
-
-	if got := observed.Load(); int(got) > maxPending {
-		t.Fatalf("PublishAsyncPending exceeded max pending: got %d, want <= %d", got, maxPending)
-	}
-}
-
 // clearPAF frees a pending slot; stalled registerPAF callers must be woken
-// instead of sitting out the full stallWait (review on #2126).
+// instead of sitting out the full stallWait.
 func TestRegisterPAFUnstallOnClear(t *testing.T) {
 	const maxPending = 1
 	js := &jetStream{

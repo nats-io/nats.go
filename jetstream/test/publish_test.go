@@ -1954,6 +1954,96 @@ func TestPublishAsyncClearStall(t *testing.T) {
 	})
 }
 
+func TestPublishAsyncConcurrentPendingRecovery(t *testing.T) {
+	for _, maxPending := range []int{1, 5} {
+		t.Run(fmt.Sprintf("max pending %d", maxPending), func(t *testing.T) {
+			withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
+				js, err := jetstream.New(nc, jetstream.WithPublishAsyncMaxPending(maxPending))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer js.CleanupPublisher()
+
+				// A core subscriber responds in place of a stream, so the test
+				// decides when each publish is acked. A NoAck stream would hold
+				// the pending slots but could never release them.
+				sub, err := nc.SubscribeSync("FOO.A")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer sub.Unsubscribe()
+				if err := nc.FlushTimeout(time.Second); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				held := make([]*nats.Msg, 0, maxPending)
+				for range maxPending {
+					if _, err := js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					msg, err := sub.NextMsg(time.Second)
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					held = append(held, msg)
+				}
+
+				const publishers = 16
+				var wg sync.WaitGroup
+				defer wg.Wait()
+				started := make(chan struct{}, publishers)
+				results := make(chan error, publishers)
+				for range publishers {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						started <- struct{}{}
+						_, err := js.PublishAsync("FOO.A", []byte("hello"), jetstream.WithStallWait(5*time.Second))
+						results <- err
+					}()
+				}
+				for range publishers {
+					<-started
+				}
+
+				// Nothing may be sent until a held publish frees capacity.
+				if _, err := sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("Expected publishers to stall; got: %v", err)
+				}
+				if numPending := js.PublishAsyncPending(); numPending > maxPending {
+					t.Fatalf("Expected at most %d pending messages; got: %d", maxPending, numPending)
+				}
+
+				for _, msg := range held {
+					if err := msg.Respond([]byte(`{"stream":"foo","seq":1}`)); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+
+				// Freed capacity must release every stalled publisher before
+				// its stall wait expires.
+				for i := range publishers {
+					msg, err := sub.NextMsg(2 * time.Second)
+					if err != nil {
+						t.Fatalf("Publisher %d did not recover after acks: %v", i, err)
+					}
+					if numPending := js.PublishAsyncPending(); numPending > maxPending {
+						t.Fatalf("Expected at most %d pending messages; got: %d", maxPending, numPending)
+					}
+					if err := msg.Respond([]byte(`{"stream":"foo","seq":1}`)); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+				for range publishers {
+					if err := <-results; err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestPublishWithScheduleAt(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 5*time.Second)
