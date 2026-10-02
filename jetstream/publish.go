@@ -1,4 +1,4 @@
-// Copyright 2022-2025 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -360,23 +359,16 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 
 	// register new paf if not retrying
 	if paf == nil {
-		var err error
-		reply, err = js.newAsyncReply()
-		if err != nil {
+		if err := js.newAsyncReply(); err != nil {
 			return nil, fmt.Errorf("nats: error creating async reply handler: %s", err)
 		}
-		id = reply[js.opts.replyPrefixLen:]
-		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait, reply: reply}
-		numPending, maxPending := js.registerPAF(id, paf)
-
-		if maxPending > 0 && numPending > maxPending {
-			select {
-			case <-js.asyncStall():
-			case <-time.After(stallWait):
-				js.clearPAF(id)
-				return nil, ErrTooManyStalledMsgs
-			}
+		paf = &pubAckFuture{msg: m, jsClient: js.publisher, maxRetries: o.retryAttempts, retryWait: o.retryWait}
+		var err error
+		reply, err = js.registerPAF(paf, stallWait)
+		if err != nil {
+			return nil, err
 		}
+		id = reply[js.opts.replyPrefixLen:]
 		if js.publisher.ackTimeout > 0 {
 			paf.timeout = time.AfterFunc(js.publisher.ackTimeout, func() {
 				js.publisher.Lock()
@@ -392,10 +384,7 @@ func (js *jetStream) PublishMsgAsync(m *nats.Msg, opts ...PublishOpt) (PubAckFut
 				delete(js.publisher.acks, id)
 
 				// check on anyone stalled and waiting.
-				if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
-					close(js.publisher.stallCh)
-					js.publisher.stallCh = nil
-				}
+				js.maybeUnstall()
 
 				// send error to user
 				paf.err = ErrAsyncPublishTimeout
@@ -443,8 +432,12 @@ const (
 	aReplyTokensize = 6
 )
 
-func (js *jetStream) newAsyncReply() (string, error) {
+// newAsyncReply ensures the async reply subscription, prefix, RNG, and
+// reconnect listener are set up. Reply tokens are allocated in registerPAF
+// under the same lock that inserts into acks.
+func (js *jetStream) newAsyncReply() error {
 	js.publisher.Lock()
+	defer js.publisher.Unlock()
 	if js.publisher.replySub == nil {
 		// Create our wildcard reply subject.
 		sha := sha256.New()
@@ -456,8 +449,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		js.publisher.replyPrefix = fmt.Sprintf("%s%s.", js.opts.replyPrefix, b[:aReplyTokensize])
 		sub, err := js.conn.Subscribe(fmt.Sprintf("%s*", js.publisher.replyPrefix), js.handleAsyncReply)
 		if err != nil {
-			js.publisher.Unlock()
-			return "", err
+			return err
 		}
 		js.publisher.replySub = sub
 		js.publisher.rr = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -466,25 +458,7 @@ func (js *jetStream) newAsyncReply() (string, error) {
 		js.publisher.connStatusCh = js.conn.StatusChanged(nats.RECONNECTING, nats.CLOSED)
 		go js.resetPendingAcksOnReconnect()
 	}
-	var sb strings.Builder
-	sb.Grow(len(js.publisher.replyPrefix) + aReplyTokensize)
-	sb.WriteString(js.publisher.replyPrefix)
-	for {
-		rn := js.publisher.rr.Int63()
-		var b [aReplyTokensize]byte
-		for i, l := 0, rn; i < len(b); i++ {
-			b[i] = rdigits[l%base]
-			l /= base
-		}
-		if _, ok := js.publisher.acks[string(b[:])]; ok {
-			continue
-		}
-		sb.Write(b[:])
-		break
-	}
-
-	js.publisher.Unlock()
-	return sb.String(), nil
+	return nil
 }
 
 // Handle an async reply from PublishAsync.
@@ -500,14 +474,6 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 	if paf == nil {
 		js.publisher.Unlock()
 		return
-	}
-
-	closeStc := func() {
-		// Check on anyone stalled and waiting.
-		if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
-			close(js.publisher.stallCh)
-			js.publisher.stallCh = nil
-		}
 	}
 
 	closeDchFn := func() func() {
@@ -555,7 +521,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 			return
 		}
 		delete(js.publisher.acks, id)
-		closeStc()
+		js.maybeUnstall()
 		defer closeDchFn()()
 		js.handleAsyncErrAndUnlock(paf, ErrNoStreamResponse)
 		return
@@ -563,7 +529,7 @@ func (js *jetStream) handleAsyncReply(m *nats.Msg) {
 
 	// Remove
 	delete(js.publisher.acks, id)
-	closeStc()
+	js.maybeUnstall()
 	defer closeDchFn()()
 
 	var pa pubAckResponse
@@ -625,6 +591,7 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 			}
 			delete(js.publisher.acks, id)
 		}
+		js.maybeUnstall()
 		if js.publisher.doneCh != nil {
 			close(js.publisher.doneCh)
 			js.publisher.doneCh = nil
@@ -633,17 +600,61 @@ func (js *jetStream) resetPendingAcksOnReconnect() {
 	}
 }
 
-// registerPAF will register for a PubAckFuture.
-func (js *jetStream) registerPAF(id string, paf *pubAckFuture) (int, int) {
-	js.publisher.Lock()
-	if js.publisher.acks == nil {
-		js.publisher.acks = make(map[string]*pubAckFuture)
+// registerPAF will register for a PubAckFuture. If max pending is set and
+// the publisher is already at the cap, it stalls until a slot frees or
+// stallWait elapses. The reply token is drawn and inserted under the same
+// lock hold so pending cannot exceed maxPending and ids cannot collide
+// across stalled callers.
+func (js *jetStream) registerPAF(paf *pubAckFuture, stallWait time.Duration) (string, error) {
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	for {
+		js.publisher.Lock()
+		if js.publisher.acks == nil {
+			js.publisher.acks = make(map[string]*pubAckFuture)
+		}
+		maxpa := js.publisher.asyncPublisherOpts.maxpa
+		if maxpa > 0 && len(js.publisher.acks) >= maxpa {
+			if js.publisher.stallCh == nil {
+				js.publisher.stallCh = make(chan struct{})
+			}
+			stc := js.publisher.stallCh
+			js.publisher.Unlock()
+			if timer == nil {
+				timer = time.NewTimer(stallWait)
+			}
+			select {
+			case <-stc:
+				continue
+			case <-timer.C:
+				return "", ErrTooManyStalledMsgs
+			}
+		}
+		// Allocate a unique reply token under the insert lock.
+		var id string
+		for {
+			rn := js.publisher.rr.Int63()
+			var b [aReplyTokensize]byte
+			for i, l := 0, rn; i < len(b); i++ {
+				b[i] = rdigits[l%base]
+				l /= base
+			}
+			if _, ok := js.publisher.acks[string(b[:])]; ok {
+				continue
+			}
+			id = string(b[:])
+			break
+		}
+		reply := js.publisher.replyPrefix + id
+		paf.reply = reply
+		js.publisher.acks[id] = paf
+		js.publisher.Unlock()
+		return reply, nil
 	}
-	js.publisher.acks[id] = paf
-	np := len(js.publisher.acks)
-	maxpa := js.publisher.asyncPublisherOpts.maxpa
-	js.publisher.Unlock()
-	return np, maxpa
 }
 
 // Lock should be held.
@@ -654,21 +665,21 @@ func (js *jetStream) getPAF(id string) *pubAckFuture {
 	return js.publisher.acks[id]
 }
 
+// maybeUnstall closes stallCh when under the max pending cap so a waiter
+// in registerPAF can proceed. Lock should be held.
+func (js *jetStream) maybeUnstall() {
+	if js.publisher.stallCh != nil && len(js.publisher.acks) < js.publisher.maxpa {
+		close(js.publisher.stallCh)
+		js.publisher.stallCh = nil
+	}
+}
+
 // clearPAF will remove a PubAckFuture that was registered.
 func (js *jetStream) clearPAF(id string) {
 	js.publisher.Lock()
 	delete(js.publisher.acks, id)
+	js.maybeUnstall()
 	js.publisher.Unlock()
-}
-
-func (js *jetStream) asyncStall() <-chan struct{} {
-	js.publisher.Lock()
-	if js.publisher.stallCh == nil {
-		js.publisher.stallCh = make(chan struct{})
-	}
-	stc := js.publisher.stallCh
-	js.publisher.Unlock()
-	return stc
 }
 
 func (paf *pubAckFuture) Ok() <-chan *PubAck {
@@ -716,6 +727,10 @@ func (js *jetStream) PublishAsyncPending() int {
 // PublishAsyncComplete returns a channel that will be closed when all
 // outstanding asynchronously published messages are acknowledged by the
 // server.
+//
+// Callers blocked in PublishMsgAsync waiting for a free slot under
+// PublishAsyncMaxPending are not outstanding yet, so the channel may be
+// closed while such a caller is still about to publish.
 func (js *jetStream) PublishAsyncComplete() <-chan struct{} {
 	js.publisher.Lock()
 	defer js.publisher.Unlock()
