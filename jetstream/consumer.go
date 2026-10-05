@@ -72,6 +72,8 @@ type (
 		// messages in comparison to Messages or Consume methods, as it does not
 		// perform any optimizations (e.g. overlapping pull requests) and new
 		// subscription is created for each execution.
+		//
+		// Total byte limit can also be configured using FetchMaxBytes option.
 		Fetch(batch int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchBytes is used to retrieve up to a provided number of bytes from
@@ -98,6 +100,8 @@ type (
 		// retrieve messages in comparison to Messages or Consume methods, as it
 		// does not perform any optimizations (e.g. overlapping pull requests)
 		// and new subscription is created for each execution.
+		//
+		// Max message count can also be configured using FetchMaxMessages option.
 		FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchNoWait is used to retrieve up to a provided number of messages

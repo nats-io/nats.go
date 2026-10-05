@@ -886,8 +886,12 @@ func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) 
 
 // FetchBytes is used to retrieve up to a provided bytes from the stream.
 func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
+	batch := DefaultMaxMessages
+	if info := p.info.Load(); info != nil && info.Config.MaxAckPending > 0 {
+		batch = min(info.Config.MaxAckPending, defaultBatchMaxBytesOnly)
+	}
 	req := &pullRequest{
-		Batch:     defaultBatchMaxBytesOnly,
+		Batch:     batch,
 		MaxBytes:  maxBytes,
 		Expires:   DefaultExpires,
 		Heartbeat: unset,

@@ -803,7 +803,225 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("with FetchMaxMessages option and buffer sizing", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				AckPolicy:     jetstream.AckExplicitPolicy,
+				Name:          "con",
+				MaxAckPending: 100,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			publishTestMsgs(t, js, 10)
+
+			// FetchBytes with FetchMaxMessages should bound message count and channel buffer
+			msgs, err := c.FetchBytes(10000, jetstream.FetchMaxMessages(3))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if chCap := cap(msgs.Messages()); chCap != 3 {
+				t.Fatalf("Expected channel buffer capacity 3; got: %d", chCap)
+			}
+
+			var count int
+			for msg := range msgs.Messages() {
+				msg.Ack()
+				count++
+			}
+			if count != 3 {
+				t.Fatalf("Expected 3 messages; got: %d", count)
+			}
+			if msgs.Error() != nil {
+				t.Fatalf("Unexpected fetch error: %v", msgs.Error())
+			}
+		})
+	})
+
+	t.Run("default batch bounded by MaxAckPending", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				AckPolicy:     jetstream.AckExplicitPolicy,
+				Name:          "con",
+				MaxAckPending: 25,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			publishTestMsgs(t, js, 25)
+
+			msgs, err := c.FetchBytes(10000)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if chCap := cap(msgs.Messages()); chCap != 25 {
+				t.Fatalf("Expected channel buffer capacity 25; got: %d", chCap)
+			}
+
+			var count int
+			for msg := range msgs.Messages() {
+				msg.Ack()
+				count++
+			}
+			if count != 25 {
+				t.Fatalf("Expected 25 messages; got: %d", count)
+			}
+		})
+	})
+
+	t.Run("avoids premature MaxAckPending saturation and timeout wait", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 10*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			// Set MaxAckPending to 5, publish 10 messages
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				AckPolicy:     jetstream.AckExplicitPolicy,
+				Name:          "con",
+				MaxAckPending: 5,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			publishTestMsgs(t, js, 10)
+
+			// Fetch with 5s timeout; since batch is bounded by MaxAckPending (5),
+			// the fetch must complete promptly as soon as 5 messages arrive without waiting for 5s timeout.
+			start := time.Now()
+			msgs, err := c.FetchBytes(1<<20, jetstream.FetchMaxWait(5*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			var count int
+			for msg := range msgs.Messages() {
+				msg.Ack()
+				count++
+			}
+			elapsed := time.Since(start)
+			if count != 5 {
+				t.Fatalf("Expected 5 messages; got: %d", count)
+			}
+			if elapsed > 2*time.Second {
+				t.Fatalf("FetchBytes took too long (%v), expected prompt completion without waiting for timeout", elapsed)
+			}
+		})
+	})
+
+	t.Run("with FetchMaxBytes option on Fetch", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, Name: "con"})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			publishTestMsgs(t, js, 5)
+			// each msg is 60 bytes; limit to 150 bytes so only 2 messages should be received
+			msgs, err := c.Fetch(5, jetstream.FetchMaxBytes(150))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			var count int
+			for msg := range msgs.Messages() {
+				msg.Ack()
+				count++
+			}
+			if count != 2 {
+				t.Fatalf("Expected 2 messages limited by bytes; got: %d", count)
+			}
+			if msgs.Error() != nil {
+				t.Fatalf("Unexpected error: %v", msgs.Error())
+			}
+		})
+	})
+
+	t.Run("invalid FetchMaxMessages and FetchMaxBytes options", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, Name: "con"})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			for _, val := range []int{0, -1, -100} {
+				_, err = c.FetchBytes(100, jetstream.FetchMaxMessages(val))
+				if !errors.Is(err, jetstream.ErrInvalidOption) {
+					t.Fatalf("Expected ErrInvalidOption for FetchMaxMessages(%d); got: %v", val, err)
+				}
+				_, err = c.Fetch(10, jetstream.FetchMaxBytes(val))
+				if !errors.Is(err, jetstream.ErrInvalidOption) {
+					t.Fatalf("Expected ErrInvalidOption for FetchMaxBytes(%d); got: %v", val, err)
+				}
+			}
+		})
+	})
+
+	t.Run("FetchBytes empty stream memory allocation", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+				AckPolicy:     jetstream.AckExplicitPolicy,
+				Name:          "con",
+				MaxAckPending: 1000,
+			})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			msgs, err := c.FetchBytes(32<<20, jetstream.FetchMaxWait(50*time.Millisecond))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for range msgs.Messages() {
+			}
+			runtime.ReadMemStats(&after)
+			allocMiB := float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20)
+			if allocMiB > 5.0 {
+				t.Fatalf("FetchBytes allocated too much memory: %.2f MiB, expected < 5 MiB", allocMiB)
+			}
+		})
+	})
 }
+
 
 func TestPullConsumerFetch_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"

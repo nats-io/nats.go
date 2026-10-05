@@ -578,6 +578,30 @@ func FetchContext(ctx context.Context) FetchOpt {
 	}
 }
 
+// FetchMaxMessages sets the maximum number of messages to retrieve in a single fetch request.
+// Can be used with FetchBytes to customize the max message count during a byte-bounded fetch.
+func FetchMaxMessages(maxMessages int) FetchOpt {
+	return func(req *pullRequest) error {
+		if maxMessages <= 0 {
+			return fmt.Errorf("%w: max messages must be greater than 0", ErrInvalidOption)
+		}
+		req.Batch = maxMessages
+		return nil
+	}
+}
+
+// FetchMaxBytes sets the maximum number of bytes to retrieve in a single fetch request.
+// Can be used with Fetch to customize the max byte limit during a message-bounded fetch.
+func FetchMaxBytes(maxBytes int) FetchOpt {
+	return func(req *pullRequest) error {
+		if maxBytes <= 0 {
+			return fmt.Errorf("%w: max bytes must be greater than 0", ErrInvalidOption)
+		}
+		req.MaxBytes = maxBytes
+		return nil
+	}
+}
+
 // WithDeletedDetails can be used to display the information about messages
 // deleted from a stream on a stream info request
 func WithDeletedDetails(deletedDetails bool) StreamInfoOpt {
