@@ -756,21 +756,26 @@ func (js *js) resetPendingAcksOnReconnect() {
 		}
 		js.mu.Lock()
 		errCb := js.opts.aecb
+		var msgs []*Msg
 		for id, paf := range js.pafs {
 			paf.err = ErrDisconnected
 			if paf.errCh != nil {
 				paf.errCh <- paf.err
 			}
 			if errCb != nil {
-				defer errCb(js, paf.msg, ErrDisconnected)
+				msgs = append(msgs, paf.msg)
 			}
 			delete(js.pafs, id)
 		}
-		if js.dch != nil {
-			close(js.dch)
-			js.dch = nil
-		}
+		dch := js.dch
+		js.dch = nil
 		js.mu.Unlock()
+		for _, msg := range msgs {
+			errCb(js, msg, ErrDisconnected)
+		}
+		if dch != nil {
+			close(dch)
+		}
 	}
 }
 
