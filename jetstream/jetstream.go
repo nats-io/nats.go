@@ -661,11 +661,12 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 	}
 
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: cfg.Name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // If we have a Domain, convert to the appropriate ext.APIPrefix.
@@ -787,11 +788,12 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 	}
 
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: cfg.Name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // CreateOrUpdateStream creates a stream with the given config. If stream
@@ -834,11 +836,12 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if resp.StreamInfo == nil {
 		return nil, ErrInvalidJetStreamResponse
 	}
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // DeleteStream removes a stream with given name
