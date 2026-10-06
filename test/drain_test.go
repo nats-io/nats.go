@@ -16,6 +16,8 @@ package test
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -442,5 +444,81 @@ func TestDrainClosedHandlerRace(t *testing.T) {
 			nc.SetClosedHandler(nil)
 		}()
 		time.Sleep(500 * time.Millisecond)
+	})
+}
+
+// Closing the connection while drainConnection is still waiting for
+// subscriptions to drain must abort the rest of the drain: the drain
+// goroutine must not flip the (already closed) connection back to
+// DRAINING_PUBS and start a new FlushTimeout on it.
+func TestDrainConnectionCloseDuringDrain(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		if _, err := nc.Subscribe("pending", func(*nats.Msg) {
+			close(entered)
+			<-release
+		}); err != nil {
+			t.Fatalf("Error creating subscription: %v", err)
+		}
+		defer close(release)
+
+		if err := nc.Publish("pending", nil); err != nil {
+			t.Fatalf("Error on publish: %v", err)
+		}
+		if err := nc.Flush(); err != nil {
+			t.Fatalf("Error on flush: %v", err)
+		}
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("callback not entered")
+		}
+
+		if err := nc.Drain(); err != nil {
+			t.Fatalf("Unexpected error on drain: %v", err)
+		}
+
+		// Wait until the drain goroutine is in its pending-subscription
+		// wait loop, so that Close lands mid-drain.
+		waiting := false
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !waiting; {
+			b := make([]byte, 1<<20)
+			n := runtime.Stack(b, true)
+			for _, stack := range strings.Split(string(b[:n]), "\n\n") {
+				if strings.Contains(stack, "(*Conn).drainConnection") && strings.Contains(stack, "time.Sleep(") {
+					waiting = true
+					break
+				}
+			}
+			if !waiting {
+				runtime.Gosched()
+			}
+		}
+		if !waiting {
+			t.Fatal("drain did not enter pending-subscription wait")
+		}
+
+		nc.Close()
+		if !nc.IsClosed() {
+			t.Fatalf("connection not closed after Close: %v", nc.Status())
+		}
+
+		// The connection must stay closed: before the fix, the drain
+		// goroutine resurrects it to DRAINING_PUBS and then sits in
+		// FlushTimeout for 5 seconds.
+		time.Sleep(250 * time.Millisecond)
+		if !nc.IsClosed() {
+			t.Fatalf("connection resurrected after Close: %v", nc.Status())
+		}
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+			b := make([]byte, 1<<20)
+			n := runtime.Stack(b, true)
+			if !strings.Contains(string(b[:n]), "(*Conn).drainConnection") {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("drain goroutine still running after Close")
 	})
 }
