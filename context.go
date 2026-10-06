@@ -67,7 +67,10 @@ func (nc *Conn) requestWithContext(ctx context.Context, subj string, hdr, data [
 		select {
 		case m, ok = <-mch:
 			if !ok {
-				return nil, ErrConnectionClosed
+				if nc.IsClosed() {
+					return nil, ErrConnectionClosed
+				}
+				return nil, ErrDisconnected
 			}
 		case <-ctx.Done():
 			nc.mu.Lock()
