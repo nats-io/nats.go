@@ -124,7 +124,6 @@ type (
 		ThresholdMessages       int
 		ThresholdBytes          int
 		StopAfter               int
-		stopAfterMsgsLeft       chan int
 		notifyOnReconnect       bool
 	}
 
@@ -792,13 +791,6 @@ func (s *pullSubscription) Stop() {
 		return
 	}
 	close(s.done)
-	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
-			close(s.consumeOpts.stopAfterMsgsLeft)
-		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
-		}
-	}
 }
 
 // Drain unsubscribes from the stream and cancels subscription. All
@@ -811,13 +803,6 @@ func (s *pullSubscription) Drain() {
 	}
 	s.draining.Store(1)
 	close(s.done)
-	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
-			close(s.consumeOpts.stopAfterMsgsLeft)
-		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
-		}
-	}
 }
 
 // Closed returns a channel that is closed when consuming is
