@@ -72,9 +72,7 @@ tester-net:
 # No host port publishing, for sibling-container mode (make test-tester).
 # Publishing here would break server bring-up: docker-proxy holds 0.0.0.0:<port>
 # inside the container's netns, racing the tester's port-reservation handover
-# ("bind: address already in use"). The ephemeral range is left at the kernel
-# default so TIME_WAIT churn cannot crowd it; narrowing it only matters when
-# ports must match a published range (see tester-up-host).
+# ("bind: address already in use").
 tester-up: tester-net
 	docker run -d \
 		--name $(TESTER_NAME) \
@@ -85,7 +83,7 @@ tester-up: tester-net
 	@echo "Tester up as '$(TESTER_NAME)'. Run the suite: make test-tester"
 
 # Publishes ports so `go test` on the host reaches the spawned servers;
-# ip_local_port_range is narrowed to match the published range. On macOS
+# NATS_PORT_RANGE keeps them inside the published range. On macOS
 # docker-proxy races the port handover, failing ~5-10% of server creations in
 # heavy suites — rerun, or use sibling-container mode, which is immune.
 tester-up-host: tester-net
@@ -93,10 +91,10 @@ tester-up-host: tester-net
 		--name $(TESTER_NAME) \
 		--network $(TESTER_NETWORK) \
 		--restart unless-stopped \
-		--sysctl net.ipv4.ip_local_port_range="30000 31000" \
 		-p 4222:4222 \
 		-p 30000-31000:30000-31000 \
 		-e NATS_ADVERTISE=localhost \
+		-e NATS_PORT_RANGE=30000-31000 \
 		$(TESTER_IMAGE) serve
 	@echo "Tester up as '$(TESTER_NAME)'. Run: make test-docker [T=...] [PKG=...]"
 	@echo "(plain 'make test' ignores this container and uses the in-process tester)"
