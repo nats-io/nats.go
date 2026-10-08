@@ -6378,6 +6378,11 @@ func (nc *Conn) drainConnection() {
 		min = 0
 	}
 	for time.Now().Before(timeout) {
+		// Close clears all subscriptions, including respMux, so min
+		// would never be reached.
+		if nc.IsClosed() {
+			return
+		}
 		if nc.NumSubscriptions() == min {
 			break
 		}
