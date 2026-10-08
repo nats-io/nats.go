@@ -667,6 +667,10 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
+				// or that the connection was closed. In the latter case
+				// nothing called Stop, so stop here to let pullMessages
+				// and the status goroutine exit. It is a no-op otherwise.
+				s.Stop()
 				s.consumer.subs.Delete(s.id)
 				s.draining.CompareAndSwap(1, 0)
 				// Check if iterator was closed due to connection closure

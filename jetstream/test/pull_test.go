@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -3239,6 +3241,66 @@ func TestPullConsumerConnectionClosed(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("Consume did not return error after connection closed")
 			}
+		})
+	})
+}
+
+func TestPullConsumerMessagesReleasedOnConnectionClosed(t *testing.T) {
+	// Once Next has reported that the iterator was closed because the
+	// connection was closed, the goroutines backing the iterator must
+	// exit without the user calling Stop or Drain.
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 5*time.Second)
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// iteratorGoroutines counts the goroutines started by Messages:
+		// pullMessages and the connection status watcher.
+		iteratorGoroutines := func() int {
+			buf := make([]byte, 1<<20)
+			for {
+				n := runtime.Stack(buf, true)
+				if n < len(buf) {
+					buf = buf[:n]
+					break
+				}
+				buf = make([]byte, 2*len(buf))
+			}
+			var count int
+			for _, g := range strings.Split(string(buf), "\n\n") {
+				if strings.Contains(g, "created by github.com/nats-io/nats.go/jetstream.(*pullConsumer).Messages") {
+					count++
+				}
+			}
+			return count
+		}
+		before := iteratorGoroutines()
+
+		it, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := iteratorGoroutines(); got != before+2 {
+			t.Fatalf("Expected 2 iterator goroutines; got: %d", got-before)
+		}
+
+		nc.Close()
+		_, err = it.Next()
+		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) || !errors.Is(err, jetstream.ErrConnectionClosed) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConnectionClosed, err)
+		}
+
+		checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+			if got := iteratorGoroutines(); got != before {
+				return fmt.Errorf("Expected iterator goroutines to exit; %d still running", got-before)
+			}
+			return nil
 		})
 	})
 }
