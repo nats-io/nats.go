@@ -25,6 +25,7 @@ type (
 		sync.Mutex
 		id                string
 		errs              chan error
+		conn              *nats.Conn
 		subscription      *nats.Subscription
 		connStatusChanged chan nats.Status
 		closedCh          chan struct{}
@@ -71,6 +72,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 	sub := &pushSubscription{
 		id:                consumeID,
 		errs:              make(chan error, 1),
+		conn:              p.js.conn,
 		done:              make(chan struct{}, 1),
 		consumeOpts:       consumeOpts,
 		connStatusChanged: p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
@@ -112,6 +114,7 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 		sub.subscription, err = p.js.conn.Subscribe(info.Config.DeliverSubject, internalHandler)
 	}
 	if err != nil {
+		sub.release()
 		return nil, err
 	}
 
@@ -217,9 +220,7 @@ func (s *pushSubscription) Stop() {
 	defer s.Unlock()
 	close(s.done)
 	s.subscription.Unsubscribe()
-	if s.hbMonitor != nil {
-		s.hbMonitor.Stop()
-	}
+	s.release()
 }
 
 // Drain unsubscribes from the stream and cancels subscription.
@@ -232,9 +233,18 @@ func (s *pushSubscription) Drain() {
 	defer s.Unlock()
 	close(s.done)
 	s.subscription.Drain()
+	s.release()
+}
+
+// release closes the heartbeat monitor, so that messages still being
+// delivered while draining cannot re-arm it, and removes the connection
+// status listener, which would otherwise stay registered on the
+// connection for its lifetime.
+func (s *pushSubscription) release() {
 	if s.hbMonitor != nil {
-		s.hbMonitor.Stop()
+		s.hbMonitor.Close()
 	}
+	s.conn.RemoveStatusListener(s.connStatusChanged)
 }
 
 // Closed returns a channel that is closed when consuming is

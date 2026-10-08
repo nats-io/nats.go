@@ -570,6 +570,86 @@ func TestPullConsumer_checkPending(t *testing.T) {
 	}
 }
 
+func TestHeartbeatMonitorReleasedOnSubscriptionEnd(t *testing.T) {
+	// A heartbeat timer left armed after consuming ended keeps the
+	// subscription, and through it the consumer and the connection,
+	// reachable until it fires (2x the heartbeat interval).
+	const heartbeat = time.Hour
+
+	// timerActive reports whether the monitor's timer was still pending.
+	// It stops the timer as a side effect.
+	timerActive := func(hb *hbMonitor) bool {
+		hb.Lock()
+		defer hb.Unlock()
+		return hb.timer.Stop()
+	}
+
+	t.Run("pull, subscription already closed", func(t *testing.T) {
+		nc := &nats.Conn{}
+		sub := &pullSubscription{
+			consumer:          &pullConsumer{js: &jetStream{conn: nc}},
+			subscription:      &nats.Subscription{}, // not valid, as after the connection was closed
+			done:              make(chan struct{}),
+			errs:              make(chan error, 10),
+			connStatusChanged: nc.StatusChanged(nats.CONNECTED, nats.RECONNECTING, nats.CLOSED),
+			consumeOpts:       &consumeOpts{Heartbeat: heartbeat},
+		}
+		sub.hbMonitor = sub.scheduleHeartbeatCheck(heartbeat)
+
+		sub.Stop()
+		sub.cleanup()
+
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer to be stopped after cleanup")
+		}
+		select {
+		case _, ok := <-sub.connStatusChanged:
+			if ok {
+				t.Fatal("Unexpected status on removed listener")
+			}
+		default:
+			t.Fatal("Expected status listener to be removed after cleanup")
+		}
+
+		// A message handler or the status goroutine still in flight
+		// must not re-arm the timer.
+		sub.hbMonitor.Reset(2 * heartbeat)
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer not to be re-armed after cleanup")
+		}
+	})
+
+	t.Run("push, drained", func(t *testing.T) {
+		nc := &nats.Conn{}
+		sub := &pushSubscription{
+			conn:              nc,
+			subscription:      &nats.Subscription{},
+			done:              make(chan struct{}),
+			errs:              make(chan error, 1),
+			connStatusChanged: nc.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
+			idleHeartbeat:     heartbeat,
+		}
+		sub.hbMonitor = sub.scheduleHeartbeatCheck(heartbeat)
+
+		sub.Drain()
+
+		// While draining, buffered messages are still delivered to the
+		// handler, which resets the timer when it returns.
+		sub.hbMonitor.Reset(2 * heartbeat)
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer not to be re-armed after drain")
+		}
+		select {
+		case _, ok := <-sub.connStatusChanged:
+			if ok {
+				t.Fatal("Unexpected status on removed listener")
+			}
+		default:
+			t.Fatal("Expected status listener to be removed after drain")
+		}
+	})
+}
+
 func TestIsWrongLastSeqErr(t *testing.T) {
 	// 10164 is the replicated-stream variant of the 10071 "wrong last
 	// sequence" CAS conflict; both must be recognized (issue #2097).

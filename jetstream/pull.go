@@ -171,7 +171,8 @@ type (
 	FetchOpt func(*pullRequest) error
 
 	hbMonitor struct {
-		timer *time.Timer
+		timer  *time.Timer
+		closed bool
 		sync.Mutex
 	}
 
@@ -302,6 +303,11 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	inbox := p.js.conn.NewInbox()
 	sub.subscription, err = p.js.conn.Subscribe(inbox, internalHandler)
 	if err != nil {
+		p.subs.Delete(sub.id)
+		p.js.conn.RemoveStatusListener(sub.connStatusChanged)
+		if sub.hbMonitor != nil {
+			sub.hbMonitor.Close()
+		}
 		return nil, err
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
@@ -542,6 +548,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		p.Unlock()
+		p.js.conn.RemoveStatusListener(sub.connStatusChanged)
 		return nil, err
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
@@ -781,9 +788,25 @@ func (hb *hbMonitor) Stop() {
 	hb.Unlock()
 }
 
+// Reset re-arms the heartbeat timer. It is a no-op once the monitor
+// has been closed.
 func (hb *hbMonitor) Reset(dur time.Duration) {
 	hb.Lock()
-	hb.timer.Reset(dur)
+	if !hb.closed {
+		hb.timer.Reset(dur)
+	}
+	hb.Unlock()
+}
+
+// Close stops the heartbeat timer for good. Unlike Stop, which only
+// pauses the timer, a closed monitor can no longer be re-armed by Reset,
+// so a message handler or status goroutine still in flight when the
+// subscription ends cannot schedule the timer again. A pending timer
+// keeps the subscription (and through it the connection) reachable.
+func (hb *hbMonitor) Close() {
+	hb.Lock()
+	hb.closed = true
+	hb.timer.Stop()
 	hb.Unlock()
 }
 
@@ -1059,7 +1082,12 @@ func (s *pullSubscription) pullMessages(subject string) {
 					s.cleanup()
 					return
 				}
-				s.errs <- err
+				// Do not block forever on a full errs channel once
+				// nothing reads it; the next iteration will clean up.
+				select {
+				case s.errs <- err:
+				case <-s.done:
+				}
 			}
 			s.fetchInProgress.Store(0)
 		case <-s.done:
@@ -1081,7 +1109,10 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 	}
 	return &hbMonitor{
 		timer: time.AfterFunc(2*dur, func() {
-			s.errs <- ErrNoHeartbeat
+			select {
+			case s.errs <- ErrNoHeartbeat:
+			case <-s.done:
+			}
 		}),
 	}
 }
@@ -1092,15 +1123,22 @@ func (s *pullSubscription) cleanup() {
 	// is already holding the lock and waiting.
 	// The fields that are read (subscription, hbMonitor)
 	// are read only (Only written on creation of pullSubscription).
-	if s.subscription == nil || !s.subscription.IsValid() {
-		return
-	}
+
+	// The status listener and the heartbeat timer have to be released
+	// even if the subscription is no longer valid (e.g. the connection
+	// was closed before Stop or Drain was called). Otherwise the armed
+	// timer keeps the subscription and the connection reachable until it
+	// fires, and the listener stays registered on the connection.
 	if s.consumer != nil {
 		nc := s.consumer.js.conn
 		nc.RemoveStatusListener(s.connStatusChanged)
 	}
 	if s.hbMonitor != nil {
-		s.hbMonitor.Stop()
+		s.hbMonitor.Close()
+	}
+	if s.subscription == nil || !s.subscription.IsValid() {
+		s.closed.Store(1)
+		return
 	}
 	drainMode := s.draining.Load() == 1
 	if drainMode {
