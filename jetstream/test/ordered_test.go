@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -546,6 +547,77 @@ func TestOrderedConsumerConsume(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("with auto unsubscribe, stop after limit is reached", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 10*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			publishTestMsgs(t, js)
+			var received atomic.Int32
+			cc, err := c.Consume(func(msg jetstream.Msg) {
+				received.Add(1)
+			}, jetstream.StopAfter(3))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			select {
+			case <-cc.Closed():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for consume to be closed")
+			}
+			// Stopping a consume which already stopped itself after
+			// reaching the limit is a no-op.
+			cc.Stop()
+			cc.Drain()
+			if received.Load() != 3 {
+				t.Fatalf("Unexpected received message count; want %d; got %d", 3, received.Load())
+			}
+		})
+	})
+
+	t.Run("with auto unsubscribe and sequence mismatch", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 10*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for range 20 {
+				if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+					t.Fatalf("Unexpected error during publish: %s", err)
+				}
+			}
+			// messages the ordered consumer discards to reset on the
+			// sequence mismatch must not count towards StopAfter
+			fetchOneFromOrderedConsumer(t, js, "foo", c.CachedInfo().Name)
+			var received atomic.Int32
+			cc, err := c.Consume(func(msg jetstream.Msg) {
+				received.Add(1)
+			}, jetstream.StopAfter(10))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			select {
+			case <-cc.Closed():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for consume to be closed; received %d", received.Load())
+			}
+			if received.Load() != 10 {
+				t.Fatalf("Unexpected received message count; want %d; got %d", 10, received.Load())
+			}
+		})
+	})
 }
 
 func TestOrderedConsumerMessages(t *testing.T) {
@@ -917,6 +989,91 @@ func TestOrderedConsumerMessages(t *testing.T) {
 
 			if len(msgs) != len(testMsgs) {
 				t.Fatalf("Unexpected received message count after drain; want %d; got %d", len(testMsgs), len(msgs))
+			}
+		})
+	})
+
+	t.Run("with auto unsubscribe and sequence mismatch, stop", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 10*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			publishTestMsgs(t, js)
+			name := c.CachedInfo().Name
+			fetchOneFromOrderedConsumer(t, js, "foo", name)
+			it, err := c.Messages(jetstream.StopAfter(100))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for range len(testMsgs) {
+				if _, err := it.Next(); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+			if c.CachedInfo().Name == name {
+				t.Fatalf("Expected consumer to be reset")
+			}
+			stopped := make(chan struct{})
+			go func() {
+				it.Stop()
+				close(stopped)
+			}()
+			select {
+			case <-stopped:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Timeout waiting for Stop to return")
+			}
+		})
+	})
+
+	t.Run("with auto unsubscribe and server restart", func(t *testing.T) {
+		withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream, inst *testservice.Instance) {
+			ctx := newTesterCtx(t, 30*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			publishTestMsgs(t, js)
+			it, err := c.Messages(jetstream.StopAfter(10))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer it.Stop()
+			received := 0
+			for range 3 {
+				if _, err := it.Next(); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				received++
+			}
+			inst.StopServer(t, inst.Servers[0])
+			inst.StartServer(t, inst.Servers[0])
+			waitForStream(t, js, "foo")
+			for range 4 {
+				publishTestMsgs(t, js)
+			}
+			for {
+				_, err := it.Next(jetstream.NextMaxWait(5 * time.Second))
+				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("Unexpected error after %d messages: %v", received, err)
+				}
+				received++
+			}
+			if received != 10 {
+				t.Fatalf("Unexpected received message count; want %d; got %d", 10, received)
 			}
 		})
 	})
@@ -1897,4 +2054,27 @@ func TestOrderedConsumerCustomPrefix(t *testing.T) {
 			}
 		})
 	})
+}
+
+// fetchOneFromOrderedConsumer pulls a single message from the ordered
+// consumer's current server-side consumer using a separate pull consumer
+// handle, so the ordered consumer sees a gap in the delivery sequence.
+func fetchOneFromOrderedConsumer(t *testing.T, js jetstream.JetStream, stream, name string) {
+	t.Helper()
+	ctx := newTesterCtx(t, 5*time.Second)
+	cons, err := js.Consumer(ctx, stream, name)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	msgs, err := cons.Fetch(1, jetstream.FetchMaxWait(2*time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var fetched int
+	for range msgs.Messages() {
+		fetched++
+	}
+	if fetched != 1 {
+		t.Fatalf("Unexpected fetched message count; want 1; got %d: %v", fetched, msgs.Error())
+	}
 }
