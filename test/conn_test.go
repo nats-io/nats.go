@@ -2124,10 +2124,6 @@ func startStalledMockServer(t *testing.T) *net.TCPAddr {
 }
 
 func TestReconnectOnFlusherError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.SkipNow()
-	}
-
 	for _, tc := range []struct {
 		name          string
 		withOption    bool
@@ -2141,18 +2137,17 @@ func TestReconnectOnFlusherError(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
-				realURL := inst.Servers[0].URL
-				fakeAddr := startStalledMockServer(t)
+				// Writes fail without sending anything: a partial write drops
+				// the connection regardless of the option.
+				d := &faultyWriteDialer{}
 
 				reconnectedCh := make(chan struct{}, 1)
 				closedCh := make(chan struct{}, 1)
 				asyncErrCh := make(chan error, 1)
 
 				opts := []nats.Option{
-					nats.SetCustomDialer(&lowWriteBufferDialer{}),
-					nats.FlusherTimeout(15 * time.Millisecond),
+					nats.SetCustomDialer(d),
 					nats.MaxReconnects(10),
-					nats.DontRandomize(),
 					nats.ReconnectHandler(func(_ *nats.Conn) {
 						select {
 						case reconnectedCh <- struct{}{}:
@@ -2179,18 +2174,12 @@ func TestReconnectOnFlusherError(t *testing.T) {
 					opts = append(opts, nats.NoReconnect())
 				}
 
-				nc, err := nats.Connect(
-					fmt.Sprintf("nats://127.0.0.1:%d,%s", fakeAddr.Port, realURL),
-					opts...,
-				)
+				nc, err := nats.Connect(inst.Servers[0].URL, opts...)
 				if err != nil {
 					t.Fatalf("Connect: %v", err)
 				}
 				defer nc.Close()
-
-				if url := nc.ConnectedUrl(); url != fmt.Sprintf("nats://127.0.0.1:%d", fakeAddr.Port) {
-					t.Fatalf("Expected initial connection to fake server, got %q", url)
-				}
+				d.conn.Load().armed.Store(true)
 
 				stopPub := make(chan struct{})
 				pubDone := make(chan struct{})
@@ -2228,9 +2217,6 @@ func TestReconnectOnFlusherError(t *testing.T) {
 					case <-time.After(5 * time.Second):
 						t.Fatal("expected reconnect after flusher error")
 					}
-					if url := nc.ConnectedUrl(); url != realURL {
-						t.Fatalf("expected to be reconnected to real server %q, got %q", realURL, url)
-					}
 				} else if tc.wantClosed {
 					WaitOnChannel(t, closedCh, struct{}{})
 					if !nc.IsClosed() {
@@ -2246,6 +2232,181 @@ func TestReconnectOnFlusherError(t *testing.T) {
 			})
 		})
 	}
+}
+
+// faultyWriteConn, once armed, fails writes with a timeout. With partial set,
+// only the next write larger than 100 bytes fails, after sending its first
+// 100 bytes. Otherwise every write fails without sending anything.
+type faultyWriteConn struct {
+	net.Conn
+	partial bool
+	armed   atomic.Bool
+}
+
+func (c *faultyWriteConn) Write(p []byte) (int, error) {
+	if !c.armed.Load() {
+		return c.Conn.Write(p)
+	}
+	if !c.partial {
+		return 0, os.ErrDeadlineExceeded
+	}
+	if len(p) > 100 && c.armed.CompareAndSwap(true, false) {
+		n, _ := c.Conn.Write(p[:100])
+		return n, os.ErrDeadlineExceeded
+	}
+	return c.Conn.Write(p)
+}
+
+type faultyWriteDialer struct {
+	partial bool
+	conn    atomic.Pointer[faultyWriteConn]
+}
+
+func (d *faultyWriteDialer) Dial(network, address string) (net.Conn, error) {
+	c, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	fc := &faultyWriteConn{Conn: c, partial: d.partial}
+	d.conn.Store(fc)
+	return fc, nil
+}
+
+func TestPartialWriteReconnects(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ws         bool
+		payload    int
+		publishErr bool
+	}{
+		{"flusher", false, 200, false},
+		// Larger than the write buffer, so Publish flushes in place.
+		{"publish", false, 64 * 1024, true},
+		{"websocket", true, 200, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var opts []testservice.CreateOption
+			if tc.ws {
+				opts = append(opts, testservice.WithWebSocket(wsPlainBody(false)))
+			}
+			inst := newTester(t).CreateServer(t, false, opts...)
+			t.Cleanup(func() { inst.Destroy(t) })
+
+			sc := dialInstance(t, inst)
+			sub, err := sc.SubscribeSync("foo")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			if err := sc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			url := inst.Servers[0].URL
+			if tc.ws {
+				url = fmt.Sprintf("ws://%s:%d", testerHost(t), wsPort(t, inst))
+			}
+			d := &faultyWriteDialer{partial: true}
+			disconnectErrCh := make(chan error, 1)
+			reconnectedCh := make(chan struct{}, 1)
+			nc, err := nats.Connect(url,
+				nats.SetCustomDialer(d),
+				nats.ReconnectWait(50*time.Millisecond),
+				nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+					select {
+					case disconnectErrCh <- err:
+					default:
+					}
+				}),
+				nats.ReconnectHandler(func(_ *nats.Conn) {
+					select {
+					case reconnectedCh <- struct{}{}:
+					default:
+					}
+				}),
+				nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+			)
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
+			}
+			defer nc.Close()
+
+			d.conn.Load().armed.Store(true)
+			pubErr := nc.Publish("foo", make([]byte, tc.payload))
+			if tc.publishErr != errors.Is(pubErr, os.ErrDeadlineExceeded) {
+				t.Fatalf("Unexpected publish error: %v", pubErr)
+			}
+
+			select {
+			case err := <-disconnectErrCh:
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("Expected the write error as disconnect reason, got: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Connection was not dropped after a partial write, status: %v", nc.Status())
+			}
+			WaitOnChannel(t, reconnectedCh, struct{}{})
+
+			if err := nc.Publish("foo", []byte("ok")); err != nil {
+				t.Fatalf("Error on publish: %v", err)
+			}
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+			msg, err := sub.NextMsg(2 * time.Second)
+			if err != nil {
+				t.Fatalf("Error on next msg: %v", err)
+			}
+			if string(msg.Data) != "ok" {
+				t.Fatalf("Expected only the message sent after reconnect, got %d bytes", len(msg.Data))
+			}
+		})
+	}
+}
+
+func TestUnknownProtocolOperationReconnects(t *testing.T) {
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		d := &faultyWriteDialer{}
+		disconnectErrCh := make(chan error, 1)
+		reconnectedCh := make(chan struct{}, 1)
+		nc, err := nats.Connect(inst.Servers[0].URL,
+			nats.SetCustomDialer(d),
+			nats.ReconnectWait(50*time.Millisecond),
+			nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+				select {
+				case disconnectErrCh <- err:
+				default:
+				}
+			}),
+			nats.ReconnectHandler(func(_ *nats.Conn) {
+				select {
+				case reconnectedCh <- struct{}{}:
+				default:
+				}
+			}),
+		)
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		// Bypass the client so the server receives an op it does not know.
+		if _, err := d.conn.Load().Conn.Write([]byte("FOO\r\n")); err != nil {
+			t.Fatalf("Error on write: %v", err)
+		}
+
+		select {
+		case err := <-disconnectErrCh:
+			if err == nil || !strings.Contains(err.Error(), "Unknown Protocol Operation") {
+				t.Fatalf("Expected the server error as disconnect reason, got: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Connection was not dropped, status: %v", nc.Status())
+		}
+		WaitOnChannel(t, reconnectedCh, struct{}{})
+		if err := nc.Flush(); err != nil {
+			t.Fatalf("Error on flush: %v", err)
+		}
+	})
 }
 
 func TestNewServers(t *testing.T) {

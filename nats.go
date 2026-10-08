@@ -96,6 +96,10 @@ const (
 
 	// MAX_SUBSCRIPTIONS_ERR is for when nats server denies the connection due to server subscriptions limit.
 	MAX_SUBSCRIPTIONS_ERR = "maximum subscriptions exceeded"
+
+	// unknownProtoOpErr is sent by the server when it cannot parse what the
+	// client sent, after which it closes the connection.
+	unknownProtoOpErr = "unknown protocol operation"
 )
 
 // Errors
@@ -710,10 +714,13 @@ type natsReader struct {
 
 type natsWriter struct {
 	w       io.Writer
+	conn    net.Conn
 	bufs    []byte
 	limit   int
 	pending *bytes.Buffer
 	plimit  int
+	// Error of a partial write that caused conn to be closed.
+	partialWriteErr error
 }
 
 // Subscription represents interest in a given subject.
@@ -2318,7 +2325,7 @@ func (nc *Conn) newReaderWriter() {
 
 func (nc *Conn) bindToNewConn() {
 	bw := nc.bw
-	bw.w, bw.bufs = nc.newWriter(), nil
+	bw.w, bw.conn, bw.bufs, bw.partialWriteErr = nc.newWriter(), nc.conn, nil, nil
 	br := nc.br
 	br.r, br.n, br.off = nc.conn, 0, -1
 }
@@ -2371,7 +2378,13 @@ func (w *natsWriter) flush() error {
 	// Do not skip calling w.w.Write() here if len(w.bufs) is 0 because
 	// the actual writer (if websocket for instance) may have things
 	// to do such as sending control frames, etc..
-	_, err := w.w.Write(w.bufs)
+	n, err := w.w.Write(w.bufs)
+	// A write that fails part way leaves a truncated protocol op on the
+	// wire, so the connection can no longer be used.
+	if err != nil && n > 0 && w.conn != nil {
+		w.partialWriteErr = err
+		w.conn.Close()
+	}
 	w.bufs = w.bufs[:0]
 	return err
 }
@@ -3750,6 +3763,12 @@ func (nc *Conn) readLoop() {
 			err = nc.parse(buf)
 		}
 		if err != nil {
+			// Report the write error rather than the read error it caused.
+			nc.mu.Lock()
+			if nc.bw.partialWriteErr != nil {
+				err = nc.bw.partialWriteErr
+			}
+			nc.mu.Unlock()
 			if shouldClose := nc.processOpErr(err, false); shouldClose {
 				nc.close(CLOSED, true, nil)
 			}
@@ -4426,6 +4445,8 @@ func (nc *Conn) processErr(ie string) {
 		close = nc.processOpErr(ErrMaxConnectionsExceeded, false)
 	} else if e == MAX_ACCOUNT_CONNECTIONS_ERR {
 		close = nc.processOpErr(ErrMaxAccountConnectionsExceeded, false)
+	} else if e == unknownProtoOpErr {
+		close = nc.processOpErr(errors.New("nats: "+ne), false)
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
 		nc.processTransientError(fmt.Errorf("%w: %s", ErrPermissionViolation, ne))
 	} else if strings.HasPrefix(e, MAX_SUBSCRIPTIONS_ERR) {
