@@ -6404,8 +6404,16 @@ func (nc *Conn) drainConnection() {
 		pushErr(ErrDrainTimeout)
 	}
 
-	// Flip State
+	// Flip State, unless the connection was closed while we were
+	// draining subscriptions (for example by a concurrent Close call).
+	// In that case abort the publish drain: the connection is already
+	// terminal, and flipping the state here would resurrect it and
+	// start a new flush on a closed connection.
 	nc.mu.Lock()
+	if nc.isClosed() {
+		nc.mu.Unlock()
+		return
+	}
 	nc.changeConnStatus(DRAINING_PUBS)
 	nc.mu.Unlock()
 
