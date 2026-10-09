@@ -1022,7 +1022,6 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 	})
 }
 
-
 func TestPullConsumerFetch_WithCluster(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
