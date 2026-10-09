@@ -684,6 +684,38 @@ func TestHeartbeatMonitorReleasedOnSubscriptionEnd(t *testing.T) {
 	})
 }
 
+func TestPullSubscriptionDrainConcurrentWithNext(t *testing.T) {
+	// Next must not report a draining iterator as closed while messages
+	// are still buffered. The race window is a few instructions wide,
+	// hence the repetitions.
+	const buffered = 50
+	for range 2000 {
+		sub := &pullSubscription{
+			consumer:    &pullConsumer{js: &jetStream{conn: &nats.Conn{}}},
+			msgs:        make(chan *nats.Msg, buffered),
+			done:        make(chan struct{}),
+			consumeOpts: &consumeOpts{},
+		}
+		// Nothing serves pull requests here.
+		sub.fetchInProgress.Store(1)
+		for range buffered {
+			sub.msgs <- &nats.Msg{Subject: "foo", Data: []byte("x")}
+		}
+
+		drained := make(chan struct{})
+		go func() {
+			sub.Drain()
+			close(drained)
+		}()
+		for i := range buffered {
+			if _, err := sub.Next(); err != nil {
+				t.Fatalf("Next %d of %d buffered messages: %v", i+1, buffered, err)
+			}
+		}
+		<-drained
+	}
+}
+
 func TestIsWrongLastSeqErr(t *testing.T) {
 	// 10164 is the replicated-stream variant of the 10071 "wrong last
 	// sequence" CAS conflict; both must be recognized (issue #2097).

@@ -656,8 +656,9 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 
 	s.Lock()
 	defer s.Unlock()
-	drainMode := s.draining.Load() == 1
+	// closed has to be read before draining, see Drain.
 	closed := s.closed.Load() == 1
+	drainMode := s.draining.Load() == 1
 	if closed && !drainMode {
 		// Check if iterator was closed due to connection closure
 		if s.consumer.js.conn.IsClosed() {
@@ -834,10 +835,16 @@ func (s *pullSubscription) Stop() {
 // subsequent calls to Next. After the buffer is drained, Next will
 // return ErrMsgIteratorClosed error.
 func (s *pullSubscription) Drain() {
+	if s.closed.Load() == 1 {
+		return
+	}
+	// draining is set before closed so that anyone who sees the
+	// subscription closed by Drain also sees it draining, rather than
+	// treating it as stopped and discarding buffered messages.
+	s.draining.Store(1)
 	if !s.closed.CompareAndSwap(0, 1) {
 		return
 	}
-	s.draining.Store(1)
 	close(s.done)
 }
 
