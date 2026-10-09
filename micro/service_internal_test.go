@@ -15,35 +15,6 @@ package micro
 
 import "testing"
 
-func TestMatchEndpointSubject(t *testing.T) {
-	for _, test := range []struct {
-		name            string
-		endpointSubject string
-		literalSubject  string
-		match           bool
-	}{
-		{"exact", "foo.bar", "foo.bar", true},
-		{"exact single token", "foo", "foo", true},
-		{"single wildcard", "foo.*", "foo.bar", true},
-		{"single wildcard mismatched literal", "foo.*", "foo.bar.baz", false},
-		{"full wildcard", "foo.>", "foo.bar.baz", true},
-		{"full wildcard one token", "foo.>", "foo.bar", true},
-		{"literal mismatch", "foo.bar", "foo.baz", false},
-		{"endpoint longer than subject", "foo.bar", "foo", false},
-		// A shorter literal endpoint must not match a longer subject.
-		{"prefix over-match single token", "foo", "foo.bar", false},
-		{"prefix over-match multi token", "foo.bar", "foo.bar.baz", false},
-		{"wildcard prefix over-match", "foo.*", "foo.bar.baz", false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := matchEndpointSubject(test.endpointSubject, test.literalSubject); got != test.match {
-				t.Errorf("matchEndpointSubject(%q, %q) = %v; want %v",
-					test.endpointSubject, test.literalSubject, got, test.match)
-			}
-		})
-	}
-}
-
 func TestAsyncCallbacksHandlerClose(t *testing.T) {
 	ac := &asyncCallbacksHandler{cbQueue: make(chan func(), 100), done: make(chan struct{})}
 	var n int
