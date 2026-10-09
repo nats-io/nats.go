@@ -237,21 +237,15 @@ type (
 		// Config contains a configuration of the service
 		Config
 
-		m            sync.Mutex
-		id           string
-		endpoints    []*Endpoint
-		verbSubs     map[string]*nats.Subscription
-		started      time.Time
-		nc           *nats.Conn
-		natsHandlers handlers
-		stopped      bool
+		m         sync.Mutex
+		id        string
+		endpoints []*Endpoint
+		verbSubs  map[string]*nats.Subscription
+		started   time.Time
+		nc        *nats.Conn
+		stopped   bool
 
 		asyncDispatcher asyncCallbacksHandler
-	}
-
-	handlers struct {
-		closed   nats.ConnHandler
-		asyncErr nats.ErrHandler
 	}
 
 	asyncCallbacksHandler struct {
@@ -326,8 +320,10 @@ func (s Verb) String() string {
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
-// AddService wraps the connection's closed and error handlers. The service
-// stops when the connection is closed.
+// A service stops when its connection is closed and reports async errors on
+// its subscriptions to Config.ErrorHandler. Set the connection's closed and
+// error handlers before adding a service; handlers set afterwards replace the
+// ones the service relies on.
 func AddService(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
@@ -350,11 +346,8 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		endpoints: make([]*Endpoint, 0),
 	}
 
-	// Add connection event (closed, error) wrapper handlers. If the service has
-	// custom callbacks, the events are queued and invoked by the same
-	// goroutine, starting now.
 	go svc.asyncDispatcher.run()
-	svc.wrapConnectionEventCallbacks()
+	registerService(svc)
 
 	if config.Endpoint != nil {
 		opts := []EndpointOpt{WithEndpointSubject(config.Endpoint.Subject)}
@@ -367,6 +360,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 			opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
 		}
 		if err := svc.AddEndpoint("default", config.Endpoint.Handler, opts...); err != nil {
+			unregisterService(svc)
 			svc.asyncDispatcher.close()
 			return nil, err
 		}
@@ -398,6 +392,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	} {
 		handler := handleVerb(verb, source)
 		if err := svc.addVerbHandlers(nc, verb, handler); err != nil {
+			unregisterService(svc)
 			svc.asyncDispatcher.close()
 			return nil, err
 		}
@@ -556,42 +551,6 @@ func (c *Config) valid() error {
 	return nil
 }
 
-func (s *service) wrapConnectionEventCallbacks() {
-	s.m.Lock()
-	defer s.m.Unlock()
-	s.natsHandlers.closed = s.nc.ClosedHandler()
-	if s.natsHandlers.closed != nil {
-		s.nc.SetClosedHandler(func(c *nats.Conn) {
-			s.Stop()
-			s.natsHandlers.closed(c)
-		})
-	} else {
-		s.nc.SetClosedHandler(func(c *nats.Conn) {
-			s.Stop()
-		})
-	}
-
-	s.natsHandlers.asyncErr = s.nc.ErrorHandler()
-	if s.natsHandlers.asyncErr != nil {
-		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			s.handleAsyncErr(sub, err)
-			s.natsHandlers.asyncErr(c, sub, err)
-		})
-	} else {
-		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			s.handleAsyncErr(sub, err)
-		})
-	}
-}
-
-func unwrapConnectionEventCallbacks(nc *nats.Conn, handlers handlers) {
-	if nc.IsClosed() {
-		return
-	}
-	nc.SetClosedHandler(handlers.closed)
-	nc.SetErrorHandler(handlers.asyncErr)
-}
-
 // handleAsyncErr reports an async error on one of the service's own
 // subscriptions to the endpoint stats and the ErrorHandler.
 func (s *service) handleAsyncErr(sub *nats.Subscription, err error) {
@@ -718,7 +677,7 @@ func (s *service) Stop() error {
 	for _, key := range keys {
 		delete(s.verbSubs, key)
 	}
-	unwrapConnectionEventCallbacks(s.nc, s.natsHandlers)
+	unregisterService(s)
 	s.stopped = true
 	if s.DoneHandler != nil {
 		s.asyncDispatcher.push(func() { s.DoneHandler(s) })
