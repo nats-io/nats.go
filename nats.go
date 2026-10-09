@@ -2265,9 +2265,13 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 		}
 		// We are checking to see if we have a secure connection and are
 		// adding an implicit server that just has an IP. If so we will remember
-		// the current hostname we are connected to.
+		// the current hostname we are connected to, or the name the current
+		// server is verified against when it is itself a discovered IP.
 		if saveTLSName && hostIsIP(u) {
-			tlsName = curl.Hostname()
+			tlsName = nc.current.tlsName
+			if tlsName == _EMPTY_ {
+				tlsName = curl.Hostname()
+			}
 		}
 	}
 
@@ -4350,7 +4354,8 @@ func (nc *Conn) processInfo(info string) error {
 		}
 	}
 	// Figure out if we should save off the current non-IP hostname if we encounter a bare IP.
-	saveTLS := nc.current != nil && !hostIsIP(nc.current.URL)
+	// When connected to a discovered IP, carry over the hostname it is verified against.
+	saveTLS := nc.current != nil && (nc.current.tlsName != _EMPTY_ || !hostIsIP(nc.current.URL))
 
 	// If there are any left in the tmp map, these are new (or restarted) servers
 	// and need to be added to the pool.

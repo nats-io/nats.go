@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -25,6 +26,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
+	"github.com/synadia-io/orbit.go/ntf-client/api"
 )
 
 // tsTestServers returns a slice of fabricated URLs that point at non-existent
@@ -1037,4 +1040,153 @@ func TestIgnoreDiscoveredServers(t *testing.T) {
 			t.Fatalf("Expected no discovered servers, got %v", nc.DiscoveredServers())
 		}
 	})
+}
+
+// TestTLSNameForServersDiscoveredOnDiscoveredIP covers servers added to the
+// pool while connected to a discovered IP. The cluster advertises IPs and the
+// certificate only carries hostnames, so those servers must be verified
+// against the hostname the client was given, or failing over to them breaks.
+func TestTLSNameForServersDiscoveredOnDiscoveredIP(t *testing.T) {
+	for _, joins := range []bool{true, false} {
+		name := "server joins"
+		if !joins {
+			name = "server restarts"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := newTester(t)
+			host := testerHost(t)
+			ips, err := net.LookupHost(host)
+			if err != nil || len(ips) == 0 {
+				t.Fatalf("could not resolve %q to an IP: %v", host, err)
+			}
+			// Generated TLS makes the tester advertise the hostname, so use a
+			// template that advertises the bare IP instead.
+			advertise := ips[0]
+			for _, ip := range ips {
+				if net.ParseIP(ip).To4() != nil {
+					advertise = ip
+				}
+			}
+			inst := c.CreateCluster(t, 3, false,
+				testservice.WithGeneratedTLS(testservice.TLSServerOnly(), testservice.TLSSANs(host)),
+				testservice.WithTemplate(advertiseIPTemplate(advertise)))
+			t.Cleanup(func() { inst.Destroy(t) })
+			caPath, _, _ := tlsCertFiles(t, inst)
+			s1, s2, s3 := inst.Servers[0], inst.Servers[1], inst.Servers[2]
+			if joins {
+				// s3 joins the cluster only once the client is on a discovered IP.
+				inst.StopServer(t, s3)
+			}
+
+			reconnected := make(chan bool, 4)
+			nc, err := nats.Connect(fmt.Sprintf("tls://%s:%d", host, s1.Port),
+				nats.RootCAs(caPath),
+				nats.ReconnectWait(50*time.Millisecond),
+				nats.MaxReconnects(-1),
+				nats.ReconnectHandler(func(*nats.Conn) { reconnected <- true }))
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
+			}
+			defer nc.Close()
+
+			inPool := func(srv *api.ManagedServer) bool {
+				for _, u := range nc.Servers() {
+					if strings.HasSuffix(u, fmt.Sprintf(":%d", srv.Port)) && u != nc.Servers()[0] {
+						return true
+					}
+				}
+				return false
+			}
+			discovered := func(srv *api.ManagedServer) string {
+				for _, u := range nc.DiscoveredServers() {
+					if strings.HasSuffix(u, fmt.Sprintf(":%d", srv.Port)) {
+						return u
+					}
+				}
+				return ""
+			}
+			waitDiscovered := func(srv *api.ManagedServer) {
+				t.Helper()
+				checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+					if discovered(srv) == "" {
+						return fmt.Errorf("%s not discovered: %v", srv.Name, nc.DiscoveredServers())
+					}
+					return nil
+				})
+			}
+			failoverTo := func(stop *api.ManagedServer, want ...*api.ManagedServer) *api.ManagedServer {
+				t.Helper()
+				inst.StopServer(t, stop)
+				if err := WaitTime(reconnected, 5*time.Second); err != nil {
+					t.Fatalf("Did not fail over after stopping %s: %v", stop.Name, nc.LastError())
+				}
+				for _, srv := range want {
+					if strings.HasSuffix(nc.ConnectedUrl(), fmt.Sprintf(":%d", srv.Port)) {
+						return srv
+					}
+				}
+				t.Fatalf("Connected to unexpected server %s", nc.ConnectedUrl())
+				return nil
+			}
+
+			waitDiscovered(s2)
+			if u, _ := url.Parse(discovered(s2)); net.ParseIP(u.Hostname()) == nil {
+				t.Fatalf("Expected servers to be discovered by IP: %v", nc.DiscoveredServers())
+			}
+			if !joins {
+				waitDiscovered(s3)
+			}
+
+			// Fail over from the seed to a discovered IP, verified against host.
+			current := s2
+			if joins {
+				failoverTo(s1, s2)
+			} else {
+				current = failoverTo(s1, s2, s3)
+			}
+			other := s3
+			if current == s3 {
+				other = s2
+			}
+
+			// While on the discovered IP, other is added to the pool again.
+			if joins {
+				inst.StartServer(t, other)
+			} else {
+				inst.StopServer(t, other)
+				checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+					if inPool(other) {
+						return fmt.Errorf("%s still in pool: %v", other.Name, nc.Servers())
+					}
+					return nil
+				})
+				inst.StartServer(t, other)
+			}
+			waitDiscovered(other)
+
+			// other is the only server left, so it has to pass verification.
+			failoverTo(current, other)
+		})
+	}
+}
+
+// advertiseIPTemplate is a tester config template for a plain cluster whose
+// servers advertise ip to clients.
+func advertiseIPTemplate(ip string) string {
+	return `
+server_name: "{{ .ServerName }}"
+port: {{ .ClientPort }}
+client_advertise: "` + net.JoinHostPort(ip, "{{ .ClientPort }}") + `"
+{{ if .LogFile }}log_file: "{{ .LogFile }}"{{ end }}
+cluster {
+	name: "{{ .ClusterName }}"
+	port: {{ .ClusterPort }}
+	routes: [
+{{ range .Routes }}
+"nats://{{ . }}"
+{{ end }}
+	]
+}
+{{ if .TLSInclude }}include "{{ .TLSInclude }}"{{ end }}
+`
 }

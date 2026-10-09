@@ -2113,6 +2113,51 @@ func TestParseServerURLPreservesTLSName(t *testing.T) {
 	}
 }
 
+// TestProcessInfoCarriesTLSNameFromDiscoveredIP covers servers learned while
+// connected to a discovered IP: they must be verified against the hostname
+// the current server is verified against, not against their bare IP.
+func TestProcessInfoCarriesTLSNameFromDiscoveredIP(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		currentURL     string
+		currentTLSName string
+		expectedName   string
+	}{
+		{"connected by hostname", "tls://localhost:5222", "", "localhost"},
+		{"connected to discovered IP", "tls://127.0.0.1:5222", "localhost", "localhost"},
+		{"connected to explicit IP", "tls://127.0.0.1:5222", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.currentURL)
+			if err != nil {
+				t.Fatalf("could not parse current URL: %v", err)
+			}
+			current := &Server{URL: u, tlsName: tc.currentTLSName, isImplicit: tc.currentTLSName != ""}
+			nc := &Conn{
+				Opts:    GetDefaultOptions(),
+				current: current,
+				srvPool: []*Server{current},
+				urls:    map[string]struct{}{u.Host: {}},
+			}
+			if err := nc.processInfo(`{"connect_urls":["127.0.0.1:5222","127.0.0.1:5224"]}`); err != nil {
+				t.Fatalf("processInfo: %v", err)
+			}
+			var added *Server
+			for _, s := range nc.srvPool {
+				if s.URL.Host == "127.0.0.1:5224" {
+					added = s
+				}
+			}
+			if added == nil {
+				t.Fatalf("127.0.0.1:5224 not added to pool: %v", nc.Servers())
+			}
+			if added.tlsName != tc.expectedName {
+				t.Fatalf("tlsName = %q, want %q", added.tlsName, tc.expectedName)
+			}
+		})
+	}
+}
+
 // hostOnlyTLSCert mints a self-signed cert carrying a single "localhost" DNS
 // SAN and deliberately no IP SANs, so verifying it against an IP-form
 // ServerName fails. Returns the server cert and a pool trusting it.
