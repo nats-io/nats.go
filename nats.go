@@ -2228,31 +2228,24 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 	if !strings.Contains(sURL, "://") {
 		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
-	var (
-		u   *url.URL
-		err error
-	)
-	for i := 0; i < 2; i++ {
-		u, err = url.Parse(sURL)
-		if err != nil {
-			return nil, err
-		}
-		if u.Port() != "" {
-			break
-		}
-		// In case given URL is of the form "localhost:", just add
-		// the port number at the end, otherwise, add ":4222".
-		if sURL[len(sURL)-1] != ':' {
-			sURL += ":"
-		}
+	u, err := url.Parse(sURL)
+	if err != nil {
+		return nil, err
+	}
+	if u.Port() == "" {
+		// Add the default port to the host rather than to the end of the
+		// string, so that URLs with a path (e.g. "nats://localhost/" or
+		// "ws://localhost/nats") get the port on the host and keep their
+		// path. In case the host is of the form "localhost:", just add the
+		// port number.
+		port := defaultPortString
 		switch u.Scheme {
 		case wsScheme:
-			sURL += defaultWSPortString
+			port = defaultWSPortString
 		case wsSchemeTLS:
-			sURL += defaultWSSPortString
-		default:
-			sURL += defaultPortString
+			port = defaultWSSPortString
 		}
+		u.Host = strings.TrimSuffix(u.Host, ":") + ":" + port
 	}
 
 	var tlsName string

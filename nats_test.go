@@ -250,6 +250,9 @@ func TestSimplifiedURLs(t *testing.T) {
 				"nats://[::9:10:11:12]",
 				"[::13:14:15:16]:",
 				"[::17:18:19:20]:1234",
+				"nats://host7/",
+				"host8/",
+				"nats://[::21:22:23:24]/",
 			},
 			[]string{
 				"nats://host1:1234/",
@@ -264,6 +267,9 @@ func TestSimplifiedURLs(t *testing.T) {
 				"nats://[::9:10:11:12]:4222",
 				"nats://[::13:14:15:16]:4222",
 				"nats://[::17:18:19:20]:1234",
+				"nats://host7:4222/",
+				"nats://host8:4222/",
+				"nats://[::21:22:23:24]:4222/",
 			},
 		},
 		{
@@ -275,6 +281,8 @@ func TestSimplifiedURLs(t *testing.T) {
 				"ws://[::1:2:3:4]:1234",
 				"ws://[::5:6:7:8]:",
 				"ws://[::9:10:11:12]",
+				"ws://host4/nats",
+				"ws://host5:/nats?x=1",
 			},
 			[]string{
 				"ws://host1:1234",
@@ -283,6 +291,8 @@ func TestSimplifiedURLs(t *testing.T) {
 				"ws://[::1:2:3:4]:1234",
 				"ws://[::5:6:7:8]:80",
 				"ws://[::9:10:11:12]:80",
+				"ws://host4:80/nats",
+				"ws://host5:80/nats?x=1",
 			},
 		},
 		{
@@ -294,6 +304,7 @@ func TestSimplifiedURLs(t *testing.T) {
 				"wss://[::1:2:3:4]:1234",
 				"wss://[::5:6:7:8]:",
 				"wss://[::9:10:11:12]",
+				"wss://host4/nats",
 			},
 			[]string{
 				"wss://host1:1234",
@@ -302,6 +313,7 @@ func TestSimplifiedURLs(t *testing.T) {
 				"wss://[::1:2:3:4]:1234",
 				"wss://[::5:6:7:8]:443",
 				"wss://[::9:10:11:12]:443",
+				"wss://host4:443/nats",
 			},
 		},
 	} {
