@@ -98,6 +98,7 @@ type (
 		// retrieve messages in comparison to Messages or Consume methods, as it
 		// does not perform any optimizations (e.g. overlapping pull requests)
 		// and new subscription is created for each execution.
+		// May return ErrMaxBytesExceeded if the batch exceeds maximum bytes.
 		FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error)
 
 		// FetchNoWait is used to retrieve up to a provided number of messages
@@ -134,6 +135,7 @@ type (
 		//
 		// Consume returns a ConsumeContext, which can be used to stop or drain
 		// the consumer.
+		// May return ErrConsumerDeleted if the consumer is deleted while consuming.
 		Consume(handler MessageHandler, opts ...PullConsumeOpt) (ConsumeContext, error)
 
 		// Messages returns MessagesContext, allowing continuous iteration
@@ -154,6 +156,7 @@ type (
 		Next(opts ...FetchOpt) (Msg, error)
 
 		// Info fetches current ConsumerInfo from the server.
+		// Returns ErrConsumerNotFound if the consumer does not exist.
 		Info(context.Context) (*ConsumerInfo, error)
 
 		// CachedInfo returns ConsumerInfo currently cached on this consumer.
