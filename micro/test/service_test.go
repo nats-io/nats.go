@@ -632,11 +632,12 @@ func TestAddServiceFailedThenConnectionClosed(t *testing.T) {
 		closed := make(chan struct{})
 		nc.SetClosedHandler(func(*nats.Conn) { close(closed) })
 
+		done := make(chan struct{}, 1)
 		_, err := micro.AddService(nc, micro.Config{
 			Name:    "test_service",
 			Version: "0.1.0",
 			// Stop queues a callback only when DoneHandler is set.
-			DoneHandler: func(micro.Service) {},
+			DoneHandler: func(micro.Service) { done <- struct{}{} },
 			Endpoint: &micro.EndpointConfig{
 				Subject: "endpoint subject",
 				Handler: micro.HandlerFunc(func(micro.Request) {}),
@@ -651,6 +652,11 @@ func TestAddServiceFailedThenConnectionClosed(t *testing.T) {
 		case <-closed:
 		case <-time.After(time.Second):
 			t.Fatalf("Timeout on ClosedHandler")
+		}
+		select {
+		case <-done:
+			t.Fatalf("Expected no DoneHandler for a service that failed to be added")
+		case <-time.After(100 * time.Millisecond):
 		}
 	})
 }
@@ -857,6 +863,146 @@ func TestServiceAsyncErrorOnForeignSubscription(t *testing.T) {
 					if _, err := nc.Request(subject, nil, time.Second); err != nil {
 						t.Fatalf("Request on %q: %v", subject, err)
 					}
+				}
+			})
+		})
+	}
+}
+
+func TestServiceStopDoesNotDetachOtherServices(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		nc.SetErrorHandler(func(*nats.Conn, *nats.Subscription, error) {})
+
+		first, err := micro.AddService(nc, micro.Config{
+			Name:    "first",
+			Version: "0.1.0",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		release := make(chan struct{})
+		errs := make(chan *micro.NATSError, 10)
+		done := make(chan struct{}, 1)
+		second, err := micro.AddService(nc, micro.Config{
+			Name:    "second",
+			Version: "0.1.0",
+			ErrorHandler: func(_ micro.Service, err *micro.NATSError) {
+				errs <- err
+			},
+			DoneHandler: func(micro.Service) {
+				done <- struct{}{}
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		err = second.AddEndpoint("work", micro.HandlerFunc(func(req micro.Request) {
+			<-release
+			req.Respond([]byte("ok"))
+		}), micro.WithEndpointSubject("second.work"), micro.WithEndpointPendingLimits(1, -1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if err := first.Stop(); err != nil {
+			t.Fatalf("Unexpected error when stopping the service: %v", err)
+		}
+
+		inbox := nats.NewInbox()
+		for range 5 {
+			if err := nc.PublishRequest("second.work", inbox, nil); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		select {
+		case natsErr := <-errs:
+			if !errors.Is(natsErr, nats.ErrSlowConsumer) {
+				t.Fatalf("Expected %v; got: %v", nats.ErrSlowConsumer, natsErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout on ErrorHandler")
+		}
+		close(release)
+
+		nc.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout on DoneHandler")
+		}
+		if !second.Stopped() {
+			t.Fatalf("Expected the service to stop when the connection is closed")
+		}
+	})
+}
+
+func TestServiceStopRestoresConnectionHandlers(t *testing.T) {
+	tests := []struct {
+		name  string
+		order []int
+	}{
+		{name: "in the order added", order: []int{0, 1}},
+		{name: "in reverse order", order: []int{1, 0}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				connErrs := make(chan *nats.Subscription, 10)
+				nc.SetErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, _ error) {
+					connErrs <- sub
+				})
+				closed := make(chan struct{})
+				nc.SetClosedHandler(func(*nats.Conn) { close(closed) })
+
+				var svcs []micro.Service
+				for _, name := range []string{"first", "second"} {
+					svc, err := micro.AddService(nc, micro.Config{
+						Name:    name,
+						Version: "0.1.0",
+					})
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					svcs = append(svcs, svc)
+				}
+				for _, i := range test.order {
+					if err := svcs[i].Stop(); err != nil {
+						t.Fatalf("Unexpected error when stopping the service: %v", err)
+					}
+				}
+
+				release := make(chan struct{})
+				sub, err := nc.Subscribe("user.work", func(*nats.Msg) {
+					<-release
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if err := sub.SetPendingLimits(1, -1); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				for range 5 {
+					if err := nc.Publish("user.work", nil); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+				select {
+				case errSub := <-connErrs:
+					if errSub != sub {
+						t.Fatalf("Expected the error on the user's subscription; got one on %q", errSub.Subject)
+					}
+				case <-time.After(time.Second):
+					t.Fatalf("Timeout on connection error handler")
+				}
+				close(release)
+
+				nc.Close()
+				select {
+				case <-closed:
+				case <-time.After(time.Second):
+					t.Fatalf("Timeout on ClosedHandler")
 				}
 			})
 		})
