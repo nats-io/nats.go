@@ -457,7 +457,6 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222 ", oneExpected)
 	check(" nats://localhost:1222", oneExpected)
 	check(" nats://localhost:1222 ", oneExpected)
-	check("nats://localhost:1222/", oneExpected)
 
 	var multiExpected = []string{
 		"nats://localhost:1222",
@@ -469,7 +468,6 @@ func TestUrlArgument(t *testing.T) {
 	check("nats://localhost:1222, nats://localhost:1223, nats://localhost:1224", multiExpected)
 	check(" nats://localhost:1222, nats://localhost:1223, nats://localhost:1224 ", multiExpected)
 	check("nats://localhost:1222,   nats://localhost:1223  ,nats://localhost:1224", multiExpected)
-	check("nats://localhost:1222/,nats://localhost:1223/,nats://localhost:1224/", multiExpected)
 }
 
 func TestParserPing(t *testing.T) {

@@ -1950,7 +1950,7 @@ func processUrlString(url string) []string {
 	urls := strings.Split(url, ",")
 	var j int
 	for _, s := range urls {
-		u := strings.TrimSuffix(strings.TrimSpace(s), "/")
+		u := strings.TrimSpace(s)
 		if len(u) > 0 {
 			urls[j] = u
 			j++
@@ -2233,11 +2233,6 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 		return nil, err
 	}
 	if u.Port() == "" {
-		// Add the default port to the host rather than to the end of the
-		// string, so that URLs with a path (e.g. "nats://localhost/" or
-		// "ws://localhost/nats") get the port on the host and keep their
-		// path. In case the host is of the form "localhost:", just add the
-		// port number.
 		port := defaultPortString
 		switch u.Scheme {
 		case wsScheme:
@@ -2245,6 +2240,7 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 		case wsSchemeTLS:
 			port = defaultWSSPortString
 		}
+		// "host:" has an empty port, so trim the colon before adding the default.
 		u.Host = strings.TrimSuffix(u.Host, ":") + ":" + port
 	}
 
