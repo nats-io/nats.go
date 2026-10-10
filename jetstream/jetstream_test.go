@@ -389,6 +389,40 @@ func TestRetryWithBackoff(t *testing.T) {
 	}
 }
 
+func TestPullConsumer_checkPendingAfterDone(t *testing.T) {
+	// Once the subscription is stopped or drained, pullMessages no longer
+	// reads fetchNext. Messages delivered while draining still call
+	// checkPending (with the lock held), and fetchNext only buffers one
+	// request, so checkPending must not block on a full fetchNext.
+	sub := &pullSubscription{
+		pending: pendingMsgs{
+			msgCount: 4,
+		},
+		consumeOpts: &consumeOpts{
+			ThresholdMessages: 5,
+			MaxMessages:       10,
+		},
+		done:      make(chan struct{}, 1),
+		fetchNext: make(chan *pullRequest, 1),
+	}
+	// A request queued before pullMessages returned, which nobody reads.
+	sub.fetchNext <- &pullRequest{}
+	close(sub.done)
+
+	returned := make(chan struct{})
+	go func() {
+		sub.Lock()
+		sub.checkPending()
+		sub.Unlock()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("checkPending blocked on fetchNext after the subscription was done")
+	}
+}
+
 func TestPullConsumer_checkPending(t *testing.T) {
 
 	tests := []struct {

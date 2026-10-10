@@ -370,7 +370,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							sub.errs <- errConnected
 						}
 
-						sub.fetchNext <- &pullRequest{
+						sub.requestNext(&pullRequest{
 							Expires:       sub.consumeOpts.Expires,
 							Batch:         sub.consumeOpts.MaxMessages,
 							MaxBytes:      sub.consumeOpts.MaxBytes,
@@ -380,7 +380,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							Priority:      sub.consumeOpts.Priority,
 							Group:         sub.consumeOpts.Group,
 							PinID:         p.getPinID(),
-						}
+						})
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 						}
@@ -398,7 +398,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					if sub.consumeOpts.StopAfter > 0 {
 						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 					}
-					sub.fetchNext <- &pullRequest{
+					sub.requestNext(&pullRequest{
 						Expires:       sub.consumeOpts.Expires,
 						Batch:         batchSize,
 						MaxBytes:      sub.consumeOpts.MaxBytes,
@@ -408,7 +408,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						Priority:      sub.consumeOpts.Priority,
 						Group:         sub.consumeOpts.Group,
 						PinID:         p.getPinID(),
-					}
+					})
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 					}
@@ -485,7 +485,7 @@ func (s *pullSubscription) checkPending() {
 			if s.consumer != nil {
 				pinID = s.consumer.getPinID()
 			}
-			s.fetchNext <- &pullRequest{
+			s.requestNext(&pullRequest{
 				Expires:       s.consumeOpts.Expires,
 				Batch:         batchSize,
 				MaxBytes:      maxBytes,
@@ -495,11 +495,20 @@ func (s *pullSubscription) checkPending() {
 				MinPending:    s.consumeOpts.MinPending,
 				MinAckPending: s.consumeOpts.MinAckPending,
 				Priority:      s.consumeOpts.Priority,
-			}
+			})
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
 			s.pending.byteCount = s.consumeOpts.MaxBytes
 		}
+	}
+}
+
+// requestNext queues req for pullMessages, giving up once the
+// subscription is done.
+func (s *pullSubscription) requestNext(req *pullRequest) {
+	select {
+	case s.fetchNext <- req:
+	case <-s.done:
 	}
 }
 
