@@ -1950,7 +1950,7 @@ func processUrlString(url string) []string {
 	urls := strings.Split(url, ",")
 	var j int
 	for _, s := range urls {
-		u := strings.TrimSuffix(strings.TrimSpace(s), "/")
+		u := strings.TrimSpace(s)
 		if len(u) > 0 {
 			urls[j] = u
 			j++
@@ -2228,31 +2228,20 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 	if !strings.Contains(sURL, "://") {
 		sURL = fmt.Sprintf("%s://%s", nc.connScheme(), sURL)
 	}
-	var (
-		u   *url.URL
-		err error
-	)
-	for i := 0; i < 2; i++ {
-		u, err = url.Parse(sURL)
-		if err != nil {
-			return nil, err
-		}
-		if u.Port() != "" {
-			break
-		}
-		// In case given URL is of the form "localhost:", just add
-		// the port number at the end, otherwise, add ":4222".
-		if sURL[len(sURL)-1] != ':' {
-			sURL += ":"
-		}
+	u, err := url.Parse(sURL)
+	if err != nil {
+		return nil, err
+	}
+	if u.Port() == "" {
+		port := defaultPortString
 		switch u.Scheme {
 		case wsScheme:
-			sURL += defaultWSPortString
+			port = defaultWSPortString
 		case wsSchemeTLS:
-			sURL += defaultWSSPortString
-		default:
-			sURL += defaultPortString
+			port = defaultWSSPortString
 		}
+		// "host:" has an empty port, so trim the colon before adding the default.
+		u.Host = strings.TrimSuffix(u.Host, ":") + ":" + port
 	}
 
 	var tlsName string
