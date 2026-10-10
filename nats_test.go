@@ -2231,3 +2231,66 @@ func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
 		})
 	}
 }
+
+// countingFailDialer never connects and counts how often it was asked to.
+type countingFailDialer struct {
+	attempts atomic.Int32
+}
+
+func (d *countingFailDialer) Dial(network, address string) (net.Conn, error) {
+	d.attempts.Add(1)
+	return nil, errors.New("dial refused")
+}
+
+// TestForceReconnectRestoresBackoff reproduces #2172: calling ForceReconnect while
+// the connection is already reconnecting must interrupt the current backoff once,
+// not disable ReconnectWait/CustomReconnectDelay for the rest of the loop.
+func TestForceReconnectRestoresBackoff(t *testing.T) {
+	const wait = 200 * time.Millisecond
+
+	tests := []struct {
+		name string
+		opts []Option
+	}{
+		{"ReconnectWait", []Option{ReconnectWait(wait), ReconnectJitter(0, 0)}},
+		{"CustomReconnectDelay", []Option{CustomReconnectDelay(func(int) time.Duration { return wait })}},
+		{"ReconnectToServerDelay", []Option{ReconnectToServer(func(servers []Server, _ ServerInfo) (*Server, time.Duration) {
+			return &servers[0], wait
+		})}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d := &countingFailDialer{}
+			opts := append([]Option{
+				RetryOnFailedConnect(true),
+				MaxReconnects(-1),
+				SetCustomDialer(d),
+			}, test.opts...)
+			nc, err := Connect("nats://127.0.0.1:1", opts...)
+			if err != nil {
+				t.Fatalf("Connect: %v", err)
+			}
+			defer nc.Close()
+			if !nc.IsReconnecting() {
+				t.Fatal("expected connection to be reconnecting")
+			}
+
+			// Let doReconnect enter its first backoff, then force one attempt.
+			time.Sleep(wait / 4)
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("ForceReconnect: %v", err)
+			}
+			time.Sleep(wait / 2)
+
+			// After the forced attempt the configured delay must apply again:
+			// roughly 1s/200ms = 5 attempts, not thousands.
+			before := d.attempts.Load()
+			time.Sleep(time.Second)
+			after := d.attempts.Load()
+			if n := after - before; n > 10 {
+				t.Fatalf("reconnect delay not honored after ForceReconnect: %d dial attempts in 1s (expected ~5)", n)
+			}
+		})
+	}
+}
