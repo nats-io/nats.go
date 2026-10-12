@@ -1,4 +1,4 @@
-// Copyright 2022-2023 The NATS Authors
+// Copyright 2022-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -252,8 +252,9 @@ type (
 	}
 
 	asyncCallbacksHandler struct {
-		cbQueue chan func()
-		closed  bool
+		cbQueue   chan func()
+		done      chan struct{}
+		closeOnce sync.Once
 	}
 )
 
@@ -338,6 +339,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		id:     id,
 		asyncDispatcher: asyncCallbacksHandler{
 			cbQueue: make(chan func(), 100),
+			done:    make(chan struct{}),
 		},
 		verbSubs:  make(map[string]*nats.Subscription),
 		endpoints: make([]*Endpoint, 0),
@@ -497,28 +499,42 @@ func (s *service) AddGroup(name string, opts ...GroupOpt) Group {
 	}
 }
 
-// dispatch is responsible for calling any async callbacks
+// run invokes queued callbacks until close is called, then invokes the ones
+// still queued and returns.
 func (ac *asyncCallbacksHandler) run() {
 	for {
-		f, ok := <-ac.cbQueue
-		if !ok || f == nil {
-			return
+		select {
+		case f := <-ac.cbQueue:
+			f()
+		case <-ac.done:
+			for {
+				select {
+				case f := <-ac.cbQueue:
+					f()
+				default:
+					return
+				}
+			}
 		}
-		f()
 	}
 }
 
-// dispatch is responsible for calling any async callbacks
+// push queues f to be invoked by run. Callbacks pushed after close may be
+// dropped.
 func (ac *asyncCallbacksHandler) push(f func()) {
-	ac.cbQueue <- f
+	select {
+	case <-ac.done:
+		return
+	default:
+	}
+	select {
+	case <-ac.done:
+	case ac.cbQueue <- f:
+	}
 }
 
 func (ac *asyncCallbacksHandler) close() {
-	if ac.closed {
-		return
-	}
-	close(ac.cbQueue)
-	ac.closed = true
+	ac.closeOnce.Do(func() { close(ac.done) })
 }
 
 func (c *Config) valid() error {

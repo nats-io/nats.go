@@ -43,3 +43,24 @@ func TestMatchEndpointSubject(t *testing.T) {
 		})
 	}
 }
+
+func TestAsyncCallbacksHandlerClose(t *testing.T) {
+	ac := &asyncCallbacksHandler{cbQueue: make(chan func(), 100), done: make(chan struct{})}
+	var n int
+	for range cap(ac.cbQueue) {
+		ac.push(func() { n++ })
+	}
+	ac.close()
+	ac.run()
+	if n != cap(ac.cbQueue) {
+		t.Fatalf("Expected %d callbacks to run; got %d", cap(ac.cbQueue), n)
+	}
+	for range 2 * cap(ac.cbQueue) {
+		ac.push(func() { n++ })
+	}
+	ac.run()
+	if n != cap(ac.cbQueue) {
+		t.Fatalf("Expected callbacks pushed after close to be dropped; %d ran", n-cap(ac.cbQueue))
+	}
+	ac.close()
+}

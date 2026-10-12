@@ -551,6 +551,109 @@ func TestAddServiceClosedConnection(t *testing.T) {
 	})
 }
 
+func TestServiceStopWithQueuedMonitoringRequests(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		started := make(chan struct{}, 4)
+		done := make(chan struct{}, 2)
+
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:    "stop_queued",
+			Version: "0.1.0",
+			Endpoint: &micro.EndpointConfig{
+				Subject: "stop.queued",
+				Handler: micro.HandlerFunc(func(micro.Request) {}),
+			},
+			StatsHandler: func(*micro.Endpoint) any {
+				started <- struct{}{}
+				time.Sleep(100 * time.Millisecond)
+				return nil
+			},
+			ErrorHandler: func(micro.Service, *micro.NATSError) {},
+			DoneHandler: func(micro.Service) {
+				done <- struct{}{}
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		statsSubject, err := micro.ControlSubject(micro.StatsVerb, "stop_queued", "")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		replies, err := nc.SubscribeSync(nats.NewInbox())
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// No reply subject: responding fails, which reports to ErrorHandler
+		// through the service's callback queue.
+		for range 3 {
+			if err := nc.Publish(statsSubject, nil); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		// Answered only after the requests queued before it are handled.
+		if err := nc.PublishRequest(statsSubject, replies.Subject, nil); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout waiting for StatsHandler")
+		}
+
+		// Stop waits for the service lock held while StatsHandler runs, so
+		// the remaining requests are handled after the queue is shut down.
+		if err := srv.Stop(); err != nil {
+			t.Fatalf("Unexpected error when stopping the service: %v", err)
+		}
+		if _, err := replies.NextMsg(2 * time.Second); err != nil {
+			t.Fatalf("Expected a response to the last queued request: %v", err)
+		}
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout on DoneHandler")
+		}
+		select {
+		case <-done:
+			t.Fatalf("DoneHandler called more than once")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+}
+
+func TestAddServiceFailedThenConnectionClosed(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		// Set before AddService so the service's closed handler wraps it and
+		// runs first.
+		closed := make(chan struct{})
+		nc.SetClosedHandler(func(*nats.Conn) { close(closed) })
+
+		_, err := micro.AddService(nc, micro.Config{
+			Name:    "test_service",
+			Version: "0.1.0",
+			// Stop queues a callback only when DoneHandler is set.
+			DoneHandler: func(micro.Service) {},
+			Endpoint: &micro.EndpointConfig{
+				Subject: "endpoint subject",
+				Handler: micro.HandlerFunc(func(micro.Request) {}),
+			},
+		})
+		if !errors.Is(err, micro.ErrConfigValidation) {
+			t.Fatalf("Expected %v; got: %v", micro.ErrConfigValidation, err)
+		}
+
+		nc.Close()
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout on ClosedHandler")
+		}
+	})
+}
+
 func TestErrHandlerSubjectMatch(t *testing.T) {
 	tests := []struct {
 		name             string
