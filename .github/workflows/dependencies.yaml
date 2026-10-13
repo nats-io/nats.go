@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - 'go.mod'
+      - 'go_test.mod'
+      - 'dependencies.tpl'
+      - '.github/workflows/dependencies.yaml'
     branches:
       - main
 
@@ -12,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BRANCH_NAME: update-report-branch-${{ github.run_id }}
+      BRANCH_NAME: update-dependencies-report
 
     steps:
       - name: Checkout repository
@@ -26,12 +29,15 @@ jobs:
           go-version: '1.26'
 
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
-        # We need this step because of test dependencies and how they are handled in nats.go
-      - name: Run go mod tidy
-        run: go mod tidy
+        run: go install github.com/google/go-licenses@v1.6.0
+
+      # encoders/protobuf needs protobuf, which only go_test.mod requires (go-licenses can't take -modfile)
       - name: Run license check
-        run: go-licenses report ./... --template dependencies.tpl > dependencies.md
+        run: |
+          cp go_test.mod go.mod
+          cp go_test.sum go.sum
+          go-licenses report ./... --ignore github.com/nats-io/nats.go --template dependencies.tpl > dependencies.md
+          git checkout -- go.mod go.sum
 
       - name: Configure git
         run: |
@@ -47,15 +53,18 @@ jobs:
       - name: Commit changes
         if: env.has_changes == 'true'
         run: |
-          git checkout -b "$BRANCH_NAME"
+          git checkout -B "$BRANCH_NAME"
           git add dependencies.md
           git commit -m "Update dependencies.md"
-          git push -u origin "$BRANCH_NAME"
+          git push --force origin "$BRANCH_NAME"
 
       - name: Create Pull Request
         if: env.has_changes == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ -n "$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[]')" ]; then
+            exit 0
+          fi
           gh pr create --title "Update dependencies.md" --body "This PR updates the dependencies report" --head "$BRANCH_NAME" --base main
 
