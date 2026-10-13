@@ -10593,3 +10593,201 @@ func TestJetStreamOrderedConsumerFirstMsgDroppedKeepsStartPosition(t *testing.T)
 		}
 	})
 }
+
+// TestJetStreamOrderedConsumerManualReconnect tests that legacy push ordered
+// consumers recover after a manual disconnect/reconnect that exceeds the
+// default InactiveThreshold (5s) but is within our extended InactiveThreshold (5m).
+func TestJetStreamOrderedConsumerManualReconnect(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "test", Subjects: []string{"test.>"}}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var mu sync.Mutex
+		var received []string
+
+		sub, err := js.Subscribe("test.ordered", func(m *nats.Msg) {
+			mu.Lock()
+			received = append(received, string(m.Data))
+			mu.Unlock()
+			m.Ack()
+		}, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Subscribe failed: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		// Send initial messages
+		for i := 1; i <= 5; i++ {
+			if _, err := js.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatalf("Publish failed: %v", err)
+			}
+		}
+
+		// Wait for messages
+		time.Sleep(500 * time.Millisecond)
+
+		mu.Lock()
+		initialCount := len(received)
+		mu.Unlock()
+		t.Logf("Initial messages received: %d", initialCount)
+		if initialCount != 5 {
+			t.Fatalf("Expected 5 initial messages, got %d", initialCount)
+		}
+
+		// Close connection (simulates network partition)
+		nc.Close()
+		t.Log("Connection closed, waiting 8 seconds (>5s default InactiveThreshold)...")
+		time.Sleep(8 * time.Second)
+
+		// Reconnect
+		nc2 := dialInstance(t, inst)
+		defer nc2.Close()
+
+		js2, err := nc2.JetStream()
+		if err != nil {
+			t.Fatalf("JetStream reconnect failed: %v", err)
+		}
+
+		// Resubscribe with ordered consumer
+		sub2, err := js2.Subscribe("test.ordered", func(m *nats.Msg) {
+			mu.Lock()
+			received = append(received, string(m.Data))
+			mu.Unlock()
+			m.Ack()
+		}, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Resubscribe failed: %v", err)
+		}
+		defer sub2.Unsubscribe()
+
+		// Send more messages after reconnect
+		for i := 6; i <= 10; i++ {
+			if _, err := js2.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatalf("Publish after reconnect failed: %v", err)
+			}
+		}
+
+		// Wait for all messages with timeout
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			mu.Lock()
+			count := len(received)
+			mu.Unlock()
+			if count == 10 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("Timeout: only %d messages received after reconnect", count)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Verify message order and no duplicates
+		mu.Lock()
+		defer mu.Unlock()
+		if len(received) != 10 {
+			t.Fatalf("Expected 10 messages, got %d", len(received))
+		}
+		for i, msg := range received {
+			expected := fmt.Sprintf("msg-%d", i+1)
+			if msg != expected {
+				t.Fatalf("Message %d: expected %q, got %q", i+1, expected, msg)
+			}
+		}
+		t.Logf("All 10 messages received in correct order after reconnect")
+	})
+}
+
+// TestJetStreamOrderedConsumerServerRestart tests ordered consumer recovery
+// after server restart.
+func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "test", Subjects: []string{"test.>"}}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var mu sync.Mutex
+		var received []string
+
+		sub, err := js.Subscribe("test.ordered", func(m *nats.Msg) {
+			mu.Lock()
+			received = append(received, string(m.Data))
+			mu.Unlock()
+			m.Ack()
+		}, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Subscribe failed: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		// Send initial messages
+		for i := 1; i <= 5; i++ {
+			if _, err := js.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatalf("Publish failed: %v", err)
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		mu.Lock()
+		initialCount := len(received)
+		mu.Unlock()
+		if initialCount != 5 {
+			t.Fatalf("Expected 5 initial messages, got %d", initialCount)
+		}
+
+		// Restart server
+		inst.StopServer(t, inst.Servers[0])
+		inst.StartServer(t, inst.Servers[0])
+
+		// Wait for JetStream to be available
+		c := newTester(t)
+		c.WaitForJetStream(t, nc)
+
+		// Send more messages
+		for i := 6; i <= 10; i++ {
+			if _, err := js.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatalf("Publish after restart failed: %v", err)
+			}
+		}
+
+		// Wait for all messages
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			mu.Lock()
+			count := len(received)
+			mu.Unlock()
+			if count == 10 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("Timeout: only %d messages received after server restart", count)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Verify message order
+		mu.Lock()
+		defer mu.Unlock()
+		if len(received) != 10 {
+			t.Fatalf("Expected 10 messages, got %d", len(received))
+		}
+		for i, msg := range received {
+			expected := fmt.Sprintf("msg-%d", i+1)
+			if msg != expected {
+				t.Fatalf("Message %d: expected %q, got %q", i+1, expected, msg)
+			}
+		}
+		t.Logf("All 10 messages received in correct order after server restart")
+	})
+}
