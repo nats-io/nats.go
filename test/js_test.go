@@ -10610,11 +10610,14 @@ func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 
 		var mu sync.Mutex
 		var received []string
-		var reconnectTime time.Time
+		reconnectCh := make(chan time.Time, 1)
 
-		// Track reconnect time
+		// Track reconnect time via channel to avoid data race
 		nc.SetReconnectHandler(func(_ *nats.Conn) {
-			reconnectTime = time.Now()
+			select {
+			case reconnectCh <- time.Now():
+			default:
+			}
 			t.Log("ReconnectedCB fired")
 		})
 
@@ -10677,7 +10680,14 @@ func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		t.Logf("Reconnected at %v", reconnectTime)
+
+		var reconnectTime time.Time
+		select {
+		case reconnectTime = <-reconnectCh:
+			t.Logf("Reconnected at %v", reconnectTime)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("ReconnectedCB not fired within 5 seconds")
+		}
 
 		// Wait for JetStream to be available
 		c := newTester(t)
@@ -10690,8 +10700,10 @@ func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 			}
 		}
 
-		// Wait for all messages with timeout
-		deadline := time.Now().Add(30 * time.Second)
+		// Wait for all messages with timeout, but assert prompt recovery
+		// Messages should arrive within 5 seconds after reconnect
+		recoveryDeadline := reconnectTime.Add(5 * time.Second)
+		overallDeadline := time.Now().Add(30 * time.Second)
 		for {
 			mu.Lock()
 			count := len(received)
@@ -10699,7 +10711,10 @@ func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 			if count == 10 {
 				break
 			}
-			if time.Now().After(deadline) {
+			if time.Now().After(recoveryDeadline) {
+				t.Fatalf("Prompt recovery failed: only %d messages received within 5s of reconnect (expected 10)", count)
+			}
+			if time.Now().After(overallDeadline) {
 				t.Fatalf("Timeout: only %d messages received after reconnect", count)
 			}
 			time.Sleep(100 * time.Millisecond)
