@@ -893,7 +893,7 @@ func (obs *obs) PutFile(file string, opts ...ObjectOpt) (*ObjectInfo, error) {
 // GetFile is a convenience function to pull and object and place in a file.
 func (obs *obs) GetFile(name, file string, opts ...GetObjectOpt) error {
 	// Expect file to be new.
-	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE, 0600)
+	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
