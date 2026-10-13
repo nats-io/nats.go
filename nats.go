@@ -6179,12 +6179,14 @@ func (nc *Conn) resendSubscriptions() {
 			nc.bw.writeDirect(fmt.Sprintf(unsubProto, sid, maxStr))
 		}
 
-		// If this is an ordered consumer, trigger a reset to recreate
+		// If this is an ordered consumer, mark it for reset to recreate
 		// the consumer on the server. This handles cases where the
 		// consumer was deleted due to inactivity or server restart.
+		// We set resetPending instead of calling tryResetOrderedConsumer
+		// directly to avoid deadlock (nc.mu is held by the reconnect flow).
 		if isOrdered {
 			s.mu.Lock()
-			s.tryResetOrderedConsumer()
+			s.jsi.resetPending = true
 			s.mu.Unlock()
 		}
 	}
