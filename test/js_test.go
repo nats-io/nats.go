@@ -10594,10 +10594,10 @@ func TestJetStreamOrderedConsumerFirstMsgDroppedKeepsStartPosition(t *testing.T)
 	})
 }
 
-// TestJetStreamOrderedConsumerManualReconnect tests that legacy push ordered
-// consumers recover after a manual disconnect/reconnect that exceeds the
+// TestJetStreamOrderedConsumerAutoReconnect tests that legacy push ordered
+// consumers recover after an automatic reconnect that exceeds the
 // default InactiveThreshold (5s) but is within our extended InactiveThreshold (5m).
-func TestJetStreamOrderedConsumerManualReconnect(t *testing.T) {
+func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
 		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
 		if err != nil {
@@ -10610,6 +10610,13 @@ func TestJetStreamOrderedConsumerManualReconnect(t *testing.T) {
 
 		var mu sync.Mutex
 		var received []string
+		var reconnectTime time.Time
+
+		// Track reconnect time
+		nc.SetReconnectHandler(func(_ *nats.Conn) {
+			reconnectTime = time.Now()
+			t.Log("ReconnectedCB fired")
+		})
 
 		sub, err := js.Subscribe("test.ordered", func(m *nats.Msg) {
 			mu.Lock()
@@ -10640,35 +10647,45 @@ func TestJetStreamOrderedConsumerManualReconnect(t *testing.T) {
 			t.Fatalf("Expected 5 initial messages, got %d", initialCount)
 		}
 
-		// Close connection (simulates network partition)
-		nc.Close()
-		t.Log("Connection closed, waiting 8 seconds (>5s default InactiveThreshold)...")
+		// Stop server to simulate network partition
+		t.Log("Stopping server...")
+		inst.StopServer(t, inst.Servers[0])
+
+		// Wait for disconnect to be detected
+		disconnectDeadline := time.Now().Add(10 * time.Second)
+		for nc.Status() != nats.CLOSED && nc.Status() != nats.RECONNECTING {
+			if time.Now().After(disconnectDeadline) {
+				t.Fatalf("Timeout waiting for disconnect")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Logf("Connection status after stop: %v", nc.Status())
+
+		// Wait longer than default InactiveThreshold (5s) but less than our 5m threshold
+		t.Log("Waiting 8 seconds (>5s default InactiveThreshold)...")
 		time.Sleep(8 * time.Second)
 
-		// Reconnect
-		nc2 := dialInstance(t, inst)
-		defer nc2.Close()
+		// Restart server
+		t.Log("Restarting server...")
+		inst.StartServer(t, inst.Servers[0])
 
-		js2, err := nc2.JetStream()
-		if err != nil {
-			t.Fatalf("JetStream reconnect failed: %v", err)
+		// Wait for reconnect
+		reconnectDeadline := time.Now().Add(30 * time.Second)
+		for nc.Status() != nats.CONNECTED {
+			if time.Now().After(reconnectDeadline) {
+				t.Fatalf("Timeout waiting for reconnect, status: %v", nc.Status())
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
+		t.Logf("Reconnected at %v", reconnectTime)
 
-		// Resubscribe with ordered consumer
-		sub2, err := js2.Subscribe("test.ordered", func(m *nats.Msg) {
-			mu.Lock()
-			received = append(received, string(m.Data))
-			mu.Unlock()
-			m.Ack()
-		}, nats.OrderedConsumer())
-		if err != nil {
-			t.Fatalf("Resubscribe failed: %v", err)
-		}
-		defer sub2.Unsubscribe()
+		// Wait for JetStream to be available
+		c := newTester(t)
+		c.WaitForJetStream(t, nc)
 
 		// Send more messages after reconnect
 		for i := 6; i <= 10; i++ {
-			if _, err := js2.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			if _, err := js.Publish("test.ordered", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
 				t.Fatalf("Publish after reconnect failed: %v", err)
 			}
 		}
@@ -10700,10 +10717,9 @@ func TestJetStreamOrderedConsumerManualReconnect(t *testing.T) {
 				t.Fatalf("Message %d: expected %q, got %q", i+1, expected, msg)
 			}
 		}
-		t.Logf("All 10 messages received in correct order after reconnect")
+		t.Logf("All 10 messages received in correct order after auto-reconnect")
 	})
 }
-
 // TestJetStreamOrderedConsumerServerRestart tests ordered consumer recovery
 // after server restart.
 func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {

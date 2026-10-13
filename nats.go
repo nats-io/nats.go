@@ -6182,12 +6182,23 @@ func (nc *Conn) resendSubscriptions() {
 		// If this is an ordered consumer, mark it for reset to recreate
 		// the consumer on the server. This handles cases where the
 		// consumer was deleted due to inactivity or server restart.
-		// We set resetPending instead of calling tryResetOrderedConsumer
-		// directly to avoid deadlock (nc.mu is held by the reconnect flow).
+		// We set resetPending and also schedule an async reset to run
+		// after the reconnect flow releases nc.mu, since tryResetOrderedConsumer
+		// may need to acquire nc.mu internally.
 		if isOrdered {
 			s.mu.Lock()
 			s.jsi.resetPending = true
 			s.mu.Unlock()
+
+			go func(sub *Subscription) {
+				// Wait briefly for the reconnect flow to complete and release nc.mu.
+				// We use a short sleep to avoid tight spinning; the actual reset
+				// will block on nc.mu until it's available.
+				time.Sleep(100 * time.Millisecond)
+				sub.mu.Lock()
+				sub.tryResetOrderedConsumer()
+				sub.mu.Unlock()
+			}(s)
 		}
 	}
 }
