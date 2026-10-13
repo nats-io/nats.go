@@ -488,11 +488,12 @@ func TestAddService(t *testing.T) {
 				}
 
 				if test.givenConfig.ErrorHandler != nil {
+					// Same subject as one of the service's subscriptions, but not one of them.
 					go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.asyncErrorSubject}, errors.New("oops"))
 					select {
 					case <-errService:
-					case <-time.After(1 * time.Second):
-						t.Fatalf("Timeout on ErrorHandler")
+						t.Fatalf("Expected an error on another subscription not to reach ErrorHandler")
+					case <-time.After(50 * time.Millisecond):
 					}
 					if test.natsErrorHandler != nil {
 						select {
@@ -654,97 +655,210 @@ func TestAddServiceFailedThenConnectionClosed(t *testing.T) {
 	})
 }
 
-func TestErrHandlerSubjectMatch(t *testing.T) {
+// requestEventually retries a request until it is answered. Requests to an
+// endpoint over its pending limit are dropped until its backlog clears.
+func requestEventually(t *testing.T, nc *nats.Conn, subject string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := nc.Request(subject, nil, 300*time.Millisecond)
+		if err == nil {
+			return
+		}
+		if errors.Is(err, nats.ErrNoResponders) || time.Now().After(deadline) {
+			t.Fatalf("Request on %q: %v", subject, err)
+		}
+	}
+}
+
+func TestServiceSlowConsumerOnEndpoint(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		// The connection's own handler runs after the services' handlers.
+		connErrs := make(chan error, 10)
+		nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			connErrs <- err
+		})
+
+		release := make(chan struct{})
+		errsA := make(chan *micro.NATSError, 10)
+		svcA, err := micro.AddService(nc, micro.Config{
+			Name:    "slow_a",
+			Version: "0.1.0",
+			ErrorHandler: func(_ micro.Service, err *micro.NATSError) {
+				errsA <- err
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer svcA.Stop()
+		err = svcA.AddEndpoint("work", micro.HandlerFunc(func(req micro.Request) {
+			<-release
+			req.Respond([]byte("ok"))
+		}), micro.WithEndpointSubject("a.work"), micro.WithEndpointPendingLimits(1, -1))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		errsB := make(chan *micro.NATSError, 10)
+		svcB, err := micro.AddService(nc, micro.Config{
+			Name:    "slow_b",
+			Version: "0.1.0",
+			Endpoint: &micro.EndpointConfig{
+				Subject: "b.work",
+				Handler: micro.HandlerFunc(func(req micro.Request) {
+					req.Respond([]byte("ok"))
+				}),
+			},
+			ErrorHandler: func(_ micro.Service, err *micro.NATSError) {
+				errsB <- err
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer svcB.Stop()
+
+		inbox := nats.NewInbox()
+		for range 5 {
+			if err := nc.PublishRequest("a.work", inbox, nil); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		select {
+		case err := <-connErrs:
+			if !errors.Is(err, nats.ErrSlowConsumer) {
+				t.Fatalf("Expected %v; got: %v", nats.ErrSlowConsumer, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Timeout on connection error handler")
+		}
+
+		select {
+		case natsErr := <-errsA:
+			if !errors.Is(natsErr, nats.ErrSlowConsumer) {
+				t.Fatalf("Expected %v; got: %v", nats.ErrSlowConsumer, natsErr)
+			}
+			if natsErr.Subject != "a.work" {
+				t.Fatalf("Expected subject %q; got: %q", "a.work", natsErr.Subject)
+			}
+		default:
+			t.Fatalf("Expected the error to reach the owning service's ErrorHandler")
+		}
+		select {
+		case natsErr := <-errsB:
+			t.Fatalf("Unexpected error reported to the other service: %v", natsErr)
+		default:
+		}
+
+		if svcA.Stopped() || svcB.Stopped() {
+			t.Fatalf("Expected both services to keep running")
+		}
+		endpoints := svcA.Stats().Endpoints
+		if len(endpoints) != 1 {
+			t.Fatalf("Expected 1 endpoint; got %d", len(endpoints))
+		}
+		if endpoints[0].NumErrors != 1 || endpoints[0].LastError != nats.ErrSlowConsumer.Error() {
+			t.Fatalf("Expected endpoint stats to record 1 error %q; got %d %q", nats.ErrSlowConsumer, endpoints[0].NumErrors, endpoints[0].LastError)
+		}
+
+		close(release)
+		requestEventually(t, nc, "a.work")
+		requestEventually(t, nc, "b.work")
+	})
+}
+
+func TestServiceAsyncErrorOnForeignSubscription(t *testing.T) {
 	tests := []struct {
-		name             string
-		endpointSubject  string
-		errSubject       string
-		expectServiceErr bool
+		name       string
+		subSubject string
+		pubSubject string
 	}{
 		{
-			name:             "exact match",
-			endpointSubject:  "foo.bar.baz",
-			errSubject:       "foo.bar.baz",
-			expectServiceErr: true,
+			name:       "wildcard overlapping an endpoint",
+			subSubject: "orders.>",
+			pubSubject: "orders.a.b",
 		},
 		{
-			name:             "match with *",
-			endpointSubject:  "foo.*.baz",
-			errSubject:       "foo.bar.baz",
-			expectServiceErr: true,
-		},
-		{
-			name:             "match with >",
-			endpointSubject:  "foo.bar.>",
-			errSubject:       "foo.bar.baz.1",
-			expectServiceErr: true,
-		},
-		{
-			name:             "monitoring handler",
-			endpointSubject:  "foo.bar.>",
-			errSubject:       "$SRV.PING",
-			expectServiceErr: true,
-		},
-		{
-			name:             "endpoint longer than subject",
-			endpointSubject:  "foo.bar.baz",
-			errSubject:       "foo.bar",
-			expectServiceErr: false,
-		},
-		{
-			name:             "no match",
-			endpointSubject:  "foo.bar.baz",
-			errSubject:       "foo.baz.bar",
-			expectServiceErr: false,
-		},
-		{
-			name:             "no match with *",
-			endpointSubject:  "foo.*.baz",
-			errSubject:       "foo.bar.foo",
-			expectServiceErr: false,
+			name:       "monitoring subject",
+			subSubject: "$SRV.PING",
+			pubSubject: "$SRV.PING",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			coreNatsAsyncErrors := []nats.ErrHandler{nil, func(c *nats.Conn, s *nats.Subscription, err error) {}}
-			for _, cb := range coreNatsAsyncErrors {
-				errChan := make(chan struct{})
-				errHandler := func(s micro.Service, err *micro.NATSError) {
-					errChan <- struct{}{}
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				// The connection's own handler runs after the service's handler.
+				connErrs := make(chan *nats.Subscription, 10)
+				nc.SetErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, _ error) {
+					connErrs <- sub
+				})
+
+				svcErrs := make(chan *micro.NATSError, 10)
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:    "foreign",
+					Version: "0.1.0",
+					Endpoint: &micro.EndpointConfig{
+						Subject: "orders.*",
+						Handler: micro.HandlerFunc(func(req micro.Request) {
+							req.Respond([]byte("ok"))
+						}),
+					},
+					ErrorHandler: func(_ micro.Service, err *micro.NATSError) {
+						svcErrs <- err
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
 				}
-				withServer(t, func(t *testing.T, nc *nats.Conn) {
-					nc.SetErrorHandler(cb)
-					svc, err := micro.AddService(nc, micro.Config{
-						Name:         "test_service",
-						Version:      "0.0.1",
-						ErrorHandler: micro.ErrHandler(errHandler),
-						Endpoint: &micro.EndpointConfig{
-							Subject: test.endpointSubject,
-							Handler: micro.HandlerFunc(func(r micro.Request) {}),
-						},
-					})
-					if err != nil {
+				defer srv.Stop()
+
+				release := make(chan struct{})
+				sub, err := nc.Subscribe(test.subSubject, func(*nats.Msg) {
+					<-release
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if err := sub.SetPendingLimits(1, -1); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				inbox := nats.NewInbox()
+				for range 5 {
+					if err := nc.PublishRequest(test.pubSubject, inbox, nil); err != nil {
 						t.Fatalf("Unexpected error: %v", err)
 					}
-					defer svc.Stop()
-
-					go nc.Opts.AsyncErrorCB(nc, &nats.Subscription{Subject: test.errSubject}, errors.New("oops"))
-					if test.expectServiceErr {
-						select {
-						case <-errChan:
-						case <-time.After(10 * time.Millisecond):
-							t.Fatalf("Expected service error callback")
-						}
-					} else {
-						select {
-						case <-errChan:
-							t.Fatalf("Expected no service error callback")
-						case <-time.After(10 * time.Millisecond):
-						}
+				}
+				select {
+				case errSub := <-connErrs:
+					if errSub != sub {
+						t.Fatalf("Expected the error on the user's subscription; got one on %q", errSub.Subject)
 					}
-				})
-			}
+				case <-time.After(time.Second):
+					t.Fatalf("Timeout on connection error handler")
+				}
+				select {
+				case natsErr := <-svcErrs:
+					t.Fatalf("Unexpected service error: %v", natsErr)
+				default:
+				}
+				if srv.Stopped() {
+					t.Fatalf("Expected the service to keep running")
+				}
+
+				close(release)
+				pingSubject, err := micro.ControlSubject(micro.PingVerb, "foreign", "")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				for _, subject := range []string{"orders.x", pingSubject} {
+					if _, err := nc.Request(subject, nil, time.Second); err != nil {
+						t.Fatalf("Request on %q: %v", subject, err)
+					}
+				}
+			})
 		})
 	}
 }
@@ -2174,6 +2288,11 @@ func TestEndpointPendingLimits(t *testing.T) {
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("Expected ErrSlowConsumer to be triggered within timeout")
+			}
+
+			requestEventually(t, nc, "test.slow")
+			if srv.Stopped() {
+				t.Fatal("Expected the service to keep running after a slow consumer")
 			}
 		})
 	})

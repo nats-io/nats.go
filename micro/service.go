@@ -194,10 +194,13 @@ type (
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
 
-		// DoneHandler is invoked when all service subscription are stopped.
+		// DoneHandler is invoked when the service stops, either after Stop or
+		// when the connection is closed.
 		DoneHandler DoneHandler
 
-		// ErrorHandler is invoked on any nats-related service error.
+		// ErrorHandler is invoked on any nats-related service error, including
+		// async errors on the service's subscriptions, such as a slow consumer.
+		// The service keeps running; call Stop from the handler to stop it.
 		ErrorHandler ErrHandler
 	}
 
@@ -323,6 +326,8 @@ func (s Verb) String() string {
 // A service name, version and Endpoint configuration are required to add a service.
 // AddService returns a [Service] interface, allowing service management.
 // Each service is assigned a unique ID.
+// AddService wraps the connection's closed and error handlers. The service
+// stops when the connection is closed.
 func AddService(nc *nats.Conn, config Config) (Service, error) {
 	if err := config.valid(); err != nil {
 		return nil, err
@@ -569,57 +574,12 @@ func (s *service) wrapConnectionEventCallbacks() {
 	s.natsHandlers.asyncErr = s.nc.ErrorHandler()
 	if s.natsHandlers.asyncErr != nil {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			if sub == nil {
-				s.natsHandlers.asyncErr(c, sub, err)
-				return
-			}
-			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
-			if !match {
-				s.natsHandlers.asyncErr(c, sub, err)
-				return
-			}
-			if s.Config.ErrorHandler != nil {
-				s.Config.ErrorHandler(s, &NATSError{
-					Subject:     sub.Subject,
-					Description: err.Error(),
-					err:         err,
-				})
-			}
-			s.m.Lock()
-			if endpoint != nil {
-				endpoint.stats.NumErrors++
-				endpoint.stats.LastError = err.Error()
-			}
-			s.m.Unlock()
-			if stopErr := s.Stop(); stopErr != nil {
-				s.natsHandlers.asyncErr(c, sub, errors.Join(err, fmt.Errorf("stopping service: %w", stopErr)))
-			} else {
-				s.natsHandlers.asyncErr(c, sub, err)
-			}
+			s.handleAsyncErr(sub, err)
+			s.natsHandlers.asyncErr(c, sub, err)
 		})
 	} else {
 		s.nc.SetErrorHandler(func(c *nats.Conn, sub *nats.Subscription, err error) {
-			if sub == nil {
-				return
-			}
-			endpoint, match := s.matchSubscriptionSubject(sub.Subject)
-			if !match {
-				return
-			}
-			if s.Config.ErrorHandler != nil {
-				s.Config.ErrorHandler(s, &NATSError{
-					Subject:     sub.Subject,
-					Description: err.Error(),
-					err:         err,
-				})
-			}
-			s.m.Lock()
-			if endpoint != nil {
-				endpoint.stats.NumErrors++
-				endpoint.stats.LastError = err.Error()
-			}
-			s.m.Unlock()
-			s.Stop()
+			s.handleAsyncErr(sub, err)
 		})
 	}
 }
@@ -632,40 +592,43 @@ func unwrapConnectionEventCallbacks(nc *nats.Conn, handlers handlers) {
 	nc.SetErrorHandler(handlers.asyncErr)
 }
 
-func (s *service) matchSubscriptionSubject(subj string) (*Endpoint, bool) {
-	s.m.Lock()
-	defer s.m.Unlock()
-	for _, verbSub := range s.verbSubs {
-		if verbSub.Subject == subj {
-			return nil, true
-		}
+// handleAsyncErr reports an async error on one of the service's own
+// subscriptions to the endpoint stats and the ErrorHandler.
+func (s *service) handleAsyncErr(sub *nats.Subscription, err error) {
+	if sub == nil {
+		return
 	}
+	s.m.Lock()
+	endpoint, owned := s.subscriptionOwner(sub)
+	if endpoint != nil {
+		endpoint.stats.NumErrors++
+		endpoint.stats.LastError = err.Error()
+	}
+	s.m.Unlock()
+	if owned && s.Config.ErrorHandler != nil {
+		s.Config.ErrorHandler(s, &NATSError{
+			Subject:     sub.Subject,
+			Description: err.Error(),
+			err:         err,
+		})
+	}
+}
+
+// subscriptionOwner reports whether sub is one of the service's
+// subscriptions and, for an endpoint subscription, returns the endpoint.
+// Lock must be held.
+func (s *service) subscriptionOwner(sub *nats.Subscription) (*Endpoint, bool) {
 	for _, e := range s.endpoints {
-		if matchEndpointSubject(e.Subject, subj) {
+		if e.subscription == sub {
 			return e, true
 		}
 	}
+	for _, verbSub := range s.verbSubs {
+		if verbSub == sub {
+			return nil, true
+		}
+	}
 	return nil, false
-}
-
-func matchEndpointSubject(endpointSubject, literalSubject string) bool {
-	subjectTokens := strings.Split(literalSubject, ".")
-	endpointTokens := strings.Split(endpointSubject, ".")
-	if len(endpointTokens) > len(subjectTokens) {
-		return false
-	}
-	for i, et := range endpointTokens {
-		if i == len(endpointTokens)-1 && et == ">" {
-			return true
-		}
-		if et != subjectTokens[i] && et != "*" {
-			return false
-		}
-	}
-	// Without a trailing ">", every subject token must be consumed; otherwise a
-	// shorter endpoint would over-match a longer subject (e.g. "foo" vs
-	// "foo.bar").
-	return len(endpointTokens) == len(subjectTokens)
 }
 
 // addVerbHandlers generates control handlers for a specific verb.
@@ -703,7 +666,9 @@ func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name st
 		}
 		return err
 	}
+	s.m.Lock()
 	s.verbSubs[name] = sub
+	s.m.Unlock()
 	return nil
 }
 
@@ -1013,8 +978,8 @@ func WithEndpointQueueGroupDisabled() EndpointOpt {
 }
 
 // WithEndpointPendingLimits sets the pending limits for the endpoint's
-// subscription. These limits how many messages and/or bytes can be buffered in
-// memory before the subscription is terminated with nats.ErrSlowConsumer.
+// subscription. Messages over a limit are dropped and nats.ErrSlowConsumer is
+// reported to the ErrorHandler and the endpoint stats.
 // Either limit can be set to -1 to indicate no limit.
 func WithEndpointPendingLimits(msgLimit, bytesLimit int) EndpointOpt {
 	return func(e *endpointOpts) error {
