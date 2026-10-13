@@ -573,6 +573,30 @@ func TestPullConsumerFetchRace(t *testing.T) {
 	})
 }
 
+// deliveredMsgSize publishes, fetches and acks a probe message and returns its
+// size as counted against max bytes, which depends on the server's ack subject.
+func deliveredMsgSize(t *testing.T, js jetstream.JetStream, c jetstream.Consumer, subject string, data []byte) int {
+	t.Helper()
+	if _, err := js.Publish(context.Background(), subject, data); err != nil {
+		t.Fatalf("Unexpected error during publish: %s", err)
+	}
+	msgs, err := c.Fetch(1)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	var size int
+	for msg := range msgs.Messages() {
+		if err := msg.Ack(); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		size = len(msg.Subject()) + len(msg.Reply()) + len(msg.Data())
+	}
+	if size == 0 {
+		t.Fatalf("Expected a message; got error: %v", msgs.Error())
+	}
+	return size
+}
+
 func TestPullConsumerFetchBytes(t *testing.T) {
 	testSubject := "FOO.123"
 	msg := [10]byte{}
@@ -596,9 +620,9 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
+			size := deliveredMsgSize(t, js, c, testSubject, msg[:])
 			publishTestMsgs(t, js, 5)
-			// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
-			msgs, err := c.FetchBytes(300)
+			msgs, err := c.FetchBytes(5 * size)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -630,9 +654,9 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
+			size := deliveredMsgSize(t, js, c, testSubject, msg[:])
 			publishTestMsgs(t, js, 5)
-			// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
-			msgs, err := c.FetchBytes(250)
+			msgs, err := c.FetchBytes(5*size - 1)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -664,7 +688,6 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			}
 
 			publishTestMsgs(t, js, 5)
-			// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 			msgs, err := c.FetchBytes(30)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -698,7 +721,6 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			}
 
 			publishTestMsgs(t, js, 5)
-			// actual received msg size will be 60 (payload=10 + Subject=7 + Reply=43)
 			msgs, err := c.FetchBytes(1000, jetstream.FetchMaxWait(50*time.Millisecond))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
@@ -1005,6 +1027,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			size := deliveredMsgSize(t, js, c, testSubject, []byte("m0"))
 			// subscribe to next request subject to verify how many next requests were sent
 			sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
 			if err != nil {
@@ -1012,7 +1035,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			}
 
 			msgs := make([]jetstream.Msg, 0)
-			it, err := c.Messages(jetstream.PullMaxBytes(60))
+			it, err := c.Messages(jetstream.PullMaxBytes(size))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -1119,6 +1142,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			size := deliveredMsgSize(t, js, c, testSubject, []byte("m0"))
 			// subscribe to next request subject to verify how many next requests were sent
 			sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
 			if err != nil {
@@ -1126,7 +1150,7 @@ func TestPullConsumerMessages(t *testing.T) {
 			}
 
 			msgs := make([]jetstream.Msg, 0)
-			it, err := c.Messages(jetstream.PullMaxBytes(150))
+			it, err := c.Messages(jetstream.PullMaxBytes(2 * size))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2148,6 +2172,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
+			size := deliveredMsgSize(t, js, c, testSubject, []byte("m0"))
 			// subscribe to next request subject to verify how many next requests were sent
 			sub, err := nc.SubscribeSync(fmt.Sprintf("$JS.API.CONSUMER.MSG.NEXT.foo.%s", c.CachedInfo().Name))
 			if err != nil {
@@ -2161,7 +2186,7 @@ func TestPullConsumerConsume(t *testing.T) {
 			l, err := c.Consume(func(msg jetstream.Msg) {
 				msgs = append(msgs, msg)
 				wg.Done()
-			}, jetstream.PullMaxBytes(150))
+			}, jetstream.PullMaxBytes(2*size))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2173,9 +2198,9 @@ func TestPullConsumerConsume(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			// new request should be sent after each consumed message (msg size is 57)
+			// each pull fits two messages
 			if requestsNum < 3 {
-				t.Fatalf("Unexpected number of requests sent; want at least 5; got %d", requestsNum)
+				t.Fatalf("Unexpected number of requests sent; want at least 3; got %d", requestsNum)
 			}
 
 			if len(msgs) != len(testMsgs) {
