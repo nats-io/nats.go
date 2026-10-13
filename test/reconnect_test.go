@@ -14,6 +14,7 @@
 package test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -1030,6 +1031,55 @@ func TestForceReconnectSubsequentCalls(t *testing.T) {
 		WaitOnChannel(t, newStatus, nats.RECONNECTING)
 		WaitOnChannel(t, newStatus, nats.CONNECTED)
 	})
+}
+
+func TestForceReconnectPendingRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		request func(nc *nats.Conn) error
+	}{
+		{
+			name: "Request",
+			request: func(nc *nats.Conn) error {
+				_, err := nc.Request("hang", nil, 5*time.Second)
+				return err
+			},
+		},
+		{
+			name: "RequestWithContext",
+			request: func(nc *nats.Conn) error {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, err := nc.RequestWithContext(ctx, "hang", nil)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				sub, err := nc.SubscribeSync("hang")
+				if err != nil {
+					t.Fatalf("Error on subscribe: %v", err)
+				}
+
+				errCh := make(chan error, 1)
+				go func() { errCh <- test.request(nc) }()
+
+				// The request is in flight once the subscriber has it.
+				if _, err := sub.NextMsg(time.Second); err != nil {
+					t.Fatalf("Error getting request: %v", err)
+				}
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Unexpected error on reconnect: %v", err)
+				}
+				if err := <-errCh; !errors.Is(err, nats.ErrDisconnected) {
+					t.Fatalf("Expected %v, got %v", nats.ErrDisconnected, err)
+				}
+			})
+		})
+	}
 }
 
 func TestAuthExpiredForceReconnect(t *testing.T) {
