@@ -37,6 +37,11 @@ type fakeReader struct {
 	closed bool
 }
 
+type dataAndEOFReader struct {
+	data []byte
+	read bool
+}
+
 func (f *fakeReader) Read(p []byte) (int, error) {
 	f.mu.Lock()
 	closed := f.closed
@@ -65,6 +70,15 @@ func (f *fakeReader) close() {
 	}
 	f.closed = true
 	close(f.ch)
+}
+
+func (r *dataAndEOFReader) Read(p []byte) (int, error) {
+	if r.read {
+		return 0, io.EOF
+	}
+	r.read = true
+	n := copy(p, r.data)
+	return n, io.EOF
 }
 
 func TestWSReader(t *testing.T) {
@@ -267,6 +281,63 @@ func TestWSDataBeforeCloseFrame(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("Expected 0 bytes on close, got %v", n)
+	}
+}
+
+func TestWSDataBeforeCloseFrameWithUnderlyingEOF(t *testing.T) {
+	errMsg := []byte("-ERR 'Authorization Violation'\r\n")
+	closeBody := "Authentication Failure"
+	closePayloadLen := 2 + len(closeBody)
+
+	frames := make([]byte, 0, len(errMsg)+closePayloadLen+8)
+	frames = append(frames, byte(wsBinaryMessage)|wsFinalBit, byte(len(errMsg)))
+	frames = append(frames, errMsg...)
+	frames = append(frames, byte(wsCloseMessage)|wsFinalBit, byte(closePayloadLen))
+	frames = append(frames, 0x03, 0xE8)
+	frames = append(frames, closeBody...)
+
+	r := wsNewReader(&dataAndEOFReader{data: frames})
+	p := make([]byte, 100)
+
+	n, err := r.Read(p)
+	if err != nil {
+		t.Fatalf("Expected data to be returned before EOF, got error: %v", err)
+	}
+	if !bytes.Equal(p[:n], errMsg) {
+		t.Fatalf("Expected %q, got %q", errMsg, p[:n])
+	}
+
+	n, err = r.Read(p)
+	if err != io.EOF {
+		t.Fatalf("Expected io.EOF, got n=%v err=%v", n, err)
+	}
+	if n != 0 {
+		t.Fatalf("Expected 0 bytes on close, got %v", n)
+	}
+}
+
+func TestNatsReaderReadStringWithDataAndEOF(t *testing.T) {
+	line := []byte("-ERR 'Authorization Violation'\r\n")
+	r := &natsReader{
+		r:   &dataAndEOFReader{data: line},
+		buf: make([]byte, 128),
+		off: -1,
+	}
+
+	s, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Expected line before EOF, got error: %v", err)
+	}
+	if s != string(line) {
+		t.Fatalf("Expected %q, got %q", string(line), s)
+	}
+
+	s, err = r.ReadString('\n')
+	if err != io.EOF {
+		t.Fatalf("Expected io.EOF after buffered line, got s=%q err=%v", s, err)
+	}
+	if s != "" {
+		t.Fatalf("Expected no buffered data after EOF, got %q", s)
 	}
 }
 
