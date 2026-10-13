@@ -709,6 +709,7 @@ func (js *jetStream) prepareKeyValueConfig(ctx context.Context, cfg KeyValueConf
 				scfg.Sources = append(scfg.Sources, ss)
 				continue
 			}
+			ss = ss.copy()
 			var sourceBucketName string
 			if strings.HasPrefix(ss.Name, kvBucketNamePre) {
 				sourceBucketName = ss.Name[len(kvBucketNamePre):]
