@@ -756,6 +756,12 @@ func TestPublish(t *testing.T) {
 			subject:   "",
 			withError: nats.ErrBadSubject,
 		},
+		{
+			name:      "message exceeds stream max msg size",
+			msg:       make([]byte, 65),
+			subject:   "FOO.1",
+			withError: jetstream.ErrStreamMessageExceedsMaximum,
+		},
 	}
 
 	for _, test := range tests {
@@ -1954,6 +1960,96 @@ func TestPublishAsyncClearStall(t *testing.T) {
 	})
 }
 
+func TestPublishAsyncConcurrentPendingRecovery(t *testing.T) {
+	for _, maxPending := range []int{1, 5} {
+		t.Run(fmt.Sprintf("max pending %d", maxPending), func(t *testing.T) {
+			withJSServer(t, func(t *testing.T, nc *nats.Conn, _ jetstream.JetStream) {
+				js, err := jetstream.New(nc, jetstream.WithPublishAsyncMaxPending(maxPending))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer js.CleanupPublisher()
+
+				// A core subscriber responds in place of a stream, so the test
+				// decides when each publish is acked. A NoAck stream would hold
+				// the pending slots but could never release them.
+				sub, err := nc.SubscribeSync("FOO.A")
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer sub.Unsubscribe()
+				if err := nc.FlushTimeout(time.Second); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				held := make([]*nats.Msg, 0, maxPending)
+				for range maxPending {
+					if _, err := js.PublishAsync("FOO.A", []byte("hello")); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					msg, err := sub.NextMsg(time.Second)
+					if err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+					held = append(held, msg)
+				}
+
+				const publishers = 16
+				var wg sync.WaitGroup
+				defer wg.Wait()
+				started := make(chan struct{}, publishers)
+				results := make(chan error, publishers)
+				for range publishers {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						started <- struct{}{}
+						_, err := js.PublishAsync("FOO.A", []byte("hello"), jetstream.WithStallWait(5*time.Second))
+						results <- err
+					}()
+				}
+				for range publishers {
+					<-started
+				}
+
+				// Nothing may be sent until a held publish frees capacity.
+				if _, err := sub.NextMsg(100 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
+					t.Fatalf("Expected publishers to stall; got: %v", err)
+				}
+				if numPending := js.PublishAsyncPending(); numPending > maxPending {
+					t.Fatalf("Expected at most %d pending messages; got: %d", maxPending, numPending)
+				}
+
+				for _, msg := range held {
+					if err := msg.Respond([]byte(`{"stream":"foo","seq":1}`)); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+
+				// Freed capacity must release every stalled publisher before
+				// its stall wait expires.
+				for i := range publishers {
+					msg, err := sub.NextMsg(2 * time.Second)
+					if err != nil {
+						t.Fatalf("Publisher %d did not recover after acks: %v", i, err)
+					}
+					if numPending := js.PublishAsyncPending(); numPending > maxPending {
+						t.Fatalf("Expected at most %d pending messages; got: %d", maxPending, numPending)
+					}
+					if err := msg.Respond([]byte(`{"stream":"foo","seq":1}`)); err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+				for range publishers {
+					if err := <-results; err != nil {
+						t.Fatalf("Unexpected error: %v", err)
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestPublishWithScheduleAt(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 5*time.Second)
@@ -2243,6 +2339,88 @@ func TestPublishWithScheduleTimeZone(t *testing.T) {
 		if got := gotMsg.Header.Get(jetstream.ScheduleTimeZoneHeader); got != "America/New_York" {
 			t.Fatalf("Expected schedule time zone header %q; got: %q", "America/New_York", got)
 		}
+	})
+}
+
+func TestPublishWithScheduleRollup(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 10*time.Second)
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:              "SCHED",
+			Subjects:          []string{"schedule.>", "target.>"},
+			AllowMsgSchedules: true,
+			AllowRollup:       true,
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		cons, err := js.CreateConsumer(ctx, "SCHED", jetstream.ConsumerConfig{
+			FilterSubject: "target.rollup",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		ack, err := js.Publish(ctx, "schedule.rollup", []byte("tick"),
+			jetstream.WithScheduleEvery(time.Second),
+			jetstream.WithScheduleTarget("target.rollup"),
+			jetstream.WithScheduleRollup(),
+		)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := gotMsg.Header.Get(jetstream.ScheduleRollupHeader); got != jetstream.MsgRollupSubject {
+			t.Fatalf("Expected schedule rollup header %q; got: %q", jetstream.MsgRollupSubject, got)
+		}
+
+		first, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+		if err != nil {
+			t.Fatalf("Expected to receive scheduled message: %v", err)
+		}
+		if got := first.Headers().Get(jetstream.MsgRollup); got != jetstream.MsgRollupSubject {
+			t.Fatalf("Expected rollup header %q on delivered message; got: %q", jetstream.MsgRollupSubject, got)
+		}
+		firstMeta, err := first.Metadata()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// The second firing must roll up the first one.
+		if _, err := cons.Next(jetstream.FetchMaxWait(5 * time.Second)); err != nil {
+			t.Fatalf("Expected to receive second scheduled message: %v", err)
+		}
+		if _, err := stream.GetMsg(ctx, firstMeta.Sequence.Stream); !errors.Is(err, jetstream.ErrMsgNotFound) {
+			t.Fatalf("Expected first scheduled message to be rolled up; got: %v", err)
+		}
+
+		t.Run("async", func(t *testing.T) {
+			paf, err := js.PublishAsync("schedule.rollup.async", nil,
+				jetstream.WithScheduleEvery(time.Hour),
+				jetstream.WithScheduleTarget("target.rollup.async"),
+				jetstream.WithScheduleRollup(),
+			)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			var ack *jetstream.PubAck
+			select {
+			case ack = <-paf.Ok():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive ack")
+			}
+			gotMsg, err := stream.GetMsg(ctx, ack.Sequence)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if got := gotMsg.Header.Get(jetstream.ScheduleRollupHeader); got != jetstream.MsgRollupSubject {
+				t.Fatalf("Expected schedule rollup header %q; got: %q", jetstream.MsgRollupSubject, got)
+			}
+		})
 	})
 }
 

@@ -1178,6 +1178,11 @@ func TestListConsumers(t *testing.T) {
 			timeout:      5 * time.Second,
 		},
 		{
+			name:         "list consumers multiple pages",
+			consumersNum: 1025,
+			timeout:      5 * time.Second,
+		},
+		{
 			name:         "with empty context",
 			consumersNum: 500,
 		},
@@ -1196,7 +1201,7 @@ func TestListConsumers(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
-				s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+				s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}, MaxConsumers: 2000})
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}

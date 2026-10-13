@@ -89,7 +89,7 @@ type (
 		stream  string
 		durable bool
 		name    string
-		info    *ConsumerInfo
+		info    atomic.Pointer[ConsumerInfo]
 		subs    syncx.Map[string, *pullSubscription]
 		pinID   string
 	}
@@ -124,7 +124,6 @@ type (
 		ThresholdMessages       int
 		ThresholdBytes          int
 		StopAfter               int
-		stopAfterMsgsLeft       chan int
 		notifyOnReconnect       bool
 	}
 
@@ -172,7 +171,8 @@ type (
 	FetchOpt func(*pullRequest) error
 
 	hbMonitor struct {
-		timer *time.Timer
+		timer  *time.Timer
+		closed bool
 		sync.Mutex
 	}
 
@@ -208,12 +208,14 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 
-	if len(p.info.Config.PriorityGroups) != 0 {
+	info := p.info.Load()
+	priorityGroups := info.Config.PriorityGroups
+	if len(priorityGroups) != 0 {
 		if consumeOpts.Group == "" {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
 		}
 
-		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+		if !slices.Contains(priorityGroups, consumeOpts.Group) {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
 		}
 	} else if consumeOpts.Group != "" {
@@ -301,6 +303,11 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	inbox := p.js.conn.NewInbox()
 	sub.subscription, err = p.js.conn.Subscribe(inbox, internalHandler)
 	if err != nil {
+		p.subs.Delete(sub.id)
+		p.js.conn.RemoveStatusListener(sub.connStatusChanged)
+		if sub.hbMonitor != nil {
+			sub.hbMonitor.Close()
+		}
 		return nil, err
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
@@ -363,7 +370,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							sub.errs <- errConnected
 						}
 
-						sub.fetchNext <- &pullRequest{
+						sub.requestNext(&pullRequest{
 							Expires:       sub.consumeOpts.Expires,
 							Batch:         sub.consumeOpts.MaxMessages,
 							MaxBytes:      sub.consumeOpts.MaxBytes,
@@ -373,7 +380,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							Priority:      sub.consumeOpts.Priority,
 							Group:         sub.consumeOpts.Group,
 							PinID:         p.getPinID(),
-						}
+						})
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 						}
@@ -391,7 +398,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					if sub.consumeOpts.StopAfter > 0 {
 						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
 					}
-					sub.fetchNext <- &pullRequest{
+					sub.requestNext(&pullRequest{
 						Expires:       sub.consumeOpts.Expires,
 						Batch:         batchSize,
 						MaxBytes:      sub.consumeOpts.MaxBytes,
@@ -401,7 +408,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						Priority:      sub.consumeOpts.Priority,
 						Group:         sub.consumeOpts.Group,
 						PinID:         p.getPinID(),
-					}
+					})
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 					}
@@ -478,7 +485,7 @@ func (s *pullSubscription) checkPending() {
 			if s.consumer != nil {
 				pinID = s.consumer.getPinID()
 			}
-			s.fetchNext <- &pullRequest{
+			s.requestNext(&pullRequest{
 				Expires:       s.consumeOpts.Expires,
 				Batch:         batchSize,
 				MaxBytes:      maxBytes,
@@ -488,11 +495,20 @@ func (s *pullSubscription) checkPending() {
 				MinPending:    s.consumeOpts.MinPending,
 				MinAckPending: s.consumeOpts.MinAckPending,
 				Priority:      s.consumeOpts.Priority,
-			}
+			})
 
 			s.pending.msgCount = s.consumeOpts.MaxMessages
 			s.pending.byteCount = s.consumeOpts.MaxBytes
 		}
+	}
+}
+
+// requestNext queues req for pullMessages, giving up once the
+// subscription is done.
+func (s *pullSubscription) requestNext(req *pullRequest) {
+	select {
+	case s.fetchNext <- req:
+	case <-s.done:
 	}
 }
 
@@ -507,12 +523,14 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
 
-	if len(p.info.Config.PriorityGroups) != 0 {
+	info := p.info.Load()
+	priorityGroups := info.Config.PriorityGroups
+	if len(priorityGroups) != 0 {
 		if consumeOpts.Group == "" {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "priority group is required for priority consumer")
 		}
 
-		if !slices.Contains(p.info.Config.PriorityGroups, consumeOpts.Group) {
+		if !slices.Contains(priorityGroups, consumeOpts.Group) {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidOption, "invalid priority group")
 		}
 	} else if consumeOpts.Group != "" {
@@ -539,6 +557,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
 	if err != nil {
 		p.Unlock()
+		p.js.conn.RemoveStatusListener(sub.connStatusChanged)
 		return nil, err
 	}
 	sub.subscription.SetClosedHandler(func(sid string) func(string) {
@@ -560,17 +579,37 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 	go sub.pullMessages(subject)
 
 	go func() {
+		// Connection state is tracked here, for the lifetime of the
+		// iterator, rather than inside Next: a reconnect that completes
+		// between two Next calls (for example when Next is driven with a
+		// short NextMaxWait) must still reset the pull request accounting,
+		// otherwise no new pull request is ever sent and the iterator goes
+		// silent on a healthy connection.
+		isConnected := true
 		for {
 			select {
 			case status, ok := <-sub.connStatusChanged:
 				if !ok {
 					return
 				}
-				if status == nats.CONNECTED {
-					sub.errs <- errConnected
-				}
-				if status == nats.RECONNECTING {
-					sub.errs <- errDisconnected
+				switch status {
+				case nats.RECONNECTING:
+					isConnected = false
+					select {
+					case sub.errs <- errDisconnected:
+					case <-sub.done:
+						return
+					}
+				case nats.CONNECTED:
+					if isConnected {
+						continue
+					}
+					isConnected = true
+					select {
+					case sub.errs <- errConnected:
+					case <-sub.done:
+						return
+					}
 				}
 			case <-sub.done:
 				return
@@ -633,7 +672,6 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 		}
 	}()
 
-	isConnected := true
 	if s.consumeOpts.StopAfter > 0 && s.delivered >= s.consumeOpts.StopAfter {
 		s.Stop()
 		return nil, ErrMsgIteratorClosed
@@ -645,6 +683,10 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
+				// or that the connection was closed. In the latter case
+				// nothing called Stop, so stop here to let pullMessages
+				// and the status goroutine exit. It is a no-op otherwise.
+				s.Stop()
 				s.consumer.subs.Delete(s.id)
 				s.draining.CompareAndSwap(1, 0)
 				// Check if iterator was closed due to connection closure
@@ -686,24 +728,23 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 				}
 			}
 			if errors.Is(err, errConnected) {
-				if !isConnected {
-					isConnected = true
-
-					if s.consumeOpts.notifyOnReconnect {
-						return nil, errConnected
-					}
-					s.pending.msgCount = 0
-					s.pending.byteCount = 0
-					if hbMonitor != nil {
-						hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
-					}
+				// errConnected is only sent for a CONNECTED that follows a
+				// RECONNECTING, so this is always a real reconnect: the pull
+				// request parked on the previous server is gone and a new one
+				// has to be issued.
+				if s.consumeOpts.notifyOnReconnect {
+					return nil, errConnected
+				}
+				s.pending.msgCount = 0
+				s.pending.byteCount = 0
+				if hbMonitor != nil {
+					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 				}
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {
 					hbMonitor.Stop()
 				}
-				isConnected = false
 			}
 		case <-timeoutCh:
 			return nil, nats.ErrTimeout
@@ -756,9 +797,25 @@ func (hb *hbMonitor) Stop() {
 	hb.Unlock()
 }
 
+// Reset re-arms the heartbeat timer. It is a no-op once the monitor
+// has been closed.
 func (hb *hbMonitor) Reset(dur time.Duration) {
 	hb.Lock()
-	hb.timer.Reset(dur)
+	if !hb.closed {
+		hb.timer.Reset(dur)
+	}
+	hb.Unlock()
+}
+
+// Close stops the heartbeat timer for good. Unlike Stop, which only
+// pauses the timer, a closed monitor can no longer be re-armed by Reset,
+// so a message handler or status goroutine still in flight when the
+// subscription ends cannot schedule the timer again. A pending timer
+// keeps the subscription (and through it the connection) reachable.
+func (hb *hbMonitor) Close() {
+	hb.Lock()
+	hb.closed = true
+	hb.timer.Stop()
 	hb.Unlock()
 }
 
@@ -770,13 +827,6 @@ func (s *pullSubscription) Stop() {
 		return
 	}
 	close(s.done)
-	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
-			close(s.consumeOpts.stopAfterMsgsLeft)
-		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
-		}
-	}
 }
 
 // Drain unsubscribes from the stream and cancels subscription. All
@@ -789,13 +839,6 @@ func (s *pullSubscription) Drain() {
 	}
 	s.draining.Store(1)
 	close(s.done)
-	if s.consumeOpts.stopAfterMsgsLeft != nil {
-		if s.delivered >= s.consumeOpts.StopAfter {
-			close(s.consumeOpts.stopAfterMsgsLeft)
-		} else {
-			s.consumeOpts.stopAfterMsgsLeft <- s.consumeOpts.StopAfter - s.delivered
-		}
-	}
 }
 
 // Closed returns a channel that is closed when consuming is
@@ -1048,7 +1091,12 @@ func (s *pullSubscription) pullMessages(subject string) {
 					s.cleanup()
 					return
 				}
-				s.errs <- err
+				// Do not block forever on a full errs channel once
+				// nothing reads it; the next iteration will clean up.
+				select {
+				case s.errs <- err:
+				case <-s.done:
+				}
 			}
 			s.fetchInProgress.Store(0)
 		case <-s.done:
@@ -1070,7 +1118,10 @@ func (s *pullSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 	}
 	return &hbMonitor{
 		timer: time.AfterFunc(2*dur, func() {
-			s.errs <- ErrNoHeartbeat
+			select {
+			case s.errs <- ErrNoHeartbeat:
+			case <-s.done:
+			}
 		}),
 	}
 }
@@ -1081,15 +1132,22 @@ func (s *pullSubscription) cleanup() {
 	// is already holding the lock and waiting.
 	// The fields that are read (subscription, hbMonitor)
 	// are read only (Only written on creation of pullSubscription).
-	if s.subscription == nil || !s.subscription.IsValid() {
-		return
-	}
+
+	// The status listener and the heartbeat timer have to be released
+	// even if the subscription is no longer valid (e.g. the connection
+	// was closed before Stop or Drain was called). Otherwise the armed
+	// timer keeps the subscription and the connection reachable until it
+	// fires, and the listener stays registered on the connection.
 	if s.consumer != nil {
 		nc := s.consumer.js.conn
 		nc.RemoveStatusListener(s.connStatusChanged)
 	}
 	if s.hbMonitor != nil {
-		s.hbMonitor.Stop()
+		s.hbMonitor.Close()
+	}
+	if s.subscription == nil || !s.subscription.IsValid() {
+		s.closed.Store(1)
+		return
 	}
 	drainMode := s.draining.Load() == 1
 	if drainMode {

@@ -17,10 +17,53 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/nats-io/nats.go"
 )
+
+func TestJetStreamReconnectErrorCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		msg := &nats.Msg{Subject: "events", Data: []byte("pending")}
+		called := make(chan struct{}, 1)
+		js := &jetStream{publisher: &jetStreamClient{}}
+		js.publisher.connStatusCh = make(chan nats.Status)
+		js.publisher.acks = map[string]*pubAckFuture{"pending": {msg: msg}}
+		done := js.PublishAsyncComplete()
+		js.publisher.aecb = func(ctx JetStream, got *nats.Msg, err error) {
+			if got != msg || !errors.Is(err, nats.ErrDisconnected) {
+				t.Errorf("Unexpected callback: message=%p, error=%v", got, err)
+			}
+			if pending := ctx.PublishAsyncPending(); pending != 0 {
+				t.Errorf("Expected pending publishes to be cleared, got %d", pending)
+			}
+			select {
+			case <-done:
+				t.Error("PublishAsyncComplete closed before the error callback returned")
+			default:
+			}
+			called <- struct{}{}
+		}
+		go js.resetPendingAcksOnReconnect()
+		defer func() {
+			close(js.publisher.connStatusCh)
+			synctest.Wait()
+		}()
+		js.publisher.connStatusCh <- nats.RECONNECTING
+		synctest.Wait()
+		select {
+		case <-called:
+		default:
+			t.Fatal("Reconnect error callback was deferred until shutdown")
+		}
+		select {
+		case <-done:
+		default:
+			t.Fatal("PublishAsyncComplete was not closed after the error callback returned")
+		}
+	})
+}
 
 func TestMessageMetadata(t *testing.T) {
 	tests := []struct {
@@ -346,6 +389,40 @@ func TestRetryWithBackoff(t *testing.T) {
 	}
 }
 
+func TestPullConsumer_checkPendingAfterDone(t *testing.T) {
+	// Once the subscription is stopped or drained, pullMessages no longer
+	// reads fetchNext. Messages delivered while draining still call
+	// checkPending (with the lock held), and fetchNext only buffers one
+	// request, so checkPending must not block on a full fetchNext.
+	sub := &pullSubscription{
+		pending: pendingMsgs{
+			msgCount: 4,
+		},
+		consumeOpts: &consumeOpts{
+			ThresholdMessages: 5,
+			MaxMessages:       10,
+		},
+		done:      make(chan struct{}, 1),
+		fetchNext: make(chan *pullRequest, 1),
+	}
+	// A request queued before pullMessages returned, which nobody reads.
+	sub.fetchNext <- &pullRequest{}
+	close(sub.done)
+
+	returned := make(chan struct{})
+	go func() {
+		sub.Lock()
+		sub.checkPending()
+		sub.Unlock()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("checkPending blocked on fetchNext after the subscription was done")
+	}
+}
+
 func TestPullConsumer_checkPending(t *testing.T) {
 
 	tests := []struct {
@@ -525,6 +602,86 @@ func TestPullConsumer_checkPending(t *testing.T) {
 
 		})
 	}
+}
+
+func TestHeartbeatMonitorReleasedOnSubscriptionEnd(t *testing.T) {
+	// A heartbeat timer left armed after consuming ended keeps the
+	// subscription, and through it the consumer and the connection,
+	// reachable until it fires (2x the heartbeat interval).
+	const heartbeat = time.Hour
+
+	// timerActive reports whether the monitor's timer was still pending.
+	// It stops the timer as a side effect.
+	timerActive := func(hb *hbMonitor) bool {
+		hb.Lock()
+		defer hb.Unlock()
+		return hb.timer.Stop()
+	}
+
+	t.Run("pull, subscription already closed", func(t *testing.T) {
+		nc := &nats.Conn{}
+		sub := &pullSubscription{
+			consumer:          &pullConsumer{js: &jetStream{conn: nc}},
+			subscription:      &nats.Subscription{}, // not valid, as after the connection was closed
+			done:              make(chan struct{}),
+			errs:              make(chan error, 10),
+			connStatusChanged: nc.StatusChanged(nats.CONNECTED, nats.RECONNECTING, nats.CLOSED),
+			consumeOpts:       &consumeOpts{Heartbeat: heartbeat},
+		}
+		sub.hbMonitor = sub.scheduleHeartbeatCheck(heartbeat)
+
+		sub.Stop()
+		sub.cleanup()
+
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer to be stopped after cleanup")
+		}
+		select {
+		case _, ok := <-sub.connStatusChanged:
+			if ok {
+				t.Fatal("Unexpected status on removed listener")
+			}
+		default:
+			t.Fatal("Expected status listener to be removed after cleanup")
+		}
+
+		// A message handler or the status goroutine still in flight
+		// must not re-arm the timer.
+		sub.hbMonitor.Reset(2 * heartbeat)
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer not to be re-armed after cleanup")
+		}
+	})
+
+	t.Run("push, drained", func(t *testing.T) {
+		nc := &nats.Conn{}
+		sub := &pushSubscription{
+			conn:              nc,
+			subscription:      &nats.Subscription{},
+			done:              make(chan struct{}),
+			errs:              make(chan error, 1),
+			connStatusChanged: nc.StatusChanged(nats.CONNECTED, nats.RECONNECTING),
+			idleHeartbeat:     heartbeat,
+		}
+		sub.hbMonitor = sub.scheduleHeartbeatCheck(heartbeat)
+
+		sub.Drain()
+
+		// While draining, buffered messages are still delivered to the
+		// handler, which resets the timer when it returns.
+		sub.hbMonitor.Reset(2 * heartbeat)
+		if timerActive(sub.hbMonitor) {
+			t.Fatal("Expected heartbeat timer not to be re-armed after drain")
+		}
+		select {
+		case _, ok := <-sub.connStatusChanged:
+			if ok {
+				t.Fatal("Unexpected status on removed listener")
+			}
+		default:
+			t.Fatal("Expected status listener to be removed after drain")
+		}
+	})
 }
 
 func TestIsWrongLastSeqErr(t *testing.T) {

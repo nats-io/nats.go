@@ -16,6 +16,8 @@ package test
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -443,4 +445,85 @@ func TestDrainClosedHandlerRace(t *testing.T) {
 		}()
 		time.Sleep(500 * time.Millisecond)
 	})
+}
+
+// Closing the connection while drainConnection is still waiting for
+// subscriptions to drain must abort the rest of the drain: the drain
+// goroutine must not flip the (already closed) connection back to
+// DRAINING_PUBS and start a new FlushTimeout on it, nor keep waiting
+// for subscriptions that Close has already removed.
+func TestDrainConnectionCloseDuringDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request bool
+	}{
+		{"no requests", false},
+		{"after request", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withServer(t, func(t *testing.T, nc *nats.Conn) {
+				if tc.request {
+					// Creates the shared response subscription, which
+					// drainConnection waits on separately.
+					if _, err := nc.Request("nobody", nil, time.Second); !errors.Is(err, nats.ErrNoResponders) {
+						t.Fatalf("Expected %v, got %v", nats.ErrNoResponders, err)
+					}
+				}
+				entered := make(chan struct{})
+				release := make(chan struct{})
+				sub, err := nc.Subscribe("pending", func(*nats.Msg) {
+					close(entered)
+					<-release
+				})
+				if err != nil {
+					t.Fatalf("Error creating subscription: %v", err)
+				}
+				defer close(release)
+
+				if err := nc.Publish("pending", nil); err != nil {
+					t.Fatalf("Error on publish: %v", err)
+				}
+				if err := nc.Flush(); err != nil {
+					t.Fatalf("Error on flush: %v", err)
+				}
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("callback not entered")
+				}
+
+				if err := nc.Drain(); err != nil {
+					t.Fatalf("Unexpected error on drain: %v", err)
+				}
+
+				// drainConnection marks the subscription as draining, so
+				// Close lands mid-drain.
+				waitFor(t, time.Second, 5*time.Millisecond, func() error {
+					if !sub.IsDraining() {
+						return errors.New("subscription not draining yet")
+					}
+					return nil
+				})
+
+				nc.Close()
+				if !nc.IsClosed() {
+					t.Fatalf("connection not closed after Close: %v", nc.Status())
+				}
+
+				time.Sleep(250 * time.Millisecond)
+				if !nc.IsClosed() {
+					t.Fatalf("connection resurrected after Close: %v", nc.Status())
+				}
+				for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+					b := make([]byte, 1<<20)
+					n := runtime.Stack(b, true)
+					if !strings.Contains(string(b[:n]), "(*Conn).drainConnection") {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				t.Fatal("drain goroutine still running after Close")
+			})
+		})
+	}
 }

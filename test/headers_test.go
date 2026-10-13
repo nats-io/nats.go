@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"sort"
 	"sync"
@@ -141,7 +140,7 @@ func TestRequestMsgRaceAsyncInfo(t *testing.T) {
 	// goroutine; the parent test may continue obliviously). Drive the same
 	// tester RPCs directly and surface errors via an error channel that the
 	// test goroutine drains after the workload.
-	testerNc, err := nats.Connect(os.Getenv("TESTER_NATS_URL"))
+	testerNc, err := nats.Connect(testerURL)
 	if err != nil {
 		t.Fatalf("could not dial tester: %v", err)
 	}

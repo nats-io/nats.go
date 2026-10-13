@@ -18,7 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1503,6 +1506,72 @@ func TestPullConsumerMessages(t *testing.T) {
 				}
 			case err := <-errs:
 				t.Fatalf("Unexpected error: %s", err)
+			}
+		})
+	})
+
+	t.Run("with server restart and short Next timeout", func(t *testing.T) {
+		// Reconnect handling used to be tracked per Next call, so a reconnect
+		// that completed between two short Next calls was never acted on: the
+		// pull request parked on the old server was still counted as pending,
+		// no new pull request was sent and the iterator went silent on a
+		// healthy connection.
+		withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream, inst *testservice.Instance) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Durable: "cons", AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			it, err := c.Messages()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer it.Stop()
+
+			var received atomic.Int32
+			done := make(chan struct{})
+			errs := make(chan error, 1)
+			go func() {
+				for received.Load() < int32(2*len(testMsgs)) {
+					msg, err := it.Next(jetstream.NextMaxWait(100 * time.Millisecond))
+					if errors.Is(err, nats.ErrTimeout) {
+						continue
+					}
+					if err != nil {
+						errs <- err
+						return
+					}
+					msg.Ack()
+					received.Add(1)
+				}
+				close(done)
+			}()
+
+			publishTestMsgs(t, js)
+			checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+				if n := received.Load(); n != int32(len(testMsgs)) {
+					return fmt.Errorf("expected %d messages before restart; got %d", len(testMsgs), n)
+				}
+				return nil
+			})
+
+			// restart the server; the reconnect completes while no Next call
+			// is in flight for long enough to observe it
+			inst.StopServer(t, inst.Servers[0])
+			inst.StartServer(t, inst.Servers[0])
+			waitForStream(t, js, "foo")
+			publishTestMsgs(t, js)
+
+			select {
+			case <-done:
+			case err := <-errs:
+				t.Fatalf("Unexpected error: %s", err)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("Timeout waiting for messages after restart; got %d of %d", received.Load(), 2*len(testMsgs))
 			}
 		})
 	})
@@ -3176,6 +3245,66 @@ func TestPullConsumerConnectionClosed(t *testing.T) {
 	})
 }
 
+func TestPullConsumerMessagesReleasedOnConnectionClosed(t *testing.T) {
+	// Once Next has reported that the iterator was closed because the
+	// connection was closed, the goroutines backing the iterator must
+	// exit without the user calling Stop or Drain.
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 5*time.Second)
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// iteratorGoroutines counts the goroutines started by Messages:
+		// pullMessages and the connection status watcher.
+		iteratorGoroutines := func() int {
+			buf := make([]byte, 1<<20)
+			for {
+				n := runtime.Stack(buf, true)
+				if n < len(buf) {
+					buf = buf[:n]
+					break
+				}
+				buf = make([]byte, 2*len(buf))
+			}
+			var count int
+			for _, g := range strings.Split(string(buf), "\n\n") {
+				if strings.Contains(g, "created by github.com/nats-io/nats.go/jetstream.(*pullConsumer).Messages") {
+					count++
+				}
+			}
+			return count
+		}
+		before := iteratorGoroutines()
+
+		it, err := c.Messages()
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if got := iteratorGoroutines(); got != before+2 {
+			t.Fatalf("Expected 2 iterator goroutines; got: %d", got-before)
+		}
+
+		nc.Close()
+		_, err = it.Next()
+		if !errors.Is(err, jetstream.ErrMsgIteratorClosed) || !errors.Is(err, jetstream.ErrConnectionClosed) {
+			t.Fatalf("Expected error: %v; got: %v", jetstream.ErrConnectionClosed, err)
+		}
+
+		checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+			if got := iteratorGoroutines(); got != before {
+				return fmt.Errorf("Expected iterator goroutines to exit; %d still running", got-before)
+			}
+			return nil
+		})
+	})
+}
+
 func TestConsumeErrHandlerNoDeadlock(t *testing.T) {
 	t.Run("error handler from background goroutine", func(t *testing.T) {
 		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
@@ -3296,6 +3425,111 @@ func TestConsumeErrHandlerNoDeadlock(t *testing.T) {
 			case <-done:
 			case <-time.After(5 * time.Second):
 				t.Fatal("Deadlock: Stop() blocked")
+			}
+		})
+	})
+}
+
+func TestPullConsumerDrainWithBufferedMessages(t *testing.T) {
+	// While draining, messages already buffered on the client are still
+	// delivered, and with a threshold just below max messages every second
+	// one queues the next pull request. Nothing reads those requests any
+	// more, which must not block the handler or Next.
+	const numMsgs = 10
+	setup := func(t *testing.T, js jetstream.JetStream) jetstream.Consumer {
+		t.Helper()
+		ctx := newTesterCtx(t, 5*time.Second)
+		s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for i := 0; i < numMsgs; i++ {
+			if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		return c
+	}
+
+	t.Run("consume", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			c := setup(t, js)
+
+			firstMsg := make(chan struct{})
+			drained := make(chan struct{})
+			var received atomic.Int32
+			cc, err := c.Consume(func(msg jetstream.Msg) {
+				if received.Add(1) == 1 {
+					close(firstMsg)
+					<-drained
+				}
+			}, jetstream.PullMaxMessages(numMsgs), jetstream.PullThresholdMessages(numMsgs-1))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			<-firstMsg
+			// let the rest of the batch reach the client
+			time.Sleep(100 * time.Millisecond)
+			cc.Drain()
+			close(drained)
+
+			closed := make(chan struct{})
+			go func() {
+				<-cc.Closed()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Consume did not finish draining; received %d messages", received.Load())
+			}
+			if got := received.Load(); got != numMsgs {
+				t.Fatalf("Expected %d messages delivered while draining; got: %d", numMsgs, got)
+			}
+		})
+	})
+
+	t.Run("messages", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			c := setup(t, js)
+
+			it, err := c.Messages(jetstream.PullMaxMessages(numMsgs), jetstream.PullThresholdMessages(numMsgs-1))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := it.Next(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			// let the rest of the batch reach the client
+			time.Sleep(100 * time.Millisecond)
+			it.Drain()
+
+			received := 1
+			done := make(chan error, 1)
+			go func() {
+				for {
+					if _, err := it.Next(); err != nil {
+						done <- err
+						return
+					}
+					received++
+				}
+			}()
+			select {
+			case err := <-done:
+				if !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+					t.Fatalf("Expected error: %v; got: %v", jetstream.ErrMsgIteratorClosed, err)
+				}
+				if received != numMsgs {
+					t.Fatalf("Expected %d messages delivered while draining; got: %d", numMsgs, received)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Next blocked while draining")
 			}
 		})
 	})

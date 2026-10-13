@@ -20,7 +20,7 @@ jobs:
             - name: Setup Go
               uses: actions/setup-go@v6
               with:
-                go-version: 'stable'
+                go-version: '1.27.1'
 
             - name: Install deps
               shell: bash --noprofile --norc -x -eo pipefail {0}
@@ -28,7 +28,7 @@ jobs:
                 go mod download -modfile=go_test.mod
                 go install honnef.co/go/tools/cmd/staticcheck@latest
                 go install github.com/client9/misspell/cmd/misspell@latest
-                go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+                go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
             - name: Run linters
               shell: bash --noprofile --norc -x -eo pipefail {0}
@@ -46,16 +46,16 @@ jobs:
         # name (no host port publishing needed).
         strategy:
             matrix:
-              go: [ "1.25", "1.26" ]
+              go: [ "1.26", "1.27" ]
               include:
-                - go: "1.26"
+                - go: "1.27"
                   coverage: true
         container: golang:${{ matrix.go }}-alpine
         services:
           nats:
             # Single source of truth for the tester image; the Makefile parses
             # the tag from this line.
-            image: synadia/ntf-server:v0.0.5-nats-2.14.3
+            image: synadia/ntf-server:v0.0.9-nats-2.15.0
             command: serve --advertise nats
             options: >-
               --name nats
