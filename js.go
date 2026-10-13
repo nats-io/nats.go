@@ -1800,6 +1800,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 		// Force R1 and MemoryStorage for these.
 		o.cfg.Replicas = 1
 		o.cfg.MemoryStorage = true
+		// Set InactiveThreshold to 5 minutes so the consumer survives
+		// short disconnects and reconnects. The default of 5 seconds
+		// causes the consumer to be deleted too quickly.
+		o.cfg.InactiveThreshold = 5 * time.Minute
 
 		if !hasHeartbeats {
 			o.cfg.Heartbeat = orderedHeartbeatsInterval

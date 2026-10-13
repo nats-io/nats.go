@@ -6147,6 +6147,7 @@ func (nc *Conn) resendSubscriptions() {
 	nc.subsMu.RUnlock()
 	for sid, s := range subs {
 		adjustedMax := uint64(0)
+		var isOrdered bool
 		s.mu.Lock()
 		// when resending subscriptions, the permissions error should be cleared
 		// since the user may have fixed the permissions issue
@@ -6163,6 +6164,12 @@ func (nc *Conn) resendSubscriptions() {
 				continue
 			}
 		}
+		// Check if this is an ordered consumer that needs to be reset.
+		// The server may have deleted the consumer due to inactivity threshold
+		// or server restart. We need to recreate it.
+		if s.jsi != nil && s.jsi.ordered {
+			isOrdered = true
+		}
 		subj, queue := s.Subject, s.Queue
 		s.mu.Unlock()
 
@@ -6170,6 +6177,15 @@ func (nc *Conn) resendSubscriptions() {
 		if adjustedMax > 0 {
 			maxStr := strconv.Itoa(int(adjustedMax))
 			nc.bw.writeDirect(fmt.Sprintf(unsubProto, sid, maxStr))
+		}
+
+		// If this is an ordered consumer, trigger a reset to recreate
+		// the consumer on the server. This handles cases where the
+		// consumer was deleted due to inactivity or server restart.
+		if isOrdered {
+			s.mu.Lock()
+			s.tryResetOrderedConsumer()
+			s.mu.Unlock()
 		}
 	}
 }
