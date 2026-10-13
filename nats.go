@@ -100,6 +100,9 @@ const (
 	// unknownProtoOpErr is sent by the server when it cannot parse what the
 	// client sent, after which it closes the connection.
 	unknownProtoOpErr = "unknown protocol operation"
+
+	// maxControlLineErr is sent by the server when a protocol line is too long.
+	maxControlLineErr = "maximum control line exceeded"
 )
 
 // Errors
@@ -4439,6 +4442,15 @@ func (nc *Conn) processErr(ie string) {
 		close = nc.processOpErr(ErrMaxAccountConnectionsExceeded, false)
 	} else if e == unknownProtoOpErr {
 		close = nc.processOpErr(errors.New("nats: "+ne), false)
+	} else if e == maxControlLineErr {
+		close = true
+		err := errors.New("nats: " + ne)
+		nc.mu.Lock()
+		nc.err = err
+		if asyncErrorCB := nc.Opts.AsyncErrorCB; asyncErrorCB != nil {
+			nc.ach.push(func() { asyncErrorCB(nc, nil, err) })
+		}
+		nc.mu.Unlock()
 	} else if strings.HasPrefix(e, PERMISSIONS_ERR) {
 		nc.processTransientError(fmt.Errorf("%w: %s", ErrPermissionViolation, ne))
 	} else if strings.HasPrefix(e, MAX_SUBSCRIPTIONS_ERR) {
