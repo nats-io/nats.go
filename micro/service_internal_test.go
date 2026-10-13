@@ -13,7 +13,12 @@
 
 package micro
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/nats-io/nats.go"
+)
 
 func TestAsyncCallbacksHandlerClose(t *testing.T) {
 	ac := &asyncCallbacksHandler{cbQueue: make(chan func(), 100), done: make(chan struct{})}
@@ -34,4 +39,50 @@ func TestAsyncCallbacksHandlerClose(t *testing.T) {
 		t.Fatalf("Expected callbacks pushed after close to be dropped; %d ran", n-cap(ac.cbQueue))
 	}
 	ac.close()
+}
+
+func TestConnHooks(t *testing.T) {
+	nc := &nats.Conn{}
+	first, second := &service{nc: nc}, &service{nc: nc}
+	registerService(first)
+	if nc.ClosedHandler() == nil || nc.ErrorHandler() == nil {
+		t.Fatal("Expected the first service to install the connection handlers")
+	}
+	errHandler := nc.ErrorHandler()
+	nc.SetErrorHandler(nil)
+	registerService(second)
+	if nc.ErrorHandler() != nil {
+		t.Fatal("Expected a later service not to reinstall the connection handlers")
+	}
+	nc.SetErrorHandler(errHandler)
+	unregisterService(first)
+	h, ok := hooks.conns[nc]
+	if !ok {
+		t.Fatal("Expected the connection to stay registered while it has services")
+	}
+	if got := len(h.services); got != 1 {
+		t.Fatalf("Expected 1 registered service; got %d", got)
+	}
+	unregisterService(second)
+	if _, ok := hooks.conns[nc]; ok {
+		t.Fatal("Expected the connection to be removed with its last service")
+	}
+	if nc.ClosedHandler() != nil || nc.ErrorHandler() != nil {
+		t.Fatal("Expected the connection handlers to be restored with its last service")
+	}
+
+	_, err := AddService(nc, Config{
+		Name:    "test_service",
+		Version: "0.1.0",
+		Endpoint: &EndpointConfig{
+			Subject: "endpoint subject",
+			Handler: HandlerFunc(func(Request) {}),
+		},
+	})
+	if !errors.Is(err, ErrConfigValidation) {
+		t.Fatalf("Expected %v; got: %v", ErrConfigValidation, err)
+	}
+	if _, ok := hooks.conns[nc]; ok {
+		t.Fatal("Expected a failed AddService to leave nothing registered")
+	}
 }
