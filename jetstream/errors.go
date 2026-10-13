@@ -99,8 +99,8 @@ var (
 	// not enabled for an account.
 	ErrJetStreamNotEnabledForAccount JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeJetStreamNotEnabledForAccount, Description: "jetstream not enabled for account", Code: 503}}
 
-	// ErrStreamMessageExceedsMaximum is an error returned when a message exceeds the
-	// maximum allowed size configured for the stream.
+	// ErrStreamMessageExceedsMaximum is an error returned when a published
+	// message exceeds the maximum message size allowed by the stream.
 	ErrStreamMessageExceedsMaximum JetStreamError = &jsError{apiErr: &APIError{ErrorCode: JSErrCodeStreamMessageExceedsMaximum, Description: "message size exceeds maximum allowed", Code: 400}}
 
 	// ErrStreamNotFound is an error returned when stream with given name does

@@ -756,6 +756,12 @@ func TestPublish(t *testing.T) {
 			subject:   "",
 			withError: nats.ErrBadSubject,
 		},
+		{
+			name:      "message exceeds stream max msg size",
+			msg:       make([]byte, 65),
+			subject:   "FOO.1",
+			withError: jetstream.ErrStreamMessageExceedsMaximum,
+		},
 	}
 
 	for _, test := range tests {
