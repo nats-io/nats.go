@@ -24,55 +24,43 @@ import (
 )
 
 func BenchmarkPublishSpeed(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-	b.StartTimer()
-
-	msg := []byte("Hello World")
-
-	for i := 0; i < b.N; i++ {
-		if err := nc.Publish("foo", msg); err != nil {
-			b.Fatalf("Error in benchmark during Publish: %v\n", err)
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		msg := []byte("Hello World")
+		b.ResetTimer()
+		for range b.N {
+			if err := nc.Publish("foo", msg); err != nil {
+				b.Fatalf("Error in benchmark during Publish: %v\n", err)
+			}
 		}
-	}
-	// Make sure they are all processed.
-	nc.Flush()
-	b.StopTimer()
+		nc.Flush()
+		b.StopTimer()
+	})
 }
 
 func BenchmarkPublishSpeedHeaders(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-
-	headers := make(nats.Header, 10)
-	for i := range 10 {
-		headers.Add(
-			fmt.Sprintf("header_%d", i),
-			generateRandomString(32),
-		)
-	}
-	msg := &nats.Msg{
-		Subject: "foo",
-		Header:  headers,
-		Data:    []byte("Hello World"),
-	}
-
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		if err := nc.PublishMsg(msg); err != nil {
-			b.Fatalf("Error in benchmark during PublishMsg: %v\n", err)
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		headers := make(nats.Header, 10)
+		for i := range 10 {
+			headers.Add(
+				fmt.Sprintf("header_%d", i),
+				generateRandomString(32),
+			)
 		}
-	}
+		msg := &nats.Msg{
+			Subject: "foo",
+			Header:  headers,
+			Data:    []byte("Hello World"),
+		}
 
-	// Make sure they are all processed.
-	nc.Flush()
-	b.StopTimer()
+		b.ResetTimer()
+		for range b.N {
+			if err := nc.PublishMsg(msg); err != nil {
+				b.Fatalf("Error in benchmark during PublishMsg: %v\n", err)
+			}
+		}
+		nc.Flush()
+		b.StopTimer()
+	})
 }
 
 func generateRandomString(length int) string {
@@ -85,130 +73,107 @@ func generateRandomString(length int) string {
 }
 
 func BenchmarkPubSubSpeed(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ch := make(chan bool)
 
-	ch := make(chan bool)
+		nc.SetErrorHandler(func(nc *nats.Conn, s *nats.Subscription, err error) {
+			b.Fatalf("Error : %v\n", err)
+		})
 
-	nc.SetErrorHandler(func(nc *nats.Conn, s *nats.Subscription, err error) {
-		b.Fatalf("Error : %v\n", err)
-	})
+		received := int32(0)
 
-	received := int32(0)
+		nc.Subscribe("foo", func(m *nats.Msg) {
+			if nr := atomic.AddInt32(&received, 1); nr >= int32(b.N) {
+				ch <- true
+			}
+		})
 
-	nc.Subscribe("foo", func(m *nats.Msg) {
-		if nr := atomic.AddInt32(&received, 1); nr >= int32(b.N) {
-			ch <- true
+		msg := []byte("Hello World")
+
+		b.ResetTimer()
+		for range b.N {
+			if err := nc.Publish("foo", msg); err != nil {
+				b.Fatalf("Error in benchmark during Publish: %v\n", err)
+			}
 		}
-	})
 
-	msg := []byte("Hello World")
-
-	b.StartTimer()
-
-	for i := 0; i < b.N; i++ {
-		if err := nc.Publish("foo", msg); err != nil {
-			b.Fatalf("Error in benchmark during Publish: %v\n", err)
+		err := WaitTime(ch, 10*time.Second)
+		if err != nil {
+			b.Fatal("Timed out waiting for messages")
+		} else if atomic.LoadInt32(&received) != int32(b.N) {
+			b.Fatalf("Received: %d, err:%v", received, nc.LastError())
 		}
-	}
-
-	// Make sure they are all processed.
-	err := WaitTime(ch, 10*time.Second)
-	if err != nil {
-		b.Fatal("Timed out waiting for messages")
-	} else if atomic.LoadInt32(&received) != int32(b.N) {
-		b.Fatalf("Received: %d, err:%v", received, nc.LastError())
-	}
-	b.StopTimer()
+		b.StopTimer()
+	})
 }
 
 func BenchmarkAsyncSubscriptionCreationSpeed(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-	b.StartTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		nc.Subscribe("foo", func(m *nats.Msg) {})
-	}
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		b.ResetTimer()
+		b.ReportAllocs()
+		for range b.N {
+			nc.Subscribe("foo", func(m *nats.Msg) {})
+		}
+	})
 }
 
 func BenchmarkSyncSubscriptionCreationSpeed(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-	b.StartTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		nc.SubscribeSync("foo")
-	}
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		b.ResetTimer()
+		b.ReportAllocs()
+		for range b.N {
+			nc.SubscribeSync("foo")
+		}
+	})
 }
 
 func BenchmarkInboxCreation(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		nats.NewInbox()
 	}
 }
 
 func BenchmarkNewInboxCreation(b *testing.B) {
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		nc.NewRespInbox()
-	}
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		b.ResetTimer()
+		for range b.N {
+			nc.NewRespInbox()
+		}
+	})
 }
 
 func BenchmarkRequest(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc := NewDefaultConnection(b)
-	defer nc.Close()
-	ok := []byte("ok")
-	nc.Subscribe("req", func(m *nats.Msg) {
-		nc.Publish(m.Reply, ok)
-	})
-	b.StartTimer()
-	b.ReportAllocs()
-	q := []byte("q")
-	for i := 0; i < b.N; i++ {
-		_, err := nc.Request("req", q, 1*time.Second)
-		if err != nil {
-			b.Fatalf("Err %v\n", err)
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ok := []byte("ok")
+		nc.Subscribe("req", func(m *nats.Msg) {
+			nc.Publish(m.Reply, ok)
+		})
+		b.ResetTimer()
+		b.ReportAllocs()
+		q := []byte("q")
+		for range b.N {
+			_, err := nc.Request("req", q, 1*time.Second)
+			if err != nil {
+				b.Fatalf("Err %v\n", err)
+			}
 		}
-	}
+	})
 }
 
 func BenchmarkOldRequest(b *testing.B) {
-	b.StopTimer()
-	s := RunDefaultServer()
-	defer s.Shutdown()
-	nc, err := nats.Connect(nats.DefaultURL, nats.UseOldRequestStyle())
-	if err != nil {
-		b.Fatalf("Failed to connect: %v", err)
-	}
-	defer nc.Close()
+	c := newTester(b)
+	inst := c.CreateServer(b, false)
+	b.Cleanup(func() { inst.Destroy(b) })
+	nc := dialInstance(b, inst, nats.UseOldRequestStyle())
+
 	ok := []byte("ok")
 	nc.Subscribe("req", func(m *nats.Msg) {
 		nc.Publish(m.Reply, ok)
 	})
-	b.StartTimer()
+	b.ResetTimer()
 	b.ReportAllocs()
 	q := []byte("q")
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := nc.Request("req", q, 1*time.Second)
 		if err != nil {
 			b.Fatalf("Err %v\n", err)
@@ -221,82 +186,28 @@ func BenchmarkPublishValidation(b *testing.B) {
 	shortSubject := "foo.bar"                                      // 7 chars
 	longSubject := "metrics.production.server01.cpu.usage.percent" // 45 chars
 
-	b.Run("skip validation, short subject", func(b *testing.B) {
-		s := RunDefaultServer()
-		defer s.Shutdown()
+	run := func(name string, subject string, opts ...nats.Option) {
+		b.Run(name, func(b *testing.B) {
+			c := newTester(b)
+			inst := c.CreateServer(b, false)
+			b.Cleanup(func() { inst.Destroy(b) })
+			nc := dialInstance(b, inst, opts...)
 
-		nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
-		if err != nil {
-			b.Fatalf("Failed to connect: %v", err)
-		}
-		defer nc.Close()
-
-		b.ResetTimer()
-		for b.Loop() {
-			if err := nc.Publish(shortSubject, msgPayload); err != nil {
-				b.Fatalf("Error publishing message: %v", err)
+			b.ResetTimer()
+			for b.Loop() {
+				if err := nc.Publish(subject, msgPayload); err != nil {
+					b.Fatalf("Error publishing message: %v", err)
+				}
 			}
-		}
-		nc.Flush()
-		b.StopTimer()
-	})
-	b.Run("skip validation, long subject", func(b *testing.B) {
-		s := RunDefaultServer()
-		defer s.Shutdown()
+			nc.Flush()
+			b.StopTimer()
+		})
+	}
 
-		nc, err := nats.Connect(s.ClientURL(), nats.SkipSubjectValidation())
-		if err != nil {
-			b.Fatalf("Failed to connect: %v", err)
-		}
-		defer nc.Close()
-
-		b.ResetTimer()
-		for b.Loop() {
-			if err := nc.Publish(longSubject, msgPayload); err != nil {
-				b.Fatalf("Error publishing message: %v", err)
-			}
-		}
-		nc.Flush()
-		b.StopTimer()
-	})
-	b.Run("with validation, short subject", func(b *testing.B) {
-		s := RunDefaultServer()
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			b.Fatalf("Failed to connect: %v", err)
-		}
-		defer nc.Close()
-
-		b.ResetTimer()
-		for b.Loop() {
-			if err := nc.Publish(shortSubject, msgPayload); err != nil {
-				b.Fatalf("Error publishing message: %v", err)
-			}
-		}
-		nc.Flush()
-		b.StopTimer()
-	})
-	b.Run("with validation, long subject", func(b *testing.B) {
-		s := RunDefaultServer()
-		defer s.Shutdown()
-
-		nc, err := nats.Connect(s.ClientURL())
-		if err != nil {
-			b.Fatalf("Failed to connect: %v", err)
-		}
-		defer nc.Close()
-
-		b.ResetTimer()
-		for b.Loop() {
-			if err := nc.Publish(longSubject, msgPayload); err != nil {
-				b.Fatalf("Error publishing message: %v", err)
-			}
-		}
-		nc.Flush()
-		b.StopTimer()
-	})
+	run("skip validation, short subject", shortSubject, nats.SkipSubjectValidation())
+	run("skip validation, long subject", longSubject, nats.SkipSubjectValidation())
+	run("with validation, short subject", shortSubject)
+	run("with validation, long subject", longSubject)
 }
 
 func BenchmarkPublishWithWriteBufferSize(b *testing.B) {
@@ -317,13 +228,11 @@ func BenchmarkPublishWithWriteBufferSize(b *testing.B) {
 		}
 		for _, sz := range bufSizes {
 			b.Run(fmt.Sprintf("payload_%s/buf_%d", p.name, sz), func(b *testing.B) {
-				s := RunDefaultServer()
-				defer s.Shutdown()
-				nc, err := nats.Connect(s.ClientURL(), nats.WriteBufferSize(sz))
-				if err != nil {
-					b.Fatalf("Failed to connect: %v", err)
-				}
-				defer nc.Close()
+				c := newTester(b)
+				inst := c.CreateServer(b, false)
+				b.Cleanup(func() { inst.Destroy(b) })
+				nc := dialInstance(b, inst, nats.WriteBufferSize(sz))
+
 				b.ResetTimer()
 				for range b.N {
 					if err := nc.Publish("foo", msg); err != nil {

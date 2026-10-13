@@ -1070,6 +1070,7 @@ type StreamAlternate struct {
 type StreamSourceInfo struct {
 	Name              string                   `json:"name"`
 	Lag               uint64                   `json:"lag"`
+	Seq               uint64                   `json:"seq,omitempty"`
 	Active            time.Duration            `json:"active"`
 	External          *ExternalStream          `json:"external"`
 	Error             *APIError                `json:"error"`
@@ -1095,14 +1096,63 @@ type StreamState struct {
 // ClusterInfo shows information about the underlying set of servers
 // that make up the stream or consumer.
 type ClusterInfo struct {
-	Name        string      `json:"name,omitempty"`
-	RaftGroup   string      `json:"raft_group,omitempty"`
-	Leader      string      `json:"leader,omitempty"`
-	LeaderSince *time.Time  `json:"leader_since,omitempty"`
-	SystemAcc   bool        `json:"system_account,omitempty"`
-	TrafficAcc  string      `json:"traffic_account,omitempty"`
-	Replicas    []*PeerInfo `json:"replicas,omitempty"`
+	Name        string              `json:"name,omitempty"`
+	RaftGroup   string              `json:"raft_group,omitempty"`
+	Leader      string              `json:"leader,omitempty"`
+	LeaderSince *time.Time          `json:"leader_since,omitempty"`
+	SystemAcc   bool                `json:"system_account,omitempty"`
+	TrafficAcc  string              `json:"traffic_account,omitempty"`
+	Replicas    []*PeerInfo         `json:"replicas,omitempty"`
+	Desired     *DesiredClusterInfo `json:"desired,omitempty"`
 }
+
+// DesiredClusterInfo shows the desired set of servers that should make up
+// the stream or consumer.
+type DesiredClusterInfo struct {
+	Created  time.Time                 `json:"created"`
+	Name     string                    `json:"name,omitempty"`
+	Replicas []*DesiredPeerInfo        `json:"replicas,omitempty"`
+	Origin   *DesiredClusterInfoOrigin `json:"origin,omitempty"`
+	Status   *DesiredClusterInfoStatus `json:"status,omitempty"`
+}
+
+// DesiredClusterInfoOrigin is the configuration the reconfiguration can be
+// rolled back to if it is canceled.
+type DesiredClusterInfoOrigin struct {
+	Replicas  int              `json:"replicas"`
+	Placement *Placement       `json:"placement,omitempty"`
+	Retention *RetentionPolicy `json:"retention,omitempty"`
+}
+
+// DesiredPeerInfo is a minimal version of PeerInfo describing a peer in the
+// desired peer set.
+type DesiredPeerInfo struct {
+	Name    string `json:"name"`
+	Offline bool   `json:"offline,omitempty"`
+	Peer    string `json:"peer"`
+}
+
+// DesiredClusterInfoStatus is what the group leader is currently doing to
+// reach the desired state, or what it is waiting on.
+type DesiredClusterInfoStatus struct {
+	Description string              `json:"description"`
+	Type        MigrationStatusType `json:"type"`
+	Err         string              `json:"err,omitempty"`
+}
+
+// MigrationStatusType classifies a migration status by what has to change
+// for the migration to advance.
+type MigrationStatusType string
+
+const (
+	MigrationStatusMeta        MigrationStatusType = "meta"
+	MigrationStatusMembership  MigrationStatusType = "membership"
+	MigrationStatusSnapshot    MigrationStatusType = "snapshot"
+	MigrationStatusCatchup     MigrationStatusType = "catchup"
+	MigrationStatusQuorum      MigrationStatusType = "quorum"
+	MigrationStatusBlocked     MigrationStatusType = "blocked"
+	MigrationStatusUnavailable MigrationStatusType = "unavailable"
+)
 
 // PeerInfo shows information about all the peers in the cluster that
 // are supporting the stream or consumer.
@@ -1112,6 +1162,8 @@ type PeerInfo struct {
 	Offline bool          `json:"offline,omitempty"`
 	Active  time.Duration `json:"active"`
 	Lag     uint64        `json:"lag,omitempty"`
+	Peer    string        `json:"peer"`
+	Pending bool          `json:"pending,omitempty"`
 }
 
 // UpdateStream updates a Stream.

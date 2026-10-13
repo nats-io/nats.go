@@ -3,25 +3,51 @@ on:
   schedule:
     - cron: "30 8 * * *"
 
+permissions:
+  contents: read
+
 jobs:
     test:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-latest-8-cores
+        # Run inside an alpine container on the same docker network as the
+        # tester service, matching ci.yaml. The nightly-latest-nats-main image
+        # is built daily by the upstream synadia/ntf-server repo against the
+        # current nats-server main branch.
+        container: golang:1.26-alpine
+        services:
+          nats:
+            image: synadia/ntf-server:nightly-latest-nats-main
+            command: serve --advertise nats
+            options: >-
+              --name nats
+              --health-cmd "nc -z localhost 4222"
+              --health-interval 1s
+              --health-retries 30
+        env:
+          TESTER_NATS_URL: nats://nats:4222
+          CGO_ENABLED: "1"
         steps:
+            # git must exist before checkout, otherwise actions/checkout falls
+            # back to the REST API and leaves no .git in the workspace.
+            - name: Install build deps
+              run: |
+                apk add --no-cache gcc libc-dev git make bash curl ca-certificates
+
             - name: Checkout code
               uses: actions/checkout@v6
-      
-            - name: Setup Go
-              uses: actions/setup-go@v6
-              with:
-                go-version: 'stable'
-                
-            - name: Get latest server
+
+            - name: Log server version
+              shell: bash --noprofile --norc -eo pipefail {0}
+              run: |
+                timeout 5 bash -c 'head -c 512 < /dev/tcp/nats/4222' || true
+                echo
+
+            - name: NoRace tests
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go get -modfile go_test.mod github.com/nats-io/nats-server/v2@main
+                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
 
             - name: Test
               shell: bash --noprofile --norc -x -eo pipefail {0}
               run: |
-                go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
                 go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing

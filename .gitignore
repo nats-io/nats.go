@@ -46,3 +46,10 @@ _testmain.go
 
 # VS Code
 .vscode
+
+# Claude Code
+.claude/
+CLAUDE.local.md
+
+# Git worktrees
+.worktrees/

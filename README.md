@@ -23,7 +23,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 go get github.com/nats-io/nats.go@latest
 
 # To get a specific version:
-go get github.com/nats-io/nats.go@v1.52.0
+go get github.com/nats-io/nats.go@v1.54.0
 
 # Note that the latest major version for NATS Server is v2:
 go get github.com/nats-io/nats-server/v2@latest
@@ -384,6 +384,10 @@ Adding new fields to structs is not considered a breaking change.
 Extending public interfaces with new methods is also not viewed as a breaking change within the context of this project. It is important to note that no unexported methods will be added to interfaces allowing users to implement them.
 
 Additionally, this library always supports at least 2 latest minor Go versions. For example, if the latest Go version is 1.22, the library will support Go 1.21 and 1.22.
+
+## Testing
+
+See [TESTING.md](TESTING.md) for how to run the test suite locally.
 
 ## License
 

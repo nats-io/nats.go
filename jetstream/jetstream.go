@@ -74,8 +74,8 @@ type (
 		Publish(ctx context.Context, subject string, payload []byte, opts ...PublishOpt) (*PubAck, error)
 
 		// PublishMsg performs a synchronous publish to a stream and waits for
-		// ack from server. It accepts subject name (which must be bound to a
-		// stream) and nats.Message.
+		// ack from server. It accepts [nats.Msg] (whose Subject must be bound
+		// to a stream) as payload.
 		PublishMsg(ctx context.Context, msg *nats.Msg, opts ...PublishOpt) (*PubAck, error)
 
 		// PublishAsync performs a publish to a stream and returns
@@ -91,8 +91,8 @@ type (
 
 		// PublishMsgAsync performs a publish to a stream and returns
 		// [PubAckFuture] interface, not blocking while waiting for an
-		// acknowledgement. It accepts subject name (which must
-		// be bound to a stream) and nats.Message.
+		// acknowledgement. It accepts [nats.Msg] (whose Subject must be bound
+		// to a stream) as payload.
 		//
 		// PublishMsgAsync does not guarantee that the message has been
 		// received by the server. It only guarantees that the message has been
@@ -108,6 +108,10 @@ type (
 		// PublishAsyncComplete returns a channel that will be closed when all
 		// outstanding asynchronously published messages are acknowledged by the
 		// server.
+		//
+		// Callers blocked in PublishMsgAsync waiting for a free slot under
+		// PublishAsyncMaxPending are not outstanding yet, so the channel may
+		// be closed while such a caller is still about to publish.
 		PublishAsyncComplete() <-chan struct{}
 
 		// CleanupPublisher will clean up the publishing side of JetStreamContext.
@@ -465,6 +469,7 @@ var subjectRegexp = regexp.MustCompile(`^[^ >]*[>]?$`)
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func New(nc *nats.Conn, opts ...JetStreamOpt) (JetStream, error) {
@@ -511,6 +516,7 @@ func setReplyPrefix(nc *nats.Conn, jsOpts *JetStreamOptions) {
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (JetStream, error) {
@@ -549,6 +555,7 @@ func NewWithAPIPrefix(nc *nats.Conn, apiPrefix string, opts ...JetStreamOpt) (Je
 // Available options:
 //   - [WithClientTrace] - enables request/response tracing.
 //   - [WithPublishAsyncErrHandler] - sets error handler for async message publish.
+//   - [WithPublishAsyncAckHandler] - sets ack handler for async message publish.
 //   - [WithPublishAsyncMaxPending] - sets the maximum outstanding async publishes
 //     that can be inflight at one time.
 func NewWithDomain(nc *nats.Conn, domain string, opts ...JetStreamOpt) (JetStream, error) {
@@ -654,11 +661,12 @@ func (js *jetStream) CreateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 	}
 
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: cfg.Name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // If we have a Domain, convert to the appropriate ext.APIPrefix.
@@ -780,11 +788,12 @@ func (js *jetStream) UpdateStream(ctx context.Context, cfg StreamConfig) (Stream
 		}
 	}
 
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: cfg.Name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // CreateOrUpdateStream creates a stream with the given config. If stream
@@ -827,11 +836,12 @@ func (js *jetStream) Stream(ctx context.Context, name string) (Stream, error) {
 	if resp.StreamInfo == nil {
 		return nil, ErrInvalidJetStreamResponse
 	}
-	return &stream{
+	s := &stream{
 		js:   js,
 		name: name,
-		info: resp.StreamInfo,
-	}, nil
+	}
+	s.info.Store(resp.StreamInfo)
+	return s, nil
 }
 
 // DeleteStream removes a stream with given name

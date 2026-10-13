@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -169,7 +170,7 @@ type (
 
 	stream struct {
 		name string
-		info *StreamInfo
+		info atomic.Pointer[StreamInfo]
 		js   *jetStream
 	}
 
@@ -495,7 +496,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 			info.State.Subjects = nil
 			// we don't want to store subjects in cache
 			cached := *info
-			s.info = &cached
+			s.info.Store(&cached)
 			info.State.Subjects = subjectMap
 			break
 		}
@@ -508,7 +509,7 @@ func (s *stream) Info(ctx context.Context, opts ...StreamInfoOpt) (*StreamInfo, 
 // This method does not perform any network requests. The cached
 // StreamInfo is updated on every call to Info and Update.
 func (s *stream) CachedInfo() *StreamInfo {
-	return s.info
+	return s.info.Load()
 }
 
 // Purge removes messages from a stream. It is a destructive operation.
@@ -574,7 +575,9 @@ func (s *stream) getMsg(ctx context.Context, mreq *apiMsgGetRequest) (*RawStream
 	var gmSubj string
 
 	// handle direct gets
-	if s.info.Config.AllowDirect {
+	info := s.info.Load()
+	allowDirect := info != nil && info.Config.AllowDirect
+	if allowDirect {
 		if mreq.LastFor != "" {
 			gmSubj = fmt.Sprintf(apiDirectMsgGetLastBySubjectT, s.name, mreq.LastFor)
 			r, err := s.js.apiRequest(ctx, gmSubj, nil)

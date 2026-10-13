@@ -1,4 +1,4 @@
-// Copyright 2012-2023 The NATS Authors
+// Copyright 2012-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -24,8 +24,10 @@ import (
 
 //lint:file-ignore SA1019 Ignore deprecation warnings for EncodedConn
 
-func NewJsonEncodedConn(tl TestLogger) *nats.EncodedConn {
-	ec, err := nats.NewEncodedConn(NewConnection(tl, TEST_PORT), nats.JSON_ENCODER)
+// newJSONEncodedConn wraps an existing *nats.Conn as a JSON-encoded connection.
+// The wrapped conn's lifetime is managed by the helper that produced it.
+func newJSONEncodedConn(tl testing.TB, nc *nats.Conn) *nats.EncodedConn {
+	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
 	if err != nil {
 		tl.Fatalf("Failed to create an encoded connection: %v\n", err)
 	}
@@ -33,157 +35,141 @@ func NewJsonEncodedConn(tl TestLogger) *nats.EncodedConn {
 }
 
 func TestEncBuiltinJsonMarshalString(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-	ch := make(chan bool)
+		testString := "Hello World!"
 
-	testString := "Hello World!"
-
-	ec.Subscribe("json_string", func(s string) {
-		if s != testString {
-			t.Fatalf("Received test string of '%s', wanted '%s'\n", s, testString)
+		ec.Subscribe("json_string", func(s string) {
+			if s != testString {
+				t.Fatalf("Received test string of '%s', wanted '%s'", s, testString)
+			}
+			ch <- true
+		})
+		ec.Publish("json_string", testString)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_string", testString)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalEmptyString(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-	ch := make(chan bool)
-
-	ec.Subscribe("json_empty_string", func(s string) {
-		if s != "" {
-			t.Fatalf("Received test of '%v', wanted empty string\n", s)
+		ec.Subscribe("json_empty_string", func(s string) {
+			if s != "" {
+				t.Fatalf("Received test of '%v', wanted empty string", s)
+			}
+			ch <- true
+		})
+		ec.Publish("json_empty_string", "")
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_empty_string", "")
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalInt(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-	ch := make(chan bool)
+		testN := 22
 
-	testN := 22
-
-	ec.Subscribe("json_int", func(n int) {
-		if n != testN {
-			t.Fatalf("Received test int of '%d', wanted '%d'\n", n, testN)
+		ec.Subscribe("json_int", func(n int) {
+			if n != testN {
+				t.Fatalf("Received test int of '%d', wanted '%d'", n, testN)
+			}
+			ch <- true
+		})
+		ec.Publish("json_int", testN)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_int", testN)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalBool(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-	ch := make(chan bool)
-
-	ec.Subscribe("json_bool", func(b bool) {
-		if !b {
-			t.Fatalf("Received test of '%v', wanted 'true'\n", b)
+		ec.Subscribe("json_bool", func(b bool) {
+			if !b {
+				t.Fatalf("Received test of '%v', wanted 'true'", b)
+			}
+			ch <- true
+		})
+		ec.Publish("json_bool", true)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_bool", true)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalNull(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
+		type TestType struct{}
+		ch := make(chan bool)
 
-	type TestType struct{}
-	ch := make(chan bool)
+		var testValue *TestType
 
-	var testValue *TestType
-
-	ec.Subscribe("json_null", func(i any) {
-		if i != nil {
-			t.Fatalf("Received test of '%v', wanted 'nil'\n", i)
+		ec.Subscribe("json_null", func(i any) {
+			if i != nil {
+				t.Fatalf("Received test of '%v', wanted 'nil'", i)
+			}
+			ch <- true
+		})
+		ec.Publish("json_null", testValue)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_null", testValue)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalArray(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
+		a := []string{"a", "b", "c"}
 
-	ch := make(chan bool)
-
-	var a = []string{"a", "b", "c"}
-
-	ec.Subscribe("json_array", func(v []string) {
-		if !reflect.DeepEqual(v, a) {
-			t.Fatalf("Received test of '%v', wanted '%v'\n", v, a)
+		ec.Subscribe("json_array", func(v []string) {
+			if !reflect.DeepEqual(v, a) {
+				t.Fatalf("Received test of '%v', wanted '%v'", v, a)
+			}
+			ch <- true
+		})
+		ec.Publish("json_array", a)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_array", a)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func TestEncBuiltinJsonMarshalEmptyArray(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
+		var a []string
 
-	ch := make(chan bool)
-
-	var a []string
-
-	ec.Subscribe("json_empty_array", func(v []string) {
-		if !reflect.DeepEqual(v, a) {
-			t.Fatalf("Received test of '%v', wanted '%v'\n", v, a)
+		ec.Subscribe("json_empty_array", func(v []string) {
+			if !reflect.DeepEqual(v, a) {
+				t.Fatalf("Received test of '%v', wanted '%v'", v, a)
+			}
+			ch <- true
+		})
+		ec.Publish("json_empty_array", a)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-	ec.Publish("json_empty_array", a)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 type person struct {
@@ -195,34 +181,32 @@ type person struct {
 }
 
 func TestEncBuiltinJsonMarshalStruct(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
+		ch := make(chan bool)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-	ch := make(chan bool)
+		me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*person)
 
-	me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
-	me.Children = make(map[string]*person)
+		me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
-	me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
-	me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
+		me.Assets = make(map[string]uint)
+		me.Assets["house"] = 1000
+		me.Assets["car"] = 100
 
-	me.Assets = make(map[string]uint)
-	me.Assets["house"] = 1000
-	me.Assets["car"] = 100
+		ec.Subscribe("json_struct", func(p *person) {
+			if !reflect.DeepEqual(p, me) {
+				t.Fatal("Did not receive the correct struct response")
+			}
+			ch <- true
+		})
 
-	ec.Subscribe("json_struct", func(p *person) {
-		if !reflect.DeepEqual(p, me) {
-			t.Fatal("Did not receive the correct struct response")
+		ec.Publish("json_struct", me)
+		if e := Wait(ch); e != nil {
+			t.Fatal("Did not receive the message")
 		}
-		ch <- true
 	})
-
-	ec.Publish("json_struct", me)
-	if e := Wait(ch); e != nil {
-		t.Fatal("Did not receive the message")
-	}
 }
 
 func BenchmarkJsonMarshalStruct(b *testing.B) {
@@ -241,39 +225,32 @@ func BenchmarkJsonMarshalStruct(b *testing.B) {
 }
 
 func BenchmarkPublishJsonStruct(b *testing.B) {
-	// stop benchmark for set-up
 	b.StopTimer()
+	withServerB(b, func(b *testing.B, nc *nats.Conn) {
+		ec := newJSONEncodedConn(b, nc)
+		defer ec.Close()
+		ch := make(chan bool)
 
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+		me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
+		me.Children = make(map[string]*person)
+		me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
+		me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
 
-	ec := NewJsonEncodedConn(b)
-	defer ec.Close()
-	ch := make(chan bool)
+		ec.Subscribe("json_benchmark_struct_publish", func(p *person) {
+			if !reflect.DeepEqual(p, me) {
+				b.Fatalf("Did not receive the correct struct response")
+			}
+			ch <- true
+		})
 
-	me := &person{Name: "derek", Age: 22, Address: "140 New Montgomery St"}
-	me.Children = make(map[string]*person)
-
-	me.Children["sam"] = &person{Name: "sam", Age: 19, Address: "140 New Montgomery St"}
-	me.Children["meg"] = &person{Name: "meg", Age: 17, Address: "140 New Montgomery St"}
-
-	ec.Subscribe("json_benchmark_struct_publish", func(p *person) {
-		if !reflect.DeepEqual(p, me) {
-			b.Fatalf("Did not receive the correct struct response")
+		b.StartTimer()
+		for range b.N {
+			ec.Publish("json_benchmark_struct_publish", me)
+			if e := Wait(ch); e != nil {
+				b.Fatal("Did not receive the message")
+			}
 		}
-		ch <- true
 	})
-
-	// resume benchmark
-	b.StartTimer()
-
-	for n := 0; n < b.N; n++ {
-		ec.Publish("json_struct", me)
-		if e := Wait(ch); e != nil {
-			b.Fatal("Did not receive the message")
-		}
-	}
-
 }
 
 func TestEncBuiltinNotMarshableToJson(t *testing.T) {
@@ -286,30 +263,24 @@ func TestEncBuiltinNotMarshableToJson(t *testing.T) {
 }
 
 func TestEncBuiltinFailedEncodedPublish(t *testing.T) {
-	s := RunServerOnPort(TEST_PORT)
-	defer s.Shutdown()
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		ec := newJSONEncodedConn(t, nc)
 
-	ec := NewJsonEncodedConn(t)
-	defer ec.Close()
-
-	ch := make(chan bool)
-	err := ec.Publish("foo", ch)
-	if err == nil {
-		t.Fatal("Expected an error trying to publish a channel")
-	}
-	err = ec.PublishRequest("foo", "bar", ch)
-	if err == nil {
-		t.Fatal("Expected an error trying to publish a channel")
-	}
-	var cr chan bool
-	err = ec.Request("foo", ch, &cr, 1*time.Second)
-	if err == nil {
-		t.Fatal("Expected an error trying to publish a channel")
-	}
-	err = ec.LastError()
-	if err != nil {
-		t.Fatalf("Expected LastError to be nil: %q ", err)
-	}
+		ch := make(chan bool)
+		if err := ec.Publish("foo", ch); err == nil {
+			t.Fatal("Expected an error trying to publish a channel")
+		}
+		if err := ec.PublishRequest("foo", "bar", ch); err == nil {
+			t.Fatal("Expected an error trying to publish a channel")
+		}
+		var cr chan bool
+		if err := ec.Request("foo", ch, &cr, 1*time.Second); err == nil {
+			t.Fatal("Expected an error trying to publish a channel")
+		}
+		if err := ec.LastError(); err != nil {
+			t.Fatalf("Expected LastError to be nil: %q ", err)
+		}
+	})
 }
 
 func TestEncBuiltinDecodeConditionals(t *testing.T) {
