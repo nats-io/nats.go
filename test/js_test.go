@@ -10735,6 +10735,7 @@ func TestJetStreamOrderedConsumerAutoReconnect(t *testing.T) {
 		t.Logf("All 10 messages received in correct order after auto-reconnect")
 	})
 }
+
 // TestJetStreamOrderedConsumerServerRestart tests ordered consumer recovery
 // after server restart.
 func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
@@ -10750,6 +10751,13 @@ func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
 
 		var mu sync.Mutex
 		var received []string
+		reconnectCh := make(chan time.Time, 1)
+		nc.SetReconnectHandler(func(_ *nats.Conn) {
+			select {
+			case reconnectCh <- time.Now():
+			default:
+			}
+		})
 
 		sub, err := js.Subscribe("test.ordered", func(m *nats.Msg) {
 			mu.Lock()
@@ -10780,6 +10788,12 @@ func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
 		// Restart server
 		inst.StopServer(t, inst.Servers[0])
 		inst.StartServer(t, inst.Servers[0])
+		var reconnectTime time.Time
+		select {
+		case reconnectTime = <-reconnectCh:
+		case <-time.After(30 * time.Second):
+			t.Fatal("ReconnectedCB not fired within 30 seconds")
+		}
 
 		// Wait for JetStream to be available
 		c := newTester(t)
@@ -10792,8 +10806,10 @@ func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
 			}
 		}
 
-		// Wait for all messages
-		deadline := time.Now().Add(30 * time.Second)
+		// A restart destroys the memory-backed ordered consumer. Verify that the
+		// reconnect reset restores delivery promptly instead of waiting for the
+		// activity check.
+		deadline := reconnectTime.Add(5 * time.Second)
 		for {
 			mu.Lock()
 			count := len(received)
@@ -10802,7 +10818,7 @@ func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("Timeout: only %d messages received after server restart", count)
+				t.Fatalf("Prompt recovery failed: only %d messages received within 5s of reconnect (expected 10)", count)
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -10821,4 +10837,208 @@ func TestJetStreamOrderedConsumerServerRestart(t *testing.T) {
 		}
 		t.Logf("All 10 messages received in correct order after server restart")
 	})
+}
+
+func TestJetStreamOrderedConsumerRepeatedReconnect(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, err := js.AddStream(&nats.StreamConfig{Name: "REPEATED", Subjects: []string{"repeated"}}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		var mu sync.Mutex
+		var received []string
+		reconnected := make(chan struct{}, 3)
+		nc.SetReconnectHandler(func(_ *nats.Conn) { reconnected <- struct{}{} })
+		sub, err := js.Subscribe("repeated", func(m *nats.Msg) {
+			mu.Lock()
+			received = append(received, string(m.Data))
+			mu.Unlock()
+		}, nats.OrderedConsumer())
+		if err != nil {
+			t.Fatalf("Subscribe failed: %v", err)
+		}
+		defer sub.Unsubscribe()
+
+		publish := func(value int) {
+			t.Helper()
+			if _, err := js.Publish("repeated", []byte(fmt.Sprintf("msg-%d", value))); err != nil {
+				t.Fatalf("Publish failed: %v", err)
+			}
+		}
+		waitForCount := func(want int, deadline time.Time) {
+			t.Helper()
+			for {
+				mu.Lock()
+				got := len(received)
+				mu.Unlock()
+				if got == want {
+					return
+				}
+				if got > want {
+					t.Fatalf("Duplicate delivery: got %d messages, expected %d", got, want)
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("Prompt recovery failed: got %d messages, expected %d", got, want)
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+		}
+
+		publish(1)
+		waitForCount(1, time.Now().Add(5*time.Second))
+		for cycle := 1; cycle <= 3; cycle++ {
+			inst.StopServer(t, inst.Servers[0])
+			inst.StartServer(t, inst.Servers[0])
+			select {
+			case <-reconnected:
+			case <-time.After(30 * time.Second):
+				t.Fatalf("Reconnect %d did not complete", cycle)
+			}
+			newTester(t).WaitForJetStream(t, nc)
+			publish(cycle + 1)
+			waitForCount(cycle+1, time.Now().Add(5*time.Second))
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		for i, msg := range received {
+			expected := fmt.Sprintf("msg-%d", i+1)
+			if msg != expected {
+				t.Fatalf("Message %d: expected %q, got %q", i+1, expected, msg)
+			}
+		}
+	})
+}
+
+func TestJetStreamOrderedConsumerReconnectResetLifecycle(t *testing.T) {
+	tests := []struct {
+		name string
+		stop func(*testing.T, *nats.Conn, *nats.Subscription)
+	}{
+		{
+			name: "unsubscribe",
+			stop: func(t *testing.T, _ *nats.Conn, sub *nats.Subscription) {
+				t.Helper()
+				if err := sub.Unsubscribe(); err != nil && !errors.Is(err, nats.ErrConsumerNotFound) {
+					t.Fatalf("Unsubscribe failed: %v", err)
+				}
+			},
+		},
+		{
+			name: "subscription drain",
+			stop: func(t *testing.T, _ *nats.Conn, sub *nats.Subscription) {
+				t.Helper()
+				if err := sub.Drain(); err != nil {
+					t.Fatalf("Subscription drain failed: %v", err)
+				}
+			},
+		},
+		{
+			name: "connection close",
+			stop: func(_ *testing.T, nc *nats.Conn, _ *nats.Subscription) { nc.Close() },
+		},
+		{
+			name: "connection drain",
+			stop: func(t *testing.T, nc *nats.Conn, _ *nats.Subscription) {
+				t.Helper()
+				if err := nc.Drain(); err != nil {
+					t.Fatalf("Connection drain failed: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, nc *nats.Conn, inst *testservice.Instance) {
+				js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if _, err := js.AddStream(&nats.StreamConfig{Name: "LIFECYCLE", Subjects: []string{"lifecycle"}}); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				disconnectEntered := make(chan struct{})
+				releaseDisconnect := make(chan struct{})
+				var disconnectOnce sync.Once
+				nc.SetDisconnectErrHandler(func(_ *nats.Conn, _ error) {
+					disconnectOnce.Do(func() { close(disconnectEntered) })
+					<-releaseDisconnect
+				})
+				reconnected := make(chan struct{}, 1)
+				nc.SetReconnectHandler(func(_ *nats.Conn) { reconnected <- struct{}{} })
+
+				delivered := make(chan struct{}, 1)
+				sub, err := js.Subscribe("lifecycle", func(_ *nats.Msg) {
+					select {
+					case delivered <- struct{}{}:
+					default:
+					}
+				}, nats.OrderedConsumer())
+				if err != nil {
+					t.Fatalf("Subscribe failed: %v", err)
+				}
+				if _, err := js.Publish("lifecycle", nil); err != nil {
+					t.Fatalf("Publish failed: %v", err)
+				}
+				select {
+				case <-delivered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("Initial delivery timed out")
+				}
+
+				inst.StopServer(t, inst.Servers[0])
+				select {
+				case <-disconnectEntered:
+				case <-time.After(10 * time.Second):
+					t.Fatal("Disconnect callback did not run")
+				}
+				inst.StartServer(t, inst.Servers[0])
+				deadline := time.Now().Add(30 * time.Second)
+				for nc.Status() != nats.CONNECTED {
+					if time.Now().After(deadline) {
+						t.Fatal("Connection did not reconnect")
+					}
+					time.Sleep(25 * time.Millisecond)
+				}
+				if err := nc.FlushTimeout(5 * time.Second); err != nil {
+					t.Fatalf("Reconnect flush failed: %v", err)
+				}
+
+				test.stop(t, nc, sub)
+				close(releaseDisconnect)
+				select {
+				case <-reconnected:
+				case <-time.After(10 * time.Second):
+					t.Fatal("Reconnect callback did not run after queued reset")
+				}
+
+				admin := dialInstance(t, inst)
+				defer admin.Close()
+				adminJS, err := admin.JetStream(nats.MaxWait(5 * time.Second))
+				if err != nil {
+					t.Fatalf("Admin JetStream context failed: %v", err)
+				}
+				deadline = time.Now().Add(5 * time.Second)
+				for {
+					info, err := adminJS.StreamInfo("LIFECYCLE")
+					if err != nil {
+						t.Fatalf("Stream info failed: %v", err)
+					}
+					if info.State.Consumers == 0 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("Queued reconnect reset recreated %d consumer(s) after %s", info.State.Consumers, test.name)
+					}
+					time.Sleep(25 * time.Millisecond)
+				}
+			})
+		})
+	}
 }
