@@ -1053,6 +1053,50 @@ func TestSkipSubjectValidation(t *testing.T) {
 	})
 }
 
+func TestMaxControlLineExceededErrorHandler(t *testing.T) {
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		errCh := make(chan error, 1)
+		closedCh := make(chan struct{})
+		nc, err := nats.Connect(inst.Servers[0].URL,
+			nats.ErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
+				if sub == nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+				}
+			}),
+			nats.ClosedHandler(func(_ *nats.Conn) { close(closedCh) }),
+		)
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+
+		if err := nc.Publish(strings.Repeat("a", 5000), []byte("hello")); err != nil {
+			t.Fatalf("Unexpected error on publish: %v", err)
+		}
+
+		select {
+		case err := <-errCh:
+			if !strings.Contains(err.Error(), "maximum control line exceeded") {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for the error handler")
+		}
+
+		select {
+		case <-closedCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for the connection to be closed")
+		}
+		if err := nc.LastError(); err == nil || !strings.Contains(err.Error(), "maximum control line exceeded") {
+			t.Fatalf("Unexpected last error: %v", err)
+		}
+	})
+}
+
 func BenchmarkNextMsgNoTimeout(b *testing.B) {
 	c := newTester(b)
 	inst := c.CreateServer(b, false)
