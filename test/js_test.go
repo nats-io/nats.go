@@ -5599,6 +5599,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
       { stream: "p.d3" }
       # For the acks. Service in case we want an ack to our ack.
       { service: "$JS.ACK.ORDERS.*.>" }
+      { service: "$JS.ACK.*.*.ORDERS.*.>" }
 
       # Allow lookup of stream to be able to bind from another account.
       { service: "$JS.API.CONSUMER.INFO.ORDERS.d4", response: stream }
@@ -5617,6 +5618,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
       { stream:  { subject: "p.d3", account: JS } }
       { stream:  { subject: "p.d4", account: JS } }
       { service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
+      { service: { subject: "$JS.ACK.*.*.ORDERS.*.>", account: JS } }
     ]
   },
   V: {
@@ -5635,6 +5637,7 @@ func TestJetStreamImportDirectOnly(t *testing.T) {
       { stream:  { subject: "p.d3", account: JS } }
       { stream:  { subject: "p.d4", account: JS } }
       { service: { subject: "$JS.ACK.ORDERS.*.>", account: JS } }
+      { service: { subject: "$JS.ACK.*.*.ORDERS.*.>", account: JS } }
     ]
   },
 }`
@@ -6771,7 +6774,7 @@ func TestJetStreamSubscribe_AckDup(t *testing.T) {
 		defer cancel()
 
 		pings := make(chan struct{}, 6)
-		nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+		nc.Subscribe("$JS.ACK.>", func(msg *nats.Msg) {
 			pings <- struct{}{}
 		})
 		nc.Flush()
@@ -6805,7 +6808,7 @@ func TestJetStreamSubscribe_AckDup(t *testing.T) {
 			}
 		}
 		if len(pings) != 1 {
-			t.Logf("Expected to receive a single ack, got: %v", len(pings))
+			t.Errorf("Expected to receive a single ack, got: %v", len(pings))
 		}
 	})
 }
@@ -6855,7 +6858,7 @@ func TestJetStreamSubscribe_AutoAck(t *testing.T) {
 				defer cancel()
 
 				acks := make(chan struct{}, 2)
-				nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+				nc.Subscribe("$JS.ACK.>", func(msg *nats.Msg) {
 					acks <- struct{}{}
 				})
 				nc.Flush()
@@ -6903,7 +6906,7 @@ func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 		defer cancel()
 
 		pings := make(chan struct{}, 3)
-		nc.Subscribe("$JS.ACK.TEST.>", func(msg *nats.Msg) {
+		nc.Subscribe("$JS.ACK.>", func(msg *nats.Msg) {
 			pings <- struct{}{}
 		})
 		nc.Flush()
@@ -6932,7 +6935,7 @@ func TestJetStreamSubscribe_AckDupInProgress(t *testing.T) {
 			t.Errorf("Unexpected error: %v", ackErr3)
 		}
 		if len(pings) != 3 {
-			t.Logf("Expected to receive multiple acks, got: %v", len(pings))
+			t.Errorf("Expected to receive multiple acks, got: %v", len(pings))
 		}
 	})
 }
