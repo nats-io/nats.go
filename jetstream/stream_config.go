@@ -50,6 +50,11 @@ type (
 		// data.
 		Sources []*StreamSourceInfo `json:"sources,omitempty"`
 
+		// Alternates is a list of mirrors and alternate copies of this stream,
+		// along with the stream itself, that the client may use to read
+		// messages. Ordered by proximity to the requesting client.
+		Alternates []StreamAlternate `json:"alternates,omitempty"`
+
 		// TimeStamp indicates when the info was gathered by the server.
 		TimeStamp time.Time `json:"ts"`
 	}
@@ -225,6 +230,10 @@ type (
 		// Name is the name of the stream that is being replicated.
 		Name string `json:"name"`
 
+		// External contains the API and delivery prefixes used to reach the
+		// stream when it lives in another account or JetStream domain.
+		External *ExternalStream `json:"external,omitempty"`
+
 		// Lag informs how many messages behind the source/mirror operation is.
 		// This will only show correctly if there is active communication
 		// with stream/mirror.
@@ -237,6 +246,10 @@ type (
 		// Active informs when last the mirror or sourced stream had activity.
 		// Value will be -1 when there has been no activity.
 		Active time.Duration `json:"active"`
+
+		// Error is the error reported by the server if the source/mirror
+		// replication is failing. It is nil when replication is healthy.
+		Error *APIError `json:"error,omitempty"`
 
 		// FilterSubject is the subject filter defined for this source/mirror.
 		FilterSubject string `json:"filter_subject,omitempty"`
@@ -288,6 +301,34 @@ type (
 		// with message count per subject. This field will only be returned if
 		// the stream has been fetched with the SubjectFilter option.
 		Subjects map[string]uint64 `json:"subjects"`
+
+		// Lost contains information about messages and bytes the server has
+		// lost, for example as a result of file store corruption. It is nil
+		// when no data has been lost.
+		Lost *LostStreamData `json:"lost,omitempty"`
+	}
+
+	// LostStreamData contains information about data lost by the server for
+	// a stream.
+	LostStreamData struct {
+		// Msgs is the list of sequence numbers of the lost messages.
+		Msgs []uint64 `json:"msgs"`
+
+		// Bytes is the number of bytes lost.
+		Bytes uint64 `json:"bytes"`
+	}
+
+	// StreamAlternate is an alternate location of a stream, either a mirror
+	// or the stream itself.
+	StreamAlternate struct {
+		// Name is the name of the alternate stream.
+		Name string `json:"name"`
+
+		// Domain is the JetStream domain the alternate stream belongs to.
+		Domain string `json:"domain,omitempty"`
+
+		// Cluster is the name of the cluster hosting the alternate stream.
+		Cluster string `json:"cluster"`
 	}
 
 	// ClusterInfo shows information about the underlying set of servers that
