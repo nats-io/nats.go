@@ -423,6 +423,33 @@ func TestPullConsumer_checkPendingAfterDone(t *testing.T) {
 	}
 }
 
+func TestPullSubscriptionResetPendingStopAfter(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		stopAfter, delivered, want int
+	}{
+		{"unlimited", 0, 200, 500},
+		{"full batch", 800, 200, 500},
+		{"initial shortened batch", 450, 0, 450},
+		{"remaining shortened batch", 450, 200, 250},
+		{"complete", 450, 450, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := &pullSubscription{
+				consumeOpts: &consumeOpts{MaxMessages: 500, MaxBytes: 10000, StopAfter: tc.stopAfter},
+				delivered:   tc.delivered,
+			}
+			sub.resetPendingMsgs()
+			if got := sub.pending.msgCount; got != tc.want {
+				t.Errorf("pending messages: got %d, want %d", got, tc.want)
+			}
+			if got := sub.pending.byteCount; got != 10000 {
+				t.Errorf("pending bytes: got %d, want 10000", got)
+			}
+		})
+	}
+}
+
 func TestPullConsumer_checkPending(t *testing.T) {
 
 	tests := []struct {
@@ -431,9 +458,11 @@ func TestPullConsumer_checkPending(t *testing.T) {
 		fetchInProgress     bool
 		shouldSend          bool
 		expectedPullRequest *pullRequest
+		expectedPendingMsgs int
 	}{
 		{
-			name: "msgs threshold not reached, bytes not set, no pull request",
+			name:                "msgs threshold not reached, bytes not set, no pull request",
+			expectedPendingMsgs: 10,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					msgCount: 10,
@@ -446,7 +475,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			shouldSend: false,
 		},
 		{
-			name: "pending msgs below threshold, send pull request",
+			name:                "pending msgs below threshold, send pull request",
+			expectedPendingMsgs: 10,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					msgCount:  4,
@@ -464,7 +494,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			},
 		},
 		{
-			name: "pending msgs below threshold but PR in progress",
+			name:                "pending msgs below threshold but PR in progress",
+			expectedPendingMsgs: 4,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					msgCount: 4,
@@ -478,7 +509,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			shouldSend:      false,
 		},
 		{
-			name: "pending bytes below threshold, send pull request",
+			name:                "pending bytes below threshold, send pull request",
+			expectedPendingMsgs: 1000000,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					byteCount: 400,
@@ -497,7 +529,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			},
 		},
 		{
-			name: "pending bytes above threshold, no pull request",
+			name:                "pending bytes above threshold, no pull request",
+			expectedPendingMsgs: 0,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					byteCount: 600,
@@ -510,7 +543,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			shouldSend: false,
 		},
 		{
-			name: "pending bytes below threshold, fetch in progress, no pull request",
+			name:                "pending bytes below threshold, fetch in progress, no pull request",
+			expectedPendingMsgs: 0,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					byteCount: 400,
@@ -524,7 +558,8 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			shouldSend:      false,
 		},
 		{
-			name: "StopAfter set, pending msgs below StopAfter, send pull request",
+			name:                "StopAfter set, pending msgs below StopAfter, send pull request",
+			expectedPendingMsgs: 6,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					msgCount: 4,
@@ -543,7 +578,35 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			},
 		},
 		{
-			name: "StopAfter set, pending msgs equal to StopAfter, no pull request",
+			name:                "StopAfter with message and byte limits",
+			expectedPendingMsgs: 6,
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{msgCount: 4, byteCount: 400},
+				consumeOpts: &consumeOpts{
+					ThresholdMessages: 5, MaxMessages: 10, MaxBytes: 1000,
+					LimitSize: true, StopAfter: 8,
+				},
+				delivered: 2,
+			},
+			shouldSend:          true,
+			expectedPullRequest: &pullRequest{Batch: 2, MaxBytes: 1000},
+		},
+		{
+			name:                "StopAfter with bytes threshold",
+			expectedPendingMsgs: 6,
+			givenSub: &pullSubscription{
+				pending: pendingMsgs{msgCount: 4, byteCount: 400},
+				consumeOpts: &consumeOpts{
+					MaxMessages: 1000000, ThresholdBytes: 500, MaxBytes: 1000, StopAfter: 8,
+				},
+				delivered: 2,
+			},
+			shouldSend:          true,
+			expectedPullRequest: &pullRequest{Batch: 2, MaxBytes: 600},
+		},
+		{
+			name:                "StopAfter set, pending msgs equal to StopAfter, no pull request",
+			expectedPendingMsgs: 6,
 			givenSub: &pullSubscription{
 				pending: pendingMsgs{
 					msgCount: 6,
@@ -593,6 +656,9 @@ func TestPullConsumer_checkPending(t *testing.T) {
 			}()
 
 			test.givenSub.checkPending()
+			if got := test.givenSub.pending.msgCount; got != test.expectedPendingMsgs {
+				t.Errorf("pending message count: got %d, want %d", got, test.expectedPendingMsgs)
+			}
 			select {
 			case <-ok:
 				// ok

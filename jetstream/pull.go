@@ -327,13 +327,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 	sub.Lock()
 	// initial pull
 	sub.resetPendingMsgs()
-	batchSize := sub.consumeOpts.MaxMessages
-	if sub.consumeOpts.StopAfter > 0 {
-		batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
-	}
 	if err := sub.pull(&pullRequest{
 		Expires:       consumeOpts.Expires,
-		Batch:         batchSize,
+		Batch:         sub.pending.msgCount,
 		MaxBytes:      consumeOpts.MaxBytes,
 		Heartbeat:     consumeOpts.Heartbeat,
 		MinPending:    consumeOpts.MinPending,
@@ -371,9 +367,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 							sub.errs <- errConnected
 						}
 
+						sub.resetPendingMsgs()
 						sub.requestNext(&pullRequest{
 							Expires:       sub.consumeOpts.Expires,
-							Batch:         sub.consumeOpts.MaxMessages,
+							Batch:         sub.pending.msgCount,
 							MaxBytes:      sub.consumeOpts.MaxBytes,
 							Heartbeat:     sub.consumeOpts.Heartbeat,
 							MinPending:    sub.consumeOpts.MinPending,
@@ -385,7 +382,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 						if sub.hbMonitor != nil {
 							sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 						}
-						sub.resetPendingMsgs()
 					}
 					sub.Unlock()
 
@@ -395,13 +391,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			case err := <-sub.errs:
 				sub.Lock()
 				if errors.Is(err, ErrNoHeartbeat) {
-					batchSize := sub.consumeOpts.MaxMessages
-					if sub.consumeOpts.StopAfter > 0 {
-						batchSize = min(batchSize, sub.consumeOpts.StopAfter-sub.delivered)
-					}
+					sub.resetPendingMsgs()
 					sub.requestNext(&pullRequest{
 						Expires:       sub.consumeOpts.Expires,
-						Batch:         batchSize,
+						Batch:         sub.pending.msgCount,
 						MaxBytes:      sub.consumeOpts.MaxBytes,
 						Heartbeat:     sub.consumeOpts.Heartbeat,
 						MinPending:    sub.consumeOpts.MinPending,
@@ -413,7 +406,6 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.consumeOpts.Heartbeat)
 					}
-					sub.resetPendingMsgs()
 				}
 				sub.Unlock()
 				if sub.consumeOpts.ErrHandler != nil {
@@ -434,10 +426,13 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 }
 
 // resetPendingMsgs resets pending message count and byte count
-// to the values set in consumeOpts
+// to the values set in consumeOpts, capped by the remaining StopAfter budget.
 // lock should be held before calling this method
 func (s *pullSubscription) resetPendingMsgs() {
 	s.pending.msgCount = s.consumeOpts.MaxMessages
+	if s.consumeOpts.StopAfter > 0 {
+		s.pending.msgCount = min(s.pending.msgCount, s.consumeOpts.StopAfter-s.delivered)
+	}
 	s.pending.byteCount = s.consumeOpts.MaxBytes
 }
 
@@ -498,7 +493,11 @@ func (s *pullSubscription) checkPending() {
 				Priority:      s.consumeOpts.Priority,
 			})
 
-			s.pending.msgCount = s.consumeOpts.MaxMessages
+			if s.consumeOpts.StopAfter > 0 {
+				s.pending.msgCount += batchSize
+			} else {
+				s.pending.msgCount = s.consumeOpts.MaxMessages
+			}
 			s.pending.byteCount = s.consumeOpts.MaxBytes
 		}
 	}
