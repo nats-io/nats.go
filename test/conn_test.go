@@ -3392,6 +3392,41 @@ func TestConnStatusChangedEvents(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		})
 	})
+	t.Run("unread events are not lost", func(t *testing.T) {
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+			// Events are read only after each reconnect completes.
+			for range 2 {
+				forceReconnect(t, nc)
+				WaitOnChannel(t, statusCh, nats.RECONNECTING)
+				WaitOnChannel(t, statusCh, nats.CONNECTED)
+			}
+		})
+	})
+	t.Run("closed by the caller", func(t *testing.T) {
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			statusCh := nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+			close(statusCh)
+			forceReconnect(t, nc)
+			if err := nc.Publish("foo", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		})
+	})
+}
+
+func forceReconnect(t *testing.T, nc *nats.Conn) {
+	t.Helper()
+	reconnected := make(chan struct{}, 1)
+	nc.SetReconnectHandler(func(*nats.Conn) { reconnected <- struct{}{} })
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	select {
+	case <-reconnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for reconnect")
+	}
 }
 
 func TestRemoveStatusListener(t *testing.T) {
@@ -3437,6 +3472,24 @@ func TestRemoveStatusListener(t *testing.T) {
 			case <-done:
 			case <-time.After(time.Second):
 				t.Fatal("Expected to receive done signal")
+			}
+		})
+	})
+	t.Run("with unread event", func(t *testing.T) {
+		withServer(t, func(t *testing.T, nc *nats.Conn) {
+			statusCh := nc.StatusChanged(nats.RECONNECTING)
+			forceReconnect(t, nc)
+
+			nc.RemoveStatusListener(statusCh)
+
+			WaitOnChannel(t, statusCh, nats.RECONNECTING)
+			select {
+			case _, ok := <-statusCh:
+				if ok {
+					t.Fatal("Expected channel to be closed")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Expected channel to be closed")
 			}
 		})
 	})
