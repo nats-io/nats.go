@@ -412,6 +412,10 @@ func (s *orderedSubscription) Closed() <-chan struct{} {
 // reset the consumer for each subsequent Fetch call.
 // Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
+	return c.fetchWithOpts(batch, true, opts...)
+}
+
+func (c *orderedConsumer) fetchWithOpts(batch int, allowMaxBytes bool, opts ...FetchOpt) (MessageBatch, error) {
 	c.Lock()
 	if c.consumerType == consumerTypeConsume {
 		c.Unlock()
@@ -436,7 +440,7 @@ func (c *orderedConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, erro
 	if err != nil {
 		return nil, err
 	}
-	msgs, err := c.currentConsumer.Fetch(batch, opts...)
+	msgs, err := c.currentConsumer.fetchWithOpts(batch, allowMaxBytes, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +524,7 @@ func (c *orderedConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 // reset the consumer for each subsequent Fetch call.
 // Consider using [Consumer.Consume] or [Consumer.Messages] instead.
 func (c *orderedConsumer) Next(opts ...FetchOpt) (Msg, error) {
-	res, err := c.Fetch(1, opts...)
+	res, err := c.fetchWithOpts(1, false, opts...)
 	if err != nil {
 		return nil, err
 	}
