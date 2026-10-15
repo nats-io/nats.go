@@ -729,8 +729,8 @@ type natsWriter struct {
 // Subscription represents interest in a given subject.
 //
 // A Subscription is safe for concurrent use by multiple goroutines, for
-// example several goroutines may call NextMsg or Fetch on the same
-// Subscription. Each message is delivered to only one of the callers.
+// example several goroutines may call NextMsg on the same Subscription.
+// Each message is delivered to only one of the callers.
 type Subscription struct {
 	mu sync.Mutex
 

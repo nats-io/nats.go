@@ -3128,10 +3128,6 @@ func checkMsg(msg *Msg, checkSts, isNoWait bool) (usrMsg bool, err error) {
 }
 
 // Fetch pulls a batch of messages from a stream for a pull consumer.
-//
-// Fetch is safe for concurrent use by multiple goroutines. Note that every
-// call sends its own pull request to the server, so the number of requests
-// grows with the number of concurrent callers.
 func (sub *Subscription) Fetch(batch int, opts ...PullOpt) ([]*Msg, error) {
 	if sub == nil {
 		return nil, ErrBadSubscription
