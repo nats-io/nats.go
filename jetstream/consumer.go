@@ -57,7 +57,7 @@ type (
 		// Use FetchMaxBytes to also limit the total size of delivered messages.
 		// The request completes when either limit is reached, or the timeout
 		// expires. For example, Fetch(500, FetchMaxBytes(32<<20)) retrieves up to
-		// 500 messages and up to 32 MiB, including message metadata and headers.
+		// 500 messages and up to 32 MiB, including subjects, reply subjects and headers.
 		//
 		// By default, Fetch uses a 5s idle heartbeat for requests longer than
 		// 10 seconds. For shorter requests, the idle heartbeat is disabled.

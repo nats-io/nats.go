@@ -1240,6 +1240,38 @@ func TestOrderedConsumerFetch(t *testing.T) {
 			}
 		})
 	})
+	t.Run("byte limit reached first", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 5; i++ {
+				if _, err := js.Publish(ctx, testSubject, make([]byte, 1000)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			msgs, err := c.Fetch(5, jetstream.FetchMaxBytes(2500), jetstream.FetchMaxWait(time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got int
+			for range msgs.Messages() {
+				got++
+			}
+			if msgs.Error() != nil {
+				t.Fatal(msgs.Error())
+			}
+			if got != 2 {
+				t.Fatalf("Expected %d messages; got: %d", 2, got)
+			}
+		})
+	})
 }
 
 func TestOrderedConsumerFetchBytes(t *testing.T) {
@@ -1463,6 +1495,22 @@ func TestOrderedConsumerNext(t *testing.T) {
 			}
 			if meta.Sequence.Stream != 2 {
 				t.Fatalf("Expected sequence: %d; got: %d", 2, meta.Sequence.Stream)
+			}
+		})
+	})
+	t.Run("with invalid max bytes option", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Next(jetstream.FetchMaxBytes(1000)); !errors.Is(err, jetstream.ErrInvalidOption) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 			}
 		})
 	})
