@@ -2048,6 +2048,43 @@ func TestKeyValueKeysDeduplicate(t *testing.T) {
 	})
 }
 
+func TestKeyValueReusesSourceConfig(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := context.Background()
+		source, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "SOURCE"})
+		expectOk(t, err)
+
+		sources := []*jetstream.StreamSource{{Name: "SOURCE"}}
+		var destinations []jetstream.KeyValue
+		for _, bucket := range []string{"DEST1", "DEST2"} {
+			kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
+				Bucket:  bucket,
+				Sources: sources,
+			})
+			expectOk(t, err)
+			destinations = append(destinations, kv)
+		}
+
+		_, err = source.Put(ctx, "key", []byte("value"))
+		expectOk(t, err)
+		for _, kv := range destinations {
+			checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
+				entry, err := kv.Get(ctx, "key")
+				if err != nil {
+					return fmt.Errorf("bucket %s: %w", kv.Bucket(), err)
+				}
+				if string(entry.Value()) != "value" {
+					return fmt.Errorf("bucket %s: unexpected value %q", kv.Bucket(), entry.Value())
+				}
+				return nil
+			})
+		}
+		if sources[0].Name != "SOURCE" || len(sources[0].SubjectTransforms) != 0 {
+			t.Fatalf("Source config was modified: %+v", sources[0])
+		}
+	})
+}
+
 func TestKeyValueWithSources(t *testing.T) {
 	t.Run("kv -> kv", func(t *testing.T) {
 		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
