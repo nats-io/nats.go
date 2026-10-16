@@ -2058,6 +2058,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	if hasHeartbeats {
 		sub.scheduleHeartbeatCheck()
 	}
+	if o.ordered {
+		connStatus := nc.StatusChanged(CONNECTED, CLOSED)
+		go sub.resetOrderedConsumerOnReconnect(nc, connStatus, sub.StatusChanged(SubscriptionClosed))
+	}
 	// For ChanSubscriptions, if we know that there is flow control, we will
 	// start a go routine that evaluates the number of delivered messages
 	// and process flow control.
@@ -2272,6 +2276,27 @@ func (sub *Subscription) tryResetOrderedConsumer() {
 		return
 	}
 	sub.resetOrderedConsumer(jsi.sseq + 1)
+}
+
+// resetOrderedConsumerOnReconnect recreates the consumer each time the
+// connection is back, since a server restart or a disconnect longer than its
+// inactive threshold removes it. It returns once the subscription or the
+// connection is closed.
+func (sub *Subscription) resetOrderedConsumerOnReconnect(nc *Conn, connStatus chan Status, subStatus <-chan SubStatus) {
+	defer nc.RemoveStatusListener(connStatus)
+	for {
+		select {
+		case status, ok := <-connStatus:
+			if !ok || status == CLOSED {
+				return
+			}
+			sub.mu.Lock()
+			sub.tryResetOrderedConsumer()
+			sub.mu.Unlock()
+		case <-subStatus:
+			return
+		}
+	}
 }
 
 // Update and replace sid. Returns the old and the new sid. Returns ok == false,
