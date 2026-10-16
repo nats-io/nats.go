@@ -194,6 +194,32 @@ func TestDefaultObjectStatus(t *testing.T) {
 	})
 }
 
+func TestObjectGetFileReplacesExistingContents(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream()
+		expectOk(t, err)
+		obs, err := js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "FILES"})
+		expectOk(t, err)
+		for _, data := range [][]byte{[]byte("new"), {}} {
+			t.Run(fmt.Sprintf("size=%d", len(data)), func(t *testing.T) {
+				_, err := obs.PutBytes("object", data)
+				expectOk(t, err)
+				file := filepath.Join(t.TempDir(), "object")
+				err = os.WriteFile(file, []byte("previous contents"), 0600)
+				expectOk(t, err)
+
+				err = obs.GetFile("object", file)
+				expectOk(t, err)
+				restored, err := os.ReadFile(file)
+				expectOk(t, err)
+				if !bytes.Equal(restored, data) {
+					t.Fatalf("Expected %q, got %q", data, restored)
+				}
+			})
+		}
+	})
+}
+
 func TestObjectFileBasics(t *testing.T) {
 	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
 		js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
