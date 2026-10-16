@@ -107,6 +107,7 @@ type (
 		Priority      uint8           `json:"priority,omitempty"`
 		ctx           context.Context `json:"-"`
 		maxWaitSet    bool            `json:"-"`
+		allowMaxBytes bool            `json:"-"`
 	}
 
 	consumeOpts struct {
@@ -869,10 +870,15 @@ func (s *pullSubscription) Closed() <-chan struct{} {
 // Fetch sends a single request to retrieve given number of messages.
 // It will wait up to provided expiry time if not all messages are available.
 func (p *pullConsumer) Fetch(batch int, opts ...FetchOpt) (MessageBatch, error) {
+	return p.fetchWithOpts(batch, true, opts...)
+}
+
+func (p *pullConsumer) fetchWithOpts(batch int, allowMaxBytes bool, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
-		Batch:     batch,
-		Expires:   DefaultExpires,
-		Heartbeat: unset,
+		Batch:         batch,
+		Expires:       DefaultExpires,
+		Heartbeat:     unset,
+		allowMaxBytes: allowMaxBytes,
 	}
 	for _, opt := range opts {
 		if err := opt(req); err != nil {
@@ -1073,7 +1079,7 @@ func (fr *fetchResult) closed() bool {
 // method will block until the message is retrieved or timeout is
 // reached.
 func (p *pullConsumer) Next(opts ...FetchOpt) (Msg, error) {
-	res, err := p.Fetch(1, opts...)
+	res, err := p.fetchWithOpts(1, false, opts...)
 	if err != nil {
 		return nil, err
 	}

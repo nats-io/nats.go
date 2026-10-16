@@ -521,6 +521,27 @@ func FetchPriorityGroup(group string) FetchOpt {
 	}
 }
 
+// FetchMaxBytes limits the total size of messages returned by [Consumer.Fetch],
+// including subjects, reply subjects and headers. Fetch completes when either
+// the message count or byte limit is reached, or the request expires.
+// If the next message does not fit in the remaining byte budget, it is left
+// available for a subsequent request.
+//
+// The limit must be greater than zero. This option is not supported by
+// [Consumer.FetchBytes] or [Consumer.Next].
+func FetchMaxBytes(maxBytes int) FetchOpt {
+	return func(req *pullRequest) error {
+		if maxBytes <= 0 {
+			return fmt.Errorf("%w: max bytes must be greater than 0", ErrInvalidOption)
+		}
+		if !req.allowMaxBytes {
+			return fmt.Errorf("%w: FetchMaxBytes is only supported by Fetch", ErrInvalidOption)
+		}
+		req.MaxBytes = maxBytes
+		return nil
+	}
+}
+
 // FetchMaxWait sets custom timeout for fetching predefined batch of messages.
 //
 // If not provided, a default of 30 seconds will be used.

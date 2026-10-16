@@ -260,6 +260,66 @@ func TestPullConsumerFetch(t *testing.T) {
 		})
 	})
 
+	for _, test := range []struct {
+		name     string
+		batch    int
+		maxBytes int
+		want     int
+	}{
+		{name: "byte limit reached first", batch: 5, maxBytes: 2500, want: 2},
+		{name: "message limit reached first", batch: 2, maxBytes: 10000, want: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+				ctx := newTesterCtx(t, 5*time.Second)
+				s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{Name: "con", AckPolicy: jetstream.AckExplicitPolicy})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := 0; i < 5; i++ {
+					if _, err := js.Publish(ctx, testSubject, make([]byte, 1000)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				msgs, err := c.Fetch(test.batch, jetstream.FetchMaxBytes(test.maxBytes), jetstream.FetchMaxWait(time.Second))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got int
+				for range msgs.Messages() {
+					got++
+				}
+				if msgs.Error() != nil {
+					t.Fatal(msgs.Error())
+				}
+				if got != test.want {
+					t.Fatalf("Expected %d messages; got: %d", test.want, got)
+				}
+			})
+		})
+	}
+
+	t.Run("with invalid max bytes option", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Fetch(5, jetstream.FetchMaxBytes(0)); !errors.Is(err, jetstream.ErrInvalidOption) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+			}
+		})
+	})
+
 	t.Run("with invalid timeout value", func(t *testing.T) {
 		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 			ctx := newTesterCtx(t, 5*time.Second)
@@ -821,6 +881,22 @@ func TestPullConsumerFetchBytes(t *testing.T) {
 			// negative heartbeat
 			_, err = c.FetchBytes(5, jetstream.FetchHeartbeat(-2*time.Second))
 			if !errors.Is(err, jetstream.ErrInvalidOption) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
+			}
+		})
+	})
+	t.Run("with invalid max bytes option", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.FetchBytes(1000, jetstream.FetchMaxBytes(1000)); !errors.Is(err, jetstream.ErrInvalidOption) {
 				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 			}
 		})
@@ -3027,6 +3103,22 @@ func TestPullConsumerNext(t *testing.T) {
 
 			if _, err := c.Next(jetstream.FetchMaxWait(50 * time.Millisecond)); !errors.Is(err, nats.ErrTimeout) {
 				t.Fatalf("Expected timeout; got: %s", err)
+			}
+		})
+	})
+	t.Run("with invalid max bytes option", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 5*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Next(jetstream.FetchMaxBytes(1000)); !errors.Is(err, jetstream.ErrInvalidOption) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrInvalidOption, err)
 			}
 		})
 	})
