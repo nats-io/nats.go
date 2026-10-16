@@ -790,7 +790,11 @@ func (kv *kvs) update(key string, value []byte, revision uint64) (uint64, error)
 	if kv.useJSPfx {
 		b.WriteString(kv.js.opts.pre)
 	}
-	b.WriteString(kv.pre)
+	if kv.putPre != _EMPTY_ {
+		b.WriteString(kv.putPre)
+	} else {
+		b.WriteString(kv.pre)
+	}
 	b.WriteString(key)
 
 	m := Msg{Subject: b.String(), Header: Header{}, Data: value}
