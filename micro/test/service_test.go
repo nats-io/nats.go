@@ -1428,6 +1428,96 @@ func TestAddEndpoint_Options(t *testing.T) {
 	})
 }
 
+func TestServiceMetadataImmutable(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		handler := micro.HandlerFunc(func(req micro.Request) {})
+		svcMeta := map[string]string{"region": "east"}
+		defaultMeta := map[string]string{"owner": "team-d"}
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:     "orders",
+			Version:  "0.1.0",
+			Metadata: svcMeta,
+			Endpoint: &micro.EndpointConfig{
+				Subject:  "orders.default",
+				Handler:  handler,
+				Metadata: defaultMeta,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+
+		epMeta := map[string]string{"owner": "team-a"}
+		err = srv.AddEndpoint("create", handler,
+			micro.WithEndpointMetadata(epMeta),
+			micro.WithEndpointMetadataKey("tier", "gold"))
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if _, ok := epMeta["tier"]; ok {
+			t.Fatalf("WithEndpointMetadataKey modified the map passed to WithEndpointMetadata: %v", epMeta)
+		}
+
+		svcMeta["region"] = "west"
+		defaultMeta["owner"] = "team-x"
+		epMeta["owner"] = "team-b"
+		epMeta["extra"] = "x"
+		info := srv.Info()
+		info.Metadata["region"] = "west"
+		for _, ep := range info.Endpoints {
+			ep.Metadata["owner"] = "team-b"
+			delete(ep.Metadata, "tier")
+		}
+		srv.Stats().Metadata["region"] = "west"
+
+		wantSvc := map[string]string{"region": "east"}
+		wantEndpoints := map[string]map[string]string{
+			"default": {"owner": "team-d"},
+			"create":  {"owner": "team-a", "tier": "gold"},
+		}
+		checkInfo := func(info micro.Info) {
+			t.Helper()
+			if !reflect.DeepEqual(info.Metadata, wantSvc) {
+				t.Fatalf("Invalid service metadata; want: %v; got: %v", wantSvc, info.Metadata)
+			}
+			got := make(map[string]map[string]string)
+			for _, ep := range info.Endpoints {
+				got[ep.Name] = ep.Metadata
+			}
+			if !reflect.DeepEqual(got, wantEndpoints) {
+				t.Fatalf("Invalid endpoint metadata; want: %v; got: %v", wantEndpoints, got)
+			}
+		}
+		checkInfo(srv.Info())
+
+		for _, verb := range []micro.Verb{micro.PingVerb, micro.InfoVerb, micro.StatsVerb} {
+			subject, err := micro.ControlSubject(verb, "orders", "")
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			resp, err := nc.Request(subject, nil, time.Second)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			var id micro.ServiceIdentity
+			if err := json.Unmarshal(resp.Data, &id); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(id.Metadata, wantSvc) {
+				t.Fatalf("Invalid service metadata in %s response; want: %v; got: %v", verb, wantSvc, id.Metadata)
+			}
+			if verb == micro.InfoVerb {
+				var info micro.Info
+				if err := json.Unmarshal(resp.Data, &info); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				checkInfo(info)
+			}
+		}
+	})
+}
+
 func TestAddEndpoint_Concurrency(t *testing.T) {
 	withServer(t, func(t *testing.T, nc *nats.Conn) {
 		ctx := context.Background()
