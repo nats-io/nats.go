@@ -6821,23 +6821,22 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 
 // RemoveStatusListener removes a status change listener.
 // If the channel is not closed, it will be closed.
-// Listeners will be removed automatically on status change
-// as well, but this is a way to remove them manually.
+// A channel closed by the caller instead is only removed
+// on later status changes.
 func (nc *Conn) RemoveStatusListener(ch chan (Status)) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
-
 	for _, listeners := range nc.statListeners {
-		for range listeners {
-			delete(listeners, ch)
-		}
+		delete(listeners, ch)
 	}
+	closeStatusListener(ch)
+}
+
+// closeStatusListener closes ch unless it is already closed.
+func closeStatusListener(ch chan Status) {
+	defer func() { _ = recover() }()
+	close(ch)
 }
 
 // registerStatusChangeListener registers a channel waiting for a specific status change event.
@@ -6858,22 +6857,27 @@ func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 // If channel is closed, or there is no listener, sendStatusEvent
 // will not block. Lock should be held entering.
 func (nc *Conn) sendStatusEvent(s Status) {
-Loop:
 	for ch := range nc.statListeners[s] {
-		// make sure channel is not closed
-		select {
-		case <-ch:
-			// if chan is closed, remove it
+		if !notifyStatusListener(ch, s) {
 			delete(nc.statListeners[s], ch)
-			continue Loop
-		default:
-		}
-		// only send event if someone's listening
-		select {
-		case ch <- s:
-		default:
 		}
 	}
+}
+
+// notifyStatusListener sends s on ch unless its buffer is full, and reports
+// whether ch is still open. Receiving from ch to detect a closed channel
+// would consume an event the listener has not read yet.
+func notifyStatusListener(ch chan Status, s Status) (open bool) {
+	defer func() {
+		if recover() != nil {
+			open = false
+		}
+	}()
+	select {
+	case ch <- s:
+	default:
+	}
+	return true
 }
 
 // changeConnStatus changes connections status and sends events
