@@ -16,6 +16,7 @@ package test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1387,6 +1388,129 @@ func TestSetPendingLimits(t *testing.T) {
 		sub.Unsubscribe()
 		nc.Flush()
 	})
+}
+
+func TestSubscriptionPendingHeaderBytes(t *testing.T) {
+	headerValue := strings.Repeat("x", 4096)
+	headerBytes := len("NATS/1.0\r\nX-Trace: " + headerValue + "\r\n\r\n")
+	for _, async := range []bool{false, true} {
+		for _, test := range []struct {
+			name    string
+			headers bool
+			data    []byte
+		}{
+			{"headers_only", true, nil},
+			{"headers_and_data", true, []byte("payload")},
+			{"data_only", false, []byte("payload")},
+		} {
+			t.Run(fmt.Sprintf("async=%t/%s", async, test.name), func(t *testing.T) {
+				withServer(t, func(t *testing.T, nc *nats.Conn) {
+					asyncErrors := make(chan error, 3)
+					nc.SetErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+						asyncErrors <- err
+					})
+					block := make(chan struct{})
+					release := sync.OnceFunc(func() { close(block) })
+					defer release()
+
+					var sub *nats.Subscription
+					var err error
+					if async {
+						sub, err = nc.Subscribe("pending.headers", func(m *nats.Msg) {
+							<-block
+							// Callbacks may modify a message. Accounting must use
+							// its size before the callback was invoked.
+							m.Subject, m.Reply, m.Header, m.Data = "", "", nil, nil
+						})
+					} else {
+						sub, err = nc.SubscribeSync("pending.headers")
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer sub.Unsubscribe()
+
+					msg := &nats.Msg{Subject: sub.Subject, Reply: "pending.reply", Data: test.data}
+					msgBytes := len(test.data)
+					if test.headers {
+						msg.Header = nats.Header{"X-Trace": []string{headerValue}}
+						msgBytes += headerBytes
+					}
+					if err := sub.SetPendingLimits(-1, 2*msgBytes); err != nil {
+						t.Fatal(err)
+					}
+					publish := func(count int) {
+						t.Helper()
+						for range count {
+							if err := nc.PublishMsg(msg); err != nil {
+								t.Fatal(err)
+							}
+						}
+						if err := nc.FlushTimeout(5 * time.Second); err != nil {
+							t.Fatal(err)
+						}
+					}
+					publish(3)
+					if dropped, err := sub.Dropped(); err != nil || dropped != 1 {
+						t.Fatalf("Expected 1 dropped message, got %d: %v", dropped, err)
+					}
+					if count, bytes, err := sub.Pending(); err != nil || count != 2 || bytes != 2*msgBytes {
+						t.Fatalf("Expected 2 pending messages and %d bytes, got %d and %d: %v", 2*msgBytes, count, bytes, err)
+					}
+					// High-water marks include the message that exceeded the limit.
+					if count, bytes, err := sub.MaxPending(); err != nil || count != 3 || bytes != 3*msgBytes {
+						t.Fatalf("Expected maximum pending of 3 messages and %d bytes, got %d and %d: %v", 3*msgBytes, count, bytes, err)
+					}
+					select {
+					case err := <-asyncErrors:
+						if err != nats.ErrSlowConsumer {
+							t.Fatalf("Expected slow consumer error, got %v", err)
+						}
+					case <-time.After(5 * time.Second):
+						t.Fatal("Did not receive slow consumer error")
+					}
+
+					release()
+					if !async {
+						if _, err := sub.NextMsg(time.Second); err != nats.ErrSlowConsumer {
+							t.Fatalf("Expected slow consumer error, got %v", err)
+						}
+						for range 2 {
+							if _, err := sub.NextMsg(time.Second); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					checkDrained := func(delivered int64) {
+						t.Helper()
+						waitFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+							if count, bytes, err := sub.Pending(); err != nil || count != 0 || bytes != 0 {
+								return fmt.Errorf("Expected no pending messages or bytes, got %d and %d: %v", count, bytes, err)
+							}
+							if count, err := sub.Delivered(); err != nil || count != delivered {
+								return fmt.Errorf("Expected %d delivered messages, got %d: %v", delivered, count, err)
+							}
+							return nil
+						})
+					}
+					checkDrained(2)
+
+					// The dropped message must not leave bytes reserved, and
+					// draining the queue must make room for more messages.
+					publish(1)
+					if !async {
+						if _, err := sub.NextMsg(time.Second); err != nil {
+							t.Fatal(err)
+						}
+					}
+					checkDrained(3)
+					if dropped, err := sub.Dropped(); err != nil || dropped != 1 {
+						t.Fatalf("Expected 1 dropped message after recovery, got %d: %v", dropped, err)
+					}
+				})
+			})
+		}
+	}
 }
 
 func TestSubscriptionTypes(t *testing.T) {

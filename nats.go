@@ -877,6 +877,11 @@ func (m *Msg) Size() int {
 	return len(m.Subject) + len(m.Reply) + hdrSize + len(m.Data)
 }
 
+// pendingSize returns the data and encoded header size of a received message.
+func (m *Msg) pendingSize() int {
+	return m.wsz - len(m.Subject) - len(m.Reply)
+}
+
 // Validate the keys and calculate the exact total encoded size.
 //
 // We don't perform any special validation on header values because we
@@ -3818,7 +3823,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 				}
 				continue
 			}
-			msgLen = len(m.Data)
+			msgLen = m.pendingSize()
 		}
 		mcb := s.mcb
 		max = s.max
@@ -3992,7 +3997,7 @@ func (nc *Conn) processMsg(data []byte) {
 			if sub.pMsgs > sub.pMsgsMax {
 				sub.pMsgsMax = sub.pMsgs
 			}
-			sub.pBytes += len(m.Data)
+			sub.pBytes += m.pendingSize()
 			if sub.pBytes > sub.pBytesMax {
 				sub.pBytesMax = sub.pBytes
 			}
@@ -4141,7 +4146,7 @@ slowConsumer:
 func (sub *Subscription) releaseReserved(m *Msg) {
 	if sub.typ != ChanSubscription {
 		sub.pMsgs--
-		sub.pBytes -= len(m.Data)
+		sub.pBytes -= m.pendingSize()
 	}
 }
 
@@ -5839,7 +5844,7 @@ func (s *Subscription) processNextMsgDelivered(msg *Msg) error {
 
 	if s.typ == SyncSubscription {
 		s.pMsgs--
-		s.pBytes -= len(msg.Data)
+		s.pBytes -= msg.pendingSize()
 	}
 	if s.jsi != nil && s.jsi.resetPending {
 		s.tryResetOrderedConsumer()
@@ -5877,6 +5882,7 @@ func (s *Subscription) QueuedMsgs() (int, error) {
 }
 
 // Pending returns the number of queued messages and queued bytes in the client for this subscription.
+// The byte count includes data and encoded headers.
 func (s *Subscription) Pending() (int, int, error) {
 	if s == nil {
 		return -1, -1, ErrBadSubscription
@@ -5952,6 +5958,7 @@ func (s *Subscription) PendingLimits() (int, int, error) {
 }
 
 // SetPendingLimits sets the limits for pending msgs and bytes for this subscription.
+// The byte limit includes data and encoded headers.
 // Zero is not allowed. Any negative value means that the given metric is not limited.
 func (s *Subscription) SetPendingLimits(msgLimit, bytesLimit int) error {
 	if s == nil {
