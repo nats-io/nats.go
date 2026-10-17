@@ -809,6 +809,11 @@ func (s SubStatus) String() string {
 // Msg represents a message delivered by NATS. This structure is used
 // by Subscribers and PublishMsg().
 //
+// A new Msg is allocated for every delivered message and is not reused by
+// the library, so it is safe to keep a reference to it, and to its Data,
+// after a message handler returns, for example to process it asynchronously.
+// There is no need to copy the message first.
+//
 // # Types of Acknowledgements
 //
 // In case using JetStream, there are multiple ways to ack a Msg:
