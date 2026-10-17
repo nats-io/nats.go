@@ -2467,3 +2467,73 @@ func TestOrderedConsumerHeartbeat(t *testing.T) {
 		})
 	})
 }
+
+func TestOrderedConsumerFetchBytesDelayedReader(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 10*time.Second)
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer, err := stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const count = 3000
+		for i := 0; i < count; i++ {
+			if err := nc.Publish("FOO", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := nc.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		batch, err := consumer.FetchBytes(4<<20, jetstream.FetchMaxWait(2*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+			info, err := consumer.Info(ctx)
+			if err != nil {
+				return err
+			}
+			if info.Delivered.Consumer != count {
+				return fmt.Errorf("Expected %d delivered messages; got %d", count, info.Delivered.Consumer)
+			}
+			return nil
+		})
+		received := 0
+		for msg := range batch.Messages() {
+			if got, want := string(msg.Data()), fmt.Sprintf("msg-%d", received); got != want {
+				t.Fatalf("Expected %q; got %q", want, got)
+			}
+			received++
+		}
+		if err := batch.Error(); err != nil {
+			t.Fatal(err)
+		}
+		if received != count {
+			t.Fatalf("Expected %d messages; got %d", count, received)
+		}
+		if _, err := js.Publish(ctx, "FOO", []byte("next")); err != nil {
+			t.Fatal(err)
+		}
+		batch, err = consumer.FetchBytes(4<<20, jetstream.FetchMaxWait(100*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		received = 0
+		for msg := range batch.Messages() {
+			if string(msg.Data()) != "next" {
+				t.Fatalf("Expected next message; got %q", msg.Data())
+			}
+			received++
+		}
+		if err := batch.Error(); err != nil {
+			t.Fatal(err)
+		}
+		if received != 1 {
+			t.Fatalf("Expected one new message; got %d", received)
+		}
+	})
+}
