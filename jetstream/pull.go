@@ -108,6 +108,7 @@ type (
 		ctx           context.Context `json:"-"`
 		maxWaitSet    bool            `json:"-"`
 		allowMaxBytes bool            `json:"-"`
+		bytesOnly     bool            `json:"-"`
 	}
 
 	consumeOpts struct {
@@ -910,6 +911,7 @@ func (p *pullConsumer) fetchWithOpts(batch int, allowMaxBytes bool, opts ...Fetc
 func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
 		Batch:     defaultBatchMaxBytesOnly,
+		bytesOnly: true,
 		MaxBytes:  maxBytes,
 		Expires:   DefaultExpires,
 		Heartbeat: unset,
@@ -953,10 +955,20 @@ func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 }
 
 func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
-	res := &fetchResult{
-		msgs: make(chan Msg, req.Batch),
+	resultBufferSize, receiveBufferSize := req.Batch, 2*req.Batch
+	if req.bytesOnly {
+		// Each message has a non-empty subject, so the byte limit is also
+		// an upper bound on the message count. Keep enough result capacity
+		// to finish the fetch even when the caller does not read the batch.
+		if req.MaxBytes > 0 && req.MaxBytes < resultBufferSize {
+			resultBufferSize = req.MaxBytes
+		}
+		receiveBufferSize = 2 * DefaultMaxMessages
 	}
-	msgs := make(chan *nats.Msg, 2*req.Batch)
+	res := &fetchResult{
+		msgs: make(chan Msg, resultBufferSize),
+	}
+	msgs := make(chan *nats.Msg, receiveBufferSize)
 	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 
 	sub := &pullSubscription{
@@ -967,12 +979,31 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 	}
 	inbox := p.js.conn.NewInbox()
 	var err error
-	sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
+	if req.bytesOnly {
+		// Async subscriptions queue on demand instead of reserving space
+		// for the wire batch limit or dropping messages at a smaller limit.
+		sub.subscription, err = p.js.conn.Subscribe(inbox, func(msg *nats.Msg) {
+			select {
+			case msgs <- msg:
+			case <-sub.done:
+			}
+		})
+		if err == nil {
+			err = sub.subscription.SetPendingLimits(2*req.Batch, -1)
+		}
+	} else {
+		sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
+	}
 	if err != nil {
+		if sub.subscription != nil {
+			sub.subscription.Unsubscribe()
+		}
 		return nil, err
 	}
 	req.PinID = p.getPinID()
 	if err := sub.pull(req, subject); err != nil {
+		close(sub.done)
+		sub.subscription.Unsubscribe()
 		return nil, err
 	}
 
@@ -987,7 +1018,11 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 
 	go func(res *fetchResult) {
 		defer sub.subscription.Unsubscribe()
+		defer close(sub.done)
 		defer close(res.msgs)
+		if hbTimer != nil {
+			defer hbTimer.Close()
+		}
 		for {
 			select {
 			case msg := <-msgs:
