@@ -101,7 +101,8 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	c.userErrHandler = consumeOpts.ErrHandler
 	c.stopAfter = max(consumeOpts.StopAfter, 0)
 	c.deliveredMessages = 0
-	opts = append(opts, consumeReconnectNotify())
+	// Preserve the resolved heartbeat when creating the pull consumer.
+	opts = append(opts, PullHeartbeat(consumeOpts.Heartbeat), consumeReconnectNotify())
 	// innerOpts returns the options for the inner pull subscription of the
 	// current serial. Lock should be held when calling it.
 	innerOpts := func() []PullConsumeOpt {
@@ -255,7 +256,9 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOption, err)
 	}
+	// Preserve the resolved heartbeat when creating the pull consumer.
 	opts = append(opts,
+		PullHeartbeat(consumeOpts.Heartbeat),
 		WithMessagesErrOnMissingHeartbeat(true),
 		messagesReconnectNotify())
 	c.stopAfter = max(consumeOpts.StopAfter, 0)

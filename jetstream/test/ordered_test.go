@@ -15,6 +15,7 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -2125,4 +2126,209 @@ func fetchOneFromOrderedConsumer(t *testing.T, js jetstream.JetStream, stream, n
 	if fetched != 1 {
 		t.Fatalf("Unexpected fetched message count; want 1; got %d: %v", fetched, msgs.Error())
 	}
+}
+
+// TestOrderedConsumerHeartbeat verifies that the heartbeat computed by the
+// ordered consumer option parsing (5s by default) is the one actually used by
+// the inner pull subscription, i.e. the value sent in idle_heartbeat of the
+// pull requests. See #2181.
+func TestOrderedConsumerHeartbeat(t *testing.T) {
+	type pullReq struct {
+		Expires   time.Duration `json:"expires"`
+		Heartbeat time.Duration `json:"idle_heartbeat"`
+	}
+
+	// nextPullRequest reads the first pull request observed on the raw
+	// $JS.API.CONSUMER.MSG.NEXT subscription and decodes its payload.
+	nextPullRequest := func(t *testing.T, sub *nats.Subscription) pullReq {
+		t.Helper()
+		msg, err := sub.NextMsg(5 * time.Second)
+		if err != nil {
+			t.Fatalf("Timeout waiting for pull request: %v", err)
+		}
+		var req pullReq
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			t.Fatalf("Unexpected error unmarshaling pull request %q: %v", msg.Data, err)
+		}
+		return req
+	}
+
+	t.Run("consume uses 5s default heartbeat", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.foo.>")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc, err := c.Consume(func(msg jetstream.Msg) {})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer cc.Stop()
+
+			req := nextPullRequest(t, sub)
+			if req.Heartbeat != 5*time.Second {
+				t.Fatalf("Expected default ordered heartbeat 5s in pull request; got %s", req.Heartbeat)
+			}
+			if req.Expires != 30*time.Second {
+				t.Fatalf("Expected default expiry 30s in pull request; got %s", req.Expires)
+			}
+		})
+	})
+
+	t.Run("consume preserves configured heartbeat", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.foo.>")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc, err := c.Consume(func(msg jetstream.Msg) {}, jetstream.PullHeartbeat(10*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer cc.Stop()
+
+			req := nextPullRequest(t, sub)
+			if req.Heartbeat != 10*time.Second {
+				t.Fatalf("Expected configured heartbeat 10s in pull request; got %s", req.Heartbeat)
+			}
+		})
+	})
+
+	t.Run("consume with short expiry uses expiry/2 heartbeat", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.foo.>")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc, err := c.Consume(func(msg jetstream.Msg) {}, jetstream.PullExpiry(8*time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer cc.Stop()
+
+			req := nextPullRequest(t, sub)
+			if req.Heartbeat != 4*time.Second {
+				t.Fatalf("Expected expiry/2 heartbeat 4s in pull request; got %s", req.Heartbeat)
+			}
+			if req.Expires != 8*time.Second {
+				t.Fatalf("Expected expiry 8s in pull request; got %s", req.Expires)
+			}
+		})
+	})
+
+	t.Run("messages uses 5s default heartbeat", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.foo.>")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			it, err := c.Messages()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			// The first pull request is only sent once Next is called.
+			go func() {
+				_, _ = it.Next()
+			}()
+			defer it.Stop()
+
+			req := nextPullRequest(t, sub)
+			if req.Heartbeat != 5*time.Second {
+				t.Fatalf("Expected default ordered heartbeat 5s in pull request; got %s", req.Heartbeat)
+			}
+		})
+	})
+
+	t.Run("messages preserves configured heartbeat", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			sub, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.foo.>")
+			if err != nil {
+				t.Fatalf("Error on subscribe: %v", err)
+			}
+			defer sub.Unsubscribe()
+			if err := nc.Flush(); err != nil {
+				t.Fatalf("Error on flush: %v", err)
+			}
+
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			it, err := c.Messages(jetstream.PullHeartbeat(10 * time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			// The first pull request is only sent once Next is called.
+			go func() {
+				_, _ = it.Next()
+			}()
+			defer it.Stop()
+
+			req := nextPullRequest(t, sub)
+			if req.Heartbeat != 10*time.Second {
+				t.Fatalf("Expected configured heartbeat 10s in pull request; got %s", req.Heartbeat)
+			}
+		})
+	})
 }
