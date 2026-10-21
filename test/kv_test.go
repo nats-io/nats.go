@@ -1374,6 +1374,10 @@ func TestKeyValueMirrorCrossDomains(t *testing.T) {
 	_, err = mkv.PutString("name", "rip")
 	expectOk(t, err)
 
+	_, err = mkv.Create("created", []byte("c"))
+	expectOk(t, err)
+	keyExists(t, kv, "created", "c")
+
 	_, err = mkv.PutString("v", "vv")
 	expectOk(t, err)
 	e := keyExists(t, kv, "v", "vv")
