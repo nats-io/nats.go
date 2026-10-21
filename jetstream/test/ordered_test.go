@@ -1239,6 +1239,20 @@ func TestOrderedConsumerFetch(t *testing.T) {
 			for msg := range res.Messages() {
 				msg.Ack()
 			}
+
+			errs := make(chan error, 1)
+			go func() {
+				_, err := c.Fetch(1, jetstream.FetchMaxWait(100*time.Millisecond))
+				errs <- err
+			}()
+			select {
+			case err := <-errs:
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Fetch blocked after a concurrent request was rejected")
+			}
 		})
 	})
 	t.Run("byte limit reached first", func(t *testing.T) {
@@ -1380,6 +1394,20 @@ func TestOrderedConsumerFetchBytes(t *testing.T) {
 			}
 			for msg := range res.Messages() {
 				msg.Ack()
+			}
+
+			errs := make(chan error, 1)
+			go func() {
+				_, err := c.FetchBytes(500, jetstream.FetchMaxWait(100*time.Millisecond))
+				errs <- err
+			}()
+			select {
+			case err := <-errs:
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("FetchBytes blocked after a concurrent request was rejected")
 			}
 		})
 	})
@@ -1572,6 +1600,79 @@ func TestOrderedConsumerFetchNoWait(t *testing.T) {
 			if len(msgs) != 2*len(testMsgs) {
 				t.Fatalf("Expected %d messages; got: %d", 2*len(testMsgs), len(msgs))
 			}
+		})
+	})
+
+	t.Run("continue from previous fetch", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for range 3 {
+				publishTestMsgs(t, js)
+			}
+
+			fetches := []func() (jetstream.MessageBatch, error){
+				func() (jetstream.MessageBatch, error) { return c.FetchNoWait(5) },
+				func() (jetstream.MessageBatch, error) { return c.Fetch(5) },
+				func() (jetstream.MessageBatch, error) { return c.FetchNoWait(5) },
+			}
+			var seq uint64
+			for _, fetch := range fetches {
+				res, err := fetch()
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+				for msg := range res.Messages() {
+					meta, err := msg.Metadata()
+					if err != nil {
+						t.Fatalf("Unexpected error: %s", err)
+					}
+					seq++
+					if meta.Sequence.Stream != seq {
+						t.Fatalf("Expected stream sequence %d; got: %d", seq, meta.Sequence.Stream)
+					}
+				}
+				if res.Error() != nil {
+					t.Fatalf("Unexpected error: %s", res.Error())
+				}
+			}
+			if seq != 3*uint64(len(testMsgs)) {
+				t.Fatalf("Expected %d messages; got: %d", 3*len(testMsgs), seq)
+			}
+		})
+	})
+
+	t.Run("concurrent fetch requests", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if _, err := c.Fetch(1, jetstream.FetchMaxWait(100*time.Millisecond)); err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+			_, err = c.FetchNoWait(1)
+			if !errors.Is(err, jetstream.ErrOrderedConsumerConcurrentRequests) {
+				t.Fatalf("Expected error: %s; got: %s", jetstream.ErrOrderedConsumerConcurrentRequests, err)
+			}
+			// The pending fetch is never read, so retry until it expires.
+			checkFor(t, 2*time.Second, 50*time.Millisecond, func() error {
+				_, err := c.FetchNoWait(1)
+				return err
+			})
 		})
 	})
 
