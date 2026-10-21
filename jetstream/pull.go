@@ -109,7 +109,6 @@ type (
 		ctx           context.Context `json:"-"`
 		maxWaitSet    bool            `json:"-"`
 		allowMaxBytes bool            `json:"-"`
-		bytesOnly     bool            `json:"-"`
 	}
 
 	consumeOpts struct {
@@ -911,7 +910,6 @@ func (p *pullConsumer) fetchWithOpts(batch int, allowMaxBytes bool, opts ...Fetc
 func (p *pullConsumer) FetchBytes(maxBytes int, opts ...FetchOpt) (MessageBatch, error) {
 	req := &pullRequest{
 		Batch:     defaultBatchMaxBytesOnly,
-		bytesOnly: true,
 		MaxBytes:  maxBytes,
 		Expires:   DefaultExpires,
 		Heartbeat: unset,
@@ -955,140 +953,134 @@ func (p *pullConsumer) FetchNoWait(batch int) (MessageBatch, error) {
 }
 
 func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
-	resultBufferSize, receiveBufferSize := req.Batch, 2*req.Batch
-	if req.bytesOnly {
+	resultBufferSize := req.Batch
+	if req.MaxBytes > 0 {
 		// Each message has a non-empty subject, so the byte limit is also
 		// an upper bound on the message count. Keep enough result capacity
 		// to finish the fetch even when the caller does not read the batch.
-		if req.MaxBytes > 0 && req.MaxBytes < resultBufferSize {
-			resultBufferSize = req.MaxBytes
-		}
-		receiveBufferSize = 2 * DefaultMaxMessages
+		resultBufferSize = min(resultBufferSize, req.MaxBytes)
 	}
-	res := &fetchResult{
-		msgs: make(chan Msg, resultBufferSize),
-	}
-	msgs := make(chan *nats.Msg, receiveBufferSize)
-	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
+	res := &fetchResult{msgs: make(chan Msg, resultBufferSize)}
+	sub := &pullSubscription{consumer: p}
+	var expiryTimer, heartbeatTimer *time.Timer
+	var stopContext func() bool
+	var heartbeatDeadline time.Time
+	var receivedMsgs, receivedBytes int
 
-	sub := &pullSubscription{
-		consumer: p,
-		done:     make(chan struct{}, 1),
-		msgs:     msgs,
-		errs:     make(chan error, 10),
-	}
-	inbox := p.js.conn.NewInbox()
-	var err error
-	if req.bytesOnly {
-		// Async subscriptions queue on demand instead of reserving space
-		// for the wire batch limit or dropping messages at a smaller limit.
-		sub.subscription, err = p.js.conn.Subscribe(inbox, func(msg *nats.Msg) {
-			select {
-			case msgs <- msg:
-			case <-sub.done:
-			}
-		})
-		if err == nil {
-			err = sub.subscription.SetPendingLimits(2*req.Batch, -1)
+	// All callbacks and setup share the result lock. In particular, a reply
+	// cannot finish the fetch before its subscription and timers are ready.
+	res.Lock()
+	defer res.Unlock()
+	finish := func(err error) {
+		if res.done {
+			return
 		}
-	} else {
-		sub.subscription, err = p.js.conn.ChanSubscribe(inbox, sub.msgs)
-	}
-	if err != nil {
+		res.err = err
+		res.done = true
+		if expiryTimer != nil {
+			expiryTimer.Stop()
+		}
+		if heartbeatTimer != nil {
+			heartbeatTimer.Stop()
+		}
+		if stopContext != nil {
+			stopContext()
+		}
 		if sub.subscription != nil {
 			sub.subscription.Unsubscribe()
 		}
+		close(res.msgs)
+	}
+
+	inbox := p.js.conn.NewInbox()
+	var err error
+	sub.subscription, err = p.js.conn.Subscribe(inbox, func(msg *nats.Msg) {
+		res.Lock()
+		defer res.Unlock()
+		if res.done {
+			return
+		}
+		if heartbeatTimer != nil {
+			heartbeatDeadline = time.Now().Add(2 * req.Heartbeat)
+			heartbeatTimer.Reset(2 * req.Heartbeat)
+		}
+		userMsg, err := checkMsg(msg)
+		if err != nil {
+			if errors.Is(err, ErrPinIDMismatch) {
+				p.setPinID("")
+			}
+			if errors.Is(err, nats.ErrTimeout) || errors.Is(err, ErrNoMessages) || errors.Is(err, ErrMaxBytesExceeded) {
+				err = nil
+			}
+			finish(err)
+			return
+		}
+		if !userMsg {
+			return
+		}
+		if pinID := msg.Header.Get("Nats-Pin-Id"); pinID != "" {
+			p.setPinID(pinID)
+		}
+		res.msgs <- p.js.toJSMsg(msg)
+		tokens, err := parser.GetMetadataFields(msg.Reply)
+		if err != nil {
+			finish(fmt.Errorf("parsing message metadata: %s", err))
+			return
+		}
+		res.sseq = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
+		receivedMsgs++
+		if req.MaxBytes != 0 {
+			receivedBytes += msg.Size()
+		}
+		if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes >= req.MaxBytes) {
+			finish(nil)
+		}
+	})
+	if err != nil {
+		finish(err)
+		return nil, err
+	}
+	// The pull request bounds the number and size of messages, so the
+	// subscription can queue replies without a second fixed-size buffer.
+	if err := sub.subscription.SetPendingLimits(-1, -1); err != nil {
+		finish(err)
 		return nil, err
 	}
 	req.PinID = p.getPinID()
+	subject := p.js.apiSubject(fmt.Sprintf(apiRequestNextT, p.stream, p.name))
 	if err := sub.pull(req, subject); err != nil {
-		close(sub.done)
-		sub.subscription.Unsubscribe()
+		finish(err)
 		return nil, err
 	}
-
-	var receivedMsgs, receivedBytes int
-	hbTimer := sub.scheduleHeartbeatCheck(req.Heartbeat)
-
-	// Use context if provided
-	var ctxDone <-chan struct{}
-	if req.ctx != nil {
-		ctxDone = req.ctx.Done()
-	}
-
-	go func(res *fetchResult) {
-		defer sub.subscription.Unsubscribe()
-		defer close(sub.done)
-		defer close(res.msgs)
-		if hbTimer != nil {
-			defer hbTimer.Close()
-		}
-		for {
-			select {
-			case msg := <-msgs:
-				res.Lock()
-				if hbTimer != nil {
-					hbTimer.Reset(2 * req.Heartbeat)
-				}
-				userMsg, err := checkMsg(msg)
-				if err != nil {
-					errNotTimeoutOrNoMsgs := !errors.Is(err, nats.ErrTimeout) && !errors.Is(err, ErrNoMessages)
-					if errNotTimeoutOrNoMsgs && !errors.Is(err, ErrMaxBytesExceeded) {
-						res.err = err
-					}
-					if errors.Is(err, ErrPinIDMismatch) {
-						p.setPinID("")
-					}
-					res.done = true
-					res.Unlock()
-					return
-				}
-				if !userMsg {
-					res.Unlock()
-					continue
-				}
-				if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
-					p.setPinID(pinId)
-				}
-				res.msgs <- p.js.toJSMsg(msg)
-				tokens, err := parser.GetMetadataFields(msg.Reply)
-				if err != nil {
-					res.err = fmt.Errorf("parsing message metadata: %s", err)
-					res.done = true
-					res.Unlock()
-					return
-				}
-				res.sseq = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
-				receivedMsgs++
-				if req.MaxBytes != 0 {
-					receivedBytes += msg.Size()
-				}
-				if receivedMsgs == req.Batch || (req.MaxBytes != 0 && receivedBytes >= req.MaxBytes) {
-					res.done = true
-					res.Unlock()
-					return
-				}
-				res.Unlock()
-			case err := <-sub.errs:
-				res.Lock()
-				res.err = err
-				res.done = true
-				res.Unlock()
-				return
-			case <-time.After(req.Expires + 1*time.Second):
-				res.Lock()
-				res.done = true
-				res.Unlock()
-				return
-			case <-ctxDone:
-				res.Lock()
-				res.err = req.ctx.Err()
-				res.done = true
-				res.Unlock()
+	expiryTimer = time.AfterFunc(req.Expires+time.Second, func() {
+		res.Lock()
+		defer res.Unlock()
+		finish(nil)
+	})
+	if req.Heartbeat > 0 {
+		heartbeatDeadline = time.Now().Add(2 * req.Heartbeat)
+		heartbeatTimer = time.AfterFunc(2*req.Heartbeat, func() {
+			res.Lock()
+			defer res.Unlock()
+			if res.done {
 				return
 			}
-		}
-	}(res)
+			// A reply may reset the deadline after this callback has started
+			// but before it obtains the lock. Do not expire a refreshed fetch.
+			if remaining := time.Until(heartbeatDeadline); remaining > 0 {
+				heartbeatTimer.Reset(remaining)
+				return
+			}
+			finish(ErrNoHeartbeat)
+		})
+	}
+	if req.ctx != nil {
+		stopContext = context.AfterFunc(req.ctx, func() {
+			res.Lock()
+			defer res.Unlock()
+			finish(req.ctx.Err())
+		})
+	}
 	return res, nil
 }
 
