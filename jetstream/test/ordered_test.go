@@ -1255,6 +1255,40 @@ func TestOrderedConsumerFetch(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("concurrent fetch requests from multiple goroutines", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			var wg sync.WaitGroup
+			var started atomic.Int32
+			start := make(chan struct{})
+			for range 10 {
+				wg.Go(func() {
+					<-start
+					_, err := c.Fetch(1, jetstream.FetchMaxWait(time.Second))
+					if err == nil {
+						started.Add(1)
+					} else if !errors.Is(err, jetstream.ErrOrderedConsumerConcurrentRequests) {
+						t.Errorf("Unexpected error: %s", err)
+					}
+				})
+			}
+			close(start)
+			wg.Wait()
+			if n := started.Load(); n != 1 {
+				t.Fatalf("Expected exactly one fetch to start; got: %d", n)
+			}
+		})
+	})
 	t.Run("byte limit reached first", func(t *testing.T) {
 		withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 			ctx := newTesterCtx(t, 5*time.Second)

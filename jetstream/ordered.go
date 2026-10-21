@@ -44,6 +44,7 @@ type (
 		stopAfter         int // StopAfter of Consume or Messages, 0 if not set
 		deliveredMessages int // messages handed to the caller, across resets
 		runningFetch      *fetchResult
+		fetchInProgress   bool
 		subscription      *orderedSubscription
 		sync.Mutex
 	}
@@ -430,6 +431,10 @@ func (c *orderedConsumer) fetch(f func(*pullConsumer) (MessageBatch, error)) (Me
 		c.Unlock()
 		return nil, ErrOrderConsumerUsedAsConsume
 	}
+	if c.fetchInProgress {
+		c.Unlock()
+		return nil, ErrOrderedConsumerConcurrentRequests
+	}
 	if c.runningFetch != nil {
 		if !c.runningFetch.closed() {
 			c.Unlock()
@@ -445,12 +450,16 @@ func (c *orderedConsumer) fetch(f func(*pullConsumer) (MessageBatch, error)) (Me
 		done:     make(chan struct{}),
 	}
 	c.subscription = &sub
+	c.fetchInProgress = true
 	c.Unlock()
 	err := c.reset()
-	if err != nil {
-		return nil, err
+	var msgs MessageBatch
+	if err == nil {
+		msgs, err = f(c.currentConsumer)
 	}
-	msgs, err := f(c.currentConsumer)
+	c.Lock()
+	defer c.Unlock()
+	c.fetchInProgress = false
 	if err != nil {
 		return nil, err
 	}
