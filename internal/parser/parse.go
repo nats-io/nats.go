@@ -16,6 +16,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -29,6 +30,8 @@ const (
 	AckTimestampSeqTokenPos
 	AckNumPendingTokenPos
 )
+
+const v1TokenCounts, v2TokenCounts = 9, 12
 
 var ErrInvalidSubjectFormat = errors.New("invalid format of ACK subject")
 
@@ -55,8 +58,6 @@ func ParseNum(d string) (n uint64) {
 }
 
 func GetMetadataFields(subject string) ([]string, error) {
-	v1TokenCounts, v2TokenCounts := 9, 12
-
 	var start int
 	tokens := make([]string, 0, v2TokenCounts)
 	for i := 0; i < len(subject); i++ {
@@ -101,4 +102,28 @@ func GetMetadataFields(subject string) ([]string, error) {
 		tokens[AckDomainTokenPos] = ""
 	}
 	return tokens, nil
+}
+
+// ParseStreamSeq returns the stream sequence of an ACK subject. It accepts
+// and rejects the same subjects as GetMetadataFields, without allocating.
+func ParseStreamSeq(subject string) (uint64, error) {
+	tokensLen := strings.Count(subject, ".") + 1
+	if tokensLen < v1TokenCounts || (tokensLen > v1TokenCounts && tokensLen < v2TokenCounts-1) {
+		return 0, ErrInvalidSubjectFormat
+	}
+	if !strings.HasPrefix(subject, "$JS.ACK.") {
+		return 0, fmt.Errorf("%w: subject should start with $JS.ACK", ErrInvalidSubjectFormat)
+	}
+	pos := AckStreamSeqTokenPos
+	// v1 subjects have no domain and account hash tokens.
+	if tokensLen == v1TokenCounts {
+		pos -= 2
+	}
+	for range pos {
+		subject = subject[strings.IndexByte(subject, '.')+1:]
+	}
+	if i := strings.IndexByte(subject, '.'); i >= 0 {
+		subject = subject[:i]
+	}
+	return ParseNum(subject), nil
 }

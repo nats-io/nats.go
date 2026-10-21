@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/parser"
 	"github.com/nats-io/nats.go/internal/syncx"
 	"github.com/nats-io/nuid"
 )
@@ -1016,14 +1017,14 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					p.setPinID(pinId)
 				}
 				res.msgs <- p.js.toJSMsg(msg)
-				meta, err := msg.Metadata()
+				sseq, err := parser.ParseStreamSeq(msg.Reply)
 				if err != nil {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
 					res.done = true
 					res.Unlock()
 					return
 				}
-				res.sseq = meta.Sequence.Stream
+				res.sseq = sseq
 				receivedMsgs++
 				if req.MaxBytes != 0 {
 					receivedBytes += msg.Size()
