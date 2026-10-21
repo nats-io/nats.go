@@ -818,7 +818,7 @@ func (js *js) cleanupReplySub() {
 		js.rsub = nil
 	}
 	if js.connStatusCh != nil {
-		close(js.connStatusCh)
+		js.nc.RemoveStatusListener(js.connStatusCh)
 		js.connStatusCh = nil
 	}
 	js.mu.Unlock()

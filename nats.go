@@ -6818,6 +6818,9 @@ func (nc *Conn) GetClientID() (uint64, error) {
 
 // StatusChanged returns a channel on which given list of connection status changes will be reported.
 // If no statuses are provided, defaults will be used: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+// The channel buffers up to 10 events; further events are dropped while it is full.
+// It stays registered, and is not closed when the connection closes, until it is
+// removed with RemoveStatusListener.
 func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	if len(statuses) == 0 {
 		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
@@ -6831,10 +6834,9 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	return ch
 }
 
-// RemoveStatusListener removes a status change listener.
-// If the channel is not closed, it will be closed.
-// A channel closed by the caller instead is only removed
-// on later status changes.
+// RemoveStatusListener unregisters ch from all statuses and closes it.
+// Events already buffered can still be received. Use this instead of
+// closing the channel yourself.
 func (nc *Conn) RemoveStatusListener(ch chan (Status)) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
