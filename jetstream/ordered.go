@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/internal/parser"
 )
 
 type (
@@ -125,14 +126,14 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				c.Unlock()
 				return
 			}
-			meta, err := msg.Metadata()
+			tokens, err := msg.(*jetStreamMsg).metadataFields()
 			if err != nil {
 				currentSub := c.currentSub
 				c.Unlock()
 				c.errHandler(serial)(currentSub, err)
 				return
 			}
-			dseq := meta.Sequence.Consumer
+			dseq := parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 			if dseq != c.cursor.deliverSeq+1 {
 				c.Unlock()
 				c.errHandler(serial)(sub, errOrderedSequenceMismatch)
@@ -143,7 +144,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 				return
 			}
 			c.cursor.deliverSeq = dseq
-			c.cursor.streamSeq = meta.Sequence.Stream
+			c.cursor.streamSeq = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
 			c.deliveredMessages++
 			last := c.stopAfter > 0 && c.deliveredMessages == c.stopAfter
 			c.Unlock()
@@ -305,15 +306,15 @@ func (s *orderedSubscription) Next(opts ...NextOpt) (Msg, error) {
 			continue
 		}
 
-		meta, err := msg.Metadata()
+		tokens, err := msg.(*jetStreamMsg).metadataFields()
 		if err != nil {
 			return nil, err
 		}
-		serial := serialNumberFromConsumer(meta.Consumer)
+		serial := serialNumberFromConsumer(tokens[parser.AckConsumerTokenPos])
 		if serial != s.consumer.serial {
 			continue
 		}
-		dseq := meta.Sequence.Consumer
+		dseq := parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 		if dseq != s.consumer.cursor.deliverSeq+1 {
 			if err := s.resetMessages(); err != nil {
 				return nil, err
@@ -321,7 +322,7 @@ func (s *orderedSubscription) Next(opts ...NextOpt) (Msg, error) {
 			continue
 		}
 		s.consumer.cursor.deliverSeq = dseq
-		s.consumer.cursor.streamSeq = meta.Sequence.Stream
+		s.consumer.cursor.streamSeq = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
 		s.consumer.deliveredMessages++
 		return msg, nil
 	}
@@ -542,14 +543,11 @@ func (c *orderedConsumer) Next(opts ...FetchOpt) (Msg, error) {
 }
 
 func serialNumberFromConsumer(name string) int {
-	if len(name) == 0 {
+	i := strings.LastIndexByte(name, '_')
+	if i < 0 {
 		return 0
 	}
-	parts := strings.Split(name, "_")
-	if len(parts) < 2 {
-		return 0
-	}
-	serial, err := strconv.Atoi(parts[len(parts)-1])
+	serial, err := strconv.Atoi(name[i+1:])
 	if err != nil {
 		return 0
 	}

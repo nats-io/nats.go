@@ -312,13 +312,9 @@ var (
 
 // Metadata returns [MsgMetadata] for a JetStream message.
 func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
-	if err := m.checkReply(); err != nil {
-		return nil, err
-	}
-
-	tokens, err := parser.GetMetadataFields(m.msg.Reply)
+	tokens, err := m.metadataFields()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotJSMessage, err)
+		return nil, err
 	}
 
 	meta := &MsgMetadata{
@@ -332,6 +328,16 @@ func (m *jetStreamMsg) Metadata() (*MsgMetadata, error) {
 	meta.Sequence.Stream = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
 	meta.Sequence.Consumer = parser.ParseNum(tokens[parser.AckConsumerSeqTokenPos])
 	return meta, nil
+}
+
+func (m *jetStreamMsg) metadataFields() (tokens [parser.AckNumPendingTokenPos + 1]string, err error) {
+	if err = m.checkReply(); err != nil {
+		return tokens, err
+	}
+	if tokens, err = parser.GetMetadataFields(m.msg.Reply); err != nil {
+		return tokens, fmt.Errorf("%w: %s", ErrNotJSMessage, err)
+	}
+	return tokens, nil
 }
 
 // Data returns the message body.

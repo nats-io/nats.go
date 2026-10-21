@@ -1017,14 +1017,14 @@ func (p *pullConsumer) fetch(req *pullRequest) (MessageBatch, error) {
 					p.setPinID(pinId)
 				}
 				res.msgs <- p.js.toJSMsg(msg)
-				sseq, err := parser.ParseStreamSeq(msg.Reply)
+				tokens, err := parser.GetMetadataFields(msg.Reply)
 				if err != nil {
 					res.err = fmt.Errorf("parsing message metadata: %s", err)
 					res.done = true
 					res.Unlock()
 					return
 				}
-				res.sseq = sseq
+				res.sseq = parser.ParseNum(tokens[parser.AckStreamSeqTokenPos])
 				receivedMsgs++
 				if req.MaxBytes != 0 {
 					receivedBytes += msg.Size()

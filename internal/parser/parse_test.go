@@ -17,7 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -105,23 +105,33 @@ func TestGetMetadataFields(t *testing.T) {
 	tests := []struct {
 		name      string
 		subject   string
-		expected  []string
+		expected  [AckNumPendingTokenPos + 1]string
 		withError error
 	}{
 		{
 			name:     "parse v2 tokens",
 			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100.token",
-			expected: []string{"$JS", "ACK", "domain", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100", "token"},
+			expected: [...]string{"$JS", "ACK", "domain", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100"},
+		},
+		{
+			name:     "parse v2 tokens without the last token",
+			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100",
+			expected: [...]string{"$JS", "ACK", "domain", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100"},
+		},
+		{
+			name:     "parse v2 tokens with an extra token",
+			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100.token.extra",
+			expected: [...]string{"$JS", "ACK", "domain", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100"},
 		},
 		{
 			name:     "parse v2 tokens with underscore domain",
 			subject:  "$JS.ACK._.hash-123.stream.cons.100.200.150.123456789.100.token",
-			expected: []string{"$JS", "ACK", "", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100", "token"},
+			expected: [...]string{"$JS", "ACK", "", "hash-123", "stream", "cons", "100", "200", "150", "123456789", "100"},
 		},
 		{
 			name:     "parse v1 tokens",
 			subject:  "$JS.ACK.stream.cons.100.200.150.123456789.100",
-			expected: []string{"$JS", "ACK", "", "", "stream", "cons", "100", "200", "150", "123456789", "100"},
+			expected: [...]string{"$JS", "ACK", "", "", "stream", "cons", "100", "200", "150", "123456789", "100"},
 		},
 		{
 			name:      "invalid start of subject",
@@ -154,76 +164,11 @@ func TestGetMetadataFields(t *testing.T) {
 				}
 				return
 			}
-			if !reflect.DeepEqual(test.expected, res) {
-				t.Fatalf("Invalid result; want: %v; got: %v", test.expected, res)
-			}
-		})
-	}
-}
-
-func TestParseStreamSeq(t *testing.T) {
-	tests := []struct {
-		name      string
-		subject   string
-		expected  uint64
-		withError error
-	}{
-		{
-			name:     "parse v2 tokens",
-			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100.token",
-			expected: 200,
-		},
-		{
-			name:     "parse v2 tokens without the last token",
-			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100",
-			expected: 200,
-		},
-		{
-			name:     "parse v2 tokens with an extra token",
-			subject:  "$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100.token.extra",
-			expected: 200,
-		},
-		{
-			name:     "parse v1 tokens",
-			subject:  "$JS.ACK.stream.cons.100.200.150.123456789.100",
-			expected: 200,
-		},
-		{
-			name:      "invalid start of subject",
-			subject:   "$ABC.123.stream.cons.100.200.150.123456789.100",
-			withError: ErrInvalidSubjectFormat,
-		},
-		{
-			name:      "invalid subject length (10)",
-			subject:   "$JS.ACK.stream.cons.100.200.150.123456789.100.ABC",
-			withError: ErrInvalidSubjectFormat,
-		},
-		{
-			name:      "invalid subject length (5)",
-			subject:   "$JS.ACK.stream.cons.100",
-			withError: ErrInvalidSubjectFormat,
-		},
-		{
-			name:      "invalid subject",
-			subject:   "",
-			withError: ErrInvalidSubjectFormat,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			res, err := ParseStreamSeq(test.subject)
-			if test.withError != nil {
-				if !errors.Is(err, test.withError) {
-					t.Fatalf("Expected error: %v; got: %v", test.withError, err)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			if res != test.expected {
-				t.Fatalf("Invalid result; want: %d; got: %d", test.expected, res)
+				t.Fatalf("Invalid result; want: %v; got: %v", test.expected, res)
 			}
 		})
 	}
@@ -231,7 +176,7 @@ func TestParseStreamSeq(t *testing.T) {
 	t.Run("no allocations", func(t *testing.T) {
 		subject := tests[0].subject
 		allocs := testing.AllocsPerRun(100, func() {
-			if _, err := ParseStreamSeq(subject); err != nil {
+			if _, err := GetMetadataFields(subject); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -241,9 +186,37 @@ func TestParseStreamSeq(t *testing.T) {
 	})
 }
 
-func FuzzParseStreamSeq(f *testing.F) {
+// sliceMetadataFields is the previous, slice based GetMetadataFields.
+func sliceMetadataFields(subject string) ([]string, error) {
+	var start int
+	tokens := make([]string, 0, v2TokenCounts)
+	for i := 0; i < len(subject); i++ {
+		if subject[i] == '.' {
+			tokens = append(tokens, subject[start:i])
+			start = i + 1
+		}
+	}
+	tokens = append(tokens, subject[start:])
+	tokensLen := len(tokens)
+	if tokensLen < v1TokenCounts || (tokensLen > v1TokenCounts && tokensLen < v2TokenCounts-1) {
+		return nil, ErrInvalidSubjectFormat
+	}
+	if tokens[0] != "$JS" || tokens[1] != "ACK" {
+		return nil, fmt.Errorf("%w: subject should start with $JS.ACK", ErrInvalidSubjectFormat)
+	}
+	if tokensLen == v1TokenCounts {
+		tokens = append(tokens[:AckDomainTokenPos+2], tokens[AckDomainTokenPos:]...)
+		tokens[AckDomainTokenPos], tokens[AckAccHashTokenPos] = "", ""
+	} else if tokens[AckDomainTokenPos] == "_" {
+		tokens[AckDomainTokenPos] = ""
+	}
+	return tokens, nil
+}
+
+func FuzzGetMetadataFields(f *testing.F) {
 	testcases := []string{
 		"$JS.ACK.domain.hash-123.stream.cons.100.200.150.123456789.100.token",
+		"$JS.ACK._.hash-123.stream.cons.100.200.150.123456789.100",
 		"$JS.ACK.stream.cons.100.200.150.123456789.100",
 		"$JS.ACK.stream.cons.100",
 		"$ABC.123.stream.cons.100.200.150.123456789.100",
@@ -253,18 +226,14 @@ func FuzzParseStreamSeq(f *testing.F) {
 		f.Add(tc)
 	}
 
-	// ParseStreamSeq must accept and reject exactly what GetMetadataFields does.
 	f.Fuzz(func(t *testing.T, subject string) {
-		seq, err := ParseStreamSeq(subject)
-		tokens, expectedErr := GetMetadataFields(subject)
+		res, err := GetMetadataFields(subject)
+		expected, expectedErr := sliceMetadataFields(subject)
 		if fmt.Sprint(err) != fmt.Sprint(expectedErr) {
 			t.Fatalf("subject: %q; expected error: %v; got: %v", subject, expectedErr, err)
 		}
-		if expectedErr != nil {
-			return
-		}
-		if expected := ParseNum(tokens[AckStreamSeqTokenPos]); seq != expected {
-			t.Fatalf("subject: %q; expected: %d; got: %d", subject, expected, seq)
+		if expectedErr == nil && !slices.Equal(res[:], expected[:len(res)]) {
+			t.Fatalf("subject: %q; expected: %q; got: %q", subject, expected[:len(res)], res)
 		}
 	})
 }
