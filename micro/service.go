@@ -867,8 +867,9 @@ func (e *Endpoint) stop() error {
 
 func (e *Endpoint) reset() {
 	e.stats = EndpointStats{
-		Name:    e.stats.Name,
-		Subject: e.stats.Subject,
+		Name:       e.stats.Name,
+		Subject:    e.stats.Subject,
+		QueueGroup: e.stats.QueueGroup,
 	}
 }
 

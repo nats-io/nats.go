@@ -1613,6 +1613,52 @@ func TestServiceStats(t *testing.T) {
 	}
 }
 
+func TestServiceResetKeepsEndpointIdentity(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		srv, err := micro.AddService(nc, micro.Config{
+			Name:       "orders",
+			Version:    "0.1.0",
+			QueueGroup: "workers",
+		})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+
+		handler := micro.HandlerFunc(func(req micro.Request) {
+			if string(req.Data()) == "fail" {
+				req.Error("500", "failed", nil)
+				return
+			}
+			req.Respond([]byte("ok"))
+		})
+		if err := srv.AddEndpoint("add", handler, micro.WithEndpointSubject("orders.add")); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for _, data := range []string{"ok", "fail"} {
+			if _, err := nc.Request("orders.add", []byte(data), time.Second); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		// Stats are updated after the handler returns, so the reply can
+		// arrive before the request is counted.
+		deadline := time.Now().Add(time.Second)
+		for srv.Stats().Endpoints[0].NumRequests != 2 {
+			if time.Now().After(deadline) {
+				t.Fatalf("Expected 2 requests in stats; got: %+v", srv.Stats().Endpoints[0])
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		srv.Reset()
+
+		want := micro.EndpointStats{Name: "add", Subject: "orders.add", QueueGroup: "workers"}
+		if got := *srv.Stats().Endpoints[0]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("Invalid stats after reset; want: %+v; got: %+v", want, got)
+		}
+	})
+}
+
 func TestRequestRespond(t *testing.T) {
 	type x struct {
 		A string `json:"a"`
