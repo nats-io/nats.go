@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -329,6 +330,7 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		return nil, err
 	}
 
+	config.Metadata = maps.Clone(config.Metadata)
 	if config.Metadata == nil {
 		config.Metadata = map[string]string{}
 	}
@@ -691,7 +693,7 @@ func (s *service) serviceIdentity() ServiceIdentity {
 		Name:     s.Config.Name,
 		ID:       s.id,
 		Version:  s.Config.Version,
-		Metadata: s.Config.Metadata,
+		Metadata: maps.Clone(s.Config.Metadata),
 	}
 }
 
@@ -706,7 +708,7 @@ func (s *service) Info() Info {
 			Name:       e.Name,
 			Subject:    e.Subject,
 			QueueGroup: e.QueueGroup,
-			Metadata:   e.Metadata,
+			Metadata:   maps.Clone(e.Metadata),
 		})
 	}
 
@@ -905,7 +907,7 @@ func WithEndpointSubject(subject string) EndpointOpt {
 
 func WithEndpointMetadata(metadata map[string]string) EndpointOpt {
 	return func(e *endpointOpts) error {
-		e.metadata = metadata
+		e.metadata = maps.Clone(metadata)
 		return nil
 	}
 }
