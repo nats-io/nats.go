@@ -10801,9 +10801,12 @@ func TestJetStreamOrderedConsumerReconnectListenerCleanup(t *testing.T) {
 					}
 					subs[i] = sub
 				}
-				if n := orderedReconnectListeners(); n != len(subs) {
-					t.Fatalf("Expected %d reconnect listeners, got %d", len(subs), n)
-				}
+				checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+					if n := orderedReconnectListeners(); n != len(subs) {
+						return fmt.Errorf("expected %d reconnect listeners, got %d", len(subs), n)
+					}
+					return nil
+				})
 				test.stop(t, nc, subs)
 				checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
 					if n := orderedReconnectListeners(); n != 0 {
@@ -10814,4 +10817,116 @@ func TestJetStreamOrderedConsumerReconnectListenerCleanup(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A reset before the first message must start where the original consumer
+// did, without losing what was published while the connection was down.
+func TestJetStreamOrderedConsumerResetBeforeFirstMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		subj string
+		pub  string
+		opt  func() nats.SubOpt
+	}{
+		{name: "deliver new", subj: "osc.>", pub: "osc.a", opt: nats.DeliverNew},
+		{name: "start sequence", subj: "osc.>", pub: "osc.a", opt: func() nats.SubOpt { return nats.StartSequence(11) }},
+		{name: "start time", subj: "osc.>", pub: "osc.a", opt: func() nats.SubOpt { return nats.StartTime(time.Now()) }},
+		{name: "last per subject without values", subj: "osc.b", pub: "osc.b", opt: nats.DeliverLastPerSubject},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, mon *nats.Conn, inst *testservice.Instance) {
+				gate := &gatedDialer{}
+				nc, js := oscStream(t, inst,
+					nats.SetCustomDialer(gate),
+					nats.ReconnectWait(50*time.Millisecond),
+					nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+				)
+				publishOSC(t, js, 10)
+				monJS, err := mon.JetStream()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				var rec seqRecorder
+				sub, err := js.Subscribe(test.subj, rec.add, nats.OrderedConsumer(), test.opt())
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				defer sub.Unsubscribe()
+
+				gate.closed.Store(true)
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Error forcing reconnect: %v", err)
+				}
+				if _, err := monJS.Publish(test.pub, nil); err != nil {
+					t.Fatalf("Error publishing: %v", err)
+				}
+				gate.closed.Store(false)
+				checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+					if !nc.IsConnected() {
+						return errors.New("not reconnected")
+					}
+					return nil
+				})
+				if _, err := js.Publish(test.pub, nil); err != nil {
+					t.Fatalf("Error publishing: %v", err)
+				}
+				rec.waitFor(t, 2, 5*time.Second)
+				// Leave time for a replay of the history to show up.
+				time.Sleep(500 * time.Millisecond)
+				rec.mu.Lock()
+				defer rec.mu.Unlock()
+				if !reflect.DeepEqual(rec.order, []uint64{11, 12}) {
+					t.Fatalf("Expected stream seqs [11 12], got %v", rec.order)
+				}
+			})
+		})
+	}
+}
+
+// A disconnect while consumers are being recreated must not end their
+// subscriptions.
+func TestJetStreamOrderedConsumerDisconnectDuringReset(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc, js := oscStream(t, inst,
+			nats.ReconnectWait(10*time.Millisecond),
+			nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+		)
+		subs := make([]*nats.Subscription, 100)
+		recs := make([]*seqRecorder, len(subs))
+		for i := range subs {
+			recs[i] = &seqRecorder{}
+			sub, err := js.Subscribe("osc.>", recs[i].add, nats.OrderedConsumer())
+			if err != nil {
+				t.Fatalf("Error subscribing: %v", err)
+			}
+			subs[i] = sub
+		}
+		for range 10 {
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Error forcing reconnect: %v", err)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			if !nc.IsConnected() {
+				return errors.New("not reconnected")
+			}
+			return nil
+		})
+		var dead int
+		for _, sub := range subs {
+			if !sub.IsValid() {
+				dead++
+			}
+		}
+		if dead > 0 {
+			t.Fatalf("%d of %d subscriptions ended", dead, len(subs))
+		}
+		publishOSC(t, js, 1)
+		for _, rec := range recs {
+			rec.waitFor(t, 1, 10*time.Second)
+		}
+	})
 }
