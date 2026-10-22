@@ -16,6 +16,7 @@ package test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -2333,6 +2334,106 @@ func TestPullConsumerConsume(t *testing.T) {
 			}
 			if ci.NumWaiting != 0 {
 				t.Fatalf("Unexpected number of waiting pull requests; want 0; got %d", ci.NumWaiting)
+			}
+		})
+	})
+
+	t.Run("with auto unsubscribe after expiry and reconnect", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 15*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "TEST", Subjects: []string{"test"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.CreateConsumer(ctx, jetstream.ConsumerConfig{Durable: "C", AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pulls, err := nc.SubscribeSync("$JS.API.CONSUMER.MSG.NEXT.TEST.C")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pulls.Unsubscribe()
+			expectPull := func(want int, wait time.Duration) {
+				t.Helper()
+				msg, err := pulls.NextMsg(wait)
+				if err != nil {
+					t.Fatalf("waiting for pull batch %d: %v", want, err)
+				}
+				var request struct {
+					Batch int `json:"batch"`
+				}
+				if err := json.Unmarshal(msg.Data, &request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Batch != want {
+					t.Fatalf("pull batch: got %d, want %d", request.Batch, want)
+				}
+			}
+			publish := func(n int) {
+				t.Helper()
+				for i := 0; i < n; i++ {
+					if _, err := js.Publish(ctx, "test", []byte("msg")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			publish(2)
+			var received atomic.Int32
+			initial := make(chan struct{})
+			cc, err := c.Consume(func(msg jetstream.Msg) {
+				if err := msg.Ack(); err != nil {
+					t.Error(err)
+				}
+				if received.Add(1) == 2 {
+					close(initial)
+				}
+			}, jetstream.PullMaxMessages(10), jetstream.StopAfter(8), jetstream.PullExpiry(2*time.Second),
+				jetstream.ConsumeErrHandler(func(cc jetstream.ConsumeContext, err error) {
+					t.Errorf("Unexpected consume error: %v", err)
+					cc.Stop()
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed := cc.Closed()
+			defer func() {
+				cc.Stop()
+				select {
+				case <-closed:
+				case <-time.After(3 * time.Second):
+					t.Error("Consume did not stop")
+				}
+			}()
+			expectPull(8, 3*time.Second)
+			select {
+			case <-initial:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			// Expire both the initial pull and its replacement. Six messages remain.
+			expectPull(6, 3*time.Second)
+			expectPull(6, 3*time.Second)
+			connected := nc.StatusChanged(nats.CONNECTED)
+			// Require the reconnect pull before the current two-second pull expires.
+			deadline := time.Now().Add(time.Second)
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-connected:
+			case <-time.After(time.Until(deadline)):
+				t.Fatal("connection did not reconnect")
+			}
+			expectPull(6, time.Until(deadline))
+			publish(6)
+			select {
+			case <-closed:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			if got := received.Load(); got != 8 {
+				t.Fatalf("received %d messages, want 8", got)
 			}
 		})
 	})
