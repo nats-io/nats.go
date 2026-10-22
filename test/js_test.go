@@ -9247,6 +9247,32 @@ func TestJetStreamCleanupPublisher(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("cleanup js publisher and reconnect on different goroutines", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+			js, err := nc.JetStream()
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.AddStream(&nats.StreamConfig{Name: "TEST", Subjects: []string{"FOO"}}); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if _, err := js.PublishAsync("FOO", []byte("hello")); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			select {
+			case <-js.PublishAsyncComplete():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive completion signal")
+			}
+
+			// Not synchronized with the reconnect on purpose: -race reports
+			// the publisher closing its status channel itself.
+			go js.CleanupPublisher()
+			time.Sleep(50 * time.Millisecond)
+			forceReconnect(t, nc)
+		})
+	})
 }
 
 func TestJetStreamPublishExpectZero(t *testing.T) {

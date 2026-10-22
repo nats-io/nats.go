@@ -6818,6 +6818,9 @@ func (nc *Conn) GetClientID() (uint64, error) {
 
 // StatusChanged returns a channel on which given list of connection status changes will be reported.
 // If no statuses are provided, defaults will be used: CONNECTED, RECONNECTING, DISCONNECTED, CLOSED.
+// The channel buffers up to 10 events; further events are dropped while it is full.
+// It stays registered, and is not closed when the connection closes, until it is
+// removed with RemoveStatusListener.
 func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	if len(statuses) == 0 {
 		statuses = []Status{CONNECTED, RECONNECTING, DISCONNECTED, CLOSED}
@@ -6831,25 +6834,23 @@ func (nc *Conn) StatusChanged(statuses ...Status) chan Status {
 	return ch
 }
 
-// RemoveStatusListener removes a status change listener.
-// If the channel is not closed, it will be closed.
-// Listeners will be removed automatically on status change
-// as well, but this is a way to remove them manually.
+// RemoveStatusListener unregisters ch from all statuses and closes it.
+// Events already buffered can still be received. Use this instead of
+// closing the channel yourself.
 func (nc *Conn) RemoveStatusListener(ch chan (Status)) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
-
 	for _, listeners := range nc.statListeners {
-		for range listeners {
-			delete(listeners, ch)
-		}
+		delete(listeners, ch)
 	}
+	closeStatusListener(ch)
+}
+
+// closeStatusListener closes ch unless it is already closed.
+func closeStatusListener(ch chan Status) {
+	defer func() { _ = recover() }()
+	close(ch)
 }
 
 // registerStatusChangeListener registers a channel waiting for a specific status change event.
@@ -6870,22 +6871,27 @@ func (nc *Conn) registerStatusChangeListener(status Status, ch chan Status) {
 // If channel is closed, or there is no listener, sendStatusEvent
 // will not block. Lock should be held entering.
 func (nc *Conn) sendStatusEvent(s Status) {
-Loop:
 	for ch := range nc.statListeners[s] {
-		// make sure channel is not closed
-		select {
-		case <-ch:
-			// if chan is closed, remove it
+		if !notifyStatusListener(ch, s) {
 			delete(nc.statListeners[s], ch)
-			continue Loop
-		default:
-		}
-		// only send event if someone's listening
-		select {
-		case ch <- s:
-		default:
 		}
 	}
+}
+
+// notifyStatusListener sends s on ch unless its buffer is full, and reports
+// whether ch is still open. Receiving from ch to detect a closed channel
+// would consume an event the listener has not read yet.
+func notifyStatusListener(ch chan Status, s Status) (open bool) {
+	defer func() {
+		if recover() != nil {
+			open = false
+		}
+	}()
+	select {
+	case ch <- s:
+	default:
+	}
+	return true
 }
 
 // changeConnStatus changes connections status and sends events
