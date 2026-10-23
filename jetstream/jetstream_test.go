@@ -913,3 +913,36 @@ func TestKV_bucketValid(t *testing.T) {
 		})
 	}
 }
+
+func TestSerialNumberFromConsumer(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected int
+	}{
+		{name: "prefix_5", expected: 5},
+		{name: "prefix_with_underscores_12", expected: 12},
+		{name: "prefix", expected: 0},
+		{name: "prefix_", expected: 0},
+		{name: "prefix_abc", expected: 0},
+		{name: "", expected: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if res := serialNumberFromConsumer(test.name); res != test.expected {
+				t.Fatalf("Invalid result; want: %d; got: %d", test.expected, res)
+			}
+		})
+	}
+
+	t.Run("no allocations", func(t *testing.T) {
+		allocs := testing.AllocsPerRun(100, func() {
+			if serialNumberFromConsumer("prefix_5") != 5 {
+				t.Fatal("invalid serial")
+			}
+		})
+		if allocs != 0 {
+			t.Fatalf("Expected no allocations; got: %v", allocs)
+		}
+	})
+}

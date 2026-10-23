@@ -16,6 +16,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -29,6 +30,8 @@ const (
 	AckTimestampSeqTokenPos
 	AckNumPendingTokenPos
 )
+
+const v1TokenCounts, v2TokenCounts = 9, 12
 
 var ErrInvalidSubjectFormat = errors.New("invalid format of ACK subject")
 
@@ -54,18 +57,8 @@ func ParseNum(d string) (n uint64) {
 	return
 }
 
-func GetMetadataFields(subject string) ([]string, error) {
-	v1TokenCounts, v2TokenCounts := 9, 12
-
-	var start int
-	tokens := make([]string, 0, v2TokenCounts)
-	for i := 0; i < len(subject); i++ {
-		if subject[i] == '.' {
-			tokens = append(tokens, subject[start:i])
-			start = i + 1
-		}
-	}
-	tokens = append(tokens, subject[start:])
+func GetMetadataFields(subject string) ([AckNumPendingTokenPos + 1]string, error) {
+	var tokens [AckNumPendingTokenPos + 1]string
 	//
 	// Newer server will include the domain name and account hash in the subject,
 	// and a token at the end.
@@ -80,24 +73,24 @@ func GetMetadataFields(subject string) ([]string, error) {
 	// it may be removed in the future. Also, the library has no use for it.
 	// The point is that a v2 ACK subject is valid if it has at least 11 tokens.
 	//
-	tokensLen := len(tokens)
+	tokensLen := strings.Count(subject, ".") + 1
 	// If lower than 9 or more than 9 but less than 11, report an error
 	if tokensLen < v1TokenCounts || (tokensLen > v1TokenCounts && tokensLen < v2TokenCounts-1) {
-		return nil, ErrInvalidSubjectFormat
+		return tokens, ErrInvalidSubjectFormat
 	}
-	if tokens[0] != "$JS" || tokens[1] != "ACK" {
-		return nil, fmt.Errorf("%w: subject should start with $JS.ACK", ErrInvalidSubjectFormat)
+	if !strings.HasPrefix(subject, "$JS.ACK.") {
+		return tokens, fmt.Errorf("%w: subject should start with $JS.ACK", ErrInvalidSubjectFormat)
 	}
-	// For v1 style, we insert 2 empty tokens (domain and hash) so that the
-	// rest of the library references known fields at a constant location.
-	if tokensLen == v1TokenCounts {
-		// Extend the array (we know the backend is big enough)
-		tokens = append(tokens[:AckDomainTokenPos+2], tokens[AckDomainTokenPos:]...)
-		// Clear the domain and hash tokens
-		tokens[AckDomainTokenPos], tokens[AckAccHashTokenPos] = "", ""
-
-	} else if tokens[AckDomainTokenPos] == "_" {
-		// If domain is "_", replace with empty value.
+	for i := range tokens {
+		// For v1 style, leave the domain and hash tokens empty so that the
+		// rest of the library references known fields at a constant location.
+		if tokensLen == v1TokenCounts && (i == AckDomainTokenPos || i == AckAccHashTokenPos) {
+			continue
+		}
+		tokens[i], subject, _ = strings.Cut(subject, ".")
+	}
+	// If domain is "_", replace with empty value.
+	if tokens[AckDomainTokenPos] == "_" {
 		tokens[AckDomainTokenPos] = ""
 	}
 	return tokens, nil

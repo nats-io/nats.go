@@ -1081,19 +1081,19 @@ func (obs *obs) Watch(opts ...WatchOpt) (ObjectWatcher, error) {
 		if err := json.Unmarshal(m.Data, &info); err != nil {
 			return // TODO(dlc) - Communicate this upwards?
 		}
-		meta, err := m.Metadata()
+		tokens, err := parser.GetMetadataFields(m.Reply)
 		if err != nil {
 			return
 		}
 
 		if !o.ignoreDeletes || !info.Deleted {
-			info.ModTime = meta.Timestamp
+			info.ModTime = time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos])))
 			w.updates <- &info
 		}
 
 		// if UpdatesOnly is set, no not send nil to the channel
 		// as it would always be triggered after initializing the watcher
-		if !initDoneMarker && meta.NumPending == 0 {
+		if !initDoneMarker && parser.ParseNum(tokens[parser.AckNumPendingTokenPos]) == 0 {
 			initDoneMarker = true
 			w.updates <- nil
 		}
