@@ -4947,8 +4947,8 @@ func (nc *Conn) newRequest(subj string, hdr, data []byte, timeout time.Duration)
 		return nil, err
 	}
 
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 
 	var ok bool
 	var msg *Msg
@@ -5688,8 +5688,8 @@ func (s *Subscription) NextMsg(timeout time.Duration) (*Msg, error) {
 	// If we are here a message was not immediately available, so lets loop
 	// with a timeout.
 
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 
 	if s.errCh != nil {
 		select {
@@ -6111,8 +6111,8 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 		nc.mu.Unlock()
 		return ErrConnectionClosed
 	}
-	t := globalTimerPool.Get(timeout)
-	defer globalTimerPool.Put(t)
+	t := time.NewTimer(timeout)
+	defer t.Stop()
 
 	// Create a buffered channel to prevent chan send to block
 	// in processPong() if this code here times out just when
