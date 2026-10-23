@@ -141,7 +141,7 @@ func TestNewWithDomain(t *testing.T) {
 				t.Fatalf("Invalid domain; want: %v, got: %v", "ABC", opts.Domain)
 			}
 
-			_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{
 				Name:     "TEST",
 				Subjects: []string{"foo"},
 			})
@@ -152,6 +152,14 @@ func TestNewWithDomain(t *testing.T) {
 			_, err = js.Publish(ctx, "foo", []byte("msg"))
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			info, err := s.Info(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if info.Domain != "ABC" {
+				t.Fatalf("Invalid stream domain; want: %v, got: %v", "ABC", info.Domain)
 			}
 		}, testservice.WithJetStream(`domain: ABC`))
 	})
