@@ -2232,64 +2232,71 @@ func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
 	}
 }
 
-// countingFailDialer never connects and counts how often it was asked to.
-type countingFailDialer struct {
-	attempts atomic.Int32
+type failDialer struct {
+	attempts chan struct{}
 }
 
-func (d *countingFailDialer) Dial(network, address string) (net.Conn, error) {
-	d.attempts.Add(1)
-	return nil, errors.New("dial refused")
+func (d *failDialer) Dial(network, address string) (net.Conn, error) {
+	select {
+	case d.attempts <- struct{}{}:
+	default:
+	}
+	return nil, errors.New("dial failed")
 }
 
-// TestForceReconnectRestoresBackoff reproduces #2172: calling ForceReconnect while
-// the connection is already reconnecting must interrupt the current backoff once,
-// not disable ReconnectWait/CustomReconnectDelay for the rest of the loop.
 func TestForceReconnectRestoresBackoff(t *testing.T) {
-	const wait = 200 * time.Millisecond
-
 	tests := []struct {
 		name string
 		opts []Option
 	}{
-		{"ReconnectWait", []Option{ReconnectWait(wait), ReconnectJitter(0, 0)}},
-		{"CustomReconnectDelay", []Option{CustomReconnectDelay(func(int) time.Duration { return wait })}},
-		{"ReconnectToServerDelay", []Option{ReconnectToServer(func(servers []Server, _ ServerInfo) (*Server, time.Duration) {
-			return &servers[0], wait
+		{"ReconnectWait", nil},
+		{"CustomReconnectDelay", []Option{CustomReconnectDelay(func(int) time.Duration { return time.Hour })}},
+		{"ReconnectToServer", []Option{ReconnectToServer(func(servers []Server, _ ServerInfo) (*Server, time.Duration) {
+			return &servers[0], time.Hour
 		})}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			d := &countingFailDialer{}
+			dialer := &failDialer{attempts: make(chan struct{}, 16)}
 			opts := append([]Option{
+				SetCustomDialer(dialer),
 				RetryOnFailedConnect(true),
 				MaxReconnects(-1),
-				SetCustomDialer(d),
+				ReconnectWait(time.Hour),
+				ReconnectJitter(0, 0),
 			}, test.opts...)
-			nc, err := Connect("nats://127.0.0.1:1", opts...)
+			nc, err := Connect(DefaultURL, opts...)
 			if err != nil {
-				t.Fatalf("Connect: %v", err)
+				t.Fatalf("Unexpected error: %v", err)
 			}
 			defer nc.Close()
-			if !nc.IsReconnecting() {
-				t.Fatal("expected connection to be reconnecting")
+
+			waitForDial := func() {
+				t.Helper()
+				select {
+				case <-dialer.attempts:
+				case <-time.After(3 * time.Second):
+					t.Fatal("ForceReconnect did not interrupt the backoff")
+				}
+			}
+			// Initial failed connect.
+			waitForDial()
+			for i := range 2 {
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				waitForDial()
+				select {
+				case <-dialer.attempts:
+					t.Fatalf("Backoff skipped after forced attempt %d", i+1)
+				case <-time.After(100 * time.Millisecond):
+				}
 			}
 
-			// Let doReconnect enter its first backoff, then force one attempt.
-			time.Sleep(wait / 4)
-			if err := nc.ForceReconnect(); err != nil {
-				t.Fatalf("ForceReconnect: %v", err)
-			}
-			time.Sleep(wait / 2)
-
-			// After the forced attempt the configured delay must apply again:
-			// roughly 1s/200ms = 5 attempts, not thousands.
-			before := d.attempts.Load()
-			time.Sleep(time.Second)
-			after := d.attempts.Load()
-			if n := after - before; n > 10 {
-				t.Fatalf("reconnect delay not honored after ForceReconnect: %d dial attempts in 1s (expected ~5)", n)
+			nc.Close()
+			if err := nc.ForceReconnect(); !errors.Is(err, ErrConnectionClosed) {
+				t.Fatalf("Expected %v, got: %v", ErrConnectionClosed, err)
 			}
 		})
 	}
