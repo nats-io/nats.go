@@ -3503,6 +3503,7 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 					rt.Stop()
 					nc.mu.Lock()
 					nc.rqch = make(chan struct{})
+					rqch = nc.rqch
 					nc.mu.Unlock()
 				case <-rt.C:
 				}
@@ -3535,9 +3536,12 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 				rt.Stop()
 
 				// we need to reset the rqch channel to avoid
-				// closing a closed channel in the next iteration
+				// closing a closed channel in the next iteration,
+				// and keep selecting on the new channel so the
+				// delay is honored again on the next iteration.
 				nc.mu.Lock()
 				nc.rqch = make(chan struct{})
+				rqch = nc.rqch
 				nc.mu.Unlock()
 			case <-rt.C:
 			}

@@ -2241,3 +2241,73 @@ func TestMakeTLSConnUsesPreservedTLSName(t *testing.T) {
 		})
 	}
 }
+
+type failDialer struct {
+	attempts chan struct{}
+}
+
+func (d *failDialer) Dial(network, address string) (net.Conn, error) {
+	select {
+	case d.attempts <- struct{}{}:
+	default:
+	}
+	return nil, errors.New("dial failed")
+}
+
+func TestForceReconnectRestoresBackoff(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []Option
+	}{
+		{"ReconnectWait", nil},
+		{"CustomReconnectDelay", []Option{CustomReconnectDelay(func(int) time.Duration { return time.Hour })}},
+		{"ReconnectToServer", []Option{ReconnectToServer(func(servers []Server, _ ServerInfo) (*Server, time.Duration) {
+			return &servers[0], time.Hour
+		})}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dialer := &failDialer{attempts: make(chan struct{}, 16)}
+			opts := append([]Option{
+				SetCustomDialer(dialer),
+				RetryOnFailedConnect(true),
+				MaxReconnects(-1),
+				ReconnectWait(time.Hour),
+				ReconnectJitter(0, 0),
+			}, test.opts...)
+			nc, err := Connect(DefaultURL, opts...)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+
+			waitForDial := func() {
+				t.Helper()
+				select {
+				case <-dialer.attempts:
+				case <-time.After(3 * time.Second):
+					t.Fatal("ForceReconnect did not interrupt the backoff")
+				}
+			}
+			// Initial failed connect.
+			waitForDial()
+			for i := range 2 {
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				waitForDial()
+				select {
+				case <-dialer.attempts:
+					t.Fatalf("Backoff skipped after forced attempt %d", i+1)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+
+			nc.Close()
+			if err := nc.ForceReconnect(); !errors.Is(err, ErrConnectionClosed) {
+				t.Fatalf("Expected %v, got: %v", ErrConnectionClosed, err)
+			}
+		})
+	}
+}
