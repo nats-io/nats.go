@@ -36,6 +36,9 @@ type (
 		// bytes, etc.
 		State StreamState `json:"state"`
 
+		// Domain is the JetStream domain the stream is in.
+		Domain string `json:"domain,omitempty"`
+
 		// Cluster contains information about the cluster to which this stream
 		// belongs (if applicable).
 		Cluster *ClusterInfo `json:"cluster,omitempty"`
