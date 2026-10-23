@@ -94,6 +94,10 @@ type JetStream interface {
 	// * If Bind() option is provided, the library will attempt to lookup the
 	// consumer with the given name, and if successful, bind to it. If the lookup fails,
 	// then the Subscribe() call will return an error.
+	// * If the library creates the consumer and MaxAckPending() is not set, the sync,
+	// channel and pull variants set it to the subscription channel capacity
+	// (SyncQueueLen(), or the capacity of the channel passed to ChanSubscribe()).
+	// Use MaxAckPending() if that exceeds a server, account or stream limit.
 	Subscribe(subj string, cb MsgHandler, opts ...SubOpt) (*Subscription, error)
 
 	// SubscribeSync creates a Subscription that can be used to process messages synchronously.
@@ -2787,7 +2791,7 @@ func MaxDeliver(n int) SubOpt {
 }
 
 // MaxAckPending sets the number of outstanding acks that are allowed before
-// message delivery is halted.
+// message delivery is halted. See JetStream.Subscribe() for the default.
 func MaxAckPending(n int) SubOpt {
 	return subOptFn(func(opts *subOpts) error {
 		opts.cfg.MaxAckPending = n
