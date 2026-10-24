@@ -3886,3 +3886,148 @@ func TestPullConsumerMaxReconnectsExceeded(t *testing.T) {
 
 	})
 }
+
+func TestPullConsumerFetchDelayedReader(t *testing.T) {
+	const count = 3000
+	for _, fetch := range []struct {
+		name  string
+		fetch func(jetstream.Consumer) (jetstream.MessageBatch, error)
+	}{
+		{"bytes", func(c jetstream.Consumer) (jetstream.MessageBatch, error) {
+			return c.FetchBytes(512<<10, jetstream.FetchMaxWait(time.Second))
+		}},
+		{"messages", func(c jetstream.Consumer) (jetstream.MessageBatch, error) {
+			return c.Fetch(count, jetstream.FetchMaxWait(2*time.Second))
+		}},
+		{"messages and bytes", func(c jetstream.Consumer) (jetstream.MessageBatch, error) {
+			return c.Fetch(count, jetstream.FetchMaxBytes(4<<20), jetstream.FetchMaxWait(2*time.Second))
+		}},
+		{"no wait", func(c jetstream.Consumer) (jetstream.MessageBatch, error) {
+			return c.FetchNoWait(count + 1)
+		}},
+	} {
+		t.Run(fetch.name, func(t *testing.T) {
+			withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+				ctx := newTesterCtx(t, 5*time.Second)
+				stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				consumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy, MaxAckPending: -1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := 0; i < count; i++ {
+					if _, err := js.Publish(ctx, "FOO", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+						t.Fatal(err)
+					}
+				}
+				subscriptions := nc.NumSubscriptions()
+				batch, err := fetch.fetch(consumer)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Let the server deliver the entire batch before reading. Buffering
+				// must not discard messages or impose a smaller message-count limit.
+				checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+					info, err := consumer.Info(ctx)
+					if err != nil {
+						return err
+					}
+					if info.Delivered.Consumer != count {
+						return fmt.Errorf("Expected %d delivered messages; got %d", count, info.Delivered.Consumer)
+					}
+					return nil
+				})
+				// Completion must release the fetch subscription without a reader.
+				checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+					if nc.NumSubscriptions() != subscriptions {
+						return fmt.Errorf("Fetch subscription was not released")
+					}
+					return nil
+				})
+				received := 0
+				for msg := range batch.Messages() {
+					if got, want := string(msg.Data()), fmt.Sprintf("msg-%d", received); got != want {
+						t.Fatalf("Expected %q; got %q", want, got)
+					}
+					if err := msg.Ack(); err != nil {
+						t.Fatal(err)
+					}
+					received++
+				}
+				if err := batch.Error(); err != nil {
+					t.Fatal(err)
+				}
+				if received != count {
+					t.Fatalf("Expected %d messages; got %d", count, received)
+				}
+			})
+		})
+	}
+}
+
+func TestPullConsumerFetchBytesCancelBuffered(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 15*time.Second)
+		stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{AckPolicy: jetstream.AckNonePolicy})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const count = 3000
+		for i := 0; i < count; i++ {
+			if _, err := js.Publish(ctx, "FOO", []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		subscriptions := nc.NumSubscriptions()
+		fetchCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		batch, err := consumer.FetchBytes(4<<20, jetstream.FetchContext(fetchCtx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+			info, err := consumer.Info(ctx)
+			if err != nil {
+				return err
+			}
+			if info.Delivered.Consumer != count {
+				return fmt.Errorf("Expected %d delivered messages; got %d", count, info.Delivered.Consumer)
+			}
+			return nil
+		})
+		cancel()
+		received := 0
+		for {
+			select {
+			case msg, ok := <-batch.Messages():
+				if !ok {
+					if !errors.Is(batch.Error(), context.Canceled) {
+						t.Fatalf("Expected context cancellation; got %v", batch.Error())
+					}
+					if received == 0 {
+						t.Fatal("Expected buffered messages after cancellation")
+					}
+					checkFor(t, time.Second, 10*time.Millisecond, func() error {
+						if nc.NumSubscriptions() != subscriptions {
+							return fmt.Errorf("Fetch subscription was not released")
+						}
+						return nil
+					})
+					return
+				}
+				if got, want := string(msg.Data()), fmt.Sprintf("msg-%d", received); got != want {
+					t.Fatalf("Expected %q; got %q", want, got)
+				}
+				received++
+			case <-ctx.Done():
+				t.Fatal("Fetch did not close after cancellation")
+			}
+		}
+	})
+}
