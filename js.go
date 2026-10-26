@@ -727,7 +727,7 @@ func (js *js) newAsyncReply() string {
 	}
 	if js.connStatusCh == nil {
 		js.connStatusCh = js.nc.StatusChanged(RECONNECTING, CLOSED)
-		go js.resetPendingAcksOnReconnect()
+		go js.resetPendingAcksOnReconnect(js.connStatusCh)
 	}
 	var sb strings.Builder
 	sb.Grow(len(js.rpre) + aReplyTokensize)
@@ -749,10 +749,7 @@ func (js *js) newAsyncReply() string {
 	return sb.String()
 }
 
-func (js *js) resetPendingAcksOnReconnect() {
-	js.mu.Lock()
-	connStatusCh := js.connStatusCh
-	js.mu.Unlock()
+func (js *js) resetPendingAcksOnReconnect(connStatusCh <-chan Status) {
 	for {
 		newStatus, ok := <-connStatusCh
 		if !ok || newStatus == CLOSED {
