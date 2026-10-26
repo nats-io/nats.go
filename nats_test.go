@@ -2123,6 +2123,64 @@ func TestParseServerURLPreservesTLSName(t *testing.T) {
 	}
 }
 
+// TestProcessInfoPropagatesTLSNameFromIPEntry verifies that a server learned
+// through INFO connect_urls while connected through an implicit IP entry
+// inherits that entry's tlsName, so a later reconnect to it still verifies
+// the certificate against the original hostname.
+func TestProcessInfoPropagatesTLSNameFromIPEntry(t *testing.T) {
+	opts := GetDefaultOptions()
+	opts.Url = "tls://nats.example.com:4222"
+	opts.NoRandomize = true
+	nc := &Conn{Opts: opts}
+	if err := nc.setupServerPool(); err != nil {
+		t.Fatalf("Problem setting up Server Pool: %v", err)
+	}
+
+	poolServer := func(hostPort string) *Server {
+		t.Helper()
+		for _, s := range nc.srvPool {
+			if s.URL.Host == hostPort {
+				return s
+			}
+		}
+		t.Fatalf("Server %q not in pool", hostPort)
+		return nil
+	}
+	info := func(urls ...string) string {
+		b, _ := json.Marshal(map[string]any{"connect_urls": urls})
+		return string(b)
+	}
+
+	// Connected through the hostname: IPs learned get its name.
+	if err := nc.processInfo(info("10.0.0.1:4222", "10.0.0.2:4222")); err != nil {
+		t.Fatalf("processInfo: %v", err)
+	}
+	for _, hp := range []string{"10.0.0.1:4222", "10.0.0.2:4222"} {
+		if got := poolServer(hp).tlsName; got != "nats.example.com" {
+			t.Fatalf("tlsName for %s = %q, want %q", hp, got, "nats.example.com")
+		}
+	}
+
+	// Reconnected through an IP entry, then a server comes back on a new IP.
+	nc.current = poolServer("10.0.0.2:4222")
+	if err := nc.processInfo(info("10.0.0.2:4222", "10.0.0.3:4222")); err != nil {
+		t.Fatalf("processInfo: %v", err)
+	}
+	if got := poolServer("10.0.0.3:4222").tlsName; got != "nats.example.com" {
+		t.Fatalf("tlsName for new IP = %q, want %q", got, "nats.example.com")
+	}
+
+	// An IP entry without a tlsName has nothing to pass on.
+	nc.current = poolServer("10.0.0.3:4222")
+	nc.current.tlsName = _EMPTY_
+	if err := nc.processInfo(info("10.0.0.3:4222", "10.0.0.4:4222")); err != nil {
+		t.Fatalf("processInfo: %v", err)
+	}
+	if got := poolServer("10.0.0.4:4222").tlsName; got != _EMPTY_ {
+		t.Fatalf("tlsName for new IP = %q, want empty", got)
+	}
+}
+
 // hostOnlyTLSCert mints a self-signed cert carrying a single "localhost" DNS
 // SAN and deliberately no IP SANs, so verifying it against an IP-form
 // ServerName fails. Returns the server cert and a pool trusting it.
