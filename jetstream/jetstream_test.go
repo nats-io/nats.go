@@ -45,7 +45,7 @@ func TestJetStreamReconnectErrorCallback(t *testing.T) {
 			}
 			called <- struct{}{}
 		}
-		go js.resetPendingAcksOnReconnect()
+		go js.resetPendingAcksOnReconnect(js.publisher.connStatusCh)
 		defer func() {
 			close(js.publisher.connStatusCh)
 			synctest.Wait()
@@ -63,6 +63,37 @@ func TestJetStreamReconnectErrorCallback(t *testing.T) {
 			t.Fatal("PublishAsyncComplete was not closed after the error callback returned")
 		}
 	})
+}
+
+func TestJetStreamReconnectWatcherCleanup(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reuse=%v", reuse), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				nc := &nats.Conn{}
+				js := &jetStream{conn: nc, publisher: &jetStreamClient{}}
+				js.publisher.connStatusCh = nc.StatusChanged(nats.RECONNECTING, nats.CLOSED)
+				connStatusCh := js.publisher.connStatusCh
+
+				// Cleanup can finish before the reconnect watcher starts running.
+				js.CleanupPublisher()
+				if reuse {
+					js.publisher.connStatusCh = nc.StatusChanged(nats.RECONNECTING, nats.CLOSED)
+					defer js.CleanupPublisher()
+				}
+				stopped := make(chan struct{})
+				go func() {
+					js.resetPendingAcksOnReconnect(connStatusCh)
+					close(stopped)
+				}()
+				synctest.Wait()
+				select {
+				case <-stopped:
+				default:
+					t.Error("Reconnect watcher did not exit after publisher cleanup")
+				}
+			})
+		})
+	}
 }
 
 func TestMessageMetadata(t *testing.T) {
