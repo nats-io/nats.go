@@ -448,7 +448,7 @@ func (js *jetStream) newAsyncReply() error {
 	}
 	if js.publisher.connStatusCh == nil {
 		js.publisher.connStatusCh = js.conn.StatusChanged(nats.RECONNECTING, nats.CLOSED)
-		go js.resetPendingAcksOnReconnect()
+		go js.resetPendingAcksOnReconnect(js.publisher.connStatusCh)
 	}
 	return nil
 }
@@ -562,10 +562,7 @@ func (js *jetStream) handleAsyncErrAndUnlock(paf *pubAckFuture, err error) {
 	}
 }
 
-func (js *jetStream) resetPendingAcksOnReconnect() {
-	js.publisher.Lock()
-	connStatusCh := js.publisher.connStatusCh
-	js.publisher.Unlock()
+func (js *jetStream) resetPendingAcksOnReconnect(connStatusCh <-chan nats.Status) {
 	for {
 		newStatus, ok := <-connStatusCh
 		if !ok || newStatus == nats.CLOSED {
