@@ -911,6 +911,12 @@ func (m *Msg) headerSize() (int, error) {
 }
 
 func (m *Msg) headerBytes() ([]byte, error) {
+	var b bytes.Buffer
+	return m.encodeHeaders(&b)
+}
+
+// encodeHeaders writes the headers into an empty buffer.
+func (m *Msg) encodeHeaders(b *bytes.Buffer) ([]byte, error) {
 	var hdr []byte
 	hdrSize, err := m.headerSize()
 	if hdrSize == 0 || err != nil {
@@ -921,14 +927,13 @@ func (m *Msg) headerBytes() ([]byte, error) {
 	// is intended to be a valid implementation of the io.StringWriter interface.
 	// This implementation cannot actually fail in practice, so it is safe to
 	// ignore write errors here.
-	var b bytes.Buffer
 	b.Grow(hdrSize)
 	_, _ = b.WriteString(hdrLine)
 	for k, vs := range m.Header {
 		for _, v := range vs {
 			_, _ = b.WriteString(k)
 			_, _ = b.WriteString(": ")
-			writeHeaderValue(&b, v)
+			writeHeaderValue(b, v)
 			_, _ = b.WriteString(crlf)
 		}
 	}
@@ -4656,15 +4661,32 @@ func readMIMEHeader(s string) (Header, error) {
 	}
 }
 
+var publishHeaderPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
 // PublishMsg publishes the Msg structure, which includes the
 // Subject, an optional Reply and an optional Data field.
 func (nc *Conn) PublishMsg(m *Msg) error {
 	if m == nil {
 		return ErrInvalidMsg
 	}
-	hdr, err := m.headerBytes()
-	if err != nil {
-		return err
+	var hdr []byte
+	if len(m.Header) > 0 {
+		b := publishHeaderPool.Get().(*bytes.Buffer)
+		defer func() {
+			// publish copies the headers into the writer's buffer before returning.
+			// Do not retain unusually large headers in the pool.
+			if b.Cap() <= 64*1024 {
+				b.Reset()
+				publishHeaderPool.Put(b)
+			}
+		}()
+		var err error
+		hdr, err = m.encodeHeaders(b)
+		if err != nil {
+			return err
+		}
 	}
 	validateReply := m.Reply != _EMPTY_
 	return nc.publish(m.Subject, m.Reply, validateReply, hdr, m.Data)

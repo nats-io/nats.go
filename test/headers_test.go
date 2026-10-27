@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +52,64 @@ func TestBasicHeaders(t *testing.T) {
 
 		if !m.Equal(msg) {
 			t.Fatalf("Messages did not match! \n%+v\n%+v\n", m, msg)
+		}
+	})
+}
+
+func TestPublishMsgConcurrentHeaders(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		const publishers, messages = 4, 100
+		sub, err := nc.SubscribeSync("headers.concurrent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Unsubscribe()
+
+		var wg sync.WaitGroup
+		errs := make(chan error, publishers)
+		for p := range publishers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range messages {
+					id := fmt.Sprintf("%d/%d", p, i)
+					m := &nats.Msg{
+						Subject: "headers.concurrent",
+						Data:    []byte(id),
+						Header:  nats.Header{"X-Value": {id, strings.Repeat(id, i+1)}},
+					}
+					if err := nc.PublishMsg(m); err != nil {
+						errs <- err
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatal(err)
+		}
+
+		seen := make(map[string]bool, publishers*messages)
+		for range publishers * messages {
+			m, err := sub.NextMsg(time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := string(m.Data)
+			var p, i int
+			if _, err := fmt.Sscanf(id, "%d/%d", &p, &i); err != nil || p < 0 || p >= publishers || i < 0 || i >= messages {
+				t.Fatalf("Invalid message ID %q", id)
+			}
+			if seen[id] {
+				t.Fatalf("Duplicate message %q", id)
+			}
+			seen[id] = true
+			expected := nats.Header{"X-Value": {id, strings.Repeat(id, i+1)}}
+			if !reflect.DeepEqual(m.Header, expected) {
+				t.Fatalf("Headers for %q: expected %v, got %v", id, expected, m.Header)
+			}
 		}
 	})
 }

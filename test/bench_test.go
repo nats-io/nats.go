@@ -38,29 +38,36 @@ func BenchmarkPublishSpeed(b *testing.B) {
 }
 
 func BenchmarkPublishSpeedHeaders(b *testing.B) {
-	withServerB(b, func(b *testing.B, nc *nats.Conn) {
-		headers := make(nats.Header, 10)
-		for i := range 10 {
-			headers.Add(
-				fmt.Sprintf("header_%d", i),
-				generateRandomString(32),
-			)
-		}
-		msg := &nats.Msg{
-			Subject: "foo",
-			Header:  headers,
-			Data:    []byte("Hello World"),
-		}
+	for _, n := range []int{0, 1, 10, 100} {
+		b.Run(fmt.Sprintf("headers=%d", n), func(b *testing.B) {
+			withServerB(b, func(b *testing.B, nc *nats.Conn) {
+				headers := make(nats.Header, n)
+				for i := range n {
+					headers.Add(
+						fmt.Sprintf("header_%d", i),
+						generateRandomString(32),
+					)
+				}
+				msg := &nats.Msg{
+					Subject: "foo",
+					Header:  headers,
+					Data:    []byte("Hello World"),
+				}
 
-		b.ResetTimer()
-		for range b.N {
-			if err := nc.PublishMsg(msg); err != nil {
-				b.Fatalf("Error in benchmark during PublishMsg: %v\n", err)
-			}
-		}
-		nc.Flush()
-		b.StopTimer()
-	})
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					if err := nc.PublishMsg(msg); err != nil {
+						b.Fatalf("Error in benchmark during PublishMsg: %v\n", err)
+					}
+				}
+				if err := nc.Flush(); err != nil {
+					b.Fatal(err)
+				}
+				b.StopTimer()
+			})
+		})
+	}
 }
 
 func generateRandomString(length int) string {
