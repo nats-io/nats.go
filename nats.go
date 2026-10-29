@@ -4661,6 +4661,8 @@ func readMIMEHeader(s string) (Header, error) {
 	}
 }
 
+const maxPooledHeaderSize = 64 * 1024
+
 var publishHeaderPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
@@ -4677,7 +4679,7 @@ func (nc *Conn) PublishMsg(m *Msg) error {
 		defer func() {
 			// publish copies the headers into the writer's buffer before returning.
 			// Do not retain unusually large headers in the pool.
-			if b.Cap() <= 64*1024 {
+			if b.Cap() <= maxPooledHeaderSize {
 				b.Reset()
 				publishHeaderPool.Put(b)
 			}
