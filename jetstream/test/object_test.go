@@ -732,6 +732,49 @@ func TestObjectWatch(t *testing.T) {
 	})
 }
 
+func TestObjectLinksShowDeleted(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		root, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "ROOT"})
+		expectOk(t, err)
+		dir, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "DIR"})
+		expectOk(t, err)
+
+		info, err := root.PutString(ctx, "A", "AAA")
+		expectOk(t, err)
+		_, err = root.AddLink(ctx, "SAME", info)
+		expectOk(t, err)
+		info, err = dir.PutString(ctx, "A", "BBB")
+		expectOk(t, err)
+		_, err = root.AddLink(ctx, "CROSS", info)
+		expectOk(t, err)
+		expectOk(t, root.Delete(ctx, "A"))
+		expectOk(t, dir.Delete(ctx, "A"))
+
+		for _, name := range []string{"A", "SAME", "CROSS"} {
+			t.Run(name, func(t *testing.T) {
+				_, err := root.Get(ctx, name)
+				expectErr(t, err, jetstream.ErrObjectNotFound)
+
+				result, err := root.Get(ctx, name, jetstream.GetObjectShowDeleted())
+				expectOk(t, err)
+				defer result.Close()
+				info, err := result.Info()
+				expectOk(t, err)
+				if !info.Deleted {
+					t.Fatal("Expected the deleted target's metadata")
+				}
+				data, err := io.ReadAll(result)
+				expectOk(t, err)
+				if len(data) != 0 {
+					t.Fatalf("Expected an empty deleted object, got %q", data)
+				}
+			})
+		}
+	})
+}
+
 func TestObjectLinks(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 10*time.Second)
