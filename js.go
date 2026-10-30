@@ -2031,6 +2031,13 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 			sub.mu.Lock()
 			sub.jsi.dc = true
 			sub.jsi.pending = info.NumPending + info.Delivered.Consumer
+			// A reset before the first message resumes where this consumer
+			// starts. A last per subject consumer with values to deliver has
+			// no such position and is recreated as is.
+			if sub.jsi.ordered && info.Delivered.Consumer == 0 &&
+				(info.Config.DeliverPolicy != DeliverLastPerSubjectPolicy || info.NumPending == 0) {
+				sub.jsi.sseq = max(sub.jsi.sseq, info.Delivered.Stream)
+			}
 			// If this is an ephemeral, we did not have a consumer name, we get it from the info
 			// after the AddConsumer returns.
 			if consumer == _EMPTY_ {
@@ -2058,6 +2065,10 @@ func (js *js) subscribe(subj, queue string, cb MsgHandler, ch chan *Msg, isSync,
 	// Do heartbeats last if needed.
 	if hasHeartbeats {
 		sub.scheduleHeartbeatCheck()
+	}
+	if o.ordered {
+		connStatus := nc.StatusChanged(CONNECTED, CLOSED)
+		go sub.resetOrderedConsumerOnReconnect(nc, connStatus, sub.StatusChanged(SubscriptionClosed))
 	}
 	// For ChanSubscriptions, if we know that there is flow control, we will
 	// start a go routine that evaluates the number of delivered messages
@@ -2275,6 +2286,37 @@ func (sub *Subscription) tryResetOrderedConsumer() {
 	sub.resetOrderedConsumer(jsi.sseq + 1)
 }
 
+// resetOrderedConsumerOnReconnect recreates the consumer each time the
+// connection is back, since a server restart or a disconnect longer than its
+// inactive threshold removes it. It returns once the subscription or the
+// connection is closed.
+func (sub *Subscription) resetOrderedConsumerOnReconnect(nc *Conn, connStatus chan Status, subStatus <-chan SubStatus) {
+	defer nc.RemoveStatusListener(connStatus)
+	// Registering the listener and closing the connection both happen under
+	// nc.mu, so this catches a close that came first.
+	if nc.IsClosed() {
+		return
+	}
+	for {
+		select {
+		case status, ok := <-connStatus:
+			if !ok || status == CLOSED {
+				return
+			}
+			// CONNECTED is sent before the subscriptions are resent. Status
+			// waits for that, and skips a reconnect that has failed again.
+			if nc.Status() != CONNECTED {
+				continue
+			}
+			sub.mu.Lock()
+			sub.tryResetOrderedConsumer()
+			sub.mu.Unlock()
+		case <-subStatus:
+			return
+		}
+	}
+}
+
 // Update and replace sid. Returns the old and the new sid. Returns ok == false,
 // leaving everything untouched, if the subscription is no longer registered on
 // the connection.
@@ -2379,11 +2421,13 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		cfgCopy := *jsi.ccreq.Config
 		cfg := &cfgCopy
 		cfg.DeliverSubject = newDeliver
-		cfg.DeliverPolicy = DeliverByStartSequencePolicy
-		cfg.OptStartSeq = sseq
-		// In case the consumer was created with a start time, we need to clear it
-		// since we are now using a start sequence.
-		cfg.OptStartTime = nil
+		if sseq > 1 || cfg.DeliverPolicy != DeliverLastPerSubjectPolicy {
+			cfg.DeliverPolicy = DeliverByStartSequencePolicy
+			cfg.OptStartSeq = sseq
+			// In case the consumer was created with a start time, we need to clear it
+			// since we are now using a start sequence.
+			cfg.OptStartTime = nil
+		}
 
 		js := jsi.js
 		sub.mu.Unlock()
@@ -2407,14 +2451,15 @@ func (sub *Subscription) resetOrderedConsumer(sseq uint64) {
 		}
 		if err != nil {
 			var apiErr *APIError
-			if errors.Is(err, ErrJetStreamNotEnabled) || errors.Is(err, ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
-				// if creating consumer failed, retry
+			if !errors.As(err, &apiErr) || errors.Is(err, ErrJetStreamNotEnabled) {
+				// No answer from the server, retry on the next reconnect or
+				// activity check.
 				return
-			} else if errors.As(err, &apiErr) && apiErr.ErrorCode == JSErrCodeInsufficientResourcesErr {
+			} else if apiErr.ErrorCode == JSErrCodeInsufficientResourcesErr {
 				// retry for insufficient resources, as it may mean that client is connected to a running
 				// server in cluster while the server hosting R1 JetStream resources is restarting
 				return
-			} else if errors.As(err, &apiErr) && apiErr.ErrorCode == JSErrCodeJetStreamNotAvailable {
+			} else if apiErr.ErrorCode == JSErrCodeJetStreamNotAvailable {
 				// retry if JetStream meta leader is temporarily unavailable
 				return
 			}
