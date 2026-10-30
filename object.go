@@ -622,7 +622,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 		// is the link in the same bucket?
 		lbuck := info.ObjectMeta.Opts.Link.Bucket
 		if lbuck == obs.name {
-			return obs.Get(info.ObjectMeta.Opts.Link.Name)
+			return obs.Get(info.ObjectMeta.Opts.Link.Name, opts...)
 		}
 
 		// different bucket
@@ -630,7 +630,7 @@ func (obs *obs) Get(name string, opts ...GetObjectOpt) (ObjectResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		return lobs.Get(info.ObjectMeta.Opts.Link.Name)
+		return lobs.Get(info.ObjectMeta.Opts.Link.Name, opts...)
 	}
 
 	result := &objResult{info: info, ctx: ctx, readTimeout: obs.js.opts.wait}
