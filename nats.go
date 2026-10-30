@@ -2271,11 +2271,8 @@ func (nc *Conn) parseServerURL(sURL string, implicit, saveTLSName bool) (*Server
 	var tlsName string
 	if implicit {
 		curl := nc.current.URL
-		// Check to see if we do not have a url.User but current connected
-		// url does. If so copy over.
-		if u.User == nil && curl.User != nil {
-			u.User = curl.User
-		}
+		// Use the reporting server's credentials, never the entry's own.
+		u.User = curl.User
 		// We are checking to see if we have a secure connection and are
 		// adding an implicit server that just has an IP. If so we will remember
 		// the current hostname we are connected to. If we are connected to an
@@ -4349,6 +4346,10 @@ func (nc *Conn) processInfo(info string) error {
 	// Transform that to a map for easy lookups
 	tmp := make(map[string]struct{}, len(urls))
 	for _, curl := range urls {
+		// An entry is matched by its address; its user info is never used.
+		if at := strings.LastIndex(curl, "@"); at >= 0 {
+			curl = curl[at+1:]
+		}
 		tmp[curl] = struct{}{}
 	}
 	// Walk the pool and removed the implicit servers that are no longer in the
