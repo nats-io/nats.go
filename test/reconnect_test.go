@@ -15,9 +15,11 @@ package test
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"sync"
@@ -1925,5 +1927,135 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 	// Flush sends PING and waits for PONG to check the connection still works.
 	if err := nc.FlushTimeout(time.Second); err != nil {
 		t.Fatalf("Recovered connection is not usable: %v", err)
+	}
+}
+
+// The INFO of a failed connection attempt that starts TLS after it is not
+// kept: ReconnectToServer gets the info of the last connected server, and a
+// lame duck flag in it does not reach LameDuckModeHandler.
+func TestFailedAttemptInfoNotKept(t *testing.T) {
+	cfg := fakeTLSConfig(t)
+	for _, test := range []struct {
+		name      string
+		handshake bool
+		plain     bool // no TLS options, and only the failing attempt requires TLS
+	}{
+		{"TLS handshake fails", false, false},
+		{"fails after the TLS handshake", true, false},
+		{"TLS handshake fails, no TLS options", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			srv := newFakeServer(t, func(conn net.Conn) {
+				n := attempts.Add(1)
+				if n == 2 {
+					conn.Write(fakeInfoWith(map[string]any{"server_name": "bad", "ldm": true, "tls_required": true}))
+					if test.handshake {
+						tls.Server(conn, cfg).Handshake()
+					}
+					return
+				}
+				if test.plain {
+					conn.Write(fakeInfoWith(map[string]any{"server_name": "good"}))
+					serveProto(conn, func(line string) {
+						if n == 1 && line == "PING" {
+							conn.Close()
+						}
+					})
+					return
+				}
+				conn.Write(fakeInfoWith(map[string]any{"server_name": "good", "tls_required": true}))
+				tc := tls.Server(conn, cfg)
+				if tc.Handshake() != nil {
+					return
+				}
+				serveProto(tc, func(line string) {
+					if n == 1 && line == "PING" {
+						tc.Close()
+					}
+				})
+			})
+			infos := make(chan string, 8)
+			ldm := make(chan struct{}, 1)
+			reconnected := make(chan struct{}, 1)
+			tlsOpt := nats.RootCAs("./configs/certs/ca.pem")
+			if test.plain {
+				tlsOpt = func(*nats.Options) error { return nil }
+			}
+			nc, err := nats.Connect("nats://"+srv.addr(),
+				tlsOpt,
+				nats.ReconnectWait(10*time.Millisecond),
+				nats.ReconnectJitter(0, 0),
+				nats.ReconnectToServer(func(_ []nats.Server, info nats.ServerInfo) (*nats.Server, time.Duration) {
+					select {
+					case infos <- info.Name:
+					default:
+					}
+					return nil, 0
+				}),
+				nats.LameDuckModeHandler(func(*nats.Conn) {
+					select {
+					case ldm <- struct{}{}:
+					default:
+					}
+				}),
+				nats.ReconnectHandler(func(*nats.Conn) {
+					select {
+					case reconnected <- struct{}{}:
+					default:
+					}
+				}),
+			)
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
+			}
+			defer nc.Close()
+			select {
+			case <-reconnected:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Client did not reconnect")
+			}
+			if n := attempts.Load(); n < 3 {
+				t.Fatalf("Expected a failed attempt before the reconnect, got %d attempts", n)
+			}
+			for len(infos) > 0 {
+				if name := <-infos; name != "good" {
+					t.Fatalf("ReconnectToServer got the info of a failed attempt: %q", name)
+				}
+			}
+			select {
+			case <-ldm:
+				t.Fatal("LameDuckModeHandler called for a failed attempt")
+			default:
+			}
+		})
+	}
+}
+
+// A plaintext attempt that fails after its INFO keeps that INFO, so with
+// RetryOnFailedConnect a message with headers can be buffered before the
+// first connection.
+func TestFailedPlaintextAttemptKeepsInfo(t *testing.T) {
+	srv := newFakeServer(t, func(conn net.Conn) {
+		conn.Write(fakeInfo())
+	})
+	nc, err := nats.Connect("nats://"+srv.addr(),
+		nats.RetryOnFailedConnect(true),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+		if nc.MaxPayload() == 0 {
+			return errors.New("expected the server info of the failed attempt")
+		}
+		return nil
+	})
+	msg := &nats.Msg{Subject: "foo", Header: nats.Header{"k": []string{"v"}}}
+	if err := nc.PublishMsg(msg); err != nil {
+		t.Fatalf("Error on publish: %v", err)
 	}
 }

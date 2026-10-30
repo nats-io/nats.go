@@ -2010,6 +2010,17 @@ func hostOnlyTLSCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
 }
 
+// A WebSocket connection never starts TLS after its INFO: a wss:// one does it
+// before the HTTP upgrade.
+func TestTLSAfterInfoWebSocket(t *testing.T) {
+	nc := &Conn{Opts: GetDefaultOptions(), ws: true}
+	nc.Opts.Secure = true
+	nc.info.TLSRequired = true
+	if nc.tlsAfterInfo() {
+		t.Fatal("tlsAfterInfo is true for a WebSocket connection")
+	}
+}
+
 // TestMakeTLSConnUsesPreservedTLSName covers the consumer side of the tlsName
 // invariant: parseServerURL records the originally-dialed hostname on a pool
 // entry (see TestParseServerURLPreservesTLSName), and makeTLSConn must use it

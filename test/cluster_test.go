@@ -15,18 +15,21 @@ package test
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	testservice "github.com/synadia-io/orbit.go/ntf-client"
 )
 
 // tsTestServers returns a slice of fabricated URLs that point at non-existent
@@ -1156,4 +1159,252 @@ func TestDiscoveredServerCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tlsDialer does the TLS handshake itself and tells the client to skip its own.
+type tlsDialer struct{}
+
+func (tlsDialer) Dial(network, address string) (net.Conn, error) {
+	return tls.Dial(network, address, &tls.Config{InsecureSkipVerify: true})
+}
+
+func (tlsDialer) SkipTLSHandshake() bool { return true }
+
+// Discovered servers come from the INFO received inside TLS. The list in the
+// INFO read before the TLS upgrade is never used, not even when the attempt
+// then fails, and a server of version 2.12 or later sends its list inside TLS
+// right after the first PONG, which Connect waits for.
+func TestDiscoveredServersFromTLSInfo(t *testing.T) {
+	const x, y = "127.0.0.1:11222", "127.0.0.1:11223"
+	cfg := fakeTLSConfig(t)
+	ca := nats.RootCAs("./configs/certs/ca.pem")
+	tlsInfo := func(version string, urls ...string) []byte {
+		return fakeInfoWith(map[string]any{"tls_required": true, "version": version}, urls...)
+	}
+	// tlsServer sends info in plaintext, upgrades to TLS and serves the
+	// protocol, calling afterPong once the first PING has been answered.
+	tlsServer := func(info []byte, afterPong func(net.Conn), onLine func(string)) func(net.Conn) {
+		return func(conn net.Conn) {
+			conn.Write(info)
+			tc := tls.Server(conn, cfg)
+			if tc.Handshake() != nil {
+				return
+			}
+			pings := 0
+			serveProto(tc, func(line string) {
+				if line != "PING" {
+					if onLine != nil {
+						onLine(line)
+					}
+					return
+				}
+				pings++
+				if pings == 1 && afterPong != nil {
+					afterPong(tc)
+				}
+			})
+		}
+	}
+	connect := func(t *testing.T, srv *fakeServer, opts ...nats.Option) (*nats.Conn, time.Duration) {
+		t.Helper()
+		start := time.Now()
+		nc, err := nats.Connect("nats://"+srv.addr(), opts...)
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		t.Cleanup(nc.Close)
+		return nc, time.Since(start)
+	}
+	expectDiscovered := func(t *testing.T, nc *nats.Conn, want ...string) {
+		t.Helper()
+		got := nc.DiscoveredServers()
+		for i := range got {
+			got[i] = got[i][strings.Index(got[i], "://")+3:]
+		}
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Fatalf("Expected discovered servers %v, got %v", want, got)
+		}
+	}
+
+	t.Run("plaintext", func(t *testing.T) {
+		a := newFakeServer(t, func(conn net.Conn) {
+			conn.Write(fakeInfo(x))
+			serveProto(conn, nil)
+		})
+		nc, _ := connect(t, a)
+		expectDiscovered(t, nc, x)
+	})
+
+	t.Run("plaintext failed attempt", func(t *testing.T) {
+		b := newFakeServer(t, recordConnects(make(chan string, 1)))
+		a := newFakeServer(t, func(conn net.Conn) {
+			conn.Write(fakeInfo(b.addr()))
+		})
+		nc, _ := connect(t, a)
+		if nc.ConnectedAddr() != b.addr() {
+			t.Fatalf("Expected a connection to %s, got %s", b.addr(), nc.ConnectedAddr())
+		}
+	})
+
+	t.Run("TLS before 2.12", func(t *testing.T) {
+		a := newFakeServer(t, tlsServer(tlsInfo("2.11.0", x), nil, nil))
+		nc, elapsed := connect(t, a, ca)
+		expectDiscovered(t, nc)
+		if elapsed > time.Second {
+			t.Fatalf("Connect waited %v for an INFO an older server does not send", elapsed)
+		}
+	})
+
+	t.Run("TLS 2.12", func(t *testing.T) {
+		a := newFakeServer(t, tlsServer(tlsInfo("2.12.0", x), func(conn net.Conn) {
+			conn.Write(fakeInfo(y))
+		}, nil))
+		nc, _ := connect(t, a, ca)
+		expectDiscovered(t, nc, y)
+	})
+
+	t.Run("TLS 2.12 without INFO after PONG", func(t *testing.T) {
+		conns := make(chan net.Conn, 1)
+		a := newFakeServer(t, tlsServer(tlsInfo("2.12.0", x), func(conn net.Conn) {
+			conns <- conn
+		}, nil))
+		nc, elapsed := connect(t, a, ca, nats.Timeout(300*time.Millisecond))
+		if elapsed < 300*time.Millisecond {
+			t.Fatalf("Connect returned after %v without waiting for the INFO", elapsed)
+		}
+		expectDiscovered(t, nc)
+		(<-conns).Write(fakeInfo(y))
+		checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+			if got := nc.DiscoveredServers(); len(got) != 1 || !strings.HasSuffix(got[0], y) {
+				return fmt.Errorf("expected discovered server %s, got %v", y, got)
+			}
+			return nil
+		})
+	})
+
+	t.Run("TLS 2.12 PING during the wait", func(t *testing.T) {
+		pongs := make(chan struct{}, 1)
+		a := newFakeServer(t, tlsServer(tlsInfo("2.12.0", x), func(conn net.Conn) {
+			conn.Write([]byte("PING\r\n"))
+			conn.Write(fakeInfo(y))
+		}, func(line string) {
+			if line == "PONG" {
+				select {
+				case pongs <- struct{}{}:
+				default:
+				}
+			}
+		}))
+		nc, _ := connect(t, a, ca)
+		expectDiscovered(t, nc, y)
+		select {
+		case <-pongs:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Client did not answer the PING sent during the wait")
+		}
+	})
+
+	t.Run("TLS first", func(t *testing.T) {
+		a := newFakeServer(t, func(conn net.Conn) {
+			tc := tls.Server(conn, cfg)
+			if tc.Handshake() != nil {
+				return
+			}
+			tc.Write(tlsInfo("2.11.0", x))
+			serveProto(tc, nil)
+		})
+		nc, _ := connect(t, a, ca, nats.TLSHandshakeFirst())
+		expectDiscovered(t, nc, x)
+	})
+
+	// A dialer counts as TLS only when it says it does the handshake.
+	t.Run("custom dialer", func(t *testing.T) {
+		a := newFakeServer(t, tlsServer(tlsInfo("2.11.0", x), nil, nil))
+		nc, _ := connect(t, a, ca, nats.SetCustomDialer(&net.Dialer{}))
+		expectDiscovered(t, nc)
+	})
+
+	t.Run("dialer that does TLS", func(t *testing.T) {
+		a := newFakeServer(t, func(conn net.Conn) {
+			tc := tls.Server(conn, cfg)
+			if tc.Handshake() != nil {
+				return
+			}
+			tc.Write(tlsInfo("2.11.0", x))
+			serveProto(tc, nil)
+		})
+		nc, _ := connect(t, a, nats.SetCustomDialer(tlsDialer{}))
+		expectDiscovered(t, nc, x)
+	})
+
+	t.Run("TLS failed attempt", func(t *testing.T) {
+		a := newFakeServer(t, func(conn net.Conn) {
+			conn.Write(tlsInfo("2.11.0", x))
+		})
+		c := newFakeServer(t, tlsServer(tlsInfo("2.11.0"), nil, nil))
+		nc, err := nats.Connect(fmt.Sprintf("nats://%s,nats://%s", a.addr(), c.addr()), ca, nats.DontRandomize())
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+		if nc.ConnectedAddr() != c.addr() {
+			t.Fatalf("Expected a connection to %s, got %s", c.addr(), nc.ConnectedAddr())
+		}
+		expectDiscovered(t, nc)
+	})
+
+	t.Run("TLS required without TLS options", func(t *testing.T) {
+		connects := make(chan string, 1)
+		b := newFakeServer(t, recordConnects(connects))
+		a := newFakeServer(t, tlsServer(tlsInfo("2.11.0", b.addr()), nil, nil))
+		// The client has no CA for the test certificate, so the attempt fails
+		// after the plaintext INFO.
+		nc, err := nats.Connect("nats://"+a.addr(), nats.UserInfo("alice", "s3cret"))
+		if err == nil {
+			nc.Close()
+		}
+		select {
+		case c := <-connects:
+			t.Fatalf("CONNECT sent to a server from the plaintext INFO: %s", c)
+		default:
+		}
+		if err == nil {
+			t.Fatal("Expected the connect to fail")
+		}
+	})
+
+	t.Run("TLS cluster", func(t *testing.T) {
+		inst := newTester(t).CreateCluster(t, 2, false, managedTLSOpts(t, testservice.TLSServerOnly()))
+		t.Cleanup(func() { inst.Destroy(t) })
+		caPath, _, _ := tlsCertFiles(t, inst)
+		nc, err := nats.Connect(inst.Servers[0].URL, nats.RootCAs(caPath))
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+		var major, minor int
+		fmt.Sscanf(nc.ConnectedServerVersion(), "%d.%d", &major, &minor)
+		if major == 2 && minor < 12 {
+			expectDiscovered(t, nc)
+			return
+		}
+		peer := hostPortFromURL(inst.Servers[1].URL)
+		checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+			if got := nc.DiscoveredServers(); !slices.ContainsFunc(got, func(s string) bool { return strings.HasSuffix(s, "://"+peer) }) {
+				return fmt.Errorf("expected discovered server %s, got %v", peer, got)
+			}
+			return nil
+		})
+	})
+
+	t.Run("ignore discovered servers", func(t *testing.T) {
+		a := newFakeServer(t, tlsServer(tlsInfo("2.12.0", x), nil, nil))
+		nc, elapsed := connect(t, a, ca, nats.IgnoreDiscoveredServers())
+		expectDiscovered(t, nc)
+		if elapsed > time.Second {
+			t.Fatalf("Connect waited %v for an INFO it would ignore", elapsed)
+		}
+	})
 }
