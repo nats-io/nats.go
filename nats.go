@@ -694,6 +694,7 @@ type Conn struct {
 	ar            bool // abort reconnect
 	rqch          chan struct{}
 	ws            bool // true if a websocket connection
+	awaitInfo     bool // wait for the INFO after the first PONG before connected
 	// tlsReason says what made the client ask for TLS.
 	tlsReason string
 
@@ -2114,6 +2115,7 @@ var _CRLF_BYTES_ = []byte(_CRLF_)
 const (
 	_OK_OP_   = "+OK"
 	_ERR_OP_  = "-ERR"
+	_PING_OP_ = "PING"
 	_PONG_OP_ = "PONG"
 	_INFO_OP_ = "INFO"
 )
@@ -2975,9 +2977,15 @@ func (nc *Conn) processConnectInit() error {
 		}
 	}
 
-	// Process the INFO protocol received from the server
+	// Process the INFO protocol received from the server. An INFO read before
+	// TLS is not authenticated, so a failed attempt leaves the server info as
+	// it was.
+	info := nc.info
 	err := nc.processExpectedInfo()
 	if err != nil {
+		if nc.tlsAfterInfo() {
+			nc.info = info
+		}
 		return nc.tlsHandshakeEOF(err)
 	}
 
@@ -2985,6 +2993,9 @@ func (nc *Conn) processConnectInit() error {
 	// Wait for the PONG response (or any error that we get from the server).
 	err = nc.sendConnect()
 	if err != nil {
+		if nc.tlsAfterInfo() {
+			nc.info = info
+		}
 		return nc.tlsHandshakeEOF(err)
 	}
 
@@ -3146,9 +3157,20 @@ func (nc *Conn) processExpectedInfo() error {
 		return ErrNoInfoReceived
 	}
 
-	// Parse the protocol
-	if err := nc.processInfo(c.args); err != nil {
-		return err
+	if c.args != _EMPTY_ {
+		if err := nc.parseInfo(c.args); err != nil {
+			return err
+		}
+	}
+
+	// An INFO read before the TLS upgrade is not authenticated, so its
+	// connect_urls are not used. A server new enough sends the list inside
+	// TLS right after the first PONG, and sendConnect waits for it.
+	nc.awaitInfo = false
+	if nc.tlsAfterInfo() {
+		nc.awaitInfo = !nc.Opts.IgnoreDiscoveredServers && sendsInfoAfterPong(nc.info.Version)
+	} else {
+		nc.updateServerPool()
 	}
 
 	if nc.Opts.Nkey != "" && nc.info.Nonce == "" {
@@ -3162,6 +3184,25 @@ func (nc *Conn) processExpectedInfo() error {
 	}
 
 	return nc.checkForSecure()
+}
+
+// tlsAfterInfo reports whether this attempt starts TLS after the INFO it has
+// read, which was therefore read in plaintext.
+func (nc *Conn) tlsAfterInfo() bool {
+	if nc.ws || nc.Opts.TLSHandshakeFirst {
+		return false
+	}
+	if sd, ok := nc.Opts.CustomDialer.(skipTLSDialer); ok && sd.SkipTLSHandshake() {
+		return false
+	}
+	return nc.Opts.Secure || nc.info.TLSRequired
+}
+
+// sendsInfoAfterPong reports whether a server of this version sends an INFO
+// right after the PONG that answers the first PING.
+func sendsInfoAfterPong(version string) bool {
+	major, minor, _, err := versionComponents(version)
+	return err == nil && (major > 2 || (major == 2 && minor >= 12))
 }
 
 // Sends a protocol control message by queuing into the bufio writer
@@ -3351,10 +3392,44 @@ func (nc *Conn) sendConnect() error {
 		return fmt.Errorf("nats: expected '%s', got '%s'", _PONG_OP_, proto)
 	}
 
+	if nc.awaitInfo {
+		if err := nc.readPostPongInfo(); err != nil {
+			return err
+		}
+	}
+
 	// This is where we are truly connected.
 	nc.changeConnStatus(CONNECTED)
 
 	return nil
+}
+
+// readPostPongInfo reads the INFO that follows the first PONG, answering
+// PINGs on the way, for up to Timeout from now. When the time runs out
+// before anything arrives, the connection goes on without it.
+func (nc *Conn) readPostPongInfo() error {
+	nc.conn.SetDeadline(time.Now().Add(nc.Opts.Timeout))
+	c := &control{}
+	for {
+		proto, err := nc.readProto()
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) && proto == _EMPTY_ {
+				return nil
+			}
+			return err
+		}
+		parseControl(proto, c)
+		switch c.op {
+		case _INFO_OP_:
+			return nc.processInfo(c.args)
+		case _PING_OP_:
+			if err := nc.bw.writeDirect(pongProto); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("nats: expected '%s', got '%s'", _INFO_OP_, strings.TrimRight(proto, "\r\n"))
+		}
+	}
 }
 
 // reads a protocol line.
@@ -4350,29 +4425,42 @@ func (nc *Conn) processOK() {
 	// do nothing
 }
 
-// processInfo is used to parse the info messages sent
-// from the server.
-// This function may update the server pool.
+// processInfo applies an INFO received on an established connection: the
+// server info, the server pool and lame duck mode.
 func (nc *Conn) processInfo(info string) error {
 	if info == _EMPTY_ {
 		return nil
 	}
+	if err := nc.parseInfo(info); err != nil {
+		return err
+	}
+	nc.updateServerPool()
+	if !nc.initc && nc.info.LameDuckMode {
+		if lameDuckModeHandler := nc.Opts.LameDuckModeHandler; lameDuckModeHandler != nil {
+			nc.ach.push(func() { lameDuckModeHandler(nc) })
+		}
+	}
+	return nil
+}
+
+// parseInfo replaces the connection's server info with the parsed INFO.
+func (nc *Conn) parseInfo(info string) error {
 	var ncInfo ServerInfo
 	if err := json.Unmarshal([]byte(info), &ncInfo); err != nil {
 		return err
 	}
-
-	// Copy content into connection's info structure.
 	nc.info = ncInfo
+	return nil
+}
+
+// updateServerPool applies the connect_urls of the server info to the pool.
+func (nc *Conn) updateServerPool() {
 	// The array could be empty/not present on initial connect,
 	// if advertise is disabled on that server, or servers that
 	// did not include themselves in the async INFO protocol.
 	// If empty, do not remove the implicit servers from the pool.
 	if len(nc.info.ConnectURLs) == 0 || nc.Opts.IgnoreDiscoveredServers {
-		if !nc.initc && ncInfo.LameDuckMode && nc.Opts.LameDuckModeHandler != nil {
-			nc.ach.push(func() { nc.Opts.LameDuckModeHandler(nc) })
-		}
-		return nil
+		return
 	}
 	// Note about pool randomization: when the pool was first created,
 	// it was randomized (if allowed). We keep the order the same (removing
@@ -4439,12 +4527,6 @@ func (nc *Conn) processInfo(info string) error {
 			}
 		}
 	}
-	if !nc.initc && ncInfo.LameDuckMode {
-		if lameDuckModeHandler := nc.Opts.LameDuckModeHandler; lameDuckModeHandler != nil {
-			nc.ach.push(func() { lameDuckModeHandler(nc) })
-		}
-	}
-	return nil
 }
 
 // processAsyncInfo does the same than processInfo, but is called
