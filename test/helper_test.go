@@ -14,10 +14,15 @@
 package test
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,4 +147,119 @@ func waitFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
 func checkFor(t *testing.T, totalWait, sleepDur time.Duration, f func() error) {
 	t.Helper()
 	waitFor(t, totalWait, sleepDur, f)
+}
+
+// fakeServer is a local listener that hands every accepted connection to
+// handle, for tests that script the server side of the protocol.
+type fakeServer struct {
+	ln   net.Listener
+	port int
+
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+}
+
+func newFakeServer(t *testing.T, handle func(net.Conn)) *fakeServer {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen: %v", err)
+	}
+	fs := &fakeServer{
+		ln:    ln,
+		port:  ln.Addr().(*net.TCPAddr).Port,
+		conns: make(map[net.Conn]struct{}),
+	}
+	t.Cleanup(fs.close)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			fs.mu.Lock()
+			fs.conns[conn] = struct{}{}
+			fs.mu.Unlock()
+			go func() {
+				defer fs.drop(conn)
+				handle(conn)
+			}()
+		}
+	}()
+	return fs
+}
+
+func (fs *fakeServer) addr() string {
+	return fmt.Sprintf("127.0.0.1:%d", fs.port)
+}
+
+func (fs *fakeServer) drop(conn net.Conn) {
+	fs.mu.Lock()
+	delete(fs.conns, conn)
+	fs.mu.Unlock()
+	conn.Close()
+}
+
+func (fs *fakeServer) close() {
+	fs.ln.Close()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for conn := range fs.conns {
+		conn.Close()
+	}
+}
+
+func fakeInfo(connectURLs ...string) []byte {
+	return fakeInfoWith(nil, connectURLs...)
+}
+
+// fakeInfoWith is fakeInfo with extra fields added or overridden.
+func fakeInfoWith(extra map[string]any, connectURLs ...string) []byte {
+	info := map[string]any{
+		"server_id":   "FAKE",
+		"proto":       1,
+		"headers":     true,
+		"max_payload": 1048576,
+	}
+	if len(connectURLs) > 0 {
+		info["connect_urls"] = connectURLs
+	}
+	maps.Copy(info, extra)
+	b, _ := json.Marshal(info)
+	return []byte(fmt.Sprintf("INFO %s\r\n", b))
+}
+
+// serveProto answers every PING on conn with PONG and passes each line,
+// without its line ending, to onLine, until the connection ends.
+func serveProto(conn net.Conn, onLine func(line string)) {
+	br := bufio.NewReader(conn)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "PING" {
+			conn.Write([]byte("PONG\r\n"))
+		}
+		if onLine != nil {
+			onLine(line)
+		}
+	}
+}
+
+// recordConnects serves a plaintext server that reports the payload of every
+// CONNECT on connects, dropping it when nobody is waiting.
+func recordConnects(connects chan<- string) func(net.Conn) {
+	return func(conn net.Conn) {
+		conn.Write(fakeInfo())
+		serveProto(conn, func(line string) {
+			if strings.HasPrefix(line, "CONNECT ") {
+				select {
+				case connects <- strings.TrimSpace(line[len("CONNECT "):]):
+				default:
+				}
+			}
+		})
+	}
 }

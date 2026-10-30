@@ -14,6 +14,8 @@
 package test
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -1037,4 +1039,121 @@ func TestIgnoreDiscoveredServers(t *testing.T) {
 			t.Fatalf("Expected no discovered servers, got %v", nc.DiscoveredServers())
 		}
 	})
+}
+
+// An entry with user info is the same server on every INFO, so the failures
+// to reach it count toward MaxReconnects.
+func TestUserInfoEntryCountsTowardMaxReconnects(t *testing.T) {
+	// b lists itself with a token in front and refuses every CONNECT.
+	b := newFakeServer(t, func(conn net.Conn) {
+		conn.Write(fakeInfo("tok@" + conn.LocalAddr().String()))
+		serveProto(conn, func(line string) {
+			if strings.HasPrefix(line, "CONNECT ") {
+				conn.Write([]byte("-ERR 'Authorization Violation'\r\n"))
+				conn.Close()
+			}
+		})
+	})
+	a := newFakeServer(t, func(conn net.Conn) {
+		conn.Write(fakeInfo("tok@" + b.addr()))
+		serveProto(conn, nil)
+	})
+	closed := make(chan struct{})
+	nc, err := nats.Connect("nats://"+a.addr(),
+		nats.MaxReconnects(3),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+		nats.ClosedHandler(func(*nats.Conn) { close(closed) }))
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	a.close()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Client kept reconnecting past MaxReconnects")
+	}
+}
+
+// A discovered server is dialed with the credentials the client uses for the
+// server that reported it; user info in the connect_urls entry itself is
+// dropped.
+func TestDiscoveredServerCredentials(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		url  string
+		opts []nats.Option
+		// userInfo is written in front of the discovered server's entry.
+		userInfo string
+		// relist makes the reporting server list the discovered server a
+		// second time, without user info.
+		relist           bool
+		user, pass, auth string
+	}{
+		{name: "credentials in URL", url: "nats://alice:secret@%s", userInfo: "bob:pw@", user: "alice", pass: "secret"},
+		{name: "credentials in options", url: "nats://%s", opts: []nats.Option{nats.UserInfo("alice", "secret")}, userInfo: "bob:pw@", user: "alice", pass: "secret"},
+		{name: "token in options", url: "nats://%s", opts: []nats.Option{nats.Token("tok")}, userInfo: "other@", auth: "tok"},
+		{name: "no credentials", url: "nats://%s", userInfo: "bob:pw@"},
+		{name: "plain entry, credentials in URL", url: "nats://alice:secret@%s", user: "alice", pass: "secret"},
+		{name: "plain entry, token in URL", url: "nats://tok@%s", auth: "tok"},
+		{name: "empty user info", url: "nats://alice:secret@%s", userInfo: "@", user: "alice", pass: "secret"},
+		{name: "user info that does not parse", url: "nats://alice:secret@%s", userInfo: "%zz@", user: "alice", pass: "secret"},
+		{name: "token handler", url: "nats://%s", opts: []nats.Option{nats.TokenHandler(func() string { return "tok" })}, userInfo: "other@", auth: "tok"},
+		{name: "user JWT", url: "nats://%s", opts: []nats.Option{nats.UserJWT(
+			func() (string, error) { return "jwt", nil },
+			func([]byte) ([]byte, error) { return []byte("sig"), nil })}, userInfo: "other@"},
+		{name: "entry listed again without user info", url: "nats://alice:secret@%s", userInfo: "bob:pw@", relist: true, user: "alice", pass: "secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			connects := make(chan string, 1)
+			b := newFakeServer(t, recordConnects(connects))
+			// a reports b, then drops the client after its first PING.
+			a := newFakeServer(t, func(conn net.Conn) {
+				conn.Write(fakeInfo(test.userInfo + b.addr()))
+				br := bufio.NewReader(conn)
+				for {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if strings.HasPrefix(line, "PING") {
+						conn.Write([]byte("PONG\r\n"))
+						if test.relist {
+							conn.Write(fakeInfo(b.addr()))
+						}
+						return
+					}
+				}
+			})
+
+			opts := append([]nats.Option{
+				nats.ReconnectWait(10 * time.Millisecond),
+				nats.ReconnectJitter(0, 0),
+			}, test.opts...)
+			nc, err := nats.Connect(fmt.Sprintf(test.url, a.addr()), opts...)
+			if err != nil {
+				t.Fatalf("Error on connect: %v", err)
+			}
+			defer nc.Close()
+
+			var connect struct {
+				User string `json:"user"`
+				Pass string `json:"pass"`
+				Auth string `json:"auth_token"`
+			}
+			select {
+			case c := <-connects:
+				if err := json.Unmarshal([]byte(c), &connect); err != nil {
+					t.Fatalf("Invalid CONNECT %q: %v", c, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Client did not connect to the discovered server")
+			}
+			if connect.User != test.user || connect.Pass != test.pass || connect.Auth != test.auth {
+				t.Fatalf("Discovered server got user %q pass %q token %q, expected user %q pass %q token %q",
+					connect.User, connect.Pass, connect.Auth, test.user, test.pass, test.auth)
+			}
+		})
+	}
 }
