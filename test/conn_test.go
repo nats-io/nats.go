@@ -230,7 +230,7 @@ func TestServerSecureConnections(t *testing.T) {
 	t.Cleanup(func() { dInst.Destroy(t) })
 
 	nc, err = nats.Connect(dInst.Servers[0].URL, nats.Secure(), nats.RootCAs(caPath))
-	if err == nil || nc != nil || err != nats.ErrSecureConnWanted {
+	if err == nil || nc != nil || !errors.Is(err, nats.ErrSecureConnWanted) {
 		if nc != nil {
 			nc.Close()
 		}
@@ -585,6 +585,207 @@ func TestServerTLSHintConnections(t *testing.T) {
 		t.Fatalf("Failed to create secure (TLS) connection: %v", err)
 	}
 	defer nc.Close()
+}
+
+// A TLS configuration keeps asking for TLS on reconnect: once the TLS server
+// is gone, a server without TLS is refused before CONNECT.
+func TestTLSConfigAsksForTLSOnReconnect(t *testing.T) {
+	c := newTester(t)
+	inst := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSServerOnly()))
+	t.Cleanup(func() { inst.Destroy(t) })
+	cfg, err := testservice.TLSConfig(inst)
+	if err != nil {
+		t.Fatalf("Error on TLS config: %v", err)
+	}
+	connects := make(chan string, 1)
+	plain := newFakeServer(t, recordConnects(connects))
+
+	nc, err := nats.Connect(
+		"nats://"+hostPortFromURL(inst.Servers[0].URL)+",nats://"+plain.addr(),
+		nats.DontRandomize(),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+		func(o *nats.Options) error {
+			o.TLSConfig = cfg
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	if _, err := nc.TLSConnectionState(); err != nil {
+		t.Fatalf("Expected a TLS connection, got: %v", err)
+	}
+
+	inst.StopServer(t, inst.Servers[0])
+	select {
+	case c := <-connects:
+		t.Fatalf("CONNECT sent without TLS on reconnect: %s", c)
+	case <-time.After(time.Second):
+	}
+}
+
+// A TLS configuration asks for TLS with a discovered server too: once the TLS
+// server that listed it is gone, a server without TLS is refused before CONNECT.
+func TestTLSConfigAsksForTLSWithDiscoveredServer(t *testing.T) {
+	connects := make(chan string, 1)
+	redialed := make(chan struct{})
+	var dials atomic.Int32
+	plain := newFakeServer(t, func(conn net.Conn) {
+		if dials.Add(1) == 2 {
+			close(redialed)
+		}
+		recordConnects(connects)(conn)
+	})
+	cfg := fakeTLSConfig(t)
+	srv := newFakeServer(t, func(conn net.Conn) {
+		conn.Write(fakeInfoWith(map[string]any{"tls_required": true}))
+		tc := tls.Server(conn, cfg)
+		if tc.Handshake() != nil {
+			return
+		}
+		// Servers send the list inside TLS, after the first PONG.
+		serveProto(tc, func(line string) {
+			if line == "PING" {
+				tc.Write(fakeInfoWith(map[string]any{"tls_required": true}, plain.addr()))
+				tc.Close()
+			}
+		})
+	})
+	ca, err := os.ReadFile("./configs/certs/ca.pem")
+	if err != nil {
+		t.Fatalf("Error reading the CA: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca)
+	nc, err := nats.Connect("nats://"+srv.addr(),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+		func(o *nats.Options) error {
+			o.TLSConfig = &tls.Config{RootCAs: pool}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	// A second dial means the first attempt ended without CONNECT.
+	select {
+	case c := <-connects:
+		t.Fatalf("CONNECT sent without TLS to discovered server %s: %s", plain.addr(), c)
+	case <-redialed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Client did not retry %s", plain.addr())
+	}
+}
+
+// dialInProcess is an InProcessConnProvider that dials the given address.
+type dialInProcess string
+
+func (a dialInProcess) InProcessConn() (net.Conn, error) {
+	return net.Dial("tcp", string(a))
+}
+
+// A TLS configuration asks for TLS: a server without TLS is refused before
+// CONNECT, and a server that only offers TLS is upgraded.
+func TestTLSConfigAsksForTLS(t *testing.T) {
+	pool := x509.NewCertPool()
+	for _, test := range []struct {
+		name string
+		set  nats.Option
+	}{
+		{"TLSConfig", func(o *nats.Options) error {
+			o.TLSConfig = &tls.Config{RootCAs: pool}
+			return nil
+		}},
+		{"RootCAsCB", func(o *nats.Options) error {
+			o.RootCAsCB = func() (*x509.CertPool, error) { return pool, nil }
+			return nil
+		}},
+		{"TLSCertCB", func(o *nats.Options) error {
+			o.TLSCertCB = func() (tls.Certificate, error) { return tls.Certificate{}, nil }
+			return nil
+		}},
+	} {
+		t.Run(test.name+" without TLS", func(t *testing.T) {
+			connects := make(chan string, 1)
+			srv := newFakeServer(t, recordConnects(connects))
+			nc, err := nats.Connect("nats://"+srv.addr(), test.set)
+			if err == nil {
+				nc.Close()
+			}
+			select {
+			case c := <-connects:
+				t.Fatalf("CONNECT sent without TLS: %s", c)
+			default:
+			}
+			if !errors.Is(err, nats.ErrSecureConnWanted) {
+				t.Fatalf("Expected %v, got: %v", nats.ErrSecureConnWanted, err)
+			}
+			if want := test.name + " asks for TLS and " + srv.addr() + " does not offer it"; !strings.Contains(err.Error(), want) {
+				t.Fatalf("Expected the error to say %q, got: %v", want, err)
+			}
+		})
+	}
+
+	// These options fill in TLSConfig as well; the error names them through Secure.
+	for _, test := range []struct {
+		name string
+		set  nats.Option
+	}{
+		{"Secure", nats.Secure()},
+		{"Secure with a TLSConfig", nats.Secure(&tls.Config{RootCAs: pool})},
+		{"RootCAs", nats.RootCAs("./configs/certs/ca.pem")},
+		{"ClientCert", nats.ClientCert("./configs/certs/client-cert.pem", "./configs/certs/client-key.pem")},
+		{"ClientTLSConfig", nats.ClientTLSConfig(nil, func() (*x509.CertPool, error) { return pool, nil })},
+	} {
+		t.Run(test.name+" without TLS", func(t *testing.T) {
+			srv := newFakeServer(t, recordConnects(make(chan string, 1)))
+			_, err := nats.Connect("nats://"+srv.addr(), test.set)
+			if want := "Secure (set by Secure, RootCAs, ClientCert or ClientTLSConfig) asks for TLS and " + srv.addr() + " does not offer it"; err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Expected the error to say %q, got: %v", want, err)
+			}
+		})
+	}
+
+	t.Run("tls URL without TLS", func(t *testing.T) {
+		srv := newFakeServer(t, recordConnects(make(chan string, 1)))
+		_, err := nats.Connect("tls://alice:s3cret@" + srv.addr())
+		if want := "the URL tls://" + srv.addr() + " asks for TLS and " + srv.addr() + " does not offer it"; err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "s3cret") {
+			t.Fatalf("Expected the error to say %q and leave out the password, got: %v", want, err)
+		}
+	})
+
+	t.Run("in-process server without TLS", func(t *testing.T) {
+		srv := newFakeServer(t, recordConnects(make(chan string, 1)))
+		_, err := nats.Connect("", nats.InProcessServer(dialInProcess(srv.addr())), nats.Secure())
+		if want := " and the in-process server does not offer it"; err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("Expected the error to say %q, got: %v", want, err)
+		}
+	})
+
+	t.Run("TLS offered", func(t *testing.T) {
+		c := newTester(t)
+		inst := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSServerOnly()), testservice.WithTopLevel("allow_non_tls: true"))
+		t.Cleanup(func() { inst.Destroy(t) })
+		cfg, err := testservice.TLSConfig(inst)
+		if err != nil {
+			t.Fatalf("Error on TLS config: %v", err)
+		}
+		nc, err := nats.Connect("nats://"+hostPortFromURL(inst.Servers[0].URL), func(o *nats.Options) error {
+			o.TLSConfig = cfg
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Error on connect: %v", err)
+		}
+		defer nc.Close()
+		if _, err := nc.TLSConnectionState(); err != nil {
+			t.Fatalf("Expected a TLS connection, got: %v", err)
+		}
+	})
 }
 
 func TestClosedConnections(t *testing.T) {

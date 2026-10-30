@@ -354,7 +354,8 @@ type Options struct {
 	Secure bool
 
 	// TLSConfig is a custom TLS configuration to use for secure
-	// transports.
+	// transports. Setting it, RootCAsCB or TLSCertCB asks for TLS with
+	// every server, as Secure does.
 	TLSConfig *tls.Config
 
 	// TLSCertCB is used to fetch and return custom tls certificate.
@@ -693,6 +694,8 @@ type Conn struct {
 	ar            bool // abort reconnect
 	rqch          chan struct{}
 	ws            bool // true if a websocket connection
+	// tlsReason says what made the client ask for TLS.
+	tlsReason string
 
 	// New style response handler
 	respSub       string               // The wildcard subject
@@ -2025,9 +2028,16 @@ func (o Options) Connect() (*Conn, error) {
 		}
 	}
 
+	nc.tlsReason = nc.Opts.tlsReason()
+
 	// If the TLSHandshakeFirst option is specified, make sure that
 	// the Secure boolean is true.
 	if nc.Opts.TLSHandshakeFirst {
+		nc.Opts.Secure = true
+	}
+
+	// A TLS configuration asks for TLS.
+	if nc.Opts.TLSConfig != nil || nc.Opts.RootCAsCB != nil || nc.Opts.TLSCertCB != nil {
 		nc.Opts.Secure = true
 	}
 
@@ -2217,6 +2227,9 @@ func (nc *Conn) setupServerPool() error {
 		if srv.URL.Scheme == tlsScheme || srv.URL.Scheme == wsSchemeTLS {
 			// FIXME(dlc), this is for all in the pool, should be case by case.
 			nc.Opts.Secure = true
+			if nc.tlsReason == _EMPTY_ {
+				nc.tlsReason = fmt.Sprintf("the URL %s://%s asks for TLS", srv.URL.Scheme, srv.URL.Host)
+			}
 			if nc.Opts.TLSConfig == nil {
 				nc.Opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 			}
@@ -3063,6 +3076,27 @@ func (nc *Conn) connect() (bool, error) {
 	return connectionEstablished, err
 }
 
+// tlsReason names the setting that asks for TLS, if any. Secure comes before
+// the TLS fields because the options that set it fill in TLSConfig too.
+func (o *Options) tlsReason() string {
+	var name string
+	switch {
+	case o.TLSHandshakeFirst:
+		name = "TLSHandshakeFirst"
+	case o.Secure:
+		name = "Secure (set by Secure, RootCAs, ClientCert or ClientTLSConfig)"
+	case o.TLSConfig != nil:
+		name = "TLSConfig"
+	case o.RootCAsCB != nil:
+		name = "RootCAsCB"
+	case o.TLSCertCB != nil:
+		name = "TLSCertCB"
+	default:
+		return _EMPTY_
+	}
+	return name + " asks for TLS"
+}
+
 // This will check to see if the connection should be
 // secure. This can be dictated from either end and should
 // only be called after the INIT protocol has been received.
@@ -3072,7 +3106,11 @@ func (nc *Conn) checkForSecure() error {
 
 	// Check for mismatch in setups
 	if o.Secure && !nc.info.TLSRequired && !nc.info.TLSAvailable {
-		return ErrSecureConnWanted
+		host := nc.current.URL.Host
+		if o.InProcessServer != nil {
+			host = "the in-process server"
+		}
+		return fmt.Errorf("%w: %s and %s does not offer it", ErrSecureConnWanted, nc.tlsReason, host)
 	} else if nc.info.TLSRequired && !o.Secure {
 		// Switch to Secure since server needs TLS.
 		o.Secure = true

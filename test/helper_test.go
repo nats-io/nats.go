@@ -15,6 +15,7 @@ package test
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,6 +228,21 @@ func fakeInfoWith(extra map[string]any, connectURLs ...string) []byte {
 	maps.Copy(info, extra)
 	b, _ := json.Marshal(info)
 	return []byte(fmt.Sprintf("INFO %s\r\n", b))
+}
+
+// fakeTLSConfig is the server side of the test certificate that carries both
+// localhost and 127.0.0.1.
+func fakeTLSConfig(t *testing.T) *tls.Config {
+	return fakeTLSConfigFrom(t, "./configs/certs/server.pem", "./configs/certs/key.pem")
+}
+
+func fakeTLSConfigFrom(t *testing.T, certFile, keyFile string) *tls.Config {
+	t.Helper()
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatalf("Could not load the server certificate: %v", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}}
 }
 
 // serveProto answers every PING on conn with PONG and passes each line,
