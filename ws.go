@@ -230,7 +230,10 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 		// Get some data from the underlying reader.
 		n, err := r.r.Read(p)
 		if err != nil {
-			return 0, err
+			if n == 0 {
+				return 0, err
+			}
+			r.closeErr = err
 		}
 		buf = p[:n]
 	}
@@ -364,6 +367,11 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 	// In case of compression, there may be nothing to drain
 	if len(r.pending) > 0 {
 		return r.drainPending(p), nil
+	}
+	if r.closeErr != nil {
+		err := r.closeErr
+		r.closeErr = nil
+		return 0, err
 	}
 	return 0, nil
 }
