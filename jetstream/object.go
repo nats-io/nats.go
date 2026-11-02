@@ -866,7 +866,7 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		// is the link in the same bucket?
 		lbuck := info.ObjectMeta.Opts.Link.Bucket
 		if lbuck == obs.name {
-			return obs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
+			return obs.Get(ctx, info.ObjectMeta.Opts.Link.Name, opts...)
 		}
 
 		// different bucket
@@ -874,7 +874,7 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		if err != nil {
 			return nil, err
 		}
-		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name)
+		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name, opts...)
 	}
 
 	result := &objResult{info: info, ctx: ctx, cancel: cancel}
