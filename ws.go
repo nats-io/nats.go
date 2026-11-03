@@ -776,6 +776,9 @@ func (nc *Conn) wsEnqueueControlMsg(needsLock bool, frameType wsOpCode, payload 
 	fh, key := wsCreateFrameHeader(false, frameType, len(payload))
 	wr.ctrlFrames = append(wr.ctrlFrames, fh)
 	if len(payload) > 0 {
+		// The payload points into the read buffer, which is reused before
+		// the frame is sent if the writer is buffering.
+		payload = bytes.Clone(payload)
 		wsMaskBuf(key, payload)
 		wr.ctrlFrames = append(wr.ctrlFrames, payload)
 	}

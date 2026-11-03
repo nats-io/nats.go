@@ -225,6 +225,41 @@ func TestWSParseControlFrames(t *testing.T) {
 	}
 }
 
+func TestWSPongPayloadWhileBuffering(t *testing.T) {
+	mr := &fakeReader{ch: make(chan []byte, 1)}
+	defer mr.close()
+	r := wsNewReader(mr)
+	var out bytes.Buffer
+	r.nc = &Conn{bw: &natsWriter{w: &websocketWriter{w: &out}}}
+	// As during a reconnect, the PONG is sent only once pending is flushed.
+	r.nc.bw.switchToPending()
+
+	// A data frame in the same read is drained into the buffer that held
+	// the PING payload.
+	mr.buf.Write([]byte{byte(wsPingMessage) | wsFinalBit, 4})
+	mr.buf.WriteString("ping")
+	mr.buf.Write([]byte{byte(wsBinaryMessage) | wsFinalBit, 5})
+	mr.buf.WriteString("hello")
+
+	p := make([]byte, 100)
+	n, err := r.Read(p)
+	if err != nil || string(p[:n]) != "hello" {
+		t.Fatalf("Unexpected read: n=%v err=%v data=%q", n, err, p[:n])
+	}
+	r.nc.bw.doneWithPending()
+	r.nc.bw.flush()
+
+	frame := out.Bytes()
+	if len(frame) != 10 || frame[0] != byte(wsPongMessage)|wsFinalBit || frame[1] != wsMaskBit|4 {
+		t.Fatalf("Unexpected PONG frame: %v", frame)
+	}
+	payload := frame[6:]
+	wsMaskBuf(frame[2:6], payload)
+	if string(payload) != "ping" {
+		t.Fatalf("Expected PONG payload %q, got %q", "ping", payload)
+	}
+}
+
 func TestWSDataBeforeCloseFrame(t *testing.T) {
 	mr := &fakeReader{ch: make(chan []byte, 1)}
 	defer mr.close()
