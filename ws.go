@@ -158,7 +158,10 @@ func (d *wsDecompressor) ReadByte() (byte, error) {
 }
 
 func (d *wsDecompressor) addBuf(b []byte) {
-	d.bufs = append(d.bufs, b)
+	// Read and ReadByte rely on no buffer being empty.
+	if len(b) > 0 {
+		d.bufs = append(d.bufs, b)
+	}
 }
 
 func (d *wsDecompressor) decompress() ([]byte, error) {
@@ -734,17 +737,21 @@ func (nc *Conn) wsEnqueueCloseMsgLocked(status int, payload string) {
 	if !ok || wr.cmDone {
 		return
 	}
-	statusAndPayloadLen := 2 + len(payload)
+	var statusAndPayloadLen int
+	// 1005 stands for a close frame without status and must not be sent.
+	if status != wsCloseStatusNoStatusReceived {
+		statusAndPayloadLen = 2 + len(payload)
+	}
 	frame := make([]byte, 2+4+statusAndPayloadLen)
 	n, key := wsFillFrameHeader(frame, false, wsCloseMessage, statusAndPayloadLen)
-	// Set the status
-	binary.BigEndian.PutUint16(frame[n:], uint16(status))
-	// If there is a payload, copy
-	if len(payload) > 0 {
+	if statusAndPayloadLen > 0 {
+		// Set the status
+		binary.BigEndian.PutUint16(frame[n:], uint16(status))
+		// If there is a payload, copy
 		copy(frame[n+2:], payload)
+		// Mask status + payload
+		wsMaskBuf(key, frame[n:n+statusAndPayloadLen])
 	}
-	// Mask status + payload
-	wsMaskBuf(key, frame[n:n+statusAndPayloadLen])
 	wr.cm = frame
 	wr.cmDone = true
 	nc.bw.flush()
@@ -769,6 +776,9 @@ func (nc *Conn) wsEnqueueControlMsg(needsLock bool, frameType wsOpCode, payload 
 	fh, key := wsCreateFrameHeader(false, frameType, len(payload))
 	wr.ctrlFrames = append(wr.ctrlFrames, fh)
 	if len(payload) > 0 {
+		// The payload points into the read buffer, which is reused before
+		// the frame is sent if the writer is buffering.
+		payload = bytes.Clone(payload)
 		wsMaskBuf(key, payload)
 		wr.ctrlFrames = append(wr.ctrlFrames, payload)
 	}

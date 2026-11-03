@@ -225,6 +225,41 @@ func TestWSParseControlFrames(t *testing.T) {
 	}
 }
 
+func TestWSPongPayloadWhileBuffering(t *testing.T) {
+	mr := &fakeReader{ch: make(chan []byte, 1)}
+	defer mr.close()
+	r := wsNewReader(mr)
+	var out bytes.Buffer
+	r.nc = &Conn{bw: &natsWriter{w: &websocketWriter{w: &out}}}
+	// As during a reconnect, the PONG is sent only once pending is flushed.
+	r.nc.bw.switchToPending()
+
+	// A data frame in the same read is drained into the buffer that held
+	// the PING payload.
+	mr.buf.Write([]byte{byte(wsPingMessage) | wsFinalBit, 4})
+	mr.buf.WriteString("ping")
+	mr.buf.Write([]byte{byte(wsBinaryMessage) | wsFinalBit, 5})
+	mr.buf.WriteString("hello")
+
+	p := make([]byte, 100)
+	n, err := r.Read(p)
+	if err != nil || string(p[:n]) != "hello" {
+		t.Fatalf("Unexpected read: n=%v err=%v data=%q", n, err, p[:n])
+	}
+	r.nc.bw.doneWithPending()
+	r.nc.bw.flush()
+
+	frame := out.Bytes()
+	if len(frame) != 10 || frame[0] != byte(wsPongMessage)|wsFinalBit || frame[1] != wsMaskBit|4 {
+		t.Fatalf("Unexpected PONG frame: %v", frame)
+	}
+	payload := frame[6:]
+	wsMaskBuf(frame[2:6], payload)
+	if string(payload) != "ping" {
+		t.Fatalf("Expected PONG payload %q, got %q", "ping", payload)
+	}
+}
+
 func TestWSDataBeforeCloseFrame(t *testing.T) {
 	mr := &fakeReader{ch: make(chan []byte, 1)}
 	defer mr.close()
@@ -267,6 +302,25 @@ func TestWSDataBeforeCloseFrame(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("Expected 0 bytes on close, got %v", n)
+	}
+}
+
+func TestWSCloseReplyWithoutStatus(t *testing.T) {
+	mr := &fakeReader{ch: make(chan []byte, 1)}
+	defer mr.close()
+	r := wsNewReader(mr)
+	var out bytes.Buffer
+	r.nc = &Conn{bw: &natsWriter{w: &websocketWriter{w: &out}}}
+
+	mr.buf.Write([]byte{byte(wsCloseMessage) | wsFinalBit, 0})
+	p := make([]byte, 100)
+	if n, err := r.Read(p); err != io.EOF || n != 0 {
+		t.Fatalf("Unexpected read: n=%v err=%v", n, err)
+	}
+	// 1005 must not be sent, so the reply has no status either.
+	frame := out.Bytes()
+	if len(frame) != 6 || frame[0] != byte(wsCloseMessage)|wsFinalBit || frame[1] != wsMaskBit {
+		t.Fatalf("Unexpected close frame: %v", frame)
 	}
 }
 
@@ -601,6 +655,54 @@ func TestWSCompressionWithContinuationFrames(t *testing.T) {
 	}
 	if !reflect.DeepEqual(uncompressed, rbuf[:n]) {
 		t.Fatalf("Unexpected uncompressed data: %v", rbuf[:n])
+	}
+}
+
+func TestWSCompressionWithEmptyFrames(t *testing.T) {
+	buf := &bytes.Buffer{}
+	compressor, _ := flate.NewWriter(buf, flate.BestSpeed)
+	compressor.Write([]byte("hello"))
+	compressor.Flush()
+	b := buf.Bytes()
+	b = b[:len(b)-4]
+
+	for _, test := range []struct {
+		name    string
+		frames  [][]byte
+		wantErr bool
+	}{
+		// Not a valid deflate stream, but must fail rather than panic.
+		{"only", [][]byte{nil}, true},
+		{"first", [][]byte{nil, b}, false},
+		{"middle", [][]byte{b[:2], nil, b[2:]}, false},
+		{"last", [][]byte{b, nil}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srbuf := &bytes.Buffer{}
+			for i, frame := range test.frames {
+				b0 := byte(wsContinuationFrame)
+				if i == 0 {
+					b0 = byte(wsBinaryMessage) | wsRsv1Bit
+				}
+				if i == len(test.frames)-1 {
+					b0 |= wsFinalBit
+				}
+				srbuf.Write([]byte{b0, byte(len(frame))})
+				srbuf.Write(frame)
+			}
+			r := wsNewReader(srbuf)
+			rbuf := make([]byte, 100)
+			n, err := r.Read(rbuf)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error, got n=%v", n)
+				}
+				return
+			}
+			if err != nil || string(rbuf[:n]) != "hello" {
+				t.Fatalf("Unexpected read: n=%v err=%v data=%q", n, err, rbuf[:n])
+			}
+		})
 	}
 }
 
