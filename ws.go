@@ -158,7 +158,10 @@ func (d *wsDecompressor) ReadByte() (byte, error) {
 }
 
 func (d *wsDecompressor) addBuf(b []byte) {
-	d.bufs = append(d.bufs, b)
+	// Read and ReadByte rely on no buffer being empty.
+	if len(b) > 0 {
+		d.bufs = append(d.bufs, b)
+	}
 }
 
 func (d *wsDecompressor) decompress() ([]byte, error) {

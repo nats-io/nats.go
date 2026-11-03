@@ -604,6 +604,54 @@ func TestWSCompressionWithContinuationFrames(t *testing.T) {
 	}
 }
 
+func TestWSCompressionWithEmptyFrames(t *testing.T) {
+	buf := &bytes.Buffer{}
+	compressor, _ := flate.NewWriter(buf, flate.BestSpeed)
+	compressor.Write([]byte("hello"))
+	compressor.Flush()
+	b := buf.Bytes()
+	b = b[:len(b)-4]
+
+	for _, test := range []struct {
+		name    string
+		frames  [][]byte
+		wantErr bool
+	}{
+		// Not a valid deflate stream, but must fail rather than panic.
+		{"only", [][]byte{nil}, true},
+		{"first", [][]byte{nil, b}, false},
+		{"middle", [][]byte{b[:2], nil, b[2:]}, false},
+		{"last", [][]byte{b, nil}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srbuf := &bytes.Buffer{}
+			for i, frame := range test.frames {
+				b0 := byte(wsContinuationFrame)
+				if i == 0 {
+					b0 = byte(wsBinaryMessage) | wsRsv1Bit
+				}
+				if i == len(test.frames)-1 {
+					b0 |= wsFinalBit
+				}
+				srbuf.Write([]byte{b0, byte(len(frame))})
+				srbuf.Write(frame)
+			}
+			r := wsNewReader(srbuf)
+			rbuf := make([]byte, 100)
+			n, err := r.Read(rbuf)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error, got n=%v", n)
+				}
+				return
+			}
+			if err != nil || string(rbuf[:n]) != "hello" {
+				t.Fatalf("Unexpected read: n=%v err=%v data=%q", n, err, rbuf[:n])
+			}
+		})
+	}
+}
+
 func TestWSTlsNoConfig(t *testing.T) {
 	opts := GetDefaultOptions()
 	opts.Servers = []string{"wss://localhost:443"}
