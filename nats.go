@@ -771,6 +771,8 @@ type Subscription struct {
 	pTail *Msg
 	pCond *sync.Cond
 	pDone func(subject string)
+	// Set when the subscription closed with no pDone to call.
+	pDoneMissed bool
 
 	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
@@ -3892,6 +3894,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 	}
 	// Now check for pDone
 	done := s.pDone
+	s.pDoneMissed = done == nil
 	s.mu.Unlock()
 
 	if done != nil {
@@ -5326,6 +5329,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 
 	if s.typ != AsyncSubscription {
 		done := s.pDone
+		s.pDoneMissed = done == nil
 		if done != nil {
 			done(s.Subject)
 		}
@@ -5605,11 +5609,23 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 }
 
 // SetClosedHandler will set the closed handler for when a subscription
-// is closed (either unsubscribed or drained).
+// is closed (either unsubscribed or drained). If the subscription has
+// already closed without calling a closed handler, the handler is called
+// right away on its own goroutine.
 func (s *Subscription) SetClosedHandler(handler func(subject string)) {
 	s.mu.Lock()
 	s.pDone = handler
+	missed := s.pDoneMissed && handler != nil
+	if missed {
+		s.pDoneMissed = false
+	}
+	subject := s.Subject
 	s.mu.Unlock()
+	// Nothing else will call the handler. Not inline, as the caller may hold
+	// locks the handler takes.
+	if missed {
+		go handler(subject)
+	}
 }
 
 // unsubscribe performs the low level unsubscribe to the server.
@@ -6325,8 +6341,9 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		// Call closed handler for non-AsyncSubscription types (AsyncSubscription handlers
 		// are called by waitForMsgs when it exits)
 		var done func(string)
-		if s.typ != AsyncSubscription && s.pDone != nil {
+		if s.typ != AsyncSubscription {
 			done = s.pDone
+			s.pDoneMissed = done == nil
 		}
 
 		// Mark as invalid, for signaling to waitForMsgs

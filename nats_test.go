@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/url"
@@ -2161,6 +2162,107 @@ func TestForceReconnectRestoresBackoff(t *testing.T) {
 			nc.Close()
 			if err := nc.ForceReconnect(); !errors.Is(err, ErrConnectionClosed) {
 				t.Fatalf("Expected %v, got: %v", ErrConnectionClosed, err)
+			}
+		})
+	}
+}
+
+func TestClosedHandlerSetAfterAsyncSubClosed(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen on an ephemeral port: %v", err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.Write([]byte("INFO {\"server_id\":\"foobar\"}\r\n"))
+				br := bufio.NewReaderSize(conn, 10*1024)
+				br.ReadLine()
+				br.ReadLine()
+				conn.Write([]byte(pongProto))
+				io.Copy(io.Discard, br)
+			}()
+		}
+	}()
+	url := fmt.Sprintf("nats://%s", l.Addr())
+
+	for _, test := range []struct {
+		name           string
+		close          func(*Conn, *Subscription)
+		handlerAtClose bool
+	}{
+		{"unsubscribe", func(_ *Conn, s *Subscription) { s.Unsubscribe() }, false},
+		{"unsubscribe with handler at close", func(_ *Conn, s *Subscription) { s.Unsubscribe() }, true},
+		{"conn close", func(nc *Conn, _ *Subscription) { nc.Close() }, false},
+		{"conn close with handler at close", func(nc *Conn, _ *Subscription) { nc.Close() }, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			nc, err := Connect(url)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+			s, err := nc.Subscribe("foo", func(*Msg) {})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			closed := make(chan string, 2)
+			waitClosed := func() {
+				t.Helper()
+				select {
+				case subject := <-closed:
+					if subject != "foo" {
+						t.Fatalf("Expected subject 'foo', got %q", subject)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("Closed handler not called")
+				}
+			}
+			if test.handlerAtClose {
+				s.SetClosedHandler(func(subject string) { closed <- subject })
+				test.close(nc, s)
+			} else {
+				test.close(nc, s)
+				// Wait for the delivery goroutine to exit having found no handler.
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					s.mu.Lock()
+					missed := s.pDoneMissed
+					s.mu.Unlock()
+					if missed {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("Delivery goroutine did not exit")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				// The handler takes a lock held by the caller of
+				// SetClosedHandler, so it must not be called inline.
+				var mu sync.Mutex
+				mu.Lock()
+				s.SetClosedHandler(func(subject string) {
+					mu.Lock()
+					defer mu.Unlock()
+					closed <- subject
+				})
+				mu.Unlock()
+			}
+			waitClosed()
+
+			// The close has been reported, so this one is not called.
+			s.SetClosedHandler(func(subject string) { closed <- subject })
+			select {
+			case <-closed:
+				t.Fatal("Closed handler called after the close was reported")
+			case <-time.After(100 * time.Millisecond):
 			}
 		})
 	}
