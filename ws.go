@@ -63,9 +63,11 @@ const (
 
 	// From https://tools.ietf.org/html/rfc6455#section-11.7
 	wsCloseStatusNormalClosure      = 1000
+	wsCloseStatusProtocolError      = 1002
 	wsCloseStatusNoStatusReceived   = 1005
 	wsCloseStatusAbnormalClosure    = 1006
 	wsCloseStatusInvalidPayloadData = 1007
+	wsCloseStatusTLSHandshake       = 1015
 
 	wsScheme    = "ws"
 	wsSchemeTLS = "wss"
@@ -279,6 +281,12 @@ func (r *websocketReader) Read(p []byte) (int, error) {
 			if !r.ff {
 				return 0, errors.New("new message started before final frame for previous message was received")
 			}
+			// Frames are only copied out of the read buffer when
+			// compression was negotiated, so a compressed frame received
+			// without it would corrupt the data of the frames around it.
+			if compressed && !r.compress {
+				return 0, r.protocolError("compressed frame received without negotiated permessage-deflate")
+			}
 			r.ff = final
 			r.fc = compressed
 		case wsContinuationFrame:
@@ -438,6 +446,9 @@ func (r *websocketReader) handleControlFrame(frameType wsOpCode, buf []byte, pos
 		status := wsCloseStatusNoStatusReceived
 		var body string
 		lp := len(payload)
+		if lp == 1 {
+			return pos, r.protocolError("close frame payload cannot be 1 byte")
+		}
 		// If there is a payload, the status is represented as a 2-byte
 		// unsigned integer (in network byte order). Then, there may be an
 		// optional body.
@@ -445,6 +456,9 @@ func (r *websocketReader) handleControlFrame(frameType wsOpCode, buf []byte, pos
 		if hasStatus {
 			// Decode the status
 			status = int(binary.BigEndian.Uint16(payload[:wsCloseSatusSize]))
+			if !wsIsValidCloseStatus(status) {
+				return pos, r.protocolError(fmt.Sprintf("invalid close status code %v", status))
+			}
 			// Now if there is a body, capture it and make sure this is a valid UTF-8.
 			if hasBody {
 				body = string(payload[wsCloseSatusSize:])
@@ -466,6 +480,30 @@ func (r *websocketReader) handleControlFrame(frameType wsOpCode, buf []byte, pos
 		// Nothing to do..
 	}
 	return pos, nil
+}
+
+// protocolError replies with a close frame carrying status 1002 and the
+// given message, and returns that message as the error that ends the read.
+func (r *websocketReader) protocolError(message string) error {
+	r.nc.wsEnqueueCloseMsg(r.nl, wsCloseStatusProtocolError, message)
+	return errors.New(message)
+}
+
+// wsIsValidCloseStatus reports whether a close status code may be sent by an
+// endpoint. See https://tools.ietf.org/html/rfc6455#section-7.4
+func wsIsValidCloseStatus(code int) bool {
+	switch code {
+	case wsCloseStatusNoStatusReceived, 1004, wsCloseStatusAbnormalClosure, wsCloseStatusTLSHandshake:
+		return false
+	}
+	if code < 1000 || code >= 5000 {
+		return false
+	}
+	// 1016-2999 are currently reserved.
+	if code >= 1016 && code <= 2999 {
+		return false
+	}
+	return true
 }
 
 func (w *websocketWriter) Write(p []byte) (int, error) {

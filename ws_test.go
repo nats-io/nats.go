@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -208,10 +209,10 @@ func TestWSParseControlFrames(t *testing.T) {
 		t.Fatalf("Error on read: n=%v err=%v", n, err)
 	}
 
-	// Write a CLOSE with invalid status
+	// Write a CLOSE with a one-byte payload: a protocol error, not a close.
 	mr.buf.Write([]byte{136, 1, 100})
 	n, err = r.Read(p)
-	if err != io.EOF || n != 0 {
+	if err == nil || err == io.EOF || n != 0 || !strings.Contains(err.Error(), "cannot be 1 byte") {
 		t.Fatalf("Error on read: n=%v err=%v", n, err)
 	}
 
@@ -321,6 +322,100 @@ func TestWSCloseReplyWithoutStatus(t *testing.T) {
 	frame := out.Bytes()
 	if len(frame) != 6 || frame[0] != byte(wsCloseMessage)|wsFinalBit || frame[1] != wsMaskBit {
 		t.Fatalf("Unexpected close frame: %v", frame)
+	}
+}
+
+// TestWSProtocolErrors checks that a close frame with a one-byte payload, a
+// close frame with a status code an endpoint must not send, and a compressed
+// frame received without negotiated compression end the read with an error
+// and are answered with a close frame carrying status 1002 and that error,
+// whether the writer sends directly or buffers (as during a reconnect).
+func TestWSProtocolErrors(t *testing.T) {
+	closeFrame := func(status int, body string) []byte {
+		payload := make([]byte, 2+len(body))
+		binary.BigEndian.PutUint16(payload, uint16(status))
+		copy(payload[2:], body)
+		return append([]byte{byte(wsCloseMessage) | wsFinalBit, byte(len(payload))}, payload...)
+	}
+	cbuf := &bytes.Buffer{}
+	compressor, _ := flate.NewWriter(cbuf, flate.BestSpeed)
+	compressor.Write([]byte("hello"))
+	compressor.Flush()
+	compressed := cbuf.Bytes()
+	compressed = compressed[:len(compressed)-4]
+	compressedFrame := append([]byte{byte(wsBinaryMessage) | wsRsv1Bit | wsFinalBit, byte(len(compressed))}, compressed...)
+
+	for _, test := range []struct {
+		name  string
+		frame []byte
+		err   string
+	}{
+		{"close with one byte payload", []byte{byte(wsCloseMessage) | wsFinalBit, 1, 100}, "close frame payload cannot be 1 byte"},
+		{"close with status 999", closeFrame(999, ""), "invalid close status code 999"},
+		{"close with status 1004", closeFrame(1004, ""), "invalid close status code 1004"},
+		{"close with status 1005", closeFrame(1005, ""), "invalid close status code 1005"},
+		{"close with status 1006", closeFrame(1006, ""), "invalid close status code 1006"},
+		{"close with status 1015", closeFrame(1015, ""), "invalid close status code 1015"},
+		{"close with status 1016", closeFrame(1016, ""), "invalid close status code 1016"},
+		{"close with status 2999", closeFrame(2999, ""), "invalid close status code 2999"},
+		{"close with status 5000", closeFrame(5000, ""), "invalid close status code 5000"},
+		{"close with invalid status and body", closeFrame(1006, "going away"), "invalid close status code 1006"},
+		{"compressed frame without negotiated compression", compressedFrame, "compressed frame received without negotiated permessage-deflate"},
+		// Valid close frames still end the read with io.EOF.
+		{"close with status 1000", closeFrame(1000, ""), ""},
+		{"close with status 3000", closeFrame(3000, "custom"), ""},
+		{"close with status 4999", closeFrame(4999, ""), ""},
+	} {
+		for _, pending := range []bool{false, true} {
+			name := test.name
+			if pending {
+				name += " while buffering"
+			}
+			t.Run(name, func(t *testing.T) {
+				// Whatever follows the offending frame must be ignored.
+				stream := append(bytes.Clone(test.frame), []byte{byte(wsBinaryMessage) | wsFinalBit, 3, 'a', 'b', 'c'}...)
+				r := wsNewReader(bytes.NewReader(stream))
+				var out bytes.Buffer
+				r.nc = &Conn{bw: &natsWriter{w: &websocketWriter{w: &out}}}
+				if pending {
+					r.nc.bw.switchToPending()
+				}
+				n, err := r.Read(make([]byte, 100))
+				if test.err == "" {
+					if err != io.EOF || n != 0 {
+						t.Fatalf("Expected EOF, got n=%v err=%v", n, err)
+					}
+				} else if err == nil || err.Error() != test.err || n != 0 {
+					t.Fatalf("Expected error %q, got n=%v err=%v", test.err, n, err)
+				}
+				if pending {
+					if out.Len() != 0 {
+						t.Fatalf("Nothing should be sent while buffering, got %v", out.Bytes())
+					}
+					r.nc.bw.doneWithPending()
+					r.nc.bw.flush()
+				}
+				frame := out.Bytes()
+				if len(frame) < 6 || frame[0] != byte(wsCloseMessage)|wsFinalBit || frame[1]&wsMaskBit == 0 {
+					t.Fatalf("Expected a masked close frame, got %v", frame)
+				}
+				payload := frame[6:]
+				wsMaskBuf(frame[2:6], payload)
+				if len(frame) != 6+int(frame[1]&0x7f) || len(payload) < 2 {
+					t.Fatalf("Unexpected close frame: %v", frame)
+				}
+				status := int(binary.BigEndian.Uint16(payload))
+				if test.err == "" {
+					if wantStatus := int(binary.BigEndian.Uint16(test.frame[2:])); status != wantStatus {
+						t.Fatalf("Expected echoed status %v, got %v", wantStatus, status)
+					}
+					return
+				}
+				if status != wsCloseStatusProtocolError || string(payload[2:]) != test.err {
+					t.Fatalf("Expected close status 1002 with %q, got %v with %q", test.err, status, payload[2:])
+				}
+			})
+		}
 	}
 }
 
@@ -641,6 +736,7 @@ func TestWSCompressionWithContinuationFrames(t *testing.T) {
 	srbuf.Write(b[20:])
 
 	r := wsNewReader(srbuf)
+	r.compress = true
 	rbuf := make([]byte, 100)
 	n, err := r.Read(rbuf[:15])
 	// Since we have a partial of compressed message, the library keeps track
@@ -691,6 +787,7 @@ func TestWSCompressionWithEmptyFrames(t *testing.T) {
 				srbuf.Write(frame)
 			}
 			r := wsNewReader(srbuf)
+			r.compress = true
 			rbuf := make([]byte, 100)
 			n, err := r.Read(rbuf)
 			if test.wantErr {
