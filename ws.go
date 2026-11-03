@@ -737,17 +737,21 @@ func (nc *Conn) wsEnqueueCloseMsgLocked(status int, payload string) {
 	if !ok || wr.cmDone {
 		return
 	}
-	statusAndPayloadLen := 2 + len(payload)
+	var statusAndPayloadLen int
+	// 1005 stands for a close frame without status and must not be sent.
+	if status != wsCloseStatusNoStatusReceived {
+		statusAndPayloadLen = 2 + len(payload)
+	}
 	frame := make([]byte, 2+4+statusAndPayloadLen)
 	n, key := wsFillFrameHeader(frame, false, wsCloseMessage, statusAndPayloadLen)
-	// Set the status
-	binary.BigEndian.PutUint16(frame[n:], uint16(status))
-	// If there is a payload, copy
-	if len(payload) > 0 {
+	if statusAndPayloadLen > 0 {
+		// Set the status
+		binary.BigEndian.PutUint16(frame[n:], uint16(status))
+		// If there is a payload, copy
 		copy(frame[n+2:], payload)
+		// Mask status + payload
+		wsMaskBuf(key, frame[n:n+statusAndPayloadLen])
 	}
-	// Mask status + payload
-	wsMaskBuf(key, frame[n:n+statusAndPayloadLen])
 	wr.cm = frame
 	wr.cmDone = true
 	nc.bw.flush()

@@ -270,6 +270,25 @@ func TestWSDataBeforeCloseFrame(t *testing.T) {
 	}
 }
 
+func TestWSCloseReplyWithoutStatus(t *testing.T) {
+	mr := &fakeReader{ch: make(chan []byte, 1)}
+	defer mr.close()
+	r := wsNewReader(mr)
+	var out bytes.Buffer
+	r.nc = &Conn{bw: &natsWriter{w: &websocketWriter{w: &out}}}
+
+	mr.buf.Write([]byte{byte(wsCloseMessage) | wsFinalBit, 0})
+	p := make([]byte, 100)
+	if n, err := r.Read(p); err != io.EOF || n != 0 {
+		t.Fatalf("Unexpected read: n=%v err=%v", n, err)
+	}
+	// 1005 must not be sent, so the reply has no status either.
+	frame := out.Bytes()
+	if len(frame) != 6 || frame[0] != byte(wsCloseMessage)|wsFinalBit || frame[1] != wsMaskBit {
+		t.Fatalf("Unexpected close frame: %v", frame)
+	}
+}
+
 func TestWSParseInvalidFrames(t *testing.T) {
 
 	newReader := func() (*fakeReader, *websocketReader) {
