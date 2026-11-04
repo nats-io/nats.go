@@ -150,6 +150,9 @@ type (
 		consumeOpts       *consumeOpts
 		delivered         int
 		closedCh          chan struct{}
+		// set by Consume once anything but a 503 arrives, as everything else
+		// comes from the consumer, while a 503 means no consumer served the pull
+		reachedConsumer atomic.Bool
 	}
 
 	pendingMsgs struct {
@@ -249,6 +252,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			sub.hbMonitor.Stop()
 		}
 		userMsg, msgErr := checkMsg(msg)
+		if !sub.reachedConsumer.Load() && !errors.Is(msgErr, nats.ErrNoResponders) {
+			sub.reachedConsumer.Store(true)
+		}
 		if !userMsg && msgErr == nil {
 			if sub.hbMonitor != nil {
 				sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
