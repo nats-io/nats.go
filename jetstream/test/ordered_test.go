@@ -621,6 +621,187 @@ func TestOrderedConsumerConsume(t *testing.T) {
 	})
 }
 
+func TestOrderedConsumerConsumeResetWait(t *testing.T) {
+	t.Run("unreachable consumer is reset with backoff", func(t *testing.T) {
+		// B can create and delete any consumer on stream S of account A, but
+		// pull only from a consumer named "fixed", so every pull of an ordered
+		// consumer created from B gets a 503.
+		accounts := `accounts: {
+	A: {
+		jetstream: enabled
+		users: [ {user: a, password: a} ]
+		exports: [
+			{ service: "$JS.API.STREAM.INFO.S" }
+			{ service: "$JS.API.CONSUMER.CREATE.S.>" }
+			{ service: "$JS.API.CONSUMER.DELETE.S.>" }
+			{ service: "$JS.API.CONSUMER.INFO.S.>" }
+			{ service: "$JS.API.CONSUMER.MSG.NEXT.S.fixed" }
+		]
+	},
+	B: {
+		users: [ {user: b, password: b} ]
+		imports: [
+			{ service: { account: A, subject: "$JS.API.STREAM.INFO.S" }, to: "A.API.STREAM.INFO.S" }
+			{ service: { account: A, subject: "$JS.API.CONSUMER.CREATE.S.>" }, to: "A.API.CONSUMER.CREATE.S.>" }
+			{ service: { account: A, subject: "$JS.API.CONSUMER.DELETE.S.>" }, to: "A.API.CONSUMER.DELETE.S.>" }
+			{ service: { account: A, subject: "$JS.API.CONSUMER.INFO.S.>" }, to: "A.API.CONSUMER.INFO.S.>" }
+			{ service: { account: A, subject: "$JS.API.CONSUMER.MSG.NEXT.S.fixed" }, to: "A.API.CONSUMER.MSG.NEXT.S.fixed" }
+		]
+	},
+}`
+		inst := newTester(t).CreateServer(t, true,
+			testservice.WithAccounts(accounts),
+			testservice.WithAuthorization("no_auth_user: b"),
+			testservice.WithSystemAccount(noSystemAccountBody()),
+		)
+		t.Cleanup(func() { inst.Destroy(t) })
+
+		ncA := dialInstance(t, inst, nats.UserInfo("a", "a"))
+		ctx := newTesterCtx(t, 10*time.Second)
+		if _, err := newJetStream(t, ncA).CreateStream(ctx, jetstream.StreamConfig{Name: "S", Subjects: []string{"s.>"}}); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		var creates, deletes atomic.Int64
+		count := func(subject string, n *atomic.Int64) {
+			if _, err := ncA.Subscribe(subject, func(*nats.Msg) { n.Add(1) }); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+		count("$JS.API.CONSUMER.CREATE.>", &creates)
+		count("$JS.API.CONSUMER.DELETE.>", &deletes)
+		if err := ncA.Flush(); err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		jsB, err := jetstream.NewWithAPIPrefix(dialInstance(t, inst), "A.API")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		c, err := jsB.OrderedConsumer(ctx, "S", jetstream.OrderedConsumerConfig{})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		cc, err := c.Consume(func(jetstream.Msg) {})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Creates at about 0s and 1s, then a wait until about 3s.
+		time.Sleep(2 * time.Second)
+		if n := creates.Load(); n < 2 || n > 3 {
+			t.Fatalf("Unexpected number of consumer creates in 2s; want 2 or 3; got %d", n)
+		}
+
+		start := time.Now()
+		cc.Stop()
+		select {
+		case <-cc.Closed():
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for consume to be closed")
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("Stop took %v", elapsed)
+		}
+		// A reset after Stop would delete the old consumer.
+		before := creates.Load() + deletes.Load()
+		time.Sleep(1500 * time.Millisecond)
+		if after := creates.Load() + deletes.Load(); after != before {
+			t.Fatalf("Unexpected consumer creates or deletes after Stop; want %d; got %d", before, after)
+		}
+	})
+
+	t.Run("stop after reached during wait", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 30*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			errs := make(chan error, 10)
+			cc, err := c.Consume(func(jetstream.Msg) {
+				// Still running when the wait ends.
+				time.Sleep(2 * time.Second)
+			}, jetstream.StopAfter(1), jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
+				select {
+				case errs <- err:
+				default:
+				}
+			}))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer cc.Stop()
+			// A reconnect before the first heartbeat starts a wait, and the
+			// old consumer delivers the last message during it.
+			time.Sleep(200 * time.Millisecond)
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if _, err := js.Publish(ctx, "FOO.A", []byte("msg")); err != nil {
+				t.Fatalf("Unexpected error during publish: %v", err)
+			}
+			select {
+			case <-cc.Closed():
+			case <-time.After(10 * time.Second):
+				t.Fatal("Timeout waiting for consume to be closed")
+			}
+			select {
+			case err := <-errs:
+				t.Fatalf("Unexpected error: %v", err)
+			default:
+			}
+			info, err := s.Info(ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if info.State.Consumers != 1 {
+				t.Fatalf("Unexpected number of consumers; want 1; got %d", info.State.Consumers)
+			}
+		})
+	})
+
+	t.Run("reached consumer is reset at once", func(t *testing.T) {
+		withJSServer(t, func(t *testing.T, nc *nats.Conn, js jetstream.JetStream) {
+			ctx := newTesterCtx(t, 20*time.Second)
+			s, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			c, err := s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			cc, err := c.Consume(func(jetstream.Msg) {}, jetstream.PullHeartbeat(500*time.Millisecond))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer cc.Stop()
+			// On an idle stream only the heartbeats show that the consumer
+			// was reached, as no status arrives on a reconnect.
+			time.Sleep(1500 * time.Millisecond)
+
+			name := c.CachedInfo().Name
+			start := time.Now()
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			for c.CachedInfo().Name == name {
+				if time.Since(start) > 5*time.Second {
+					t.Fatal("Timeout waiting for consumer reset")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if elapsed := time.Since(start); elapsed > 750*time.Millisecond {
+				t.Fatalf("Consumer reset took %v", elapsed)
+			}
+		})
+	})
+}
+
 func TestOrderedConsumerMessages(t *testing.T) {
 	testSubject := "FOO.123"
 	testMsgs := []string{"m1", "m2", "m3", "m4", "m5"}
