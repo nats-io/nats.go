@@ -1225,8 +1225,10 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 		// if UpdatesOnly was used, mark initialization as complete
 		w.initDone = true
 	}
+	sub.mu.Unlock()
+
 	// Set us up to close when the waitForMessages func returns.
-	sub.pDone = func(_ string) {
+	sub.SetClosedHandler(func(_ string) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if w.initDoneTimer != nil {
@@ -1234,9 +1236,7 @@ func (kv *kvs) WatchFiltered(keys []string, opts ...WatchOpt) (KeyWatcher, error
 		}
 		close(w.updates)
 		close(w.errCh)
-	}
-
-	sub.mu.Unlock()
+	})
 
 	w.sub = sub
 	return w, nil
