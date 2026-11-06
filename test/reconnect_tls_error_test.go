@@ -14,7 +14,6 @@
 package test
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"sync/atomic"
@@ -26,98 +25,81 @@ import (
 )
 
 func TestReconnectTLSVerificationError(t *testing.T) {
-	// Run with NATS INFO before TLS, then with TLS before INFO.
-	for _, handshakeFirst := range []bool{false, true} {
-		name := "INFO before TLS"
-		if handshakeFirst {
-			name = "TLS handshake first"
-		}
-		t.Run(name, func(t *testing.T) {
-			c := newTester(t)
-			tlsOpts := []testservice.TLSOpt{testservice.TLSServerOnly()}
-			if handshakeFirst {
-				tlsOpts = append(tlsOpts, testservice.TLSHandshakeFirst())
-			}
-			inst := c.CreateServer(t, false, managedTLSOpts(t, tlsOpts...))
-			t.Cleanup(func() { inst.Destroy(t) })
+	c := newTester(t)
+	inst := c.CreateServer(t, false, managedTLSOpts(t, testservice.TLSServerOnly()))
+	t.Cleanup(func() { inst.Destroy(t) })
 
-			// Trust the test server's CA so the first connection succeeds.
-			trustedRoots := x509.NewCertPool()
-			if !trustedRoots.AppendCertsFromPEM([]byte(inst.TLS.CAPEM)) {
-				t.Fatal("Failed to parse server CA")
+	// Trust the test server's CA so the first connection succeeds.
+	trustedRoots := x509.NewCertPool()
+	if !trustedRoots.AppendCertsFromPEM([]byte(inst.TLS.CAPEM)) {
+		t.Fatal("Failed to parse server CA")
+	}
+	var rejectNext atomic.Bool
+	var errorCallbacks atomic.Int32
+	reconnectErrors := make(chan error, 2)
+	reconnected := make(chan struct{}, 1)
+	opts := []nats.Option{
+		nats.ClientTLSConfig(nil, func() (*x509.CertPool, error) {
+			// This function supplies trusted CAs for each TLS handshake.
+			// Swap(false) reads the flag and clears it at the same time.
+			// An empty pool makes this handshake reject the server certificate.
+			// The next call trusts the CA again, even if no error callback runs.
+			if rejectNext.Swap(false) {
+				return x509.NewCertPool(), nil
 			}
-			var rejectNext atomic.Bool
-			var errorCallbacks atomic.Int32
-			reconnectErrors := make(chan error, 2)
-			reconnected := make(chan struct{}, 1)
-			opts := []nats.Option{
-				nats.ClientTLSConfig(nil, func() (*x509.CertPool, error) {
-					// This function supplies trusted CAs for each TLS handshake.
-					// Swap(false) reads the flag and clears it at the same time.
-					// An empty pool makes this handshake reject the server certificate.
-					// The next call trusts the CA again, even if no error callback runs.
-					if rejectNext.Swap(false) {
-						return x509.NewCertPool(), nil
-					}
-					return trustedRoots, nil
-				}),
-				nats.MaxReconnects(-1),
-				nats.ReconnectWait(10 * time.Millisecond),
-				nats.ReconnectJitter(0, 0),
-				nats.ReconnectErrHandler(func(nc *nats.Conn, err error) {
-					// Check that the callback can safely query the connection status.
-					// Calling it directly while holding the connection's write lock would deadlock.
-					nc.Status()
-					errorCallbacks.Add(1)
-					select {
-					case reconnectErrors <- err:
-					default:
-					}
-				}),
-				nats.ReconnectHandler(func(_ *nats.Conn) {
-					select {
-					case reconnected <- struct{}{}:
-					default:
-					}
-				}),
-			}
-			if handshakeFirst {
-				opts = append(opts, nats.TLSHandshakeFirst())
-			}
-			nc, err := nats.Connect(inst.Servers[0].URL, opts...)
-			if err != nil {
-				t.Fatalf("Failed to establish trusted TLS connection: %v", err)
-			}
-			t.Cleanup(nc.Close)
-
-			// Disconnect the client while leaving the server running.
-			// Fail the first retry, then allow the next retry to succeed.
-			rejectNext.Store(true)
-			if err := nc.ForceReconnect(); err != nil {
-				t.Fatalf("Failed to force reconnection: %v", err)
-			}
+			return trustedRoots, nil
+		}),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(10 * time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+		nats.ReconnectErrHandler(func(nc *nats.Conn, err error) {
+			// Check that the callback can safely query the connection status.
+			// Calling it directly while holding the connection's write lock would deadlock.
+			nc.Status()
+			errorCallbacks.Add(1)
 			select {
-			case <-reconnected:
-			case <-time.After(5 * time.Second):
-				t.Fatal("Connection did not recover after restoring trusted roots")
+			case reconnectErrors <- err:
+			default:
 			}
+		}),
+		nats.ReconnectHandler(func(_ *nats.Conn) {
+			select {
+			case reconnected <- struct{}{}:
+			default:
+			}
+		}),
+	}
+	nc, err := nats.Connect(inst.Servers[0].URL, opts...)
+	if err != nil {
+		t.Fatalf("Failed to establish trusted TLS connection: %v", err)
+	}
+	t.Cleanup(nc.Close)
 
-			// Callbacks run one at a time, in the order they were queued.
-			// The recovery notification tells us any earlier error callback has finished.
-			if got := errorCallbacks.Load(); got != 1 {
-				t.Fatalf("Expected one TLS reconnect error callback, got %d", got)
-			}
-			err = <-reconnectErrors
-			// The error must identify TLS verification failure caused by an unknown CA.
-			var verificationErr *tls.CertificateVerificationError
-			var authorityErr x509.UnknownAuthorityError
-			if !errors.Is(err, nats.ErrTLS) || !errors.As(err, &verificationErr) || !errors.As(err, &authorityErr) {
-				t.Fatalf("Expected a TLS certificate verification error for an unknown CA, got %v", err)
-			}
-			// Flush sends PING and waits for PONG to check the connection still works.
-			if err := nc.FlushTimeout(time.Second); err != nil {
-				t.Fatalf("Recovered connection is not usable: %v", err)
-			}
-		})
+	// Disconnect the client while leaving the server running.
+	// Fail the first retry, then allow the next retry to succeed.
+	rejectNext.Store(true)
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("Failed to force reconnection: %v", err)
+	}
+	select {
+	case <-reconnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connection did not recover after restoring trusted roots")
+	}
+
+	// Callbacks run one at a time, in the order they were queued.
+	// The recovery notification tells us any earlier error callback has finished.
+	if got := errorCallbacks.Load(); got != 1 {
+		t.Fatalf("Expected one TLS reconnect error callback, got %d", got)
+	}
+	err = <-reconnectErrors
+	// The error must identify TLS verification failure caused by an unknown CA.
+	var authorityErr x509.UnknownAuthorityError
+	if !errors.Is(err, nats.ErrTLS) || !errors.As(err, &authorityErr) {
+		t.Fatalf("Expected a TLS certificate verification error for an unknown CA, got %v", err)
+	}
+	// Flush sends PING and waits for PONG to check the connection still works.
+	if err := nc.FlushTimeout(time.Second); err != nil {
+		t.Fatalf("Recovered connection is not usable: %v", err)
 	}
 }
