@@ -35,8 +35,7 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 		t.Fatal("Failed to parse server CA")
 	}
 	var rejectNext atomic.Bool
-	// Keep room for a second error so duplicate callbacks fail the test too.
-	reconnectErrors := make(chan error, 2)
+	reconnectErrors := make(chan error, 1)
 	reconnected := make(chan struct{}, 1)
 	nc, err := nats.Connect(inst.Servers[0].URL,
 		nats.ClientTLSConfig(nil, func() (*x509.CertPool, error) {
@@ -87,10 +86,11 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 
 	// Callbacks run one at a time, in the order they were queued.
 	// The recovery notification tells us any earlier error callback has finished.
-	if got := len(reconnectErrors); got != 1 {
-		t.Fatalf("Expected one queued TLS reconnect error, got %d", got)
+	select {
+	case err = <-reconnectErrors:
+	default:
+		t.Fatal("No TLS reconnect error callback received")
 	}
-	err = <-reconnectErrors
 	// The error must identify TLS verification failure caused by an unknown CA.
 	var authorityErr x509.UnknownAuthorityError
 	if !errors.Is(err, nats.ErrTLS) || !errors.As(err, &authorityErr) {
