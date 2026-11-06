@@ -72,11 +72,6 @@ Because the tester and the `nats-server` instances it spawns run inside the test
 binary, `-race` instruments the server too: expect somewhat slower runs, and note
 that a data race in `nats-server` surfaces here as a nats.go test failure.
 
-This is also why `go_test.mod` declares `go 1.26.0` while `go.mod` stays at
-`1.25.0` — `orbit.go/ntf` requires 1.26, and merely requiring a module raises the
-floor for the whole test module. Production builds are unaffected; 1.26 is the
-floor for the CI test matrix.
-
 ## Testing against a different nats-server
 
 The in-process tester links `nats-server` as an ordinary Go dependency, so
