@@ -26,6 +26,7 @@ import (
 )
 
 func TestReconnectTLSVerificationError(t *testing.T) {
+	// Cover both INFO-before-TLS and TLS-first connection setup.
 	for _, handshakeFirst := range []bool{false, true} {
 		name := "INFO before TLS"
 		if handshakeFirst {
@@ -40,18 +41,22 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 			inst := c.CreateServer(t, false, managedTLSOpts(t, tlsOpts...))
 			t.Cleanup(func() { inst.Destroy(t) })
 
+			// Trust the real test server's generated CA for the initial connection
+			// and for recovery after the injected verification failure.
 			trustedRoots := x509.NewCertPool()
 			if !trustedRoots.AppendCertsFromPEM([]byte(inst.TLS.CAPEM)) {
 				t.Fatal("Failed to parse server CA")
 			}
+			// The test arms this flag; the TLS handshake consumes it once.
 			var rejectNext atomic.Bool
 			var errorCallbacks atomic.Int32
 			reconnectErrors := make(chan error, 2)
 			reconnected := make(chan struct{}, 1)
 			opts := []nats.Option{
 				nats.ClientTLSConfig(nil, func() (*x509.CertPool, error) {
-					// Reject exactly one handshake, then restore trust so recovery
-					// does not depend on the error callback being delivered.
+					// An empty CA pool rejects the server's certificate. Swap resets
+					// the flag, so only this handshake fails and the next trusts the CA.
+					// Recovery must not depend on the error callback being delivered.
 					if rejectNext.Swap(false) {
 						return x509.NewCertPool(), nil
 					}
@@ -61,7 +66,8 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 				nats.ReconnectWait(10 * time.Millisecond),
 				nats.ReconnectJitter(0, 0),
 				nats.ReconnectErrHandler(func(nc *nats.Conn, err error) {
-					// Connection methods must remain usable from this callback.
+					// Status would deadlock if this callback were invoked directly
+					// while holding the connection's write lock.
 					nc.Status()
 					errorCallbacks.Add(1)
 					select {
@@ -85,6 +91,8 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 			}
 			t.Cleanup(nc.Close)
 
+			// Keep the server running and force the established client to reconnect.
+			// The next TLS handshake fails because its CA pool is empty.
 			rejectNext.Store(true)
 			if err := nc.ForceReconnect(); err != nil {
 				t.Fatalf("Failed to force reconnection: %v", err)
@@ -95,16 +103,21 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 				t.Fatal("Connection did not recover after restoring trusted roots")
 			}
 
-			// ReconnectHandler runs after queued reconnect-error callbacks.
+			// Both handlers run on the same FIFO callback queue. Receiving the
+			// reconnect notification means earlier error callbacks have finished,
+			// so the count includes all reported failures before recovery.
 			if got := errorCallbacks.Load(); got != 1 {
 				t.Fatalf("Expected one TLS reconnect error callback, got %d", got)
 			}
 			err = <-reconnectErrors
+			// Check both the NATS TLS error and the underlying certificate cause,
+			// so a TCP failure or an unrelated reconnect error cannot satisfy this.
 			var verificationErr *tls.CertificateVerificationError
 			var authorityErr x509.UnknownAuthorityError
 			if !errors.Is(err, nats.ErrTLS) || !errors.As(err, &verificationErr) || !errors.As(err, &authorityErr) {
 				t.Fatalf("Expected a TLS certificate verification error for an unknown CA, got %v", err)
 			}
+			// A successful PING/PONG exchange confirms the recovered connection works.
 			if err := nc.FlushTimeout(time.Second); err != nil {
 				t.Fatalf("Recovered connection is not usable: %v", err)
 			}
