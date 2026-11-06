@@ -6216,6 +6216,12 @@ func (nc *Conn) resendSubscriptions() {
 	for sid, s := range subs {
 		adjustedMax := uint64(0)
 		s.mu.Lock()
+		// Draining subs are only removed locally once done, so resubscribing
+		// would leave orphaned interest on the server.
+		if s.draining {
+			s.mu.Unlock()
+			continue
+		}
 		// when resending subscriptions, the permissions error should be cleared
 		// since the user may have fixed the permissions issue
 		s.permissionsErr = nil

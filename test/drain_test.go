@@ -162,6 +162,14 @@ func TestDrainUnSubs(t *testing.T) {
 }
 
 func TestDrainSlowSubscriber(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconnect=%v", reconnect), func(t *testing.T) {
+			testDrainSlowSubscriber(t, reconnect)
+		})
+	}
+}
+
+func testDrainSlowSubscriber(t *testing.T, reconnect bool) {
 	withServer(t, func(t *testing.T, nc *nats.Conn) {
 		received := int32(0)
 
@@ -184,6 +192,12 @@ func TestDrainSlowSubscriber(t *testing.T) {
 			t.Fatalf("Expected most messages to be pending, but got %d vs %d", pmsgs, total)
 		}
 		sub.Drain()
+		// Reconnecting mid-drain must not resubscribe on the new connection.
+		if reconnect {
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Error on force reconnect: %v", err)
+			}
+		}
 
 		waitFor(t, 2*time.Second, 100*time.Millisecond, func() error {
 			_, _, err := sub.Pending()
@@ -196,6 +210,9 @@ func TestDrainSlowSubscriber(t *testing.T) {
 			}
 			return nil
 		})
+		if _, err := nc.Request("foo", nil, time.Second); !errors.Is(err, nats.ErrNoResponders) {
+			t.Fatalf("Expected %v, got %v", nats.ErrNoResponders, err)
+		}
 	})
 }
 
