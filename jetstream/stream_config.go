@@ -283,7 +283,7 @@ type (
 		LastTime time.Time `json:"last_ts"`
 
 		// Consumers is the number of consumers on the stream.
-		Consumers int `json:"consumer_count"`
+		Consumers uint64 `json:"consumer_count"`
 
 		// Deleted is a list of sequence numbers that have been removed from the
 		// stream. This field will only be returned if the stream has been
@@ -294,7 +294,7 @@ type (
 		// stream. Only deleted messages causing a gap in stream sequence numbers
 		// are counted. Messages deleted at the beginning or end of the stream
 		// are not counted.
-		NumDeleted int `json:"num_deleted"`
+		NumDeleted uint64 `json:"num_deleted"`
 
 		// NumSubjects is the number of unique subjects the stream has received
 		// messages on.
