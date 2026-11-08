@@ -10,8 +10,6 @@ Official Go client library for the NATS messaging system. Provides core pub/sub,
 
 This project uses a **dual module** setup: `go.mod` for production (minimal deps) and `go_test.mod` for testing (protobuf encoder + jwt + nkeys + nuid + the ntf tester). Always use `-modfile=go_test.mod` when running tests.
 
-`go_test.mod` declares `go 1.26.0` while `go.mod` stays at `1.25.0`, because `github.com/synadia-io/orbit.go/ntf` requires 1.26 and that raises the floor for the whole test module. `go get`/`go mod tidy` will rewrite this line; leave it at 1.26.0. TESTING.md has the full derivation.
-
 Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`) run against real servers spawned by a **tester** service, driven through `github.com/synadia-io/orbit.go/ntf-client`. There are two ways to run it:
 
 - **In-process, no docker (the default)** — a `TestMain` in each of the three test packages starts `github.com/synadia-io/orbit.go/ntf` inside the test binary. No build tag; this is what a plain `go test` does.
