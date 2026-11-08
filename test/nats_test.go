@@ -460,7 +460,10 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 			t.Fatalf("Unexpected ConnectedUrl: %q (expected %q or %q)", nc.ConnectedUrl(), s1.Servers[0].URL, s2.Servers[0].URL)
 		}
 	}
-	if n1 < 35 || n1 > 65 {
+	// Each connection picks s1 with probability 0.5, so n1 is Binomial(100, 0.5).
+	// A 35..65 window failed a correct shuffle about 1 in 559 runs; 20..80 does so
+	// about 1 in 3.7 billion while still catching an unshuffled pool (100/0).
+	if n1 < 20 || n1 > 80 {
 		t.Fatalf("Does not seem balanced between servers: s1=%d, s2=%d", n1, n2)
 	}
 }
