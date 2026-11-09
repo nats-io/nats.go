@@ -1930,6 +1930,46 @@ func TestReconnectTLSVerificationError(t *testing.T) {
 	}
 }
 
+// After SetServerPool with a tls:// URL, a reconnect to a server that does not
+// offer TLS fails before CONNECT.
+func TestSetServerPoolTLSURLNoPlaintextConnect(t *testing.T) {
+	a := newFakeServer(t, func(conn net.Conn) {
+		conn.Write(fakeInfo())
+		serveProto(conn, nil)
+	})
+	connects := make(chan string, 1)
+	redialed := make(chan struct{})
+	var dials atomic.Int32
+	b := newFakeServer(t, func(conn net.Conn) {
+		if dials.Add(1) == 2 {
+			close(redialed)
+		}
+		recordConnects(connects)(conn)
+	})
+	nc, err := nats.Connect("nats://"+a.addr(),
+		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectJitter(0, 0),
+	)
+	if err != nil {
+		t.Fatalf("Error on connect: %v", err)
+	}
+	defer nc.Close()
+	if err := nc.SetServerPool([]string{"tls://" + b.addr()}); err != nil {
+		t.Fatalf("SetServerPool: %v", err)
+	}
+	if err := nc.ForceReconnect(); err != nil {
+		t.Fatalf("ForceReconnect: %v", err)
+	}
+	// A second dial means the first attempt ended without CONNECT.
+	select {
+	case c := <-connects:
+		t.Fatalf("CONNECT sent in plaintext to %s: %s", b.addr(), c)
+	case <-redialed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Client did not retry %s", b.addr())
+	}
+}
+
 // The INFO of a failed connection attempt that starts TLS after it is not
 // kept: ReconnectToServer gets the info of the last connected server, and a
 // lame duck flag in it does not reach LameDuckModeHandler.

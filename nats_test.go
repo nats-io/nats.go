@@ -2176,3 +2176,106 @@ func TestForceReconnectRestoresBackoff(t *testing.T) {
 		})
 	}
 }
+
+// A tls:// URL given through SetServerPool makes the client ask for TLS from
+// every server, as one given at connect does.
+func TestSetServerPoolWithTLSURLAsksForTLS(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		urls   []string
+		secure bool
+		reason string
+	}{
+		{"tls URL", []string{"nats://localhost:4222", "tls://localhost:4223"}, true, "the URL tls://localhost:4223 asks for TLS"},
+		{"plaintext only", []string{"nats://localhost:4222"}, false, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			nc := &Conn{Opts: GetDefaultOptions()}
+			if err := nc.SetServerPool(test.urls); err != nil {
+				t.Fatalf("SetServerPool: %v", err)
+			}
+			if nc.Opts.Secure != test.secure {
+				t.Fatalf("Secure = %v, expected %v", nc.Opts.Secure, test.secure)
+			}
+			if test.secure && nc.Opts.TLSConfig == nil {
+				t.Fatal("Expected a default TLS configuration")
+			}
+			if nc.tlsReason != test.reason {
+				t.Fatalf("tlsReason = %q, expected %q", nc.tlsReason, test.reason)
+			}
+		})
+	}
+}
+
+// Servers listed over a wss:// connection are dialed with wss://, also when
+// the wss:// URL came from SetServerPool and one of them was learned earlier
+// without TLS.
+func TestSetServerPoolWSSDiscoveredServersUseTLS(t *testing.T) {
+	nc := &Conn{Opts: GetDefaultOptions(), ws: true}
+	if err := nc.SetServerPool([]string{"wss://localhost:8443", "ws://localhost:8080"}); err != nil {
+		t.Fatalf("SetServerPool: %v", err)
+	}
+	server := func(hostPort string) *Server {
+		t.Helper()
+		for _, s := range nc.srvPool {
+			if s.URL.Host == hostPort {
+				return s
+			}
+		}
+		t.Fatalf("Server %q not in pool", hostPort)
+		return nil
+	}
+	info := func(urls ...string) string {
+		b, _ := json.Marshal(map[string]any{"connect_urls": urls})
+		return string(b)
+	}
+
+	nc.current = server("localhost:8080")
+	if err := nc.processInfo(info("localhost:8081")); err != nil {
+		t.Fatalf("processInfo: %v", err)
+	}
+	if got := server("localhost:8081").URL.Scheme; got != wsScheme {
+		t.Fatalf("Listed over ws://: scheme %q, expected %q", got, wsScheme)
+	}
+
+	nc.current = server("localhost:8443")
+	if err := nc.processInfo(info("localhost:8081", "localhost:8082")); err != nil {
+		t.Fatalf("processInfo: %v", err)
+	}
+	for _, hp := range []string{"localhost:8081", "localhost:8082"} {
+		if got := server(hp).URL.Scheme; got != wsSchemeTLS {
+			t.Fatalf("Listed over wss://: %s has scheme %q, expected %q", hp, got, wsSchemeTLS)
+		}
+	}
+}
+
+func TestSetServerPoolTLSURLKeepsState(t *testing.T) {
+	t.Run("refused pool changes nothing", func(t *testing.T) {
+		nc := &Conn{Opts: GetDefaultOptions()}
+		err := nc.SetServerPool([]string{"tls://localhost:4223", "ws://localhost:8080"})
+		if !errors.Is(err, ErrMixingWebsocketSchemes) {
+			t.Fatalf("Expected %v, got %v", ErrMixingWebsocketSchemes, err)
+		}
+		if nc.Opts.Secure || nc.Opts.TLSConfig != nil || nc.tlsReason != _EMPTY_ {
+			t.Fatal("Expected a refused pool to leave TLS off")
+		}
+	})
+	t.Run("user TLS config kept, scheme case ignored, never turned off", func(t *testing.T) {
+		tc := &tls.Config{ServerName: "example"}
+		opts := GetDefaultOptions()
+		opts.TLSConfig = tc
+		nc := &Conn{Opts: opts}
+		if err := nc.SetServerPool([]string{"nats://localhost:4222", "TLS://localhost:4223"}); err != nil {
+			t.Fatalf("SetServerPool: %v", err)
+		}
+		if !nc.Opts.Secure || nc.Opts.TLSConfig != tc {
+			t.Fatalf("Expected TLS with the given configuration, Secure=%v", nc.Opts.Secure)
+		}
+		if err := nc.SetServerPool([]string{"nats://localhost:4222"}); err != nil {
+			t.Fatalf("SetServerPool: %v", err)
+		}
+		if !nc.Opts.Secure {
+			t.Fatal("Expected a pool without a TLS URL to keep TLS")
+		}
+	})
+}

@@ -2224,10 +2224,16 @@ func (nc *Conn) setupServerPool() error {
 		}
 	}
 
-	// Check for Scheme hint to move to TLS mode.
-	for _, srv := range nc.srvPool {
+	nc.secureFromSchemes(nc.srvPool)
+
+	return nc.pickServer()
+}
+
+// secureFromSchemes asks for TLS when a server in pool has a TLS scheme. One
+// such URL makes the whole connection TLS, at connect as after SetServerPool.
+func (nc *Conn) secureFromSchemes(pool []*Server) {
+	for _, srv := range pool {
 		if srv.URL.Scheme == tlsScheme || srv.URL.Scheme == wsSchemeTLS {
-			// FIXME(dlc), this is for all in the pool, should be case by case.
 			nc.Opts.Secure = true
 			if nc.tlsReason == _EMPTY_ {
 				nc.tlsReason = fmt.Sprintf("the URL %s://%s asks for TLS", srv.URL.Scheme, srv.URL.Host)
@@ -2237,8 +2243,6 @@ func (nc *Conn) setupServerPool() error {
 			}
 		}
 	}
-
-	return nc.pickServer()
 }
 
 // Helper function to return scheme
@@ -4478,6 +4482,12 @@ func (nc *Conn) updateServerPool() {
 		}
 		tmp[curl] = struct{}{}
 	}
+	// A server listed over wss:// is dialed with wss://, also one learned
+	// earlier without TLS.
+	scheme := nc.connScheme()
+	if nc.ws && nc.current != nil && nc.current.URL.Scheme == wsSchemeTLS {
+		scheme = wsSchemeTLS
+	}
 	// Walk the pool and removed the implicit servers that are no longer in the
 	// given array/map
 	sp := nc.srvPool
@@ -4489,6 +4499,9 @@ func (nc *Conn) updateServerPool() {
 		// Remove from the temp map so that at the end we are left with only
 		// new (or restarted) servers that need to be added to the pool.
 		delete(tmp, curl)
+		if inInfo && srv.isImplicit && scheme == wsSchemeTLS {
+			srv.URL.Scheme = wsSchemeTLS
+		}
 		// Keep servers that were set through Options, but also the one that
 		// we are currently connected to (even if it is a discovered server).
 		if !srv.isImplicit || srv.URL == nc.current.URL {
@@ -4514,7 +4527,7 @@ func (nc *Conn) updateServerPool() {
 		if _, present := nc.urls[curl]; !present {
 			hasNew = true
 		}
-		nc.addURLToPool(fmt.Sprintf("%s://%s", nc.connScheme(), curl), true, saveTLS)
+		nc.addURLToPool(fmt.Sprintf("%s://%s", scheme, curl), true, saveTLS)
 	}
 	if hasNew {
 		// Randomize the pool if allowed but leave the first URL in place.
@@ -6879,6 +6892,9 @@ func (nc *Conn) ServerPool() []Server {
 // can be called while the connection is active. It will return an error if the
 // connection is closed or if any of the provided URLs are invalid.
 //
+// A tls:// URL in the pool makes the client ask for TLS from every server, as
+// one given at connect does. Nothing in a pool turns TLS off.
+//
 // This function does not trigger an immediate reconnect. The new server
 // pool will be used on the next reconnect attempt.
 // If you want to trigger an immediate reconnect to apply the new server pool,
@@ -6928,6 +6944,10 @@ func (nc *Conn) SetServerPool(servers []string) error {
 
 	nc.srvPool = newPool
 	nc.urls = newURLs
+	// A WebSocket pool keeps dialing each URL with its own scheme.
+	if !nc.ws {
+		nc.secureFromSchemes(newPool)
+	}
 
 	// Update nc.current to point to the corresponding server in the new pool
 	// This is important because currentServer() uses pointer equality
