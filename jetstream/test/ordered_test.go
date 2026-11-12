@@ -762,6 +762,34 @@ func TestOrderedConsumerMessages(t *testing.T) {
 			if len(msgs) != 2*len(testMsgs) {
 				t.Fatalf("Expected %d messages; got: %d", 2*len(testMsgs), len(msgs))
 			}
+
+			// same with Next polled with a NextMaxWait shorter than
+			// 2*heartbeat: the missing heartbeat has to be detected across
+			// Next calls for the consumer to be reset
+			c, err = s.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if err := s.DeleteConsumer(ctx, c.CachedInfo().Name); err != nil {
+				t.Fatal(err)
+			}
+			it, err = c.Messages(jetstream.PullHeartbeat(1 * time.Second))
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer it.Stop()
+			msgs = msgs[:0]
+			deadline := time.Now().Add(10 * time.Second)
+			for len(msgs) < 2*len(testMsgs) {
+				msg, err := it.Next(jetstream.NextMaxWait(300 * time.Millisecond))
+				if errors.Is(err, nats.ErrTimeout) && time.Now().Before(deadline) {
+					continue
+				}
+				if err != nil {
+					t.Fatalf("Unexpected error: %s", err)
+				}
+				msgs = append(msgs, msg)
+			}
 		})
 	})
 

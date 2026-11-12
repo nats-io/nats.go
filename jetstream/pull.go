@@ -150,6 +150,10 @@ type (
 		consumeOpts       *consumeOpts
 		delivered         int
 		closedCh          chan struct{}
+		// lastActivity is the last time Next observed activity from the
+		// server, used to track heartbeats across Next calls. Only used
+		// by Messages; the lock should be held when accessing it.
+		lastActivity time.Time
 	}
 
 	pendingMsgs struct {
@@ -667,12 +671,35 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 		}
 		return nil, ErrMsgIteratorClosed
 	}
+	// Heartbeats are tracked across Next calls rather than per call: with
+	// a NextMaxWait shorter than 2*heartbeat, a monitor armed afresh on
+	// every call never fires, so a lost pull request was never detected
+	// and the iterator went silent on a healthy stream. The monitor only
+	// waits for what is left of the heartbeat interval since the last
+	// activity, and is not armed while disconnected (the reconnect
+	// re-arms it).
+	if s.lastActivity.IsZero() {
+		s.lastActivity = time.Now()
+	}
 	hbMonitor := s.scheduleHeartbeatCheck(s.consumeOpts.Heartbeat)
+	if hbMonitor != nil {
+		if s.consumer.js.conn.IsConnected() {
+			hbMonitor.Reset(time.Until(s.lastActivity.Add(2 * s.consumeOpts.Heartbeat)))
+		} else {
+			hbMonitor.Stop()
+		}
+	}
 	defer func() {
 		if hbMonitor != nil {
 			hbMonitor.Stop()
 		}
 	}()
+	resetHeartbeat := func() {
+		s.lastActivity = time.Now()
+		if hbMonitor != nil {
+			hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
+		}
+	}
 
 	if s.consumeOpts.StopAfter > 0 && s.delivered >= s.consumeOpts.StopAfter {
 		s.Stop()
@@ -697,9 +724,7 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 				}
 				return nil, ErrMsgIteratorClosed
 			}
-			if hbMonitor != nil {
-				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
-			}
+			resetHeartbeat()
 			userMsg, msgErr := checkMsg(msg)
 			if !userMsg {
 				// heartbeat message
@@ -720,13 +745,17 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 			return s.consumer.js.toJSMsg(msg), nil
 		case err := <-s.errs:
 			if errors.Is(err, ErrNoHeartbeat) {
+				// Not a missing heartbeat if the timer fired before it was
+				// reset, or if messages received while no Next call was in
+				// flight are still buffered (reading them resets the timer).
+				if len(s.msgs) > 0 || time.Since(s.lastActivity) < 2*s.consumeOpts.Heartbeat {
+					continue
+				}
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
+				resetHeartbeat()
 				if s.consumeOpts.ReportMissingHeartbeats {
 					return nil, err
-				}
-				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 				}
 			}
 			if errors.Is(err, errConnected) {
@@ -739,9 +768,7 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 				}
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
-				if hbMonitor != nil {
-					hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
-				}
+				resetHeartbeat()
 			}
 			if errors.Is(err, errDisconnected) {
 				if hbMonitor != nil {

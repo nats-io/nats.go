@@ -1772,6 +1772,23 @@ func TestPullConsumerMessages(t *testing.T) {
 			if elapsed < time.Second || elapsed > 1500*time.Millisecond {
 				t.Fatalf("Unexpected elapsed time; want 1-1.5s; got %v", elapsed)
 			}
+
+			// with a NextMaxWait shorter than 2*heartbeat, the missing
+			// heartbeat has to be detected across Next calls
+			now = time.Now()
+			for {
+				_, err = it.Next(jetstream.NextMaxWait(200 * time.Millisecond))
+				if !errors.Is(err, nats.ErrTimeout) || time.Since(now) > 5*time.Second {
+					break
+				}
+			}
+			elapsed = time.Since(now)
+			if !errors.Is(err, jetstream.ErrNoHeartbeat) {
+				t.Fatalf("Expected error: %v; got: %v", jetstream.ErrNoHeartbeat, err)
+			}
+			if elapsed < time.Second || elapsed > 1500*time.Millisecond {
+				t.Fatalf("Unexpected elapsed time; want 1-1.5s; got %v", elapsed)
+			}
 		})
 	})
 
