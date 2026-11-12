@@ -4611,6 +4611,9 @@ func DecodeHeadersMsg(data []byte) (Header, error) {
 
 	// Check if we have an inlined status.
 	if len(l) > hdrPreEnd {
+		if l[hdrPreEnd] != ' ' && l[hdrPreEnd] != '\t' {
+			return nil, ErrBadHeaderMsg
+		}
 		var description string
 		status := strings.TrimSpace(l[hdrPreEnd:])
 		if len(status) < statusLen {
