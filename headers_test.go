@@ -26,8 +26,8 @@ import (
 func TestHeaderParser(t *testing.T) {
 	shouldErr := func(hdr string) {
 		t.Helper()
-		if _, err := DecodeHeadersMsg([]byte(hdr)); err == nil {
-			t.Fatalf("Expected an error")
+		if _, err := DecodeHeadersMsg([]byte(hdr)); err != ErrBadHeaderMsg {
+			t.Fatalf("Expected %v for %q, got %v", ErrBadHeaderMsg, hdr, err)
 		}
 	}
 	shouldErr("NATS/1.0")
@@ -37,6 +37,8 @@ func TestHeaderParser(t *testing.T) {
 	shouldErr("NATS/1.0 5\r\n\r\n")
 	shouldErr("NATS/1.0 41\r\n\r\n")
 	shouldErr("NATS/1.0 \r\n\r\n")
+	shouldErr("NATS/1.0418\r\nExample: test\r\n\r\n")
+	shouldErr("NATS/1.0418 I'm a teapot\r\n\r\n")
 
 	// Check that we can do inline status and descriptions
 	checkStatus := func(hdr string, status int, description string) {
@@ -58,6 +60,8 @@ func TestHeaderParser(t *testing.T) {
 	checkStatus("NATS/1.0 503", 503, "")
 	checkStatus("NATS/1.0 503 No Responders", 503, "No Responders")
 	checkStatus("NATS/1.0  404   No Messages", 404, "No Messages")
+	checkStatus("NATS/1.0\t418", 418, "")
+	checkStatus("NATS/1.0 \t418 I'm a teapot\r\nExample: test", 418, "I'm a teapot")
 }
 
 func TestHeaderMultiLine(t *testing.T) {
