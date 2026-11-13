@@ -1904,6 +1904,70 @@ func TestClosedHandlerOnConnectionClose(t *testing.T) {
 	})
 }
 
+// Async subscriptions are covered by TestClosedHandlerSetAfterAsyncSubClosed,
+// as only a white-box test can tell when their delivery goroutine has exited.
+func TestClosedHandlerSetAfterClose(t *testing.T) {
+	withServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		subscribe := map[string]func(*nats.Conn) (*nats.Subscription, error){
+			"chan subscribe": func(nc *nats.Conn) (*nats.Subscription, error) {
+				return nc.ChanSubscribe("foo", make(chan *nats.Msg, 1))
+			},
+			"sync subscribe": func(nc *nats.Conn) (*nats.Subscription, error) {
+				return nc.SubscribeSync("foo")
+			},
+		}
+		closers := map[string]func(*nats.Conn, *nats.Subscription){
+			"unsubscribe": func(_ *nats.Conn, sub *nats.Subscription) { sub.Unsubscribe() },
+			"conn close":  func(nc *nats.Conn, _ *nats.Subscription) { nc.Close() },
+		}
+		for subName, sub := range subscribe {
+			for closeName, closeSub := range closers {
+				for _, handlerAtClose := range []bool{false, true} {
+					name := fmt.Sprintf("%s/%s/handler at close %t", subName, closeName, handlerAtClose)
+					t.Run(name, func(t *testing.T) {
+						nc, err := nats.Connect(inst.Servers[0].URL)
+						if err != nil {
+							t.Fatalf("Unexpected error: %v", err)
+						}
+						defer nc.Close()
+						s, err := sub(nc)
+						if err != nil {
+							t.Fatalf("Unexpected error: %v", err)
+						}
+
+						closed := make(chan string, 2)
+						if handlerAtClose {
+							s.SetClosedHandler(func(subject string) { closed <- subject })
+							closeSub(nc, s)
+						} else {
+							closeSub(nc, s)
+							// The handler takes a lock held by the caller of
+							// SetClosedHandler, so it must not be called inline.
+							var mu sync.Mutex
+							mu.Lock()
+							s.SetClosedHandler(func(subject string) {
+								mu.Lock()
+								defer mu.Unlock()
+								closed <- subject
+							})
+							mu.Unlock()
+						}
+						WaitOnChannel(t, closed, "foo")
+
+						// The close has been reported, so this one is not called.
+						s.SetClosedHandler(func(subject string) { closed <- subject })
+						select {
+						case <-closed:
+							t.Fatal("Closed handler called after the close was reported")
+						case <-time.After(100 * time.Millisecond):
+						}
+					})
+				}
+			}
+		}
+	})
+}
+
 const denyFooSubscribeAuthSnippet = `
 authorization: {
     users = [
