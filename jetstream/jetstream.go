@@ -335,7 +335,7 @@ type (
 		// may configure.
 		MaxAckPending int `json:"max_ack_pending"`
 
-		// MemoryMaxStreamBytes is is the maximum size any single memory based
+		// MemoryMaxStreamBytes is the maximum size any single memory based
 		// stream may be.
 		MemoryMaxStreamBytes int64 `json:"memory_max_stream_bytes"`
 
