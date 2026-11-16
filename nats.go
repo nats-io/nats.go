@@ -3589,6 +3589,10 @@ func (nc *Conn) doReconnect(err error, forceReconnect bool) {
 
 		// Process connect logic
 		if nc.err = nc.processConnectInit(); nc.err != nil {
+			if reconnectErrCB := nc.Opts.ReconnectErrCB; reconnectErrCB != nil {
+				reconnectErr := nc.err
+				nc.ach.push(func() { reconnectErrCB(nc, reconnectErr) })
+			}
 			// Check if we should abort reconnect. If so, break out
 			// of the loop and connection will be closed.
 			if nc.ar {
