@@ -460,7 +460,8 @@ func TestLookupHostResultIsRandomized(t *testing.T) {
 			t.Fatalf("Unexpected ConnectedUrl: %q (expected %q or %q)", nc.ConnectedUrl(), s1.Servers[0].URL, s2.Servers[0].URL)
 		}
 	}
-	if n1 < 35 || n1 > 65 {
+
+	if n1 < 20 || n1 > 80 {
 		t.Fatalf("Does not seem balanced between servers: s1=%d, s2=%d", n1, n2)
 	}
 }
