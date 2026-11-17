@@ -177,6 +177,8 @@ type (
 		// Keys will return all keys, filtering out any duplicates.
 		// For large datasets, this can be memory-heavy as all keys are loaded
 		// into memory. Use ListKeys for a streaming alternative.
+		// If the context ends before all initial values are received, Keys
+		// returns the context error and no keys.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
@@ -191,7 +193,8 @@ type (
 		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
-		// KeyValueMaxHistory).
+		// KeyValueMaxHistory). If the context ends before all initial values
+		// are received, History returns the context error and no entries.
 		History(ctx context.Context, key string, opts ...WatchOpt) ([]KeyValueEntry, error)
 
 		// Bucket returns the KV store name.
@@ -1407,13 +1410,28 @@ func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 		return nil, err
 	}
 	defer watcher.Stop()
+	return collectKeys(ctx, watcher.Updates())
+}
 
+func collectKeys(ctx context.Context, updates <-chan KeyValueEntry) ([]string, error) {
 	var keys []string
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
+initialValues:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case entry := <-updates:
+			if entry == nil {
+				// A closed channel is not the completion marker when the
+				// context has ended. Also check a buffered marker in case
+				// both select cases are ready.
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				break initialValues
+			}
+			keys = append(keys, entry.Key())
 		}
-		keys = append(keys, entry.Key())
 	}
 	if len(keys) == 0 {
 		return nil, ErrNoKeysFound
@@ -1504,13 +1522,28 @@ func (kv *kvs) History(ctx context.Context, key string, opts ...WatchOpt) ([]Key
 		return nil, err
 	}
 	defer watcher.Stop()
+	return collectHistory(ctx, watcher.Updates())
+}
 
+func collectHistory(ctx context.Context, updates <-chan KeyValueEntry) ([]KeyValueEntry, error) {
 	var entries []KeyValueEntry
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
+initialValues:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case entry := <-updates:
+			if entry == nil {
+				// A closed channel is not the completion marker when the
+				// context has ended. Also check a buffered marker in case
+				// both select cases are ready.
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				break initialValues
+			}
+			entries = append(entries, entry)
 		}
-		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
 		return nil, ErrKeyNotFound
