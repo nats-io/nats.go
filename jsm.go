@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -1079,6 +1080,9 @@ type StreamSourceInfo struct {
 }
 
 // StreamState is information about the given stream.
+//
+// NumDeleted is capped at math.MaxInt when decoded. This only matters on
+// 32-bit platforms, where int cannot hold every value the server can report.
 type StreamState struct {
 	Msgs        uint64            `json:"messages"`
 	Bytes       uint64            `json:"bytes"`
@@ -1091,6 +1095,32 @@ type StreamState struct {
 	NumDeleted  int               `json:"num_deleted"`
 	NumSubjects uint64            `json:"num_subjects"`
 	Subjects    map[string]uint64 `json:"subjects"`
+}
+
+// UnmarshalJSON decodes num_deleted as an int64 and caps it to the range of
+// int. On 32-bit platforms a stream can have more interior deletes than int
+// can hold, which would otherwise fail decoding of the whole stream info.
+func (s *StreamState) UnmarshalJSON(data []byte) error {
+	type streamState StreamState
+	aux := struct {
+		*streamState
+		NumDeleted int64 `json:"num_deleted"`
+	}{
+		streamState: (*streamState)(s),
+		NumDeleted:  int64(s.NumDeleted),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch {
+	case aux.NumDeleted > math.MaxInt:
+		s.NumDeleted = math.MaxInt
+	case aux.NumDeleted < math.MinInt:
+		s.NumDeleted = math.MinInt
+	default:
+		s.NumDeleted = int(aux.NumDeleted)
+	}
+	return nil
 }
 
 // ClusterInfo shows information about the underlying set of servers

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -294,6 +295,10 @@ type (
 		// stream. Only deleted messages causing a gap in stream sequence numbers
 		// are counted. Messages deleted at the beginning or end of the stream
 		// are not counted.
+		//
+		// The value is capped at math.MaxInt when decoded. This only matters
+		// on 32-bit platforms, where int cannot hold every value the server
+		// can report.
 		NumDeleted int `json:"num_deleted"`
 
 		// NumSubjects is the number of unique subjects the stream has received
@@ -861,6 +866,32 @@ func (alg *StoreCompression) UnmarshalJSON(b []byte) error {
 		*alg = NoCompression
 	default:
 		return errors.New("unknown compression algorithm")
+	}
+	return nil
+}
+
+// UnmarshalJSON decodes num_deleted as an int64 and caps it to the range of
+// int. On 32-bit platforms a stream can have more interior deletes than int
+// can hold, which would otherwise fail decoding of the whole stream info.
+func (s *StreamState) UnmarshalJSON(data []byte) error {
+	type streamState StreamState
+	aux := struct {
+		*streamState
+		NumDeleted int64 `json:"num_deleted"`
+	}{
+		streamState: (*streamState)(s),
+		NumDeleted:  int64(s.NumDeleted),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch {
+	case aux.NumDeleted > math.MaxInt:
+		s.NumDeleted = math.MaxInt
+	case aux.NumDeleted < math.MinInt:
+		s.NumDeleted = math.MinInt
+	default:
+		s.NumDeleted = int(aux.NumDeleted)
 	}
 	return nil
 }
