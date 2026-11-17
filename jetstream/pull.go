@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -93,6 +94,14 @@ type (
 		info    atomic.Pointer[ConsumerInfo]
 		subs    syncx.Map[string, *pullSubscription]
 		pinID   string
+
+		// checkingResource is set while a check started by
+		// startResourceCheck runs, so the subscriptions of this handle run
+		// one check at a time.
+		checkingResource atomic.Bool
+		// nextResourceCheck is the time, in Unix nanoseconds, before which
+		// no new check starts.
+		nextResourceCheck atomic.Int64
 	}
 
 	pullRequest struct {
@@ -126,7 +135,11 @@ type (
 		ThresholdMessages       int
 		ThresholdBytes          int
 		StopAfter               int
+		AbortOnMissingResource  bool
 		notifyOnReconnect       bool
+		// noResourceCheck turns the check for a missing consumer or stream
+		// off, for the ordered consumer, which replaces its consumer itself.
+		noResourceCheck bool
 	}
 
 	ConsumeErrHandlerFunc func(consumeCtx ConsumeContext, err error)
@@ -153,6 +166,9 @@ type (
 		// set by Consume once anything but a 503 arrives, as everything else
 		// comes from the consumer, while a 503 means no consumer served the pull
 		reachedConsumer atomic.Bool
+		// activity counts messages other than a 503, so a resource check can
+		// tell whether the consumer was heard from after it started.
+		activity atomic.Uint64
 	}
 
 	pendingMsgs struct {
@@ -252,8 +268,11 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			sub.hbMonitor.Stop()
 		}
 		userMsg, msgErr := checkMsg(msg)
-		if !sub.reachedConsumer.Load() && !errors.Is(msgErr, nats.ErrNoResponders) {
-			sub.reachedConsumer.Store(true)
+		if !errors.Is(msgErr, nats.ErrNoResponders) {
+			sub.activity.Add(1)
+			if !sub.reachedConsumer.Load() {
+				sub.reachedConsumer.Store(true)
+			}
 		}
 		if !userMsg && msgErr == nil {
 			if sub.hbMonitor != nil {
@@ -279,6 +298,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 
 			if sub.consumeOpts.ErrHandler != nil && notifyErr != nil {
 				sub.consumeOpts.ErrHandler(sub, notifyErr)
+			}
+			if errors.Is(notifyErr, nats.ErrNoResponders) {
+				sub.startResourceCheck()
 			}
 			if termErr != nil {
 				if sub.closed.Load() == 1 {
@@ -418,7 +440,8 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if sub.consumeOpts.ErrHandler != nil {
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
-				if errors.Is(err, ErrConnectionClosed) {
+				if errors.Is(err, ErrConnectionClosed) ||
+					(sub.consumeOpts.AbortOnMissingResource && isResourceNotFound(err)) {
 					sub.Stop()
 				}
 			case <-sub.done:
@@ -707,14 +730,21 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 				hbMonitor.Reset(2 * s.consumeOpts.Heartbeat)
 			}
 			userMsg, msgErr := checkMsg(msg)
+			if !errors.Is(msgErr, nats.ErrNoResponders) {
+				s.activity.Add(1)
+			}
 			if !userMsg {
 				// heartbeat message
 				if msgErr == nil {
 					continue
 				}
-				if termErr, _ := s.handleStatusMsg(msg, msgErr); termErr != nil {
+				termErr, notifyErr := s.handleStatusMsg(msg, msgErr)
+				if termErr != nil {
 					s.Stop()
 					return nil, termErr
+				}
+				if errors.Is(notifyErr, nats.ErrNoResponders) {
+					s.startResourceCheck()
 				}
 				continue
 			}
@@ -725,6 +755,12 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 			s.incrementDeliveredMsgs()
 			return s.consumer.js.toJSMsg(msg), nil
 		case err := <-s.errs:
+			if isResourceNotFound(err) {
+				if s.consumeOpts.AbortOnMissingResource {
+					s.Stop()
+				}
+				return nil, err
+			}
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
@@ -797,6 +833,85 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) (error, 
 		}
 	}
 	return nil, nil
+}
+
+// startResourceCheck checks in the background whether the consumer and its
+// stream still exist, after a pull request got a no responders status. The
+// subscriptions of one consumer handle run at most one check at a time, and
+// start one at most once per heartbeat interval, with jitter, since anything
+// that can publish to the pull inbox can send a 503.
+func (s *pullSubscription) startResourceCheck() {
+	if s.consumeOpts.noResourceCheck || s.closed.Load() == 1 {
+		return
+	}
+	p := s.consumer
+	if !p.checkingResource.CompareAndSwap(false, true) {
+		return
+	}
+	now := time.Now().UnixNano()
+	if now < p.nextResourceCheck.Load() {
+		p.checkingResource.Store(false)
+		return
+	}
+	hb := s.consumeOpts.Heartbeat
+	p.nextResourceCheck.Store(now + int64(hb+rand.N(hb/5+1)))
+	go p.checkResource()
+}
+
+// checkResource asks the server for the consumer info. If the consumer or
+// its stream is not found, it reports ErrConsumerNotFound or
+// ErrStreamNotFound to every subscription of this handle that runs the
+// check, unless the subscription got a message since the check started,
+// which means the consumer was recreated in the meantime.
+func (p *pullConsumer) checkResource() {
+	defer p.checkingResource.Store(false)
+
+	type subActivity struct {
+		sub      *pullSubscription
+		activity uint64
+	}
+	var subs []subActivity
+	p.subs.Range(func(_ string, sub *pullSubscription) bool {
+		if !sub.consumeOpts.noResourceCheck {
+			subs = append(subs, subActivity{sub, sub.activity.Load()})
+		}
+		return true
+	})
+	if len(subs) == 0 {
+		return
+	}
+
+	resp, err := p.infoRequest(context.Background())
+	if err != nil || resp.Error == nil {
+		// Any other result, such as a timeout or no responders while the
+		// server is still recovering, leaves the subscriptions running.
+		return
+	}
+	var gone error
+	switch resp.Error.ErrorCode {
+	case JSErrCodeConsumerNotFound:
+		gone = ErrConsumerNotFound
+	case JSErrCodeStreamNotFound:
+		gone = ErrStreamNotFound
+	default:
+		return
+	}
+	for _, s := range subs {
+		if s.sub.closed.Load() == 1 || s.sub.activity.Load() != s.activity {
+			continue
+		}
+		// Do not block: the next 503 starts a new check if this one is
+		// dropped because errs is full.
+		select {
+		case s.sub.errs <- gone:
+		default:
+		}
+	}
+}
+
+// isResourceNotFound reports whether err was reported by checkResource.
+func isResourceNotFound(err error) bool {
+	return errors.Is(err, ErrConsumerNotFound) || errors.Is(err, ErrStreamNotFound)
 }
 
 func (hb *hbMonitor) Stop() {
@@ -1268,6 +1383,9 @@ func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, err
 }
 
 func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
+	if ordered && consumeOpts.AbortOnMissingResource {
+		return errors.New("abort on missing resource is not supported for ordered consumers")
+	}
 	// we cannot use both max messages and max bytes unless we're using max bytes as fetch size limiter
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset && !consumeOpts.LimitSize {
 		return errors.New("only one of MaxMessages and MaxBytes can be specified")

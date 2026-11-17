@@ -191,14 +191,8 @@ type (
 
 // Info fetches current ConsumerInfo from the server.
 func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
-	ctx, cancel := p.js.wrapContextWithoutDeadline(ctx)
-	if cancel != nil {
-		defer cancel()
-	}
-	infoSubject := fmt.Sprintf(apiConsumerInfoT, p.stream, p.name)
-	var resp consumerInfoResponse
-
-	if _, err := p.js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+	resp, err := p.infoRequest(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {
@@ -213,6 +207,21 @@ func (p *pullConsumer) Info(ctx context.Context) (*ConsumerInfo, error) {
 
 	p.info.Store(resp.ConsumerInfo)
 	return resp.ConsumerInfo, nil
+}
+
+// infoRequest sends a consumer info request and returns the response as
+// is, so callers can look at the API error code.
+func (p *pullConsumer) infoRequest(ctx context.Context) (*consumerInfoResponse, error) {
+	ctx, cancel := p.js.wrapContextWithoutDeadline(ctx)
+	if cancel != nil {
+		defer cancel()
+	}
+	infoSubject := fmt.Sprintf(apiConsumerInfoT, p.stream, p.name)
+	var resp consumerInfoResponse
+	if _, err := p.js.apiRequestJSON(ctx, infoSubject, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // CachedInfo returns ConsumerInfo currently cached on this consumer.
