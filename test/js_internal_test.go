@@ -524,3 +524,57 @@ func TestJetStreamOrderedConsumerSIDRace(t *testing.T) {
 		}
 	})
 }
+
+// A last per subject consumer reset before its first message must be
+// recreated as last per subject rather than replay superseded values.
+func TestJetStreamOrderedConsumerResetKeepsLastPerSubject(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc, js := oscStream(t, inst, nats.ReconnectWait(50*time.Millisecond))
+		// osc.a is last at seq 1, osc.b at seq 6 with superseded values in between.
+		if _, err := js.Publish("osc.a", nil); err != nil {
+			t.Fatalf("Error publishing: %v", err)
+		}
+		for range 5 {
+			if _, err := js.Publish("osc.b", nil); err != nil {
+				t.Fatalf("Error publishing: %v", err)
+			}
+		}
+		var dropping atomic.Bool
+		var dropped atomic.Int32
+		dropping.Store(true)
+		drop := func(m *nats.Msg) *nats.Msg {
+			if dropping.Load() {
+				dropped.Add(1)
+				return nil
+			}
+			return m
+		}
+		nc.AddMsgFilter("osc.a", drop)
+		nc.AddMsgFilter("osc.b", drop)
+
+		var rec seqRecorder
+		sub, err := js.Subscribe("osc.>", rec.add, nats.OrderedConsumer(), nats.DeliverLastPerSubject(), nats.IdleHeartbeat(time.Minute))
+		if err != nil {
+			t.Fatalf("Error subscribing: %v", err)
+		}
+		defer sub.Unsubscribe()
+		checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+			if n := dropped.Load(); n != 2 {
+				return fmt.Errorf("dropped %d of 2 values", n)
+			}
+			return nil
+		})
+		dropping.Store(false)
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatalf("Error forcing reconnect: %v", err)
+		}
+		rec.waitFor(t, 2, 5*time.Second)
+		// Leave time for superseded values to show up.
+		time.Sleep(500 * time.Millisecond)
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.order) != 2 || rec.order[0] != 1 || rec.order[1] != 6 {
+			t.Fatalf("Expected stream seqs [1 6], got %v", rec.order)
+		}
+	})
+}
