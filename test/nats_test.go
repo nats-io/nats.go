@@ -15,6 +15,7 @@ package test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -416,6 +417,83 @@ func TestNkeyAuth(t *testing.T) {
 
 	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		t.Fatalf("Error on Flush: %v", err)
+	}
+}
+
+func TestProxySignature(t *testing.T) {
+	kp, _ := nkeys.CreateUser()
+	pub, _ := kp.PublicKey()
+	untrusted, _ := nkeys.CreateUser()
+
+	authBody := `authorization {
+  users: [
+    { user: "proxied", password: "pwd", proxy_required: true }
+  ]
+}`
+	proxies := fmt.Sprintf(`proxies {
+  trusted: [
+    { key: %q }
+  ]
+}`, pub)
+
+	c := newTester(t)
+	inst := c.CreateServer(t, false, append(singleUserPassOpts(authBody), testservice.WithTopLevel(proxies))...)
+	t.Cleanup(func() { inst.Destroy(t) })
+	clientURL := inst.Servers[0].URL
+
+	connect := func(opts ...nats.Option) (*nats.Conn, error) {
+		opts = append([]nats.Option{
+			nats.UserInfo("proxied", "pwd"),
+			nats.MaxReconnects(10),
+			nats.ReconnectWait(100 * time.Millisecond),
+		}, opts...)
+		return nats.Connect(clientURL, opts...)
+	}
+
+	if _, err := connect(); !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected an authorization error with no proxy signature, got %v", err)
+	}
+	if _, err := connect(nats.ProxySignature(untrusted.Sign)); !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Expected an authorization error with an untrusted proxy signature, got %v", err)
+	}
+	failSign := func(nonce []byte) ([]byte, error) {
+		return nil, errors.New("no key")
+	}
+	if _, err := connect(nats.ProxySignature(failSign)); err == nil || !strings.Contains(err.Error(), "no key") {
+		t.Fatalf("Expected the signature callback's error, got %v", err)
+	}
+
+	nc, err := connect(nats.ProxySignature(kp.Sign))
+	if err != nil {
+		t.Fatalf("Expected to succeed but got %v", err)
+	}
+	defer nc.Close()
+
+	// A reconnect gets a new nonce, which must be signed again.
+	inst.StopServer(t, inst.Servers[0])
+	inst.StartServer(t, inst.Servers[0])
+
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("Error on Flush: %v", err)
+	}
+}
+
+func TestProxySignatureNotSupported(t *testing.T) {
+	kp, _ := nkeys.CreateUser()
+
+	// Without trusted proxies or nkeys, the server sends no nonce.
+	authBody := `authorization {
+  users: [
+    { user: "user", password: "pwd" }
+  ]
+}`
+	c := newTester(t)
+	inst := c.CreateServer(t, false, singleUserPassOpts(authBody)...)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	_, err := nats.Connect(inst.Servers[0].URL, nats.UserInfo("user", "pwd"), nats.ProxySignature(kp.Sign))
+	if !errors.Is(err, nats.ErrProxySignatureNotSupported) {
+		t.Fatalf("Expected %v, got %v", nats.ErrProxySignatureNotSupported, err)
 	}
 }
 

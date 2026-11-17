@@ -146,6 +146,7 @@ var (
 	ErrNoUserCB                      = errors.New("nats: user callback not defined")
 	ErrNkeyAndUser                   = errors.New("nats: user callback and nkey defined")
 	ErrNkeysNotSupported             = errors.New("nats: nkeys not supported by the server")
+	ErrProxySignatureNotSupported    = errors.New("nats: proxy signature not supported by the server")
 	ErrStaleConnection               = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet               = errors.New("nats: token and token handler both set")
 	ErrUserInfoAlreadySet            = errors.New("nats: cannot set user info callback and user/pass")
@@ -524,6 +525,12 @@ type Options struct {
 	// SignatureCB designates the function used to sign the nonce
 	// presented from the server.
 	SignatureCB SignatureHandler
+
+	// ProxySignatureCB designates the function used to sign the nonce
+	// presented from the server as one of its trusted proxies. The
+	// signature is sent beside the connection's own credentials, and lets
+	// the server accept a user that requires a proxy.
+	ProxySignatureCB SignatureHandler
 
 	// User sets the username to be used when connecting to the server.
 	User string
@@ -1138,6 +1145,7 @@ type connectInfo struct {
 	Echo         bool   `json:"echo"`
 	Headers      bool   `json:"headers"`
 	NoResponders bool   `json:"no_responders"`
+	ProxySig     string `json:"proxy_sig,omitempty"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -1653,6 +1661,18 @@ func Nkey(pubKey string, sigCB SignatureHandler) Option {
 		if pubKey != "" && sigCB == nil {
 			return ErrNkeyButNoSigCB
 		}
+		return nil
+	}
+}
+
+// ProxySignature will set the callback that signs the server nonce as a
+// trusted proxy of the server (see the proxies block of the server
+// configuration, in nats-server v2.12.0 and later). It is for applications
+// that connect on behalf of clients they have authenticated themselves, and
+// is independent of the credentials the connection authenticates with.
+func ProxySignature(sigCB SignatureHandler) Option {
+	return func(o *Options) error {
+		o.ProxySignatureCB = sigCB
 		return nil
 	}
 }
@@ -3222,7 +3242,7 @@ func (nc *Conn) sendProto(proto string) {
 // applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
-	var nkey, sig, user, pass, token, ujwt string
+	var nkey, sig, user, pass, token, ujwt, proxySig string
 	u := nc.current.URL.User
 	if u != nil {
 		// if no password, assume username is authToken
@@ -3273,6 +3293,18 @@ func (nc *Conn) connectProto() (string, error) {
 		sig = base64.RawURLEncoding.EncodeToString(sigraw)
 	}
 
+	if o.ProxySignatureCB != nil {
+		// The server sends a nonce when it has trusted proxies configured.
+		if nc.info.Nonce == _EMPTY_ {
+			return _EMPTY_, ErrProxySignatureNotSupported
+		}
+		sigraw, err := o.ProxySignatureCB([]byte(nc.info.Nonce))
+		if err != nil {
+			return _EMPTY_, fmt.Errorf("error signing nonce as proxy: %w", err)
+		}
+		proxySig = base64.RawURLEncoding.EncodeToString(sigraw)
+	}
+
 	if nc.Opts.TokenHandler != nil {
 		if token != _EMPTY_ {
 			return _EMPTY_, ErrTokenAlreadySet
@@ -3285,6 +3317,7 @@ func (nc *Conn) connectProto() (string, error) {
 	cinfo := connectInfo{
 		o.Verbose, o.Pedantic, ujwt, nkey, sig, user, pass, token,
 		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho, hdrs, hdrs,
+		proxySig,
 	}
 
 	b, err := json.Marshal(cinfo)
