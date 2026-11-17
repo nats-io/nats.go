@@ -126,6 +126,7 @@ type (
 		ThresholdMessages       int
 		ThresholdBytes          int
 		StopAfter               int
+		AbortOnMissingConsumer  bool
 		notifyOnReconnect       bool
 	}
 
@@ -150,6 +151,10 @@ type (
 		consumeOpts       *consumeOpts
 		delivered         int
 		closedCh          chan struct{}
+		// missedSignals counts consecutive missed heartbeats and no
+		// responders statuses, used by AbortOnMissingConsumer.
+		missedSignals    atomic.Uint32
+		checkingConsumer atomic.Uint32
 	}
 
 	pendingMsgs struct {
@@ -194,6 +199,11 @@ const (
 	DefaultExpires           = 30 * time.Second
 	defaultBatchMaxBytesOnly = 1_000_000
 	unset                    = -1
+
+	// missingConsumerThreshold is the number of consecutive missed
+	// heartbeats or no responders statuses after which a subscription
+	// using PullAbortOnMissingConsumer checks whether its consumer exists.
+	missingConsumerThreshold = 2
 )
 
 // Consume can be used to continuously receive messages and handle them
@@ -250,6 +260,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		}
 		userMsg, msgErr := checkMsg(msg)
 		if !userMsg && msgErr == nil {
+			sub.missedSignals.Store(0)
 			if sub.hbMonitor != nil {
 				sub.hbMonitor.Reset(2 * consumeOpts.Heartbeat)
 			}
@@ -274,6 +285,9 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			if sub.consumeOpts.ErrHandler != nil && notifyErr != nil {
 				sub.consumeOpts.ErrHandler(sub, notifyErr)
 			}
+			if errors.Is(notifyErr, nats.ErrNoResponders) {
+				sub.recordMissedSignal()
+			}
 			if termErr != nil {
 				if sub.closed.Load() == 1 {
 					return
@@ -285,6 +299,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 			}
 			return
 		}
+		sub.missedSignals.Store(0)
 		if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
 			p.setPinID(pinId)
 		}
@@ -412,7 +427,10 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if sub.consumeOpts.ErrHandler != nil {
 					sub.consumeOpts.ErrHandler(sub, err)
 				}
-				if errors.Is(err, ErrConnectionClosed) {
+				if errors.Is(err, ErrNoHeartbeat) {
+					sub.recordMissedSignal()
+				}
+				if errors.Is(err, ErrConnectionClosed) || errors.Is(err, ErrConsumerNotFound) {
 					sub.Stop()
 				}
 			case <-sub.done:
@@ -704,14 +722,20 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 			if !userMsg {
 				// heartbeat message
 				if msgErr == nil {
+					s.missedSignals.Store(0)
 					continue
 				}
-				if termErr, _ := s.handleStatusMsg(msg, msgErr); termErr != nil {
+				termErr, notifyErr := s.handleStatusMsg(msg, msgErr)
+				if termErr != nil {
 					s.Stop()
 					return nil, termErr
 				}
+				if errors.Is(notifyErr, nats.ErrNoResponders) {
+					s.recordMissedSignal()
+				}
 				continue
 			}
+			s.missedSignals.Store(0)
 			if pinId := msg.Header.Get("Nats-Pin-Id"); pinId != "" {
 				s.consumer.setPinID(pinId)
 			}
@@ -719,9 +743,14 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 			s.incrementDeliveredMsgs()
 			return s.consumer.js.toJSMsg(msg), nil
 		case err := <-s.errs:
+			if errors.Is(err, ErrConsumerNotFound) {
+				s.Stop()
+				return nil, err
+			}
 			if errors.Is(err, ErrNoHeartbeat) {
 				s.pending.msgCount = 0
 				s.pending.byteCount = 0
+				s.recordMissedSignal()
 				if s.consumeOpts.ReportMissingHeartbeats {
 					return nil, err
 				}
@@ -791,6 +820,44 @@ func (s *pullSubscription) handleStatusMsg(msg *nats.Msg, msgErr error) (error, 
 		}
 	}
 	return nil, nil
+}
+
+// recordMissedSignal counts a missed heartbeat or a no responders status.
+// With PullAbortOnMissingConsumer set, once missingConsumerThreshold of them
+// arrive in a row it checks, in the background, whether the consumer still
+// exists. If the server reports it as not found, ErrConsumerNotFound is
+// delivered on errs, which stops the subscription.
+//
+// It must not be called with the subscription lock held by a caller that
+// waits for the check, since the check runs without the lock.
+func (s *pullSubscription) recordMissedSignal() {
+	if !s.consumeOpts.AbortOnMissingConsumer || s.closed.Load() == 1 {
+		return
+	}
+	if s.missedSignals.Add(1) < missingConsumerThreshold {
+		return
+	}
+	if !s.checkingConsumer.CompareAndSwap(0, 1) {
+		return
+	}
+	s.missedSignals.Store(0)
+	go s.checkConsumerExists()
+}
+
+func (s *pullSubscription) checkConsumerExists() {
+	defer s.checkingConsumer.Store(0)
+	// Any error other than ErrConsumerNotFound (timeout, no responders
+	// while the server is still recovering) leaves the subscription running.
+	if _, err := s.consumer.Info(context.Background()); !errors.Is(err, ErrConsumerNotFound) {
+		return
+	}
+	if s.closed.Load() == 1 {
+		return
+	}
+	select {
+	case s.errs <- ErrConsumerNotFound:
+	case <-s.done:
+	}
 }
 
 func (hb *hbMonitor) Stop() {
@@ -1262,6 +1329,9 @@ func parseMessagesOpts(ordered bool, opts ...PullMessagesOpt) (*consumeOpts, err
 }
 
 func (consumeOpts *consumeOpts) setDefaults(ordered bool) error {
+	if ordered && consumeOpts.AbortOnMissingConsumer {
+		return errors.New("abort on missing consumer is not supported for ordered consumers")
+	}
 	// we cannot use both max messages and max bytes unless we're using max bytes as fetch size limiter
 	if consumeOpts.MaxBytes != unset && consumeOpts.MaxMessages != unset && !consumeOpts.LimitSize {
 		return errors.New("only one of MaxMessages and MaxBytes can be specified")
