@@ -1222,6 +1222,9 @@ type watcher struct {
 	initDone    bool
 	initPending uint64
 	received    uint64
+	stop        chan struct{}
+	stopOnce    sync.Once
+	stopped     bool
 }
 
 // Updates returns the interior channel.
@@ -1237,6 +1240,7 @@ func (w *watcher) Stop() error {
 	if w == nil {
 		return nil
 	}
+	w.stopOnce.Do(func() { close(w.stop) })
 	return w.sub.Unsubscribe()
 }
 
@@ -1274,7 +1278,21 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 	}
 
 	// We will block below on placing items on the chan. That is by design.
-	w := &watcher{updates: make(chan KeyValueEntry, 256)}
+	w := &watcher{updates: make(chan KeyValueEntry, 256), stop: make(chan struct{})}
+
+	// Gives up once the watcher is stopped or the context ends.
+	send := func(entry KeyValueEntry) {
+		if w.stopped {
+			return
+		}
+		select {
+		case w.updates <- entry:
+		case <-w.stop:
+			w.stopped = true
+		case <-ctx.Done():
+			w.stopped = true
+		}
+	}
 
 	update := func(m *nats.Msg) {
 		tokens, err := parser.GetMetadataFields(m.Reply)
@@ -1317,7 +1335,7 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 				delta:    delta,
 				op:       op,
 			}
-			w.updates <- entry
+			send(entry)
 		}
 		// Check if done and initial values.
 		if !w.initDone {
@@ -1326,7 +1344,7 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 			// We're done if we've received all expected messages OR there are no more pending.
 			if w.received >= w.initPending || delta == 0 {
 				w.initDone = true
-				w.updates <- nil
+				send(nil)
 			}
 		}
 	}

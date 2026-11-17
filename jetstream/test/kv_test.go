@@ -684,6 +684,64 @@ func TestKeyValueWatchContext(t *testing.T) {
 	})
 }
 
+func TestKeyValueWatchStopWithFullBuffer(t *testing.T) {
+	for _, cancelContext := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel context %v", cancelContext), func(t *testing.T) {
+			withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+
+				kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "WATCHSTOP"})
+				expectOk(t, err)
+
+				watchCtx, cancelWatch := context.WithCancel(ctx)
+				defer cancelWatch()
+				watcher, err := kv.WatchAll(watchCtx)
+				expectOk(t, err)
+				defer watcher.Stop()
+
+				// Nothing reads the updates, so the watcher blocks on a full channel.
+				updates := watcher.Updates()
+				for i := range cap(updates) + 1 {
+					_, err := kv.PutString(ctx, fmt.Sprintf("key.%d", i), "value")
+					expectOk(t, err)
+				}
+				checkFor(t, 5*time.Second, 20*time.Millisecond, func() error {
+					if len(updates) < cap(updates) {
+						return errors.New("updates channel is not full")
+					}
+					return nil
+				})
+				// Let the watcher block on the entry that does not fit.
+				time.Sleep(250 * time.Millisecond)
+
+				if cancelContext {
+					cancelWatch()
+				} else {
+					expectOk(t, watcher.Stop())
+				}
+
+				// A watcher still blocked on that entry would deliver it now.
+				var received int
+				for {
+					select {
+					case _, ok := <-updates:
+						if !ok {
+							if received != cap(updates) {
+								t.Fatalf("Expected %d updates before the channel closed, got %d", cap(updates), received)
+							}
+							return
+						}
+						received++
+					case <-time.After(2 * time.Second):
+						t.Fatal("Updates channel was not closed")
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestKeyValueWatchContextUpdates(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
