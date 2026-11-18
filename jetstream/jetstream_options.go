@@ -446,6 +446,37 @@ func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// PullAbortOnMissingConsumer makes Consumer.Consume and Consumer.Messages
+// stop when their consumer no longer exists on the server, for example after
+// it was removed while the client was disconnected, or after the server lost
+// its JetStream state.
+//
+// In those cases the server does not send a consumer deleted status. Pull
+// requests instead get no responders statuses, or no heartbeats at all.
+// When this option is set, after a couple of those in a row the client sends
+// a consumer info request. If the server reports the consumer as not found,
+// ErrConsumerNotFound is passed to the error handler and Consume stops, or
+// MessagesContext.Next returns ErrConsumerNotFound and the iterator stops.
+// Any other result, such as a timeout, leaves the subscription running.
+//
+// The option is not supported for ordered consumers, which recreate their
+// consumer on their own. Default: false.
+//
+// PullAbortOnMissingConsumer implements both PullConsumeOpt and
+// PullMessagesOpt, allowing it to configure Consumer.Consume and
+// Consumer.Messages.
+type PullAbortOnMissingConsumer bool
+
+func (a PullAbortOnMissingConsumer) configureConsume(opts *consumeOpts) error {
+	opts.AbortOnMissingConsumer = bool(a)
+	return nil
+}
+
+func (a PullAbortOnMissingConsumer) configureMessages(opts *consumeOpts) error {
+	opts.AbortOnMissingConsumer = bool(a)
+	return nil
+}
+
 // ConsumeErrHandler sets custom error handler invoked when an error was
 // encountered while consuming messages It will be invoked for both terminal
 // (Consumer Deleted, invalid request body) and non-terminal (e.g. missing

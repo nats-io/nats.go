@@ -519,6 +519,10 @@ request. An error will be triggered if at least 2 heartbeats are missed
 - `ConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a
   custom error handler on `Consume()`, allowing e.g. tracking missing
   heartbeats.
+- `PullAbortOnMissingConsumer(bool)` - when set, `Consume()` checks whether
+  the consumer still exists after repeated missed heartbeats or no responders
+  errors. If it does not, `ErrConsumerNotFound` is passed to the error handler
+  and `Consume()` stops. Not supported for ordered consumers.
 - `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
   will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,
@@ -573,6 +577,10 @@ iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
+- `PullAbortOnMissingConsumer(bool)` - when set, the iterator checks whether
+  the consumer still exists after repeated missed heartbeats or no responders
+  errors. If it does not, `Next()` returns `ErrConsumerNotFound` and the
+  iterator stops. Not supported for ordered consumers.
 - `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
   will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,

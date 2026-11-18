@@ -4031,3 +4031,144 @@ func TestPullConsumerFetchBytesCancelBuffered(t *testing.T) {
 		}
 	})
 }
+
+// wipeJetStreamState restarts the server on an empty store directory, so
+// streams and consumers are gone, then recreates the stream and checks the
+// consumer no longer exists. See https://github.com/nats-io/nats.go/issues/2221.
+func wipeJetStreamState(t *testing.T, inst *testservice.Instance, js jetstream.JetStream, cfg jetstream.StreamConfig, cons jetstream.Consumer) {
+	t.Helper()
+	ctx := newTesterCtx(t, 10*time.Second)
+	srv := inst.Servers[0]
+	inst.StopServer(t, srv)
+	inst.UpdateServer(t, srv, testservice.WithJetStream(`store_dir: "{{.StoreDir}}/wiped"`))
+	inst.StartServer(t, srv)
+
+	if _, err := js.CreateStream(ctx, cfg); err != nil {
+		t.Fatalf("Unexpected error recreating stream: %v", err)
+	}
+	if _, err := cons.Info(ctx); !errors.Is(err, jetstream.ErrConsumerNotFound) {
+		t.Fatalf("Expected consumer to be gone after store loss, got: %v", err)
+	}
+}
+
+func setupConsumerLostTest(t *testing.T) (*testservice.Instance, jetstream.JetStream, jetstream.StreamConfig, jetstream.Consumer) {
+	t.Helper()
+	inst := newTester(t).CreateServer(t, true)
+	t.Cleanup(func() { inst.Destroy(t) })
+
+	nc := dialInstance(t, inst,
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(100*time.Millisecond),
+	)
+	js := newJetStream(t, nc)
+	ctx := newTesterCtx(t, 10*time.Second)
+
+	streamCfg := jetstream.StreamConfig{Name: "ORDERS", Subjects: []string{"orders.>"}}
+	stream, err := js.CreateStream(ctx, streamCfg)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cons, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Durable:   "worker",
+		AckPolicy: jetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	return inst, js, streamCfg, cons
+}
+
+func TestPullConsumerConsumeAbortOnMissingConsumer(t *testing.T) {
+	inst, js, streamCfg, cons := setupConsumerLostTest(t)
+
+	errs := make(chan error, 100)
+	cc, err := cons.Consume(func(msg jetstream.Msg) { _ = msg.Ack() },
+		jetstream.PullHeartbeat(500*time.Millisecond),
+		jetstream.PullExpiry(2*time.Second),
+		jetstream.PullAbortOnMissingConsumer(true),
+		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
+			select {
+			case errs <- err:
+			default:
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer cc.Stop()
+
+	wipeJetStreamState(t, inst, js, streamCfg, cons)
+
+	deadline := time.After(10 * time.Second)
+	seen := map[string]int{}
+	for {
+		select {
+		case err := <-errs:
+			if errors.Is(err, jetstream.ErrConsumerNotFound) {
+				select {
+				case <-cc.Closed():
+				case <-time.After(5 * time.Second):
+					t.Fatalf("Consume did not stop after reporting the missing consumer")
+				}
+				return
+			}
+			seen[err.Error()]++
+		case <-deadline:
+			t.Fatalf("Consume never reported the missing consumer; errors seen: %v", seen)
+		}
+	}
+}
+
+func TestPullConsumerMessagesAbortOnMissingConsumer(t *testing.T) {
+	inst, js, streamCfg, cons := setupConsumerLostTest(t)
+
+	it, err := cons.Messages(
+		jetstream.PullHeartbeat(500*time.Millisecond),
+		jetstream.PullExpiry(2*time.Second),
+		jetstream.PullAbortOnMissingConsumer(true),
+		jetstream.WithMessagesErrOnMissingHeartbeat(false),
+	)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	defer it.Stop()
+
+	wipeJetStreamState(t, inst, js, streamCfg, cons)
+
+	_, err = it.Next(jetstream.NextMaxWait(10 * time.Second))
+	if !errors.Is(err, jetstream.ErrConsumerNotFound) {
+		t.Fatalf("Expected ErrConsumerNotFound, got: %v", err)
+	}
+	if _, err := it.Next(); !errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+		t.Fatalf("Expected ErrMsgIteratorClosed after the consumer was lost, got: %v", err)
+	}
+}
+
+func TestOrderedConsumerAbortOnMissingConsumerNotSupported(t *testing.T) {
+	inst := newTester(t).CreateServer(t, true)
+	t.Cleanup(func() { inst.Destroy(t) })
+	nc := dialInstance(t, inst)
+	js := newJetStream(t, nc)
+	ctx := newTesterCtx(t, 10*time.Second)
+
+	stream, err := js.CreateStream(ctx, jetstream.StreamConfig{Name: "ORDERS", Subjects: []string{"orders.>"}})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	cons, err := stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := cons.Consume(func(jetstream.Msg) {}, jetstream.PullAbortOnMissingConsumer(true)); !errors.Is(err, jetstream.ErrInvalidOption) {
+		t.Fatalf("Expected ErrInvalidOption from Consume, got: %v", err)
+	}
+	// An ordered consumer is tied to one consumption mode, so use a new one.
+	cons, err = stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if _, err := cons.Messages(jetstream.PullAbortOnMissingConsumer(true)); !errors.Is(err, jetstream.ErrInvalidOption) {
+		t.Fatalf("Expected ErrInvalidOption from Messages, got: %v", err)
+	}
+}
