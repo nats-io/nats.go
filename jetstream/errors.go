@@ -443,6 +443,10 @@ var (
 	// ErrNoKeysFound is returned when no keys are found.
 	ErrNoKeysFound JetStreamError = &jsError{message: "no keys found"}
 
+	// ErrKeyWatcherClosed is returned when the watcher closes before Keys or
+	// History receives all initial values and the context is still active.
+	ErrKeyWatcherClosed JetStreamError = &jsError{message: "key watcher closed before snapshot completed"}
+
 	// ErrTTLOnDeleteNotSupported is returned when attempting to set a TTL
 	// on a delete operation.
 	ErrTTLOnDeleteNotSupported JetStreamError = &jsError{message: "TTL is not supported on delete"}
