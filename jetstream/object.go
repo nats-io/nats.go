@@ -740,8 +740,9 @@ func (obs *obs) Put(ctx context.Context, meta ObjectMeta, r io.Reader) (*ObjectI
 			m.Data = chunk[:n]
 			h.Write(m.Data)
 
-			// Send msg itself.
-			if _, err := pubJS.PublishMsgAsync(m); err != nil {
+			// Send msg itself. A retry would resend m after chunk was
+			// overwritten by the next read, and after later chunks.
+			if _, err := pubJS.PublishMsgAsync(m, WithRetryAttempts(0)); err != nil {
 				purgePartial()
 				return nil, err
 			}
