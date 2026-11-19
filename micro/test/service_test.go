@@ -1749,6 +1749,22 @@ func TestServiceResetKeepsEndpointIdentity(t *testing.T) {
 	})
 }
 
+func TestServiceResetKeepsStarted(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		srv, err := micro.AddService(nc, micro.Config{Name: "orders", Version: "0.1.0"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+
+		started := srv.Stats().Started
+		srv.Reset()
+		if got := srv.Stats().Started; !got.Equal(started) {
+			t.Fatalf("Expected started to stay %v after reset; got: %v", started, got)
+		}
+	})
+}
+
 func TestRequestRespond(t *testing.T) {
 	type x struct {
 		A string `json:"a"`
