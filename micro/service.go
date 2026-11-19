@@ -757,7 +757,6 @@ func (s *service) Reset() {
 	for _, endpoint := range s.endpoints {
 		endpoint.reset()
 	}
-	s.started = time.Now().UTC()
 	s.m.Unlock()
 }
 
