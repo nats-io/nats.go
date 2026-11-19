@@ -426,6 +426,9 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	if !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: invalid endpoint subject", ErrConfigValidation)
 	}
+	if subject == APIPrefix || strings.HasPrefix(subject, APIPrefix+".") {
+		return fmt.Errorf("%w: endpoint subject %q is under %s, which is reserved for discovery", ErrConfigValidation, subject, APIPrefix)
+	}
 	if !subjectRegexp.MatchString(queueGroup) {
 		return fmt.Errorf("%w: invalid endpoint queue group", ErrConfigValidation)
 	}
