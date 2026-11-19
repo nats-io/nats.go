@@ -32,6 +32,9 @@ type (
 	// Service exposes methods to operate on a service instance.
 	Service interface {
 		// AddEndpoint registers endpoint with given name on a specific subject.
+		// Subjects under [APIPrefix] are reserved for discovery and refused.
+		// A wildcard subject that overlaps with them, such as ">", is accepted,
+		// and its endpoint also receives discovery requests.
 		AddEndpoint(string, Handler, ...EndpointOpt) error
 
 		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
@@ -425,6 +428,9 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	}
 	if !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: invalid endpoint subject", ErrConfigValidation)
+	}
+	if subject == APIPrefix || strings.HasPrefix(subject, APIPrefix+".") {
+		return fmt.Errorf("%w: endpoint subject %q is under %s, which is reserved for discovery", ErrConfigValidation, subject, APIPrefix)
 	}
 	if !subjectRegexp.MatchString(queueGroup) {
 		return fmt.Errorf("%w: invalid endpoint queue group", ErrConfigValidation)

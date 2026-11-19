@@ -1353,6 +1353,54 @@ func TestContextHandler(t *testing.T) {
 	})
 }
 
+func TestAddEndpoint_ReservedSubject(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		handler := micro.HandlerFunc(func(micro.Request) {})
+
+		_, err := micro.AddService(nc, micro.Config{
+			Name:     "orders",
+			Version:  "0.1.0",
+			Endpoint: &micro.EndpointConfig{Subject: "$SRV.custom", Handler: handler},
+		})
+		if !errors.Is(err, micro.ErrConfigValidation) {
+			t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+		}
+
+		srv, err := micro.AddService(nc, micro.Config{Name: "orders", Version: "0.1.0"})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+
+		tests := []struct {
+			name string
+			add  func() error
+		}{
+			{"prefix", func() error { return srv.AddEndpoint("e", handler, micro.WithEndpointSubject("$SRV")) }},
+			{"under prefix", func() error { return srv.AddEndpoint("e", handler, micro.WithEndpointSubject("$SRV.custom")) }},
+			{"discovery subject", func() error { return srv.AddEndpoint("e", handler, micro.WithEndpointSubject("$SRV.PING.orders")) }},
+			{"group", func() error { return srv.AddGroup("$SRV").AddEndpoint("e", handler) }},
+			{"nested group", func() error { return srv.AddGroup("$SRV").AddGroup("g").AddEndpoint("e", handler) }},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				if err := test.add(); !errors.Is(err, micro.ErrConfigValidation) {
+					t.Fatalf("Expected error: %v; got: %v", micro.ErrConfigValidation, err)
+				}
+			})
+		}
+		if n := len(srv.Info().Endpoints); n != 0 {
+			t.Fatalf("Expected no endpoints; got: %d", n)
+		}
+
+		for _, subject := range []string{"$SRVX.custom", "orders.$SRV"} {
+			if err := srv.AddEndpoint("e", handler, micro.WithEndpointSubject(subject)); err != nil {
+				t.Fatalf("Unexpected error for %q: %v", subject, err)
+			}
+		}
+	})
+}
+
 func TestAddEndpoint_Options(t *testing.T) {
 	withServer(t, func(t *testing.T, nc *nats.Conn) {
 		config := micro.Config{
