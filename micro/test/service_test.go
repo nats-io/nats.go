@@ -2079,6 +2079,91 @@ func TestControlSubject(t *testing.T) {
 	}
 }
 
+func TestControlSubjectWithPrefix(t *testing.T) {
+	tests := []struct {
+		prefix          string
+		verb            micro.Verb
+		srvName         string
+		id              string
+		expectedSubject string
+		withError       error
+	}{
+		{prefix: "ACME", verb: micro.PingVerb, expectedSubject: "ACME.PING"},
+		{prefix: "ACME.SRV", verb: micro.InfoVerb, srvName: "test", expectedSubject: "ACME.SRV.INFO.test"},
+		{prefix: "AcMe", verb: micro.StatsVerb, srvName: "test", id: "123", expectedSubject: "AcMe.STATS.test.123"},
+		{prefix: "", verb: micro.PingVerb, srvName: "test", expectedSubject: "$SRV.PING.test"},
+		{prefix: "ACME", verb: micro.Verb(100), withError: micro.ErrVerbNotSupported},
+		{prefix: "ACME", verb: micro.PingVerb, id: "123", withError: micro.ErrServiceNameRequired},
+	}
+
+	for _, test := range tests {
+		res, err := micro.ControlSubjectWithPrefix(test.prefix, test.verb, test.srvName, test.id)
+		if test.withError != nil {
+			if !errors.Is(err, test.withError) {
+				t.Fatalf("Expected error: %v; got: %v", test.withError, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if res != test.expectedSubject {
+			t.Errorf("Invalid subject; want: %q; got: %q", test.expectedSubject, res)
+		}
+	}
+}
+
+func TestServiceAPIPrefix(t *testing.T) {
+	withServer(t, func(t *testing.T, nc *nats.Conn) {
+		handler := micro.HandlerFunc(func(micro.Request) {})
+
+		for _, prefix := range []string{"ACME", "ACME.SRV", "ACME.$SRV", "AcMe"} {
+			t.Run(prefix, func(t *testing.T) {
+				srv, err := micro.AddService(nc, micro.Config{Name: "orders", Version: "0.1.0", APIPrefix: prefix})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				defer srv.Stop()
+
+				id := srv.Info().ID
+				for _, verb := range []micro.Verb{micro.PingVerb, micro.InfoVerb, micro.StatsVerb} {
+					for _, target := range [][2]string{{"", ""}, {"orders", ""}, {"orders", id}} {
+						subject, err := micro.ControlSubjectWithPrefix(prefix, verb, target[0], target[1])
+						if err != nil {
+							t.Fatalf("Unexpected error: %v", err)
+						}
+						if _, err := nc.Request(subject, nil, time.Second); err != nil {
+							t.Fatalf("Unexpected error on %s: %v", subject, err)
+						}
+					}
+				}
+				subject, _ := micro.ControlSubject(micro.PingVerb, "orders", "")
+				if _, err := nc.Request(subject, nil, time.Second); !errors.Is(err, nats.ErrNoResponders) {
+					t.Fatalf("Expected error on %s: %v; got: %v", subject, nats.ErrNoResponders, err)
+				}
+
+				for _, subject := range []string{prefix, prefix + ".custom", "$SRV", "$SRV.custom"} {
+					if err := srv.AddEndpoint("e", handler, micro.WithEndpointSubject(subject)); !errors.Is(err, micro.ErrConfigValidation) {
+						t.Fatalf("Expected error for %q: %v; got: %v", subject, micro.ErrConfigValidation, err)
+					}
+				}
+			})
+		}
+
+		srv, err := micro.AddService(nc, micro.Config{Name: "orders", Version: "0.1.0", APIPrefix: micro.APIPrefix})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		defer srv.Stop()
+
+		for _, prefix := range []string{" ", "A B", "A\tB", ".ACME", "ACME.", "A..B", "*", "ACME.*", "ACME.>", "$SRV.PING"} {
+			if _, err := micro.AddService(nc, micro.Config{Name: "orders", Version: "0.1.0", APIPrefix: prefix}); !errors.Is(err, micro.ErrConfigValidation) {
+				t.Fatalf("Expected error for prefix %q: %v; got: %v", prefix, micro.ErrConfigValidation, err)
+			}
+		}
+	})
+}
+
 func TestCustomQueueGroup(t *testing.T) {
 	tests := []struct {
 		name                string
