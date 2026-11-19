@@ -163,9 +163,27 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	c.currentSub = cc.(*pullSubscription)
 
 	go func() {
+		// Replacing a consumer that no pull reached waits first, or pulls
+		// that can never reach a consumer would spin on resets. The wait
+		// is outside the lock, so it does not hold up Stop.
+		var delay time.Duration
 		for {
 			select {
 			case <-c.doReset:
+				c.Lock()
+				reached := c.currentSub.reachedConsumer.Load()
+				c.Unlock()
+				if reached {
+					delay = 0
+				} else {
+					delay = min(max(2*delay, time.Second), 10*time.Second)
+					select {
+					case <-time.After(delay):
+					case <-sub.done:
+						continue
+					}
+				}
+				// The old consumer can still deliver during the wait.
 				c.Lock()
 				done := c.stopAfter > 0 && c.deliveredMessages >= c.stopAfter
 				c.Unlock()
