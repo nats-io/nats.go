@@ -471,7 +471,8 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	// Apply pending limits if configured
 	if options.msgLimit != 0 || options.bytesLimit != 0 {
 		if err := sub.SetPendingLimits(options.msgLimit, options.bytesLimit); err != nil {
-			return err
+			// The endpoint is not added, so it must not keep handling requests.
+			return errors.Join(err, sub.Unsubscribe())
 		}
 	}
 
