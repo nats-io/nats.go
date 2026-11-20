@@ -1588,6 +1588,246 @@ func TestFlushReleaseOnClose(t *testing.T) {
 	checkErrChannel(t, errCh)
 }
 
+// startHoldPongServer starts a TCP server speaking just enough of the NATS
+// protocol for a client to connect. After the handshake, PINGs from the
+// client are answered with PONG only while answerPongs is set, which lets
+// tests hold back PONGs to observe flush timeouts without waiting for long
+// durations. The returned URL can be passed to nats.Connect.
+func startHoldPongServer(t *testing.T, answerPongs *atomic.Bool) string {
+	t.Helper()
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	t.Cleanup(func() { l.Close() })
+
+	addr := l.Addr().(*net.TCPAddr)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
+		}
+		defer conn.Close()
+		info := fmt.Sprintf(serverInfo, addr.IP, addr.Port)
+		conn.Write([]byte(info))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				// The client disconnected, which is expected on Close.
+				return
+			}
+			if strings.HasPrefix(line, "PING") && answerPongs.Load() {
+				if _, err := conn.Write([]byte("PONG\r\n")); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+	t.Cleanup(func() { checkErrChannel(t, errCh) })
+
+	return fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port)
+}
+
+func TestFlushWaitDefaults(t *testing.T) {
+	// The defaults preserve the timeouts that were previously hardcoded.
+	if nats.DefaultFlushWait != 10*time.Second {
+		t.Fatalf("Expected DefaultFlushWait to be 10s, got %v", nats.DefaultFlushWait)
+	}
+	if nats.DefaultDrainFlushTimeout != 5*time.Second {
+		t.Fatalf("Expected DefaultDrainFlushTimeout to be 5s, got %v", nats.DefaultDrainFlushTimeout)
+	}
+
+	opts := nats.GetDefaultOptions()
+	if opts.FlushWait != nats.DefaultFlushWait {
+		t.Fatalf("Expected default FlushWait to be %v, got %v", nats.DefaultFlushWait, opts.FlushWait)
+	}
+	if opts.DrainFlushTimeout != nats.DefaultDrainFlushTimeout {
+		t.Fatalf("Expected default DrainFlushTimeout to be %v, got %v", nats.DefaultDrainFlushTimeout, opts.DrainFlushTimeout)
+	}
+
+	// Non-positive durations are rejected with ErrBadTimeout, before any
+	// connection attempt is made.
+	for _, invalid := range []time.Duration{0, -time.Second} {
+		if _, err := nats.Connect(nats.DefaultURL, nats.FlushWait(invalid)); err == nil || err != nats.ErrBadTimeout {
+			t.Fatalf("Expected ErrBadTimeout from FlushWait(%v), got %v", invalid, err)
+		}
+		if _, err := nats.Connect(nats.DefaultURL, nats.DrainFlushTimeout(invalid)); err == nil || err != nats.ErrBadTimeout {
+			t.Fatalf("Expected ErrBadTimeout from DrainFlushTimeout(%v), got %v", invalid, err)
+		}
+	}
+
+	// Negative durations on a directly-constructed Options are rejected
+	// by Connect before dialing, so they fail fast like the options.
+	// Zero values keep falling back to the defaults (see
+	// TestFlushWaitDefaultsApplied).
+	for _, tc := range []struct {
+		name string
+		opts nats.Options
+	}{
+		{"negative FlushWait", nats.Options{Url: nats.DefaultURL, FlushWait: -time.Second}},
+		{"negative DrainFlushTimeout", nats.Options{Url: nats.DefaultURL, DrainFlushTimeout: -time.Second}},
+	} {
+		if _, err := tc.opts.Connect(); err == nil || err != nats.ErrBadTimeout {
+			t.Fatalf("Expected ErrBadTimeout from %s, got %v", tc.name, err)
+		}
+	}
+}
+
+func TestFlushWaitDefaultsApplied(t *testing.T) {
+	alwaysAnswer := &atomic.Bool{}
+	alwaysAnswer.Store(true)
+	natsURL := startHoldPongServer(t, alwaysAnswer)
+
+	// Options obtained from GetDefaultOptions carry the defaults.
+	opts := nats.GetDefaultOptions()
+	opts.AllowReconnect = false
+	opts.Servers = []string{natsURL}
+	nc, err := opts.Connect()
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+	if nc.Opts.FlushWait != 10*time.Second {
+		t.Fatalf("Expected FlushWait to default to 10s, got %v", nc.Opts.FlushWait)
+	}
+	if nc.Opts.DrainFlushTimeout != 5*time.Second {
+		t.Fatalf("Expected DrainFlushTimeout to default to 5s, got %v", nc.Opts.DrainFlushTimeout)
+	}
+
+	// Flush and RTT work unchanged with the defaults.
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Error on Flush(): %v", err)
+	}
+	if _, err := nc.RTT(); err != nil {
+		t.Fatalf("Error on RTT(): %v", err)
+	}
+
+	// A directly-constructed Options with zero flush timeouts gets the
+	// defaults applied by Connect as well, so existing callers that omit
+	// the new options keep the previous behavior. The mock server accepts
+	// a single connection, so start a fresh one for the second client.
+	alwaysAnswer2 := &atomic.Bool{}
+	alwaysAnswer2.Store(true)
+	natsURL2 := startHoldPongServer(t, alwaysAnswer2)
+
+	opts2 := nats.Options{Url: natsURL2, AllowReconnect: false}
+	nc2, err := opts2.Connect()
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc2.Close()
+	if nc2.Opts.FlushWait != 10*time.Second {
+		t.Fatalf("Expected FlushWait to default to 10s, got %v", nc2.Opts.FlushWait)
+	}
+	if nc2.Opts.DrainFlushTimeout != 5*time.Second {
+		t.Fatalf("Expected DrainFlushTimeout to default to 5s, got %v", nc2.Opts.DrainFlushTimeout)
+	}
+	if err := nc2.FlushTimeout(2 * time.Second); err != nil {
+		t.Fatalf("Error on FlushTimeout(): %v", err)
+	}
+}
+
+func TestFlushWaitOption(t *testing.T) {
+	answerPongs := &atomic.Bool{}
+	natsURL := startHoldPongServer(t, answerPongs)
+
+	// The dial timeout is set well above the assertions' upper bounds so
+	// that wiring the flush waits to Options.Timeout by mistake fails the
+	// timing assertions instead of passing by falling inside their
+	// windows (the dial-timeout default is 2s, which sits inside them).
+	nc, err := nats.Connect(natsURL,
+		nats.NoReconnect(),
+		nats.Timeout(8*time.Second),
+		nats.FlushWait(100*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	if nc.Opts.FlushWait != 100*time.Millisecond {
+		t.Fatalf("Expected FlushWait to be 100ms, got %v", nc.Opts.FlushWait)
+	}
+
+	// While the server answers PINGs, the round trips succeed under the
+	// configured FlushWait.
+	answerPongs.Store(true)
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Expected Flush() to succeed, got %v", err)
+	}
+	if _, err := nc.RTT(); err != nil {
+		t.Fatalf("Expected RTT() to succeed, got %v", err)
+	}
+
+	// The server now holds back PONGs, so Flush must time out after the
+	// configured FlushWait, not the 10s default.
+	//
+	// Note: after these timeouts there is no point checking that a later
+	// flush succeeds once the server answers again. A timed-out flush
+	// only nils out its entry in the client's pending PONG queue (see
+	// removeFlushEntry), and processPong pops one entry per PONG, so the
+	// PONGs answering the timed-out PINGs are discarded before any new
+	// flush can be completed.
+	answerPongs.Store(false)
+	start := time.Now()
+	if err := nc.Flush(); err == nil || err != nats.ErrTimeout {
+		t.Fatalf("Expected ErrTimeout from Flush(), got %v", err)
+	}
+	// Both ends of the wait: the PONG wait runs the full configured
+	// 100ms (a shorter fixed wait would mean the option is ignored),
+	// and the call must not stretch to the 10s default either.
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("Flush() returned after %v with FlushWait=100ms, option ignored?", elapsed)
+	} else if elapsed >= 5*time.Second {
+		t.Fatalf("Flush() took %v with FlushWait=100ms, option not applied?", elapsed)
+	}
+
+	// RTT uses the same configured timeout.
+	start = time.Now()
+	if _, err := nc.RTT(); err == nil || err != nats.ErrTimeout {
+		t.Fatalf("Expected ErrTimeout from RTT(), got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("RTT() returned after %v with FlushWait=100ms, option ignored?", elapsed)
+	} else if elapsed >= 5*time.Second {
+		t.Fatalf("RTT() took %v with FlushWait=100ms, option not applied?", elapsed)
+	}
+
+	// An explicit FlushTimeout uses its own argument rather than the
+	// configured FlushWait: with a long FlushWait, the short explicit
+	// timeout must still win.
+	nc.Opts.FlushWait = 3 * time.Second
+	start = time.Now()
+	if err := nc.FlushTimeout(50 * time.Millisecond); err == nil || err != nats.ErrTimeout {
+		t.Fatalf("Expected ErrTimeout from FlushTimeout(50ms), got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
+		t.Fatalf("FlushTimeout(50ms) returned after %v, explicit timeout ignored?", elapsed)
+	} else if elapsed >= 2*time.Second {
+		t.Fatalf("FlushTimeout(50ms) took %v, explicit timeout ignored?", elapsed)
+	}
+}
+
 func TestMaxPendingOut(t *testing.T) {
 	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
 
