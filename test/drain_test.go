@@ -14,8 +14,10 @@
 package test
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"runtime"
 	"strings"
 	"sync"
@@ -406,6 +408,199 @@ func TestDrainConnLastError(t *testing.T) {
 		}
 
 		wg.Wait()
+	})
+}
+
+func TestDrainFlushTimeout(t *testing.T) {
+	// The mock server completes the handshake but holds back PONGs, so
+	// the final flush of a drain times out after the configured
+	// DrainFlushTimeout, not the 5s default, and the error is reported
+	// to the async error handler before the connection is closed.
+	answerPongs := &atomic.Bool{}
+	natsURL := startHoldPongServer(t, answerPongs)
+
+	errCh := make(chan error, 1)
+	closed := make(chan struct{})
+	nc, err := nats.Connect(natsURL,
+		nats.NoReconnect(),
+		// DrainTimeout is much longer than the waits below so the test
+		// fails if the final flush is ever wired to the wrong option:
+		// the connection would stay open past the waits. There are no
+		// subscriptions, so the subscription drain phase completes
+		// immediately and the long value does not slow the test down.
+		// The dial timeout is raised for the same reason: the 2s default
+		// would fall inside the waits below.
+		nats.DrainTimeout(10*time.Second),
+		nats.Timeout(8*time.Second),
+		nats.DrainFlushTimeout(100*time.Millisecond),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		}),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			close(closed)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	if nc.Opts.DrainFlushTimeout != 100*time.Millisecond {
+		t.Fatalf("Expected DrainFlushTimeout to be 100ms, got %v", nc.Opts.DrainFlushTimeout)
+	}
+
+	drainStart := time.Now()
+	if err := nc.Drain(); err != nil {
+		t.Fatalf("Error on drain: %v", err)
+	}
+
+	// With no subscriptions, the drain phase completes immediately and
+	// the final flush fails with ErrTimeout. The failure must arrive
+	// after the configured DrainFlushTimeout (a shorter fixed wait would
+	// mean the option is ignored) and well before the waits above expire
+	// even against the long DrainTimeout.
+	select {
+	case err := <-errCh:
+		if err != nats.ErrTimeout {
+			t.Fatalf("Expected ErrTimeout from final drain flush, got %v", err)
+		}
+		if elapsed := time.Since(drainStart); elapsed < 100*time.Millisecond {
+			t.Fatalf("Final drain flush failed after %v with DrainFlushTimeout=100ms, option ignored?", elapsed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timeout waiting for final drain flush error")
+	}
+
+	// The connection must still be closed after the failed flush.
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timeout waiting for closed state for connection")
+	}
+	if !nc.IsClosed() {
+		t.Fatal("Expected connection to be closed")
+	}
+}
+
+func TestSubDrainShortFlushWait(t *testing.T) {
+	// Regression test for short FlushWait values: the flush that guards
+	// the end of a subscription drain must keep the default wait. The
+	// mock server queues the last message behind the drain flush's PONG
+	// and releases both after a delay much longer than the configured
+	// FlushWait. If the drain used the short FlushWait for its protocol
+	// confirmation, it would complete (and remove the subscription)
+	// before the delayed message is delivered, dropping it.
+	serverInfo := "INFO {\"server_id\":\"foobar\",\"host\":\"%s\",\"port\":%d,\"auth_required\":false,\"tls_required\":false,\"max_payload\":1048576}\r\n"
+
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal("Could not listen on an ephemeral port")
+	}
+	t.Cleanup(func() { l.Close() })
+	addr := l.Addr().(*net.TCPAddr)
+
+	sawSub := make(chan bool)
+	gotMsg := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			errCh <- fmt.Errorf("error accepting client connection: %v", err)
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte(fmt.Sprintf(serverInfo, addr.IP, addr.Port)))
+
+		// Read connect and ping commands sent from the client
+		br := bufio.NewReaderSize(conn, 1024)
+		if _, err := br.ReadString('\n'); err != nil {
+			errCh <- fmt.Errorf("expected CONNECT from client, got: %s", err)
+			return
+		}
+		if _, err := br.ReadString('\n'); err != nil {
+			errCh <- fmt.Errorf("expected PING from client, got: %s", err)
+			return
+		}
+		conn.Write([]byte("PONG\r\n"))
+
+		var sid string
+		draining := false
+		held := false
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				// The client disconnected, which is expected on Close.
+				return
+			}
+			fields := strings.Fields(line)
+			switch {
+			case len(fields) >= 3 && fields[0] == "SUB":
+				sid = fields[2]
+				close(sawSub)
+			case len(fields) > 0 && fields[0] == "UNSUB":
+				draining = true
+			case len(fields) > 0 && fields[0] == "PING":
+				if draining && !held {
+					held = true
+					// Hold back the message and the PONG answering the
+					// drain flush, and release both together after a
+					// delay longer than the configured FlushWait.
+					go func() {
+						time.Sleep(500 * time.Millisecond)
+						msg := fmt.Sprintf("MSG foo %s 3\r\nbar\r\n", sid)
+						conn.Write([]byte(msg))
+						conn.Write([]byte("PONG\r\n"))
+					}()
+					continue
+				}
+				conn.Write([]byte("PONG\r\n"))
+			}
+		}
+	}()
+
+	// Wait for server mock to start
+	time.Sleep(100 * time.Millisecond)
+	t.Cleanup(func() { checkErrChannel(t, errCh) })
+
+	nc, err := nats.Connect(fmt.Sprintf("nats://%s:%d", addr.IP, addr.Port),
+		nats.NoReconnect(),
+		nats.FlushWait(30*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer nc.Close()
+
+	sub, err := nc.Subscribe("foo", func(_ *nats.Msg) {
+		close(gotMsg)
+	})
+	if err != nil {
+		t.Fatalf("Error creating subscription; %v", err)
+	}
+	if err := Wait(sawSub); err != nil {
+		t.Fatal("Timeout waiting for subscription to reach the server")
+	}
+
+	if err := sub.Drain(); err != nil {
+		t.Fatalf("Error on drain: %v", err)
+	}
+
+	// The message released with the drain flush PONG must be delivered.
+	select {
+	case <-gotMsg:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for message released with the drain flush PONG")
+	}
+
+	// The subscription is removed once the drain completes.
+	waitFor(t, 2*time.Second, 10*time.Millisecond, func() error {
+		if nc.NumSubscriptions() == 0 {
+			return nil
+		}
+		return errors.New("Subscription not removed after drain")
 	})
 }
 

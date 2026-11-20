@@ -65,6 +65,8 @@ const (
 	RequestChanLen            = 8
 	DefaultDrainTimeout       = 30 * time.Second
 	DefaultFlusherTimeout     = time.Minute
+	DefaultFlushWait          = 10 * time.Second
+	DefaultDrainFlushTimeout  = 5 * time.Second
 	LangString                = "go"
 )
 
@@ -181,6 +183,8 @@ func GetDefaultOptions() Options {
 		ReconnectBufSize:   DefaultReconnectBufSize,
 		DrainTimeout:       DefaultDrainTimeout,
 		FlusherTimeout:     DefaultFlusherTimeout,
+		FlushWait:          DefaultFlushWait,
+		DrainFlushTimeout:  DefaultDrainFlushTimeout,
 	}
 }
 
@@ -410,13 +414,41 @@ type Options struct {
 	Timeout time.Duration
 
 	// DrainTimeout sets the timeout for a drain operation to complete.
+	// This bounds only the subscription drain phase of a connection drain:
+	// once it expires (or the subscriptions are drained earlier), the
+	// client still performs a final flush of pending publishes, bounded
+	// separately by DrainFlushTimeout, before the connection is closed.
 	// Defaults to 30s.
 	DrainTimeout time.Duration
 
 	// FlusherTimeout is the maximum time to wait for write operations
 	// to the underlying connection to complete (including the flusher loop).
+	// A value of 0 or less disables the write timeout: writes to the
+	// underlying connection can then block indefinitely.
 	// Defaults to 1m.
 	FlusherTimeout time.Duration
+
+	// FlushWait is the maximum time a Flush or RTT call waits for the
+	// server to reply with PONG to the client's PING. It bounds the wait
+	// for the PONG, not the sending of the PING: a stalled write of the
+	// PING itself can delay the call further (see FlusherTimeout). It
+	// does not affect FlushTimeout calls, which use the timeout passed
+	// to them, nor the final flush of a connection drain, which is
+	// bounded by DrainFlushTimeout, nor the flush that confirms a
+	// subscription drain (see Subscription.Drain), which keeps the
+	// default wait so queued messages are not dropped early, nor writes
+	// to the underlying connection, which are bounded by FlusherTimeout.
+	// Defaults to 10s.
+	FlushWait time.Duration
+
+	// DrainFlushTimeout is the maximum time the final flush of a connection
+	// drain (see Conn.Drain) waits for the server to acknowledge pending
+	// publishes, after the subscription drain phase bounded by DrainTimeout
+	// has completed. It bounds the wait for the PONG, not the sending of
+	// the PING: a stalled write of the PING itself can delay the drain
+	// further (see FlusherTimeout).
+	// Defaults to 5s.
+	DrainFlushTimeout time.Duration
 
 	// ReconnectOnFlusherError, when set to true, causes the client to
 	// trigger a reconnect if the background flusher fails to write to the
@@ -1444,6 +1476,32 @@ func DrainTimeout(t time.Duration) Option {
 	}
 }
 
+// FlushWait is an Option to set the timeout for Flush and RTT round trips
+// to the server. See [Options.FlushWait] for what it bounds.
+// Defaults to 10s.
+func FlushWait(t time.Duration) Option {
+	return func(o *Options) error {
+		if t <= 0 {
+			return ErrBadTimeout
+		}
+		o.FlushWait = t
+		return nil
+	}
+}
+
+// DrainFlushTimeout is an Option to set the timeout for the final flush of
+// a connection drain. See [Options.DrainFlushTimeout] for what it bounds.
+// Defaults to 5s.
+func DrainFlushTimeout(t time.Duration) Option {
+	return func(o *Options) error {
+		if t <= 0 {
+			return ErrBadTimeout
+		}
+		o.DrainFlushTimeout = t
+		return nil
+	}
+}
+
 // DisconnectErrHandler is an Option to set the disconnected error handler.
 func DisconnectErrHandler(cb ConnErrHandler) Option {
 	return func(o *Options) error {
@@ -2010,6 +2068,21 @@ func (o Options) Connect() (*Conn, error) {
 	// Ensure that Timeout is not 0
 	if nc.Opts.Timeout == 0 {
 		nc.Opts.Timeout = DefaultTimeout
+	}
+	// Ensure that FlushWait is not 0. Reject negative values before
+	// dialing, matching the FlushWait option: they would otherwise
+	// surface only as runtime flush failures.
+	if nc.Opts.FlushWait == 0 {
+		nc.Opts.FlushWait = DefaultFlushWait
+	} else if nc.Opts.FlushWait < 0 {
+		return nil, ErrBadTimeout
+	}
+	// Ensure that DrainFlushTimeout is not 0 or negative, for the same
+	// reasons as FlushWait above.
+	if nc.Opts.DrainFlushTimeout == 0 {
+		nc.Opts.DrainFlushTimeout = DefaultDrainFlushTimeout
+	} else if nc.Opts.DrainFlushTimeout < 0 {
+		return nil, ErrBadTimeout
 	}
 
 	// Check first for user jwt callback being defined and nkey.
@@ -5684,7 +5757,11 @@ func (nc *Conn) checkDrained(sub *Subscription) {
 
 	// This allows us to know that whatever we have in the client pending
 	// is correct and the server will not send additional information.
-	nc.Flush()
+	// Keep the default wait for this protocol confirmation regardless of
+	// the FlushWait option: on a short FlushWait, completing the drain
+	// here would remove the subscription before the server has released
+	// messages queued ahead of the PONG, dropping them.
+	nc.FlushTimeout(DefaultFlushWait)
 
 	sub.mu.Lock()
 	// For JS subscriptions, check if we are going to delete the
@@ -6314,6 +6391,9 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 }
 
 // RTT calculates the round trip time between this client and the server.
+// The wait for the server's PONG is bounded by the FlushWait option (10s
+// by default); the underlying write of the PING is bounded separately by
+// FlusherTimeout.
 func (nc *Conn) RTT() (time.Duration, error) {
 	if nc.IsClosed() {
 		return 0, ErrConnectionClosed
@@ -6322,16 +6402,22 @@ func (nc *Conn) RTT() (time.Duration, error) {
 		return 0, ErrDisconnected
 	}
 	start := time.Now()
-	if err := nc.FlushTimeout(10 * time.Second); err != nil {
+	if err := nc.FlushTimeout(nc.Opts.FlushWait); err != nil {
 		return 0, err
 	}
 	return time.Since(start), nil
 }
 
 // Flush will perform a round trip to the server and return when it
-// receives the internal reply.
+// receives the internal reply. The wait for the reply is bounded by
+// the FlushWait option (10s by default), and the underlying write of
+// the PING is bounded separately by FlusherTimeout; use FlushTimeout
+// to bound a specific flush differently.
 func (nc *Conn) Flush() error {
-	return nc.FlushTimeout(10 * time.Second)
+	if nc == nil {
+		return ErrInvalidConnection
+	}
+	return nc.FlushTimeout(nc.Opts.FlushWait)
 }
 
 // Buffered will return the number of bytes buffered to be sent to the server.
@@ -6584,6 +6670,7 @@ func (nc *Conn) drainConnection() {
 	nc.subsMu.RUnlock()
 	errCB := nc.Opts.AsyncErrorCB
 	drainWait := nc.Opts.DrainTimeout
+	drainFlushTimeout := nc.Opts.DrainFlushTimeout
 	respMux := nc.respMux
 	nc.mu.Unlock()
 
@@ -6659,7 +6746,7 @@ func (nc *Conn) drainConnection() {
 	nc.mu.Unlock()
 
 	// Do publish drain via Flush() call.
-	err := nc.FlushTimeout(5 * time.Second)
+	err := nc.FlushTimeout(drainFlushTimeout)
 	if err != nil {
 		pushErr(err)
 	}
@@ -6673,6 +6760,11 @@ func (nc *Conn) drainConnection() {
 // will be drained and can not publish any additional messages. Upon draining
 // of the publishers, the connection will be closed. Use the ClosedCB
 // option to know when the connection has moved from draining to closed.
+//
+// Subscriptions are given up to the DrainTimeout option (30s by default)
+// to drain. Once that phase completes, a final flush of pending publishes
+// is performed, bounded by the DrainFlushTimeout option (5s by default),
+// before the connection is closed.
 //
 // See note in Subscription.Drain for JetStream subscriptions.
 func (nc *Conn) Drain() error {
