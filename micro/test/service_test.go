@@ -2205,6 +2205,36 @@ func TestCustomQueueGroup(t *testing.T) {
 			},
 		},
 		{
+			name: "disable queue group on endpoint config",
+			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
+				srv, err := micro.AddService(nc, micro.Config{
+					Name:       "test_service",
+					Version:    "0.0.1",
+					QueueGroup: "q-config",
+					Endpoint: &micro.EndpointConfig{
+						Subject:            "foo",
+						QueueGroupDisabled: true,
+						Handler:            micro.HandlerFunc(func(r micro.Request) {}),
+					},
+				})
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				// add endpoint on service directly, should have queue group from service config
+				err = srv.AddEndpoint("bar", micro.HandlerFunc(func(r micro.Request) {}))
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				return srv
+			},
+			expectedQueueGroups: map[string]string{
+				"default": "",
+				"bar":     "q-config",
+			},
+		},
+		{
 			name: "empty queue group in option, inherit from parent",
 			endpointInit: func(t *testing.T, nc *nats.Conn) micro.Service {
 				srv, err := micro.AddService(nc, micro.Config{

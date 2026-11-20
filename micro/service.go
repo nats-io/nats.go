@@ -356,7 +356,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 		if config.Endpoint.Metadata != nil {
 			opts = append(opts, WithEndpointMetadata(config.Endpoint.Metadata))
 		}
-		if config.Endpoint.QueueGroup != "" {
+		if config.Endpoint.QueueGroupDisabled {
+			opts = append(opts, WithEndpointQueueGroupDisabled())
+		} else if config.Endpoint.QueueGroup != "" {
 			opts = append(opts, WithEndpointQueueGroup(config.Endpoint.QueueGroup))
 		} else if config.QueueGroup != "" {
 			opts = append(opts, WithEndpointQueueGroup(config.QueueGroup))
