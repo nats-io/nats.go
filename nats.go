@@ -4078,9 +4078,18 @@ func (nc *Conn) processMsg(data []byte) {
 		return
 	}
 
-	// Copy them into string
-	subj := string(nc.ps.ma.subject)
-	reply := string(nc.ps.ma.reply)
+	// Copy them into string. Subject and reply share one allocation.
+	var subj, reply string
+	if len(nc.ps.ma.reply) == 0 {
+		subj = string(nc.ps.ma.subject)
+	} else {
+		var sb strings.Builder
+		sb.Grow(len(nc.ps.ma.subject) + len(nc.ps.ma.reply))
+		sb.Write(nc.ps.ma.subject)
+		sb.Write(nc.ps.ma.reply)
+		s := sb.String()
+		subj, reply = s[:len(nc.ps.ma.subject)], s[len(nc.ps.ma.subject):]
+	}
 
 	// Doing message create outside of the sub's lock to reduce contention.
 	// It's possible that we end-up not using the message, but that's ok.
