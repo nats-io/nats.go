@@ -724,6 +724,43 @@ func TestParserShouldFail(t *testing.T) {
 	}
 }
 
+func TestParserMsgSizeLimit(t *testing.T) {
+	for _, proto := range []string{
+		"MSG foo 1 9223372036854775807\r\n",
+		"MSG foo 1 _INBOX.bar 9223372036854775807\r\n",
+		"MSG foo 1 4611686018427387904\r\n",
+		"HMSG foo 1 0 9223372036854775807\r\n",
+		"HMSG foo 1 _INBOX.bar 0 9223372036854775807\r\n",
+		"HMSG foo 1 4611686018427387904 4611686018427387904\r\n",
+	} {
+		nc := &Conn{ps: &parseState{}}
+		if err := nc.parse([]byte(proto)); err == nil {
+			t.Errorf("Expected a parse error for %q", proto)
+		}
+	}
+
+	// The server never sends sizes longer than 9 digits.
+	for _, tc := range []struct {
+		hdr  int
+		args string
+		ok   bool
+	}{
+		{-1, "foo 1 999999999", true},
+		{-1, "foo 1 1000000000", false},
+		{0, "foo 1 999999999 999999999", true},
+		{0, "foo 1 1000000000 1000000000", false},
+	} {
+		nc := &Conn{ps: &parseState{hdr: tc.hdr}}
+		err := nc.processMsgArgs([]byte(tc.args))
+		if tc.ok && (err != nil || nc.ps.ma.size != 999999999) {
+			t.Errorf("Expected %q to be accepted, got size %d, err %v", tc.args, nc.ps.ma.size, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("Expected %q to be rejected", tc.args)
+		}
+	}
+}
+
 func TestParserSplitMsg(t *testing.T) {
 	nc := &Conn{}
 	nc.ps = &parseState{}
