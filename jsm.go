@@ -1616,6 +1616,15 @@ type streamLister struct {
 	pageInfo *apiPaged
 }
 
+// listContext returns a copy of the JetStream context with its own options,
+// set to list the streams matching subject. Listers must not set options on
+// jsc itself, as they are shared by every call made through the context.
+func (jsc *js) listContext(subject string) *js {
+	o := *jsc.opts
+	o.streamListSubject = subject
+	return &js{nc: jsc.nc, opts: &o}
+}
+
 // streamListResponse list of detailed stream information.
 // A nil request is valid and means all streams.
 type streamListResponse struct {
