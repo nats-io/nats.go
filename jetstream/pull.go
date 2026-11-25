@@ -147,9 +147,11 @@ type (
 		done              chan struct{}
 		connStatusChanged chan nats.Status
 		fetchNext         chan *pullRequest
+		fetchDone         chan struct{} // signaled when fetchInProgress is cleared
 		consumeOpts       *consumeOpts
 		delivered         int
 		closedCh          chan struct{}
+		afterPull         func() // test hook, runs while fetchInProgress is still set
 	}
 
 	pendingMsgs struct {
@@ -235,6 +237,7 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 		errs:        make(chan error, 10),
 		done:        make(chan struct{}, 1),
 		fetchNext:   make(chan *pullRequest, 1),
+		fetchDone:   make(chan struct{}, 1),
 		consumeOpts: consumeOpts,
 	}
 	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING, nats.CLOSED)
@@ -415,6 +418,12 @@ func (p *pullConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt) (
 				if errors.Is(err, ErrConnectionClosed) {
 					sub.Stop()
 				}
+			case <-sub.fetchDone:
+				// The handler may have skipped checkPending while a pull
+				// request was being published. Check again.
+				sub.Lock()
+				sub.checkPending()
+				sub.Unlock()
 			case <-sub.done:
 				return
 			}
@@ -551,6 +560,7 @@ func (p *pullConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, error
 		msgs:        msgs,
 		errs:        make(chan error, 10),
 		fetchNext:   make(chan *pullRequest, 1),
+		fetchDone:   make(chan struct{}, 1),
 		consumeOpts: consumeOpts,
 	}
 	sub.connStatusChanged = p.js.conn.StatusChanged(nats.CONNECTED, nats.RECONNECTING)
@@ -682,6 +692,9 @@ func (s *pullSubscription) Next(opts ...NextOpt) (Msg, error) {
 	for {
 		s.checkPending()
 		select {
+		case <-s.fetchDone:
+			// checkPending above may have been skipped while a pull request
+			// was being published. Go around and check again.
 		case msg, ok := <-s.msgs:
 			if !ok {
 				// if msgs channel is closed, it means that subscription was either drained or stopped
@@ -1138,7 +1151,20 @@ func (s *pullSubscription) pullMessages(subject string) {
 				case <-s.done:
 				}
 			}
+			if s.afterPull != nil {
+				s.afterPull()
+			}
 			s.fetchInProgress.Store(0)
+			// checkPending does nothing while fetchInProgress is set, and
+			// the messages requested above may all have been handled in
+			// the meantime. Signal the reader to check again: otherwise no
+			// pull request is outstanding until the heartbeat timeout.
+			// pullMessages must not call checkPending itself, as Next
+			// holds the lock while waiting.
+			select {
+			case s.fetchDone <- struct{}{}:
+			default:
+			}
 		case <-s.done:
 			s.cleanup()
 			return
