@@ -15,6 +15,7 @@ package nats
 
 import (
 	"fmt"
+	"math"
 )
 
 type msgArg struct {
@@ -547,6 +548,11 @@ func parseInt64(d []byte) (n int64) {
 	}
 	for _, dec := range d {
 		if dec < ascii_0 || dec > ascii_9 {
+			return -1
+		}
+		// Reject values that would wrap to a positive subscription ID and
+		// slip past the caller's negative-value check.
+		if n > (math.MaxInt64-(int64(dec)-ascii_0))/10 {
 			return -1
 		}
 		n = n*10 + (int64(dec) - ascii_0)
