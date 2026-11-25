@@ -550,8 +550,8 @@ func parseInt64(d []byte) (n int64) {
 		if dec < ascii_0 || dec > ascii_9 {
 			return -1
 		}
-		// Reject values that would overflow before wrapping around to a
-		// plausible (and possibly positive) size or subscription id.
+		// Reject values that would wrap to a positive subscription ID and
+		// slip past the caller's negative-value check.
 		if n > (math.MaxInt64-(int64(dec)-ascii_0))/10 {
 			return -1
 		}
