@@ -741,14 +741,14 @@ func (s *stream) ListConsumers(ctx context.Context) ConsumerInfoLister {
 				return
 			}
 			for _, info := range page {
+				if info == nil {
+					continue
+				}
 				select {
+				case l.consumers <- info:
 				case <-ctx.Done():
 					l.err = ctx.Err()
 					return
-				default:
-				}
-				if info != nil {
-					l.consumers <- info
 				}
 			}
 			if errors.Is(err, ErrEndOfData) {
