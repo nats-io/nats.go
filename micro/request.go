@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/nats-io/nats.go"
 )
@@ -163,13 +164,15 @@ func (r *request) Error(code, description string, data []byte, opts ...RespondOp
 // WithHeaders can be used to configure response with custom headers.
 func WithHeaders(headers Headers) RespondOpt {
 	return func(m *nats.Msg) {
-		if m.Header == nil {
-			m.Header = nats.Header(headers)
+		if len(headers) == 0 {
 			return
+		}
+		if m.Header == nil {
+			m.Header = make(nats.Header, len(headers))
 		}
 
 		for k, v := range headers {
-			m.Header[k] = v
+			m.Header[k] = slices.Clone(v)
 		}
 	}
 }
