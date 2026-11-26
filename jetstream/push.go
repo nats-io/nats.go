@@ -95,7 +95,6 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 			handler(jsMsg)
 			return
 		}
-		sub.Lock()
 		if err, terminate := sub.handleStatusMsg(msg, status, descr); err != nil {
 			if sub.consumeOpts.ErrHandler != nil {
 				sub.consumeOpts.ErrHandler(sub, err)
@@ -104,7 +103,6 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 				sub.Stop()
 			}
 		}
-		sub.Unlock()
 	}
 
 	var err error
@@ -160,15 +158,15 @@ func (p *pushConsumer) Consume(handler MessageHandler, opts ...PushConsumeOpt) (
 				}
 			case err := <-sub.errs:
 				sub.Lock()
-				if sub.consumeOpts.ErrHandler != nil {
-					sub.consumeOpts.ErrHandler(sub, err)
-				}
 				if errors.Is(err, ErrNoHeartbeat) {
 					if sub.hbMonitor != nil {
 						sub.hbMonitor.Reset(2 * sub.idleHeartbeat)
 					}
 				}
 				sub.Unlock()
+				if sub.consumeOpts.ErrHandler != nil {
+					sub.consumeOpts.ErrHandler(sub, err)
+				}
 			case <-sub.done:
 				return
 			}
@@ -189,21 +187,17 @@ func (s *pushSubscription) handleStatusMsg(msg *nats.Msg, status, description st
 			return nil, false
 		case fcRequestDescr:
 			if err := msg.Respond(nil); err != nil {
-				if s.consumeOpts.ErrHandler != nil {
-					s.consumeOpts.ErrHandler(s, err)
-				}
+				return err, false
 			}
 			return nil, false
 		}
 	case statusConflict:
-		if description == consumerDeleted {
+		lowerDescr := strings.ToLower(description)
+		if strings.Contains(lowerDescr, consumerDeleted) {
 			return ErrConsumerDeleted, true
 		}
-		if description == leadershipChange {
-			if s.consumeOpts.ErrHandler != nil {
-				s.consumeOpts.ErrHandler(s, ErrConsumerLeadershipChanged)
-				return ErrConsumerLeadershipChanged, false
-			}
+		if strings.Contains(lowerDescr, leadershipChange) {
+			return ErrConsumerLeadershipChanged, false
 		}
 	}
 	return nil, false
@@ -271,9 +265,10 @@ func (s *pushSubscription) scheduleHeartbeatCheck(dur time.Duration) *hbMonitor 
 	}
 	return &hbMonitor{
 		timer: time.AfterFunc(2*dur, func() {
-			s.Lock()
-			defer s.Unlock()
-			s.errs <- ErrNoHeartbeat
+			select {
+			case s.errs <- ErrNoHeartbeat:
+			case <-s.done:
+			}
 		}),
 	}
 }
