@@ -15,83 +15,40 @@ Integration tests (everything in `./test/`, `./jetstream/test/`, `./micro/test/`
 - **In-process, no docker (the default)** — a `TestMain` in each of the three test packages starts `github.com/synadia-io/orbit.go/ntf` inside the test binary. No build tag; this is what a plain `go test` does.
 - **Docker** (`synadia/ntf-server`, tag pinned in `.github/workflows/ci.yaml`) — located via `TESTER_NATS_URL`. This is what CI uses.
 
-`TESTER_NATS_URL` takes precedence: when set, it is used instead of starting an in-process tester. The two are **not** necessarily equivalent — in-process links whatever nats-server `orbit.go/ntf` depends on, the container ships its own — so `TestMain` hard-fails when `GITHUB_ACTIONS` is set without `TESTER_NATS_URL`, rather than silently changing what CI tests against. (`GITHUB_ACTIONS`, not `CI`: devcontainers and other runners set that one too.)
+`TESTER_NATS_URL` takes precedence: when set, it is used instead of starting an in-process tester. The two can run different nats-server builds, so `TestMain` hard-fails when `GITHUB_ACTIONS` is set without `TESTER_NATS_URL` rather than silently changing what CI tests against.
 
 ```bash
-# Default local workflow: no docker, nothing to start or tear down.
+# In-process tester (default, no docker)
 make test                            # full race-enabled suite
 make test T=TestName PKG=./test/...  # single test, verbose
-make test-norace                     # NoRace suite
+make test-norace                     # NoRace suite (race detector off)
 
-# Equivalent raw command:
+# Raw equivalent of `make test`
 go test -modfile=go_test.mod -tags=internal_testing -race -p=1 ./... --failfast -vet=off
 
-# Docker workflow (host-side mode publishes the tester's ports so `go test`
-# from your terminal can reach the spawned NATS servers via localhost).
-# Use the test-docker targets: plain `make test` ignores the container.
+# Docker tester; use test-docker, plain `make test` ignores the container
 make tester-up-host
 make test-docker T=TestName PKG=./test/...
+make tester-down
 
-# Run all tests against the tester (single command, covers both white-box
-# tests at the repo root and integration tests in ./test/, ./jetstream/test/,
-# ./micro/test/).
-TESTER_NATS_URL=nats://localhost:4222 \
-  go test -modfile=go_test.mod -race -v -p=1 ./... --failfast -vet=off -tags=internal_testing
-
-# Run NoRace tests (must be run separately, without -race flag)
-TESTER_NATS_URL=nats://localhost:4222 \
-  go test -modfile=go_test.mod -v -run=TestNoRace -p=1 ./... --failfast -vet=off
-
-# Run a specific test
-TESTER_NATS_URL=nats://localhost:4222 \
-  go test -modfile=go_test.mod -race -tags=internal_testing -run TestName ./...
-
-# Run tests for a specific package
-TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -race ./jetstream/test/... --failfast
-TESTER_NATS_URL=nats://localhost:4222 go test -modfile=go_test.mod -race ./micro/test/... --failfast
-
-# Makefile wrappers for the docker path (TESTER_NATS_URL defaults to nats://localhost:4222)
-make test-docker                          # full race-enabled suite with internal_testing tag
-make test-docker T=TestName PKG=./test/... # single test, verbose
-
-# Test against a different nats-server (branch/tag/commit/local checkout).
-# Adds a replace directive to go_test.mod — never commit it. Do NOT use
-# `go get ...@main`, which can drop ntf from the module graph (why: TESTING.md).
+# Another nats-server via a go_test.mod replace: never commit it, never `go get ...@main`
 make server-replace V=main
 make server-replace-drop
 
-# Stop the tester
-make tester-down
-
-# Alternative: run the full suite inside an alpine sibling container (matches CI).
-# Doesn't need TESTER_NATS_URL or tester-up-host — the Makefile target handles it.
-make test-tester
-
-# Build
-go build ./...
-
-# Formatting
+# Lint as CI runs it (staticcheck and golangci-lint take the modfile through GOFLAGS)
 go fmt -modfile=go_test.mod ./...
-
-# Vet
 go vet -modfile=go_test.mod ./...
-
-# Static analysis (as CI does it; staticcheck has no -modfile flag, so it goes
-# through GOFLAGS)
 GOFLAGS="-mod=mod -modfile=go_test.mod" staticcheck ./...
-
-# Linting (golangci-lint runs only on jetstream/; the modfile GOFLAGS lets it
-# typecheck jetstream/test, whose deps live in go_test.mod only)
 GOFLAGS="-mod=mod -modfile=go_test.mod" golangci-lint run --timeout 5m0s ./jetstream/...
-
-# Spell check
 find . -type f -name "*.go" | xargs misspell -error -locale US
 
-# Update test dependencies (never change go.mod for test deps)
+# Test dependencies go in go_test.mod only
 go mod tidy -modfile=go_test.mod
 ```
 
-A plain `go test -modfile=go_test.mod ./...` now runs the integration suites too, since `TestMain` starts a tester on its own. It takes minutes rather than seconds — that is expected, not a hang.
+A plain `go test -modfile=go_test.mod ./...` runs the integration suites too, since `TestMain` starts a tester on its own. It takes minutes rather than seconds — that is expected, not a hang.
+
+[TESTING.md](TESTING.md) covers the rest: sibling-container mode (`make test-tester`, matches CI), coverage, the `server-replace` caveats and troubleshooting.
 
 ## Important Build Tags
 
@@ -108,11 +65,12 @@ A plain `go test -modfile=go_test.mod ./...` now runs the integration suites too
 ## Project Structure
 
 ```
-nats.go                 # Core connection, pub/sub, request/reply (~6500 lines)
+nats.go                 # Core connection, pub/sub, request/reply
 parser.go               # Client-side protocol parser
 ws.go                   # WebSocket transport support
 js.go                   # Legacy JetStream API (deprecated, see jetstream/)
 jsm.go                  # Legacy JetStream management
+jserrors.go             # Legacy JetStream errors
 kv.go                   # Legacy KeyValue API
 object.go               # Legacy Object Store API
 enc.go                  # EncodedConn (deprecated)
@@ -124,6 +82,8 @@ testing_internal.go     # Internal test hooks (go:build internal_testing)
 
 jetstream/              # New JetStream API (preferred over legacy)
   jetstream.go          #   Top-level JetStream interface
+  api.go                #   JetStream API subjects and request helpers
+  *_options.go          #   Functional options (jetstream, kv, object)
   stream.go             #   Stream management
   stream_config.go      #   Stream configuration types
   consumer.go           #   Consumer management
@@ -141,11 +101,14 @@ jetstream/              # New JetStream API (preferred over legacy)
 micro/                  # Micro services framework
   service.go            #   Service interface and implementation
   request.go            #   Request handling
+  conn_hooks.go         #   Shared per-connection status/error callbacks
   test/                 #   Integration tests
 
 internal/
-  parser/               # NATS protocol parser (used by core client)
+  parser/               # JetStream ack reply subject parsing (message metadata)
   syncx/                # Concurrent map utility
+
+util/                   # TLS config cloning
 
 encoders/
   builtin/              # Default encoders (JSON, GOB, string)
@@ -169,20 +132,32 @@ The tester client is an external test-only dependency: `github.com/synadia-io/or
 
 ## Test Architecture
 
-- **Root `nats_test.go`** (package `nats`) -- White-box unit tests with access to unexported internals.
+- **White-box tests** -- Unit tests with access to unexported internals: root `nats_test.go` (package `nats`, plus `js_test.go`, `headers_test.go`, `ws_test.go`, `timer_test.go`), `jetstream/jetstream_test.go` (package `jetstream`), `micro/service_internal_test.go` (package `micro`).
 - **`test/`** (package `test`) -- Black-box integration tests. Tests bring up a NATS server via the testservice helpers (`withServer`, `withJSServer`, `withJSCluster`, ...) which talk to the tester over NATS — either the in-process one started by `TestMain` (the default) or the `synadia/ntf-server` docker service via `TESTER_NATS_URL`. Use the `testerURL` package var; never read `TESTER_NATS_URL` directly, or the test will bypass the in-process tester (this exact bug hit `headers_test.go`).
 - **`jetstream/test/`** (package `test`) -- Integration tests for the new JetStream API, same testservice harness.
 - **`micro/test/`** (package `micro_test`) -- Integration tests for the micro services framework, same testservice harness.
 - **NoRace tests** -- Prefixed `TestNoRace*`, guarded by `//go:build !race && !skip_no_race_tests`. Must be run separately without `-race`.
-- Tests always run with `-p=1` (no parallel packages) because the tester serializes some bookkeeping that doesn't tolerate concurrent CreateServer calls from independent test binaries.
+- Tests always run with `-p=1` (no parallel packages): the shared docker tester doesn't tolerate concurrent CreateServer calls from independent test binaries, and the in-process path keeps it to limit server churn.
+
+### Adding tests
+
+A bug fix comes with a regression test that fails without the fix.
+
+Add tests to the existing test file for the code you're changing. Don't create a new `_test.go` file for a bug fix or a small addition; a new file is only for a new area with no existing home, named after the source file it covers. Reuse the helpers in `helper_test.go` / `testservice_helper_test.go` rather than adding near-duplicates.
+
+- `jetstream/<file>.go` -> `jetstream/test/<file>_test.go` (`pull_test.go`, `kv_test.go`, `ordered_test.go`, ...); white-box -> the existing `jetstream/*_test.go` closest to the change, else `jetstream_test.go`.
+- `micro/` -> `micro/test/service_test.go`; white-box -> `micro/service_internal_test.go`.
+- Legacy JetStream (`js.go`, `jsm.go`, `kv.go`, `object.go`) -> `test/js_test.go`, `test/kv_test.go`, `test/object_test.go`; tests needing `internal_testing` hooks -> `test/js_internal_test.go`.
+- Core client -> the matching `test/` file (`conn_test.go`, `sub_test.go`, `reconnect_test.go`, `headers_test.go`, `ws_test.go`, ...); white-box (including `parser.go`) -> root `nats_test.go`, or the root `*_test.go` named after the source file.
 
 ## Code Conventions
 
 - **License header** -- Every `.go` file starts with the Apache 2.0 license header (Copyright year range).
-- **Error variables** -- Exported errors defined as `var Err... = errors.New("nats: ...")` in `nats.go`. JetStream errors in `jetstream/errors.go` follow the same pattern.
+- **Error variables** -- Core exported errors are `var Err... = errors.New("nats: ...")` in `nats.go`. JetStream errors (`jetstream/errors.go`, legacy `jserrors.go`) are `JetStreamError` values (`&jsError{...}`), wrapping an `APIError` with the server's error code where one exists.
 - **Options pattern** -- Connection options use functional options: `nats.Connect(url, nats.Name("myapp"), nats.MaxReconnects(5))`. JetStream and micro use similar patterns.
 - **No external dependencies in production** -- Only `klauspost/compress`, `nkeys`, `nuid` in `go.mod`. Test deps (protobuf, jwt, etc.) are isolated in `go_test.mod`. PRs adding dependencies are scrutinized heavily.
-- **Commits require sign-off** -- Use `git commit -s` (DCO: `Signed-off-by`).
+- **PR titles** -- Start with a tag, then a short summary of the change: `[FIXED]` bug fix, `[ADDED]` new API or option, `[IMPROVED]` performance, docs, tests or internals, `[CHANGED]` something existing users will notice (behavior change, removal, Go version bump). For example: `[FIXED] Preserve options when following object links`. Commit subjects on `main` follow the same format.
+- **Sign-off required** -- `Signed-off-by` (DCO) in every commit (`git commit -s`) and in the PR description, under a legal name.
 - **US English spelling** -- Enforced by `misspell -locale US` in CI.
 - **Interface-driven design** -- JetStream and micro packages define interfaces (`JetStream`, `Stream`, `Consumer`, `Service`) with concrete unexported implementations.
 
