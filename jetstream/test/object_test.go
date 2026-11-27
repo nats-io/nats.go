@@ -238,6 +238,53 @@ func TestGetObjectDigestMismatch(t *testing.T) {
 	})
 }
 
+type readerFunc func(p []byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+func TestPutObjectStreamUnavailableDuringChunk(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 10*time.Second)
+
+		obs, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "FOO"})
+		expectOk(t, err)
+		stream, err := js.Stream(ctx, "OBJ_FOO")
+		expectOk(t, err)
+		cfg := stream.CachedInfo().Config
+
+		// The first chunk is published while the stream is gone, so it gets
+		// no responders; the second chunk is read after the stream is back.
+		chunks := []string{"first", "second"}
+		reads := 0
+		r := readerFunc(func(p []byte) (int, error) {
+			switch reads {
+			case 0:
+				expectOk(t, js.DeleteStream(ctx, cfg.Name))
+			case 1:
+				_, err := js.CreateStream(ctx, cfg)
+				expectOk(t, err)
+			default:
+				return 0, io.EOF
+			}
+			n := copy(p, chunks[reads])
+			reads++
+			return n, nil
+		})
+
+		_, err = obs.Put(ctx, jetstream.ObjectMeta{Name: "A"}, r)
+		if err != nil {
+			_, err = obs.GetInfo(ctx, "A")
+			expectErr(t, err, jetstream.ErrObjectNotFound)
+			return
+		}
+		data, err := obs.GetBytes(ctx, "A")
+		expectOk(t, err)
+		if string(data) != "firstsecond" {
+			t.Fatalf("Expected result: 'firstsecond'; got: %q", data)
+		}
+	})
+}
+
 func TestDefaultObjectStatus(t *testing.T) {
 	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
 		ctx := newTesterCtx(t, 10*time.Second)
