@@ -2701,6 +2701,33 @@ func TestEndpointPendingLimits(t *testing.T) {
 			}
 		})
 
+		t.Run("rejected limits do not leave a subscription", func(t *testing.T) {
+			srv, err := micro.AddService(nc, micro.Config{
+				Name:    "test-service-rejected",
+				Version: "1.0.0",
+			})
+			if err != nil {
+				t.Fatalf("Error adding service: %v", err)
+			}
+			defer srv.Stop()
+
+			err = srv.AddEndpoint("test", handler,
+				micro.WithEndpointSubject("test.rejected"),
+				micro.WithEndpointPendingLimits(10, 0))
+			if !errors.Is(err, nats.ErrInvalidArg) {
+				t.Fatalf("Expected error: %v; got: %v", nats.ErrInvalidArg, err)
+			}
+			if endpoints := srv.Info().Endpoints; len(endpoints) != 0 {
+				t.Fatalf("Expected no endpoints, got %d", len(endpoints))
+			}
+
+			// The endpoint was not added, so nothing should handle the request.
+			_, err = nc.Request("test.rejected", []byte("test"), time.Second)
+			if !errors.Is(err, nats.ErrNoResponders) {
+				t.Fatalf("Expected error: %v; got: %v", nats.ErrNoResponders, err)
+			}
+		})
+
 		t.Run("pending limits trigger slow consumer error", func(t *testing.T) {
 			errCh := make(chan error, 1)
 
