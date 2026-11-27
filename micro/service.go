@@ -32,6 +32,9 @@ type (
 	// Service exposes methods to operate on a service instance.
 	Service interface {
 		// AddEndpoint registers endpoint with given name on a specific subject.
+		// Subjects under [APIPrefix] are reserved for discovery and refused.
+		// A wildcard subject that overlaps with them, such as ">", is accepted,
+		// and its endpoint also receives discovery requests.
 		AddEndpoint(string, Handler, ...EndpointOpt) error
 
 		// AddGroup returns a Group interface, allowing for more complex endpoint topologies.
@@ -191,6 +194,13 @@ type (
 		// QueueGroupDisabled disables the queue group for the service.
 		QueueGroupDisabled bool `json:"queue_group_disabled"`
 
+		// APIPrefix replaces [APIPrefix] in the subjects the service answers
+		// PING, INFO and STATS requests on, so that tools can reach it across
+		// accounts. It is used as given, including its case, and cannot be
+		// under [APIPrefix]. Endpoints cannot be added under either of them.
+		// Defaults to [APIPrefix].
+		APIPrefix string `json:"api_prefix,omitempty"`
+
 		// StatsHandler is a user-defined custom function.
 		// used to calculate additional service stats.
 		StatsHandler StatsHandler
@@ -260,7 +270,7 @@ const (
 	// Queue Group name used across all services
 	DefaultQueueGroup = "q"
 
-	// APIPrefix is the root of all control subjects
+	// APIPrefix is the default root of all control subjects
 	APIPrefix = "$SRV"
 )
 
@@ -333,6 +343,9 @@ func AddService(nc *nats.Conn, config Config) (Service, error) {
 	config.Metadata = maps.Clone(config.Metadata)
 	if config.Metadata == nil {
 		config.Metadata = map[string]string{}
+	}
+	if config.APIPrefix == "" {
+		config.APIPrefix = APIPrefix
 	}
 
 	id := nuid.Next()
@@ -425,6 +438,11 @@ func addEndpoint(s *service, name, subject string, handler Handler, metadata map
 	}
 	if !subjectRegexp.MatchString(subject) {
 		return fmt.Errorf("%w: invalid endpoint subject", ErrConfigValidation)
+	}
+	for _, prefix := range []string{APIPrefix, s.Config.APIPrefix} {
+		if subject == prefix || strings.HasPrefix(subject, prefix+".") {
+			return fmt.Errorf("%w: endpoint subject %q is under %s, which is reserved for discovery", ErrConfigValidation, subject, prefix)
+		}
 	}
 	if !subjectRegexp.MatchString(queueGroup) {
 		return fmt.Errorf("%w: invalid endpoint queue group", ErrConfigValidation)
@@ -549,8 +567,26 @@ func (c *Config) valid() error {
 	if c.QueueGroup != "" && !subjectRegexp.MatchString(c.QueueGroup) {
 		return fmt.Errorf("%w: queue group: invalid queue group name", ErrConfigValidation)
 	}
+	if c.APIPrefix != "" && !validAPIPrefix(c.APIPrefix) {
+		return fmt.Errorf("%w: api prefix: should consist of literal subject tokens", ErrConfigValidation)
+	}
+	if strings.HasPrefix(c.APIPrefix, APIPrefix+".") {
+		return fmt.Errorf("%w: api prefix: %q is under %s, which is reserved for discovery", ErrConfigValidation, c.APIPrefix, APIPrefix)
+	}
 
 	return nil
+}
+
+func validAPIPrefix(prefix string) bool {
+	if strings.ContainsAny(prefix, " \t\r\n") {
+		return false
+	}
+	for token := range strings.SplitSeq(prefix, ".") {
+		if token == "" || token == "*" || token == ">" {
+			return false
+		}
+	}
+	return true
 }
 
 // handleAsyncErr reports an async error on one of the service's own
@@ -610,7 +646,7 @@ func (svc *service) addVerbHandlers(nc *nats.Conn, verb Verb, handler HandlerFun
 
 // addInternalHandler registers a control subject handler.
 func (s *service) addInternalHandler(nc *nats.Conn, verb Verb, kind, id, name string, handler HandlerFunc) error {
-	subj, err := ControlSubject(verb, kind, id)
+	subj, err := ControlSubjectWithPrefix(s.Config.APIPrefix, verb, kind, id)
 	if err != nil {
 		if stopErr := s.Stop(); stopErr != nil {
 			return errors.Join(err, fmt.Errorf("stopping service: %w", stopErr))
@@ -757,7 +793,6 @@ func (s *service) Reset() {
 	for _, endpoint := range s.endpoints {
 		endpoint.reset()
 	}
-	s.started = time.Now().UTC()
 	s.m.Unlock()
 }
 
@@ -882,6 +917,13 @@ func (e *Endpoint) reset() {
 //   - verb and kind: subject used to monitor services with the provided name
 //   - verb, name and id: subject used to monitor an instance of a service with the provided ID
 func ControlSubject(verb Verb, name, id string) (string, error) {
+	return ControlSubjectWithPrefix(APIPrefix, verb, name, id)
+}
+
+// ControlSubjectWithPrefix is like [ControlSubject], with prefix in place of
+// [APIPrefix], for services that set [Config.APIPrefix]. An empty prefix
+// means [APIPrefix].
+func ControlSubjectWithPrefix(prefix string, verb Verb, name, id string) (string, error) {
 	verbStr := verb.String()
 	if verbStr == "" {
 		return "", fmt.Errorf("%w: %q", ErrVerbNotSupported, verbStr)
@@ -889,13 +931,16 @@ func ControlSubject(verb Verb, name, id string) (string, error) {
 	if name == "" && id != "" {
 		return "", ErrServiceNameRequired
 	}
+	if prefix == "" {
+		prefix = APIPrefix
+	}
 	if name == "" && id == "" {
-		return fmt.Sprintf("%s.%s", APIPrefix, verbStr), nil
+		return fmt.Sprintf("%s.%s", prefix, verbStr), nil
 	}
 	if id == "" {
-		return fmt.Sprintf("%s.%s.%s", APIPrefix, verbStr, name), nil
+		return fmt.Sprintf("%s.%s.%s", prefix, verbStr, name), nil
 	}
-	return fmt.Sprintf("%s.%s.%s.%s", APIPrefix, verbStr, name, id), nil
+	return fmt.Sprintf("%s.%s.%s.%s", prefix, verbStr, name, id), nil
 }
 
 func WithEndpointSubject(subject string) EndpointOpt {

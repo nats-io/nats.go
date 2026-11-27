@@ -464,12 +464,12 @@ func (nc *Conn) processMsgArgs(arg []byte) error {
 		nc.ps.ma.subject = args[0]
 		nc.ps.ma.sid = parseInt64(args[1])
 		nc.ps.ma.reply = nil
-		nc.ps.ma.size = int(parseInt64(args[2]))
+		nc.ps.ma.size = parseSize(args[2])
 	case 4:
 		nc.ps.ma.subject = args[0]
 		nc.ps.ma.sid = parseInt64(args[1])
 		nc.ps.ma.reply = args[2]
-		nc.ps.ma.size = int(parseInt64(args[3]))
+		nc.ps.ma.size = parseSize(args[3])
 	default:
 		return fmt.Errorf("nats: processMsgArgs Parse Error: '%s'", arg)
 	}
@@ -510,14 +510,14 @@ func (nc *Conn) processHeaderMsgArgs(arg []byte) error {
 		nc.ps.ma.subject = args[0]
 		nc.ps.ma.sid = parseInt64(args[1])
 		nc.ps.ma.reply = nil
-		nc.ps.ma.hdr = int(parseInt64(args[2]))
-		nc.ps.ma.size = int(parseInt64(args[3]))
+		nc.ps.ma.hdr = parseSize(args[2])
+		nc.ps.ma.size = parseSize(args[3])
 	case 5:
 		nc.ps.ma.subject = args[0]
 		nc.ps.ma.sid = parseInt64(args[1])
 		nc.ps.ma.reply = args[2]
-		nc.ps.ma.hdr = int(parseInt64(args[3]))
-		nc.ps.ma.size = int(parseInt64(args[4]))
+		nc.ps.ma.hdr = parseSize(args[3])
+		nc.ps.ma.size = parseSize(args[4])
 	default:
 		return fmt.Errorf("nats: processHeaderMsgArgs Parse Error: '%s'", arg)
 	}
@@ -550,6 +550,24 @@ func parseInt64(d []byte) (n int64) {
 			return -1
 		}
 		n = n*10 + (int64(dec) - ascii_0)
+	}
+	return n
+}
+
+// maxSizeLen is the server's own limit on the digits of a size, which
+// keeps any size well clear of overflowing an int, even on 32-bit.
+const maxSizeLen = 9
+
+// parseSize parses a payload or header size. It returns -1 on error.
+func parseSize(d []byte) (n int) {
+	if len(d) == 0 || len(d) > maxSizeLen {
+		return -1
+	}
+	for _, dec := range d {
+		if dec < ascii_0 || dec > ascii_9 {
+			return -1
+		}
+		n = n*10 + int(dec-ascii_0)
 	}
 	return n
 }

@@ -146,6 +146,7 @@ var (
 	ErrNoUserCB                      = errors.New("nats: user callback not defined")
 	ErrNkeyAndUser                   = errors.New("nats: user callback and nkey defined")
 	ErrNkeysNotSupported             = errors.New("nats: nkeys not supported by the server")
+	ErrProxySignatureNotSupported    = errors.New("nats: proxy signature not supported by the server")
 	ErrStaleConnection               = errors.New("nats: " + STALE_CONNECTION)
 	ErrTokenAlreadySet               = errors.New("nats: token and token handler both set")
 	ErrUserInfoAlreadySet            = errors.New("nats: cannot set user info callback and user/pass")
@@ -525,6 +526,12 @@ type Options struct {
 	// presented from the server.
 	SignatureCB SignatureHandler
 
+	// ProxySignatureCB designates the function used to sign the nonce
+	// presented from the server as one of its trusted proxies. The
+	// signature is sent beside the connection's own credentials, and lets
+	// the server accept a user that requires a proxy.
+	ProxySignatureCB SignatureHandler
+
 	// User sets the username to be used when connecting to the server.
 	User string
 
@@ -775,6 +782,8 @@ type Subscription struct {
 	pTail *Msg
 	pCond *sync.Cond
 	pDone func(subject string)
+	// Set when the subscription closed with no pDone to call.
+	pDoneMissed bool
 
 	// Pending stats, async subscriptions, high-speed etc.
 	pMsgs       int
@@ -1138,6 +1147,7 @@ type connectInfo struct {
 	Echo         bool   `json:"echo"`
 	Headers      bool   `json:"headers"`
 	NoResponders bool   `json:"no_responders"`
+	ProxySig     string `json:"proxy_sig,omitempty"`
 }
 
 // MsgHandler is a callback function that processes messages delivered to
@@ -1653,6 +1663,18 @@ func Nkey(pubKey string, sigCB SignatureHandler) Option {
 		if pubKey != "" && sigCB == nil {
 			return ErrNkeyButNoSigCB
 		}
+		return nil
+	}
+}
+
+// ProxySignature will set the callback that signs the server nonce as a
+// trusted proxy of the server (see the proxies block of the server
+// configuration, in nats-server v2.12.0 and later). It is for applications
+// that connect on behalf of clients they have authenticated themselves, and
+// is independent of the credentials the connection authenticates with.
+func ProxySignature(sigCB SignatureHandler) Option {
+	return func(o *Options) error {
+		o.ProxySignatureCB = sigCB
 		return nil
 	}
 }
@@ -3222,7 +3244,7 @@ func (nc *Conn) sendProto(proto string) {
 // applicable. The lock is assumed to be held upon entering.
 func (nc *Conn) connectProto() (string, error) {
 	o := nc.Opts
-	var nkey, sig, user, pass, token, ujwt string
+	var nkey, sig, user, pass, token, ujwt, proxySig string
 	u := nc.current.URL.User
 	if u != nil {
 		// if no password, assume username is authToken
@@ -3273,6 +3295,18 @@ func (nc *Conn) connectProto() (string, error) {
 		sig = base64.RawURLEncoding.EncodeToString(sigraw)
 	}
 
+	if o.ProxySignatureCB != nil {
+		// The server sends a nonce when it has trusted proxies configured.
+		if nc.info.Nonce == _EMPTY_ {
+			return _EMPTY_, ErrProxySignatureNotSupported
+		}
+		sigraw, err := o.ProxySignatureCB([]byte(nc.info.Nonce))
+		if err != nil {
+			return _EMPTY_, fmt.Errorf("error signing nonce as proxy: %w", err)
+		}
+		proxySig = base64.RawURLEncoding.EncodeToString(sigraw)
+	}
+
 	if nc.Opts.TokenHandler != nil {
 		if token != _EMPTY_ {
 			return _EMPTY_, ErrTokenAlreadySet
@@ -3285,6 +3319,7 @@ func (nc *Conn) connectProto() (string, error) {
 	cinfo := connectInfo{
 		o.Verbose, o.Pedantic, ujwt, nkey, sig, user, pass, token,
 		o.Secure, o.Name, LangString, Version, clientProtoInfo, !o.NoEcho, hdrs, hdrs,
+		proxySig,
 	}
 
 	b, err := json.Marshal(cinfo)
@@ -4010,6 +4045,7 @@ func (nc *Conn) waitForMsgs(s *Subscription) {
 	}
 	// Now check for pDone
 	done := s.pDone
+	s.pDoneMissed = done == nil
 	s.mu.Unlock()
 
 	if done != nil {
@@ -5467,6 +5503,7 @@ func (nc *Conn) removeSub(s *Subscription) {
 
 	if s.typ != AsyncSubscription {
 		done := s.pDone
+		s.pDoneMissed = done == nil
 		if done != nil {
 			done(s.Subject)
 		}
@@ -5746,11 +5783,23 @@ func (s *Subscription) AutoUnsubscribe(max int) error {
 }
 
 // SetClosedHandler will set the closed handler for when a subscription
-// is closed (either unsubscribed or drained).
+// is closed (either unsubscribed or drained). If the subscription has
+// already closed without calling a closed handler, the handler is called
+// right away on its own goroutine.
 func (s *Subscription) SetClosedHandler(handler func(subject string)) {
 	s.mu.Lock()
 	s.pDone = handler
+	missed := s.pDoneMissed && handler != nil
+	if missed {
+		s.pDoneMissed = false
+	}
+	subject := s.Subject
 	s.mu.Unlock()
+	// Nothing else will call the handler. Not inline, as the caller may hold
+	// locks the handler takes.
+	if missed {
+		go handler(subject)
+	}
 }
 
 // unsubscribe performs the low level unsubscribe to the server.
@@ -6472,8 +6521,9 @@ func (nc *Conn) close(status Status, doCBs bool, err error) {
 		// Call closed handler for non-AsyncSubscription types (AsyncSubscription handlers
 		// are called by waitForMsgs when it exits)
 		var done func(string)
-		if s.typ != AsyncSubscription && s.pDone != nil {
+		if s.typ != AsyncSubscription {
 			done = s.pDone
+			s.pDoneMissed = done == nil
 		}
 
 		// Mark as invalid, for signaling to waitForMsgs

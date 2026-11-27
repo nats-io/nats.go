@@ -29,6 +29,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"math/big"
 	"net"
 	"net/url"
@@ -720,6 +722,43 @@ func TestParserShouldFail(t *testing.T) {
 	c.ps.state = OP_START
 	if err := c.parse([]byte("-ERRx\r\n")); err == nil {
 		t.Fatal("Should have received a parse error")
+	}
+}
+
+func TestParserMsgSizeLimit(t *testing.T) {
+	for _, proto := range []string{
+		"MSG foo 1 9223372036854775807\r\n",
+		"MSG foo 1 _INBOX.bar 9223372036854775807\r\n",
+		"MSG foo 1 4611686018427387904\r\n",
+		"HMSG foo 1 0 9223372036854775807\r\n",
+		"HMSG foo 1 _INBOX.bar 0 9223372036854775807\r\n",
+		"HMSG foo 1 4611686018427387904 4611686018427387904\r\n",
+	} {
+		nc := &Conn{ps: &parseState{}}
+		if err := nc.parse([]byte(proto)); err == nil {
+			t.Errorf("Expected a parse error for %q", proto)
+		}
+	}
+
+	// The server never sends sizes longer than 9 digits.
+	for _, tc := range []struct {
+		hdr  int
+		args string
+		ok   bool
+	}{
+		{-1, "foo 1 999999999", true},
+		{-1, "foo 1 1000000000", false},
+		{0, "foo 1 999999999 999999999", true},
+		{0, "foo 1 1000000000 1000000000", false},
+	} {
+		nc := &Conn{ps: &parseState{hdr: tc.hdr}}
+		err := nc.processMsgArgs([]byte(tc.args))
+		if tc.ok && (err != nil || nc.ps.ma.size != 999999999) {
+			t.Errorf("Expected %q to be accepted, got size %d, err %v", tc.args, nc.ps.ma.size, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("Expected %q to be rejected", tc.args)
+		}
 	}
 }
 
@@ -2278,4 +2317,155 @@ func TestSetServerPoolTLSURLKeepsState(t *testing.T) {
 			t.Fatal("Expected a pool without a TLS URL to keep TLS")
 		}
 	})
+}
+
+// On 32-bit platforms int cannot hold every num_deleted value the server can
+// report (e.g. for a stream with MaxMsgsPerSubject=1 and heavy churn). Such
+// values must be capped at math.MaxInt instead of failing to decode.
+func TestStreamStateNumDeletedOverflow(t *testing.T) {
+	tests := []struct {
+		name       string
+		numDeleted int64
+	}{
+		{name: "zero", numDeleted: 0},
+		{name: "max int32", numDeleted: math.MaxInt32},
+		{name: "above int32", numDeleted: 1 << 32},
+		{name: "max int64", numDeleted: math.MaxInt64},
+		{name: "negative", numDeleted: -1},
+		{name: "below int32", numDeleted: -(1 << 32)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := fmt.Appendf(nil, `{"messages":5,"last_seq":10,"consumer_count":3,"num_deleted":%d,"deleted":[2,4]}`, test.numDeleted)
+
+			var state StreamState
+			if err := json.Unmarshal(data, &state); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			want := test.numDeleted
+			if want > math.MaxInt {
+				want = math.MaxInt
+			} else if want < math.MinInt {
+				want = math.MinInt
+			}
+			if int64(state.NumDeleted) != want {
+				t.Fatalf("Invalid NumDeleted; want: %d; got: %d", want, state.NumDeleted)
+			}
+			if state.Msgs != 5 || state.LastSeq != 10 || state.Consumers != 3 || len(state.Deleted) != 2 {
+				t.Fatalf("Other fields not decoded correctly: %+v", state)
+			}
+		})
+	}
+
+	// A response without num_deleted leaves the field untouched, as for any
+	// other field.
+	state := StreamState{NumDeleted: 7}
+	if err := json.Unmarshal([]byte(`{"messages":1}`), &state); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if state.NumDeleted != 7 || state.Msgs != 1 {
+		t.Fatalf("Unexpected state: %+v", state)
+	}
+}
+
+func TestClosedHandlerSetAfterAsyncSubClosed(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Could not listen on an ephemeral port: %v", err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.Write([]byte("INFO {\"server_id\":\"foobar\"}\r\n"))
+				br := bufio.NewReaderSize(conn, 10*1024)
+				br.ReadLine()
+				br.ReadLine()
+				conn.Write([]byte(pongProto))
+				io.Copy(io.Discard, br)
+			}()
+		}
+	}()
+	url := fmt.Sprintf("nats://%s", l.Addr())
+
+	for _, test := range []struct {
+		name           string
+		close          func(*Conn, *Subscription)
+		handlerAtClose bool
+	}{
+		{"unsubscribe", func(_ *Conn, s *Subscription) { s.Unsubscribe() }, false},
+		{"unsubscribe with handler at close", func(_ *Conn, s *Subscription) { s.Unsubscribe() }, true},
+		{"conn close", func(nc *Conn, _ *Subscription) { nc.Close() }, false},
+		{"conn close with handler at close", func(nc *Conn, _ *Subscription) { nc.Close() }, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			nc, err := Connect(url)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			defer nc.Close()
+			s, err := nc.Subscribe("foo", func(*Msg) {})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			closed := make(chan string, 2)
+			waitClosed := func() {
+				t.Helper()
+				select {
+				case subject := <-closed:
+					if subject != "foo" {
+						t.Fatalf("Expected subject 'foo', got %q", subject)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("Closed handler not called")
+				}
+			}
+			if test.handlerAtClose {
+				s.SetClosedHandler(func(subject string) { closed <- subject })
+				test.close(nc, s)
+			} else {
+				test.close(nc, s)
+				// Wait for the delivery goroutine to exit having found no handler.
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					s.mu.Lock()
+					missed := s.pDoneMissed
+					s.mu.Unlock()
+					if missed {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("Delivery goroutine did not exit")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				// The handler takes a lock held by the caller of
+				// SetClosedHandler, so it must not be called inline.
+				var mu sync.Mutex
+				mu.Lock()
+				s.SetClosedHandler(func(subject string) {
+					mu.Lock()
+					defer mu.Unlock()
+					closed <- subject
+				})
+				mu.Unlock()
+			}
+			waitClosed()
+
+			// The close has been reported, so this one is not called.
+			s.SetClosedHandler(func(subject string) { closed <- subject })
+			select {
+			case <-closed:
+				t.Fatal("Closed handler called after the close was reported")
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
 }
