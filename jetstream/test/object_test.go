@@ -900,6 +900,40 @@ func TestObjectLinks(t *testing.T) {
 	})
 }
 
+func TestObjectLinksOverDeletedObject(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		ctx := newTesterCtx(t, 10*time.Second)
+
+		root, err := js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{Bucket: "ROOT"})
+		expectOk(t, err)
+
+		_, err = root.PutString(ctx, "A", "AAA")
+		expectOk(t, err)
+		_, err = root.PutString(ctx, "B", "BBB")
+		expectOk(t, err)
+		infoC, err := root.PutString(ctx, "C", "CCC")
+		expectOk(t, err)
+
+		// The name of a deleted object can be reused for a link.
+		expectOk(t, root.Delete(ctx, "A"))
+		_, err = root.AddLink(ctx, "A", infoC)
+		expectOk(t, err)
+		data, err := root.GetString(ctx, "A")
+		expectOk(t, err)
+		if data != "CCC" {
+			t.Fatalf("Expected %q, got %q", "CCC", data)
+		}
+
+		// Same for a bucket link.
+		expectOk(t, root.Delete(ctx, "B"))
+		info, err := root.AddBucketLink(ctx, "B", root)
+		expectOk(t, err)
+		if info.Opts == nil || info.Opts.Link == nil || info.Opts.Link.Bucket != "ROOT" {
+			t.Fatalf("Bucket link info not what was expected: %+v", info)
+		}
+	})
+}
+
 func expectLinkIsCorrect(t *testing.T, originalObject *jetstream.ObjectInfo, linkObject *jetstream.ObjectInfo) {
 	if linkObject.Opts.Link == nil || !expectLinkPartsAreCorrect(t, linkObject, originalObject.Bucket, originalObject.Name) {
 		t.Fatalf("Link info not what was expected:\nActual: %+v\nTarget: %+v", linkObject, originalObject)

@@ -1017,12 +1017,12 @@ func (obs *obs) AddLink(ctx context.Context, name string, obj *ObjectInfo) (*Obj
 		return nil, ErrNoLinkToLink
 	}
 
-	// If object with link's name is found, error.
+	// If object with link's name is found and is not deleted, error.
 	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
 	einfo, err := obs.GetInfo(ctx, name, GetObjectInfoShowDeleted())
 	if einfo != nil {
-		if !einfo.isLink() {
+		if !einfo.isLink() && !einfo.Deleted {
 			return nil, ErrObjectAlreadyExists
 		}
 	} else if err != ErrObjectNotFound {
@@ -1057,12 +1057,12 @@ func (ob *obs) AddBucketLink(ctx context.Context, name string, bucket ObjectStor
 		return nil, ErrBucketMalformed
 	}
 
-	// If object with link's name is found, error.
+	// If object with link's name is found and is not deleted, error.
 	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
 	einfo, err := ob.GetInfo(ctx, name, GetObjectInfoShowDeleted())
 	if einfo != nil {
-		if !einfo.isLink() {
+		if !einfo.isLink() && !einfo.Deleted {
 			return nil, ErrObjectAlreadyExists
 		}
 	} else if err != ErrObjectNotFound {

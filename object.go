@@ -772,12 +772,12 @@ func (obs *obs) AddLink(name string, obj *ObjectInfo) (*ObjectInfo, error) {
 		return nil, ErrNoLinkToLink
 	}
 
-	// If object with link's name is found, error.
+	// If object with link's name is found and is not deleted, error.
 	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
 	einfo, err := obs.GetInfo(name, GetObjectInfoShowDeleted())
 	if einfo != nil {
-		if !einfo.isLink() {
+		if !einfo.isLink() && !einfo.Deleted {
 			return nil, ErrObjectAlreadyExists
 		}
 	} else if err != ErrObjectNotFound {
@@ -812,12 +812,12 @@ func (ob *obs) AddBucketLink(name string, bucket ObjectStore) (*ObjectInfo, erro
 		return nil, ErrBucketMalformed
 	}
 
-	// If object with link's name is found, error.
+	// If object with link's name is found and is not deleted, error.
 	// If link with link's name is found, that's okay to overwrite.
 	// If there was an error that was not ErrObjectNotFound, error.
 	einfo, err := ob.GetInfo(name, GetObjectInfoShowDeleted())
 	if einfo != nil {
-		if !einfo.isLink() {
+		if !einfo.isLink() && !einfo.Deleted {
 			return nil, ErrObjectAlreadyExists
 		}
 	} else if err != ErrObjectNotFound {
