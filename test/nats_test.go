@@ -497,81 +497,59 @@ func TestProxySignatureNotSupported(t *testing.T) {
 	}
 }
 
-// These drive the server-pool shuffle with a comma-joined two-URL pool. The
-// DNS multi-IP path (net.LookupHost returning several addresses for one host)
-// reaches the same srvPool shuffle but is not covered directly: the tester
-// cannot bind two servers to one port across address families.
+// firstDialRecorder fails every dial and keeps the first address it was
+// given, so the shuffle of a hostname's addresses in createConn runs without
+// a server listening on each of them.
+type firstDialRecorder struct {
+	first string
+}
+
+func (d *firstDialRecorder) Dial(_, address string) (net.Conn, error) {
+	if d.first == "" {
+		d.first = address
+	}
+	return nil, errors.New("dial refused by test")
+}
+
+func firstDials(t *testing.T, total int, opts ...nats.Option) ([]string, map[string]int) {
+	t.Helper()
+	ips, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatalf("Error looking up localhost: %v", err)
+	}
+	if len(ips) < 2 {
+		t.Skipf("Need localhost to resolve to several addresses, got %v", ips)
+	}
+	addrs := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		addrs = append(addrs, net.JoinHostPort(ip, "4222"))
+	}
+	counts := make(map[string]int)
+	for range total {
+		d := &firstDialRecorder{}
+		if _, err := nats.Connect("nats://localhost:4222", append(opts, nats.SetCustomDialer(d))...); err == nil {
+			t.Fatal("Expected connect to fail")
+		}
+		counts[d.first]++
+	}
+	return addrs, counts
+}
 
 func TestLookupHostResultIsRandomized(t *testing.T) {
-	c := newTester(t)
-	s1 := c.CreateServer(t, false)
-	t.Cleanup(func() { s1.Destroy(t) })
-	s2 := c.CreateServer(t, false)
-	t.Cleanup(func() { s2.Destroy(t) })
-
-	urls := s1.Servers[0].URL + "," + s2.Servers[0].URL
-
-	const total = 100
-	conns := make([]*nats.Conn, 0, total)
-	for i := 0; i < total; i++ {
-		nc, err := nats.Connect(urls)
-		if err != nil {
-			t.Fatalf("Error on connect (i=%d): %v", i, err)
+	const total = 200
+	addrs, counts := firstDials(t, total)
+	for _, addr := range addrs {
+		if counts[addr] < total/(2*len(addrs)) {
+			t.Fatalf("Does not seem balanced between addresses: %v", counts)
 		}
-		conns = append(conns, nc)
-	}
-	t.Cleanup(func() {
-		for _, nc := range conns {
-			nc.Close()
-		}
-	})
-
-	// Tally which server each connection ended up on.
-	var n1, n2 int
-	for _, nc := range conns {
-		switch nc.ConnectedUrl() {
-		case s1.Servers[0].URL:
-			n1++
-		case s2.Servers[0].URL:
-			n2++
-		default:
-			t.Fatalf("Unexpected ConnectedUrl: %q (expected %q or %q)", nc.ConnectedUrl(), s1.Servers[0].URL, s2.Servers[0].URL)
-		}
-	}
-	if n1 < 35 || n1 > 65 {
-		t.Fatalf("Does not seem balanced between servers: s1=%d, s2=%d", n1, n2)
 	}
 }
 
 func TestLookupHostResultIsNotRandomizedWithNoRandom(t *testing.T) {
-	c := newTester(t)
-	s1 := c.CreateServer(t, false)
-	t.Cleanup(func() { s1.Destroy(t) })
-	s2 := c.CreateServer(t, false)
-	t.Cleanup(func() { s2.Destroy(t) })
-
-	urls := s1.Servers[0].URL + "," + s2.Servers[0].URL
-
 	const total = 100
-	conns := make([]*nats.Conn, 0, total)
-	for i := 0; i < total; i++ {
-		nc, err := nats.Connect(urls, nats.DontRandomize())
-		if err != nil {
-			t.Fatalf("Error on connect (i=%d): %v", i, err)
-		}
-		conns = append(conns, nc)
-	}
-	t.Cleanup(func() {
-		for _, nc := range conns {
-			nc.Close()
-		}
-	})
-
-	// With DontRandomize, every connection should hit s1 (the first URL).
-	for i, nc := range conns {
-		if got, want := nc.ConnectedUrl(), s1.Servers[0].URL; got != want {
-			t.Fatalf("Connection %d: expected %q, got %q (DontRandomize should pin to first URL)", i, want, got)
-		}
+	addrs, counts := firstDials(t, total, nats.DontRandomize())
+	if counts[addrs[0]] != total {
+		t.Fatalf("Expected every connect to dial %q first, got %v", addrs[0], counts)
 	}
 }
 
