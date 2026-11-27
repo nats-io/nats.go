@@ -1323,6 +1323,41 @@ func TestListConsumers(t *testing.T) {
 	}
 }
 
+func TestListConsumersStopsWhenContextDone(t *testing.T) {
+	withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+		s, err := js.CreateStream(context.Background(), jetstream.StreamConfig{Name: "foo", Subjects: []string{"FOO.*"}})
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		for i := 0; i < 3; i++ {
+			_, err = s.CreateOrUpdateConsumer(context.Background(), jetstream.ConsumerConfig{AckPolicy: jetstream.AckExplicitPolicy})
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		consumersList := s.ListConsumers(ctx)
+		// Read one consumer, then stop reading and cancel the context.
+		<-consumersList.Info()
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+
+		select {
+		case info, ok := <-consumersList.Info():
+			if ok {
+				t.Fatalf("Expected no more consumers after the context is done; got %q", info.Name)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for the consumer list to be closed")
+		}
+		if !errors.Is(consumersList.Err(), context.Canceled) {
+			t.Fatalf("Expected error: %v; got: %v", context.Canceled, consumersList.Err())
+		}
+	})
+}
+
 func TestConsumerNames(t *testing.T) {
 	tests := []struct {
 		name         string
