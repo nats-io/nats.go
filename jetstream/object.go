@@ -835,6 +835,15 @@ func (info *ObjectInfo) isLink() bool {
 // Get will pull the object from the underlying stream.
 func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (ObjectResult, error) {
 	ctx, cancel := obs.js.wrapContextWithoutDeadline(ctx)
+
+	result, err := obs.get(ctx, name, cancel, opts...)
+	if err != nil && cancel != nil {
+		cancel()
+	}
+	return result, err
+}
+
+func (ob *obs) get(ctx context.Context, name string, cancel context.CancelFunc, opts ...GetObjectOpt) (ObjectResult, error) {
 	var o getObjectOpts
 	for _, opt := range opts {
 		if opt != nil {
@@ -849,7 +858,7 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 	}
 
 	// Grab meta info.
-	info, err := obs.GetInfo(ctx, name, infoOpts...)
+	info, err := ob.GetInfo(ctx, name, infoOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -859,22 +868,21 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 
 	// Check for object links. If single objects we do a pass through.
 	if info.isLink() {
-		if info.ObjectMeta.Opts.Link.Name == "" {
+		link := info.ObjectMeta.Opts.Link
+		if link.Name == "" {
 			return nil, ErrCantGetBucket
 		}
 
-		// is the link in the same bucket?
-		lbuck := info.ObjectMeta.Opts.Link.Bucket
-		if lbuck == obs.name {
-			return obs.Get(ctx, info.ObjectMeta.Opts.Link.Name, opts...)
+		if link.Bucket == ob.name {
+			return ob.get(ctx, link.Name, cancel, opts...)
 		}
 
-		// different bucket
-		lobs, err := obs.js.ObjectStore(ctx, lbuck)
+		bucket, err := ob.js.ObjectStore(ctx, link.Bucket)
 		if err != nil {
 			return nil, err
 		}
-		return lobs.Get(ctx, info.ObjectMeta.Opts.Link.Name, opts...)
+
+		return bucket.(*obs).get(ctx, link.Name, cancel, opts...)
 	}
 
 	result := &objResult{info: info, ctx: ctx, cancel: cancel}
@@ -937,14 +945,15 @@ func (obs *obs) Get(ctx context.Context, name string, opts ...GetObjectOpt) (Obj
 		}
 	}
 
-	chunkSubj := fmt.Sprintf(objChunksPreTmpl, obs.name, info.NUID)
-	streamName := fmt.Sprintf(objNameTmpl, obs.name)
+	chunkSubj := fmt.Sprintf(objChunksPreTmpl, ob.name, info.NUID)
+	streamName := fmt.Sprintf(objNameTmpl, ob.name)
 	subscribeOpts := []nats.SubOpt{
 		nats.OrderedConsumer(),
 		nats.Context(ctx),
 		nats.BindStream(streamName),
 	}
-	_, err = obs.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
+
+	_, err = ob.pushJS.Subscribe(chunkSubj, processChunk, subscribeOpts...)
 	if err != nil {
 		return nil, err
 	}
