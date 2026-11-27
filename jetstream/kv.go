@@ -177,6 +177,8 @@ type (
 		// Keys will return all keys, filtering out any duplicates.
 		// For large datasets, this can be memory-heavy as all keys are loaded
 		// into memory. Use ListKeys for a streaming alternative.
+		// If the initial snapshot is interrupted, Keys returns the context
+		// error or [ErrKeyWatcherClosed], with no keys.
 		Keys(ctx context.Context, opts ...WatchOpt) ([]string, error)
 
 		// ListKeys will return KeyLister, allowing to retrieve all keys from
@@ -191,7 +193,8 @@ type (
 		ListKeysFiltered(ctx context.Context, filters ...string) (KeyLister, error)
 
 		// History will return all historical values for the key (up to
-		// KeyValueMaxHistory).
+		// KeyValueMaxHistory). If the initial snapshot is interrupted, History
+		// returns the context error or [ErrKeyWatcherClosed], with no entries.
 		History(ctx context.Context, key string, opts ...WatchOpt) ([]KeyValueEntry, error)
 
 		// Bucket returns the KV store name.
@@ -1424,17 +1427,16 @@ func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer watcher.Stop()
-
-	var keys []string
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
-		}
-		keys = append(keys, entry.Key())
+	entries, err := collectKVSnapshot(ctx, watcher)
+	if err != nil {
+		return nil, err
 	}
-	if len(keys) == 0 {
+	if len(entries) == 0 {
 		return nil, ErrNoKeysFound
+	}
+	keys := make([]string, len(entries))
+	for i, entry := range entries {
+		keys[i] = entry.Key()
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys), nil
@@ -1521,19 +1523,39 @@ func (kv *kvs) History(ctx context.Context, key string, opts ...WatchOpt) ([]Key
 	if err != nil {
 		return nil, err
 	}
-	defer watcher.Stop()
-
-	var entries []KeyValueEntry
-	for entry := range watcher.Updates() {
-		if entry == nil {
-			break
-		}
-		entries = append(entries, entry)
+	entries, err := collectKVSnapshot(ctx, watcher)
+	if err != nil {
+		return nil, err
 	}
 	if len(entries) == 0 {
 		return nil, ErrKeyNotFound
 	}
 	return entries, nil
+}
+
+// collectKVSnapshot reads through the initial-values marker and always stops
+// the watcher. An interrupted snapshot must not return partial results.
+func collectKVSnapshot(ctx context.Context, watcher KeyWatcher) ([]KeyValueEntry, error) {
+	defer watcher.Stop()
+	updates := watcher.Updates()
+	var entries []KeyValueEntry
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case entry, ok := <-updates:
+			if !ok {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return nil, ErrKeyWatcherClosed
+			}
+			if entry == nil {
+				return entries, nil
+			}
+			entries = append(entries, entry)
+		}
+	}
 }
 
 // Bucket returns the current bucket name.
