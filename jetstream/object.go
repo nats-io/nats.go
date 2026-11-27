@@ -1254,8 +1254,11 @@ func (obs *obs) Seal(ctx context.Context) error {
 
 // Implementation for Watch
 type objWatcher struct {
-	updates chan *ObjectInfo
-	sub     *nats.Subscription
+	updates  chan *ObjectInfo
+	sub      *nats.Subscription
+	stop     chan struct{}
+	stopOnce sync.Once
+	stopped  bool
 }
 
 // Updates returns the interior channel.
@@ -1271,6 +1274,7 @@ func (w *objWatcher) Stop() error {
 	if w == nil {
 		return nil
 	}
+	w.stopOnce.Do(func() { close(w.stop) })
 	return w.sub.Unsubscribe()
 }
 
@@ -1287,7 +1291,21 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 
 	var initDoneMarker bool
 
-	w := &objWatcher{updates: make(chan *ObjectInfo, 32)}
+	w := &objWatcher{updates: make(chan *ObjectInfo, 32), stop: make(chan struct{})}
+
+	// Gives up once the watcher is stopped or the context ends.
+	send := func(info *ObjectInfo) {
+		if w.stopped {
+			return
+		}
+		select {
+		case w.updates <- info:
+		case <-w.stop:
+			w.stopped = true
+		case <-ctx.Done():
+			w.stopped = true
+		}
+	}
 
 	update := func(m *nats.Msg) {
 		var info ObjectInfo
@@ -1301,14 +1319,14 @@ func (obs *obs) Watch(ctx context.Context, opts ...WatchOpt) (ObjectWatcher, err
 
 		if !o.ignoreDeletes || !info.Deleted {
 			info.ModTime = time.Unix(0, int64(parser.ParseNum(tokens[parser.AckTimestampSeqTokenPos])))
-			w.updates <- &info
+			send(&info)
 		}
 
 		// if UpdatesOnly is set, no not send nil to the channel
 		// as it would always be triggered after initializing the watcher
 		if !initDoneMarker && parser.ParseNum(tokens[parser.AckNumPendingTokenPos]) == 0 {
 			initDoneMarker = true
-			w.updates <- nil
+			send(nil)
 		}
 	}
 
