@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -10619,6 +10621,312 @@ func TestJetStreamOrderedConsumerFirstMsgDroppedKeepsStartPosition(t *testing.T)
 		defer rec.mu.Unlock()
 		if len(rec.order) != 1 || rec.order[0] != 101 {
 			t.Fatalf("Expected only stream seq 101, got %v", rec.order)
+		}
+	})
+}
+
+// gatedDialer refuses to dial while closed is set, keeping the client away
+// from a server that is still running.
+type gatedDialer struct {
+	closed atomic.Bool
+}
+
+func (d *gatedDialer) Dial(network, address string) (net.Conn, error) {
+	if d.closed.Load() {
+		return nil, errors.New("gate closed")
+	}
+	return net.Dial(network, address)
+}
+
+// An ordered consumer must resume as soon as the connection is back, whether
+// or not its consumer survived the disconnect.
+func TestJetStreamOrderedConsumerResetOnReconnect(t *testing.T) {
+	tests := []struct {
+		name           string
+		blockCallbacks bool
+		disconnect     func(*testing.T, *testservice.Instance, *nats.Conn, *gatedDialer, func(int))
+	}{
+		{
+			name: "consumer removed for inactivity",
+			disconnect: func(t *testing.T, _ *testservice.Instance, nc *nats.Conn, gate *gatedDialer, waitForConsumers func(int)) {
+				gate.closed.Store(true)
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Error forcing reconnect: %v", err)
+				}
+				waitForConsumers(0)
+				gate.closed.Store(false)
+			},
+		},
+		{
+			name: "server restart",
+			disconnect: func(t *testing.T, inst *testservice.Instance, _ *nats.Conn, _ *gatedDialer, _ func(int)) {
+				inst.StopServer(t, inst.Servers[0])
+				inst.StartServer(t, inst.Servers[0])
+			},
+		},
+		{
+			name:           "server restart with blocked callbacks",
+			blockCallbacks: true,
+			disconnect: func(t *testing.T, inst *testservice.Instance, _ *nats.Conn, _ *gatedDialer, _ func(int)) {
+				inst.StopServer(t, inst.Servers[0])
+				inst.StartServer(t, inst.Servers[0])
+			},
+		},
+		{
+			name: "consumer survives disconnect",
+			disconnect: func(t *testing.T, _ *testservice.Instance, nc *nats.Conn, _ *gatedDialer, _ func(int)) {
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Error forcing reconnect: %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, mon *nats.Conn, inst *testservice.Instance) {
+				gate := &gatedDialer{}
+				opts := []nats.Option{
+					nats.SetCustomDialer(gate),
+					nats.ReconnectWait(50 * time.Millisecond),
+					nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+				}
+				if test.blockCallbacks {
+					opts = append(opts, nats.DisconnectErrHandler(func(*nats.Conn, error) { <-t.Context().Done() }))
+				}
+				nc, js := oscStream(t, inst, opts...)
+				monJS, err := mon.JetStream()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				waitForConsumers := func(want int) {
+					t.Helper()
+					checkFor(t, 15*time.Second, 50*time.Millisecond, func() error {
+						si, err := monJS.StreamInfo("OSC")
+						if err != nil {
+							return err
+						}
+						if si.State.Consumers != want {
+							return fmt.Errorf("expected %d consumers, got %d", want, si.State.Consumers)
+						}
+						return nil
+					})
+				}
+
+				var rec seqRecorder
+				// Heartbeats this far apart keep the activity check from
+				// recovering the consumer within the test.
+				sub, err := js.Subscribe("osc.>", rec.add, nats.OrderedConsumer(), nats.IdleHeartbeat(time.Minute))
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				defer sub.Unsubscribe()
+				publishOSC(t, js, 10)
+				rec.waitFor(t, 10, 10*time.Second)
+
+				creates := countConsumerCreates(t, inst)
+				test.disconnect(t, inst, nc, gate, waitForConsumers)
+				checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+					if !nc.IsConnected() {
+						return errors.New("not reconnected")
+					}
+					return nil
+				})
+				newTester(t).WaitForJetStream(t, nc)
+				publishOSC(t, js, 10)
+				rec.waitFor(t, 20, 5*time.Second)
+				rec.verifyComplete(t, 20)
+				waitForConsumers(1)
+				if n := creates.Load(); n > 1 {
+					t.Fatalf("Expected at most one consumer create on reconnect, got %d", n)
+				}
+			})
+		})
+	}
+}
+
+// orderedReconnectListeners counts the goroutines that reset ordered
+// consumers on reconnect.
+func orderedReconnectListeners() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), "(*Subscription).resetOrderedConsumerOnReconnect(")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+func TestJetStreamOrderedConsumerReconnectListenerCleanup(t *testing.T) {
+	tests := []struct {
+		name string
+		stop func(*testing.T, *nats.Conn, []*nats.Subscription)
+	}{
+		{
+			name: "unsubscribe",
+			stop: func(t *testing.T, _ *nats.Conn, subs []*nats.Subscription) {
+				for _, sub := range subs {
+					if err := sub.Unsubscribe(); err != nil {
+						t.Fatalf("Error unsubscribing: %v", err)
+					}
+				}
+			},
+		},
+		{
+			name: "drain",
+			stop: func(t *testing.T, _ *nats.Conn, subs []*nats.Subscription) {
+				for _, sub := range subs {
+					if err := sub.Drain(); err != nil {
+						t.Fatalf("Error draining: %v", err)
+					}
+				}
+			},
+		},
+		{
+			name: "connection close",
+			stop: func(_ *testing.T, nc *nats.Conn, _ []*nats.Subscription) {
+				nc.Close()
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+				nc, js := oscStream(t, inst)
+				subs := make([]*nats.Subscription, 3)
+				for i := range subs {
+					sub, err := js.Subscribe("osc.>", func(*nats.Msg) {}, nats.OrderedConsumer())
+					if err != nil {
+						t.Fatalf("Error subscribing: %v", err)
+					}
+					subs[i] = sub
+				}
+				checkFor(t, 5*time.Second, 10*time.Millisecond, func() error {
+					if n := orderedReconnectListeners(); n != len(subs) {
+						return fmt.Errorf("expected %d reconnect listeners, got %d", len(subs), n)
+					}
+					return nil
+				})
+				test.stop(t, nc, subs)
+				checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+					if n := orderedReconnectListeners(); n != 0 {
+						return fmt.Errorf("%d reconnect listeners left", n)
+					}
+					return nil
+				})
+			})
+		})
+	}
+}
+
+// A reset before the first message must start where the original consumer
+// did, without losing what was published while the connection was down.
+func TestJetStreamOrderedConsumerResetBeforeFirstMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		subj string
+		pub  string
+		opt  func() nats.SubOpt
+	}{
+		{name: "deliver new", subj: "osc.>", pub: "osc.a", opt: nats.DeliverNew},
+		{name: "start sequence", subj: "osc.>", pub: "osc.a", opt: func() nats.SubOpt { return nats.StartSequence(11) }},
+		{name: "start time", subj: "osc.>", pub: "osc.a", opt: func() nats.SubOpt { return nats.StartTime(time.Now()) }},
+		{name: "last per subject without values", subj: "osc.b", pub: "osc.b", opt: nats.DeliverLastPerSubject},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withJSServerInstance(t, func(t *testing.T, mon *nats.Conn, inst *testservice.Instance) {
+				gate := &gatedDialer{}
+				nc, js := oscStream(t, inst,
+					nats.SetCustomDialer(gate),
+					nats.ReconnectWait(50*time.Millisecond),
+					nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+				)
+				publishOSC(t, js, 10)
+				monJS, err := mon.JetStream()
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+
+				var rec seqRecorder
+				sub, err := js.Subscribe(test.subj, rec.add, nats.OrderedConsumer(), test.opt())
+				if err != nil {
+					t.Fatalf("Error subscribing: %v", err)
+				}
+				defer sub.Unsubscribe()
+
+				gate.closed.Store(true)
+				if err := nc.ForceReconnect(); err != nil {
+					t.Fatalf("Error forcing reconnect: %v", err)
+				}
+				if _, err := monJS.Publish(test.pub, nil); err != nil {
+					t.Fatalf("Error publishing: %v", err)
+				}
+				gate.closed.Store(false)
+				checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+					if !nc.IsConnected() {
+						return errors.New("not reconnected")
+					}
+					return nil
+				})
+				if _, err := js.Publish(test.pub, nil); err != nil {
+					t.Fatalf("Error publishing: %v", err)
+				}
+				rec.waitFor(t, 2, 5*time.Second)
+				// Leave time for a replay of the history to show up.
+				time.Sleep(500 * time.Millisecond)
+				rec.mu.Lock()
+				defer rec.mu.Unlock()
+				if !reflect.DeepEqual(rec.order, []uint64{11, 12}) {
+					t.Fatalf("Expected stream seqs [11 12], got %v", rec.order)
+				}
+			})
+		})
+	}
+}
+
+// A disconnect while consumers are being recreated must not end their
+// subscriptions.
+func TestJetStreamOrderedConsumerDisconnectDuringReset(t *testing.T) {
+	withJSServerInstance(t, func(t *testing.T, _ *nats.Conn, inst *testservice.Instance) {
+		nc, js := oscStream(t, inst,
+			nats.ReconnectWait(10*time.Millisecond),
+			nats.ErrorHandler(func(*nats.Conn, *nats.Subscription, error) {}),
+		)
+		subs := make([]*nats.Subscription, 100)
+		recs := make([]*seqRecorder, len(subs))
+		for i := range subs {
+			recs[i] = &seqRecorder{}
+			sub, err := js.Subscribe("osc.>", recs[i].add, nats.OrderedConsumer())
+			if err != nil {
+				t.Fatalf("Error subscribing: %v", err)
+			}
+			subs[i] = sub
+		}
+		for range 10 {
+			if err := nc.ForceReconnect(); err != nil {
+				t.Fatalf("Error forcing reconnect: %v", err)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		checkFor(t, 10*time.Second, 10*time.Millisecond, func() error {
+			if !nc.IsConnected() {
+				return errors.New("not reconnected")
+			}
+			return nil
+		})
+		var dead int
+		for _, sub := range subs {
+			if !sub.IsValid() {
+				dead++
+			}
+		}
+		if dead > 0 {
+			t.Fatalf("%d of %d subscriptions ended", dead, len(subs))
+		}
+		publishOSC(t, js, 1)
+		for _, rec := range recs {
+			rec.waitFor(t, 1, 10*time.Second)
 		}
 	})
 }
