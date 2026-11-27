@@ -1314,8 +1314,7 @@ func (kv *kvs) Status() (KeyValueStatus, error) {
 // KeyValueStoreNames is used to retrieve a list of key value store names
 func (js *js) KeyValueStoreNames() <-chan string {
 	ch := make(chan string)
-	l := &streamNamesLister{js: js}
-	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
+	l := &streamNamesLister{js: js.listContext(fmt.Sprintf(kvSubjectsTmpl, "*"))}
 	go func() {
 		defer close(ch)
 		for l.Next() {
@@ -1334,8 +1333,7 @@ func (js *js) KeyValueStoreNames() <-chan string {
 // KeyValueStores is used to retrieve a list of key value store statuses
 func (js *js) KeyValueStores() <-chan KeyValueStatus {
 	ch := make(chan KeyValueStatus)
-	l := &streamLister{js: js}
-	l.js.opts.streamListSubject = fmt.Sprintf(kvSubjectsTmpl, "*")
+	l := &streamLister{js: js.listContext(fmt.Sprintf(kvSubjectsTmpl, "*"))}
 	go func() {
 		defer close(ch)
 		for l.Next() {

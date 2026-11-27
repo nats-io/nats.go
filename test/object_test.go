@@ -1095,6 +1095,50 @@ func TestListObjectStores(t *testing.T) {
 	}
 }
 
+func TestListObjectStoresKeepsJetStreamContext(t *testing.T) {
+	withJSServer(t, func(t *testing.T, nc *nats.Conn) {
+		js, err := nc.JetStream()
+		expectOk(t, err)
+
+		_, err = js.CreateObjectStore(&nats.ObjectStoreConfig{Bucket: "OBJS"})
+		expectOk(t, err)
+		_, err = js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "KVS"})
+		expectOk(t, err)
+
+		// List object stores with a context that is done once listing ends.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		for range js.ObjectStoreNames(nats.Context(ctx)) {
+		}
+		for range js.ObjectStores(nats.Context(ctx)) {
+		}
+		cancel()
+
+		// The context and subject filter used for listing object stores
+		// must not leak into other listings on the same JetStreamContext.
+		names := make([]string, 0)
+		for name := range js.KeyValueStoreNames() {
+			names = append(names, name)
+		}
+		if len(names) != 1 || names[0] != "KVS" {
+			t.Fatalf("Expected key value store names [KVS]; got: %v", names)
+		}
+		infos := make([]nats.KeyValueStatus, 0)
+		for info := range js.KeyValueStores() {
+			infos = append(infos, info)
+		}
+		if len(infos) != 1 || infos[0].Bucket() != "KVS" {
+			t.Fatalf("Expected 1 key value store; got: %d", len(infos))
+		}
+		objNames := make([]string, 0)
+		for name := range js.ObjectStoreNames() {
+			objNames = append(objNames, name)
+		}
+		if len(objNames) != 1 {
+			t.Fatalf("Expected 1 object store name; got: %v", objNames)
+		}
+	})
+}
+
 func TestGetObjectDigestValue(t *testing.T) {
 	tests := []struct {
 		inputFile string

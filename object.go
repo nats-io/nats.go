@@ -1363,8 +1363,7 @@ func (js *js) ObjectStoreNames(opts ...ObjectOpt) <-chan string {
 	if o.ctx == nil {
 		o.ctx, cancel = context.WithTimeout(context.Background(), defaultRequestWait)
 	}
-	l := &streamLister{js: js}
-	l.js.opts.streamListSubject = fmt.Sprintf(objAllChunksPreTmpl, "*")
+	l := &streamLister{js: js.listContext(fmt.Sprintf(objAllChunksPreTmpl, "*"))}
 	l.js.opts.ctx = o.ctx
 	go func() {
 		if cancel != nil {
@@ -1403,8 +1402,7 @@ func (js *js) ObjectStores(opts ...ObjectOpt) <-chan ObjectStoreStatus {
 	if o.ctx == nil {
 		o.ctx, cancel = context.WithTimeout(context.Background(), defaultRequestWait)
 	}
-	l := &streamLister{js: js}
-	l.js.opts.streamListSubject = fmt.Sprintf(objAllChunksPreTmpl, "*")
+	l := &streamLister{js: js.listContext(fmt.Sprintf(objAllChunksPreTmpl, "*"))}
 	l.js.opts.ctx = o.ctx
 	go func() {
 		if cancel != nil {
