@@ -446,6 +446,44 @@ func (nMsgs StopAfter) configureMessages(opts *consumeOpts) error {
 	return nil
 }
 
+// AbortOnMissingResource makes Consumer.Consume and Consumer.Messages
+// stop when their consumer or stream no longer exists on the server.
+//
+// When a pull request gets a no responders status, the client checks
+// whether the consumer still exists, at most once per heartbeat interval.
+// This happens with or without this option: if the server reports the
+// consumer or its stream as not found, ErrConsumerNotFound or
+// ErrStreamNotFound is passed to the error handler, after the
+// ErrNoResponders it already got, and MessagesContext.Next returns it. By
+// default consumption then continues, so it recovers if the consumer is
+// recreated under the same name.
+//
+// With this option, Consume stops after passing the error to the error
+// handler, and the iterator stops after Next returns it, so later calls to
+// Next return ErrMsgIteratorClosed.
+//
+// The option is not supported for ordered consumers, which recreate their
+// consumer on their own.
+//
+// AbortOnMissingResource implements both PullConsumeOpt and
+// PullMessagesOpt, allowing it to configure Consumer.Consume and
+// Consumer.Messages.
+func AbortOnMissingResource() abortOnMissingResource {
+	return abortOnMissingResource{}
+}
+
+type abortOnMissingResource struct{}
+
+func (abortOnMissingResource) configureConsume(opts *consumeOpts) error {
+	opts.AbortOnMissingResource = true
+	return nil
+}
+
+func (abortOnMissingResource) configureMessages(opts *consumeOpts) error {
+	opts.AbortOnMissingResource = true
+	return nil
+}
+
 // ConsumeErrHandler sets custom error handler invoked when an error was
 // encountered while consuming messages It will be invoked for both terminal
 // (Consumer Deleted, invalid request body) and non-terminal (e.g. missing

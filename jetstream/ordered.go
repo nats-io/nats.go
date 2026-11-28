@@ -104,7 +104,7 @@ func (c *orderedConsumer) Consume(handler MessageHandler, opts ...PullConsumeOpt
 	c.stopAfter = max(consumeOpts.StopAfter, 0)
 	c.deliveredMessages = 0
 	// Preserve the resolved heartbeat when creating the pull consumer.
-	opts = append(opts, PullHeartbeat(consumeOpts.Heartbeat), consumeReconnectNotify())
+	opts = append(opts, PullHeartbeat(consumeOpts.Heartbeat), consumeReconnectNotify(), noResourceCheck())
 	// innerOpts returns the options for the inner pull subscription of the
 	// current serial. Lock should be held when calling it.
 	innerOpts := func() []PullConsumeOpt {
@@ -280,7 +280,8 @@ func (c *orderedConsumer) Messages(opts ...PullMessagesOpt) (MessagesContext, er
 	opts = append(opts,
 		PullHeartbeat(consumeOpts.Heartbeat),
 		WithMessagesErrOnMissingHeartbeat(true),
-		messagesReconnectNotify())
+		messagesReconnectNotify(),
+		noResourceCheck())
 	c.stopAfter = max(consumeOpts.StopAfter, 0)
 	c.deliveredMessages = 0
 	c.userErrHandler = consumeOpts.ErrHandler
@@ -676,6 +677,16 @@ func consumeReconnectNotify() PullConsumeOpt {
 func messagesReconnectNotify() PullMessagesOpt {
 	return pullOptFunc(func(opts *consumeOpts) error {
 		opts.notifyOnReconnect = true
+		return nil
+	})
+}
+
+// noResourceCheck turns off the check for a missing consumer or stream on the
+// inner pull subscriptions, since the ordered consumer replaces its consumer
+// on its own.
+func noResourceCheck() pullOptFunc {
+	return pullOptFunc(func(opts *consumeOpts) error {
+		opts.noResourceCheck = true
 		return nil
 	})
 }

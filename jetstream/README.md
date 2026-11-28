@@ -519,6 +519,13 @@ request. An error will be triggered if at least 2 heartbeats are missed
 - `ConsumeErrHandler(func (ConsumeContext, error))` - when used, sets a
   custom error handler on `Consume()`, allowing e.g. tracking missing
   heartbeats.
+- `AbortOnMissingResource()` - makes `Consume()` stop when its consumer or
+  stream no longer exists. When a pull request gets a no responders error,
+  `Consume()` checks whether the consumer still exists, with or without this
+  option. If the consumer or stream is not found, the error handler gets
+  `ErrConsumerNotFound` or `ErrStreamNotFound` after `ErrNoResponders`. By
+  default `Consume()` keeps going, so it recovers if the consumer is recreated;
+  with this option it stops. Not supported for ordered consumers.
 - `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
   will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,
@@ -573,6 +580,14 @@ iter, _ := cons.Messages(jetstream.PullMaxMessages(10), jetstream.PullMaxBytes(1
 - `PullHeartbeat(time.Duration)` - idle heartbeat duration for a single pull
 request. An error will be triggered if at least 2 heartbeats are missed (unless
 `WithMessagesErrOnMissingHeartbeat(false)` is used)
+- `AbortOnMissingResource()` - makes the iterator stop when its consumer or
+  stream no longer exists. When a pull request gets a no responders error,
+  the iterator checks whether the consumer still exists, with or without this
+  option. If the consumer or stream is not found, `Next()` returns
+  `ErrConsumerNotFound` or `ErrStreamNotFound`. By default the iterator stays
+  open, so `Next()` works again if the consumer is recreated; with this option
+  it stops and later calls return `ErrMsgIteratorClosed`. Not supported for
+  ordered consumers.
 - `PullMaxMessagesWithBytesLimit(int, int)` - up to the provided number of messages
   will be buffered and a single fetch size will be limited to the provided value.
   This is an advanced option and should be used with caution. Most of the time,
