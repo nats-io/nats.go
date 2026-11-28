@@ -1441,8 +1441,10 @@ func (kv *kvs) Keys(ctx context.Context, opts ...WatchOpt) ([]string, error) {
 }
 
 type keyLister struct {
-	watcher KeyWatcher
-	keys    chan string
+	watcher  KeyWatcher
+	keys     chan string
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // ListKeys will return all keys.
@@ -1454,24 +1456,7 @@ func (kv *kvs) ListKeys(ctx context.Context, opts ...WatchOpt) (KeyLister, error
 	if err != nil {
 		return nil, err
 	}
-	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
-
-	go func() {
-		defer close(kl.keys)
-		defer watcher.Stop()
-		for {
-			select {
-			case entry := <-watcher.Updates():
-				if entry == nil {
-					return
-				}
-				kl.keys <- entry.Key()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return kl, nil
+	return newKeyLister(ctx, watcher), nil
 }
 
 // ListKeysFiltered returns a KeyLister for filtered keys in the bucket.
@@ -1483,8 +1468,14 @@ func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyList
 		return nil, err
 	}
 
-	// Reuse the existing keyLister implementation
-	kl := &keyLister{watcher: watcher, keys: make(chan string, 256)}
+	return newKeyLister(ctx, watcher), nil
+}
+
+// newKeyLister forwards the watcher's initial keys to the lister's channel.
+// It gives up once the lister is stopped or the context ends, even if nothing
+// is reading the keys.
+func newKeyLister(ctx context.Context, watcher KeyWatcher) *keyLister {
+	kl := &keyLister{watcher: watcher, keys: make(chan string, 256), stop: make(chan struct{})}
 
 	go func() {
 		defer close(kl.keys)
@@ -1496,14 +1487,22 @@ func (kv *kvs) ListKeysFiltered(ctx context.Context, filters ...string) (KeyList
 				if entry == nil { // Indicates all initial values are received
 					return
 				}
-				kl.keys <- entry.Key()
+				select {
+				case kl.keys <- entry.Key():
+				case <-kl.stop:
+					return
+				case <-ctx.Done():
+					return
+				}
+			case <-kl.stop:
+				return
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	return kl, nil
+	return kl
 }
 
 func (kl *keyLister) Keys() <-chan string {
@@ -1511,6 +1510,7 @@ func (kl *keyLister) Keys() <-chan string {
 }
 
 func (kl *keyLister) Stop() error {
+	kl.stopOnce.Do(func() { close(kl.stop) })
 	return kl.watcher.Stop()
 }
 
