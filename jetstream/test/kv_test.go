@@ -1169,6 +1169,76 @@ func TestListKeysFiltered(t *testing.T) {
 	})
 }
 
+func TestKeyValueListKeysStopWithFullBuffer(t *testing.T) {
+	listers := map[string]func(context.Context, jetstream.KeyValue) (jetstream.KeyLister, error){
+		"ListKeys": func(ctx context.Context, kv jetstream.KeyValue) (jetstream.KeyLister, error) {
+			return kv.ListKeys(ctx)
+		},
+		"ListKeysFiltered": func(ctx context.Context, kv jetstream.KeyValue) (jetstream.KeyLister, error) {
+			return kv.ListKeysFiltered(ctx, "key.>")
+		},
+	}
+	for name, list := range listers {
+		for _, cancelContext := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s cancel context %v", name, cancelContext), func(t *testing.T) {
+				withJSServer(t, func(t *testing.T, _ *nats.Conn, js jetstream.JetStream) {
+					ctx := newTesterCtx(t, 10*time.Second)
+
+					kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "LISTSTOP"})
+					expectOk(t, err)
+
+					// One more key than the lister can buffer.
+					const numKeys = 257
+					for i := range numKeys {
+						_, err := kv.PutString(ctx, fmt.Sprintf("key.%d", i), "value")
+						expectOk(t, err)
+					}
+
+					listCtx, cancelList := context.WithCancel(ctx)
+					defer cancelList()
+					lister, err := list(listCtx, kv)
+					expectOk(t, err)
+					defer func() { _ = lister.Stop() }()
+
+					// Nothing reads the keys, so the lister blocks on a full channel.
+					keys := lister.Keys()
+					checkFor(t, 5*time.Second, 20*time.Millisecond, func() error {
+						if len(keys) < cap(keys) {
+							return errors.New("keys channel is not full")
+						}
+						return nil
+					})
+					// Let the lister block on the key that does not fit.
+					time.Sleep(250 * time.Millisecond)
+
+					if cancelContext {
+						cancelList()
+					} else {
+						expectOk(t, lister.Stop())
+					}
+
+					// A lister still blocked on that key would deliver it now.
+					var received int
+					for {
+						select {
+						case _, ok := <-keys:
+							if !ok {
+								if received != cap(keys) {
+									t.Fatalf("Expected %d keys before the channel closed, got %d", cap(keys), received)
+								}
+								return
+							}
+							received++
+						case <-time.After(2 * time.Second):
+							t.Fatal("Keys channel was not closed")
+						}
+					}
+				})
+			})
+		}
+	}
+}
+
 func contains(slice []string, key string) bool {
 	for _, k := range slice {
 		if k == key {
