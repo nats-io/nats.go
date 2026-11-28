@@ -977,3 +977,40 @@ func TestSerialNumberFromConsumer(t *testing.T) {
 		}
 	})
 }
+
+func TestWatcherAttachClosedHandlerForAlreadyClosedSubscription(t *testing.T) {
+	w := &watcher{updates: make(chan KeyValueEntry, 1)}
+
+	// A zero-value subscription has no connection, so it reports itself as
+	// ended, which is the state a subscription can reach between Subscribe and
+	// the closed handler being installed.
+	sub := &nats.Subscription{}
+
+	w.mu.Lock()
+	w.attachClosedHandler(sub)
+	w.mu.Unlock()
+
+	select {
+	case _, ok := <-w.updates:
+		if ok {
+			t.Fatal("Expected updates channel to be closed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Updates channel was not closed for an already ended subscription")
+	}
+
+	// Closing again, e.g. from the closed handler, must not panic.
+	w.closeUpdates()
+}
+
+func TestWatcherStopAfterSubscriptionEnded(t *testing.T) {
+	w := &watcher{
+		updates: make(chan KeyValueEntry, 1),
+		stop:    make(chan struct{}),
+		sub:     &nats.Subscription{},
+	}
+
+	if err := w.Stop(); err != nil {
+		t.Fatalf("Expected Stop on an ended subscription to be harmless, got: %v", err)
+	}
+}
