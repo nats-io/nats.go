@@ -1225,6 +1225,7 @@ type watcher struct {
 	stop        chan struct{}
 	stopOnce    sync.Once
 	stopped     bool
+	closed      bool
 }
 
 // Updates returns the interior channel.
@@ -1241,7 +1242,39 @@ func (w *watcher) Stop() error {
 		return nil
 	}
 	w.stopOnce.Do(func() { close(w.stop) })
-	return w.sub.Unsubscribe()
+	err := w.sub.Unsubscribe()
+	// Stopping a watcher whose subscription already ended is harmless.
+	if errors.Is(err, nats.ErrBadSubscription) || errors.Is(err, nats.ErrConnectionClosed) {
+		return nil
+	}
+	return err
+}
+
+// attachClosedHandler arranges for w.updates to be closed when sub ends,
+// including when sub has already ended before the handler could be installed.
+// The caller must hold w.mu.
+func (w *watcher) attachClosedHandler(sub *nats.Subscription) {
+	sub.SetClosedHandler(func(_ string) {
+		w.closeUpdates()
+	})
+	if !sub.IsValid() {
+		w.closeUpdatesLocked()
+	}
+}
+
+// closeUpdates closes the updates channel. It must be called with w.mu held.
+func (w *watcher) closeUpdatesLocked() {
+	if w.closed {
+		return
+	}
+	w.closed = true
+	close(w.updates)
+}
+
+func (w *watcher) closeUpdates() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closeUpdatesLocked()
 }
 
 // WatchFiltered will watch for any updates to keys that match the provided
@@ -1282,7 +1315,9 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 
 	// Gives up once the watcher is stopped or the context ends.
 	send := func(entry KeyValueEntry) {
-		if w.stopped {
+		// The updates channel is closed when the subscription ends; a message
+		// processed afterwards must not be sent on it.
+		if w.stopped || w.closed {
 			return
 		}
 		select {
@@ -1380,11 +1415,15 @@ func (kv *kvs) WatchFiltered(ctx context.Context, keys []string, opts ...WatchOp
 	if err != nil {
 		return nil, err
 	}
-	sub.SetClosedHandler(func(_ string) {
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		close(w.updates)
-	})
+	w.attachClosedHandler(sub)
+	// The subscription can end before the closed handler is installed, for
+	// example when the context is canceled or the connection closes while the
+	// watcher is being created. The handler never runs in that case, so stop
+	// initializing the watcher here.
+	if !sub.IsValid() {
+		w.sub = sub
+		return w, nil
+	}
 	// If there were no pending messages at the time of the creation
 	// of the consumer, send the marker.
 	// Skip if UpdatesOnly() is set, since there will never be updates initially.
